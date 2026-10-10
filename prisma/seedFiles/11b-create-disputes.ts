@@ -135,6 +135,20 @@ export function seedDisputeDueBy(
   return new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
+function resolveSeedDueBy(
+  index: number,
+  status: DisputeStatus,
+  now: Date,
+): Date | null {
+  if (index === 0) {
+    return new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
+  }
+  if (index === 1) {
+    return new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+  }
+  return seedDisputeDueBy(status, now);
+}
+
 export async function createDisputes(): Promise<void> {
   console.log(`Creating ${NUM_DISPUTES} disputes...`);
 
@@ -172,17 +186,10 @@ export async function createDisputes(): Promise<void> {
           : faker.helpers.arrayElement(DISPUTE_STATUSES);
       const reasonCode = faker.helpers.arrayElement(DISPUTE_REASONS);
       const reason = REASON_DESCRIPTIONS[reasonCode];
-      const gateway: PaymentGateway =
-        i === 0 || i === 1 ? "RAZORPAY" : payment.paymentGateway;
+      const gateway: PaymentGateway = payment.paymentGateway;
       const disputeId = generateDisputeId(gateway);
       const evidence = generateEvidence(reasonCode, status);
-
-      const dueBy =
-        i === 0
-          ? new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000)
-          : i === 1
-            ? new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000)
-            : seedDisputeDueBy(status, now);
+      const dueBy = resolveSeedDueBy(i, status, now);
 
       // Charge refundable status
       const isChargeRefundable = !["CHARGE_REFUNDED", "LOST"].includes(status);

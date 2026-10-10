@@ -729,12 +729,6 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         },
       });
 
-      if (userRole === "STAFF" || userRole === "ADMIN") {
-        await prisma.twoFactor.create({
-          data: await buildSeedOperatorTwoFactorRow(user.id, user.email),
-        });
-      }
-
       // For consultees, add a WorkExperience or Education record at User level
       if (userRole === "CONSULTEE") {
         const consulteeStage = user.consulteeProfile?.careerStage;
@@ -781,6 +775,18 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
       console.log(`Created ${i + 1} users`);
     }
   }
+
+  const operators = users.filter(
+    (u) => u.role === "STAFF" || u.role === "ADMIN",
+  );
+  await Promise.all(
+    operators.map(async (operator) =>
+      prisma.twoFactor.create({
+        data: await buildSeedOperatorTwoFactorRow(operator.id, operator.email),
+      }),
+    ),
+  );
+
   console.log(`Created ${users.length} users successfully.`);
   return users;
 }

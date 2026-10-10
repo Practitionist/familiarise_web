@@ -310,26 +310,68 @@ export async function POST(req: NextRequest) {
           ? reviewSnapshotText
           : (verifiedForBackfill?.messageText ?? contentText);
 
-      const appendedDescription = `${similarReport.description ?? ""}\nReporter ${similarReport.reportCount + 1} (${reason}): ${(description ?? "").slice(0, 280)}`;
+      const MAX_AGGREGATED_DESCRIPTION_LENGTH = 4000;
+      let candidate = similarReport;
+      let updated = false;
 
-      // Increment report count on existing report
-      const updatedReport = await prisma.moderationReport.update({
-        where: { id: similarReport.id },
-        data: {
-          reportCount: { increment: 1 },
-          description: appendedDescription,
-          ...(similarReport.contentText === null && backfillContentText
-            ? { contentText: backfillContentText }
-            : {}),
-        },
-      });
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const currentCount = candidate.reportCount;
+        const appendedDescription = `${candidate.description ?? ""}\nReporter ${currentCount + 1} (${reason}): ${(description ?? "").slice(0, 280)}`;
+        const cappedAppended = appendedDescription.slice(
+          0,
+          MAX_AGGREGATED_DESCRIPTION_LENGTH,
+        );
 
-      return NextResponse.json({
-        message: "Report submitted successfully",
-        reportId: updatedReport.id,
-        reportReference: formatReportReference(updatedReport.id),
-        aggregated: true,
-      });
+        const casResult = await prisma.moderationReport.updateMany({
+          where: {
+            id: candidate.id,
+            reportCount: currentCount,
+            status: { in: ["PENDING", "UNDER_REVIEW"] },
+          },
+          data: {
+            reportCount: { increment: 1 },
+            description: cappedAppended,
+            ...(candidate.contentText === null && backfillContentText
+              ? { contentText: backfillContentText }
+              : {}),
+          },
+        });
+
+        if (casResult.count > 0) {
+          updated = true;
+          break;
+        }
+
+        const reloaded = await prisma.moderationReport.findUnique({
+          where: { id: candidate.id },
+        });
+        if (
+          !reloaded ||
+          (reloaded.status !== "PENDING" && reloaded.status !== "UNDER_REVIEW")
+        ) {
+          candidate = reloaded ?? candidate;
+          break;
+        }
+        candidate = reloaded;
+      }
+
+      if (updated) {
+        return NextResponse.json({
+          message: "Report submitted successfully",
+          reportId: candidate.id,
+          reportReference: formatReportReference(candidate.id),
+          aggregated: true,
+        });
+      }
+      if (
+        candidate.status === "PENDING" ||
+        candidate.status === "UNDER_REVIEW"
+      ) {
+        return NextResponse.json(
+          { error: "Concurrent report update conflict; please retry" },
+          { status: 409 },
+        );
+      }
     }
 
     // Verified against Stream, not trusted from the caller — see
@@ -339,12 +381,12 @@ export async function POST(req: NextRequest) {
         ? await resolveReportedMessage(streamMessageId, target)
         : { streamMessageId: null, streamChannelCid: null, messageText: null };
 
-    const effectiveContentText =
-      type === "REVIEW"
-        ? reviewSnapshotText
-        : type === "MESSAGE"
-          ? (verifiedMessage.messageText ?? contentText)
-          : contentText;
+    let effectiveContentText = contentText;
+    if (type === "REVIEW") {
+      effectiveContentText = reviewSnapshotText ?? undefined;
+    } else if (type === "MESSAGE") {
+      effectiveContentText = verifiedMessage.messageText ?? contentText;
+    }
 
     // Create new report
     const report = await prisma.moderationReport.create({

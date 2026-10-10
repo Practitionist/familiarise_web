@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { FileText } from "lucide-react";
 
+import { ANTI_SCAM_NOTICE } from "@/app/(pages)/constants";
 import { CategoryGrid } from "./_components/CategoryGrid";
 import { StillStuckCard } from "./_components/StillStuckCard";
 import { SupportSearch } from "./_components/SupportSearch";
@@ -117,8 +118,7 @@ export default function SupportIndexPage() {
               <StillStuckCard className={CARD_CLASS} />
             </div>
             <p className="mt-6 text-xs text-muted-foreground">
-              Safety notice: Familiarise support will never ask for your OTP,
-              UPI PIN, card CVV, or screen-sharing access.
+              Safety notice: {ANTI_SCAM_NOTICE}
             </p>
           </div>
         </div>

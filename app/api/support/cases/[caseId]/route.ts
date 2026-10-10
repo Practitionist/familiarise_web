@@ -10,6 +10,7 @@ import { notifySupportTicketUpdate } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { EMAIL_BUDGET_MS, sendSupportTicketUpdateEmail } from "@/lib/email";
 import {
   PatchSupportCaseSchema,
@@ -103,39 +104,66 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     const updatedCase = result.supportCase;
-    if (result.previousStatus !== updatedCase.status) {
-      const statusLabel = supportTicketStatusLabel(updatedCase.status);
-      const dashboardUrl = supportRequestHref(
-        `case_${updatedCase.id}`,
-        updatedCase.organizationId,
-      );
-      await notifySupportTicketUpdate(
-        updatedCase.submitterUserId,
-        {
-          ticketId: updatedCase.id,
-          reference: updatedCase.referenceNumber,
-          ticketTitle: updatedCase.title,
-          status: statusLabel,
-          statusCode: updatedCase.status,
-          dashboardUrl,
-          ...notificationScope(updatedCase.organizationId),
-        },
-        `case-status:${updatedCase.id}:${updatedCase.status}:${updatedCase.updatedAt.getTime()}`,
-      );
-      await sendSupportTicketUpdateEmail(
-        {
-          ticketId: updatedCase.id,
-          ownerUserId: updatedCase.submitterUserId,
-          reference: updatedCase.referenceNumber,
-          title: updatedCase.title,
-          statusCode:
-            updatedCase.status === "ESCALATED"
-              ? "IN_PROGRESS"
-              : updatedCase.status,
-          statusLabel,
-          ticketUrl: dashboardUrl,
-        },
-        EMAIL_BUDGET_MS.REQUEST,
+    const statusTargets =
+      result.previousStatus !== updatedCase.status
+        ? [
+            {
+              id: updatedCase.id,
+              referenceNumber: updatedCase.referenceNumber,
+              title: updatedCase.title,
+              status: updatedCase.status,
+              submitterUserId: updatedCase.submitterUserId,
+              organizationId: updatedCase.organizationId,
+              updatedAtMs: updatedCase.updatedAt.getTime(),
+            },
+            ...(result.cascadedIncidents ?? []).map((inc) => ({
+              id: inc.id,
+              referenceNumber: inc.referenceNumber,
+              title: inc.title,
+              status: "RESOLVED" as const,
+              submitterUserId: inc.submitterUserId,
+              organizationId: inc.organizationId,
+              updatedAtMs: updatedCase.updatedAt.getTime(),
+            })),
+          ]
+        : [];
+
+    if (statusTargets.length > 0) {
+      await Promise.all(
+        statusTargets.flatMap((t) => {
+          const statusLabel = supportTicketStatusLabel(t.status);
+          const dashboardUrl = supportRequestHref(
+            caseKeyOf({ kind: "ticket", id: t.id }),
+            t.organizationId,
+          );
+          return [
+            notifySupportTicketUpdate(
+              t.submitterUserId,
+              {
+                ticketId: t.id,
+                reference: t.referenceNumber,
+                ticketTitle: t.title,
+                status: statusLabel,
+                statusCode: t.status,
+                dashboardUrl,
+                ...notificationScope(t.organizationId),
+              },
+              `case-status:${t.id}:${t.status}:${t.updatedAtMs}`,
+            ),
+            sendSupportTicketUpdateEmail(
+              {
+                ticketId: t.id,
+                ownerUserId: t.submitterUserId,
+                reference: t.referenceNumber,
+                title: t.title,
+                statusCode: t.status === "ESCALATED" ? "IN_PROGRESS" : t.status,
+                statusLabel,
+                ticketUrl: dashboardUrl,
+              },
+              EMAIL_BUDGET_MS.REQUEST,
+            ),
+          ];
+        }),
       );
     }
 

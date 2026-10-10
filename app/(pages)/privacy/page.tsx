@@ -202,10 +202,10 @@ export default function PrivacyPolicyPage() {
                         &sect;9 / Fourth Schedule Part B Item 6)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Service &amp; Account</strong> (
-                        <code>PRIMARY_PROCESSING</code>) — Create and operate
-                        your account, authenticate sessions, and verify adult
-                        eligibility.
+                        <strong>Service &amp; Account</strong> {"("}
+                        <code>PRIMARY_PROCESSING</code>
+                        {")"} — Create and operate your account, authenticate
+                        sessions, and verify adult eligibility.
                       </td>
                       <td className="p-2 align-top">
                         <strong>Core (Required)</strong> — Retained while
@@ -220,10 +220,10 @@ export default function PrivacyPolicyPage() {
                         request notes)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Session Booking</strong> (
-                        <code>SESSION_BOOKING</code>) — Schedule, manage, and
-                        deliver 1:1 consultations, subscriptions, webinars, and
-                        classes.
+                        <strong>Session Booking</strong> {"("}
+                        <code>SESSION_BOOKING</code>
+                        {")"} — Schedule, manage, and deliver 1:1 consultations,
+                        subscriptions, webinars, and classes.
                       </td>
                       <td className="p-2 align-top">
                         <strong>Core (Required)</strong> — Free-text notes
@@ -237,9 +237,10 @@ export default function PrivacyPolicyPage() {
                         name, avatar, session room participation)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Video &amp; Chat</strong> (
-                        <code>STREAM_DATA_PROCESSING</code>) — Real-time video
-                        calls and messaging via GetStream.io.
+                        <strong>Video &amp; Chat</strong> {"("}
+                        <code>STREAM_DATA_PROCESSING</code>
+                        {")"} — Real-time video calls and messaging via
+                        GetStream.io.
                       </td>
                       <td className="p-2 align-top">
                         <strong>Core (Required)</strong> — Active account
@@ -256,8 +257,10 @@ export default function PrivacyPolicyPage() {
                         <strong>
                           Financial Settlement &amp; Statutory Tax
                         </strong>{" "}
-                        (<code>PRIMARY_PROCESSING</code> &amp; DPDP
-                        &sect;12(3)/&sect;8(7)(b))
+                        {"("}
+                        <code>PRIMARY_PROCESSING</code> &amp; DPDP
+                        &sect;12(3)/&sect;8(7)(b)
+                        {")"}
                       </td>
                       <td className="p-2 align-top">
                         <strong>Statutory Retention</strong> — Retained for 7–8
@@ -292,9 +295,10 @@ export default function PrivacyPolicyPage() {
                         telemetry)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>Marketing &amp; Analytics</strong> (
-                        <code>MARKETING_COMMS</code>, <code>ANALYTICS</code>) —
-                        Send product updates/offers and measure feature usage.
+                        <strong>Marketing &amp; Analytics</strong> {"("}
+                        <code>MARKETING_COMMS</code>, <code>ANALYTICS</code>
+                        {")"} — Send product updates/offers and measure feature
+                        usage.
                       </td>
                       <td className="p-2 align-top">
                         <strong>Optional</strong> — Until withdrawn via 1-click
@@ -340,8 +344,9 @@ export default function PrivacyPolicyPage() {
                 </li>
                 <li>
                   <strong>GetStream.io:</strong> Video conferencing and
-                  real-time chat communication (
-                  <code>STREAM_DATA_PROCESSING</code>)
+                  real-time chat communication {"("}
+                  <code>STREAM_DATA_PROCESSING</code>
+                  {")"}
                 </li>
                 <li>
                   <strong>
@@ -589,7 +594,7 @@ export default function PrivacyPolicyPage() {
                   >
                     {COMPANY_INFO.email}
                   </a>
-                  . Grievances receive an immediate ticket reference, are
+                  {". "}Grievances receive an immediate ticket reference, are
                   acknowledged within 24 hours, and are resolved within 15 days.
                 </li>
                 <li>

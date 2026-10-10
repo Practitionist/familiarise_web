@@ -11,10 +11,11 @@ import {
 
 export function redirectOnTwoFactorPreconditionError(
   error: unknown,
-  navigate?: unknown,
+  navigate?: (url: string) => void,
 ): void {
   if (
     typeof window !== "undefined" &&
+    window.location.pathname !== "/auth/two-factor/setup" &&
     error instanceof Error &&
     "status" in error &&
     error.status === 428
@@ -33,10 +34,10 @@ export function redirectOnTwoFactorPreconditionError(
 export function makeQueryClient() {
   return new QueryClient({
     queryCache: new QueryCache({
-      onError: redirectOnTwoFactorPreconditionError,
+      onError: (error) => redirectOnTwoFactorPreconditionError(error),
     }),
     mutationCache: new MutationCache({
-      onError: redirectOnTwoFactorPreconditionError,
+      onError: (error) => redirectOnTwoFactorPreconditionError(error),
     }),
     defaultOptions: {
       queries: {

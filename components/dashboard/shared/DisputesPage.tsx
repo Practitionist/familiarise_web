@@ -103,6 +103,12 @@ const getDaysUntilDue = (dueBy: string | null) => {
   return diffDays;
 };
 
+function getDueCellClassName(isOverdue: boolean, isUrgent: boolean): string {
+  if (isOverdue) return "text-red-600 font-semibold";
+  if (isUrgent) return "text-red-600 font-medium";
+  return "text-muted-foreground";
+}
+
 function DisputeDueCell({
   dueBy,
   status,
@@ -111,25 +117,17 @@ function DisputeDueCell({
   const daysUntilDue = getDaysUntilDue(dueBy);
   const hoursUntilDue =
     (new Date(dueBy).getTime() - Date.now()) / (1000 * 60 * 60);
-  const actionableOpen =
+  const isActionable =
     status === "NEEDS_RESPONSE" || status === "WARNING_NEEDS_RESPONSE";
-  const isOverdue = actionableOpen && daysUntilDue !== null && daysUntilDue < 0;
-  const isCritical48h = hoursUntilDue <= 48 && hoursUntilDue >= 0;
+  const isOverdue = isActionable && new Date(dueBy).getTime() < Date.now();
+  const isCritical48h = !isOverdue && hoursUntilDue <= 48 && hoursUntilDue >= 0;
   const isUrgent =
     isOverdue ||
     isCritical48h ||
     (daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0);
 
   return (
-    <div
-      className={
-        isOverdue
-          ? "text-red-600 font-semibold"
-          : isUrgent
-            ? "text-red-600 font-medium"
-            : "text-muted-foreground"
-      }
-    >
+    <div className={getDueCellClassName(isOverdue, isUrgent)}>
       <div className="flex items-center gap-1.5">
         <span>{formatDate(dueBy)}</span>
         {isOverdue && (
@@ -143,12 +141,12 @@ function DisputeDueCell({
           </Badge>
         )}
       </div>
-      {isOverdue && daysUntilDue !== null && (
+      {isOverdue && (
         <p className="text-xs font-semibold text-red-600">
-          {`Overdue by ${Math.abs(daysUntilDue)} day(s)`}
+          {`Overdue by ${Math.max(1, Math.abs(daysUntilDue ?? 1))} day(s)`}
         </p>
       )}
-      {daysUntilDue !== null && daysUntilDue >= 0 && (
+      {!isOverdue && daysUntilDue !== null && daysUntilDue >= 0 && (
         <p className="text-xs">
           {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days left`}
         </p>
@@ -322,9 +320,9 @@ export function DisputesPage({
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Urgent Attention Required</AlertTitle>
           <AlertDescription>
-            {urgentCount} dispute{urgentCount > 1 ? "s" : ""} require
-            {urgentCount === 1 ? "s" : ""} response within 3 days. Please
-            escalate to admin for evidence submission.
+            {urgentCount} dispute{urgentCount > 1 ? "s are" : " is"} overdue or
+            require{urgentCount === 1 ? "s" : ""} an imminent response (&lt;= 3
+            days). Please escalate to admin for evidence submission.
           </AlertDescription>
         </Alert>
       )}

@@ -91,6 +91,68 @@ export interface DeflectionSummary {
 
 const SEVEN_DAYS_MS = 7 * 24 * 3_600_000;
 
+function isWithinRecontactWindow(firstAt: Date, eventAt: Date): boolean {
+  const delta = eventAt.getTime() - firstAt.getTime();
+  return delta > 0 && delta <= SEVEN_DAYS_MS;
+}
+
+async function countRecontactedUsers(
+  firstResolvedByUser: Map<string, { id: string; at: Date }>,
+  earliestAt: Date,
+): Promise<number> {
+  const userIds = [...firstResolvedByUser.keys()];
+  const [subsequentOutcomes, subsequentCases, subsequentTickets] =
+    await Promise.all([
+      prisma.supportFlowOutcome.findMany({
+        where: {
+          userId: { in: userIds },
+          createdAt: { gt: earliestAt },
+        },
+        select: { id: true, userId: true, createdAt: true },
+      }),
+      prisma.supportCase.findMany({
+        where: {
+          requesterUserId: { in: userIds },
+          createdAt: { gt: earliestAt },
+          deletedAt: null,
+        },
+        select: { requesterUserId: true, createdAt: true },
+      }),
+      prisma.supportTicket.findMany({
+        where: {
+          userId: { in: userIds },
+          createdAt: { gt: earliestAt },
+        },
+        select: { userId: true, createdAt: true },
+      }),
+    ]);
+
+  const recontacted = new Set<string>();
+  for (const o of subsequentOutcomes) {
+    const first = firstResolvedByUser.get(o.userId);
+    if (
+      first &&
+      o.id !== first.id &&
+      isWithinRecontactWindow(first.at, o.createdAt)
+    ) {
+      recontacted.add(o.userId);
+    }
+  }
+  for (const c of subsequentCases) {
+    const first = firstResolvedByUser.get(c.requesterUserId);
+    if (first && isWithinRecontactWindow(first.at, c.createdAt)) {
+      recontacted.add(c.requesterUserId);
+    }
+  }
+  for (const t of subsequentTickets) {
+    const first = firstResolvedByUser.get(t.userId);
+    if (first && isWithinRecontactWindow(first.at, t.createdAt)) {
+      recontacted.add(t.userId);
+    }
+  }
+  return recontacted.size;
+}
+
 export async function deflectionSince(
   since: Date,
   where: Prisma.SupportFlowOutcomeWhereInput = {},
@@ -119,72 +181,14 @@ export async function deflectionSince(
     }
   }
 
-  const userIds = [...firstResolvedByUser.keys()];
-  const resolvedUsers = userIds.length;
-  let recontactedUsers = 0;
-
-  if (resolvedUsers > 0) {
-    const earliestAt = resolvedRows[0].createdAt;
-    const [subsequentOutcomes, subsequentCases, subsequentTickets] =
-      await Promise.all([
-        prisma.supportFlowOutcome.findMany({
-          where: {
-            userId: { in: userIds },
-            createdAt: { gt: earliestAt },
-          },
-          select: { id: true, userId: true, createdAt: true },
-        }),
-        prisma.supportCase.findMany({
-          where: {
-            requesterUserId: { in: userIds },
-            createdAt: { gt: earliestAt },
-            deletedAt: null,
-          },
-          select: { requesterUserId: true, createdAt: true },
-        }),
-        prisma.supportTicket.findMany({
-          where: {
-            userId: { in: userIds },
-            createdAt: { gt: earliestAt },
-          },
-          select: { userId: true, createdAt: true },
-        }),
-      ]);
-
-    const recontacted = new Set<string>();
-    for (const o of subsequentOutcomes) {
-      const first = firstResolvedByUser.get(o.userId);
-      if (
-        first &&
-        o.id !== first.id &&
-        o.createdAt.getTime() > first.at.getTime() &&
-        o.createdAt.getTime() - first.at.getTime() <= SEVEN_DAYS_MS
-      ) {
-        recontacted.add(o.userId);
-      }
-    }
-    for (const c of subsequentCases) {
-      const first = firstResolvedByUser.get(c.requesterUserId);
-      if (
-        first &&
-        c.createdAt.getTime() > first.at.getTime() &&
-        c.createdAt.getTime() - first.at.getTime() <= SEVEN_DAYS_MS
-      ) {
-        recontacted.add(c.requesterUserId);
-      }
-    }
-    for (const t of subsequentTickets) {
-      const first = firstResolvedByUser.get(t.userId);
-      if (
-        first &&
-        t.createdAt.getTime() > first.at.getTime() &&
-        t.createdAt.getTime() - first.at.getTime() <= SEVEN_DAYS_MS
-      ) {
-        recontacted.add(t.userId);
-      }
-    }
-    recontactedUsers = recontacted.size;
-  }
+  const resolvedUsers = firstResolvedByUser.size;
+  const recontactedUsers =
+    resolvedUsers > 0
+      ? await countRecontactedUsers(
+          firstResolvedByUser,
+          resolvedRows[0].createdAt,
+        )
+      : 0;
 
   return {
     resolved,
@@ -205,6 +209,66 @@ export interface SupportHealthMetrics extends DeflectionSummary {
   ackWithin24hRate: number | null;
   disposedWithin15dRate: number | null;
   medianFirstReplyMinutes: number | null;
+}
+
+function summarizeHealthTimings(
+  combined: Array<{
+    createdAt: Date;
+    acknowledgedAt: Date | null;
+    resolvedAt: Date | null;
+    pausedSeconds: number;
+    firstAgentReplyAt: Date | null;
+  }>,
+  now: Date,
+): {
+  ackWithin24hRate: number | null;
+  disposedWithin15dRate: number | null;
+  medianFirstReplyMinutes: number | null;
+} {
+  const ackMissCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const ackEvaluatedRows = combined.filter(
+    (r) =>
+      r.acknowledgedAt !== null ||
+      r.createdAt.getTime() <= ackMissCutoff.getTime(),
+  );
+  const ackWithin24h = ackEvaluatedRows.filter(
+    (r) =>
+      r.acknowledgedAt !== null &&
+      r.acknowledgedAt.getTime() - r.createdAt.getTime() <= 24 * 3_600_000,
+  ).length;
+  const ackWithin24hRate =
+    ackEvaluatedRows.length > 0
+      ? Math.round((ackWithin24h / ackEvaluatedRows.length) * 1000) / 10
+      : null;
+
+  const resolvedRows = combined.filter(
+    (r): r is typeof r & { resolvedAt: Date } => r.resolvedAt !== null,
+  );
+  const disposedWithin15d = resolvedRows.filter(
+    (r) =>
+      r.resolvedAt.getTime() - r.createdAt.getTime() - r.pausedSeconds * 1000 <=
+      15 * 24 * 3_600_000,
+  ).length;
+  const disposedWithin15dRate =
+    resolvedRows.length > 0
+      ? Math.round((disposedWithin15d / resolvedRows.length) * 1000) / 10
+      : null;
+
+  const firstReplyMinutes = combined
+    .filter(
+      (r): r is typeof r & { firstAgentReplyAt: Date } =>
+        r.firstAgentReplyAt !== null,
+    )
+    .map(
+      (r) => (r.firstAgentReplyAt.getTime() - r.createdAt.getTime()) / 60_000,
+    )
+    .sort((a, b) => a - b);
+  const medianFirstReplyMinutes =
+    firstReplyMinutes.length > 0
+      ? Math.round(firstReplyMinutes[Math.floor(firstReplyMinutes.length / 2)])
+      : null;
+
+  return { ackWithin24hRate, disposedWithin15dRate, medianFirstReplyMinutes };
 }
 
 export async function supportHealthMetrics(
@@ -245,53 +309,12 @@ export async function supportHealthMetrics(
       ? Math.round((ratings.reduce((a, b) => a + b, 0) / csatCount) * 100) / 100
       : null;
 
-  const ackMissCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const combined = [...cases, ...tickets];
-  const ackEvaluatedRows = combined.filter(
-    (r) =>
-      r.acknowledgedAt !== null ||
-      r.createdAt.getTime() <= ackMissCutoff.getTime(),
-  );
-  const ackWithin24h = ackEvaluatedRows.filter(
-    (r) =>
-      r.acknowledgedAt !== null &&
-      r.acknowledgedAt.getTime() - r.createdAt.getTime() <= 24 * 3_600_000,
-  ).length;
-  const ackWithin24hRate =
-    ackEvaluatedRows.length > 0
-      ? Math.round((ackWithin24h / ackEvaluatedRows.length) * 1000) / 10
-      : null;
-
-  const resolvedRows = combined.filter((r) => r.resolvedAt !== null);
-  const disposedWithin15d = resolvedRows.filter(
-    (r) =>
-      r.resolvedAt!.getTime() -
-        r.createdAt.getTime() -
-        r.pausedSeconds * 1000 <=
-      15 * 24 * 3_600_000,
-  ).length;
-  const disposedWithin15dRate =
-    resolvedRows.length > 0
-      ? Math.round((disposedWithin15d / resolvedRows.length) * 1000) / 10
-      : null;
-
-  const firstReplyMinutes = combined
-    .filter((r) => r.firstAgentReplyAt !== null)
-    .map(
-      (r) => (r.firstAgentReplyAt!.getTime() - r.createdAt.getTime()) / 60_000,
-    )
-    .sort((a, b) => a - b);
-  const medianFirstReplyMinutes =
-    firstReplyMinutes.length > 0
-      ? Math.round(firstReplyMinutes[Math.floor(firstReplyMinutes.length / 2)])
-      : null;
+  const timings = summarizeHealthTimings([...cases, ...tickets], now);
 
   return {
     ...deflection,
     csatAverage,
     csatCount,
-    ackWithin24hRate,
-    disposedWithin15dRate,
-    medianFirstReplyMinutes,
+    ...timings,
   };
 }

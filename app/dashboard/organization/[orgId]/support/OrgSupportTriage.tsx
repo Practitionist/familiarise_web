@@ -178,7 +178,7 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
   // A failed request is not "no data" — show it, with a way out. A 403 (data
   // resolved to null) is a third thing: the card is not for this role.
   const summaryError = summary.isError ? (
-    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
+    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground sm:col-span-2">
       Couldn&apos;t load the quality summary.{" "}
       <Button
         variant="outline"
@@ -188,6 +188,11 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       >
         Retry
       </Button>
+    </div>
+  ) : summary.data === null && !summary.isLoading ? (
+    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground sm:col-span-2">
+      The quality summary needs the quality permission, which your role does not
+      hold.
     </div>
   ) : null;
   const threadsError = threads.isError ? (
@@ -201,11 +206,6 @@ export function OrgSupportTriage({ orgId }: { orgId: string }) {
       >
         Retry
       </Button>
-    </div>
-  ) : summary.data === null && !summary.isLoading ? (
-    <div className="rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">
-      The quality summary needs the quality permission, which your role does not
-      hold.
     </div>
   ) : null;
 

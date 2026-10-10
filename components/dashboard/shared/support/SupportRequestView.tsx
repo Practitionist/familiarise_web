@@ -219,6 +219,112 @@ function SessionRequest({
   );
 }
 
+function ticketLiveAnnouncement(sending: boolean, offline: boolean): string {
+  if (sending) return "Sending reply…";
+  if (offline) return "You are offline. Your draft message is preserved.";
+  return "";
+}
+
+function TicketCsatPrompt({
+  effectiveCsat,
+  onRate,
+}: Readonly<{
+  effectiveCsat: number | null;
+  onRate: (star: number) => void;
+}>) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
+      <p className="font-medium text-foreground">
+        {effectiveCsat
+          ? "Thanks for rating how we handled your request."
+          : "How did our support team do on this request?"}
+      </p>
+      <div className="mt-1.5 flex items-center gap-1">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <Button
+            key={star}
+            type="button"
+            size="sm"
+            variant={effectiveCsat === star ? "default" : "outline"}
+            className="h-7 w-7 p-0 text-xs"
+            aria-label={`Rate support ${star} out of 5`}
+            onClick={() => onRate(star)}
+          >
+            {star}★
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TicketComposer({
+  closed,
+  resolved,
+  requestsHref,
+  draft,
+  sending,
+  onDraftChange,
+  onSubmit,
+}: Readonly<{
+  closed: boolean;
+  resolved: boolean;
+  requestsHref: string;
+  draft: string;
+  sending: boolean;
+  onDraftChange: (value: string) => void;
+  onSubmit: (message: string) => void;
+}>) {
+  if (closed) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        This request is closed.{" "}
+        <Link
+          href={requestsHref}
+          className="font-medium text-foreground underline underline-offset-4"
+        >
+          Start a new request
+        </Link>{" "}
+        if you still need help.
+      </p>
+    );
+  }
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const msg = draft.trim();
+        if (msg && !sending) onSubmit(msg);
+      }}
+    >
+      {resolved && (
+        <p id="support-reply-reopens" className="text-xs text-muted-foreground">
+          This request is marked resolved. Replying reopens it.
+        </p>
+      )}
+      <Textarea
+        aria-label="Reply"
+        aria-describedby={resolved ? "support-reply-reopens" : undefined}
+        rows={3}
+        value={draft}
+        onChange={(e) => onDraftChange(e.target.value)}
+        placeholder={
+          resolved
+            ? "Reply to reopen this request…"
+            : "Write a reply to our team…"
+        }
+      />
+      <div className="flex justify-end">
+        <Button type="submit" size="sm" disabled={sending || !draft.trim()}>
+          <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+          Send
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 /** A platform request (`t_<ticketId>`); private notes never reach this read. */
 function TicketRequest({
   ticketId,
@@ -230,6 +336,11 @@ function TicketRequest({
   const [offline, setOffline] = useState(false);
   const [csatChoice, setCsatChoice] = useState<number | null>(null);
   const queryKey = ["user-support-ticket", ticketId];
+
+  useEffect(() => {
+    setDraft("");
+    setCsatChoice(null);
+  }, [ticketId]);
 
   useEffect(() => {
     setOffline(!navigator.onLine);
@@ -316,10 +427,16 @@ function TicketRequest({
   }
   const closed = data.status === "CLOSED";
   const resolved = data.status === "RESOLVED";
-  const resolvedBasis = data.resolvedAt ?? data.createdAt;
-  const withinCsatWindow =
-    Date.now() - new Date(resolvedBasis).getTime() <= 28 * 24 * 60 * 60 * 1000;
+  const withinCsatWindow = Boolean(
+    data.resolvedAt &&
+    Date.now() - new Date(data.resolvedAt).getTime() <=
+      28 * 24 * 60 * 60 * 1000,
+  );
   const effectiveCsat = csatChoice ?? data.csatRating ?? null;
+  const paymentHref =
+    data.payment && props.paymentsBase
+      ? `${props.paymentsBase}/${data.payment.id}`
+      : undefined;
 
   return (
     <>
@@ -353,11 +470,7 @@ function TicketRequest({
                   size="sm"
                 />
               }
-              href={
-                props.paymentsBase
-                  ? `${props.paymentsBase}/${data.payment.id}`
-                  : undefined
-              }
+              href={paymentHref}
               hrefLabel="Go to payment"
             />
           )}
@@ -379,35 +492,13 @@ function TicketRequest({
                 </p>
               )}
               {resolved && withinCsatWindow && (
-                <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs">
-                  <p className="font-medium text-foreground">
-                    {effectiveCsat
-                      ? "Thanks for rating how we handled your request."
-                      : "How did our support team do on this request?"}
-                  </p>
-                  <div className="mt-1.5 flex items-center gap-1">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <Button
-                        key={star}
-                        type="button"
-                        size="sm"
-                        variant={effectiveCsat === star ? "default" : "outline"}
-                        className="h-7 w-7 p-0 text-xs"
-                        aria-label={`Rate support ${star} out of 5`}
-                        onClick={() => void submitCsat(star)}
-                      >
-                        {star}★
-                      </Button>
-                    ))}
-                  </div>
-                </div>
+                <TicketCsatPrompt
+                  effectiveCsat={effectiveCsat}
+                  onRate={(star) => void submitCsat(star)}
+                />
               )}
               <div aria-live="polite" className="sr-only">
-                {reply.isPending
-                  ? "Sending reply…"
-                  : offline
-                    ? "You are offline. Your draft message is preserved."
-                    : ""}
+                {ticketLiveAnnouncement(reply.isPending, offline)}
               </div>
               {offline && (
                 <div
@@ -427,60 +518,15 @@ function TicketRequest({
               )}
             </div>
             <div className="border-t border-border p-4">
-              {closed ? (
-                <p className="text-sm text-muted-foreground">
-                  This request is closed.{" "}
-                  <Link
-                    href={props.requestsHref}
-                    className="font-medium text-foreground underline underline-offset-4"
-                  >
-                    Start a new request
-                  </Link>{" "}
-                  if you still need help.
-                </p>
-              ) : (
-                <form
-                  className="space-y-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const msg = draft.trim();
-                    if (msg && !reply.isPending) reply.mutate(msg);
-                  }}
-                >
-                  {resolved && (
-                    <p
-                      id="support-reply-reopens"
-                      className="text-xs text-muted-foreground"
-                    >
-                      This request is marked resolved. Replying reopens it.
-                    </p>
-                  )}
-                  <Textarea
-                    aria-label="Reply"
-                    aria-describedby={
-                      resolved ? "support-reply-reopens" : undefined
-                    }
-                    rows={3}
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    placeholder={
-                      resolved
-                        ? "Reply to reopen this request…"
-                        : "Write a reply to our team…"
-                    }
-                  />
-                  <div className="flex justify-end">
-                    <Button
-                      type="submit"
-                      size="sm"
-                      disabled={reply.isPending || !draft.trim()}
-                    >
-                      <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-                      Send
-                    </Button>
-                  </div>
-                </form>
-              )}
+              <TicketComposer
+                closed={closed}
+                resolved={resolved}
+                requestsHref={props.requestsHref}
+                draft={draft}
+                sending={reply.isPending}
+                onDraftChange={setDraft}
+                onSubmit={(msg) => reply.mutate(msg)}
+              />
             </div>
           </div>
         </div>

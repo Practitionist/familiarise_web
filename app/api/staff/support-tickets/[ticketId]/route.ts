@@ -20,7 +20,10 @@ import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "@/lib/support/case-key";
 import { withSupportAttachmentHrefs } from "@/lib/support/attachment-href";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
-import { tightenDeadlinesForPriorityRaise } from "@/lib/support/sla";
+import {
+  tightenDeadlinesForPriorityRaise,
+  userRepliedPatch,
+} from "@/lib/support/sla";
 import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
 import { UpdateSupportTicketSchema } from "@/schemas/support";
 
@@ -35,74 +38,14 @@ interface RouteParams {
   params: Promise<{ ticketId: string }>;
 }
 
-/**
- * GET /api/staff/support-tickets/[ticketId]
- * Get full ticket details with responses, attachments, and linked entities
- */
-export async function GET(req: NextRequest, { params }: RouteParams) {
-  try {
-    const auth = await requirePrivilegedAuth();
-    if (auth.error) return auth.error;
-
-    const { ticketId } = await params;
-
-    const ticket = await prisma.supportTicket.findUnique({
-      where: { id: ticketId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            image: true,
-            phone: true,
-            createdAt: true,
-          },
-        },
-        responses: {
-          orderBy: { createdAt: "asc" },
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                image: true,
-                role: true,
-              },
-            },
-          },
-        },
-        attachments: {
-          orderBy: { uploadedAt: "desc" },
-        },
-        appointmentSupportThread: {
-          select: {
-            id: true,
-            category: true,
-            status: true,
-            activeChannel: true,
-            createdAt: true,
-            lastMessageAt: true,
-            messages: {
-              orderBy: [{ seq: "desc" }, { createdAt: "desc" }],
-              take: 50,
-              select: { id: true, sender: true, body: true, createdAt: true },
-            },
-          },
-        },
-      },
-    });
-
-    if (!ticket) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
-    }
-
-    const [
-      linkedConsultation,
-      linkedSubscription,
-      linkedPayment,
-      linkedRefund,
-    ] = await Promise.all([
+async function loadTicketLinkedEntities(ticket: {
+  consultationId: string | null;
+  subscriptionId: string | null;
+  paymentId: string | null;
+  refundId: string | null;
+}) {
+  const [linkedConsultation, linkedSubscription, linkedPayment, linkedRefund] =
+    await Promise.all([
       ticket.consultationId
         ? prisma.consultation.findUnique({
             where: { id: ticket.consultationId },
@@ -185,6 +128,78 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         : Promise.resolve(null),
     ]);
 
+  return {
+    linkedConsultation,
+    linkedSubscription,
+    linkedPayment,
+    linkedRefund,
+  };
+}
+
+/**
+ * GET /api/staff/support-tickets/[ticketId]
+ * Get full ticket details with responses, attachments, and linked entities
+ */
+export async function GET(_req: NextRequest, { params }: RouteParams) {
+  try {
+    const auth = await requirePrivilegedAuth();
+    if (auth.error) return auth.error;
+
+    const { ticketId } = await params;
+
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            image: true,
+            phone: true,
+            createdAt: true,
+          },
+        },
+        responses: {
+          orderBy: { createdAt: "asc" },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                image: true,
+                role: true,
+              },
+            },
+          },
+        },
+        attachments: {
+          orderBy: { uploadedAt: "desc" },
+        },
+        appointmentSupportThread: {
+          select: {
+            id: true,
+            category: true,
+            status: true,
+            activeChannel: true,
+            createdAt: true,
+            lastMessageAt: true,
+            messages: {
+              orderBy: [{ seq: "desc" }, { createdAt: "desc" }],
+              take: 50,
+              select: { id: true, sender: true, body: true, createdAt: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!ticket) {
+      return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+    }
+
+    const linkedEntities = await loadTicketLinkedEntities(ticket);
+
     return NextResponse.json({
       ...ticket,
       attachments: withSupportAttachmentHrefs(ticket.attachments),
@@ -196,10 +211,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             },
           }
         : {}),
-      linkedConsultation,
-      linkedSubscription,
-      linkedPayment,
-      linkedRefund,
+      ...linkedEntities,
     });
   } catch (error) {
     Sentry.captureException(
@@ -226,6 +238,8 @@ function buildTicketPatchFields(
     acknowledgedAt: Date | null;
     resolutionDueAt: Date | null;
     resolvedAt: Date | null;
+    awaitingUserSince: Date | null;
+    pausedSeconds: number;
   },
   now: Date,
 ): Prisma.SupportTicketUncheckedUpdateManyInput {
@@ -233,6 +247,9 @@ function buildTicketPatchFields(
 
   if (validatedData.status) {
     updateData.status = validatedData.status;
+    if (existing.awaitingUserSince !== null) {
+      Object.assign(updateData, userRepliedPatch(existing, now));
+    }
     if (validatedData.status === "RESOLVED") {
       updateData.resolvedAt = now;
       updateData.closedAt = null;
@@ -247,16 +264,14 @@ function buildTicketPatchFields(
 
   if (validatedData.priority) {
     updateData.priority = validatedData.priority;
-    if (existing.priority) {
-      const tightened = tightenDeadlinesForPriorityRaise(
-        existing,
-        validatedData.priority,
-        now,
-      );
-      if (tightened.ackDueAt) updateData.ackDueAt = tightened.ackDueAt;
-      if (tightened.resolutionDueAt) {
-        updateData.resolutionDueAt = tightened.resolutionDueAt;
-      }
+    const tightened = tightenDeadlinesForPriorityRaise(
+      existing,
+      validatedData.priority,
+      now,
+    );
+    if (tightened.ackDueAt) updateData.ackDueAt = tightened.ackDueAt;
+    if (tightened.resolutionDueAt) {
+      updateData.resolutionDueAt = tightened.resolutionDueAt;
     }
   }
 
@@ -314,6 +329,155 @@ async function syncLinkedThreadStatus(
   }
 }
 
+async function recordTicketAuditEvents(
+  tx: Tx,
+  ticketId: string,
+  actorId: string,
+  validatedData: z.infer<typeof StaffPatchSupportTicketSchema>,
+  existing: {
+    status: string;
+    priority: string;
+    assignedToId: string | null;
+  },
+  trimmedNote: string | null,
+  now: Date,
+): Promise<void> {
+  const ops: Promise<unknown>[] = [];
+
+  if (trimmedNote) {
+    ops.push(
+      tx.supportResponse.create({
+        data: {
+          message: trimmedNote,
+          isInternal: true,
+          supportTicket: { connect: { id: ticketId } },
+          user: { connect: { id: actorId } },
+        },
+      }),
+    );
+  }
+
+  if (validatedData.status && validatedData.status !== existing.status) {
+    const wasSettled =
+      existing.status === "RESOLVED" || existing.status === "CLOSED";
+    const isReopenTarget =
+      validatedData.status === "OPEN" || validatedData.status === "IN_PROGRESS";
+    ops.push(
+      tx.supportCaseEvent.create({
+        data: {
+          legacyTicketId: ticketId,
+          actorId,
+          kind: wasSettled && isReopenTarget ? "REOPENED" : "STATUS_CHANGED",
+          fromValue: existing.status,
+          toValue: validatedData.status,
+          createdAt: now,
+        },
+      }),
+    );
+  }
+
+  if (validatedData.priority && validatedData.priority !== existing.priority) {
+    ops.push(
+      tx.supportCaseEvent.create({
+        data: {
+          legacyTicketId: ticketId,
+          actorId,
+          kind: "PRIORITY_CHANGED",
+          fromValue: existing.priority,
+          toValue: validatedData.priority,
+          createdAt: now,
+        },
+      }),
+    );
+  }
+
+  if (
+    validatedData.assignedToId !== undefined &&
+    validatedData.assignedToId !== existing.assignedToId
+  ) {
+    ops.push(
+      tx.supportCaseEvent.create({
+        data: {
+          legacyTicketId: ticketId,
+          actorId,
+          kind: validatedData.assignedToId ? "ASSIGNED" : "UNASSIGNED",
+          fromValue: existing.assignedToId,
+          toValue: validatedData.assignedToId,
+          note: trimmedNote,
+          createdAt: now,
+        },
+      }),
+    );
+  }
+
+  if (ops.length > 0) {
+    await Promise.all(ops);
+  }
+}
+
+async function notifyTicketCustomerStatusChange(
+  updatedTicket: {
+    id: string;
+    referenceNumber: string | null;
+    title: string;
+    status: "OPEN" | "IN_PROGRESS" | "ON_HOLD" | "RESOLVED" | "CLOSED";
+    organizationId: string | null;
+    user: { id: string };
+    appointmentSupportThread: { organizationId: string | null } | null;
+  },
+  now: Date,
+): Promise<void> {
+  const reference = updatedTicket.referenceNumber ?? undefined;
+  const ticketTitle = updatedTicket.title || "Support Ticket";
+  const statusLabel = supportTicketStatusLabel(updatedTicket.status);
+  const requestUrl = supportRequestHref(
+    caseKeyOf({ kind: "ticket", id: updatedTicket.id }),
+    updatedTicket.appointmentSupportThread?.organizationId,
+  );
+
+  await Promise.all([
+    notifySupportTicketUpdate(
+      updatedTicket.user.id,
+      {
+        ticketId: updatedTicket.id,
+        reference,
+        ticketTitle,
+        status: statusLabel,
+        statusCode: updatedTicket.status,
+        dashboardUrl: requestUrl,
+        ...notificationScope(updatedTicket.organizationId),
+      },
+      `ticket-status:${updatedTicket.id}:${updatedTicket.status}:${now.getTime()}`,
+    ),
+    sendSupportTicketUpdateEmail(
+      {
+        ticketId: updatedTicket.id,
+        ownerUserId: updatedTicket.user.id,
+        reference,
+        title: ticketTitle,
+        statusCode: updatedTicket.status,
+        statusLabel,
+        ticketUrl: requestUrl,
+      },
+      EMAIL_BUDGET_MS.REQUEST,
+    ),
+  ]);
+}
+
+async function validateStaffTicketAssignee(
+  assignedToId: string | null | undefined,
+): Promise<boolean> {
+  if (assignedToId === undefined || assignedToId === null) return true;
+  const assignee = await prisma.user.findUnique({
+    where: { id: assignedToId },
+    select: { role: true },
+  });
+  return Boolean(
+    assignee &&
+    (assignee.role === UserRole.STAFF || assignee.role === UserRole.ADMIN),
+  );
+}
+
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
     const auth = await requirePrivilegedAuth();
@@ -362,24 +526,11 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    if (
-      validatedData.assignedToId !== undefined &&
-      validatedData.assignedToId !== null
-    ) {
-      const assignee = await prisma.user.findUnique({
-        where: { id: validatedData.assignedToId },
-        select: { role: true },
-      });
-
-      if (
-        !assignee ||
-        (assignee.role !== UserRole.STAFF && assignee.role !== UserRole.ADMIN)
-      ) {
-        return NextResponse.json(
-          { error: "Invalid assignee - must be staff or admin" },
-          { status: 400 },
-        );
-      }
+    if (!(await validateStaffTicketAssignee(validatedData.assignedToId))) {
+      return NextResponse.json(
+        { error: "Invalid assignee - must be staff or admin" },
+        { status: 400 },
+      );
     }
 
     const now = new Date();
@@ -408,66 +559,15 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           now,
         );
 
-        if (trimmedNote) {
-          await tx.supportResponse.create({
-            data: {
-              message: trimmedNote,
-              isInternal: true,
-              supportTicket: { connect: { id: ticketId } },
-              user: { connect: { id: actorId } },
-            },
-          });
-        }
-
-        if (validatedData.status && validatedData.status !== existing.status) {
-          const isReopen =
-            (existing.status === "RESOLVED" || existing.status === "CLOSED") &&
-            (validatedData.status === "OPEN" ||
-              validatedData.status === "IN_PROGRESS");
-          await tx.supportCaseEvent.create({
-            data: {
-              legacyTicketId: ticketId,
-              actorId,
-              kind: isReopen ? "REOPENED" : "STATUS_CHANGED",
-              fromValue: existing.status,
-              toValue: validatedData.status,
-              createdAt: now,
-            },
-          });
-        }
-
-        if (
-          validatedData.priority &&
-          validatedData.priority !== existing.priority
-        ) {
-          await tx.supportCaseEvent.create({
-            data: {
-              legacyTicketId: ticketId,
-              actorId,
-              kind: "PRIORITY_CHANGED",
-              fromValue: existing.priority,
-              toValue: validatedData.priority,
-              createdAt: now,
-            },
-          });
-        }
-
-        if (
-          validatedData.assignedToId !== undefined &&
-          validatedData.assignedToId !== existing.assignedToId
-        ) {
-          await tx.supportCaseEvent.create({
-            data: {
-              legacyTicketId: ticketId,
-              actorId,
-              kind: validatedData.assignedToId ? "ASSIGNED" : "UNASSIGNED",
-              fromValue: existing.assignedToId,
-              toValue: validatedData.assignedToId,
-              note: trimmedNote,
-              createdAt: now,
-            },
-          });
-        }
+        await recordTicketAuditEvents(
+          tx,
+          ticketId,
+          actorId,
+          validatedData,
+          existing,
+          trimmedNote,
+          now,
+        );
 
         return tx.supportTicket.findUniqueOrThrow({
           where: { id: ticketId },
@@ -499,40 +599,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Only notify and email the customer when the ticket status changed.
     if (existing.status !== updatedTicket.status) {
-      const reference = updatedTicket.referenceNumber ?? undefined;
-      const ticketTitle = updatedTicket.title || "Support Ticket";
-      const statusLabel = supportTicketStatusLabel(updatedTicket.status);
-      const requestUrl = supportRequestHref(
-        caseKeyOf({ kind: "ticket", id: updatedTicket.id }),
-        updatedTicket.appointmentSupportThread?.organizationId,
-      );
-      await notifySupportTicketUpdate(
-        updatedTicket.user.id,
-        {
-          ticketId: updatedTicket.id,
-          reference,
-          ticketTitle,
-          status: statusLabel,
-          statusCode: updatedTicket.status,
-          dashboardUrl: requestUrl,
-          ...notificationScope(updatedTicket.organizationId),
-        },
-        `ticket-status:${updatedTicket.id}:${updatedTicket.status}:${now.getTime()}`,
-      );
-      await sendSupportTicketUpdateEmail(
-        {
-          ticketId: updatedTicket.id,
-          ownerUserId: updatedTicket.user.id,
-          reference,
-          title: ticketTitle,
-          statusCode: updatedTicket.status,
-          statusLabel,
-          ticketUrl: requestUrl,
-        },
-        EMAIL_BUDGET_MS.REQUEST,
-      );
+      await notifyTicketCustomerStatusChange(updatedTicket, now);
     }
 
     return NextResponse.json(updatedTicket);

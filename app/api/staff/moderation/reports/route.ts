@@ -13,7 +13,7 @@ import {
   ModerationReportType,
   ModerationReportStatus,
   Prisma,
-  type UserRole,
+  UserRole,
 } from "@prisma/client";
 import { z } from "zod";
 
@@ -43,6 +43,61 @@ const moderationReportsQuerySchema = z.object({
     .transform((n) => Math.min(100, Math.max(1, n)))
     .default(20),
 });
+
+const REPORT_INCLUDE = {
+  reportedBy: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      image: true,
+      role: true,
+    },
+  },
+  targetUser: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      image: true,
+      role: true,
+      banned: true,
+      banExpires: true,
+    },
+  },
+  actions: {
+    orderBy: { createdAt: "desc" as const },
+    take: 1,
+    select: {
+      id: true,
+      actionType: true,
+      createdAt: true,
+      sideEffects: true,
+      notes: true,
+      takenBy: { select: { name: true } },
+    },
+  },
+  _count: {
+    select: { actions: true },
+  },
+  review: {
+    select: {
+      id: true,
+      rating: true,
+      reviewDescription: true,
+      appointmentId: true,
+      consultantProfile: {
+        select: { user: { select: { name: true } } },
+      },
+    },
+  },
+} satisfies Prisma.ModerationReportInclude;
+
+const REPORT_ORDER_BY: Prisma.ModerationReportOrderByWithRelationInput[] = [
+  { status: "asc" },
+  { reportCount: "desc" },
+  { createdAt: "desc" },
+];
 
 /**
  * GET /api/staff/moderation/reports
@@ -75,19 +130,19 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get("search");
     const offset = (page - 1) * limit;
 
-    const where: Prisma.ModerationReportWhereInput = {};
+    const filterWhere: Prisma.ModerationReportWhereInput = {};
 
-    if (type) where.type = type;
-    if (status) where.status = status;
+    if (type) filterWhere.type = type;
     if (assignedToId) {
-      where.assignedToId = assignedToId === "unassigned" ? null : assignedToId;
+      filterWhere.assignedToId =
+        assignedToId === "unassigned" ? null : assignedToId;
     }
     if (organizationId) {
-      where.organizationId =
+      filterWhere.organizationId =
         organizationId === "personal" ? null : organizationId;
     }
     if (search) {
-      where.OR = [
+      filterWhere.OR = [
         { id: { contains: search, mode: "insensitive" } },
         { reason: { contains: search, mode: "insensitive" } },
         { description: { contains: search, mode: "insensitive" } },
@@ -97,110 +152,88 @@ export async function GET(req: NextRequest) {
       ];
     }
 
-    const [reports, total] = await Promise.all([
-      prisma.moderationReport.findMany({
-        where,
-        include: {
-          reportedBy: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-              role: true,
-            },
-          },
-          targetUser: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              image: true,
-              role: true,
-              banned: true,
-              banExpires: true,
-            },
-          },
-          actions: {
-            orderBy: { createdAt: "desc" },
-            take: 1,
-            select: {
-              id: true,
-              actionType: true,
-              createdAt: true,
-              sideEffects: true,
-              notes: true,
-              takenBy: { select: { name: true } },
-            },
-          },
-          _count: {
-            select: { actions: true },
-          },
-          review: {
-            select: {
-              id: true,
-              rating: true,
-              reviewDescription: true,
-              appointmentId: true,
-              consultantProfile: {
-                select: { user: { select: { name: true } } },
-              },
-            },
-          },
-        },
-        orderBy: [
-          { status: "asc" },
-          { reportCount: "desc" },
-          { createdAt: "desc" },
-        ],
-        take: limit,
-        skip: offset,
-      }),
+    const where: Prisma.ModerationReportWhereInput = status
+      ? { ...filterWhere, status }
+      : filterWhere;
+
+    const coercionWhere: Prisma.ModerationReportWhereInput = {
+      ...where,
+      reason: "COERCION_OR_RETALIATION",
+    };
+    const nonCoercionWhere: Prisma.ModerationReportWhereInput = {
+      ...where,
+      reason: { not: "COERCION_OR_RETALIATION" },
+    };
+
+    const [total, coercionCount, statusCounts] = await Promise.all([
       prisma.moderationReport.count({ where }),
+      prisma.moderationReport.count({ where: coercionWhere }),
+      prisma.moderationReport.groupBy({
+        by: ["status"],
+        where: filterWhere,
+        _count: { id: true },
+      }),
     ]);
+
+    const coercionSkip = offset < coercionCount ? offset : 0;
+    const coercionTake =
+      offset < coercionCount ? Math.min(limit, coercionCount - offset) : 0;
+    const nonCoercionSkip = Math.max(0, offset - coercionCount);
+    const nonCoercionTake = limit - coercionTake;
+
+    const [coercionReports, nonCoercionReports] = await Promise.all([
+      coercionTake > 0
+        ? prisma.moderationReport.findMany({
+            where: coercionWhere,
+            include: REPORT_INCLUDE,
+            orderBy: REPORT_ORDER_BY,
+            skip: coercionSkip,
+            take: coercionTake,
+          })
+        : Promise.resolve([]),
+      nonCoercionTake > 0
+        ? prisma.moderationReport.findMany({
+            where: nonCoercionWhere,
+            include: REPORT_INCLUDE,
+            orderBy: REPORT_ORDER_BY,
+            skip: nonCoercionSkip,
+            take: nonCoercionTake,
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const reports = [...coercionReports, ...nonCoercionReports];
 
     const appointmentIds = reports
       .map((r) => r.review?.appointmentId)
       .filter((id): id is string => Boolean(id));
     const signalsByAppointment = await readReviewReportSignals(appointmentIds);
 
-    const formattedReports = reports
-      .map((report) => ({
-        id: report.id,
-        type: report.type,
-        status: report.status,
-        reason: report.reason,
-        description: report.description,
-        contentText: report.contentText,
-        contentUrl: report.contentUrl,
-        streamMessageId: report.streamMessageId,
-        streamChannelCid: report.streamChannelCid,
-        reportCount: report.reportCount,
-        reportedBy: report.reportedBy,
-        targetUser: report.targetUser,
-        reviewId: report.reviewId,
-        review: report.review,
-        contextSignals: report.review?.appointmentId
-          ? (signalsByAppointment[report.review.appointmentId] ?? null)
-          : null,
-        organizationId: report.organizationId ?? null,
-        assignedToId: report.assignedToId,
-        actionCount: report._count.actions,
-        latestAction: report.actions[0] ?? null,
-        createdAt: report.createdAt,
-        resolvedAt: report.resolvedAt,
-      }))
-      .sort(
-        (a, b) =>
-          (b.reason === "COERCION_OR_RETALIATION" ? 1 : 0) -
-          (a.reason === "COERCION_OR_RETALIATION" ? 1 : 0),
-      );
-
-    // Get counts by status
-    const statusCounts = await prisma.moderationReport.groupBy({
-      by: ["status"],
-      _count: { id: true },
-    });
+    const formattedReports = reports.map((report) => ({
+      id: report.id,
+      type: report.type,
+      status: report.status,
+      reason: report.reason,
+      description: report.description,
+      contentText: report.contentText,
+      contentUrl: report.contentUrl,
+      streamMessageId: report.streamMessageId,
+      streamChannelCid: report.streamChannelCid,
+      reportCount: report.reportCount,
+      reportedBy: report.reportedBy,
+      targetUser: report.targetUser,
+      reviewId: report.reviewId,
+      review: report.review,
+      contextSignals: report.review?.appointmentId
+        ? (signalsByAppointment[report.review.appointmentId] ?? null)
+        : null,
+      organizationId: report.organizationId ?? null,
+      assignedToId: report.assignedToId,
+      actionCount: report._count.actions,
+      latestAction: report.actions[0] ?? null,
+      createdAt: report.createdAt,
+      resolvedAt: report.resolvedAt,
+    }));
 
     const counts = {
       total,
@@ -215,17 +248,15 @@ export async function GET(req: NextRequest) {
         statusCounts.find((s) => s.status === "ESCALATED")?._count.id || 0,
     };
 
+    const parsedRole = z.nativeEnum(UserRole).safeParse(auth.session.user.role);
+
     return NextResponse.json({
       reports: formattedReports,
       counts,
-      // #1270 — banning is ADMIN-only (`users.moderate`), but the queue showed
-      // every moderator a Ban button that answered 403. Ship the capability so
-      // the UI can offer what the caller may actually do.
       capabilities: {
-        canModerateUsers: hasBackofficePermission(
-          auth.session.user.role as UserRole,
-          "users.moderate",
-        ),
+        canModerateUsers:
+          parsedRole.success &&
+          hasBackofficePermission(parsedRole.data, "users.moderate"),
       },
       pagination: {
         total,

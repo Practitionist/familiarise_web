@@ -318,18 +318,19 @@ function loadReviewableAppointments(
   consulteeProfileId: string,
   userId: string,
   appointmentId?: string,
-  /**
-   * Narrows the ARMS, not the page. `take: 50` applies before any caller-side
-   * filter, so selecting a consultant afterwards returned nothing whenever the
-   * qualifying session with them fell outside the consultee's 50 newest
-   * bookings — and ProfileReviewComposer reads an empty list as "not
-   * eligible", so an active client could neither post nor edit their review.
-   */
   consultantProfileId?: string,
+  unreviewedOnly?: boolean,
 ) {
   return prisma.appointment.findMany({
     where: {
       ...(appointmentId ? { id: appointmentId } : {}),
+      ...(unreviewedOnly
+        ? {
+            consultantReviews: {
+              none: { consulteeProfileId, deletedAt: null },
+            },
+          }
+        : {}),
       deletedAt: null,
       OR: [
         // 1:1 arms — the wrapper IS the relationship, so ownership is the gate.
@@ -497,6 +498,15 @@ type ExistingReview = {
 /** The columns that key a review inside one (consultant, consultee) pair. */
 type ReviewKey = { track: ReviewTrack | null; ratingUnitId: string | null };
 
+function ratingUnitForAppointment(row: {
+  webinarId: string | null;
+  classId: string | null;
+}): string | null {
+  if (row.webinarId) return `webinar:${row.webinarId}`;
+  if (row.classId) return `class:${row.classId}`;
+  return null;
+}
+
 function describe(
   row: AppointmentRow,
   reviewByConsultant: Map<string, (ExistingReview & ReviewKey)[]>,
@@ -514,11 +524,7 @@ function describe(
   const track = trackForAppointment(row);
   // Group only. A 1:1 review is one data point by construction now, so a bucket
   // key for it would be a column that always holds exactly one row.
-  const ratingUnitId = row.webinarId
-    ? `webinar:${row.webinarId}`
-    : row.classId
-      ? `class:${row.classId}`
-      : null;
+  const ratingUnitId = ratingUnitForAppointment(row);
 
   const existingReview = pickExistingReview(
     reviewByConsultant.get(consultantProfileId) ?? [],
@@ -676,14 +682,19 @@ export async function listReviewableSessions(
   consulteeProfileId: string,
   userId: string,
   consultantProfileId?: string,
+  options?: { unreviewedOnly?: boolean },
 ): Promise<ReviewableSession[]> {
   const rows = await loadReviewableAppointments(
     consulteeProfileId,
     userId,
     undefined,
     consultantProfileId,
+    options?.unreviewedOnly,
   );
-  return describeAll(rows, consulteeProfileId);
+  const sessions = await describeAll(rows, consulteeProfileId);
+  return options?.unreviewedOnly
+    ? sessions.filter((session) => !session.reviewed)
+    : sessions;
 }
 
 /**

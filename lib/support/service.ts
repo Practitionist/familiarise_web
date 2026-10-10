@@ -135,15 +135,12 @@ export async function runSupportTurn(
     select: { id: true, appointmentType: true, organizationId: true },
   });
   if (!appt) return null;
-  // #1852 — the thread belongs to the caller's seat org on a group session
-  // (B2C or a sponsor), not to the host's; an org operator's own thread keeps
-  // the host org, which is the org it acts for.
+  // Attribute group-session threads to the caller's seat organization; org-operator threads keep the host org.
   const threadOrgId = input.isOrgParty
     ? appt.organizationId
     : await seatOrganizationId(prisma, appt, userId);
 
-  // Find-or-create — the @@unique([appointmentId, userId]) makes this the single
-  // conversation for this order, and guards against a double-open race.
+  // Find-or-create keyed on (appointmentId, userId) so concurrent opens converge cleanly.
   const thread = await prisma.appointmentSupportThread.upsert({
     where: { appointmentId_userId: { appointmentId, userId } },
     create: {
@@ -155,9 +152,7 @@ export async function runSupportTurn(
     update: {},
   });
 
-  // The intent being STARTED wins over the one stored, because the chip click
-  // is what re-scopes the thread — otherwise the first no-show turn would still
-  // be answered with the previous intent's session.
+  // Explicit intent selection re-scopes the thread to that category's entry node.
   const ctx = await buildSupportContext(
     thread.id,
     appointmentId,
@@ -169,10 +164,6 @@ export async function runSupportTurn(
   // Switching intent restarts the flow at its entry node.
   let category = thread.category;
   let currentNodeId = thread.currentNodeId;
-  // Clicking an intent chip always (re)starts that intent's flow — a same-
-  // category re-click must not resume a stale cursor, or the turn looks
-  // ignored (the pre-#support-hub flows left threads whose option ids no
-  // longer exist in the registry).
   if (input.category) {
     category = input.category;
     currentNodeId = null;
@@ -272,14 +263,19 @@ export async function runSupportTurn(
         chosenLabel: "Talk to a person",
       },
       input.userMessage,
-      "keyword",
+      `${category.toLowerCase()}_human`,
       input.urgent,
     );
   }
 
-  const resolvedNodeId = (
-    turn.messages[0]?.metadata as { nodeId?: string } | undefined
-  )?.nodeId;
+  const firstMeta = turn.messages[0]?.metadata;
+  const resolvedNodeId =
+    typeof firstMeta === "object" &&
+    firstMeta !== null &&
+    "nodeId" in firstMeta &&
+    typeof firstMeta.nodeId === "string"
+      ? firstMeta.nodeId
+      : undefined;
   if (
     category === "RECORDING_ACCESS" &&
     turn.resolved &&
@@ -393,15 +389,21 @@ export async function runSupportTurn(
         ...turn.messages.map((m) => ({
           sender: m.sender,
           body: m.body,
-          metadata: (m.metadata as object) ?? undefined,
+          metadata:
+            typeof m.metadata === "object" && m.metadata !== null
+              ? m.metadata
+              : undefined,
         })),
       ];
       let seq = await allocateMessageSeq(tx, thread.id, outgoing.length);
-      for (const m of outgoing) {
+      async function stepOutgoing(idx: number): Promise<void> {
+        if (idx >= outgoing.length) return;
         await tx.supportMessage.create({
-          data: { threadId: thread.id, seq: ++seq, ...m },
+          data: { threadId: thread.id, seq: ++seq, ...outgoing[idx] },
         });
+        return stepOutgoing(idx + 1);
       }
+      await stepOutgoing(0);
       return true;
     },
     { maxWait: ALLOCATION_TX_MAX_WAIT_MS, timeout: ALLOCATION_TX_TIMEOUT_MS },
@@ -454,30 +456,13 @@ async function persistHumanTurn(
   },
   userMessage: string | undefined,
 ): Promise<RunTurnResult> {
-  // Report the thread's ACTUAL status. This used to return a hardcoded
-  // "ESCALATED", so once ops resolved the thread the user's own message came
-  // back claiming it was still with the team.
   let status = thread.status;
   let messageId: string | null = null;
   let accepted = true;
 
   if (userMessage) {
-    // Deliberately SHORT. On Netlify PG_POOL_MAX=1 serialises every query onto
-    // one connection, and a cold instance can stretch 400ms of idle await into
-    // twenty-plus seconds — so an interactive transaction holding that
-    // connection across six sequential round trips blew Prisma's 5s default and
-    // surfaced to the user as "something went wrong". Two writes here; the SLA
-    // clock and the notification both happen after the commit, because neither
-    // is an invariant of the message being stored.
     const written = await prisma.$transaction(
       async (tx) => {
-        // The CAS and the sequence allocation are the SAME statement: a CLOSED
-        // or RESOLVED thread is one the PATCH route refuses to reopen, so a
-        // message must not land on it or bump its activity clock.
-        // A reply on a RESOLVED thread reopens it (Zendesk's rule); CLOSED is
-        // staff saying the matter is finished, and stays refused.
-        // Unconditional rather than gated on the pre-transaction read: a staff
-        // RESOLVE landing in between must not leave the reply on a RESOLVED thread.
         const moved = await tx.appointmentSupportThread.updateMany({
           where: { id: thread.id, status: { not: "CLOSED" } },
           data: {
@@ -489,8 +474,6 @@ async function persistHumanTurn(
         });
         if (moved.count === 0) return null;
         if (thread.supportTicketId) {
-          // The ticket's CURRENT status is the predicate, so this reopens
-          // exactly when the queue had it resolved.
           await tx.supportTicket.updateMany({
             where: { id: thread.supportTicketId, status: "RESOLVED" },
             data: { status: "OPEN", resolvedAt: null },
@@ -516,10 +499,6 @@ async function persistHumanTurn(
     );
 
     if (!written) {
-      // The thread settled underneath us and the CAS refused the write. Report
-      // where it actually landed AND that the message was not accepted —
-      // returning a plain success made the client mark it delivered, so a
-      // message that was never stored looked sent.
       const current = await prisma.appointmentSupportThread.findUniqueOrThrow({
         where: { id: thread.id },
         select: { status: true },
@@ -528,12 +507,8 @@ async function persistHumanTurn(
       accepted = false;
     } else {
       messageId = written.id;
-      // The row's status after the write, not the pre-transaction read.
       status = written.status;
 
-      // Post-commit, and best-effort. A clock that resumes a moment late is a
-      // rounding error on a 15-day deadline; a message that failed to store
-      // because the clock update timed out is a lost customer message.
       if (thread.supportTicketId) {
         await resumeTicketClock(thread.supportTicketId).catch((error) => {
           console.error("support: SLA resume failed", {
@@ -640,6 +615,13 @@ async function escalate(
     createdAt: Date;
   } | null = null;
 
+  const normalizeSender = (
+    raw: string,
+  ): "BOT" | "SYSTEM" | "USER" | "AGENT" => {
+    if (raw === "SYSTEM" || raw === "USER" || raw === "AGENT") return raw;
+    return "BOT";
+  };
+
   let turnMessageId: string | undefined;
   const ticketId = await prisma.$transaction(
     async (tx) => {
@@ -673,19 +655,25 @@ async function escalate(
           metadata: undefined,
         })),
         ...turn.messages.map((m) => ({
-          sender: m.sender as "BOT" | "SYSTEM" | "USER" | "AGENT",
+          sender: normalizeSender(m.sender),
           body: m.body,
-          metadata: (m.metadata as object) ?? undefined,
+          metadata:
+            typeof m.metadata === "object" && m.metadata !== null
+              ? m.metadata
+              : undefined,
         })),
       ];
       let seq = await allocateMessageSeq(tx, threadId, outgoing.length);
-      for (const m of outgoing) {
+      async function stepEscalationOutgoing(idx: number): Promise<void> {
+        if (idx >= outgoing.length) return;
         const stored = await tx.supportMessage.create({
-          data: { threadId, seq: ++seq, ...m },
+          data: { threadId, seq: ++seq, ...outgoing[idx] },
           select: { id: true },
         });
         turnMessageId ??= stored.id;
+        return stepEscalationOutgoing(idx + 1);
       }
+      await stepEscalationOutgoing(0);
 
       let linkedTicketId = existingTicketId;
       if (linkedTicketId) {

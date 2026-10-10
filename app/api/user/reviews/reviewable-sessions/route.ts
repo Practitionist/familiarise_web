@@ -60,9 +60,10 @@ export async function GET(req: NextRequest) {
         consulteeProfileId,
         session.user.id,
         consultantProfileId,
+        { unreviewedOnly: onlyUnreviewed },
       );
       return NextResponse.json({
-        data: onlyUnreviewed ? items.filter((item) => !item.reviewed) : items,
+        data: items,
       });
     }
 
@@ -81,9 +82,11 @@ export async function GET(req: NextRequest) {
     const items = await listReviewableSessions(
       consulteeProfileId,
       session.user.id,
+      undefined,
+      { unreviewedOnly: onlyUnreviewed },
     );
     return NextResponse.json({
-      data: onlyUnreviewed ? items.filter((item) => !item.reviewed) : items,
+      data: items,
     });
   } catch (cause) {
     return supportError({

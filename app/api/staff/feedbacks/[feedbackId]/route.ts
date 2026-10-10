@@ -105,7 +105,7 @@ export async function PATCH(
                 status: nextStatus,
                 dashboardUrl: goHref("auto", "feedbacks"),
               },
-              dedupeKey: `platform-feedback:${feedbackId}:${nextStatus}`,
+              dedupeKey: `platform-feedback:${feedbackId}:${existing.status}->${nextStatus}:${Date.now()}`,
             })
           : null;
 

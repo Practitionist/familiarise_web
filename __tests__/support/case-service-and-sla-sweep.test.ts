@@ -114,12 +114,17 @@ jest.mock("../../lib/prisma", () => {
     },
     notificationOutbox: {
       findUnique: jest.fn(),
+      findMany: jest.fn(),
     },
     membership: {
       findFirst: jest.fn(),
     },
     appointment: {
       findUnique: jest.fn(),
+    },
+    user: {
+      findUnique: jest.fn(async () => ({ role: "STAFF" })),
+      findMany: jest.fn(),
     },
   };
 
@@ -132,10 +137,6 @@ jest.mock("../../lib/prisma", () => {
       groupBy: jest.fn(),
       findMany: jest.fn(),
       findFirst: jest.fn(),
-    },
-    user: {
-      findUnique: jest.fn(),
-      findMany: jest.fn(),
     },
     dispute: {
       findMany: jest.fn(),
@@ -183,7 +184,7 @@ interface MockPrismaClient {
   supportResponse: { create: jest.Mock };
   appointmentSupportThread: { findUnique: jest.Mock; updateMany: jest.Mock };
   supportMessage: { create: jest.Mock };
-  notificationOutbox: { findUnique: jest.Mock };
+  notificationOutbox: { findUnique: jest.Mock; findMany: jest.Mock };
   membership: { findFirst: jest.Mock };
   appointment: { findUnique: jest.Mock };
   $transaction: jest.Mock;
@@ -256,6 +257,8 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
     mockPrisma.appointmentSupportThread.updateMany.mockReset();
     mockPrisma.supportMessage.create.mockReset();
     mockPrisma.notificationOutbox.findUnique.mockReset();
+    mockPrisma.notificationOutbox.findMany.mockReset();
+    mockPrisma.notificationOutbox.findMany.mockResolvedValue([]);
     mockPrisma.membership.findFirst.mockReset();
     mockPrisma.appointment.findUnique.mockReset();
     mockPrisma.supportFlowOutcome.create.mockReset();
@@ -377,7 +380,7 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
     });
   });
 
-  it("dedupes createOrReuseSupportCase on clientIntakeId and open scope and rejects invalid shape", async () => {
+  it("dedupes createOrReuseSupportCase on submitter-scoped clientIntakeId and appends USER turn on open scope", async () => {
     expect(
       CreateSupportCaseInputSchema.safeParse({
         title: "Missing category and flowKey",
@@ -397,7 +400,7 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
       }).success,
     ).toBe(false);
 
-    mockTx.supportCase.findUnique.mockResolvedValueOnce({
+    mockTx.supportCase.findFirst.mockResolvedValueOnce({
       id: "case-existing",
       referenceNumber: "FAM-2026-000042",
     });
@@ -411,23 +414,78 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
     });
     expect(replay.reused).toBe(true);
     expect(replay.dedupeReason).toBe("client_intake_id");
+    expect(mockTx.supportCase.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          clientIntakeId: "intake-xyz",
+          submitterUserId: "u-1",
+        },
+      }),
+    );
     expect(mockTx.supportCase.create).not.toHaveBeenCalled();
 
-    mockTx.supportCase.findUnique.mockResolvedValueOnce(null);
+    const now = new Date("2026-10-10T12:00:00.000Z");
+    const awaitingSince = new Date("2026-10-10T11:59:00.000Z");
     mockTx.supportCase.findFirst.mockResolvedValueOnce({
       id: "case-open-scope",
       referenceNumber: "FAM-2026-000043",
+      status: "RESOLVED",
+      assignedToId: "staff-1",
+      messageSeq: 2,
+      awaitingUserSince: awaitingSince,
+      pausedSeconds: 10,
+      messages: [],
+      subjects: [],
+      events: [],
     });
-    const openScope = await createOrReuseSupportCase({
-      title: "Cancel booking",
-      description: "Need refund",
-      requesterUserId: "u-1",
-      submitterUserId: "u-1",
-      appointmentId: "apt-1",
-      category: "REFUND",
+    mockTx.supportCase.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockTx.supportCaseMessage.create.mockResolvedValueOnce({
+      id: "msg-new",
+      seq: 3,
+      sender: "USER",
+      body: "Need refund",
     });
+    mockTx.supportCaseEvent.create.mockResolvedValueOnce({ id: "evt-reopen" });
+    mockTx.supportCase.findUnique.mockResolvedValueOnce(null);
+
+    const openScope = await createOrReuseSupportCase(
+      {
+        title: "Cancel booking",
+        description: "Need refund",
+        requesterUserId: "u-1",
+        submitterUserId: "u-1",
+        appointmentId: "apt-1",
+        category: "REFUND",
+      },
+      now,
+    );
     expect(openScope.reused).toBe(true);
     expect(openScope.dedupeReason).toBe("open_scope");
+    expect(mockTx.supportCase.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "case-open-scope",
+          status: "RESOLVED",
+        }),
+        data: expect.objectContaining({
+          status: "IN_PROGRESS",
+          messageSeq: { increment: 1 },
+          lastMessageAt: now,
+          pausedSeconds: 70,
+          awaitingUserSince: null,
+        }),
+      }),
+    );
+    expect(mockTx.supportCaseMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          caseId: "case-open-scope",
+          seq: 3,
+          sender: "USER",
+          body: "Need refund",
+        }),
+      }),
+    );
   });
 
   it("appendSupportCaseTurn replays stored messages on duplicate clientTurnId with isInternal: false filter for non-staff", async () => {
@@ -544,7 +602,11 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
       createdAt: now,
       organizationId: "org-1",
       requesterUserId: "member-1",
-      submitterUserId: "org-admin-1",
+      submitterUserId: null,
+      title: "Organization support request",
+      description: "",
+      subjects: [],
+      events: [],
       messages: [],
       filedByOrganizationNotice: true,
     });
@@ -901,5 +963,141 @@ describe("WS1/WS2/WS4/WS6/WS9 Support Backend & SLA Engine", () => {
     }
 
     expect(missingDedupeKey).toEqual([]);
+  });
+
+  it("recovers from Prisma P2002 unique constraint race on clientIntakeId and enforces occurrence belonging + viewer redaction on POST /api/support/cases", async () => {
+    const { Prisma } = await import("@prisma/client");
+    mockPrisma.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "5.22.0",
+      }),
+    );
+    mockPrisma.supportCase.findFirst.mockResolvedValueOnce({
+      id: "case-winner",
+      referenceNumber: "FAM-2026-000999",
+      submitterUserId: "u-1",
+      requesterUserId: "u-1",
+      status: "OPEN",
+      subjects: [],
+      messages: [],
+      events: [],
+    });
+
+    const recovered = await createOrReuseSupportCase({
+      title: "Race submission",
+      description: "Body",
+      category: "GENERAL",
+      requesterUserId: "u-1",
+      submitterUserId: "u-1",
+      clientIntakeId: "intake-race-1",
+    });
+    expect(recovered.reused).toBe(true);
+    expect(recovered.dedupeReason).toBe("client_intake_id");
+    expect(recovered.supportCase.id).toBe("case-winner");
+
+    mockPrisma.appointment.findUnique.mockResolvedValueOnce({
+      id: "apt-1",
+      organizationId: null,
+      participants: [{ userId: "user-1", organizationId: null }],
+      payment: [],
+      occurrences: [],
+    });
+    const mismatchedOccRes = await postCases(
+      new NextRequest("https://familiarise.com/api/support/cases", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Session help",
+          description: "Audio drop",
+          category: "TECHNICAL",
+          appointmentId: "apt-1",
+          appointmentOccurrenceId: "occ-other-apt",
+        }),
+      }),
+    );
+    expect(mismatchedOccRes.status).toBe(400);
+
+    const now = new Date("2026-10-10T12:00:00.000Z");
+    mockPrisma.notificationOutbox.findMany.mockResolvedValueOnce([
+      {
+        transactionId: "tx-old",
+        entityRef: "sla:old-ticket-1:ack:breach",
+        payload: { ticketId: "old-ticket-1", activity: "sla-ack-breach" },
+      },
+    ]);
+    mockPrisma.user.findMany.mockResolvedValueOnce([]);
+    mockPrisma.supportTicket.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockPrisma.supportCase.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    mockPrisma.dispute.findMany.mockResolvedValueOnce([]);
+
+    await runSupportSlaSweep({ now, limit: 10 });
+    expect(mockPrisma.supportTicket.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              acknowledgedAt: null,
+              id: { notIn: ["old-ticket-1"] },
+            }),
+          ]),
+        }),
+      }),
+    );
+  });
+
+  test("patchSupportCaseLifecycle banks awaitingUserSince into pausedSeconds on status change", async () => {
+    const { patchSupportCaseLifecycle } =
+      await import("../../lib/support/case-service");
+    const now = new Date("2026-10-10T12:00:00.000Z");
+    const updatedAt = new Date("2026-10-10T11:00:00.000Z");
+    const awaitingSince = new Date("2026-10-10T11:30:00.000Z"); // 1800s ago
+    mockPrisma.supportCase.findUnique.mockResolvedValueOnce({
+      id: "case-pause-1",
+      caseKind: "INCIDENT",
+      status: "IN_PROGRESS",
+      priority: "MEDIUM",
+      ackDueAt: new Date("2026-10-11T10:00:00.000Z"),
+      acknowledgedAt: new Date("2026-10-10T10:05:00.000Z"),
+      resolutionDueAt: new Date("2026-10-25T10:00:00.000Z"),
+      resolvedAt: null,
+      assignedToId: "staff-1",
+      awaitingUserSince: awaitingSince,
+      pausedSeconds: 200,
+      messageSeq: 2,
+      updatedAt,
+    });
+    mockPrisma.supportCase.updateMany.mockResolvedValueOnce({ count: 1 });
+    mockPrisma.supportCase.findUniqueOrThrow.mockResolvedValueOnce({
+      id: "case-pause-1",
+      status: "RESOLVED",
+      pausedSeconds: 2000,
+      awaitingUserSince: null,
+    });
+
+    const res = await patchSupportCaseLifecycle(
+      {
+        caseId: "case-pause-1",
+        actorId: "staff-1",
+        status: "RESOLVED",
+        expectedUpdatedAt: updatedAt.toISOString(),
+      },
+      now,
+    );
+    expect(res.ok).toBe(true);
+    expect(mockPrisma.supportCase.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "RESOLVED",
+          awaitingUserSince: null,
+          pausedSeconds: 2000,
+        }),
+      }),
+    );
   });
 });

@@ -105,6 +105,60 @@ function present(
   };
 }
 
+function unmatchedPromptTurn(
+  flow: WalkableFlow,
+  node: Extract<FlowNode, { kind: "PROMPT" }>,
+  input: SupportTurnInput,
+): SupportTurnResult {
+  const baseOptions = optionsOf(flow, node);
+  const typedAsk = input.userMessage?.trim();
+  if (typedAsk && typedAsk.length >= 20) {
+    const optionsWithHuman = baseOptions.some((o) => o.id === "human")
+      ? baseOptions
+      : [
+          ...baseOptions,
+          { id: "human", label: "Talk to a person", escalates: true },
+        ];
+    return {
+      messages: [
+        {
+          sender: "BOT",
+          body: "Pick the closest option below, or choose Talk to a person so our team sees your message.",
+          metadata: {
+            nodeId: node.id,
+            options: optionsWithHuman,
+            unrecognized: true,
+          },
+        },
+      ],
+      nextNodeId: node.id,
+      actions: [],
+      escalate: false,
+      resolved: false,
+      customerAsk: typedAsk,
+      unrecognized: true,
+    };
+  }
+  return {
+    messages: [
+      {
+        sender: "BOT",
+        body: UNRECOGNIZED_BODY,
+        metadata: {
+          nodeId: node.id,
+          options: baseOptions,
+          unrecognized: true,
+        },
+      },
+    ],
+    nextNodeId: node.id,
+    actions: [],
+    escalate: false,
+    resolved: false,
+    unrecognized: true,
+  };
+}
+
 /**
  * Advance one turn through `flow`. `currentNodeId` null = first turn (present
  * the entry prompt). On a PROMPT, resolves `chosenOptionId`; typed descriptions
@@ -130,51 +184,7 @@ export function walkFlow(
   if (node.kind === "PROMPT") {
     const chosen = node.options.find((o) => o.id === input.chosenOptionId);
     if (!chosen) {
-      const typedAsk = input.userMessage?.trim();
-      if (typedAsk && typedAsk.length >= 20) {
-        const baseOptions = optionsOf(flow, node);
-        const optionsWithHuman = baseOptions.some((o) => o.id === "human")
-          ? baseOptions
-          : [
-              ...baseOptions,
-              { id: "human", label: "Talk to a person", escalates: true },
-            ];
-        return {
-          messages: [
-            {
-              sender: "BOT",
-              body: "Got it — we saved your details. Pick an option below, or talk to a person.",
-              metadata: {
-                nodeId: node.id,
-                options: optionsWithHuman,
-              },
-            },
-          ],
-          nextNodeId: node.id,
-          actions: [],
-          escalate: false,
-          resolved: false,
-          customerAsk: typedAsk,
-        };
-      }
-      return {
-        messages: [
-          {
-            sender: "BOT",
-            body: UNRECOGNIZED_BODY,
-            metadata: {
-              nodeId: node.id,
-              options: optionsOf(flow, node),
-              unrecognized: true,
-            },
-          },
-        ],
-        nextNodeId: node.id,
-        actions: [],
-        escalate: false,
-        resolved: false,
-        unrecognized: true,
-      };
+      return unmatchedPromptTurn(flow, node, input);
     }
     if (chosen.next === null) {
       // Choice ends the flow with no successor — treat as resolved.

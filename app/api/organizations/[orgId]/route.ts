@@ -428,6 +428,34 @@ function buildMsmeInfoUpsert(
   return { upsert: { create: fields, update: fields } };
 }
 
+const SCALAR_ORG_UPDATE_KEYS = [
+  "name",
+  "slug",
+  "billingEmail",
+  "supportContactEmail",
+  "escalationContactEmail",
+  "canSponsor",
+  "canHost",
+  "requiresPO",
+  "paymentTermsDays",
+  "defaultCancellationPolicy",
+  "defaultRefundPolicy",
+  "isPublic",
+  "streamRecordingRetentionDays",
+] as const satisfies readonly (keyof PatchBody)[];
+
+function buildScalarOrganizationFields(
+  body: PatchBody,
+): Prisma.OrganizationUpdateInput {
+  const scalars: Record<string, unknown> = {};
+  for (const key of SCALAR_ORG_UPDATE_KEYS) {
+    if (body[key] !== undefined) {
+      scalars[key] = body[key];
+    }
+  }
+  return scalars;
+}
+
 function buildOrganizationUpdateData(
   body: PatchBody,
   gstStateCode: string | null | undefined,
@@ -436,34 +464,10 @@ function buildOrganizationUpdateData(
   const taxInfo = buildTaxInfoUpsert(body, gstStateCode);
   const msmeInfo = buildMsmeInfoUpsert(body);
   return {
-    ...(body.name !== undefined && { name: body.name }),
-    ...(body.slug !== undefined && { slug: body.slug }),
-    ...(body.billingEmail !== undefined && { billingEmail: body.billingEmail }),
-    ...(body.supportContactEmail !== undefined && {
-      supportContactEmail: body.supportContactEmail,
-    }),
-    ...(body.escalationContactEmail !== undefined && {
-      escalationContactEmail: body.escalationContactEmail,
-    }),
-    ...(body.canSponsor !== undefined && { canSponsor: body.canSponsor }),
-    ...(body.canHost !== undefined && { canHost: body.canHost }),
-    ...(body.requiresPO !== undefined && { requiresPO: body.requiresPO }),
-    ...(body.paymentTermsDays !== undefined && {
-      paymentTermsDays: body.paymentTermsDays,
-    }),
+    ...buildScalarOrganizationFields(body),
     ...(brandingProfile && { brandingProfile }),
     ...(taxInfo && { taxInfo }),
     ...(msmeInfo && { msmeInfo }),
-    ...(body.defaultCancellationPolicy !== undefined && {
-      defaultCancellationPolicy: body.defaultCancellationPolicy,
-    }),
-    ...(body.defaultRefundPolicy !== undefined && {
-      defaultRefundPolicy: body.defaultRefundPolicy,
-    }),
-    ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
-    ...(body.streamRecordingRetentionDays !== undefined && {
-      streamRecordingRetentionDays: body.streamRecordingRetentionDays,
-    }),
   };
 }
 

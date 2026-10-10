@@ -337,7 +337,9 @@ export async function createSupportTickets(
           : rawDescription;
 
       const ticketDate = faker.date.recent({ days: 30 });
-      const year = ticketDate.getUTCFullYear();
+      const year = new Date(
+        ticketDate.getTime() + 330 * 60_000,
+      ).getUTCFullYear();
       const seq = await nextSeedSeq(year);
       const referenceNumber = formatTicketReference(year, seq);
       const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(

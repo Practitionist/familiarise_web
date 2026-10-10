@@ -18,6 +18,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sendContactInquiryEmail } from "@/lib/email";
 import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
+import { allocateTicketReference } from "@/lib/support/reference";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 
 const CATEGORY_VALUES = INQUIRY_CATEGORIES.map((c) => c.value);
@@ -32,7 +33,9 @@ const ContactBodySchema = z.object({
   category: z
     .string()
     .refine(
-      (v) => CATEGORY_VALUES.includes(v as (typeof CATEGORY_VALUES)[number]),
+      (v) =>
+        v === "" ||
+        CATEGORY_VALUES.some((knownCategory) => knownCategory === v),
       {
         message: "Unknown inquiry category",
       },
@@ -41,18 +44,10 @@ const ContactBodySchema = z.object({
     .or(z.literal("")),
   // Honeypot: a real person never fills a hidden field. Bots fill everything.
   // Present in the payload but never rendered visibly.
-  //
-  // #1132 — deliberately NOT `.max(0)`. Rejecting a populated value at the
-  // schema meant a tripped honeypot returned 400 while a clean submit returned
-  // 202, which is exactly the signal the silent-success branch below exists to
-  // deny a bot. Accept it here, discard it after parsing.
   website: z.string().max(200).optional(),
 });
 
 export async function POST(req: NextRequest) {
-  // #1132 — use the shared helper: it prefers Netlify's canonical
-  // x-nf-client-connection-ip over the caller-supplied x-forwarded-for, so a
-  // spoofed header cannot vary the bucket key per request.
   const ip = getClientIp(req);
 
   const rl = await applyRateLimit(spamLimiter, `contact:${ip}`);
@@ -76,19 +71,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true }, { status: 202 });
   }
 
-  // #1230 wave-4b — enterprise funnel persistence. The #1132 blocker-6
-  // class was "email is the only record": a Resend outage discarded the
-  // deal entirely. Enterprise/team-training inquiries now land in the Lead
-  // table FIRST; the email is notification, not the system of record.
   const LEAD_CATEGORIES = new Set(["enterprise", "team-training"]);
   if (LEAD_CATEGORIES.has(parsed.data.category ?? "")) {
-    // CR #1243 — idempotent lead capture. The key is a digest of the
-    // submission content itself, so a user retrying after a 502 (or a
-    // double-click) lands on the unique constraint and answers 202 against
-    // the EXISTING row — no duplicate sales records, no client changes.
-    // Canonical JSON of EVERY persisted field + a UTC day bucket: unambiguous
-    // (no delimiter collisions) and time-scoped, so a genuine follow-up days
-    // later creates a fresh lead while transport retries stay idempotent.
     const dayBucket = new Date().toISOString().slice(0, 10);
     const submissionKey = createHash("sha256")
       .update(
@@ -119,18 +103,19 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (err) {
-      if (
-        !(
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === "P2002"
-        )
-      ) {
+      if (!(
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      )) {
         throw err;
       }
-      // Duplicate of an existing lead — still answer success so the retry
-      // loop terminates.
     }
   }
+
+  const referenceNumber =
+    parsed.data.category === "grievance"
+      ? await prisma.$transaction((tx) => allocateTicketReference(tx))
+      : null;
 
   const result = await sendContactInquiryEmail({
     firstName: parsed.data.firstName,
@@ -140,10 +125,9 @@ export async function POST(req: NextRequest) {
     subject: parsed.data.subject,
     message: parsed.data.message,
     category: parsed.data.category || null,
+    referenceNumber,
   });
 
-  // #1654 — a staged row is durable: the relay delivers it, so the visitor
-  // hears success. Only a lead that could not even be staged asks for a retry.
   if (!result.success && !result.staged) {
     return NextResponse.json(
       {
@@ -154,5 +138,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ ok: true }, { status: 202 });
+  return NextResponse.json(
+    { ok: true, ...(referenceNumber ? { referenceNumber } : {}) },
+    { status: 202 },
+  );
 }

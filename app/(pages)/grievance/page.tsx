@@ -64,6 +64,9 @@ export default function GrievanceRedressalPage() {
                   </a>
                 </p>
                 <p>
+                  <strong>Phone:</strong> {GRIEVANCE_OFFICER.phone}
+                </p>
+                <p>
                   <strong>Jurisdiction:</strong> {COMPANY_INFO.jurisdiction}
                 </p>
                 <p>
@@ -96,10 +99,10 @@ export default function GrievanceRedressalPage() {
               </h2>
               <p>
                 Every support request and formal complaint opened on{" "}
-                {COMPANY_INFO.name} receives a unique tracking reference (
+                {COMPANY_INFO.name} receives a unique tracking reference {"("}
                 <code>FAM-YYYY-NNNNNN</code> for support tickets and{" "}
-                <code>RPT-XXXXXXXX</code> for content/review moderation reports)
-                so you can monitor progress end to end.
+                <code>RPT-XXXXXXXX</code> for content/review moderation
+                {" reports)"} so you can monitor progress end to end.
               </p>
               <ul>
                 <li>
@@ -119,10 +122,11 @@ export default function GrievanceRedressalPage() {
                   </strong>{" "}
                   Statutory ceiling is acknowledgement within 48 hours and
                   redressal within 1 month with a trackable ticket handle;{" "}
-                  {COMPANY_INFO.name} applies our stricter{" "}
-                  <strong>24-hour acknowledgement</strong> and{" "}
-                  <strong>15-day resolution</strong> standard across all
-                  consumer grievances.
+                  {COMPANY_INFO.name} applies our stricter acknowledgement{" "}
+                  <strong>({GRIEVANCE_OFFICER.ackPromise})</strong> and
+                  resolution{" "}
+                  <strong>({GRIEVANCE_OFFICER.resolutionPromise})</strong>{" "}
+                  standard across all consumer grievances.
                 </li>
                 <li>
                   <strong>
@@ -155,7 +159,7 @@ export default function GrievanceRedressalPage() {
                   >
                     https://gac.gov.in
                   </a>
-                  .
+                  {"."}
                 </li>
                 <li>
                   <strong>National Consumer Helpline (CCPA):</strong> Consumer
@@ -168,7 +172,7 @@ export default function GrievanceRedressalPage() {
                   >
                     https://consumerhelpline.gov.in
                   </a>
-                  .
+                  {"."}
                 </li>
                 <li>
                   <strong>Data Protection Board of India:</strong> Unresolved

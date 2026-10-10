@@ -19,7 +19,11 @@ import { MESSAGE_ORDER } from "@/lib/support/message-seq";
 import { AppointmentIdParams } from "@/schemas/support";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
-import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import {
+  spamLimiter,
+  supportTurnLimiter,
+  applyRateLimit,
+} from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
 import { stripCallbackTags } from "@/lib/validation/phone";
 import {
@@ -141,18 +145,15 @@ export async function POST(
         appointmentId,
       });
 
-    const rl = await applyRateLimit(spamLimiter, `appt-support:${auth.userId}`);
-    if (rl) return rl;
-
     const tooLarge = assertBodySize(req);
     if (tooLarge) return tooLarge;
 
-    const body = turnSchema.safeParse(await req.json().catch(() => ({})));
-    if (!body.success) {
+    const parsed = turnSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
       return supportError({
         status: 400,
         code: "VALIDATION_FAILED",
-        detail: body.error.flatten(),
+        detail: parsed.error.flatten(),
         context: {
           route: "appointments.support",
           action: "turn",
@@ -160,10 +161,21 @@ export async function POST(
         },
       });
     }
+
+    const mayEscalate =
+      Boolean(parsed.data.userMessage) ||
+      parsed.data.chosenOptionId === "human" ||
+      parsed.data.category === "OTHER";
+    const rl = await applyRateLimit(
+      mayEscalate ? spamLimiter : supportTurnLimiter,
+      `appt-support:${auth.userId}`,
+    );
+    if (rl) return rl;
+
     if (
       auth.isOrgParty &&
-      body.data.category &&
-      !ORG_PARTY_CATEGORIES.has(body.data.category)
+      parsed.data.category &&
+      !ORG_PARTY_CATEGORIES.has(parsed.data.category)
     ) {
       return supportError({
         status: 403,
@@ -172,13 +184,13 @@ export async function POST(
           route: "appointments.support",
           action: "turn",
           appointmentId,
-          attemptedCategory: body.data.category,
+          attemptedCategory: parsed.data.category,
         },
       });
     }
 
     const result = await runSupportTurn(appointmentId, auth.userId, {
-      ...body.data,
+      ...parsed.data,
       isOrgParty: auth.isOrgParty,
     });
     if (!result) {

@@ -14,9 +14,10 @@ export const COMPANY_INFO = {
 } as const;
 
 export const GRIEVANCE_OFFICER = {
-  name: "Grievance Redressal Officer",
+  name: "Kaustav Ganguly (Grievance Redressal Officer)",
   designation: "Grievance & Nodal Compliance Officer",
   email: "support@familiarisenow.com",
+  phone: "+91-80-4710-8000",
   ackPromise: ACK_PROMISE_COPY,
   resolutionPromise: `within ${STATUTORY_RESOLUTION_DAYS} days`,
 } as const;

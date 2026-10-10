@@ -26,18 +26,31 @@ export type ReviewReportReasonValue = z.infer<
   typeof ReviewReportReasonValueSchema
 >;
 
-export const CreateReportSchema = z.object({
-  type: z.nativeEnum(ModerationReportType),
-  reason: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
-  description: z.string().trim().max(MAX_TEXT_LENGTH).optional(),
-  targetUserId: z.string().min(1).max(MAX_TITLE_LENGTH).optional(),
-  contentText: z.string().trim().max(MAX_TEXT_LENGTH).optional(),
-  contentUrl: z.string().max(MAX_TITLE_LENGTH).optional(),
-  reviewId: z.string().max(MAX_TITLE_LENGTH).optional(),
-  organizationId: z.string().min(1).max(MAX_TITLE_LENGTH).optional(),
-  streamMessageId: z.string().max(MAX_TITLE_LENGTH).optional(),
-  streamChannelCid: z.string().max(MAX_TITLE_LENGTH).optional(),
-});
+export const CreateReportSchema = z
+  .object({
+    type: z.nativeEnum(ModerationReportType),
+    reason: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
+    description: z.string().trim().max(MAX_TEXT_LENGTH).optional(),
+    targetUserId: z.string().min(1).max(MAX_TITLE_LENGTH).optional(),
+    contentText: z.string().trim().max(MAX_TEXT_LENGTH).optional(),
+    contentUrl: z.string().max(MAX_TITLE_LENGTH).optional(),
+    reviewId: z.string().max(MAX_TITLE_LENGTH).optional(),
+    organizationId: z.string().min(1).max(MAX_TITLE_LENGTH).optional(),
+    streamMessageId: z.string().max(MAX_TITLE_LENGTH).optional(),
+    streamChannelCid: z.string().max(MAX_TITLE_LENGTH).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (
+      val.type === "REVIEW" &&
+      !ReviewReportReasonValueSchema.safeParse(val.reason).success
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason"],
+        message: "Invalid review report reason",
+      });
+    }
+  });
 
 export type CreateReportInput = z.infer<typeof CreateReportSchema>;
 

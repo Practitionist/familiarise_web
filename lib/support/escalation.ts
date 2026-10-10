@@ -59,26 +59,26 @@ export interface EscalationBriefInput {
 
 const BOT_PROMISES_PREFIX = "Bot told the customer:";
 
+const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
+
 /** Structured handoff brief written to ticket descriptions at escalation time. */
 export function escalationBrief(input: EscalationBriefInput): string {
   const lines: string[] = [];
-  if (input.customerAsk?.trim()) {
-    lines.push(`Customer ask: ${input.customerAsk.trim()}`);
-  }
-  if (input.topic?.trim()) {
-    lines.push(`Topic: ${input.topic.trim()}`);
-  }
-  if (input.path?.trim()) {
-    lines.push(`Flow path: ${input.path.trim()}`);
-  }
-  if (input.botSaid?.trim()) {
-    lines.push(`Bot response: ${input.botSaid.trim()}`);
-  }
-  if (input.reason?.trim()) {
-    lines.push(`Escalation reason: ${input.reason.trim()}`);
+  const fields: ReadonlyArray<[string, string | null | undefined]> = [
+    ["Customer ask", input.customerAsk],
+    ["Topic", input.topic],
+    ["Flow path", input.path],
+    ["Bot response", input.botSaid],
+    ["Escalation reason", input.reason],
+  ];
+  for (const [label, value] of fields) {
+    const clean = value ? oneLine(value) : "";
+    if (clean) {
+      lines.push(`${label}: ${clean}`);
+    }
   }
   const promiseTexts = (input.promises ?? [])
-    .map((p) => p.text.trim())
+    .map((p) => oneLine(p.text))
     .filter(Boolean);
   if (promiseTexts.length > 0) {
     lines.push(`${BOT_PROMISES_PREFIX} ${promiseTexts.join(" | ")}`);

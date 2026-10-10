@@ -995,12 +995,12 @@ ALTER TABLE "organizations" ADD CONSTRAINT "org_stream_recording_retention_days_
   CHECK ("streamRecordingRetentionDays" IS NULL OR "streamRecordingRetentionDays" BETWEEN 7 AND 3650);
 
 -- SPLIT
--- At most one open non-deleted SupportCase per (appointmentId, appointmentOccurrenceId, requesterUserId, category)
--- using NULLS NOT DISTINCT so booking-wide (appointmentOccurrenceId IS NULL) and platform-wide cases collide cleanly.
+-- At most one open non-deleted SupportCase per (appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category)
+-- using NULLS NOT DISTINCT so booking-wide (appointmentOccurrenceId IS NULL) and platform-wide cases collide cleanly without merging cross-submitter threads.
 DROP INDEX IF EXISTS "support_case_open_scope_key";
 -- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "support_case_open_scope_key"
-  ON "SupportCase" ("appointmentId", "appointmentOccurrenceId", "requesterUserId", "category")
+  ON "SupportCase" ("appointmentId", "appointmentOccurrenceId", "requesterUserId", "submitterUserId", "category")
   NULLS NOT DISTINCT
   WHERE "closedAt" IS NULL AND "deletedAt" IS NULL;
 

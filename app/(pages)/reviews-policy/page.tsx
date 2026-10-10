@@ -135,16 +135,16 @@ export default function ReviewsPolicyPage() {
                 </li>
               </ul>
               <p>
-                <strong>Human Review Guarantee:</strong> Every moderation report
-                is evaluated by a trained human moderator. No automated
-                algorithm or AI filter ever removes or suppresses a public
-                review.
+                <strong>Human Review Guarantee (DSA Art. 16 &amp; 17):</strong>{" "}
+                Every moderation report and appeal is evaluated solely by a
+                trained human moderator. No automated decision-making or AI
+                filtering removes, demotes, or suppresses public reviews.
               </p>
 
               <Separator className="my-6" />
 
               <h2 className="text-2xl font-semibold mt-6 mb-4">
-                5. &ldquo;Not Counted in Rating&rdquo; Exclusions &amp; Appeals
+                5. &ldquo;Not Counted in Rating&rdquo; Exclusions &amp; Redress
               </h2>
               <p>
                 When session records show an anomaly (such as an unresolved
@@ -152,16 +152,22 @@ export default function ReviewsPolicyPage() {
                 excluding a score from aggregate averages without erasing
                 good-faith text, a human moderator may mark a review{" "}
                 <strong>Not counted in rating</strong>. Both parties receive a
-                written statement of reasons naming the policy ground,
-                confirming human review, and providing a report reference code (
-                <code>RPT-XXXXXXXX</code>).
+                written statement of reasons naming the specific policy ground,
+                confirming that no automated means were used, and providing a
+                report reference code {"("}
+                <code>RPT-XXXXXXXX</code>
+                {")."}
               </p>
               <p>
-                If you disagree with any moderation decision, open a request
-                from <Link href="/support">Support</Link> or our{" "}
-                <Link href="/grievance">Grievance Redressal</Link> page and
-                quote your <code>RPT-XXXXXXXX</code> reference number for
-                independent reconsideration.
+                If you disagree with any moderation decision, you have three
+                redress options: {"(1)"} submit an internal appeal for free
+                human reconsideration within 6 months via{" "}
+                <Link href="/support">Support</Link> or our{" "}
+                <Link href="/grievance">Grievance Redressal</Link> page quoting
+                your <code>RPT-XXXXXXXX</code> reference number; {"(2)"} refer
+                eligible disputes to a certified out-of-court dispute settlement
+                body where applicable {"(including EU DSA Art. 21 bodies)"}; or{" "}
+                {"(3)"} seek judicial redress before the competent courts.
               </p>
             </CardContent>
           </Card>

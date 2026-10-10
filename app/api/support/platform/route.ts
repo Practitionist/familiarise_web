@@ -65,55 +65,52 @@ const turnSchema = z
     message: "Send either a chosen option or a message, not both",
   });
 
-async function resolveOutcomeId(
-  recorded: unknown,
-  userId: string,
-  flowKey: string,
-): Promise<string | null> {
-  if (typeof recorded === "string") return recorded;
-  if (
-    typeof recorded === "object" &&
-    recorded !== null &&
-    "id" in recorded &&
-    typeof recorded.id === "string"
-  ) {
-    return recorded.id;
+type TurnInput = z.infer<typeof turnSchema>;
+type PlatformFlow = NonNullable<ReturnType<typeof platformFlowForId>>;
+type WalkResult = ReturnType<typeof walkFlow>;
+
+function resolveCandidateIds(
+  entryNodeId: string,
+  visitedNodeIds: readonly string[] | undefined,
+  currentNodeId: string | null | undefined,
+): readonly string[] {
+  if (visitedNodeIds && visitedNodeIds.length > 0) return visitedNodeIds;
+  if (currentNodeId) return [entryNodeId, currentNodeId];
+  return [entryNodeId];
+}
+
+function stepLabelFromNodes(
+  flow: PlatformFlow,
+  id: string,
+  prevId: string | null,
+): string | null {
+  if (prevId) {
+    const prevNode = flow.nodes[prevId];
+    if (prevNode?.kind === "PROMPT") {
+      const matchedOpt = prevNode.options.find((o) => o.next === id);
+      if (matchedOpt) return matchedOpt.label;
+    }
   }
-  const latest = await prisma.supportFlowOutcome?.findFirst?.({
-    where: { userId, flowKey },
-    orderBy: { createdAt: "desc" },
-    select: { id: true },
-  });
-  return latest?.id ?? null;
+  if (id !== flow.entryNodeId) {
+    const node = flow.nodes[id];
+    const snippet = node?.body.split(/[.?!]/)[0]?.trim();
+    if (snippet) return snippet;
+  }
+  return null;
 }
 
 /** Resolve visited node IDs strictly from the server flow graph into human-readable steps. */
 function buildServerPlatformPath(
-  flow: {
-    title: string;
-    entryNodeId: string;
-    nodes: Record<
-      string,
-      | {
-          id: string;
-          kind: "PROMPT";
-          body: string;
-          options: { id: string; label: string; next: string | null }[];
-        }
-      | { id: string; kind: "TERMINAL"; body: string }
-    >;
-  },
+  flow: PlatformFlow,
   visitedNodeIds: readonly string[] | undefined,
   currentNodeId: string | null | undefined,
   chosenLabel: string | undefined,
 ): string {
-  const candidateIds =
-    visitedNodeIds && visitedNodeIds.length > 0
-      ? visitedNodeIds
-      : currentNodeId
-        ? [flow.entryNodeId, currentNodeId]
-        : [flow.entryNodeId];
-
+  const candidateIds = resolveCandidateIds(
+    flow.entryNodeId,
+    visitedNodeIds,
+    currentNodeId,
+  );
   const validIds: string[] = [];
   for (const id of candidateIds) {
     if (flow.nodes[id] && !validIds.includes(id)) {
@@ -123,30 +120,34 @@ function buildServerPlatformPath(
 
   const steps: string[] = [flow.title];
   for (let i = 0; i < validIds.length; i += 1) {
-    const id = validIds[i];
-    const prevId = i > 0 ? validIds[i - 1] : null;
-    if (prevId) {
-      const prevNode = flow.nodes[prevId];
-      if (prevNode?.kind === "PROMPT") {
-        const matchedOpt = prevNode.options.find((o) => o.next === id);
-        if (matchedOpt && !steps.includes(matchedOpt.label)) {
-          steps.push(matchedOpt.label);
-          continue;
-        }
-      }
-    }
-    if (id !== flow.entryNodeId) {
-      const node = flow.nodes[id];
-      const snippet = node?.body.split(/[.?!]/)[0]?.trim();
-      if (snippet && !steps.includes(snippet)) {
-        steps.push(snippet);
-      }
+    const step = stepLabelFromNodes(
+      flow,
+      validIds[i],
+      i > 0 ? validIds[i - 1] : null,
+    );
+    if (step && !steps.includes(step)) {
+      steps.push(step);
     }
   }
   if (chosenLabel && !steps.includes(chosenLabel)) {
     steps.push(chosenLabel);
   }
   return steps.join(" → ");
+}
+
+function extractTerminalNodeId(
+  messages: WalkResult["messages"],
+): string | null {
+  const meta = messages[0]?.metadata;
+  if (
+    typeof meta === "object" &&
+    meta !== null &&
+    "nodeId" in meta &&
+    typeof meta.nodeId === "string"
+  ) {
+    return meta.nodeId;
+  }
+  return null;
 }
 
 /** Resolve the caller's platform context (role-aware intent gating). */
@@ -164,6 +165,141 @@ async function buildPlatformContext(
     ),
     organizationIds: memberships.map((m) => m.organizationId),
   };
+}
+
+async function handleSelfServeTurn(
+  flow: PlatformFlow,
+  turn: WalkResult,
+  userId: string,
+  organizationId: string | null,
+): Promise<NextResponse> {
+  const outcomeId = turn.resolved
+    ? await recordFlowOutcome({
+        scope: "PLATFORM",
+        flowKey: flow.id,
+        terminalNodeId: extractTerminalNodeId(turn.messages),
+        reason: turn.reason ?? null,
+        outcome: "RESOLVED",
+        userId,
+        organizationId,
+      })
+    : null;
+
+  return NextResponse.json({
+    data: {
+      flowId: flow.id,
+      messages: turn.messages,
+      nextNodeId: turn.nextNodeId,
+      resolved: turn.resolved,
+      escalated: false,
+      actions: turn.actions,
+      outcomeId,
+    },
+  });
+}
+
+async function handleEscalatedTurn(
+  flow: PlatformFlow,
+  turn: WalkResult,
+  input: TurnInput,
+  userId: string,
+  organizationId: string | null,
+): Promise<NextResponse> {
+  const rl = await applyRateLimit(spamLimiter, `tickets:${userId}`);
+  if (rl) return rl;
+
+  const reason = turn.reason ?? "platform_escalated";
+  const issueType = issueTypeForFlow(flow, reason);
+  const priority = escalationPriority(reason, input.urgent);
+
+  const terminalNodeId = extractTerminalNodeId(turn.messages);
+  const terminalNode = terminalNodeId ? flow.nodes[terminalNodeId] : undefined;
+  const terminalPromises =
+    turn.promises ??
+    (terminalNode?.kind === "TERMINAL" ? terminalNode.promises : undefined);
+
+  const typedAsk =
+    input.userMessage && !isBareHumanRequest(input.userMessage)
+      ? input.userMessage
+      : (turn.chosenLabel ?? null);
+
+  const brief = escalationBrief({
+    customerAsk: typedAsk,
+    topic: flow.title,
+    path: buildServerPlatformPath(
+      flow,
+      input.visitedNodeIds,
+      input.nodeId,
+      turn.chosenLabel,
+    ),
+    botSaid: turn.messages.find((m) => m.sender === "BOT")?.body ?? null,
+    reason,
+    promises: terminalPromises,
+  });
+  const description = organizationId
+    ? `${brief}\nOrganization: ${organizationId}`
+    : brief;
+
+  const recent = await findRecentOpenEscalation(
+    userId,
+    issueType,
+    organizationId,
+  );
+  if (recent) {
+    if (input.urgent) await raiseReusedTicketToHigh(prisma, recent.id);
+    const recentTicket = await prisma.supportTicket.findUnique({
+      where: { id: recent.id },
+      select: { ackDueAt: true },
+    });
+    return NextResponse.json({
+      data: {
+        flowId: flow.id,
+        messages: turn.messages,
+        nextNodeId: null,
+        resolved: false,
+        escalated: true,
+        actions: turn.actions,
+        supportTicketId: recent.id,
+        supportTicketReference: recent.referenceNumber,
+        replyByAt: recentTicket?.ackDueAt?.toISOString() ?? null,
+        deduped: true,
+      },
+    });
+  }
+
+  const ticket = await createSupportTicket({
+    userId,
+    title: `${flow.title}: ${reason.replaceAll("_", " ").toLowerCase()}`,
+    description,
+    priority,
+    issueType,
+    organizationId,
+    filedBy: "requester",
+  });
+
+  await recordFlowOutcome({
+    scope: "PLATFORM",
+    flowKey: flow.id,
+    terminalNodeId,
+    reason,
+    outcome: "ESCALATED",
+    userId,
+    organizationId,
+  });
+
+  return NextResponse.json({
+    data: {
+      flowId: flow.id,
+      messages: turn.messages,
+      nextNodeId: null,
+      resolved: false,
+      escalated: true,
+      actions: turn.actions,
+      supportTicketId: ticket.id,
+      supportTicketReference: ticket.referenceNumber,
+      replyByAt: ticket.ackDueAt?.toISOString() ?? null,
+    },
+  });
 }
 
 export async function GET() {
@@ -260,147 +396,23 @@ export async function POST(req: NextRequest) {
         },
       });
     }
-    const organizationId = attribution.organizationId;
 
     if (!turn.escalate) {
-      let outcomeId: string | null = null;
-      if (turn.resolved) {
-        const meta = turn.messages[0]?.metadata;
-        const terminalNodeId =
-          typeof meta === "object" &&
-          meta !== null &&
-          "nodeId" in meta &&
-          typeof meta.nodeId === "string"
-            ? meta.nodeId
-            : null;
-        const recorded: unknown = await recordFlowOutcome({
-          scope: "PLATFORM",
-          flowKey: flow.id,
-          terminalNodeId,
-          reason: turn.reason ?? null,
-          outcome: "RESOLVED",
-          userId: session.user.id,
-          organizationId,
-        });
-        outcomeId = await resolveOutcomeId(recorded, session.user.id, flow.id);
-      }
-      return NextResponse.json({
-        data: {
-          flowId: flow.id,
-          messages: turn.messages,
-          nextNodeId: turn.nextNodeId,
-          resolved: turn.resolved,
-          escalated: false,
-          actions: turn.actions,
-          outcomeId,
-        },
-      });
-    }
-
-    const rl = await applyRateLimit(spamLimiter, `tickets:${session.user.id}`);
-    if (rl) return rl;
-
-    const reason = turn.reason ?? "platform_escalated";
-    const issueType = issueTypeForFlow(flow, reason);
-    const priority = escalationPriority(reason, input.urgent);
-
-    const firstMeta = turn.messages[0]?.metadata;
-    const terminalNodeId =
-      typeof firstMeta === "object" &&
-      firstMeta !== null &&
-      "nodeId" in firstMeta &&
-      typeof firstMeta.nodeId === "string"
-        ? firstMeta.nodeId
-        : undefined;
-    const terminalNode = terminalNodeId
-      ? flow.nodes[terminalNodeId]
-      : undefined;
-    const terminalPromises =
-      turn.promises ??
-      (terminalNode?.kind === "TERMINAL" ? terminalNode.promises : undefined);
-
-    const typedAsk =
-      input.userMessage && !isBareHumanRequest(input.userMessage)
-        ? input.userMessage
-        : (turn.chosenLabel ?? null);
-
-    const brief = escalationBrief({
-      customerAsk: typedAsk,
-      topic: flow.title,
-      path: buildServerPlatformPath(
+      return handleSelfServeTurn(
         flow,
-        input.visitedNodeIds,
-        input.nodeId,
-        turn.chosenLabel,
-      ),
-      botSaid: turn.messages.find((m) => m.sender === "BOT")?.body ?? null,
-      reason,
-      promises: terminalPromises,
-    });
-    const description = organizationId
-      ? `${brief}\nOrganization: ${organizationId}`
-      : brief;
-
-    const recent = await findRecentOpenEscalation(
-      session.user.id,
-      issueType,
-      organizationId,
-    );
-    if (recent) {
-      if (input.urgent) await raiseReusedTicketToHigh(prisma, recent.id);
-      const recentTicket = await prisma.supportTicket.findUnique?.({
-        where: { id: recent.id },
-        select: { ackDueAt: true },
-      });
-      return NextResponse.json({
-        data: {
-          flowId: flow.id,
-          messages: turn.messages,
-          nextNodeId: null,
-          resolved: false,
-          escalated: true,
-          actions: turn.actions,
-          supportTicketId: recent.id,
-          supportTicketReference: recent.referenceNumber,
-          replyByAt: recentTicket?.ackDueAt?.toISOString() ?? null,
-          deduped: true,
-        },
-      });
+        turn,
+        session.user.id,
+        attribution.organizationId,
+      );
     }
 
-    const ticket = await createSupportTicket({
-      userId: session.user.id,
-      title: `${flow.title}: ${reason.replaceAll("_", " ").toLowerCase()}`,
-      description,
-      priority,
-      issueType,
-      organizationId,
-      filedBy: "requester",
-    });
-
-    await recordFlowOutcome({
-      scope: "PLATFORM",
-      flowKey: flow.id,
-      terminalNodeId: terminalNodeId ?? null,
-      reason,
-      outcome: "ESCALATED",
-      userId: session.user.id,
-      organizationId,
-    });
-
-    return NextResponse.json({
-      data: {
-        flowId: flow.id,
-        messages: turn.messages,
-        nextNodeId: null,
-        resolved: false,
-        escalated: true,
-        actions: turn.actions,
-        supportTicketId: ticket.id,
-        supportTicketReference: ticket.referenceNumber,
-        replyByAt: ticket.ackDueAt?.toISOString() ?? null,
-      },
-    });
+    return handleEscalatedTurn(
+      flow,
+      turn,
+      input,
+      session.user.id,
+      attribution.organizationId,
+    );
   } catch (cause) {
     return supportError({
       status: 500,

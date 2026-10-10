@@ -59,7 +59,8 @@ jest.mock("../../lib/support/service", () => ({
 
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
-  spamLimiter: {},
+  spamLimiter: { id: "spamLimiter" },
+  supportTurnLimiter: { id: "supportTurnLimiter" },
   applyRateLimit: jest.fn(async () => null),
 }));
 
@@ -70,7 +71,11 @@ jest.mock("../../lib/support/context", () => ({
 
 import { NextRequest } from "next/server";
 import { authorizeAppointment } from "../../lib/api/appointment-access";
-import { applyRateLimit } from "../../lib/rate-limit";
+import {
+  applyRateLimit,
+  spamLimiter,
+  supportTurnLimiter,
+} from "../../lib/rate-limit";
 import prisma from "../../lib/prisma";
 import { buildSupportContext } from "../../lib/support/context";
 import { runSupportTurn } from "../../lib/support/service";
@@ -175,7 +180,31 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     );
   });
 
-  it("allows normal multi-turn conversations while guarding against automated spam bursts", async () => {
+  it("uses supportTurnLimiter rather than spamLimiter on benign button steps", async () => {
+    mockedRunTurn.mockResolvedValue({
+      messages: [{ sender: "BOT", body: "Next option" }],
+      nextNodeId: "n3",
+      actions: [],
+    });
+    for (let i = 0; i < 6; i++) {
+      const res = await POST(req("POST", { chosenOptionId: `opt_${i}` }), {
+        params: Promise.resolve({ appointmentId: SLUG }),
+      });
+      expect(res.status).toBe(200);
+    }
+    expect(mockedRunTurn).toHaveBeenCalledTimes(6);
+    expect(applyRateLimit).toHaveBeenCalledTimes(6);
+    expect(applyRateLimit).toHaveBeenCalledWith(
+      supportTurnLimiter,
+      "appt-support:u1",
+    );
+    expect(applyRateLimit).not.toHaveBeenCalledWith(
+      spamLimiter,
+      expect.anything(),
+    );
+  });
+
+  it("allows free-text turns while applying spamLimiter against automated spam bursts", async () => {
     mockedRunTurn.mockResolvedValue({
       messages: [],
       nextNodeId: null,

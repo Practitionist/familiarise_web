@@ -161,12 +161,12 @@ describe("ReactQueryProvider central HTTP 428 precondition handler", () => {
     expect(assignMock).not.toHaveBeenCalled();
 
     const client = makeQueryClient();
-    expect(client.getQueryCache().config.onError).toBe(
-      redirectOnTwoFactorPreconditionError,
-    );
-    expect(client.getMutationCache().config.onError).toBe(
-      redirectOnTwoFactorPreconditionError,
-    );
+    expect(typeof client.getQueryCache().config.onError).toBe("function");
+    expect(typeof client.getMutationCache().config.onError).toBe("function");
+    // Passing a second TanStack metadata argument (even a function) must NOT hijack navigate:
+    const fakeQueryMeta = jest.fn();
+    client.getQueryCache().config.onError!(err428, fakeQueryMeta as never);
+    expect(fakeQueryMeta).not.toHaveBeenCalled();
   });
 });
 
@@ -265,11 +265,27 @@ describe("TwoFactorSettings backup code gate & TwoFactorSetupPage escape hatch",
     const copyBtn = Array.from(container.querySelectorAll("button")).find(
       (btn) => btn.textContent === "Copy codes",
     );
+    const { toast: toastMock } = await import("@/components/ui/use-toast");
     await act(async () => {
       copyBtn?.click();
     });
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       "abcde-12345\nfghij-67890",
+    );
+    expect(toastMock).toHaveBeenCalledWith({
+      title: "Backup codes copied to clipboard",
+    });
+
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: jest.fn().mockRejectedValue(new Error("Clipboard denied")),
+      },
+    });
+    await act(async () => {
+      copyBtn?.click();
+    });
+    expect(toastMock).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: "destructive" }),
     );
 
     const checkbox = container.querySelector('input[type="checkbox"]');

@@ -7,6 +7,9 @@ import { isStaleCaseError, throwSupportError } from "@/lib/support/error-copy";
 import type { CaseWorkspace } from "@/types/support-case";
 
 async function send(url: string, method: "POST" | "PATCH", body: object) {
+  if (!url) {
+    throw new Error("Missing case endpoint URL");
+  }
   const res = await fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -88,14 +91,20 @@ export function useCaseMutations(c: CaseWorkspace | undefined) {
     }),
   });
 
+  const key = c?.key;
+
   const setStatus = useMutation({
-    mutationFn: (status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED") =>
-      ticketUrl
+    mutationFn: (status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED") => {
+      const expectedUpdatedAt =
+        qc.getQueryData<CaseWorkspace>(["support-case", key])?.updatedAt ??
+        c?.updatedAt;
+      return ticketUrl
         ? send(ticketUrl, "PATCH", {
             status,
-            expectedUpdatedAt: c?.updatedAt,
+            expectedUpdatedAt,
           })
-        : send(threadUrl ?? "", "PATCH", { status }),
+        : send(threadUrl ?? "", "PATCH", { status });
+    },
     ...settle("Status updated"),
   });
 
@@ -104,11 +113,15 @@ export function useCaseMutations(c: CaseWorkspace | undefined) {
       assignedToId?: string | null;
       priority?: string;
       note?: string;
-    }) =>
-      send(ticketUrl ?? "", "PATCH", {
+    }) => {
+      const expectedUpdatedAt =
+        qc.getQueryData<CaseWorkspace>(["support-case", key])?.updatedAt ??
+        c?.updatedAt;
+      return send(ticketUrl ?? "", "PATCH", {
         ...patch,
-        expectedUpdatedAt: c?.updatedAt,
-      }),
+        expectedUpdatedAt,
+      });
+    },
     ...settle("Case updated"),
   });
 

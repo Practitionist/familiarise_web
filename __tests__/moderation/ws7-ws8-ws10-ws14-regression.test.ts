@@ -130,11 +130,19 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(
       REVIEW_REPORT_REASONS.some((r) => r.value === "COERCION_OR_RETALIATION"),
     ).toBe(true);
-    expect(PatchReportSchema.safeParse({ status: "DISMISSED" }).success).toBe(
-      false,
-    );
     expect(
-      PatchReportSchema.safeParse({ status: "ACTION_TAKEN" }).success,
+      PatchReportSchema.safeParse({
+        status: "DISMISSED",
+        expectedStatus: "PENDING",
+        expectedAssignedToId: null,
+      }).success,
+    ).toBe(false);
+    expect(
+      PatchReportSchema.safeParse({
+        status: "ACTION_TAKEN",
+        expectedStatus: "PENDING",
+        expectedAssignedToId: null,
+      }).success,
     ).toBe(false);
     expect(
       PatchReportSchema.safeParse({ status: "UNDER_REVIEW" }).success,
@@ -151,6 +159,15 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
         description: "Threatened refund chargeback",
       }).success,
     ).toBe(true);
+    expect(
+      CreateReportSchema.safeParse({
+        type: "REVIEW",
+        targetUserId: "user-2",
+        reviewId: "rev-1",
+        reason: "INVALID_REASON",
+        description: "Arbitrary non-enum reason",
+      }).success,
+    ).toBe(false);
   });
 
   test("PATCH /api/staff/moderation/reports/[reportId] rejects terminal status writes", async () => {
@@ -163,7 +180,11 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status: "DISMISSED" }),
+        body: JSON.stringify({
+          status: "DISMISSED",
+          expectedStatus: "PENDING",
+          expectedAssignedToId: null,
+        }),
       },
     );
     const res = await patchReportRoute(req, {
@@ -213,10 +234,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
         description: "First reporter statement",
         contentText: "Unfair review",
       });
-    mockModerationReport.update.mockResolvedValue({
-      id: "rep-open-1",
-      reportCount: 2,
-    });
+    mockModerationReport.updateMany.mockResolvedValue({ count: 1 });
 
     const secondReq = new NextRequest("http://localhost/api/report", {
       method: "POST",
@@ -231,8 +249,12 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     });
     const secondRes = await createReportRoute(secondReq);
     expect(secondRes.status).toBe(200);
-    expect(mockModerationReport.update).toHaveBeenCalledWith({
-      where: { id: "rep-open-1" },
+    expect(mockModerationReport.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "rep-open-1",
+        reportCount: 1,
+        status: { in: ["PENDING", "UNDER_REVIEW"] },
+      },
       data: {
         reportCount: { increment: 1 },
         description:
@@ -267,7 +289,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(mockPurgeReviewSurfaces).not.toHaveBeenCalled();
   });
 
-  test("moderationStatementOfReasons states policy ground, human review, and appeal reference", () => {
+  test("moderationStatementOfReasons states policy ground, human review, and appeal reference without leaking internal staff notes", () => {
     const notice = moderationStatementOfReasons({
       actionType: "CONTENT_REMOVED",
       reportId: "abcdef123456",
@@ -277,9 +299,10 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(notice).toContain("human moderator");
     expect(notice).toContain("no automated decision was used");
     expect(notice).toContain("RPT-ABCDEF12");
+    expect(notice).not.toContain("Details:");
   });
 
-  test("GET /api/admin/disputes/[disputeId] builds structured read-only evidencePack", async () => {
+  test("GET /api/admin/disputes/[disputeId] builds structured read-only evidencePack and sanitizes raw attendance userIds", async () => {
     mockRequirePrivilegedAuth.mockResolvedValue({
       session: { user: { id: "admin-1", role: "ADMIN" } },
     });
@@ -323,6 +346,16 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
             },
           ],
           supportThreads: [],
+          supportCases: [
+            {
+              id: "case-1",
+              status: "OPEN",
+              category: "billing",
+              referenceNumber: "FAM-2026-000001",
+              priority: "HIGH",
+              createdAt: new Date("2026-10-02T09:00:00Z"),
+            },
+          ],
         },
       },
     });
@@ -339,6 +372,11 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(body.evidencePack.attendance.summary).toContain(
       "No meeting attendance telemetry records were recorded",
     );
+    expect(body.evidencePack.supportHistory.ticketCount).toBe(1);
+    expect(body.evidencePack.supportHistory.openCount).toBe(1);
+    expect(body.payment.appointment.occurrences[0].attendances).toBeUndefined();
+    expect(body.payment.appointment.supportThreads).toBeUndefined();
+    expect(body.payment.appointment.supportCases).toBeUndefined();
   });
 
   test("Compliance constants publish Grievance Officer details and 24-hour acknowledgment without placeholders", () => {

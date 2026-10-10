@@ -52,6 +52,37 @@ function secretOf(totpURI: string): string {
   }
 }
 
+async function copyCodesToClipboard(
+  codes: string[],
+  showToast: typeof toast,
+): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(codes.join("\n"));
+    showToast({ title: "Backup codes copied to clipboard" });
+  } catch {
+    showToast({
+      title: "Couldn't copy backup codes",
+      description:
+        "Clipboard access failed. Select the codes manually or use Download .txt.",
+      variant: "destructive",
+    });
+  }
+}
+
+function downloadBackupCodesFile(codes: string[]): void {
+  const blob = new Blob([`${codes.join("\n")}\n`], {
+    type: "text/plain;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "familiarise-backup-codes.txt";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function SetupSignOutButton() {
   const [signingOut, setSigningOut] = useState(false);
 
@@ -193,25 +224,6 @@ export function TwoFactorSettings({
     if (ok) setPassword("");
   }
 
-  function handleCopyCodes(codes: string[]) {
-    void navigator.clipboard.writeText(codes.join("\n"));
-    toast({ title: "Backup codes copied to clipboard" });
-  }
-
-  function handleDownloadCodes(codes: string[]) {
-    const blob = new Blob([`${codes.join("\n")}\n`], {
-      type: "text/plain;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "familiarise-backup-codes.txt";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }
-
   const errorLine = error ? (
     <p role="alert" className="mt-3 text-sm text-red-400">
       {error}
@@ -250,7 +262,15 @@ export function TwoFactorSettings({
             </code>
           </p>
         ) : null}
-        <div className="mt-4 flex gap-2">
+        <form
+          className="mt-4 flex flex-wrap gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy && code.length === 6) {
+              void confirmEnrolment();
+            }
+          }}
+        >
           <input
             aria-label="Six digit code"
             inputMode="numeric"
@@ -261,14 +281,26 @@ export function TwoFactorSettings({
             className="w-32 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-white"
           />
           <button
-            type="button"
+            type="submit"
             disabled={busy || code.length !== 6}
-            onClick={() => void confirmEnrolment()}
             className={primaryButton}
           >
             {busy ? "Verifying…" : "Verify"}
           </button>
-        </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setSetup(null);
+              setCode("");
+              setError(null);
+              setPhase("idle");
+            }}
+            className={secondaryButton}
+          >
+            Cancel
+          </button>
+        </form>
         {errorLine}
       </section>
     );
@@ -284,7 +316,15 @@ export function TwoFactorSettings({
           Staff accounts need an authenticator app. Until it is set up, the back
           office stays closed to you.
         </p>
-        <div className="mt-4 space-y-3">
+        <form
+          className="mt-4 space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy) {
+              void beginEnrolment();
+            }
+          }}
+        >
           <label
             className="block text-sm text-neutral-300"
             htmlFor="tfa-enable-password"
@@ -299,15 +339,10 @@ export function TwoFactorSettings({
             onChange={(e) => setPassword(e.target.value)}
             className={inputClass}
           />
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void beginEnrolment()}
-            className={primaryButton}
-          >
+          <button type="submit" disabled={busy} className={primaryButton}>
             {busy ? "Working…" : "Set up two-factor"}
           </button>
-        </div>
+        </form>
         {errorLine}
       </section>
     );
@@ -344,14 +379,14 @@ export function TwoFactorSettings({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => handleCopyCodes(backupCodes)}
+              onClick={() => void copyCodesToClipboard(backupCodes, toast)}
               className={secondaryButton}
             >
               Copy codes
             </button>
             <button
               type="button"
-              onClick={() => handleDownloadCodes(backupCodes)}
+              onClick={() => downloadBackupCodesFile(backupCodes)}
               className={secondaryButton}
             >
               Download .txt

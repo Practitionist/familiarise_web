@@ -144,7 +144,7 @@ class InMemoryRedisEdge {
   }
 
   async scriptLoad(script: string): Promise<string> {
-    const sha = createHash("sha1").update(script).digest("hex");
+    const sha = createHash("sha256").update(script).digest("hex").slice(0, 40);
     this.scripts.set(sha, script);
     return sha;
   }
@@ -166,7 +166,7 @@ class InMemoryRedisEdge {
     keys: string[],
     args: Array<string | number>,
   ): Promise<unknown> {
-    const sha = createHash("sha1").update(script).digest("hex");
+    const sha = createHash("sha256").update(script).digest("hex").slice(0, 40);
     this.scripts.set(sha, script);
 
     if (script.includes("requestsInCurrentWindow") || keys.length >= 2) {

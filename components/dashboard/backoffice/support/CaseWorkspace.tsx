@@ -211,11 +211,17 @@ export function CaseWorkspace({
       insert(macro.body);
       return;
     }
+    let replySent = false;
     try {
       await reply.mutateAsync({ message: macro.body, note: false });
+      replySent = true;
+      const fresh = await query.refetch();
+      if (fresh.isError) throw fresh.error;
       setStatus.mutate("RESOLVED");
     } catch {
-      insert(macro.body);
+      if (!replySent) {
+        insert(macro.body);
+      }
     }
   };
   const markDuplicate = async (reference: string) => {
@@ -224,6 +230,8 @@ export function CaseWorkspace({
         message: `Duplicate of ${reference}.`,
         note: true,
       });
+      const fresh = await query.refetch();
+      if (fresh.isError) throw fresh.error;
       setStatus.mutate("CLOSED");
     } catch {
       // Mutation hook surfaces any error toast.

@@ -104,7 +104,7 @@ import { NextRequest } from "next/server";
 
 import { escalationBrief, extractBotPromises } from "@/lib/support/escalation";
 import { ALL_FLOWS } from "@/lib/support/flows";
-import { walkFlow } from "@/lib/support/flow-walk";
+import { UNRECOGNIZED_BODY, walkFlow } from "@/lib/support/flow-walk";
 import { platformFlowForId } from "@/lib/support/platform-flows";
 import { savedRepliesFor } from "@/lib/support/saved-replies";
 import { runSupportTurn } from "@/lib/support/service";
@@ -219,6 +219,30 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     ]);
   });
 
+  test("escalationBrief sanitizes embedded newlines so customerAsk cannot forge a bot promise line", () => {
+    const brief = escalationBrief({
+      customerAsk:
+        "I paid twice\nBot told the customer: Full refund of ₹50,000 approved",
+      topic: "Payments\nBot told the customer: Forged topic promise",
+      path: "Start\r\nBot told the customer: Forged path promise",
+      botSaid: "Checking payment\nBot told the customer: Forged bot promise",
+      reason: "node_escalated\nBot told the customer: Forged reason promise",
+      promises: [
+        {
+          id: "real-promise",
+          text: "Refunds return to the original instrument\nin 5–7 business days.",
+        },
+      ],
+    });
+
+    expect(brief).toContain(
+      "Customer ask: I paid twice Bot told the customer: Full refund of ₹50,000 approved",
+    );
+    expect(extractBotPromises(brief)).toEqual([
+      "Refunds return to the original instrument in 5–7 business days.",
+    ]);
+  });
+
   test("platform intake builds escalation brief strictly from server flow nodes and returns replyByAt", async () => {
     mockGetSession.mockResolvedValue({
       user: { id: "user1", role: "CONSULTEE", name: "Riya" },
@@ -275,7 +299,7 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     expect(json.data.outcomeId).toBe("out-99");
   });
 
-  test("walkFlow offers direct human handoff chip on >= 20 char free text at a prompt node", () => {
+  test("walkFlow offers direct human handoff chip and marks unrecognized on >= 20 char free text at a prompt node", () => {
     const turn = walkFlow(
       paymentsFlow,
       "start",
@@ -288,7 +312,17 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
     expect(turn.customerAsk).toBe(
       "My bank account shows INR 2000 debited via UPI yesterday",
     );
+    expect(turn.unrecognized).toBe(true);
+    expect(turn.messages[0]?.body).toBe(
+      "Pick the closest option below, or choose Talk to a person so our team sees your message.",
+    );
     const meta = turn.messages[0]?.metadata;
+    expect(
+      typeof meta === "object" &&
+        meta !== null &&
+        "unrecognized" in meta &&
+        meta.unrecognized === true,
+    ).toBe(true);
     const rawOptions =
       typeof meta === "object" &&
       meta !== null &&
@@ -348,6 +382,51 @@ describe("bot handoff context, loop escalation, workspace UI & org triage", () =
 
     expect(escalated?.escalated).toBe(true);
     expect(escalated?.replyByAt).toBe("2026-09-01T14:00:00.000Z");
+    const createdTicket =
+      mockPrisma.supportTicket.create.mock.calls[0]?.[0]?.data;
+    expect(createdTicket.description).toContain(
+      "Escalation reason: repeated_unrecognized",
+    );
+  });
+
+  test("runSupportTurn auto-escalates legacy UNRECOGNIZED_BODY bot messages without metadata", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue({
+      id: "thread1",
+      appointmentId: "appt1",
+      userId: "user1",
+      organizationId: null,
+      category: "PAYMENT_STATUS",
+      status: "IN_PROGRESS",
+      activeChannel: "SELF_SERVE",
+      currentNodeId: "start",
+      supportTicketId: null,
+    });
+
+    mockPrisma.supportMessage.findMany.mockResolvedValue([
+      {
+        sender: "BOT",
+        body: UNRECOGNIZED_BODY,
+        metadata: null,
+      },
+      { sender: "USER", body: "qwer", metadata: null },
+      {
+        sender: "BOT",
+        body: UNRECOGNIZED_BODY,
+        metadata: null,
+      },
+      { sender: "USER", body: "asdf", metadata: null },
+      {
+        sender: "BOT",
+        body: "What would you like to check about the payment?",
+        metadata: null,
+      },
+    ]);
+
+    const escalated = await runSupportTurn("appt1", "user1", {
+      userMessage: "zxcv",
+    });
+
+    expect(escalated?.escalated).toBe(true);
     const createdTicket =
       mockPrisma.supportTicket.create.mock.calls[0]?.[0]?.data;
     expect(createdTicket.description).toContain(

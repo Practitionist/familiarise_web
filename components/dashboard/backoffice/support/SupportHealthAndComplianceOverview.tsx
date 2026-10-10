@@ -56,9 +56,9 @@ type ComplianceReportPayload = z.infer<typeof ComplianceReportPayloadSchema>;
 export function SupportHealthAndComplianceOverview({
   tree,
 }: Readonly<{ tree: string }>) {
-  const now = new Date();
-  const [selectedYear, setSelectedYear] = useState(now.getUTCFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(now.getUTCMonth() + 1);
+  const istNow = new Date(Date.now() + 330 * 60_000);
+  const [selectedYear, setSelectedYear] = useState(istNow.getUTCFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(istNow.getUTCMonth() + 1);
 
   const isAdmin = tree === "admin";
 
@@ -105,10 +105,12 @@ export function SupportHealthAndComplianceOverview({
       c.acknowledgedAt ?? "",
       c.resolvedAt ?? "",
     ]);
+    const escapeCsvCell = (cell: string): string => {
+      const safe = /^[=+\-@\t\r]/.test(cell) ? `'${cell}` : cell;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const csv = [header, ...rows]
-      .map((line) =>
-        line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
-      )
+      .map((line) => line.map(escapeCsvCell).join(","))
       .join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -190,11 +192,13 @@ export function SupportHealthAndComplianceOverview({
                 value={selectedYear}
                 onChange={(e) => setSelectedYear(Number(e.target.value))}
               >
-                {[now.getUTCFullYear() - 1, now.getUTCFullYear()].map((yr) => (
-                  <option key={yr} value={yr}>
-                    {yr}
-                  </option>
-                ))}
+                {[istNow.getUTCFullYear() - 1, istNow.getUTCFullYear()].map(
+                  (yr) => (
+                    <option key={yr} value={yr}>
+                      {yr}
+                    </option>
+                  ),
+                )}
               </select>
               <select
                 aria-label="Compliance month"

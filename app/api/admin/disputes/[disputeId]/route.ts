@@ -100,6 +100,17 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                     },
                   },
                 },
+                supportCases: {
+                  orderBy: { createdAt: "desc" },
+                  select: {
+                    id: true,
+                    status: true,
+                    category: true,
+                    referenceNumber: true,
+                    priority: true,
+                    createdAt: true,
+                  },
+                },
               },
             },
           },
@@ -115,6 +126,31 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const occurrences = appt?.occurrences ?? [];
     const allAttendances = occurrences.flatMap((o) => o.attendances);
     const supportThreads = appt?.supportThreads ?? [];
+    const supportCases = appt?.supportCases ?? [];
+
+    const mergedSupportThreads = [
+      ...supportThreads.map((t) => ({
+        id: t.id,
+        status: String(t.status),
+        category: t.category,
+        referenceNumber: t.supportTicket?.referenceNumber ?? null,
+        ticketStatus: t.supportTicket?.status ?? null,
+        priority: t.supportTicket?.priority ?? null,
+        createdAt: t.createdAt,
+      })),
+      ...supportCases.map((c) => ({
+        id: c.id,
+        status: String(c.status),
+        category: c.category,
+        referenceNumber: c.referenceNumber,
+        ticketStatus: c.status,
+        priority: c.priority,
+        createdAt: c.createdAt,
+      })),
+    ].sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
 
     const evidencePack = {
       booking: appt
@@ -146,23 +182,38 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             : "No meeting attendance telemetry records were recorded for this booking.",
       },
       supportHistory: {
-        ticketCount: supportThreads.length,
-        openCount: supportThreads.filter((t) => t.status !== "RESOLVED").length,
-        threads: supportThreads.map((t) => ({
-          id: t.id,
-          status: t.status,
-          category: t.category,
-          referenceNumber: t.supportTicket?.referenceNumber ?? null,
-          ticketStatus: t.supportTicket?.status ?? null,
-          priority: t.supportTicket?.priority ?? null,
-          createdAt: t.createdAt,
-        })),
+        ticketCount: mergedSupportThreads.length,
+        openCount: mergedSupportThreads.filter(
+          (item) => item.status !== "RESOLVED" && item.status !== "CLOSED",
+        ).length,
+        threads: mergedSupportThreads,
       },
     };
 
+    const sanitizedAppointment = appt
+      ? {
+          id: appt.id,
+          appointmentType: appt.appointmentType,
+          createdAt: appt.createdAt,
+          occurrences: occurrences.map((o) => ({
+            id: o.id,
+            startsAt: o.startsAt,
+            endsAt: o.endsAt,
+            completionStatus: o.completionStatus,
+            outcome: o.outcome,
+          })),
+        }
+      : null;
+
     return NextResponse.json({
       ...dispute,
-      evidencePack,
+      payment: dispute.payment
+        ? {
+            ...dispute.payment,
+            appointment: sanitizedAppointment,
+          }
+        : null,
+      evidencePack: canManageDisputes ? evidencePack : null,
     });
   } catch (error) {
     Sentry.captureException(

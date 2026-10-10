@@ -4,6 +4,7 @@
  * Note: Disputes are primarily created via webhooks when payment gateways notify us
  */
 
+import { UserRole } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
@@ -86,7 +87,7 @@ async function requireDisputesManager(): Promise<
 
 export async function GET(req: NextRequest) {
   try {
-    const { error: authError } = await requireDisputesReader();
+    const { session, error: authError } = await requireDisputesReader();
     if (authError) return authError;
 
     const parsedLimit = z.coerce
@@ -101,13 +102,24 @@ export async function GET(req: NextRequest) {
     }
     const limit = parsedLimit.data;
 
+    const callerRole = z.nativeEnum(UserRole).safeParse(session.user.role);
+    const canManageDisputes =
+      callerRole.success &&
+      hasBackofficePermission(callerRole.data, "disputes.manage");
+
     const disputes = await prisma.dispute.findMany({
       take: limit,
       orderBy: { createdAt: "desc" },
       include: {
         payment: {
           include: {
-            user: { select: { id: true, email: true, name: true } },
+            user: {
+              select: {
+                id: true,
+                ...(canManageDisputes ? { email: true } : {}),
+                name: true,
+              },
+            },
             appointment: { select: { id: true, appointmentType: true } },
           },
         },

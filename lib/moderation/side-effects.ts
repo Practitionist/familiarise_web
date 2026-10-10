@@ -119,7 +119,6 @@ export function moderationStatementOfReasons(params: {
   actionType: ModerationActionType;
   reportId: string;
   reportReason?: string;
-  notes?: string;
 }): string {
   const reference = formatReportReference(params.reportId);
   const ground = reportReasonLabel(params.reportReason ?? "OTHER");
@@ -127,10 +126,7 @@ export function moderationStatementOfReasons(params: {
     params.actionType === "NO_ACTION"
       ? `No policy violation requiring enforcement was identified under ground "${ground}".`
       : `Action applied under policy ground "${ground}".`;
-  const noteSuffix = params.notes?.trim()
-    ? ` Details: ${params.notes.trim()}`
-    : "";
-  return `${base}${noteSuffix} A human moderator reviewed this report; no automated decision was used. If you disagree with this decision, open a request from Support and quote ${reference}.`;
+  return `${base} A human moderator reviewed this report; no automated decision was used. If you disagree with this decision, open a request from Support and quote ${reference}.`;
 }
 
 /** Reporter-facing words for how a report was decided. */
@@ -173,6 +169,7 @@ async function stageReporterDispositionBell(
 ): Promise<void> {
   if (!input.report.reportedById) return;
   const reference = formatReportReference(input.report.id);
+  const dedupeSuffix = input.actionId ?? input.actionType;
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.MODERATION_REPORT_OUTCOME,
     recipients: [input.report.reportedById],
@@ -186,7 +183,7 @@ async function stageReporterDispositionBell(
       ),
       dashboardUrl: goHref("auto", "feedbacks"),
     },
-    dedupeKey: `report-disposition:${input.report.id}:${input.actionId ?? input.actionType}`,
+    dedupeKey: `report-disposition:${input.report.id}:${dedupeSuffix}`,
   });
 }
 
@@ -199,6 +196,7 @@ export async function applyTransactionalEffects(
     input.actionType === "CONTENT_REMOVED" ||
     input.actionType === "REVIEW_REMOVED"
   ) {
+    const contentRemovedSuffix = input.actionId ?? input.report.id;
     await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.CONTENT_REMOVED_NOTICE,
       recipients: [input.report.targetUserId],
@@ -207,10 +205,9 @@ export async function applyTransactionalEffects(
           actionType: input.actionType,
           reportId: input.report.id,
           reportReason: input.report.reason,
-          notes: input.notes,
         }),
       },
-      dedupeKey: `content-removed:${input.actionId ?? input.report.id}`,
+      dedupeKey: `content-removed:${contentRemovedSuffix}`,
     });
   }
   // The expert already gets the exclusion notice; one message is enough.
@@ -729,13 +726,13 @@ async function triggerModerationNotification(
   transactional: TransactionalEffectResult,
   summary: SideEffectSummary,
 ): Promise<TriggerOutcome> {
-  const { actionId, actionType, report, notes } = input;
-  const dedupeKey = `moderation-action:${actionId ?? `${report.id}:${actionType}`}`;
+  const { actionId, actionType, report } = input;
+  const actionSuffix = actionId ?? `${report.id}:${actionType}`;
+  const dedupeKey = `moderation-action:${actionSuffix}`;
   const statementReason = moderationStatementOfReasons({
     actionType,
     reportId: report.id,
     reportReason: report.reason,
-    notes,
   });
   switch (actionType) {
     case "WARNING_ISSUED":
