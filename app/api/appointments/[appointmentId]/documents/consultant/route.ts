@@ -13,6 +13,7 @@ import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 import {
   MAX_DOCS_PER_APPOINTMENT,
   MAX_VERSIONS_PER_THREAD,
+  resolveDocumentThreadSlot,
   validateDocumentUpload,
   withVersionConflictRetry,
 } from "@/lib/documents/document-review";
@@ -302,41 +303,15 @@ export async function POST(
     try {
       document = await withVersionConflictRetry(() =>
         prisma.$transaction(async (tx) => {
-          let rootDocumentId: string | null = null;
-          let versionNo = 1;
-          if (responseToDocumentId) {
-            const parent = await tx.appointmentDocument.findFirst({
-              where: {
-                id: responseToDocumentId,
-                appointmentId,
-                deletedAt: null,
-              },
-              select: { id: true, rootDocumentId: true },
-            });
-            if (!parent) throw new Error("INVALID_RESPONSE_TARGET");
-            rootDocumentId = parent.rootDocumentId ?? parent.id;
-            const liveThreadCount = await tx.appointmentDocument.count({
-              where: {
-                deletedAt: null,
-                OR: [{ id: rootDocumentId }, { rootDocumentId }],
-              },
-            });
-            if (liveThreadCount >= MAX_VERSIONS_PER_THREAD) {
-              throw new Error("VERSION_LIMIT_REACHED");
-            }
-            const aggregate = await tx.appointmentDocument.aggregate({
-              where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
-              _max: { versionNo: true },
-            });
-            versionNo = (aggregate._max.versionNo ?? 1) + 1;
-          } else {
-            const rootCount = await tx.appointmentDocument.count({
-              where: { appointmentId, rootDocumentId: null, deletedAt: null },
-            });
-            if (rootCount >= MAX_DOCS_PER_APPOINTMENT) {
-              throw new Error("DOCUMENT_LIMIT_REACHED");
-            }
-          }
+          const { rootDocumentId, versionNo } = await resolveDocumentThreadSlot(
+            tx,
+            {
+              appointmentId,
+              parentDocumentId: responseToDocumentId,
+              maxDocsPerAppointment: MAX_DOCS_PER_APPOINTMENT,
+              maxVersionsPerThread: MAX_VERSIONS_PER_THREAD,
+            },
+          );
           return tx.appointmentDocument.create({
             data: {
               fileName: uploadResult.fileName!,
@@ -351,9 +326,8 @@ export async function POST(
               rootDocumentId,
               versionNo,
               appointmentId,
-              // Consultant uploads don't need review
               reviewStatus: "APPROVED",
-              reviewedById: userId, // A8 — FK scalar (#676)
+              reviewedById: userId,
               reviewedAt: new Date(),
             },
           });

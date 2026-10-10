@@ -213,3 +213,69 @@ export function groupDocumentsIntoThreads<T extends ThreadableDocument>(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
 }
+
+interface ThreadSlotTx {
+  appointmentDocument: {
+    findFirst: (args: {
+      where: { id: string; appointmentId: string; deletedAt: null };
+      select: { id: true; rootDocumentId: true };
+    }) => Promise<{ id: string; rootDocumentId: string | null } | null>;
+    count: (args: { where: Record<string, unknown> }) => Promise<number>;
+    aggregate: (args: {
+      where: Record<string, unknown>;
+      _max: { versionNo: true };
+    }) => Promise<{ _max: { versionNo: number | null } }>;
+  };
+}
+
+export async function resolveDocumentThreadSlot(
+  tx: ThreadSlotTx,
+  params: {
+    appointmentId: string;
+    parentDocumentId: string | null | undefined;
+    maxDocsPerAppointment: number;
+    maxVersionsPerThread: number;
+  },
+): Promise<{ rootDocumentId: string | null; versionNo: number }> {
+  const {
+    appointmentId,
+    parentDocumentId,
+    maxDocsPerAppointment,
+    maxVersionsPerThread,
+  } = params;
+
+  if (!parentDocumentId) {
+    const rootCount = await tx.appointmentDocument.count({
+      where: { appointmentId, rootDocumentId: null, deletedAt: null },
+    });
+    if (rootCount >= maxDocsPerAppointment) {
+      throw new Error("DOCUMENT_LIMIT_REACHED");
+    }
+    return { rootDocumentId: null, versionNo: 1 };
+  }
+
+  const parent = await tx.appointmentDocument.findFirst({
+    where: { id: parentDocumentId, appointmentId, deletedAt: null },
+    select: { id: true, rootDocumentId: true },
+  });
+  if (!parent) {
+    throw new Error("INVALID_THREAD_PARENT");
+  }
+
+  const rootDocumentId = parent.rootDocumentId ?? parent.id;
+  const liveThreadCount = await tx.appointmentDocument.count({
+    where: {
+      deletedAt: null,
+      OR: [{ id: rootDocumentId }, { rootDocumentId }],
+    },
+  });
+  if (liveThreadCount >= maxVersionsPerThread) {
+    throw new Error("VERSION_LIMIT_REACHED");
+  }
+
+  const aggregate = await tx.appointmentDocument.aggregate({
+    where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
+    _max: { versionNo: true },
+  });
+  return { rootDocumentId, versionNo: (aggregate._max.versionNo ?? 1) + 1 };
+}
