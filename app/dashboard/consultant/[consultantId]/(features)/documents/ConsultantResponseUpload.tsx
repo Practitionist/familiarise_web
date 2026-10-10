@@ -82,7 +82,10 @@ export function ConsultantResponseUpload({
       onClose();
       onSuccess?.();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Upload error:", error);
       toast({
         title: "Upload failed",
@@ -156,7 +159,7 @@ export function ConsultantResponseUpload({
                 ref={fileInputRef}
                 type="file"
                 onChange={handleFileSelect}
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.txt,.csv,.md,.zip,.rar"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.txt"
                 className="flex-1"
               />
               {selectedFile && (
@@ -171,7 +174,8 @@ export function ConsultantResponseUpload({
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              Supported: PDF, Office documents, images, text files (max 10MB)
+              Supported: PDF, Word (.doc, .docx), images (.jpg, .png, .gif),
+              text (.txt) — max 10MB
             </p>
           </div>
 

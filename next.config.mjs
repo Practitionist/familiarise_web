@@ -479,10 +479,29 @@ const nextConfig = {
   },
 
   async headers() {
+    const inlinePreviewHeaders = [
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      {
+        key: CSP_HEADER_KEY,
+        value: CSP_DIRECTIVES.replace(
+          "frame-ancestors 'none'",
+          "frame-ancestors 'self'",
+        ).replace("object-src 'none'", "object-src 'self'"),
+      },
+    ];
     return [
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        source:
+          "/api/appointments/:appointmentId/documents/:documentId/download",
+        headers: inlinePreviewHeaders,
+      },
+      {
+        source: "/api/plans/materials/:materialId/download",
+        headers: inlinePreviewHeaders,
       },
       {
         source: "/avif/(.*)",

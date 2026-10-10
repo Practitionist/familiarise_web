@@ -1,7 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { Prisma, type AppointmentDocument } from "@prisma/client";
+import {
+  DocumentReviewStatus,
+  Prisma,
+  type AppointmentDocument,
+} from "@prisma/client";
+import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
 import type { Session } from "@/lib/auth";
@@ -95,7 +100,6 @@ async function resolveAppointmentDocument(
   if (!isDevelopment) {
     const userId = session.user.id;
     const consulteeBranches = [
-      // User is the consultee
       {
         consultation: {
           requestedBy: {
@@ -105,7 +109,6 @@ async function resolveAppointmentDocument(
           },
         },
       },
-      // User is part of subscription (consultee)
       {
         subscription: {
           requestedBy: {
@@ -122,7 +125,6 @@ async function resolveAppointmentDocument(
           ? consulteeBranches
           : [
               ...consulteeBranches,
-              // User is the consultant
               {
                 consultation: {
                   consultationPlan: {
@@ -134,7 +136,6 @@ async function resolveAppointmentDocument(
                   },
                 },
               },
-              // User is part of subscription (consultant)
               {
                 subscription: {
                   subscriptionPlan: {
@@ -232,8 +233,15 @@ export async function PATCH(
     }
 
     const { appointmentId, documentId } = await params;
-    const body = await request.json();
-    const { reviewStatus, reviewNotes } = body;
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body", code: "INVALID_INPUT" },
+        { status: 400 },
+      );
+    }
 
     // Review decisions mutate consultee-visible state; throttle like uploads.
     if (session?.user?.id) {
@@ -262,7 +270,6 @@ export async function PATCH(
     if (!isDevelopment) {
       whereClause.appointment = {
         OR: [
-          // User is the consultant for consultation
           {
             consultation: {
               consultationPlan: {
@@ -274,7 +281,6 @@ export async function PATCH(
               },
             },
           },
-          // User is the consultant for subscription
           {
             subscription: {
               subscriptionPlan: {
@@ -290,7 +296,6 @@ export async function PATCH(
       };
     }
 
-    // Verify user is the consultant for this appointment
     const document = await prisma.appointmentDocument.findFirst({
       where: whereClause,
     });
@@ -308,56 +313,55 @@ export async function PATCH(
       );
     }
 
-    // Valid review statuses
-    const validStatuses = [
-      "PENDING",
-      "IN_REVIEW",
-      "APPROVED",
-      "REJECTED",
-      "NEEDS_REVISION",
-    ];
-    if (reviewStatus && !validStatuses.includes(reviewStatus)) {
+    const patchSchema = z.object({
+      reviewStatus: z.nativeEnum(DocumentReviewStatus).optional(),
+      reviewNotes: z.string().trim().max(2000).nullish(),
+    });
+    const parsedPatch = patchSchema.safeParse(body);
+    if (!parsedPatch.success) {
       return NextResponse.json(
-        { error: "Invalid review status" },
+        {
+          error: "Invalid review payload",
+          details: parsedPatch.error.flatten(),
+        },
         { status: 400 },
       );
     }
 
-    // Transition guard — APPROVED/REJECTED are terminal. Reopening a decided
-    // review would rewrite history the consultee was already notified about;
-    // corrections go through a threaded upload instead.
+    const { reviewStatus: validStatus, reviewNotes: validNotes } =
+      parsedPatch.data;
+
     if (
-      reviewStatus &&
+      validStatus &&
       !isReviewTransitionAllowed(
         document.reviewStatus as ReviewStatus,
-        reviewStatus as ReviewStatus,
+        validStatus as ReviewStatus,
       )
     ) {
       return NextResponse.json(
         {
           error: "Invalid transition",
-          message: `A ${document.reviewStatus.toLowerCase()} document can no longer move to ${reviewStatus}. Upload or request a threaded revision instead.`,
+          message: `A ${document.reviewStatus.toLowerCase()} document can no longer move to ${validStatus}. Upload or request a threaded revision instead.`,
           code: "INVALID_REVIEW_TRANSITION",
         },
         { status: 409 },
       );
     }
 
-    // Update document review status
     const updatedDocument = await prisma.appointmentDocument.update({
       where: {
         id: documentId,
       },
       data: {
-        ...(reviewStatus && { reviewStatus }),
-        ...(reviewNotes && { reviewNotes }),
-        ...(reviewStatus && { reviewedAt: new Date() }),
-        ...(reviewStatus && { reviewedById: session.user.id }), // A8 — FK scalar (#676)
+        ...(validStatus && { reviewStatus: validStatus }),
+        ...(validNotes !== undefined && {
+          reviewNotes: validNotes === "" ? null : validNotes,
+        }),
+        ...(validStatus && { reviewedAt: new Date() }),
+        ...(validStatus && { reviewedById: session.user.id }),
       },
     });
 
-    // Tell the consultee their submission moved. One recipient, known side →
-    // scopedHref links straight at the right dashboard.
     const appointmentInfo = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       select: {
@@ -405,7 +409,7 @@ export async function PATCH(
         ?.name ||
       "The consultant";
 
-    if (recipientId && reviewStatus) {
+    if (recipientId && validStatus) {
       // #1861 P2r — the review update already committed above with no open
       // transaction to piggyback on; stage the outbox row now (awaited,
       // before the response) and defer only the delivery attempt.
@@ -416,8 +420,8 @@ export async function PATCH(
             ...notificationScope(appointmentInfo?.organizationId),
             appointmentId,
             documentId,
-            reviewStatus: reviewStatus as ReviewStatus,
-            reviewNotes: reviewNotes || undefined,
+            reviewStatus: validStatus as ReviewStatus,
+            reviewNotes: validNotes || undefined,
             originalName: document.originalName,
             consultantName: reviewerName,
             dashboardUrl: scopedHref({

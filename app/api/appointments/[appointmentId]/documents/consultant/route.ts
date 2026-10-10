@@ -11,6 +11,7 @@ import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 import {
   MAX_DOCS_PER_APPOINTMENT,
+  MAX_VERSIONS_PER_THREAD,
   validateDocumentUpload,
   withVersionConflictRetry,
 } from "@/lib/documents/document-review";
@@ -22,10 +23,6 @@ const isDevelopment = () =>
   process.env.NODE_ENV === "development" &&
   process.env.DEV_BYPASS_AUTH === "true";
 
-/**
- * Load the appointment iff the caller delivers it (any of the four plan
- * arms). Kept out of the handler so POST reads linearly — Sonar S3776.
- */
 async function loadConsultantAppointment(
   appointmentId: string,
   userId: string,
@@ -150,7 +147,6 @@ export async function POST(
       );
     }
 
-    // Get consultant ID
     const consultantId =
       appointment.consultation?.consultationPlan?.consultantProfile?.id ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.id ||
@@ -168,7 +164,6 @@ export async function POST(
       );
     }
 
-    // Parse form data
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const description = formData.get("description") as string | null;
@@ -186,8 +181,6 @@ export async function POST(
       );
     }
 
-    // Size/type parity with the consultee route — one shared gate so the two
-    // roles' limits can never drift apart again.
     const validation = validateDocumentUpload(file);
     if (!validation.ok) {
       return NextResponse.json(
@@ -203,17 +196,16 @@ export async function POST(
       );
     }
 
-    // Quota + response-target validation BEFORE uploading (a post-upload
-    // rejection leaks the stored object).
     if (
+      !responseToDocumentId &&
       (await prisma.appointmentDocument.count({
-        where: { appointmentId, deletedAt: null },
+        where: { appointmentId, rootDocumentId: null, deletedAt: null },
       })) >= MAX_DOCS_PER_APPOINTMENT
     ) {
       return NextResponse.json(
         {
           error: "Document limit reached",
-          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} documents.`,
+          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads.`,
           code: "DOCUMENT_LIMIT_REACHED",
         },
         { status: 400 },
@@ -223,7 +215,7 @@ export async function POST(
     if (responseToDocumentId) {
       const parent = await prisma.appointmentDocument.findFirst({
         where: { id: responseToDocumentId, appointmentId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, rootDocumentId: true },
       });
       if (!parent) {
         return NextResponse.json(
@@ -233,6 +225,23 @@ export async function POST(
             code: "NOT_FOUND",
           },
           { status: 404 },
+        );
+      }
+      const rootId = parent.rootDocumentId ?? parent.id;
+      const versionCount = await prisma.appointmentDocument.count({
+        where: {
+          deletedAt: null,
+          OR: [{ id: rootId }, { rootDocumentId: rootId }],
+        },
+      });
+      if (versionCount >= MAX_VERSIONS_PER_THREAD) {
+        return NextResponse.json(
+          {
+            error: "Version limit reached",
+            message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
+            code: "VERSION_LIMIT_REACHED",
+          },
+          { status: 400 },
         );
       }
     }

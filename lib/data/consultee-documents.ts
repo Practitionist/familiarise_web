@@ -35,7 +35,10 @@ export interface ConsulteeDocumentRow {
   fileUrl: string;
   description: string | null;
   reviewStatus: DocumentReviewStatus;
-  /** CONSULTEE = the learner's upload; CONSULTANT = the expert's response. */
+  reviewNotes: string | null;
+  versionNo: number;
+  rootDocumentId: string | null;
+  responseToDocumentId: string | null;
   uploadedByRole: "CONSULTEE" | "CONSULTANT";
   uploadedAt: Date | string;
   appointmentTitle: string;
@@ -88,7 +91,6 @@ export function normalizeDocumentsQuery(raw: {
   return { limit, offset, status };
 }
 
-/** The learner's own personal 1:1 bookings that are still open for files. */
 function ownBookingWhere(consulteeId: string): Prisma.AppointmentWhereInput {
   return {
     organizationId: null,
@@ -105,6 +107,12 @@ function ownBookingWhere(consulteeId: string): Prisma.AppointmentWhereInput {
           status: { notIn: [...CLOSED_STATUSES] },
         },
       },
+      {
+        trial: {
+          consulteeProfileId: consulteeId,
+          status: { notIn: ["REJECTED", "CANCELLED"] },
+        },
+      },
     ],
   };
 }
@@ -116,11 +124,6 @@ const planSelect = {
   },
 } as const;
 
-/**
- * Materials of the plans behind the learner's bookings — the same arms the
- * resources read uses: their 1:1 requests, trials and the group events they
- * hold a seat on. A withdrawn request keeps none.
- */
 function materialsWhere(
   consulteeId: string,
   userId: string,
@@ -184,12 +187,17 @@ export async function readConsulteeDocuments(args: {
         fileUrl: true,
         description: true,
         reviewStatus: true,
+        reviewNotes: true,
+        versionNo: true,
+        rootDocumentId: true,
+        responseToDocumentId: true,
         uploadedByRole: true,
         uploadedAt: true,
         appointment: {
           select: {
             consultation: { select: { consultationPlan: planSelect } },
             subscription: { select: { subscriptionPlan: planSelect } },
+            trial: { select: { subscriptionPlan: planSelect } },
           },
         },
       },
@@ -198,7 +206,6 @@ export async function readConsulteeDocuments(args: {
       skip: offset,
     }),
     prisma.appointmentDocument.count({ where }),
-    // The status filter narrows the learner's own files only; materials have none.
     status
       ? Promise.resolve([])
       : prisma.planMaterial.findMany({
@@ -226,6 +233,7 @@ export async function readConsulteeDocuments(args: {
       const plan =
         doc.appointment.consultation?.consultationPlan ??
         doc.appointment.subscription?.subscriptionPlan ??
+        doc.appointment.trial?.subscriptionPlan ??
         null;
       return {
         id: doc.id,
@@ -236,6 +244,10 @@ export async function readConsulteeDocuments(args: {
         fileUrl: doc.fileUrl,
         description: doc.description,
         reviewStatus: doc.reviewStatus,
+        reviewNotes: doc.reviewNotes,
+        versionNo: doc.versionNo,
+        rootDocumentId: doc.rootDocumentId,
+        responseToDocumentId: doc.responseToDocumentId,
         uploadedByRole: doc.uploadedByRole,
         uploadedAt: doc.uploadedAt,
         appointmentTitle: plan?.title ?? "Booking",
