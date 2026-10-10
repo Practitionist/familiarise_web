@@ -315,7 +315,114 @@ export async function readCaseWorkspace(
 ): Promise<CaseWorkspace | null> {
   if (ref.kind === "ticket") return readTicketWorkspace(ref.id, grants);
   if (ref.kind === "thread") return readThreadWorkspace(ref.id, grants);
+  if (ref.kind === "case") return readSupportCaseWorkspace(ref.id, grants);
   return null;
+}
+
+async function readSupportCaseWorkspace(
+  caseId: string,
+  grants: WorkspaceGrants,
+): Promise<CaseWorkspace | null> {
+  const c = await prisma.supportCase.findUnique({ where: { id: caseId } });
+  if (!c) return null;
+  const key = caseKeyOf({ kind: "case", id: c.id });
+  const [
+    requester,
+    assignedTo,
+    organization,
+    paymentSubject,
+    messages,
+    events,
+  ] = await Promise.all([
+    prisma.user.findUniqueOrThrow({
+      where: { id: c.requesterUserId },
+      select: PERSON_SELECT,
+    }),
+    c.assignedToId
+      ? prisma.user.findUnique({
+          where: { id: c.assignedToId },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve(null),
+    c.organizationId
+      ? prisma.organization.findUnique({
+          where: { id: c.organizationId },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve(null),
+    prisma.supportCaseSubject.findFirst({
+      where: { caseId: c.id, subjectType: "PAYMENT" },
+      select: { subjectId: true },
+    }),
+    prisma.supportCaseMessage.findMany({
+      where: { caseId: c.id },
+      orderBy: { seq: "asc" },
+      take: TIMELINE_LIMIT,
+    }),
+    prisma.supportCaseEvent.findMany({
+      where: { caseId: c.id },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  const [booking, payment, pastCases, sentryIssues] = await Promise.all([
+    c.appointmentId
+      ? readBooking(c.appointmentId, requester.name)
+      : Promise.resolve(null),
+    grants.showPayment ? readPayment(paymentSubject?.subjectId ?? null) : null,
+    readPastCases(requester.id, key),
+    findUserIssues({ userId: requester.id, limit: 5 }),
+  ]);
+  return {
+    key,
+    kind: "ticket",
+    ticketId: c.id,
+    threadId: null,
+    subject: c.title,
+    reference: c.referenceNumber,
+    topic: ticketTopic({ category: c.category ?? "OTHER", issueType: null }),
+    status: c.status,
+    priority: c.priority,
+    channel: c.activeChannel,
+    assignee: assignedTo,
+    sla: slaStateOf(c),
+    ackDueAt: c.ackDueAt?.toISOString() ?? null,
+    resolutionDueAt: c.resolutionDueAt?.toISOString() ?? null,
+    lastMessageAt: c.lastMessageAt?.toISOString() ?? null,
+    createdAt: c.createdAt.toISOString(),
+    updatedAt: c.updatedAt.toISOString(),
+    handoffSummary: null,
+    person: {
+      id: requester.id,
+      name: requester.name,
+      role: requester.role,
+      email: grants.showEmail ? requester.email : null,
+      phone: requester.phone,
+      joinedAt: requester.createdAt.toISOString(),
+    },
+    booking,
+    payment,
+    organization,
+    pastCases,
+    sentryIssues,
+    events: events.map((e) => ({
+      id: e.id,
+      kind: e.kind,
+      fromValue: e.fromValue,
+      toValue: e.toValue,
+      note: e.note,
+      actorName: null,
+      createdAt: e.createdAt.toISOString(),
+    })),
+    timeline: messages.map((m) => ({
+      id: m.id,
+      author: m.sender,
+      authorName: null,
+      body: m.body,
+      internal: m.isInternal,
+      at: m.createdAt.toISOString(),
+    })),
+    attachments: [],
+  };
 }
 
 async function readCaseEvents(ticketId: string): Promise<CaseHistoryEvent[]> {

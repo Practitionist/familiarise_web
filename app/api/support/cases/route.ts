@@ -339,22 +339,28 @@ async function dispatchCasePostNotifications(
   const c = result.supportCase;
   if (!result.reused) {
     await Promise.all([
-      notifySupportStaff({
-        id: c.id,
-        title: c.title,
-        organizationId: c.organizationId,
-        referenceNumber: c.referenceNumber,
-        userId: c.submitterUserId,
-      }).catch(() => undefined),
-      notifyRequesterOfTicket({
-        id: c.id,
-        title: c.title,
-        referenceNumber: c.referenceNumber,
-        userId: c.submitterUserId,
-        ackDueAt: c.ackDueAt,
-        createdAt: c.createdAt,
-        organizationId: c.organizationId,
-      }).catch(() => undefined),
+      notifySupportStaff(
+        {
+          id: c.id,
+          title: c.title,
+          organizationId: c.organizationId,
+          referenceNumber: c.referenceNumber,
+          userId: c.submitterUserId,
+        },
+        "case",
+      ).catch(() => undefined),
+      notifyRequesterOfTicket(
+        {
+          id: c.id,
+          title: c.title,
+          referenceNumber: c.referenceNumber,
+          userId: c.submitterUserId,
+          ackDueAt: c.ackDueAt,
+          createdAt: c.createdAt,
+          organizationId: c.organizationId,
+        },
+        "case",
+      ).catch(() => undefined),
     ]);
     return;
   }
@@ -369,7 +375,7 @@ async function dispatchCasePostNotifications(
       })
       .catch(() => []);
     if (recipients.length === 0) return;
-    const caseKey = caseKeyOf({ kind: "ticket", id: c.id });
+    const caseKey = caseKeyOf({ kind: "case", id: c.id });
     const dedupeKey = `case-reply:${c.id}:seq:${c.messageSeq ?? 1}`;
     await Promise.all(
       recipients.map((r) =>

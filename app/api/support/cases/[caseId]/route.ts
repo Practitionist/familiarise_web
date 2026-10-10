@@ -133,7 +133,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         statusTargets.flatMap((t) => {
           const statusLabel = supportTicketStatusLabel(t.status);
           const dashboardUrl = supportRequestHref(
-            caseKeyOf({ kind: "ticket", id: t.id }),
+            caseKeyOf({ kind: "case", id: t.id }),
             t.organizationId,
           );
           return [
@@ -149,7 +149,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                 ...notificationScope(t.organizationId),
               },
               `case-status:${t.id}:${t.status}:${t.updatedAtMs}`,
-            ),
+            ).catch(() => undefined),
             sendSupportTicketUpdateEmail(
               {
                 ticketId: t.id,
@@ -161,7 +161,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                 ticketUrl: dashboardUrl,
               },
               EMAIL_BUDGET_MS.REQUEST,
-            ),
+            ).catch(() => undefined),
           ];
         }),
       );

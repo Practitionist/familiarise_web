@@ -46,9 +46,7 @@ export function ContactForm() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   useEffect(() => {
-    if (validCategory) {
-      setValues((prev) => ({ ...prev, category: validCategory }));
-    }
+    setValues((prev) => ({ ...prev, category: validCategory }));
   }, [validCategory]);
 
   const set = (key: keyof typeof EMPTY) => (value: string) =>

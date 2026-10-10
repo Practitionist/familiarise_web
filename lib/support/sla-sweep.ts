@@ -138,19 +138,28 @@ function parseStagedSlaOutboxRows(
 ): {
   ackBreachIds: string[];
   resBreachIds: string[];
+  ackWarnIds: string[];
+  resWarnIds: string[];
   stagedKeys: Set<string>;
 } {
   const ackSet = new Set<string>();
   const resSet = new Set<string>();
+  const ackWarnSet = new Set<string>();
+  const resWarnSet = new Set<string>();
   const stagedKeys = new Set<string>();
 
   const recordKeyString = (raw: string | null | undefined) => {
     if (!raw) return;
     stagedKeys.add(raw);
     const match = /^sla:(.+):(ack|res):(warn|breach)$/.exec(raw);
-    if (match?.[3] !== "breach") return;
-    if (match[2] === "ack") ackSet.add(match[1]);
-    if (match[2] === "res") resSet.add(match[1]);
+    if (!match) return;
+    if (match[3] === "breach") {
+      if (match[2] === "ack") ackSet.add(match[1]);
+      if (match[2] === "res") resSet.add(match[1]);
+    } else if (match[3] === "warn") {
+      if (match[2] === "ack") ackWarnSet.add(match[1]);
+      if (match[2] === "res") resWarnSet.add(match[1]);
+    }
   };
 
   for (const row of rows) {
@@ -162,6 +171,8 @@ function parseStagedSlaOutboxRows(
   return {
     ackBreachIds: [...ackSet],
     resBreachIds: [...resSet],
+    ackWarnIds: [...ackWarnSet],
+    resWarnIds: [...resWarnSet],
     stagedKeys,
   };
 }
@@ -171,6 +182,8 @@ async function fetchSlaSweepCandidates(
   limit: number,
   ackBreachIds: string[],
   resBreachIds: string[],
+  ackWarnIds: string[] = [],
+  resWarnIds: string[] = [],
 ): Promise<SlaSweepCandidate[]> {
   const ackWarnHorizon = new Date(now.getTime() + ACK_WARN_MS);
   const resWarnHorizon = new Date(now.getTime() + RES_WARN_MS);
@@ -197,10 +210,12 @@ async function fetchSlaSweepCandidates(
     {
       acknowledgedAt: null,
       ackDueAt: { gt: now, lte: ackWarnHorizon },
+      ...(ackWarnIds.length > 0 ? { id: { notIn: ackWarnIds } } : {}),
     },
     {
       resolvedAt: null,
       resolutionDueAt: { gt: now, lte: resWarnHorizon },
+      ...(resWarnIds.length > 0 ? { id: { notIn: resWarnIds } } : {}),
     },
   ];
 
@@ -398,6 +413,7 @@ async function processSingleSlaNotice(
             recipients,
             payload,
             dedupeKey,
+            entityRef: dedupeKey,
           });
           return !existing;
         },
@@ -724,15 +740,16 @@ export async function runSupportSlaSweep(opts?: {
         .catch(() => []),
     ]);
 
-    const { ackBreachIds, resBreachIds, stagedKeys } = parseStagedSlaOutboxRows(
-      outboxRows ?? [],
-    );
+    const { ackBreachIds, resBreachIds, ackWarnIds, resWarnIds, stagedKeys } =
+      parseStagedSlaOutboxRows(outboxRows ?? []);
 
     const candidates = await fetchSlaSweepCandidates(
       now,
       limit,
       ackBreachIds.slice(0, 500),
       resBreachIds.slice(0, 500),
+      ackWarnIds.slice(0, 500),
+      resWarnIds.slice(0, 500),
     );
 
     const noticeOutcomes = await runSequential(candidates, (row) =>

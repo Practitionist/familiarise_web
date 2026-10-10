@@ -162,10 +162,16 @@ export async function POST(
       });
     }
 
+    const existingThread = await prisma.appointmentSupportThread.findUnique({
+      where: { appointmentId_userId: { appointmentId, userId: auth.userId } },
+      select: { activeChannel: true },
+    });
+    const onHumanChannel = existingThread?.activeChannel === "HUMAN";
     const mayEscalate =
-      Boolean(parsed.data.userMessage) ||
-      parsed.data.chosenOptionId === "human" ||
-      parsed.data.category === "OTHER";
+      !onHumanChannel &&
+      (Boolean(parsed.data.userMessage) ||
+        parsed.data.chosenOptionId === "human" ||
+        parsed.data.category === "OTHER");
     const rl = await applyRateLimit(
       mayEscalate ? spamLimiter : supportTurnLimiter,
       `appt-support:${auth.userId}`,

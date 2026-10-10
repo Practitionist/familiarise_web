@@ -551,7 +551,7 @@ export function SupportRequestView(props: Readonly<SupportRequestViewProps>) {
       {ref?.kind === "booking" && (
         <SessionRequest appointmentId={ref.id} props={props} />
       )}
-      {ref?.kind === "ticket" && (
+      {(ref?.kind === "ticket" || ref?.kind === "case") && (
         <TicketRequest ticketId={ref.id} props={props} />
       )}
     </DashboardErrorBoundary>

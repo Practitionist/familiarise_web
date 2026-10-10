@@ -14,6 +14,7 @@ export async function stageBell(
     recipients: string[];
     payload: NovuPayload;
     dedupeKey: string;
+    entityRef?: string;
   },
 ) {
   if (args.recipients.length === 0) return null;

@@ -31,7 +31,7 @@ export async function SupportRequestCasePage({
 }>) {
   const ref = parseCaseKey(caseKey);
   if (!ref || ref.kind === "thread") notFound();
-  if (ref.kind === "ticket") {
+  if (ref.kind === "ticket" || ref.kind === "case") {
     const { user } = await requireOnboarded();
     const own = await readOwnTicket(ref.id, user.id);
     if (!own) notFound();
