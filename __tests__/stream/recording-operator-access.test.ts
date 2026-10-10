@@ -42,8 +42,8 @@ jest.mock("../../lib/stream/recording-service", () => ({
 
 jest.mock("../../lib/stream/recording-storage", () => ({
   __esModule: true,
-  getBestRecordingUrl: jest.fn(async () => "https://signed.example/play.mp4"),
-  generateSignedUrl: jest.fn(async () => "https://signed.example/play.mp4"),
+  getBestRecordingUrl: jest.fn(() => "https://signed.example/play.mp4"),
+  generateSignedUrl: jest.fn(() => "https://signed.example/play.mp4"),
   isDurablyOurs: jest.fn(() => true),
   durablyOursWhere: jest.fn(() => ({})),
 }));
@@ -141,7 +141,7 @@ beforeEach(() => {
   db.recordingPurchase.findFirst.mockResolvedValue(null);
   db.orgAuditLog.create.mockResolvedValue({ id: "audit-1" });
   db.systemEvent.create.mockResolvedValue({ id: "evt-1" });
-  mockedBestUrl.mockResolvedValue("https://signed.example/play.mp4");
+  mockedBestUrl.mockReturnValue("https://signed.example/play.mp4");
 });
 
 describe("the recordings permission matrix", () => {
@@ -212,6 +212,28 @@ describe("GET /api/stream/recordings/[recordingId] — operator access", () => {
     expect(mockedBestUrl).toHaveBeenCalledTimes(1);
   });
 
+  it("answers 410 to a buyer of an EXPIRED recording but keeps the ADMIN metadata view", async () => {
+    mockedGetRecording.mockResolvedValue({
+      ...recordingFixture,
+      status: "EXPIRED",
+    });
+    db.recordingPurchase.findFirst.mockResolvedValue({ id: "purchase-1" });
+    mockedGetSession.mockResolvedValue(sessionFor("CONSULTEE"));
+    const buyer = await GET(request(), params);
+    expect(buyer.status).toBe(410);
+
+    mockedGetSession.mockResolvedValue(sessionFor("ADMIN"));
+    const admin = await GET(request(), params);
+    const body = await admin.json();
+    expect(admin.status).toBe(200);
+    expect(body.access.level).toBe("METADATA_ONLY");
+    expect(body.recording).toMatchObject({
+      status: "EXPIRED",
+      playbackUrl: null,
+    });
+    expect(mockedBestUrl).not.toHaveBeenCalled();
+  });
+
   it("still refuses an unrelated consultee", async () => {
     // The guard against "fixed it by opening it to everyone".
     const { res } = await callAs("CONSULTEE");
@@ -264,7 +286,7 @@ describe("every privileged recording read is audited", () => {
       order.push("audit");
       return { id: "audit-1" };
     });
-    mockedBestUrl.mockImplementation(async () => {
+    mockedBestUrl.mockImplementation(() => {
       order.push("url");
       return "https://signed.example/play.mp4";
     });

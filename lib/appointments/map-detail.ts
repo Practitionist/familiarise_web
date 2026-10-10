@@ -6,6 +6,7 @@
  * host for group events).
  */
 
+import { RecordingStatus } from "@prisma/client";
 import type {
   TAppointmentDetail,
   TDetailAppointment,
@@ -35,10 +36,12 @@ import {
 
 type Role = "consultee" | "consultant";
 
+const PLAYABLE_RECORDING_STATUSES: ReadonlySet<RecordingStatus> =
+  new Set<RecordingStatus>([RecordingStatus.READY, RecordingStatus.AVAILABLE]);
+
 interface DetailRecordingVM {
   id: string;
   title: string;
-  url: string | null;
   thumbnailUrl: string | null;
   status: string;
   durationInMinutes: number;
@@ -118,7 +121,8 @@ function eventOf(appointment: TDetailAppointment): {
     title: plan?.title ?? (webinar ? "Webinar" : "Class"),
     status: normalizeStatus((webinar?.status ?? cls?.status)?.toString()),
     consultant: person(plan?.consultantProfile?.user, "Unknown Consultant"),
-    consultantProfileId: plan?.consultantProfile?.id ?? null,
+    consultantProfileId:
+      plan?.consultantProfile?.id ?? plan?.consultantProfileId ?? null,
     consultee: null,
     pendingPaymentUrl: null,
     collaborators: (plan?.collaborators ?? []).map((c) => ({
@@ -133,6 +137,7 @@ export function mapAppointmentDetail(
   detail: TAppointmentDetail,
   role: Role,
   now: Date = new Date(),
+  viewerConsultantId?: string,
 ): { vm: AppointmentVM; recordings: DetailRecordingVM[] } {
   const { appointment } = detail;
   const facts = eventOf(appointment);
@@ -154,10 +159,27 @@ export function mapAppointmentDetail(
     ? { total: entitlement.total, completed: entitlement.completed }
     : null;
 
+  const isCollaboratorViewer =
+    role === "consultant" &&
+    Boolean(
+      viewerConsultantId &&
+      facts.consultantProfileId &&
+      facts.consultantProfileId !== viewerConsultantId,
+    );
+
   const counterpart =
     role === "consultee"
       ? facts.consultant
-      : (facts.consultee ?? facts.consultant);
+      : (facts.consultee ??
+        (isCollaboratorViewer
+          ? facts.consultant
+          : {
+              name:
+                appointment.appointmentType === "WEBINAR"
+                  ? "Registered attendees"
+                  : "Enrolled learners",
+              image: facts.consultant.image,
+            }));
 
   const rawOccurrences: OccurrenceLike[] = all
     .flatMap((a) =>
@@ -210,18 +232,20 @@ export function mapAppointmentDetail(
     },
   };
 
+  // Playback is minted per request by GET /api/stream/recordings/[id]; only playable rows are listed.
   const recordings: DetailRecordingVM[] = all.flatMap((a) =>
     a.occurrences.flatMap((slot) =>
-      (slot.meeting?.recordings ?? []).map((rec) => ({
-        id: rec.id,
-        title: rec.title,
-        url: rec.storageUrl ?? rec.recordingUrl ?? null,
-        thumbnailUrl: rec.thumbnailUrl ?? null,
-        status: rec.status?.toString() ?? "READY",
-        durationInMinutes: rec.durationInMinutes,
-        recordedAt: toDate(rec.recordedAt),
-        sessionStartsAt: toDate(slot.startsAt),
-      })),
+      (slot.meeting?.recordings ?? [])
+        .filter((rec) => PLAYABLE_RECORDING_STATUSES.has(rec.status))
+        .map((rec) => ({
+          id: rec.id,
+          title: rec.title,
+          thumbnailUrl: rec.thumbnailUrl ?? null,
+          status: rec.status,
+          durationInMinutes: rec.durationInMinutes,
+          recordedAt: toDate(rec.recordedAt),
+          sessionStartsAt: toDate(slot.startsAt),
+        })),
     ),
   );
   recordings.sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime());

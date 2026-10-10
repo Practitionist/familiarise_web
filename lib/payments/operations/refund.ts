@@ -618,8 +618,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // id — no heuristic amount+time matching needed.
   if (gateway.status === "FAILED") {
     try {
-      await prisma.refund.update({
-        where: { id: reserved.id },
+      await prisma.refund.updateMany({
+        where: { id: reserved.id, status: RefundStatus.PENDING },
         data: {
           refundId: gateway.refundId || reserved.refundId,
           status: RefundStatus.FAILED,
@@ -633,8 +633,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       // (it still records the decline via the reconciler) and never surface a
       // raw P2002 for a refund whose money state is already correct.
       await prisma.refund
-        .update({
-          where: { id: reserved.id },
+        .updateMany({
+          where: { id: reserved.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             failureReason: "Gateway declined the refund",
@@ -667,8 +667,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   let boundRefundRowId = reserved.id;
   if (gateway.refundId && gateway.refundId !== reserved.refundId) {
     try {
-      await prisma.refund.update({
-        where: { id: reserved.id },
+      await prisma.refund.updateMany({
+        where: { id: reserved.id, status: RefundStatus.PENDING },
         data: {
           refundId: gateway.refundId,
           // Merge, not replace: Phase 1's audit keys (initiatedByUserId,
@@ -751,8 +751,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     // FAILED branch) — just merge metadata onto the reservation row.
     if (gateway.metadata) {
       await prisma.refund
-        .update({
-          where: { id: reserved.id },
+        .updateMany({
+          where: { id: reserved.id, status: RefundStatus.PENDING },
           data: {
             metadata: {
               ...(reserved.metadata &&
@@ -795,6 +795,33 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   const settled = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
+        const settledClaim = await tx.refund.updateMany({
+          where: { id: boundRefundRowId, status: RefundStatus.PENDING },
+          data: { status: RefundStatus.SUCCEEDED },
+        });
+        if (settledClaim.count === 0) {
+          // Concurrent webhook or reconciler already transitioned this row out of PENDING;
+          // only treat as settled if that writer landed SUCCEEDED (and already restored credits).
+          const current = await tx.refund.findUnique({
+            where: { id: boundRefundRowId },
+            select: { status: true },
+          });
+          return {
+            refundId: boundRefundRowId,
+            amountRefundedPaise: requested,
+            legsReversed: 0,
+            consultantEarningsReversed: 0,
+            organizationEarningsReversed: 0,
+            clawbackInitiated: false,
+            memberOverageRefundDue: null,
+            status:
+              current?.status === RefundStatus.SUCCEEDED
+                ? ("SUCCEEDED" as const)
+                : ("PENDING" as const),
+            gatewayRefundId: gateway.refundId || undefined,
+          };
+        }
+
         const cascade = await applyRefundCascade(tx, {
           paymentId: input.paymentId,
           refundId: boundRefundRowId,
@@ -803,26 +830,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           initiatedByUserId: input.initiatedByUserId ?? null,
         });
 
-        await tx.refund.update({
-          where: { id: boundRefundRowId },
-          data: { status: RefundStatus.SUCCEEDED },
-        });
-
-        // Restore referral credits. This closes the #B20 gap: credit restoration
-        // used to live ONLY in the gateway-refund webhook, so a refund initiated
-        // through the app (or through the reversal engine) settled without ever
-        // giving the buyer their credits back.
-        //
-        // It must run AFTER the SUCCEEDED update above, because
-        // reverseCreditsForPayment derives its restoration target from the
-        // cumulative SUCCEEDED refund total for the payment — called before, this
-        // refund would be missing from that sum and credits would be
-        // under-restored. It is re-entrant, so the webhook calling it again for
-        // the same refund is a no-op.
-        // `payment.amount` is the denominator, matching what the webhook passes
-        // at app/api/webhooks/utils.ts — the proportion is (cumulative refunded /
-        // amount charged), and the two paths must agree or a payment refunded
-        // partly through each would restore the wrong total.
+        // Runs after SUCCEEDED transition so cumulative SUCCEEDED refund sum includes this row.
         const restoredCredits = await reverseCreditsForPayment(
           input.paymentId,
           tx,
@@ -1131,6 +1139,13 @@ export async function applyRefundCascade(
     legAmounts[legAmounts.length - 1].reverse += remainder;
   }
 
+  const linkedOrgInvoice = payment.billableToOrgInvoiceId
+    ? await tx.organizationInvoice.findUnique({
+        where: { id: payment.billableToOrgInvoiceId },
+        select: { status: true, issuedAt: true },
+      })
+    : null;
+
   for (const { leg, reverse } of legAmounts) {
     if (reverse <= 0) continue;
     legsReversed++;
@@ -1182,25 +1197,7 @@ export async function applyRefundCascade(
 
       case "INVOICE_ACCRUAL":
       case "OVERAGE_INVOICE_ACCRUAL": {
-        // Both base and overage accrual legs share the same reversal
-        // semantics: if the invoice is already PAID, clawback is handled
-        // at the OrganizationEarnings level below (mutating the leg of a
-        // settled invoice would diverge from the issued document).
-        //
-        // #786/#781 §B — funding legs are append-only: the original leg is
-        // never mutated; the refund nets through a negative *_REVERSAL
-        // sibling. One reversal leg per source keeps @@unique([paymentId,
-        // source]) intact; subsequent partial refunds decrement the
-        // existing reversal leg. The monthly rollup sums original +
-        // reversal so it bills the net — and the full funding history
-        // stays readable from the legs.
-        const billable = payment.billableToOrgInvoiceId
-          ? await tx.organizationInvoice.findUnique({
-              where: { id: payment.billableToOrgInvoiceId },
-              select: { status: true },
-            })
-          : null;
-        const alreadyBilled = billable?.status === "PAID";
+        const alreadyBilled = linkedOrgInvoice?.status === "PAID";
         if (!alreadyBilled) {
           const reversalSource =
             leg.source === "INVOICE_ACCRUAL"
@@ -1515,11 +1512,13 @@ export async function applyRefundCascade(
   // reversal. Idempotent on refundId, so calling it from both paths (or a cron
   // retry) is safe.
   // -----------------------------------------------------------------------
+  const cascadeNow = new Date();
   const refundCreditNote = await mintRefundCreditNote(tx, {
     paymentId: payment.id,
     refundId: input.refundId,
     amountPaise: input.amountPaise,
     reason: input.reason,
+    now: cascadeNow,
   });
 
   // #1365 — the B2C sibling: a personal buyer's invoice is reversed by its own
@@ -1529,6 +1528,7 @@ export async function applyRefundCascade(
     refundId: input.refundId,
     amountPaise: input.amountPaise,
     reason: input.reason,
+    now: cascadeNow,
   });
 
   // -----------------------------------------------------------------------
@@ -1715,8 +1715,9 @@ export async function applyRefundCascade(
       // defaults to 0 in the schema, but legacy/imported rows may lack it.
       // Past the s.34(2) cutoff the GST stays with the government and the platform bears it.
       const taxPaise = payment.taxAmount ?? 0;
+      const cutoffSourceDate = linkedOrgInvoice?.issuedAt ?? payment.createdAt;
       const gstRev =
-        taxPaise > 0 && isPastGstCreditNoteCutoff(payment.createdAt)
+        taxPaise > 0 && isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow)
           ? 0
           : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
@@ -1918,7 +1919,7 @@ export type OrgCreditNoteMintResult = {
  * note already issued against it is summed, mirroring the consumer minter.
  * Aggregations bypass the money extension, hence `sumPaise`.
  */
-async function remainingOrgInvoiceCreditPaise(
+export async function remainingOrgInvoiceCreditPaise(
   tx: Tx,
   invoice: { id: string; totalPaise: number; subtotalPaise: number },
 ): Promise<number> {
@@ -2006,6 +2007,7 @@ export async function mintRefundCreditNote(
     // CreditNote, so each path is idempotent independently.
     refundId?: string;
     disputeId?: string;
+    now?: Date;
   },
 ): Promise<OrgCreditNoteMintResult> {
   if (!params.refundId === !params.disputeId) {
@@ -2113,8 +2115,7 @@ export async function mintRefundCreditNote(
     cnTax = taxShare(cnTotal);
     cnSubtotal = cnTotal - cnTax;
   }
-  // The cutoff runs from the booking's supply, not the later rollup invoice.
-  const commercial = isPastGstCreditNoteCutoff(payment.createdAt);
+  const commercial = isPastGstCreditNoteCutoff(invoice.issuedAt, params.now);
   if (commercial) {
     cnTax = 0;
     cnTotal = cnSubtotal;
@@ -2127,7 +2128,7 @@ export async function mintRefundCreditNote(
   const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
     tx,
     org,
-    new Date(),
+    params.now ?? new Date(),
   );
 
   const cn = await tx.creditNote.create({

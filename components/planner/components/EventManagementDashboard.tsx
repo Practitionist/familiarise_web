@@ -31,6 +31,7 @@ import type {
 } from "@/types/planner-events";
 import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
+import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { useSession } from "@/lib/auth-client";
 import { useListParams } from "@/hooks/useListParams";
 import { EmptyState } from "@/components/dashboard/EmptyState";
@@ -353,6 +354,7 @@ export function EventManagementDashboard({
 
   const consultationPlans = useConsultationPlans(consultantId);
   const subscriptionPlans = useSubscriptionPlans(consultantId);
+  const expertShareHref = useExpertShareHref(consultantId);
 
   const archive: Record<
     OfferingPlanType,
@@ -430,6 +432,7 @@ export function EventManagementDashboard({
       duplicateHref: planId
         ? `${basePath}/offerings/${row.type}/new?from=${planId}`
         : null,
+      shareAttributionHref: expertShareHref,
       trials:
         row.type === "subscription" && planId
           ? {

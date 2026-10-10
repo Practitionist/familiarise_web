@@ -328,9 +328,7 @@ function jsonResponse(body: unknown, status: number): Response {
  * into `failed` the same as any other non-2xx/409 outcome.
  */
 async function readResponseText(res: Response): Promise<string> {
-  return typeof res.text === "function"
-    ? await res.text().catch(() => "")
-    : "";
+  return typeof res.text === "function" ? await res.text().catch(() => "") : "";
 }
 
 async function parse503Response(
@@ -642,7 +640,8 @@ export default async function cronTick(_req: Request): Promise<Response> {
   let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
   const started = Date.now();
-  const targets = dueTargets(new Date(started));
+  const tickDate = new Date(Math.round(started / 60_000) * 60_000);
+  const targets = dueTargets(tickDate);
 
   const settled = await Promise.allSettled(
     targets.map((name) => hitTarget(baseUrl, secret, name)),
@@ -700,7 +699,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   // history — only the Sentry report is suppressed.
   await alertFailedTargets(
     failedForAlert.filter((f) => reportableToSentry(f.name)),
-    new Date(started),
+    tickDate,
   );
 
   // #1861 P4a — one heartbeat check-in per tick, sent after the targets so it

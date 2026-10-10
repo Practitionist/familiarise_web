@@ -246,6 +246,19 @@ export async function handlePaymentSuccess(
             reportSentryError(err, { subsystem: "payments" });
             throw err;
           }
+
+          // Settle only on gateway truth; without a captured amount stay PENDING.
+          if (!recovering && gatewayAmountPaise === undefined) {
+            reportSentryMessage(
+              "capture without gateway amount - staying PENDING",
+              {
+                subsystem: "payments",
+                expected: true,
+                extra: { paymentIntentId },
+              },
+            );
+            return null;
+          }
           const parkCapture = () =>
             postUnappliedReceipt(tx, {
               paymentId: payment.id,
@@ -351,7 +364,9 @@ export async function handlePaymentSuccess(
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
                 description: autoRefundPendingDescription(
-                  `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
+                  gatewayAmountPaise > payment.amount
+                    ? `Over-capture surplus of ${gatewayAmountPaise - payment.amount}p on ${paymentIntentId} (capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p)`
+                    : `capture amount ${gatewayAmountPaise}p ≠ expected ${payment.amount}p`,
                 ),
               },
             });
@@ -826,18 +841,20 @@ export async function handlePaymentSuccess(
       context: { paymentIntentId, paymentId: loser.id },
     });
     try {
-      await refundPayment({
+      const outcome = await refundPayment({
         paymentId: loser.id,
         reason: "legacy capture overlapped a confirmed booking",
         initiatedByUserId: null,
       });
-      await prisma.payment.update({
-        where: { id: loser.id },
-        data: {
-          description:
-            "Auto-refunded: legacy-shape capture overlapped a confirmed booking — booking NOT confirmed.",
-        },
-      });
+      if (outcome?.status !== "PENDING") {
+        await prisma.payment.update({
+          where: { id: loser.id },
+          data: {
+            description:
+              "Auto-refunded: legacy-shape capture overlapped a confirmed booking — booking NOT confirmed.",
+          },
+        });
+      }
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
       console.error(
@@ -851,18 +868,44 @@ export async function handlePaymentSuccess(
   if (!txResult) return null;
 
   if (txResult.outcome === "amount_mismatch") {
+    const refundablePaise = Math.min(
+      txResult.gatewayAmountPaise,
+      txResult.expectedAmount,
+    );
+    const surplusPaise = txResult.gatewayAmountPaise - refundablePaise;
+    if (surplusPaise > 0) {
+      // Log surplus audit event before attempting gateway refund so transient errors never drop it.
+      void recordSystemErrorSafe({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Over-capture surplus of ${surplusPaise}p on payment ${txResult.paymentId} requires operator refund`,
+        err: new Error("OVERCAPTURE_SURPLUS_RECOVERY"),
+        context: {
+          paymentId: txResult.paymentId,
+          gatewayAmountPaise: txResult.gatewayAmountPaise,
+          expectedAmount: txResult.expectedAmount,
+          surplusPaise,
+        },
+      });
+    }
     try {
-      await refundPayment({
+      const outcome = await refundPayment({
         paymentId: txResult.paymentId,
+        amountPaise: refundablePaise,
         reason: "capture amount mismatch",
         initiatedByUserId: null,
       });
-      await prisma.payment.update({
-        where: { id: txResult.paymentId },
-        data: {
-          description: `Auto-refunded: capture amount ${txResult.gatewayAmountPaise}p ≠ expected ${txResult.expectedAmount}p. Booking NOT confirmed.`,
-        },
-      });
+      if (outcome?.status !== "PENDING") {
+        await prisma.payment.update({
+          where: { id: txResult.paymentId },
+          data: {
+            description:
+              surplusPaise > 0
+                ? `REQUIRES_MANUAL_RECOVERY: Over-capture surplus of ${surplusPaise}p on ${paymentIntentId} (refunded ${refundablePaise}p of ${txResult.gatewayAmountPaise}p captured). Booking NOT confirmed.`
+                : `Auto-refunded: capture amount ${txResult.gatewayAmountPaise}p ≠ expected ${txResult.expectedAmount}p. Booking NOT confirmed.`,
+          },
+        });
+      }
     } catch (refundError) {
       reportSentryError(refundError, {
         subsystem: "payments",
@@ -884,17 +927,20 @@ export async function handlePaymentSuccess(
 
   if (txResult.outcome === "captured_after_release") {
     try {
-      await refundBookingPayment({
+      const outcome = await refundBookingPayment({
         paymentId: txResult.paymentId,
+        amountPaise: gatewayAmountPaise,
         reason: `capture after hold release (${txResult.releasedBy})`,
         initiatedByUserId: null,
       });
-      await prisma.payment.update({
-        where: { id: txResult.paymentId },
-        data: {
-          description: `Auto-refunded: capture landed after the hold was released (${txResult.releasedBy}). Booking NOT confirmed.`,
-        },
-      });
+      if (outcome?.status !== "PENDING") {
+        await prisma.payment.update({
+          where: { id: txResult.paymentId },
+          data: {
+            description: `Auto-refunded: capture landed after the hold was released (${txResult.releasedBy}). Booking NOT confirmed.`,
+          },
+        });
+      }
     } catch (refundError) {
       reportSentryError(refundError, {
         subsystem: "payments",
@@ -913,23 +959,21 @@ export async function handlePaymentSuccess(
 
   if (txResult.capturedAfterTerminal) {
     try {
-      if (txResult.seatReleased) {
-        // Refund THIS capture by intent (a seat may be org- or credit-funded).
-        // It throws on failure, so the marker below survives for the retry sweep.
-        await refundBookingPayment({
-          paymentId: txResult.paymentId,
-          reason: "capture after seat release",
-          initiatedByUserId: null,
-          dedupeKey: `capture-unseated:${txResult.paymentId}`,
-        });
-      } else {
-        await refundPayment({
-          paymentId: txResult.paymentId,
-          reason: "capture after cancellation",
-          initiatedByUserId: null,
-        });
+      const outcome = txResult.seatReleased
+        ? await refundBookingPayment({
+            paymentId: txResult.paymentId,
+            reason: "capture after seat release",
+            initiatedByUserId: null,
+            dedupeKey: `capture-unseated:${txResult.paymentId}`,
+          })
+        : await refundPayment({
+            paymentId: txResult.paymentId,
+            reason: "capture after cancellation",
+            initiatedByUserId: null,
+          });
+      if (outcome?.status !== "PENDING") {
+        await settleAutoRefundMarker(txResult.paymentId);
       }
-      await settleAutoRefundMarker(txResult.paymentId);
     } catch (refundError) {
       reportSentryError(refundError, { subsystem: "payments" });
       console.error(
@@ -942,13 +986,15 @@ export async function handlePaymentSuccess(
 
   if (txResult.doubleBookingBlocked) {
     try {
-      await refundPayment({
+      const outcome = await refundPayment({
         paymentId: txResult.paymentId,
         reason: DOUBLE_BOOKING_BLOCKED_NOTE,
         initiatedByUserId: null,
       });
       await releaseBlockedBookingHold(txResult.appointmentId);
-      await settleAutoRefundMarker(txResult.paymentId);
+      if (outcome?.status !== "PENDING") {
+        await settleAutoRefundMarker(txResult.paymentId);
+      }
     } catch (refundError) {
       reportSentryError(refundError, {
         subsystem: "payments",

@@ -226,10 +226,10 @@ export async function GET(
     // themselves + ADMIN) see everything; the public include narrows
     // to PUBLIC + ORG_AND_PUBLIC.
     const planVisibilityFilter:
-      | { visibility: { in: OrgPlanVisibility[] } }
-      | undefined = isPrivilegedAccess
-      ? undefined
-      : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
+      { visibility: { in: OrgPlanVisibility[] } } | undefined =
+      isPrivilegedAccess
+        ? undefined
+        : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
     // #1527 Q4 — 1:1 and subscription plans also hide drafts (and archived
     // rows) from the public include.
     const oneOnOnePlanFilter = isPrivilegedAccess
@@ -326,6 +326,9 @@ export async function GET(
           : {
               "Cache-Control":
                 "public, s-maxage=60, stale-while-revalidate=300",
+              // The payload depends on who is signed in, so the shared copy is keyed on the session cookie.
+              "Netlify-Vary":
+                "cookie=__Secure-better-auth.session_token|better-auth.session_token",
             },
       },
     );

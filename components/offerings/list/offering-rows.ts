@@ -68,6 +68,11 @@ export interface OfferingRow {
   description: string;
   priceText: string;
   durationText: string;
+  sessionsPerWeek: number | null;
+  sessionDurationInHours: number | null;
+  cadenceText: string | null;
+  topicCount: number;
+  moduleCount: number;
   status: OfferingStatusChip;
   isDraft: boolean;
   isArchived: boolean;
@@ -78,6 +83,7 @@ export interface OfferingRow {
   /** #1819 — a plan's batches, numbered by first session. */
   batch: { index: number; total: number } | null;
   trialEnabled: boolean;
+  trialIsFree: boolean;
   event: Event;
 }
 
@@ -95,6 +101,16 @@ const EVENT_STATUS: Record<WebinarStatus | ClassStatus, OfferingStatusChip> = {
 
 const plural = (n: number, one: string, many: string) =>
   `${n} ${n === 1 ? one : many}`;
+
+function formatCadence(
+  sessionsPerWeek: number | null,
+  sessionDurationInHours: number | null,
+): string | null {
+  if (!sessionsPerWeek || sessionsPerWeek <= 0) return null;
+  const perWeek = `${sessionsPerWeek}x/wk`;
+  if (!sessionDurationInHours || sessionDurationInHours <= 0) return perWeek;
+  return `${perWeek} · ${sessionDurationInHours}h/session`;
+}
 
 function planStatus(
   status: string | null | undefined,
@@ -130,6 +146,11 @@ function consultationRow(event: ConsultationPlanEvent): OfferingRow {
     description: plan.description ?? "",
     priceText: price(plan.price, plan.priceCurrency),
     durationText: plural(plan.durationInHours, "hour", "hours"),
+    sessionsPerWeek: null,
+    sessionDurationInHours: null,
+    cadenceText: null,
+    topicCount: plan.topics?.length ?? 0,
+    moduleCount: 0,
     status,
     isDraft: status === DRAFT,
     isArchived: status === ARCHIVED,
@@ -139,6 +160,7 @@ function consultationRow(event: ConsultationPlanEvent): OfferingRow {
     seats: null,
     batch: null,
     trialEnabled: false,
+    trialIsFree: false,
     event,
   };
 }
@@ -147,6 +169,10 @@ function subscriptionRow(event: SubscriptionPlanEvent): OfferingRow {
   const plan = event.subscriptionPlan;
   const planId = plan.id ?? event.id;
   const status = planStatus(plan.status, plan.archivedAt);
+  const legacyCallsPerWeek = (plan as { callsPerWeek?: number }).callsPerWeek;
+  const sessionsPerWeek = plan.sessionsPerWeek ?? legacyCallsPerWeek ?? null;
+  const sessionDurationInHours = plan.sessionDurationInHours ?? 1;
+  const trialEnabled = plan.trialEnabled ?? false;
   return {
     key: `subscription:${planId ?? plan.title}`,
     statKey: planId ? offeringStatKey("subscription", planId) : null,
@@ -157,6 +183,11 @@ function subscriptionRow(event: SubscriptionPlanEvent): OfferingRow {
     description: plan.description ?? "",
     priceText: `${price(plan.price, plan.priceCurrency)}/mo`,
     durationText: plural(plan.durationInMonths, "month", "months"),
+    sessionsPerWeek,
+    sessionDurationInHours,
+    cadenceText: formatCadence(sessionsPerWeek, sessionDurationInHours),
+    topicCount: plan.topics?.length ?? 0,
+    moduleCount: plan.subscriptionContents?.length ?? 0,
     status,
     isDraft: status === DRAFT,
     isArchived: status === ARCHIVED,
@@ -165,7 +196,8 @@ function subscriptionRow(event: SubscriptionPlanEvent): OfferingRow {
     startsAt: null,
     seats: null,
     batch: null,
-    trialEnabled: plan.trialEnabled ?? false,
+    trialEnabled,
+    trialIsFree: trialEnabled && (plan.trialPriceInPaise ?? 0) === 0,
     event,
   };
 }
@@ -194,6 +226,11 @@ function webinarRow(
     description: plan.description ?? "",
     priceText: price(plan.price, plan.priceCurrency),
     durationText: plural(plan.durationInHours, "hour", "hours"),
+    sessionsPerWeek: null,
+    sessionDurationInHours: null,
+    cadenceText: null,
+    topicCount: plan.topics?.length ?? 0,
+    moduleCount: 0,
     status,
     isDraft: status === DRAFT,
     isArchived: status === ARCHIVED,
@@ -206,6 +243,7 @@ function webinarRow(
     },
     batch: null,
     trialEnabled: false,
+    trialIsFree: false,
     event,
   };
 }
@@ -247,6 +285,8 @@ function classRows(
     const plan = event.classPlan;
     const status = eventStatus(event.status, plan.archivedAt);
     const batch = batchOf.get(event.id) ?? null;
+    const sessionsPerWeek = plan.sessionsPerWeek ?? null;
+    const sessionDurationInHours = plan.sessionDurationInHours ?? 1;
     return {
       key: `class:${plan.id}:${event.id}`,
       statKey: plan.id ? offeringStatKey("class", plan.id) : null,
@@ -257,6 +297,11 @@ function classRows(
       description: plan.description ?? "",
       priceText: price(plan.price, plan.priceCurrency),
       durationText: plural(plan.durationInMonths, "month", "months"),
+      sessionsPerWeek,
+      sessionDurationInHours,
+      cadenceText: formatCadence(sessionsPerWeek, sessionDurationInHours),
+      topicCount: plan.topics?.length ?? 0,
+      moduleCount: plan.classContents?.length ?? 0,
       status,
       isDraft: status === DRAFT,
       isArchived: status === ARCHIVED,
@@ -269,6 +314,7 @@ function classRows(
       },
       batch: batch && batch.total > 1 ? batch : null,
       trialEnabled: false,
+      trialIsFree: false,
       event,
     };
   });

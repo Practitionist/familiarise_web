@@ -4,13 +4,14 @@ import { requireBackofficePage } from "@/lib/auth-guard";
 export default async function BackofficeInvoicesPage({
   params,
 }: Readonly<{ params: Promise<{ tree: string }> }>) {
-  await requireBackofficePage("invoices.read", (await params).tree);
+  const { tree } = await params;
+  await requireBackofficePage("invoices.read", tree);
   return (
     <InvoicesPage
       apiEndpoint="/api/admin/invoices"
       title="Invoices"
       description="View all platform payment invoices"
-      showExport={true}
+      dashboardBasePath={`/dashboard/${tree}`}
       queryKeyPrefix="admin-invoices"
     />
   );

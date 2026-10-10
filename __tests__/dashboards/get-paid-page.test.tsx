@@ -45,8 +45,8 @@ import { settleReversePennyDrop } from "@/lib/payments/payouts/reverse-penny-dro
 import { payoutRequirements } from "@/lib/payments/payouts/payout-requirements";
 import { payoutSetupNeeded } from "@/lib/data/needs-you";
 import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
-import { GetPaidView } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/payouts/GetPaidClient";
-import type { PayoutSetup } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/payouts/get-paid-api";
+import { GetPaidView } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/get-paid/GetPaidClient";
+import type { PayoutSetup } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/get-paid/get-paid-api";
 
 const FULL_ACCOUNT = "765432123456789";
 const CP = "cp-1";
@@ -319,21 +319,14 @@ describe("Y2-2 the server page imports no client-module function", () => {
   it("page.tsx takes only the default component from GetPaidClient.tsx and its key from a directive-free module", () => {
     const dir = path.join(
       process.cwd(),
-      "app/dashboard/consultant/[consultantId]/(features)/settings/payouts",
+      "app/dashboard/consultant/[consultantId]/(features)/settings/get-paid",
     );
-    // #1785 L-2 — the page moved to the hub's get-paid section; the
-    // components stayed under payouts/.
-    const page = readFileSync(
-      path.join(dir, "..", "get-paid", "page.tsx"),
-      "utf8",
-    );
-    // FAMILIARISE_WEB-5Q: calling a `"use client"` export from the RSC 500s
-    // on every load. Only the component may cross that line.
+    const page = readFileSync(path.join(dir, "page.tsx"), "utf8");
     const fromClient = page.match(
-      /import\s*\{([^}]*)\}\s*from\s*"\.\.\/payouts\/GetPaidClient"/,
+      /import\s*\{([^}]*)\}\s*from\s*"\.\/GetPaidClient"/,
     );
     expect(fromClient?.[1].trim()).toBe("GetPaidClient");
-    expect(page).toContain('from "../payouts/payout-setup-keys"');
+    expect(page).toContain('from "./payout-setup-keys"');
     const keys = readFileSync(path.join(dir, "payout-setup-keys.ts"), "utf8");
     expect(keys).not.toMatch(/^"use client"/m);
     expect(keys).not.toMatch(/^import /m);

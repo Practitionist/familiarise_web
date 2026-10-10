@@ -40,6 +40,14 @@ const slotsWithRecordings = {
               status: { notIn: ["FAILED", "EXPIRED"] },
             },
             orderBy: { recordedAt: "desc" as const },
+            select: {
+              id: true,
+              title: true,
+              durationInMinutes: true,
+              recordedAt: true,
+              thumbnailUrl: true,
+              status: true,
+            },
           },
         },
       },
@@ -211,10 +219,9 @@ export async function GET(
     const lateJoin = await lateJoinRecordingAccess(userId);
 
     // Get paid plan IDs via shared RecordingService method
-    const {
-      webinarPlanIds: paidWebinarPlanIds,
-      classPlanIds: paidClassPlanIds,
-    } = await RecordingService.getPaidPlanIds(userId);
+    const { webinarScope, classPlanIds: paidClassPlanIds } =
+      await RecordingService.getPaidPlanIds(userId);
+    const sharedWebinarPlanIds = webinarScope.sharedPlanIds;
 
     // #1166 ORG-4 — personal surface: participation arms pin the appointment
     // to organizationId: null (ADR 19; mirrors the events read). The
@@ -252,11 +259,11 @@ export async function GET(
                   participants: { some: liveParticipant(userId) },
                 },
               },
-              // Other instances from paid plans that have recordings
-              ...(paidWebinarPlanIds.length > 0
+              // Other runs of paid plans that share recordings across runs
+              ...(sharedWebinarPlanIds.length > 0
                 ? [
                     {
-                      webinarPlanId: { in: paidWebinarPlanIds },
+                      webinarPlanId: { in: sharedWebinarPlanIds },
                       appointment: {
                         occurrences: {
                           some: {
@@ -389,22 +396,14 @@ export async function GET(
       take: 50,
     });
 
-    const applyMediaRedaction = <
-      T extends { playbackUrl?: string | null; thumbnailUrl?: string | null },
-    >(
-      items: T[],
-    ): T[] =>
-      includeMediaUrls
-        ? items
-        : items.map((item) => ({
-            ...item,
-            playbackUrl: null,
-            thumbnailUrl: null,
-          }));
-
-    const extractAndRedact = async (
+    const extractAndRedact = (
       ...args: Parameters<typeof extractRecordings>
-    ) => applyMediaRedaction(await extractRecordings(...args));
+    ) => {
+      const items = extractRecordings(...args);
+      return includeMediaUrls
+        ? items
+        : items.map((item) => ({ ...item, thumbnailUrl: null }));
+    };
 
     // Include if COMPLETED or has at least 1 material/recording
     type TransformedEvent = {
@@ -418,93 +417,75 @@ export async function GET(
       e.recordings.length > 0;
 
     const transform = {
-      consultations: (
-        await Promise.all(
-          consultations.map(async (c: ConsultationWithResources) => ({
-            id: c.id,
-            planTitle: c.consultationPlan.title,
-            consultantName: c.consultationPlan.consultantProfile.user.name,
-            consultantImage: c.consultationPlan.consultantProfile.user.image,
-            status: c.status,
-            date: c.appointment?.occurrences?.[0]?.startsAt || c.requestedAt,
-            materials: c.consultationPlan.materials,
-            recordings: await extractAndRedact(
-              c.appointment ? [c.appointment] : [],
-            ),
-          })),
-        )
-      ).filter(shouldInclude),
-      subscriptions: (
-        await Promise.all(
-          subscriptions.map(async (s: SubscriptionWithResources) => ({
-            id: s.id,
-            planTitle: s.subscriptionPlan.title,
-            consultantName: s.subscriptionPlan.consultantProfile.user.name,
-            consultantImage: s.subscriptionPlan.consultantProfile.user.image,
-            status: s.status,
-            date: s.schedulingPeriodStartsAt || s.requestedAt,
-            materials: s.subscriptionPlan.materials,
-            recordings: await extractAndRedact(
-              s.appointment ? [s.appointment] : [],
-            ),
-          })),
-        )
-      ).filter((e) => e.status !== "PENDING" && shouldInclude(e)),
-      webinars: (
-        await Promise.all(
-          webinars.map(async (w: WebinarWithResources) => ({
-            id: w.id,
-            planTitle: w.webinarPlan.title,
-            consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
-            consultantImage:
-              w.webinarPlan.consultantProfile?.user.image ?? null,
-            status: w.status,
-            date: w.appointment?.occurrences?.[0]?.startsAt || w.createdAt,
-            materials: w.webinarPlan.materials,
-            recordings: await extractAndRedact(
-              w.appointment ? [w.appointment] : [],
-            ),
-          })),
-        )
-      ).filter(shouldInclude),
-      classes: (
-        await Promise.all(
-          classes.map(async (cl: ClassWithResources) => ({
-            id: cl.id,
-            planTitle: cl.classPlan.title,
-            consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
-            consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
-            status: cl.status,
-            date:
-              cl.schedulingPeriodStartsAt ||
-              cl.appointment?.occurrences?.[0]?.startsAt ||
-              cl.createdAt,
-            materials: cl.classPlan.materials,
-            recordings: await extractAndRedact(
-              cl.appointment ? [cl.appointment] : [],
-              { access: lateJoin, classId: cl.id, classPlanId: cl.classPlanId },
-            ),
-          })),
-        )
-      ).filter(shouldInclude),
-      trials: (
-        await Promise.all(
-          trials.map(async (t: TrialWithResources) => ({
-            id: t.id,
-            planTitle: `Trial: ${t.subscriptionPlan.title}`,
-            consultantName:
-              t.subscriptionPlan.consultantProfile?.user.name ?? null,
-            consultantImage:
-              t.subscriptionPlan.consultantProfile?.user.image ?? null,
-            status: t.status,
-            date: t.appointment?.occurrences?.[0]?.startsAt || t.requestedAt,
-            materials: t.subscriptionPlan.materials,
-            recordings: await extractAndRedact(
-              t.appointment ? [t.appointment] : [],
-            ),
-          })),
-        )
-      ).filter(shouldInclude),
+      consultations: consultations
+        .map((c: ConsultationWithResources) => ({
+          id: c.id,
+          planTitle: c.consultationPlan.title,
+          consultantName: c.consultationPlan.consultantProfile.user.name,
+          consultantImage: c.consultationPlan.consultantProfile.user.image,
+          status: c.status,
+          date: c.appointment?.occurrences?.[0]?.startsAt || c.requestedAt,
+          materials: c.consultationPlan.materials,
+          recordings: extractAndRedact(c.appointment ? [c.appointment] : []),
+        }))
+        .filter(shouldInclude),
+      subscriptions: subscriptions
+        .map((s: SubscriptionWithResources) => ({
+          id: s.id,
+          planTitle: s.subscriptionPlan.title,
+          consultantName: s.subscriptionPlan.consultantProfile.user.name,
+          consultantImage: s.subscriptionPlan.consultantProfile.user.image,
+          status: s.status,
+          date: s.schedulingPeriodStartsAt || s.requestedAt,
+          materials: s.subscriptionPlan.materials,
+          recordings: extractAndRedact(s.appointment ? [s.appointment] : []),
+        }))
+        .filter((e) => e.status !== "PENDING" && shouldInclude(e)),
+      webinars: webinars
+        .map((w: WebinarWithResources) => ({
+          id: w.id,
+          planTitle: w.webinarPlan.title,
+          consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
+          consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
+          status: w.status,
+          date: w.appointment?.occurrences?.[0]?.startsAt || w.createdAt,
+          materials: w.webinarPlan.materials,
+          recordings: extractAndRedact(w.appointment ? [w.appointment] : []),
+        }))
+        .filter(shouldInclude),
+      classes: classes
+        .map((cl: ClassWithResources) => ({
+          id: cl.id,
+          planTitle: cl.classPlan.title,
+          consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
+          consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
+          status: cl.status,
+          date:
+            cl.schedulingPeriodStartsAt ||
+            cl.appointment?.occurrences?.[0]?.startsAt ||
+            cl.createdAt,
+          materials: cl.classPlan.materials,
+          recordings: extractAndRedact(cl.appointment ? [cl.appointment] : [], {
+            access: lateJoin,
+            classId: cl.id,
+            classPlanId: cl.classPlanId,
+          }),
+        }))
+        .filter(shouldInclude),
+      trials: trials
+        .map((t: TrialWithResources) => ({
+          id: t.id,
+          planTitle: `Trial: ${t.subscriptionPlan.title}`,
+          consultantName:
+            t.subscriptionPlan.consultantProfile?.user.name ?? null,
+          consultantImage:
+            t.subscriptionPlan.consultantProfile?.user.image ?? null,
+          status: t.status,
+          date: t.appointment?.occurrences?.[0]?.startsAt || t.requestedAt,
+          materials: t.subscriptionPlan.materials,
+          recordings: extractAndRedact(t.appointment ? [t.appointment] : []),
+        }))
+        .filter(shouldInclude),
       purchased: purchasedRecordings
         .filter(
           (p, idx, arr) =>
@@ -514,8 +495,9 @@ export async function GET(
         .map((p) => {
           const rec = p.recording;
           const apt = rec.meeting?.occurrence?.appointment;
-          const plan =
-            apt?.webinar?.webinarPlan ?? apt?.class?.classPlan ?? null;
+          const webinarPlan = apt?.webinar?.webinarPlan ?? null;
+          const classPlan = apt?.class?.classPlan ?? null;
+          const plan = webinarPlan ?? classPlan;
           const consultantUser = plan?.consultantProfile?.user;
           return {
             id: `purchased-${p.id}`,
@@ -525,6 +507,17 @@ export async function GET(
             status: "COMPLETED",
             date: rec.recordedAt,
             eventType: "purchased" as const,
+            offeringType: apt?.class
+              ? ("class" as const)
+              : ("webinar" as const),
+            classId: apt?.class?.id ?? null,
+            webinarId: apt?.webinar?.id ?? null,
+            classPlan: classPlan
+              ? { id: classPlan.id, title: classPlan.title }
+              : null,
+            webinarPlan: webinarPlan
+              ? { id: webinarPlan.id, title: webinarPlan.title }
+              : null,
             materials: [],
             recordings: [
               {
@@ -532,7 +525,6 @@ export async function GET(
                 title: rec.listingTitle || rec.title,
                 durationInMinutes: rec.durationInMinutes,
                 recordedAt: rec.recordedAt,
-                playbackUrl: null,
                 thumbnailUrl: includeMediaUrls ? rec.thumbnailUrl : null,
                 status: rec.status,
               },

@@ -64,12 +64,33 @@ export async function GET(
       _count: { _all: true },
       _sum: { rating: true },
     });
-  const [allTime, recent, older] = await Promise.all([
-    grouped(attendeeRatings),
+  const [recent, older] = await Promise.all([
     grouped({ ...attendeeRatings, createdAt: { gte: since30d } }),
     grouped({ ...attendeeRatings, createdAt: { lt: since30d } }),
   ]);
-  type Pair = (typeof allTime)[number];
+  type Pair = (typeof recent)[number];
+
+  const allTimeMap = new Map<string, Pair>();
+  for (const row of [...recent, ...older]) {
+    const key = `${row.consultantProfileId ?? ""}:${row.userId}`;
+    const existing = allTimeMap.get(key);
+    if (existing) {
+      allTimeMap.set(key, {
+        consultantProfileId: row.consultantProfileId,
+        userId: row.userId,
+        _count: { _all: existing._count._all + row._count._all },
+        _sum: { rating: (existing._sum.rating ?? 0) + (row._sum.rating ?? 0) },
+      });
+    } else {
+      allTimeMap.set(key, {
+        consultantProfileId: row.consultantProfileId,
+        userId: row.userId,
+        _count: { _all: row._count._all },
+        _sum: { rating: row._sum.rating },
+      });
+    }
+  }
+  const allTime: Pair[] = [...allTimeMap.values()];
 
   const round1 = (n: number) => Math.round(n * 10) / 10;
 

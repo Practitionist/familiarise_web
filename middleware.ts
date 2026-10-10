@@ -285,6 +285,18 @@ export async function middleware(
     return NextResponse.next();
   }
 
+  if (
+    pathname.startsWith("/dashboard/consultant/") &&
+    pathname.endsWith("/settings/payouts")
+  ) {
+    const targetUrl = req.nextUrl.clone();
+    targetUrl.pathname = pathname.replace(
+      /\/settings\/payouts$/,
+      "/settings/get-paid",
+    );
+    return NextResponse.redirect(targetUrl, 308);
+  }
+
   const isSubNavigation =
     req.headers.get("Next-Router-Prefetch") === "1" ||
     req.headers.get("RSC") === "1";
@@ -304,13 +316,17 @@ export async function middleware(
   return response;
 }
 
+export function isExpertShareAttributionPath(pathname: string): boolean {
+  return /^\/explore\/(experts|programs\/plans)\//.test(pathname);
+}
+
 /** An expert's signed share link: keep the token for checkout, which verifies it. */
 function rememberExpertVia(
   req: NextRequest,
   pathname: string,
   response: NextResponse,
 ): void {
-  if (!pathname.startsWith("/explore/experts/")) return;
+  if (!isExpertShareAttributionPath(pathname)) return;
   const via = parseViaToken(req.nextUrl.searchParams.get("via"));
   if (!via) return;
   response.cookies.set(EXPERT_VIA_COOKIE, via, {

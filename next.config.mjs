@@ -36,6 +36,11 @@ const RESOLVED_APP_URL =
  * Opt-in type-check and lint inside Netlify's `next build`. See the `eslint` /
  * `typescript` keys below.
  */
+const PDFKIT_FONT_FILES = [
+  "./node_modules/pdfkit/package.json",
+  "./node_modules/pdfkit/js/standard-fonts/**",
+];
+
 const STRICT_BUILD = process.env.STRICT_BUILD === "true";
 
 /**
@@ -363,21 +368,27 @@ const nextConfig = {
   // bundler (lib/pdf/react-runtime/jsx-runtime.ts), which the tracer cannot
   // see, and the only traced import of `react` is the reconciler's, which
   // reaches the package root rather than that entrypoint. Ship the package.
+  //
+  // pdfkit@0.20.1 loads font metrics via `createRequire()('#standard-fonts/*')`,
+  // a package `imports` subpath the tracer cannot follow; ship those files.
   outputFileTracingIncludes: {
     "/api/payments/[paymentId]/invoice/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/payments/[paymentId]/credit-note/[creditNoteId]/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/organizations/[orgId]/billing-account/credit-notes/[creditNoteId]/pdf":
-      ["./public/fonts/**", "./node_modules/react/**"],
+      ["./public/fonts/**", "./node_modules/react/**", ...PDFKIT_FONT_FILES],
   },
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
@@ -534,18 +545,15 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // container RSS — not heap — is the constraint. The widened client upload
   // holds the full client source-map set in memory during the finalize phase;
   // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
+  // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
+  sourcemaps: {
+    disable:
+      process.env.NETLIFY === "true" && process.env.CONTEXT !== "production",
+  },
   widenClientFileUpload: process.env.NETLIFY !== "true",
 
-  // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
-  // tunnelRoute: "/monitoring",
-
   webpack: {
-    // Tree-shaking options for reducing bundle size
     treeshake: {
-      // Automatically tree-shake Sentry logger statements to reduce bundle size
       removeDebugLogging: true,
     },
   },

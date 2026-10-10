@@ -18,11 +18,19 @@ export async function GET() {
     return NextResponse.json({
       data: {
         totalAvailable,
-        history,
+        history: history.map((credit) => ({
+          ...credit,
+          state: credit.state,
+          expiresAt: credit.expiresAt,
+          vestedAt: credit.vestedAt,
+        })),
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error fetching credits:", error);
     return NextResponse.json(
       { error: "Failed to fetch credits" },

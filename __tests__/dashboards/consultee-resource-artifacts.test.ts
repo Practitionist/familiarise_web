@@ -98,7 +98,7 @@ describe("the two Library pages read their own sources (#1527)", () => {
       "app/api/dashboard/consultee/[consulteeId]/resources/route.ts",
     );
     expect(route).toContain("lateJoinRecordingAccess(userId)");
-    expect(route).toMatch(/access: lateJoin, classId: cl\.id/);
+    expect(route).toMatch(/access: lateJoin,\s+classId: cl\.id/);
     // #1527 — the filter moved to the shared extractor the org Library reuses.
     expect(route).toContain('from "@/lib/stream/session-recordings"');
     expect(read("lib/stream/session-recordings.ts")).toContain(

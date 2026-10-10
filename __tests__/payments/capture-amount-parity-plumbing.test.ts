@@ -258,7 +258,7 @@ beforeEach(() => {
 });
 
 describe("order.paid must not pass the order TOTAL as a captured amount", () => {
-  it("withholds the amount when Razorpay ships no payment entity, so parity is skipped not faked", async () => {
+  it("withholds the amount when Razorpay ships no payment entity, so it stays PENDING, not faked", async () => {
     paymentFindUnique.mockResolvedValue({
       ...pendingPayment,
       paymentIntent: "order_1",
@@ -272,7 +272,10 @@ describe("order.paid must not pass the order TOTAL as a captured amount", () => 
 
     expectNoMismatchStamp();
     expect(refundPayment).not.toHaveBeenCalled();
-    expect(appointmentFindUnique).toHaveBeenCalled();
+    // Settle-only-on-gateway-truth: no captured amount, so the row stays
+    // PENDING and the flow returns before any appointment lookup.
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
+    expect(appointmentFindUnique).not.toHaveBeenCalled();
   });
 
   it("still uses the payment entity's amount when Razorpay ships one", async () => {

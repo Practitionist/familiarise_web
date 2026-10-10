@@ -5,7 +5,9 @@ import { useCall } from "@stream-io/video-react-sdk";
 import { Circle, Square, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
+import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
 import { useSessionInfo } from "../session-info";
+import DeclineRecordingButton from "./DeclineRecordingButton";
 
 interface RecordingControlsProps {
   meetingId: string;
@@ -24,7 +26,7 @@ const RecordingControls = ({
 }: RecordingControlsProps) => {
   const call = useCall();
   const { toast } = useToast();
-  const { isHost: sessionIsHost } = useSessionInfo();
+  const { isHost: sessionIsHost, appointmentType } = useSessionInfo();
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -37,6 +39,9 @@ const RecordingControls = ({
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
+
+  // The host mounts a button-only and an indicator copy; only one may announce.
+  const announces = !showOnlyButton;
 
   // Subscribe to call recording state changes
   useEffect(() => {
@@ -53,30 +58,31 @@ const RecordingControls = ({
     const unsubscribe = call.on("call.recording_started", () => {
       setIsRecording(true);
       setIsLoading(false);
-      toast({
-        title: "Recording Started",
-        description: "The session is now being recorded.",
-      });
+      if (announces)
+        toast({
+          title: "Recording Started",
+          description: "The session is now being recorded.",
+        });
     });
 
     const unsubscribeStopped = call.on("call.recording_stopped", () => {
       setIsRecording(false);
       setIsLoading(false);
       setRecordingDuration(0);
-      toast({
-        title: "Recording Stopped",
-        description: "The recording has been saved.",
-      });
+      if (announces)
+        // Neutral: a consent decline also stops the recording, and discards it.
+        toast({ title: "Recording stopped." });
     });
 
     const unsubscribeFailed = call.on("call.recording_failed", () => {
       setIsRecording(false);
       setIsLoading(false);
-      toast({
-        title: "Recording Failed",
-        description: "There was an error with the recording.",
-        variant: "destructive",
-      });
+      if (announces)
+        toast({
+          title: "Recording Failed",
+          description: "There was an error with the recording.",
+          variant: "destructive",
+        });
     });
 
     const unsubscribeUpdated = call.on("call.updated", () => {
@@ -97,7 +103,7 @@ const RecordingControls = ({
       unsubscribeFailed();
       unsubscribeUpdated();
     };
-  }, [call, toast]);
+  }, [call, toast, announces]);
 
   // Recording duration timer
   useEffect(() => {
@@ -194,14 +200,20 @@ const RecordingControls = ({
   if (!isHost) {
     if (isRecording) {
       return (
-        <div
-          className="flex items-center gap-2 px-3 py-2 bg-red-500/20 rounded-lg border border-red-500/30 cursor-not-allowed"
-          title="Recording in progress"
-        >
-          <Circle className="w-3 h-3 fill-red-500 text-red-500 animate-pulse" />
-          <span className="text-sm font-medium text-red-400">
-            REC {formatDuration(recordingDuration)}
-          </span>
+        <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-2 px-3 py-2 bg-red-500/20 rounded-lg border border-red-500/30 cursor-not-allowed"
+            title="Recording in progress"
+          >
+            <Circle className="w-3 h-3 fill-red-500 text-red-500 animate-pulse" />
+            <span className="text-sm font-medium text-red-400">
+              REC {formatDuration(recordingDuration)}
+            </span>
+          </div>
+          {/* Group recordings are acknowledge-only; the consent route refuses their declines. */}
+          {call && !isOneToManyAppointmentType(appointmentType) && (
+            <DeclineRecordingButton callId={call.id} />
+          )}
         </div>
       );
     }

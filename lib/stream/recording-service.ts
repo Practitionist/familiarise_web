@@ -17,12 +17,20 @@ import {
   hiddenFromLateJoiner,
   lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
-import { generateRecordingTitle } from "@/lib/stream/recording-utils";
 import {
-  RecordingTransferService,
-  resolveAppointmentStoragePolicy,
-} from "@/lib/stream/recording-transfer-service";
-import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
+  generateRecordingTitle,
+  streamCopyExpiresAt,
+  type AppointmentWithOwnership,
+} from "@/lib/stream/recording-utils";
+import {
+  discardDeclinedRecording,
+  wasDeclinedDuringRecording,
+} from "@/lib/stream/recording-decline";
+import {
+  webinarRecordingScope,
+  webinarRecordingWhere,
+  type WebinarRecordingScope,
+} from "@/lib/stream/recording-attendee-scope";
 import type {
   RecordingRow,
   ConsultantRecordingWithDetails,
@@ -66,6 +74,7 @@ export interface StreamRecording {
   url: string;
   start_time: Date;
   end_time: Date;
+  session_id: string;
 }
 
 /**
@@ -78,9 +87,10 @@ export type SyncableSession = {
   streamCallId: string | null;
   occurrence: {
     appointment:
-      | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> & {
-          organizationId: string | null;
-        })
+      | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> &
+          AppointmentWithOwnership & {
+            organizationId: string | null;
+          })
       | null;
   };
 };
@@ -213,6 +223,7 @@ export class RecordingService {
         url: r.url,
         start_time: r.start_time,
         end_time: r.end_time,
+        session_id: r.session_id,
       }));
     } catch (error) {
       streamLogger.error("Failed to get call recordings from Stream", error, {
@@ -501,12 +512,11 @@ export class RecordingService {
   }
 
   /**
-   * Get paid webinar/class plan IDs and entitled 1:1 appointment IDs for a user.
-   * Shared by getConsulteeRecordings and the resources API.
-   * @param userId The user ID
+   * Recording entitlements from the user's payments and live seats: the webinar
+   * scope, paid class plans, and entitled 1:1 appointments.
    */
   static async getPaidPlanIds(userId: string): Promise<{
-    webinarPlanIds: string[];
+    webinarScope: WebinarRecordingScope;
     classPlanIds: string[];
     appointmentIds: string[];
   }> {
@@ -532,7 +542,14 @@ export class RecordingService {
           appointment: {
             select: {
               id: true,
-              webinar: { select: { webinarPlanId: true } },
+              webinar: {
+                select: {
+                  webinarPlanId: true,
+                  webinarPlan: {
+                    select: { shareRecordingsWithAllAttendees: true },
+                  },
+                },
+              },
               class: { select: { classPlanId: true } },
               consultation: { select: { id: true } },
               subscription: { select: { id: true } },
@@ -558,7 +575,14 @@ export class RecordingService {
                   refunds: { select: { amountPaise: true, status: true } },
                 },
               },
-              webinar: { select: { webinarPlanId: true } },
+              webinar: {
+                select: {
+                  webinarPlanId: true,
+                  webinarPlan: {
+                    select: { shareRecordingsWithAllAttendees: true },
+                  },
+                },
+              },
               class: { select: { classPlanId: true } },
               consultation: { select: { id: true } },
               subscription: { select: { id: true } },
@@ -604,12 +628,21 @@ export class RecordingService {
     });
     const combined = [...entitled, ...entitledSeats];
 
-    const webinarPlanIds = Array.from(
-      new Set(
-        combined
-          .map((e) => e.appointment?.webinar?.webinarPlanId)
-          .filter((id): id is string => !!id),
-      ),
+    const webinarScope = webinarRecordingScope(
+      combined.flatMap((e) => {
+        const webinar = e.appointment?.webinar;
+        const appointmentId = e.appointment?.id ?? e.appointmentId;
+        return webinar && appointmentId
+          ? [
+              {
+                appointmentId,
+                webinarPlanId: webinar.webinarPlanId,
+                shareRecordingsWithAllAttendees:
+                  webinar.webinarPlan.shareRecordingsWithAllAttendees,
+              },
+            ]
+          : [];
+      }),
     );
     const classPlanIds = Array.from(
       new Set(
@@ -632,7 +665,7 @@ export class RecordingService {
       ),
     );
 
-    return { webinarPlanIds, classPlanIds, appointmentIds };
+    return { webinarScope, classPlanIds, appointmentIds };
   }
 
   private static buildOneToOneTypeFilter(
@@ -646,30 +679,22 @@ export class RecordingService {
 
   private static buildConsulteeWhereConditions(params: {
     type?: ConsultantRecordingFilterType;
-    webinarPlanIds: string[];
+    webinarScope: WebinarRecordingScope;
     classPlanIds: string[];
     appointmentIds: string[];
     purchasedRecordingIds: string[];
   }): Prisma.RecordingWhereInput[] {
     const {
       type,
-      webinarPlanIds,
+      webinarScope,
       classPlanIds,
       appointmentIds,
       purchasedRecordingIds,
     } = params;
     const whereConditions: Prisma.RecordingWhereInput[] = [];
 
-    if ((!type || type === "webinar") && webinarPlanIds.length > 0) {
-      whereConditions.push({
-        meeting: {
-          occurrence: {
-            appointment: {
-              webinar: { webinarPlanId: { in: webinarPlanIds } },
-            },
-          },
-        },
-      });
+    if (!type || type === "webinar") {
+      whereConditions.push(...webinarRecordingWhere(webinarScope));
     }
 
     if ((!type || type === "class") && classPlanIds.length > 0) {
@@ -724,7 +749,7 @@ export class RecordingService {
     },
   ): Promise<ConsulteeRecordingWithDetails[]> {
     try {
-      const [{ webinarPlanIds, classPlanIds, appointmentIds = [] }, purchases] =
+      const [{ webinarScope, classPlanIds, appointmentIds = [] }, purchases] =
         await Promise.all([
           this.getPaidPlanIds(userId),
           prisma.recordingPurchase?.findMany?.({
@@ -739,7 +764,7 @@ export class RecordingService {
 
       const whereConditions = this.buildConsulteeWhereConditions({
         type: filters?.type,
-        webinarPlanIds,
+        webinarScope,
         classPlanIds,
         appointmentIds,
         purchasedRecordingIds,
@@ -950,45 +975,6 @@ export class RecordingService {
   }
 
   /**
-   * Get recordings that are expiring soon (for transfer to Supabase)
-   * @param daysBeforeExpiry Number of days before expiry to consider
-   * @param limit Maximum number of rows to return per batch
-   */
-  static async getExpiringRecordings(
-    daysBeforeExpiry: number = 3,
-    limit: number = 10,
-  ): Promise<RecordingRow[]> {
-    const now = new Date();
-    const expiryThreshold = new Date(now);
-    expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
-
-    try {
-      const recordings = await prisma.recording.findMany({
-        where: {
-          storageType: "STREAM_S3",
-          status: "READY",
-          transferAttempts: { lt: 5 },
-          streamUrlExpiresAt: {
-            lte: expiryThreshold,
-            gt: now,
-          },
-        },
-        orderBy: {
-          streamUrlExpiresAt: "asc",
-        },
-        take: limit,
-      });
-
-      return recordings;
-    } catch (error) {
-      streamLogger.error("Failed to get expiring recordings", error, {
-        daysBeforeExpiry,
-      });
-      return [];
-    }
-  }
-
-  /**
    * Get the current recording state for a meeting session
    * @param meetingId The meeting session ID
    */
@@ -1058,7 +1044,24 @@ export class RecordingService {
       if (streamRecordings === null)
         return { ok: false, reason: "stream-unreachable" };
 
+      const appointment = session.occurrence.appointment;
       for (const streamRec of streamRecordings) {
+        if (
+          await wasDeclinedDuringRecording(
+            session.id,
+            appointment,
+            new Date(streamRec.end_time),
+          )
+        ) {
+          await discardDeclinedRecording({
+            meetingId: session.id,
+            streamCallId: session.streamCallId,
+            sessionId: streamRec.session_id,
+            filename: streamRec.filename,
+          });
+          continue;
+        }
+
         // Check if recording already exists (by filename/streamRecordingId)
         const existingRecording = await prisma.recording.findFirst({
           where: {
@@ -1084,16 +1087,8 @@ export class RecordingService {
           : 0;
 
         // Generate title from appointment info (same logic as handleRecordingReady)
-        const appointment = session.occurrence.appointment;
         const title = generateRecordingTitle(appointment, startDate);
-
-        // Stream retains recordings for 14 days from when the recording ended
-        const expiryAnchorMs = Number.isFinite(endDate.getTime())
-          ? endDate.getTime()
-          : Date.now();
-        const streamUrlExpiresAt = new Date(
-          expiryAnchorMs + 14 * 24 * 60 * 60 * 1000,
-        );
+        const streamUrlExpiresAt = streamCopyExpiresAt(endDate);
 
         const recording = await prisma.recording.create({
           data: {
@@ -1112,28 +1107,6 @@ export class RecordingService {
         });
 
         syncedRecordings.push(recording);
-
-        const storagePolicy = resolveAppointmentStoragePolicy(
-          appointment as Parameters<typeof resolveAppointmentStoragePolicy>[0],
-        );
-        if (
-          storagePolicy === "PERMANENT" ||
-          storagePolicy === "SUPABASE_PERMANENT"
-        ) {
-          const recordingId = recording.id;
-          await runAfterOrInline(() =>
-            RecordingTransferService.queueRecordingTransfer(recordingId).catch(
-              (err) =>
-                streamLogger.error(
-                  "Synced recording transfer kick threw",
-                  err,
-                  {
-                    recordingId,
-                  },
-                ),
-            ),
-          );
-        }
 
         streamLogger.info("Recording synced successfully", {
           recordingId: recording.id,

@@ -14,6 +14,7 @@
 
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -25,6 +26,8 @@ import {
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
 import { EmptyState as EmptyBlock } from "@/components/dashboard/EmptyState";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { humanizeEnum } from "@/lib/ui/tone";
 
 const PROGRAM_TYPE_LABEL: Record<string, string> = {
@@ -40,12 +43,30 @@ const OVERAGE_BEHAVIOR_LABEL: Record<string, string> = {
   CHARGE_ORG: "Over-cap bookings billed to the organisation",
 };
 
+const LEAVE_ERROR_COPY: Record<string, string> = {
+  SOLE_OWNER:
+    "You are the sole owner of this organization. Transfer ownership before leaving.",
+  MEMBER_HAS_OBLIGATIONS:
+    "You still have upcoming sessions or money in progress under this organization. Settle or cancel those before leaving.",
+  NOT_A_MEMBER: "You are no longer an active member of this organization.",
+  ACCESS_DENIED: "Unable to verify organization access for leaving.",
+  LEAVE_FAILED:
+    "We could not complete your request to leave this organization. Please try again.",
+};
+
 export default async function MyProgramPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ orgId: string }>;
+  searchParams?: Promise<{ leaveError?: string }>;
 }) {
   const { orgId } = await params;
+  const resolvedSearch = searchParams ? await searchParams : undefined;
+  const leaveError =
+    typeof resolvedSearch?.leaveError === "string"
+      ? (LEAVE_ERROR_COPY[resolvedSearch.leaveError] ?? null)
+      : null;
   const access = await requireOrgAccess(orgId);
   // Same grant as the nav item (#1527): the sponsored member's own page.
   if (access.error || !hasOrgPermission(access.member.role, "myProgram.read")) {
@@ -103,14 +124,49 @@ export default async function MyProgramPage({
   // the personal dashboard now excludes. The org appointments page's "mine"
   // scope is the surface that actually holds them.
   const appointmentsHref = `/dashboard/organization/${orgId}/appointments?scope=mine`;
+  const primaryProgramId = assignments[0]?.program.id;
+  let browseCoveredHref = "/explore/experts";
+  let browseCoveredLabel = "Browse experts";
+  if (primaryProgramId) {
+    browseCoveredHref = `/explore/experts?program=${primaryProgramId}`;
+    browseCoveredLabel = "Browse covered experts";
+  } else if (orgCatalog.length > 0) {
+    browseCoveredHref = "#org-catalog";
+    browseCoveredLabel = "Browse org offerings";
+  }
 
   return (
     <>
       <DashboardHeader
         title="My Program"
         description={`${access.org.name} sponsors your bookings through the programs below.`}
+        actions={
+          <Button asChild size="sm">
+            <Link href={browseCoveredHref}>{browseCoveredLabel}</Link>
+          </Button>
+        }
       />
       <DashboardContent>
+        <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700 dark:text-emerald-400" />
+          <div className="text-xs text-emerald-900 dark:text-emerald-200">
+            <p className="font-semibold">
+              Session Privacy &amp; Organization Visibility
+            </p>
+            <p className="mt-0.5 text-emerald-800/90 dark:text-emerald-300/90">
+              Your session recordings, chat messages, session notes, and
+              individual ratings remain strictly private between you and your
+              expert. {access.org.name} administrators can see your program seat
+              assignment, session count and attendance status, and sponsor or
+              reimbursement ledger entries, as described in our{" "}
+              <Link href="/privacy" className="underline underline-offset-2">
+                Privacy Notice
+              </Link>
+              .
+            </p>
+          </div>
+        </div>
+
         {/* #777 §C.5/§F — outstanding overage deep-link banner. */}
         {outstandingOveragePaise > 0 && (
           <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-300 bg-amber-50 p-4">
@@ -203,7 +259,11 @@ export default async function MyProgramPage({
         )}
 
         {assignments.length === 0 ? (
-          <EmptyState orgId={orgId} />
+          <EmptyState
+            orgId={orgId}
+            browseHref={browseCoveredHref}
+            browseLabel={browseCoveredLabel}
+          />
         ) : (
           <section className="space-y-4">
             {assignments.map((a) => {
@@ -219,11 +279,12 @@ export default async function MyProgramPage({
               // engagements. Both are normalised to the pool's own unit here:
               // whole-rupee credits, where 1 credit = ₹1 = 100 paise.
               const isPool = a.program.type === "CREDIT_POOL";
-              const cap = isPool
-                ? (pool?.creditBudgetPerCycle ?? null)
-                : a.program.type === "LICENSED_SEAT"
-                  ? (seat?.coveredEngagementsPerCycle ?? null)
-                  : null;
+              let cap: number | null = null;
+              if (isPool) {
+                cap = pool?.creditBudgetPerCycle ?? null;
+              } else if (a.program.type === "LICENSED_SEAT") {
+                cap = seat?.coveredEngagementsPerCycle ?? null;
+              }
               const used = isPool
                 ? Math.round(Number(a.consumedPaise ?? 0) / 100)
                 : a.engagementsUsed;
@@ -245,6 +306,12 @@ export default async function MyProgramPage({
                 cap === null
                   ? `${unitLabel} available — no cap this cycle${poolRateNote}`
                   : `${unitLabel} ${remainingWord} this cycle${poolRateNote}`;
+              const daysUntilReset = Math.max(
+                0,
+                Math.ceil(
+                  (a.periodEnd.getTime() - Date.now()) / (24 * 60 * 60 * 1000),
+                ),
+              );
 
               return (
                 <div key={a.id} className="rounded-lg border bg-card p-5">
@@ -260,7 +327,9 @@ export default async function MyProgramPage({
                         →{" "}
                         {a.periodEnd.toLocaleDateString("en-IN", {
                           timeZone: "Asia/Kolkata",
-                        })}
+                        })}{" "}
+                        · resets in {daysUntilReset}{" "}
+                        {daysUntilReset === 1 ? "day" : "days"}
                       </p>
                     </div>
                     <span className="rounded-full border px-2.5 py-0.5 text-xs">
@@ -302,14 +371,7 @@ export default async function MyProgramPage({
                         </span>
                       )}
                     </div>
-                    {cap !== null && pct !== null && (
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full bg-primary transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    )}
+                    {cap !== null && pct !== null && <Progress value={pct} />}
                   </div>
 
                   {/* Was rendered for LICENSED_SEAT only, so a CREDIT_POOL
@@ -400,43 +462,47 @@ export default async function MyProgramPage({
                       const matchedAssignment = assignments.find(
                         (a) => a.id === u.programAssignmentId,
                       );
-                      const isPoolUtilization = u.programSubType
-                        ? u.programSubType === "CREDIT_POOL"
-                        : matchedAssignment
-                          ? matchedAssignment.program.type === "CREDIT_POOL"
-                          : hasCreditPool && !hasLicensedSeat;
+                      let isPoolUtilization = hasCreditPool && !hasLicensedSeat;
+                      if (u.programSubType) {
+                        isPoolUtilization = u.programSubType === "CREDIT_POOL";
+                      } else if (matchedAssignment) {
+                        isPoolUtilization =
+                          matchedAssignment.program.type === "CREDIT_POOL";
+                      }
+                      let statusLabel = "Covered";
+                      if (u.reversedAt) {
+                        statusLabel = "Reversed";
+                      } else if (u.wasOverage) {
+                        statusLabel = "Overage";
+                      }
                       return (
-                      <tr key={u.id} className="border-t">
-                        <td className="px-4 py-2 whitespace-nowrap">
-                          {u.createdAt.toLocaleDateString("en-IN", {
-                            timeZone: "Asia/Kolkata",
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                          })}
-                        </td>
-                        <td className="px-4 py-2 whitespace-nowrap">
-                          {humanizeEnum(
-                            u.payment.appointment?.appointmentType,
-                          ) || "—"}
-                        </td>
-                        <td className="px-4 py-2 text-right whitespace-nowrap">
-                          {isPoolUtilization
-                            ? `${Math.round(u.priceAtBookingPaise / 100).toLocaleString("en-IN")} credits`
-                            : u.engagementsConsumed}
-                        </td>
-                        <td className="px-4 py-2 text-right whitespace-nowrap">
-                          {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}
-                        </td>
-                        <td className="px-4 py-2 text-xs whitespace-nowrap">
-                          {u.reversedAt
-                            ? "Reversed"
-                            : u.wasOverage
-                              ? "Overage"
-                              : "Covered"}
-                        </td>
-                      </tr>
-                    );
+                        <tr key={u.id} className="border-t">
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            {u.createdAt.toLocaleDateString("en-IN", {
+                              timeZone: "Asia/Kolkata",
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                            })}
+                          </td>
+                          <td className="px-4 py-2 whitespace-nowrap">
+                            {humanizeEnum(
+                              u.payment.appointment?.appointmentType,
+                            ) || "—"}
+                          </td>
+                          <td className="px-4 py-2 text-right whitespace-nowrap">
+                            {isPoolUtilization
+                              ? `${Math.round(u.priceAtBookingPaise / 100).toLocaleString("en-IN")} credits`
+                              : u.engagementsConsumed}
+                          </td>
+                          <td className="px-4 py-2 text-right whitespace-nowrap">
+                            {formatCurrencyAmount(u.priceAtBookingPaise, "INR")}
+                          </td>
+                          <td className="px-4 py-2 text-xs whitespace-nowrap">
+                            {statusLabel}
+                          </td>
+                        </tr>
+                      );
                     });
                   })()}
                 </tbody>
@@ -479,7 +545,7 @@ export default async function MyProgramPage({
           </section>
         )}
         {orgCatalog.length > 0 && (
-          <section className="space-y-3">
+          <section id="org-catalog" className="space-y-3">
             <div>
               <h2 className="font-medium">Offered by {access.org.name}</h2>
               <p className="text-sm text-muted-foreground">
@@ -501,9 +567,9 @@ export default async function MyProgramPage({
                       </span>
                     )}
                   </div>
-                  {(plan.subtitle || plan.description) && (
+                  {(plan.subtitle ?? plan.description) && (
                     <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
-                      {plan.subtitle || plan.description}
+                      {plan.subtitle ?? plan.description}
                     </p>
                   )}
                   <p className="text-xs font-semibold text-muted-foreground mt-2">
@@ -517,6 +583,51 @@ export default async function MyProgramPage({
             </div>
           </section>
         )}
+
+        <div className="pt-2 border-t text-xs text-muted-foreground space-y-2">
+          {leaveError && (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              {leaveError}
+            </p>
+          )}
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <span>
+              Need to leave {access.org.name}? Exiting releases any active
+              program seats under this organization.
+            </span>
+            <details className="relative">
+              <summary className="list-none cursor-pointer inline-flex items-center justify-center rounded-md text-xs font-medium h-8 px-3 border border-destructive/30 text-destructive hover:bg-destructive/10">
+                Leave organization
+              </summary>
+              <div className="mt-2 rounded-lg border border-destructive/30 bg-card p-3 space-y-2 text-foreground max-w-sm">
+                <p className="text-xs font-medium">
+                  Leave {access.org.name} ({access.org.slug})?
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Your membership ends immediately and active program seats are
+                  released. Completed sessions and receipts remain on your
+                  account.
+                </p>
+                <form
+                  action={`/api/organizations/${orgId}/members/leave`}
+                  method="post"
+                >
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 text-xs"
+                  >
+                    Confirm leave organization
+                  </Button>
+                </form>
+              </div>
+            </details>
+          </div>
+        </div>
       </DashboardContent>
     </>
   );
@@ -531,21 +642,34 @@ const CATALOG_DETAIL_PATH: Record<string, string> = {
   CLASS: "classes",
 };
 
-function EmptyState({ orgId }: { orgId: string }) {
+function EmptyState({
+  orgId,
+  browseHref,
+  browseLabel,
+}: {
+  orgId: string;
+  browseHref: string;
+  browseLabel: string;
+}) {
   return (
     <div className="rounded-lg border bg-card p-6">
       <h2 className="font-medium">No active programs yet</h2>
       <p className="text-sm text-muted-foreground mt-2">
-        You're a member of this organisation, but no Program has been assigned
-        to your account in the current cycle. Reach out to your org
+        You&apos;re a member of this organisation, but no Program has been
+        assigned to your account in the current cycle. Reach out to your org
         administrator to be added to a program.
       </p>
-      <Link
-        href={`/dashboard/organization/${orgId}/home`}
-        className="mt-4 inline-flex text-sm text-primary underline"
-      >
-        Back to overview
-      </Link>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Button asChild size="sm">
+          <Link href={browseHref}>{browseLabel}</Link>
+        </Button>
+        <Link
+          href={`/dashboard/organization/${orgId}/home`}
+          className="inline-flex text-sm text-primary underline"
+        >
+          Back to overview
+        </Link>
+      </div>
     </div>
   );
 }

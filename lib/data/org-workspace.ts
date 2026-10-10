@@ -15,7 +15,13 @@
  */
 
 import { reportSentryError } from "@/lib/observability/report";
-import type { FundingSource, MemberRole, OrgStatus } from "@prisma/client";
+import type {
+  FundingSource,
+  MemberRole,
+  OrgAuditCategory,
+  OrgStatus,
+  Prisma,
+} from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -38,6 +44,7 @@ export interface OperatorOrgRow {
     billingAccount: {
       fundingSource: FundingSource;
       walletBalance: number | null;
+      minBalancePaise: number | null;
       currency: string;
     } | null;
   };
@@ -66,6 +73,7 @@ export async function getOperatorOrganizations(
             select: {
               fundingSource: true,
               walletBalance: true,
+              minBalancePaise: true,
               currency: true,
             },
           },
@@ -269,8 +277,19 @@ export interface WorkspaceActivityRow {
   actorName: string | null;
 }
 
+export interface WorkspaceActivityOrgOption {
+  id: string;
+  name: string;
+}
+
+export interface WorkspaceActivityFilters {
+  organizationId?: string | null;
+  category?: OrgAuditCategory | null;
+}
+
 export interface WorkspaceActivityPage {
   data: WorkspaceActivityRow[];
+  organizations: WorkspaceActivityOrgOption[];
   pagination: {
     hasMore: boolean;
     nextCursor: string | null;
@@ -288,6 +307,7 @@ export async function getWorkspaceActivity(
   userId: string,
   cursor: string | null,
   limit: number = WORKSPACE_ACTIVITY_DEFAULT_LIMIT,
+  filters?: WorkspaceActivityFilters,
 ): Promise<WorkspaceActivityPage> {
   const ownedOrgs = await prisma.membership.findMany({
     where: { userId, role: "OWNER", status: "ACTIVE" },
@@ -296,6 +316,9 @@ export async function getWorkspaceActivity(
       organization: { select: { id: true, name: true, slug: true } },
     },
   });
+  const organizations = ownedOrgs
+    .map((o) => ({ id: o.organization.id, name: o.organization.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const orgIds = ownedOrgs.map((o) => o.organizationId);
   const orgById = new Map(
     ownedOrgs.map((o) => [o.organizationId, o.organization]),
@@ -304,12 +327,30 @@ export async function getWorkspaceActivity(
   if (orgIds.length === 0) {
     return {
       data: [],
+      organizations: [],
       pagination: { hasMore: false, nextCursor: null, limit },
     };
   }
 
+  const requestedOrgId = filters?.organizationId ?? null;
+  const scopedOrgIds = requestedOrgId
+    ? orgIds.filter((id) => id === requestedOrgId)
+    : orgIds;
+  if (scopedOrgIds.length === 0) {
+    return {
+      data: [],
+      organizations,
+      pagination: { hasMore: false, nextCursor: null, limit },
+    };
+  }
+
+  const where: Prisma.OrgAuditLogWhereInput = {
+    organizationId: { in: scopedOrgIds },
+    ...(filters?.category ? { category: filters.category } : {}),
+  };
+
   const rows = await prisma.orgAuditLog.findMany({
-    where: { organizationId: { in: orgIds } },
+    where,
     orderBy: { createdAt: "desc" },
     take: limit + 1,
     ...(cursor && { cursor: { id: cursor }, skip: 1 }),
@@ -364,6 +405,7 @@ export async function getWorkspaceActivity(
 
   return {
     data,
+    organizations,
     pagination: { hasMore, nextCursor, limit },
   };
 }

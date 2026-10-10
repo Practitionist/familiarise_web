@@ -6,7 +6,12 @@ import { Loader2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/tailwind";
 
-type Decision = "GRANTED" | "DECLINED";
+import {
+  useRecordingConsentDecision,
+  type RecordingConsentChoice,
+} from "../hooks/useRecordingConsentDecision";
+
+type Decision = RecordingConsentChoice;
 type Regime = "OPT_OUT" | "ACKNOWLEDGE";
 
 interface Notice {
@@ -49,7 +54,7 @@ export interface ConsentGate {
  */
 export function useRecordingConsent(meetingId: string): ConsentGate {
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { submit, pending: saving } = useRecordingConsentDecision(meetingId);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -97,34 +102,16 @@ export function useRecordingConsent(meetingId: string): ConsentGate {
 
   const decide = useCallback(
     async (decision: Decision) => {
-      setSaving(true);
       setError(null);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(meetingId)}/recording-consent`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ decision }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setError(
-            typeof body?.error === "string"
-              ? body.error
-              : "Could not save your choice. Please try again.",
-          );
-          return;
-        }
-        setNotice((prev) => (prev ? { ...prev, decision } : prev));
-      } catch {
-        setError("Could not save your choice. Please try again.");
-      } finally {
-        setSaving(false);
+      const result = await submit(decision);
+      if (!result) return;
+      if (!result.ok) {
+        setError(result.error);
+        return;
       }
+      setNotice((prev) => (prev ? { ...prev, decision } : prev));
     },
-    [meetingId],
+    [submit],
   );
 
   // Still loading, or nothing to disclose: do not block, do not render.

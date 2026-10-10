@@ -3,7 +3,6 @@
 import type { RecordingListingStatus } from "@prisma/client";
 import type { RecordingData } from "@/types/recording";
 
-import { useState } from "react";
 import Image from "next/image";
 import { formatDistanceToNow, format } from "date-fns";
 import {
@@ -11,8 +10,6 @@ import {
   Clock,
   Calendar,
   AlertCircle,
-  Loader2,
-  Download,
   ExternalLink,
   Users,
   Settings2,
@@ -30,7 +27,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/utils/tailwind";
 
 export type ExtendedRecordingData = Omit<RecordingData, "planType"> & {
   planType:
@@ -46,7 +42,6 @@ export type ExtendedRecordingData = Omit<RecordingData, "planType"> & {
   consentAttestedAt?: string | null;
   hasBuyers?: boolean;
   canManage?: boolean;
-  canTransfer?: boolean;
   canPublish?: boolean;
 };
 
@@ -59,19 +54,16 @@ function formatFileSize(bytes: number): string {
 
 interface RecordingCardProps {
   readonly recording: ExtendedRecordingData;
-  readonly onTransfer?: (recordingId: string) => Promise<void>;
   readonly onWatch?: (recording: ExtendedRecordingData) => void;
   readonly onManage?: (recording: ExtendedRecordingData) => void;
 }
 
 export function RecordingCard({
   recording,
-  onTransfer,
   onWatch,
   onManage,
 }: Readonly<RecordingCardProps>) {
   const { toast } = useToast();
-  const [isTransferring, setIsTransferring] = useState(false);
 
   const formatDuration = (minutes: number) => {
     const hrs = Math.floor(minutes / 60);
@@ -82,34 +74,7 @@ export function RecordingCard({
     return `${mins}m`;
   };
 
-  const handleTransfer = async () => {
-    if (!onTransfer) return;
-
-    setIsTransferring(true);
-    try {
-      await onTransfer(recording.id);
-      toast({
-        title: "Transfer Started",
-        description: "Recording is being transferred to permanent storage.",
-      });
-    } catch (error) {
-      toast({
-        title: "Transfer Failed",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to transfer recording",
-        variant: "destructive",
-      });
-    } finally {
-      setIsTransferring(false);
-    }
-  };
-
   const canManage = recording.canManage ?? true;
-  const canTransfer =
-    recording.canTransfer ??
-    (recording.status === "READY" && recording.storageType === "STREAM_S3");
 
   const isExpiringSoon =
     recording.streamUrlExpiresAt &&
@@ -253,30 +218,6 @@ export function RecordingCard({
               <Settings2 className="w-4 h-4 mr-1.5" />
               Manage / Publish
             </Button>
-          )}
-
-          {canTransfer && onTransfer && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    onClick={handleTransfer}
-                    disabled={isTransferring}
-                    className={cn(isExpiringSoon && "border-yellow-500/50")}
-                  >
-                    {isTransferring ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Download className="w-4 h-4" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Transfer to permanent storage</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
           )}
 
           {recording.status === "AVAILABLE" && recording.playbackUrl && (

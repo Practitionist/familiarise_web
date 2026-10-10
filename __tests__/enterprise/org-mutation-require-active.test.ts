@@ -99,6 +99,7 @@ describe("Enterprise org mutation routes requireActive enforcement & DPDP compli
       "app/api/organizations/[orgId]/data-exports/route.ts#POST",
       "app/api/organizations/[orgId]/invitations/route.ts#POST",
       "app/api/organizations/[orgId]/members/bulk-import/route.ts#POST",
+      "app/api/organizations/[orgId]/members/leave/route.ts#POST",
       "app/api/organizations/[orgId]/route.ts#DELETE",
       "app/api/organizations/[orgId]/verification/resubmit/route.ts#POST",
     ]);

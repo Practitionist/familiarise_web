@@ -162,7 +162,6 @@ export async function POST(request: NextRequest) {
         whatsIncluded: validatedData.whatsIncluded,
         faqs: faqCreateNested(validatedData.faqs),
         recordingEnabled: validatedData.recordingEnabled,
-        recordingStoragePolicy: validatedData.recordingStoragePolicy,
         // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
         status: validatedData.status,
         consultantProfile: { connect: { id: consultantProfileId } },

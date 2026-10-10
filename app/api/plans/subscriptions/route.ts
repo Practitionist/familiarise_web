@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
     const topicIds = await findOrCreateTopics(validatedData.topics ?? []);
 
     // Compute derived metrics
-    const sessionDurationInHours = planData.sessionDurationInHours || 1.0;
+    const sessionDurationInHours = validatedData.sessionDurationInHours ?? 1.0;
     // Use accurate week counting instead of fixed * 4 approximation
     const metricStartDate = new Date();
     metricStartDate.setHours(0, 0, 0, 0);
@@ -220,7 +220,6 @@ export async function POST(request: NextRequest) {
         whatsIncluded: validatedData.whatsIncluded,
         faqs: faqCreateNested(validatedData.faqs),
         recordingEnabled: validatedData.recordingEnabled,
-        recordingStoragePolicy: validatedData.recordingStoragePolicy,
         // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
         status: validatedData.status,
         trialEnabled,

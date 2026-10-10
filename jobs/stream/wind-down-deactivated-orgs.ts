@@ -32,10 +32,8 @@ import {
 import { withCronLock } from "../../lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runJob } from "../../lib/observability/job-sentry";
-import {
-  deleteRecordingObject,
-  storageClient,
-} from "../../lib/stream/recording-storage";
+import { deleteRecordingObject } from "../../lib/stream/recording-storage";
+import { removeObjects } from "../../lib/supabase-storage-core";
 
 const MAX_ORGS_PER_RUN = 100;
 const MAX_REMOVED_MEMBERS_PER_RUN = 250;
@@ -404,11 +402,12 @@ async function purgeSingleOrgRecording(
 ): Promise<void> {
   try {
     if (rec.previewClipStoragePath) {
-      const { error: previewRemoveError } = await storageClient.storage
-        .from(RECORDING_PREVIEWS_BUCKET)
-        .remove([rec.previewClipStoragePath]);
-      if (previewRemoveError) {
-        throw new Error(previewRemoveError.message);
+      if (
+        !(await removeObjects(RECORDING_PREVIEWS_BUCKET, [
+          rec.previewClipStoragePath,
+        ]))
+      ) {
+        throw new Error("Recording preview clip was not removed from storage");
       }
     }
     const del = rec.storagePath
@@ -424,7 +423,6 @@ async function purgeSingleOrgRecording(
       where: { id: rec.id },
       data: {
         status: "EXPIRED",
-        storageUrl: null,
         storagePath: null,
         storageType: "STREAM_S3",
         previewClipUrl: null,

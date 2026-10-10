@@ -44,12 +44,18 @@ export default async function OrgRoot({
       },
     });
 
-    if (!member || member.status !== "ACTIVE") {
-      // No active membership — bounce out to the user's personal dashboard.
+    if (
+      !member ||
+      (member.status !== "ACTIVE" && member.status !== "SUSPENDED")
+    ) {
+      // No active or suspended membership — bounce out to the user's personal dashboard.
       redirect(resolvePersonalDashboardHref(session.user) ?? "/dashboard");
     }
 
     const base = `/dashboard/organization/${orgId}`;
+    if (member.status === "SUSPENDED") {
+      redirect(`${base}/appointments`);
+    }
     // Those pages need the capability; without it they'd bounce to home.
     if (member.role === "LEARNER") {
       redirect(

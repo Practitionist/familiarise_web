@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => {
     // staff fan-out both live on the same client.
     supportTicket: {
       findFirst: jest.fn(async () => null),
+      updateMany: jest.fn(async () => ({ count: 1 })),
       create: jest.fn(async () => ({
         id: "t1",
         title: "T",
@@ -74,9 +75,17 @@ jest.mock("../../lib/novu", () => ({
 
 import { NextRequest } from "next/server";
 import { getSession } from "../../lib/auth-server";
+import prisma from "../../lib/prisma";
+import { applyRateLimit, spamLimiter } from "../../lib/rate-limit";
 import { GET, POST } from "../../app/api/support/platform/route";
 
 const mockedGetSession = getSession as jest.Mock;
+
+beforeEach(() => {
+  (applyRateLimit as jest.Mock).mockClear();
+  (prisma.supportTicket.create as jest.Mock).mockClear();
+  (prisma.supportTicket.updateMany as jest.Mock).mockClear();
+});
 
 function postReq(body: unknown): NextRequest {
   return new NextRequest("https://x.test/api/support/platform", {
@@ -107,7 +116,9 @@ describe("POST /api/support/platform", () => {
 
   it("REGRESSION: a bare entry turn {flowId} passes validation (the XOR refine used to 400 it)", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
-    const res = await POST(postReq({ flowId: "PAYMENTS_BILLING", nodeId: null }));
+    const res = await POST(
+      postReq({ flowId: "PAYMENTS_BILLING", nodeId: null }),
+    );
     // Reaches the engine and answers with the entry prompt — NOT a
     // VALIDATION_FAILED 400.
     expect(res.status).toBe(200);
@@ -119,7 +130,11 @@ describe("POST /api/support/platform", () => {
   it("VALIDATION_FAILED envelope when a turn carries BOTH an option and a message", async () => {
     mockedGetSession.mockResolvedValue({ user: { id: "u1" } });
     const res = await POST(
-      postReq({ flowId: "PAYMENTS_BILLING", chosenOptionId: "twice", userMessage: "both" }),
+      postReq({
+        flowId: "PAYMENTS_BILLING",
+        chosenOptionId: "twice",
+        userMessage: "both",
+      }),
     );
     expect(res.status).toBe(400);
     const json = await res.json();
@@ -149,6 +164,90 @@ describe("asking for a person, in the scope that had no way to", () => {
     const json = await res.json();
     expect(json.data.escalated).toBe(true);
     expect(json.data.supportTicketId).toBeTruthy();
+    // Filing the ticket spends the ticket budget; walking the flow does not.
+    expect(applyRateLimit).toHaveBeenCalledWith(spamLimiter, "tickets:u1");
+  });
+
+  it("files an urgent hand-off at HIGH, not a silent MEDIUM", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
+    await POST(
+      postReq({
+        flowId: "PAYMENTS_BILLING",
+        nodeId: "start",
+        userMessage: "Speak to someone: the refund never arrived",
+        urgent: true,
+      }),
+    );
+    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ priority: "HIGH" }),
+      }),
+    );
+  });
+
+  it("files the General flow's own human option, sent through the details form, as an urgent general ticket", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
+    const res = await POST(
+      postReq({
+        flowId: "GENERAL",
+        nodeId: "start",
+        userMessage: "Speak to someone: my account page will not load at all",
+        urgent: true,
+      }),
+    );
+    const json = await res.json();
+    expect(json.data.escalated).toBe(true);
+    expect(prisma.supportTicket.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          priority: "HIGH",
+          issueType: "GENERAL_INQUIRY",
+        }),
+      }),
+    );
+  });
+
+  it("raises a reused open ticket to HIGH when the replayed hand-off is urgent", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
+    (prisma.supportTicket.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "t-recent",
+      referenceNumber: "FAM-2026-000009",
+    });
+    const res = await POST(
+      postReq({
+        flowId: "PAYMENTS_BILLING",
+        nodeId: "start",
+        userMessage: "Speak to someone: the refund never arrived",
+        urgent: true,
+      }),
+    );
+    const json = await res.json();
+    expect(json.data.deduped).toBe(true);
+    expect(prisma.supportTicket.create).not.toHaveBeenCalled();
+    expect(prisma.supportTicket.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "t-recent",
+        status: { not: "CLOSED" },
+        priority: { in: ["LOW", "MEDIUM"] },
+      },
+      data: { priority: "HIGH" },
+    });
+  });
+
+  it("leaves a reused ticket's priority alone when the replay is not urgent", async () => {
+    mockedGetSession.mockResolvedValue({ user: { id: "u1", name: "U" } });
+    (prisma.supportTicket.findFirst as jest.Mock).mockResolvedValueOnce({
+      id: "t-recent",
+      referenceNumber: "FAM-2026-000009",
+    });
+    await POST(
+      postReq({
+        flowId: "PAYMENTS_BILLING",
+        nodeId: "start",
+        userMessage: "just get me an agent please",
+      }),
+    );
+    expect(prisma.supportTicket.updateMany).not.toHaveBeenCalled();
   });
 
   it("leaves an ordinary message to the flow", async () => {
@@ -162,6 +261,7 @@ describe("asking for a person, in the scope that had no way to", () => {
     );
     const json = await res.json();
     expect(json.data.escalated).toBe(false);
+    expect(applyRateLimit).not.toHaveBeenCalled();
   });
 });
 

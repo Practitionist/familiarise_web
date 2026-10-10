@@ -1,6 +1,8 @@
 import { faker } from "@faker-js/faker";
 import { SupportPriority, SupportTicketStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
+import { formatTicketReference } from "../../lib/support/reference";
+import { slaDeadlinesFor } from "../../lib/support/sla";
 import { UserWithProfiles } from "./1a-create-users";
 
 // Support ticket categories
@@ -197,12 +199,83 @@ import { config } from "./config";
 // Support ticket volume - configurable via SEED_MODE environment variable
 const NUM_TICKETS = config.volumes.supportTickets;
 
+function buildPlannedSeedResponses(
+  status: SupportTicketStatus,
+  ticketDate: Date,
+  creatorId: string,
+  staffAndAdmins: UserWithProfiles[],
+): {
+  responses: {
+    message: string;
+    userId: string;
+    createdAt: Date;
+    isStaff: boolean;
+  }[];
+  lastResponseDate: Date;
+} {
+  const numResponses =
+    status === "OPEN"
+      ? faker.number.int({ min: 0, max: 2 })
+      : status === "ON_HOLD"
+        ? faker.helpers.arrayElement([1, 3])
+        : faker.number.int({ min: 1, max: 5 });
+
+  const responses: {
+    message: string;
+    userId: string;
+    createdAt: Date;
+    isStaff: boolean;
+  }[] = [];
+  let lastResponseDate = new Date(ticketDate);
+
+  for (let j = 0; j < numResponses; j++) {
+    const isStaff = j % 2 === 0;
+    const responderId = isStaff
+      ? faker.helpers.arrayElement(staffAndAdmins).id
+      : creatorId;
+
+    let message: string;
+    if (!isStaff) {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.userFollowUp);
+    } else if (status === "ON_HOLD" && j === numResponses - 1) {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.followUp);
+    } else if (j === 0) {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.initial);
+    } else if (status === "RESOLVED" || status === "CLOSED") {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.resolution);
+    } else {
+      message = faker.helpers.arrayElement(STAFF_RESPONSES.followUp);
+    }
+
+    lastResponseDate = faker.date.between({
+      from: lastResponseDate,
+      to: new Date(),
+    });
+
+    responses.push({
+      message,
+      userId: responderId,
+      createdAt: lastResponseDate,
+      isStaff,
+    });
+  }
+
+  return { responses, lastResponseDate };
+}
+
+const GUARANTEED_INITIAL_STATUSES: SupportTicketStatus[] = [
+  "OPEN",
+  "ON_HOLD",
+  "IN_PROGRESS",
+  "RESOLVED",
+  "CLOSED",
+];
+
 export async function createSupportTickets(
   users: UserWithProfiles[],
 ): Promise<void> {
   console.log(`Creating ${NUM_TICKETS} support tickets with responses...`);
 
-  // Get users by role
   const consultees = users.filter((user) => user.role === "CONSULTEE");
   const consultants = users.filter((user) => user.role === "CONSULTANT");
   const staffAndAdmins = users.filter(
@@ -223,6 +296,24 @@ export async function createSupportTickets(
 
   let ticketsCreated = 0;
   let responsesCreated = 0;
+  const highestSeqByYear = new Map<number, number>();
+
+  // Continue from the live counter so seeded references never collide with real ones.
+  const counterStartByYear = new Map<number, number>();
+  const cursorByYear = new Map<number, number>();
+  const nextSeedSeq = async (year: number): Promise<number> => {
+    if (!counterStartByYear.has(year)) {
+      const counter = await prisma.supportTicketCounter.findUnique({
+        where: { year },
+        select: { nextSeq: true },
+      });
+      counterStartByYear.set(year, counter?.nextSeq ?? 1);
+      cursorByYear.set(year, counter?.nextSeq ?? 1);
+    }
+    const seq = cursorByYear.get(year) ?? 1;
+    cursorByYear.set(year, seq + 1);
+    return seq;
+  };
 
   for (let i = 0; i < NUM_TICKETS; i++) {
     try {
@@ -230,14 +321,48 @@ export async function createSupportTickets(
       const category = faker.helpers.arrayElement(TICKET_CATEGORIES);
       const templates = TICKET_TEMPLATES[category];
       const title = faker.helpers.arrayElement(templates.titles);
-      const description = faker.helpers.arrayElement(templates.descriptions);
-      const priority = getWeightedPriority();
-      const status = getWeightedStatus();
+      const priority: SupportPriority =
+        i === 0 ? "URGENT" : getWeightedPriority();
+      const status: SupportTicketStatus =
+        i < GUARANTEED_INITIAL_STATUSES.length
+          ? GUARANTEED_INITIAL_STATUSES[i]
+          : getWeightedStatus();
+      const rawDescription = faker.helpers.arrayElement(templates.descriptions);
+      const description =
+        priority === "URGENT"
+          ? `[Callback Requested: +919876543210]\n\n${rawDescription}`
+          : rawDescription;
 
       const ticketDate = faker.date.recent({ days: 30 });
+      const year = ticketDate.getUTCFullYear();
+      const seq = await nextSeedSeq(year);
+      const referenceNumber = formatTicketReference(year, seq);
+      const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(
+        priority,
+        ticketDate,
+      );
+
+      const { responses: plannedResponses, lastResponseDate } =
+        buildPlannedSeedResponses(
+          status,
+          ticketDate,
+          creator.id,
+          staffAndAdmins,
+        );
+
+      const firstStaffReply =
+        plannedResponses.find((r) => r.isStaff)?.createdAt ?? null;
+      const acknowledgedAt =
+        status === "OPEN" && !firstStaffReply
+          ? null
+          : (firstStaffReply ?? new Date(ticketDate.getTime() + 15 * 60_000));
+      const resolvedAt =
+        status === "RESOLVED" || status === "CLOSED" ? lastResponseDate : null;
+      const closedAt = status === "CLOSED" ? lastResponseDate : null;
 
       const ticket = await prisma.supportTicket.create({
         data: {
+          referenceNumber,
           title,
           description,
           priority,
@@ -245,51 +370,29 @@ export async function createSupportTickets(
           category,
           userId: creator.id,
           createdAt: ticketDate,
+          lastMessageAt: lastResponseDate,
+          ackDueAt,
+          resolutionDueAt,
+          acknowledgedAt,
+          firstAgentReplyAt: firstStaffReply,
+          resolvedAt,
+          closedAt,
         },
       });
 
+      highestSeqByYear.set(
+        year,
+        Math.max(highestSeqByYear.get(year) ?? 0, seq),
+      );
       ticketsCreated++;
 
-      // Create responses based on status
-      const numResponses =
-        status === "OPEN"
-          ? faker.number.int({ min: 0, max: 2 })
-          : faker.number.int({ min: 1, max: 5 });
-
-      let lastResponseDate = new Date(ticketDate);
-
-      for (let j = 0; j < numResponses; j++) {
-        // Alternate between staff and user responses
-        const isStaffResponse = j % 2 === 0;
-        const responder = isStaffResponse
-          ? faker.helpers.arrayElement(staffAndAdmins)
-          : creator;
-
-        let message: string;
-        if (isStaffResponse) {
-          if (j === 0) {
-            message = faker.helpers.arrayElement(STAFF_RESPONSES.initial);
-          } else if (status === "RESOLVED" || status === "CLOSED") {
-            message = faker.helpers.arrayElement(STAFF_RESPONSES.resolution);
-          } else {
-            message = faker.helpers.arrayElement(STAFF_RESPONSES.followUp);
-          }
-        } else {
-          message = faker.helpers.arrayElement(STAFF_RESPONSES.userFollowUp);
-        }
-
-        // Response date is after ticket creation and previous response
-        lastResponseDate = faker.date.between({
-          from: lastResponseDate,
-          to: new Date(),
-        });
-
+      for (const resp of plannedResponses) {
         await prisma.supportResponse.create({
           data: {
-            message,
+            message: resp.message,
             supportTicketId: ticket.id,
-            userId: responder.id,
-            createdAt: lastResponseDate,
+            userId: resp.userId,
+            createdAt: resp.createdAt,
           },
         });
 
@@ -304,6 +407,15 @@ export async function createSupportTickets(
     } catch (error) {
       console.error(`Failed to create support ticket ${i + 1}:`, error);
     }
+  }
+
+  for (const [year, highestSeq] of highestSeqByYear) {
+    const nextSeq = Math.max(counterStartByYear.get(year) ?? 1, highestSeq + 1);
+    await prisma.supportTicketCounter.upsert({
+      where: { year },
+      create: { year, nextSeq },
+      update: { nextSeq },
+    });
   }
 
   console.log(
