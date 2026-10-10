@@ -1317,11 +1317,10 @@ export async function handleDisputeCreated(
       );
       if (!options?.isRedrive) {
         await recordSystemErrorSafe({
-          severity: "error",
-          subsystem: "payments",
-          job: "razorpay-webhook",
+          category: "razorpay_webhook",
           summary: `CRITICAL_DISPUTE_UNLINKED: failed to fetch Razorpay payment ${chargeId} for dispute ${disputeId}`,
-          meta: { disputeId, chargeId, amount },
+          err: error,
+          context: { disputeId, chargeId, amount },
         });
       }
     }
@@ -1594,11 +1593,10 @@ export async function handleDisputeCreated(
   );
   if (result instanceof DeferSignal && !options?.isRedrive) {
     await recordSystemErrorSafe({
-      severity: "error",
-      subsystem: "payments",
-      job: "razorpay-webhook",
+      category: "razorpay_webhook",
       summary: `CRITICAL_DISPUTE_UNLINKED: no Payment matched dispute ${disputeId} (${chargeId})`,
-      meta: { disputeId, chargeId, amount },
+      err: new Error("Payment not found for dispute"),
+      context: { disputeId, chargeId, amount },
     });
   }
   await attemptStaged(stagedNotification);
