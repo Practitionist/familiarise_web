@@ -213,19 +213,20 @@ export function EventResourceCard({
                         {mat.description && ` \u00B7 ${mat.description}`}
                       </p>
                     </div>
-                    <a
-                      href={getPlanMaterialUrl(mat.id, "attachment")}
-                      onClick={(e) => e.stopPropagation()}
+                    <Button
+                      asChild
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2.5 text-xs"
                     >
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2.5 text-xs"
+                      <a
+                        href={getPlanMaterialUrl(mat.id, "attachment")}
+                        onClick={(e) => e.stopPropagation()}
                       >
                         <Download className="w-3.5 h-3.5 mr-1" />
                         Download
-                      </Button>
-                    </a>
+                      </a>
+                    </Button>
                   </div>
                 ))}
               </div>

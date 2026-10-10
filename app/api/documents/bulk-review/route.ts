@@ -99,8 +99,14 @@ export async function PATCH(request: NextRequest) {
     };
 
     const { targetDocs, result } = await prisma.$transaction(async (tx) => {
-      const docs = await tx.appointmentDocument.findMany({
+      const updatedRows = await tx.appointmentDocument.updateManyAndReturn({
         where: eligibleWhere,
+        data: {
+          reviewStatus,
+          ...(reviewNotes ? { reviewNotes } : {}),
+          reviewedAt: new Date(),
+          reviewedById: session.user.id,
+        },
         select: {
           id: true,
           appointmentId: true,
@@ -155,17 +161,7 @@ export async function PATCH(request: NextRequest) {
         },
       });
 
-      const targetIds = docs.map((doc) => doc.id);
-      const updated = await tx.appointmentDocument.updateMany({
-        where: { ...eligibleWhere, id: { in: targetIds } },
-        data: {
-          reviewStatus,
-          ...(reviewNotes ? { reviewNotes } : {}),
-          reviewedAt: new Date(),
-          reviewedById: session.user.id,
-        },
-      });
-      return { targetDocs: docs, result: updated };
+      return { targetDocs: updatedRows, result: { count: updatedRows.length } };
     });
 
     if (targetDocs.length > 0) {

@@ -82,54 +82,11 @@ async function fetchDocuments(
   return res.json();
 }
 
-export function ConsulteeDocumentsPage({
-  consulteeId,
-}: Readonly<{ consulteeId: string }>) {
-  const basePath = `/dashboard/consultee/${consulteeId}`;
-  const queryClient = useQueryClient();
-  const { page, setPage } = useListParams();
-  const [statusFilter, setStatusFilter] = useState<string>("");
-  const [search, setSearch] = useState<string>("");
-  const [drawerThread, setDrawerThread] =
-    useState<DocumentThread<ConsulteeDocumentRow> | null>(null);
-
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["consultee-documents", consulteeId, page],
-    queryFn: () => fetchDocuments(consulteeId, page, ""),
-    placeholderData: keepPreviousData,
-  });
-
-  const threads = useMemo(() => {
-    const grouped = groupDocumentsIntoThreads(data?.data ?? []);
-    const statusMatched = statusFilter
-      ? grouped.filter((t) => t.effectiveStatus === statusFilter)
-      : grouped;
-    if (!search.trim()) return statusMatched;
-    const q = search.trim().toLowerCase();
-    return statusMatched.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.latestVersion.appointmentTitle.toLowerCase().includes(q) ||
-        (t.latestVersion.consultantName?.toLowerCase().includes(q) ?? false) ||
-        (t.effectiveReviewNotes?.toLowerCase().includes(q) ?? false),
-    );
-  }, [data?.data, statusFilter, search]);
-
-  const filteredMaterials = useMemo(() => {
-    const items = data?.materials ?? [];
-    if (!search.trim()) return items;
-    const q = search.trim().toLowerCase();
-    return items.filter(
-      (m) =>
-        m.originalName.toLowerCase().includes(q) ||
-        m.planTitle.toLowerCase().includes(q) ||
-        (m.consultantName?.toLowerCase().includes(q) ?? false),
-    );
-  }, [data?.materials, search]);
-
-  const threadColumns: ResponsiveColumn<
-    DocumentThread<ConsulteeDocumentRow>
-  >[] = [
+function buildThreadColumns(
+  basePath: string,
+  onOpenDrawer: (rootId: string) => void,
+): ResponsiveColumn<DocumentThread<ConsulteeDocumentRow>>[] {
+  return [
     {
       key: "deliverable",
       header: "Deliverable",
@@ -139,7 +96,7 @@ export function ConsulteeDocumentsPage({
           <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setDrawerThread(thread)}
+              onClick={() => onOpenDrawer(thread.rootId)}
               className="inline-flex items-center gap-1.5 text-left font-medium text-foreground underline-offset-4 hover:underline"
             >
               <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -208,6 +165,8 @@ export function ConsulteeDocumentsPage({
       header: "",
       cell: (thread) => {
         const needsRevision = thread.effectiveStatus === "NEEDS_REVISION";
+        const nextVersionNo =
+          (thread.latestVersion.versionNo ?? thread.versionCount) + 1;
         return (
           <div className="flex items-center justify-end gap-1.5">
             {needsRevision && (
@@ -215,10 +174,10 @@ export function ConsulteeDocumentsPage({
                 type="button"
                 size="sm"
                 className="h-7 px-2.5 text-xs"
-                onClick={() => setDrawerThread(thread)}
+                onClick={() => onOpenDrawer(thread.rootId)}
               >
                 <FileUp className="mr-1 h-3 w-3" />
-                Upload v{thread.versionCount + 1}
+                Upload v{nextVersionNo}
               </Button>
             )}
             <Button
@@ -226,7 +185,7 @@ export function ConsulteeDocumentsPage({
               variant="outline"
               size="sm"
               className="h-7 px-2 text-xs"
-              onClick={() => setDrawerThread(thread)}
+              onClick={() => onOpenDrawer(thread.rootId)}
             >
               <Eye className="mr-1 h-3 w-3" />
               Preview
@@ -253,74 +212,188 @@ export function ConsulteeDocumentsPage({
       },
     },
   ];
+}
 
-  const materialColumns: ResponsiveColumn<ConsulteeMaterialRow>[] = [
-    {
-      key: "name",
-      header: "Material",
-      primary: true,
-      cell: (m) => (
-        <div className="space-y-0.5">
-          <a
-            href={getPlanMaterialUrl(m.id, "inline")}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
-          >
-            <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <span className="truncate">{m.originalName}</span>
-            <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+const MATERIAL_COLUMNS: ResponsiveColumn<ConsulteeMaterialRow>[] = [
+  {
+    key: "name",
+    header: "Material",
+    primary: true,
+    cell: (m) => (
+      <div className="space-y-0.5">
+        <a
+          href={getPlanMaterialUrl(m.id, "inline")}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
+        >
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate">{m.originalName}</span>
+          <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+        </a>
+        <p className="text-[11px] text-muted-foreground">
+          {formatFileSize(m.fileSize)}
+          {m.description ? ` · ${m.description}` : ""}
+        </p>
+      </div>
+    ),
+  },
+  {
+    key: "plan",
+    header: "Plan / Offering",
+    cell: (m) => <span className="text-foreground">{m.planTitle}</span>,
+  },
+  {
+    key: "expert",
+    header: "Expert",
+    cell: (m) => (
+      <span className="text-muted-foreground">{m.consultantName ?? "—"}</span>
+    ),
+  },
+  {
+    key: "date",
+    header: "Added",
+    cell: (m) => (
+      <span className="whitespace-nowrap text-xs text-muted-foreground">
+        {DATE.format(new Date(m.uploadedAt))}
+      </span>
+    ),
+  },
+  {
+    key: "download",
+    header: "",
+    cell: (m) => (
+      <div className="flex justify-end">
+        <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">
+          <a href={getPlanMaterialUrl(m.id, "attachment")}>
+            <Download className="mr-1 h-3.5 w-3.5" />
+            Download
           </a>
-          <p className="text-[11px] text-muted-foreground">
-            {formatFileSize(m.fileSize)}
-            {m.description ? ` · ${m.description}` : ""}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: "plan",
-      header: "Plan / Offering",
-      cell: (m) => <span className="text-foreground">{m.planTitle}</span>,
-    },
-    {
-      key: "expert",
-      header: "Expert",
-      cell: (m) => (
-        <span className="text-muted-foreground">{m.consultantName ?? "—"}</span>
-      ),
-    },
-    {
-      key: "date",
-      header: "Added",
-      cell: (m) => (
-        <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {DATE.format(new Date(m.uploadedAt))}
-        </span>
-      ),
-    },
-    {
-      key: "download",
-      header: "",
-      cell: (m) => (
-        <div className="flex justify-end">
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs"
-          >
-            <a href={getPlanMaterialUrl(m.id, "attachment")}>
-              <Download className="mr-1 h-3.5 w-3.5" />
-              Download
-            </a>
-          </Button>
-        </div>
-      ),
-    },
-  ];
+        </Button>
+      </div>
+    ),
+  },
+];
+
+export function ConsulteeDocumentsPage({
+  consulteeId,
+}: Readonly<{ consulteeId: string }>) {
+  const basePath = `/dashboard/consultee/${consulteeId}`;
+  const queryClient = useQueryClient();
+  const { page, setPage } = useListParams();
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [search, setSearch] = useState<string>("");
+  const [drawerRootId, setDrawerRootId] = useState<string | null>(null);
+
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["consultee-documents", consulteeId, page, statusFilter],
+    queryFn: () => fetchDocuments(consulteeId, page, statusFilter),
+    placeholderData: keepPreviousData,
+  });
+
+  const threads = useMemo(() => {
+    const grouped = groupDocumentsIntoThreads(data?.data ?? []);
+    if (!search.trim()) return grouped;
+    const q = search.trim().toLowerCase();
+    return grouped.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.latestVersion.appointmentTitle.toLowerCase().includes(q) ||
+        (t.latestVersion.consultantName?.toLowerCase().includes(q) ?? false) ||
+        (t.effectiveReviewNotes?.toLowerCase().includes(q) ?? false),
+    );
+  }, [data?.data, search]);
+
+  const drawerThread = useMemo(
+    () =>
+      drawerRootId
+        ? (threads.find((t) => t.rootId === drawerRootId) ?? null)
+        : null,
+    [drawerRootId, threads],
+  );
+
+  const filteredMaterials = useMemo(() => {
+    const items = data?.materials ?? [];
+    if (!search.trim()) return items;
+    const q = search.trim().toLowerCase();
+    return items.filter(
+      (m) =>
+        m.originalName.toLowerCase().includes(q) ||
+        m.planTitle.toLowerCase().includes(q) ||
+        (m.consultantName?.toLowerCase().includes(q) ?? false),
+    );
+  }, [data?.materials, search]);
+
+  const threadColumns = useMemo(
+    () => buildThreadColumns(basePath, setDrawerRootId),
+    [basePath],
+  );
 
   const isFirstLoad = isLoading && !data;
+
+  const deliverablesTabContent = (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {STATUS_CHIPS.map((chip) => {
+          const active = statusFilter === chip.value;
+          return (
+            <Button
+              key={chip.label}
+              type="button"
+              size="sm"
+              variant={active ? "default" : "outline"}
+              className="h-7 text-xs"
+              onClick={() => {
+                setStatusFilter(chip.value);
+                setPage(1);
+              }}
+            >
+              {chip.label}
+            </Button>
+          );
+        })}
+      </div>
+
+      <ResponsiveTable<DocumentThread<ConsulteeDocumentRow>>
+        columns={threadColumns}
+        rows={threads}
+        getRowId={(t) => t.rootId}
+        isLoading={isFirstLoad}
+        error={error}
+        onRetry={() => void refetch()}
+        empty={
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            No deliverables match your filters yet. Upload documents from a
+            confirmed booking to start a review thread.
+          </p>
+        }
+      />
+      {data && data.count > PAGE_SIZE && (
+        <TablePagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={data.count}
+          onPageChange={setPage}
+        />
+      )}
+    </div>
+  );
+
+  const materialsTabContent = (
+    <ResponsiveTable<ConsulteeMaterialRow>
+      columns={MATERIAL_COLUMNS}
+      rows={filteredMaterials}
+      getRowId={(m) => m.id}
+      isLoading={isFirstLoad}
+      error={error}
+      onRetry={() => void refetch()}
+      empty={
+        <p className="py-8 text-center text-sm text-muted-foreground">
+          Handouts attached to your booked plans appear here.
+        </p>
+      }
+    />
+  );
 
   return (
     <div className="space-y-4">
@@ -334,6 +407,7 @@ export function ConsulteeDocumentsPage({
           <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             type="search"
+            aria-label="Search files, sessions, or feedback"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search files, sessions, feedback..."
@@ -347,74 +421,14 @@ export function ConsulteeDocumentsPage({
           {
             value: "files",
             label: data ? `Deliverables · ${threads.length}` : "Deliverables",
-            content: (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {STATUS_CHIPS.map((chip) => {
-                    const active = statusFilter === chip.value;
-                    return (
-                      <Button
-                        key={chip.label}
-                        type="button"
-                        size="sm"
-                        variant={active ? "default" : "outline"}
-                        className="h-7 text-xs"
-                        onClick={() => {
-                          setStatusFilter(chip.value);
-                          setPage(1);
-                        }}
-                      >
-                        {chip.label}
-                      </Button>
-                    );
-                  })}
-                </div>
-
-                <ResponsiveTable<DocumentThread<ConsulteeDocumentRow>>
-                  columns={threadColumns}
-                  rows={threads}
-                  getRowId={(t) => t.rootId}
-                  isLoading={isFirstLoad}
-                  error={error}
-                  onRetry={() => void refetch()}
-                  empty={
-                    <p className="py-8 text-center text-sm text-muted-foreground">
-                      No deliverables match your filters yet. Upload documents
-                      from a confirmed booking to start a review thread.
-                    </p>
-                  }
-                />
-                {data && data.count > PAGE_SIZE && (
-                  <TablePagination
-                    page={page}
-                    pageSize={PAGE_SIZE}
-                    total={data.count}
-                    onPageChange={setPage}
-                  />
-                )}
-              </div>
-            ),
+            content: deliverablesTabContent,
           },
           {
             value: "materials",
             label: data
               ? `Plan materials · ${filteredMaterials.length}`
               : "Plan materials",
-            content: (
-              <ResponsiveTable<ConsulteeMaterialRow>
-                columns={materialColumns}
-                rows={filteredMaterials}
-                getRowId={(m) => m.id}
-                isLoading={isFirstLoad}
-                error={error}
-                onRetry={() => void refetch()}
-                empty={
-                  <p className="py-8 text-center text-sm text-muted-foreground">
-                    Handouts attached to your booked plans appear here.
-                  </p>
-                }
-              />
-            ),
+            content: materialsTabContent,
           },
         ]}
       />
@@ -422,7 +436,7 @@ export function ConsulteeDocumentsPage({
       <DocumentReviewDrawer
         thread={drawerThread}
         isOpen={Boolean(drawerThread)}
-        onClose={() => setDrawerThread(null)}
+        onClose={() => setDrawerRootId(null)}
         viewerRole="consultee"
         canUpload
         onUpdated={() => {

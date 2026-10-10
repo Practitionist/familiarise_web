@@ -6,7 +6,10 @@ import { Prisma } from "@prisma/client";
 import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 
 import { getSession } from "@/lib/auth-server";
-import { isPreviewableMimeType } from "@/lib/documents/urls";
+import {
+  formatContentDisposition,
+  isPreviewableMimeType,
+} from "@/lib/documents/urls";
 
 export async function GET(
   request: NextRequest,
@@ -227,10 +230,13 @@ export async function GET(
       status: 200,
       headers: {
         "Content-Type": document.mimeType || "application/octet-stream",
-        "Content-Disposition": `${effectiveDisposition}; filename="${encodeURIComponent(document.originalName)}"`,
+        "Content-Disposition": formatContentDisposition(
+          effectiveDisposition,
+          document.originalName,
+        ),
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy":
-          "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+          "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'",
         "Content-Length": buffer.length.toString(),
         "Cache-Control": "no-cache, no-store, must-revalidate",
         Pragma: "no-cache",

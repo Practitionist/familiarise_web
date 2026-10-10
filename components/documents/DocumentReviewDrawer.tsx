@@ -93,27 +93,46 @@ export function DocumentReviewDrawer({
   const [revisionNote, setRevisionNote] = useState<string>("");
   const [isSaving, setIsSaving] = useState(false);
 
-  const reviewTarget =
-    thread?.latestConsulteeSubmission ?? thread?.latestVersion ?? null;
+  const threadRef = React.useRef(thread);
+  useEffect(() => {
+    threadRef.current = thread;
+  }, [thread]);
+
+  const reviewTarget = thread?.latestConsulteeSubmission ?? null;
+  const threadRootId = thread?.rootId;
 
   useEffect(() => {
-    if (!thread) return;
+    const current = threadRef.current;
+    if (!isOpen || !current) return;
     const defaultId =
-      initialVersionId && thread.versions.some((v) => v.id === initialVersionId)
+      initialVersionId &&
+      current.versions.some((v) => v.id === initialVersionId)
         ? initialVersionId
-        : thread.latestVersion.id;
+        : current.latestVersion.id;
     setSelectedVersionId(defaultId);
-    setStatusDraft(reviewTarget?.reviewStatus ?? "PENDING");
-    setNotesDraft(thread.effectiveReviewNotes ?? "");
+    setStatusDraft(
+      current.latestConsulteeSubmission?.reviewStatus ??
+        current.latestVersion.reviewStatus ??
+        "PENDING",
+    );
+    setNotesDraft(current.effectiveReviewNotes ?? "");
     setAttachmentFile(null);
     setRevisionNote("");
-  }, [thread, initialVersionId, reviewTarget?.reviewStatus]);
+  }, [isOpen, threadRootId, initialVersionId]);
+
+  useEffect(() => {
+    if (!isSaving && reviewTarget?.reviewStatus) {
+      setStatusDraft(reviewTarget.reviewStatus);
+    }
+  }, [isSaving, reviewTarget?.reviewStatus]);
 
   if (!thread) return null;
 
   const activeVersion =
     thread.versions.find((v) => v.id === selectedVersionId) ??
     thread.latestVersion;
+  const nextVersionNo =
+    (thread.latestVersion.versionNo ?? thread.versionCount) + 1;
 
   const inlineUrl = getAppointmentDocumentUrl(
     thread.appointmentId,
@@ -236,7 +255,7 @@ export function DocumentReviewDrawer({
       }
 
       toast({
-        title: `Uploaded v${thread.versionCount + 1}`,
+        title: `Uploaded v${nextVersionNo}`,
         description:
           "Your revised document has been threaded and sent for review.",
       });
@@ -255,6 +274,45 @@ export function DocumentReviewDrawer({
       setIsSaving(false);
     }
   };
+
+  let previewStage: React.ReactNode;
+  if (!canPreviewInline) {
+    previewStage = (
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        <FileText className="mb-3 h-10 w-10 text-muted-foreground" />
+        <p className="text-sm font-medium text-foreground">
+          {activeVersion.originalName}
+        </p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          Inline preview is available for PDFs, images, and text files. Download
+          this file to inspect it locally.
+        </p>
+        <Button asChild size="sm" variant="outline" className="mt-4">
+          <a href={downloadUrl}>
+            <Download className="mr-1.5 h-3.5 w-3.5" />
+            Download ({formatFileSize(activeVersion.fileSize)})
+          </a>
+        </Button>
+      </div>
+    );
+  } else if (isImage) {
+    previewStage = (
+      <object
+        data={inlineUrl}
+        type={activeVersion.mimeType}
+        aria-label={activeVersion.originalName}
+        className="max-h-[60vh] max-w-full object-contain p-2"
+      />
+    );
+  } else {
+    previewStage = (
+      <iframe
+        title={activeVersion.originalName}
+        src={inlineUrl}
+        className="h-[60vh] w-full border-0"
+      />
+    );
+  }
 
   return (
     <ResponsiveModal open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -288,7 +346,7 @@ export function DocumentReviewDrawer({
                   ({formatFileSize(activeVersion.fileSize)})
                 </span>
               </span>
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex shrink-0 items-center gap-1.5">
                 <a
                   href={inlineUrl}
                   target="_blank"
@@ -310,47 +368,13 @@ export function DocumentReviewDrawer({
             </div>
 
             <div className="flex min-h-[380px] flex-1 items-center justify-center overflow-hidden rounded-lg border bg-muted/20">
-              {canPreviewInline ? (
-                isImage ? (
-                  <object
-                    data={inlineUrl}
-                    type={activeVersion.mimeType}
-                    aria-label={activeVersion.originalName}
-                    className="max-h-[60vh] max-w-full object-contain p-2"
-                  />
-                ) : (
-                  <iframe
-                    title={activeVersion.originalName}
-                    src={inlineUrl}
-                    sandbox="allow-scripts"
-                    className="h-[60vh] w-full border-0"
-                  />
-                )
-              ) : (
-                <div className="flex flex-col items-center justify-center p-8 text-center">
-                  <FileText className="mb-3 h-10 w-10 text-muted-foreground" />
-                  <p className="text-sm font-medium text-foreground">
-                    {activeVersion.originalName}
-                  </p>
-                  <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-                    Inline preview is available for PDFs, images, and text
-                    files. Download this file to inspect it locally.
-                  </p>
-                  <Button asChild size="sm" variant="outline" className="mt-4">
-                    <a href={downloadUrl}>
-                      <Download className="mr-1.5 h-3.5 w-3.5" />
-                      Download ({formatFileSize(activeVersion.fileSize)})
-                    </a>
-                  </Button>
-                </div>
-              )}
+              {previewStage}
             </div>
           </div>
 
           {/* Right 5 columns: Version Switcher + Review/Revision Controls */}
           <div className="flex flex-col justify-between space-y-4 lg:col-span-5">
             <div className="space-y-4">
-              {/* Version Timeline Switcher */}
               <div className="space-y-1.5">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   Version History
@@ -390,81 +414,84 @@ export function DocumentReviewDrawer({
                 )}
               </div>
 
-              {/* Consultant Review Form */}
               {viewerRole === "consultant" ? (
-                <div className="space-y-3 rounded-lg border p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Review & Feedback
-                  </p>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {CONSULTANT_STATUS_OPTIONS.map((opt) => {
-                      const Icon = opt.icon;
-                      const active = statusDraft === opt.value;
-                      const allowed = reviewTarget
-                        ? isReviewTransitionAllowed(
-                            reviewTarget.reviewStatus as ReviewStatus,
-                            opt.value,
-                          )
-                        : true;
-                      return (
-                        <Button
-                          key={opt.value}
-                          type="button"
-                          size="sm"
-                          disabled={!allowed}
-                          variant={active ? "default" : "outline"}
-                          className="justify-start text-xs"
-                          onClick={() => setStatusDraft(opt.value)}
-                        >
-                          <Icon className="mr-1.5 h-3.5 w-3.5 shrink-0" />
-                          <span className="truncate">{opt.label}</span>
-                        </Button>
-                      );
-                    })}
-                  </div>
+                reviewTarget ? (
+                  <div className="space-y-3 rounded-lg border p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Review & Feedback
+                    </p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {CONSULTANT_STATUS_OPTIONS.map((opt) => {
+                        const Icon = opt.icon;
+                        const active = statusDraft === opt.value;
+                        const allowed = isReviewTransitionAllowed(
+                          reviewTarget.reviewStatus as ReviewStatus,
+                          opt.value,
+                        );
+                        return (
+                          <Button
+                            key={opt.value}
+                            type="button"
+                            size="sm"
+                            disabled={!allowed}
+                            variant={active ? "default" : "outline"}
+                            className="justify-start text-xs"
+                            onClick={() => setStatusDraft(opt.value)}
+                          >
+                            <Icon className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{opt.label}</span>
+                          </Button>
+                        );
+                      })}
+                    </div>
 
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="drawer-review-notes"
-                      className="text-xs font-medium text-foreground"
-                    >
-                      Feedback notes for learner
-                    </label>
-                    <Textarea
-                      id="drawer-review-notes"
-                      rows={4}
-                      value={notesDraft}
-                      onChange={(e) => setNotesDraft(e.target.value)}
-                      placeholder="Share actionable feedback, edits needed, or approval notes..."
-                      className="text-xs"
-                    />
-                  </div>
-
-                  {canUpload && (
                     <div className="space-y-1">
                       <label
-                        htmlFor="drawer-consultant-attachment"
-                        className="inline-flex items-center gap-1 text-xs font-medium text-foreground"
+                        htmlFor="drawer-review-notes"
+                        className="text-xs font-medium text-foreground"
                       >
-                        <Paperclip className="h-3 w-3" />
-                        Attach marked-up file (optional)
+                        Feedback notes for learner
                       </label>
-                      <Input
-                        id="drawer-consultant-attachment"
-                        type="file"
-                        accept={ALLOWED_DOCUMENT_ACCEPT_ATTR}
-                        onChange={(e) =>
-                          setAttachmentFile(e.target.files?.[0] ?? null)
-                        }
-                        className="h-8 text-xs"
+                      <Textarea
+                        id="drawer-review-notes"
+                        rows={4}
+                        value={notesDraft}
+                        onChange={(e) => setNotesDraft(e.target.value)}
+                        placeholder="Share actionable feedback, edits needed, or approval notes..."
+                        className="text-xs"
                       />
                     </div>
-                  )}
-                </div>
+
+                    {canUpload && (
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="drawer-consultant-attachment"
+                          className="inline-flex items-center gap-1 text-xs font-medium text-foreground"
+                        >
+                          <Paperclip className="h-3 w-3" />
+                          Attach marked-up file (optional)
+                        </label>
+                        <Input
+                          id="drawer-consultant-attachment"
+                          type="file"
+                          accept={ALLOWED_DOCUMENT_ACCEPT_ATTR}
+                          onChange={(e) =>
+                            setAttachmentFile(e.target.files?.[0] ?? null)
+                          }
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+                    Expert resource shared with learner — no learner submission
+                    awaiting review in this thread.
+                  </div>
+                )
               ) : (
-                /* Consultee Feedback Readout + Upload Revision */
                 <div className="space-y-3">
-                  <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                  <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Expert Feedback
                     </p>
@@ -503,10 +530,11 @@ export function DocumentReviewDrawer({
                     <div className="space-y-2.5 rounded-lg border p-3">
                       <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         <FileUp className="h-3.5 w-3.5" />
-                        Upload Revision (v{thread.versionCount + 1})
+                        Upload Revision (v{nextVersionNo})
                       </p>
                       <Input
                         type="file"
+                        aria-label="Select revised file"
                         accept={ALLOWED_DOCUMENT_ACCEPT_ATTR}
                         onChange={(e) =>
                           setAttachmentFile(e.target.files?.[0] ?? null)
@@ -515,6 +543,7 @@ export function DocumentReviewDrawer({
                       />
                       <Input
                         type="text"
+                        aria-label="Summary of changes"
                         placeholder="Optional summary of changes in this version..."
                         value={revisionNote}
                         onChange={(e) => setRevisionNote(e.target.value)}
@@ -532,31 +561,31 @@ export function DocumentReviewDrawer({
           <Button variant="outline" size="sm" onClick={onClose}>
             Close
           </Button>
-          {viewerRole === "consultant" ? (
-            <Button
-              size="sm"
-              onClick={() => void handleSaveConsultantReview()}
-              disabled={isSaving}
-            >
-              {isSaving && (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          {viewerRole === "consultant"
+            ? reviewTarget && (
+                <Button
+                  size="sm"
+                  onClick={() => void handleSaveConsultantReview()}
+                  disabled={isSaving}
+                >
+                  {isSaving && (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  )}
+                  Save Feedback
+                </Button>
+              )
+            : canUpload && (
+                <Button
+                  size="sm"
+                  onClick={() => void handleUploadConsulteeRevision()}
+                  disabled={isSaving || !attachmentFile}
+                >
+                  {isSaving && (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  )}
+                  Upload v{nextVersionNo} Revision
+                </Button>
               )}
-              Save Feedback
-            </Button>
-          ) : (
-            canUpload && (
-              <Button
-                size="sm"
-                onClick={() => void handleUploadConsulteeRevision()}
-                disabled={isSaving || !attachmentFile}
-              >
-                {isSaving && (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                )}
-                Upload v{thread.versionCount + 1} Revision
-              </Button>
-            )
-          )}
         </ResponsiveModalFooter>
       </ResponsiveModalContent>
     </ResponsiveModal>

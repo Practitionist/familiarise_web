@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -58,7 +58,7 @@ import {
   getDocumentTypeIcon,
 } from "@/lib/documents/document-utils";
 
-const APPOINTMENT_TYPES = ["Consultation", "Subscription"] as const;
+const APPOINTMENT_TYPES = ["Consultation", "Subscription", "Trial"] as const;
 
 const REVIEW_STATUSES = [
   "PENDING",
@@ -72,332 +72,11 @@ interface ExtendedDocumentsTabProps extends DocumentsTabProps {
   onRefresh?: () => void;
 }
 
-export function DocumentsTab({
-  documentsPage,
-  isPlaceholderData,
-  onRefresh,
-  page,
-  pageSize,
-  onPageChange,
-  onPageSizeChange,
-  statusFilter,
-  typeFilter,
-  onStatusFilterChange,
-  onTypeFilterChange,
-}: Readonly<ExtendedDocumentsTabProps>) {
-  const [selectedDocument, setSelectedDocument] = useState<IDocument | null>(
-    null,
-  );
-  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
-  const [responseDialogOpen, setResponseDialogOpen] = useState(false);
-  const [documentForResponse, setDocumentForResponse] =
-    useState<IDocument | null>(null);
-  const [reviewStatus, setReviewStatus] = useState<string>("");
-  const [reviewNotes, setReviewNotes] = useState<string>("");
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [viewMode, setViewMode] = useState<"threaded" | "all">("threaded");
-  const [drawerThread, setDrawerThread] =
-    useState<DocumentThread<IDocument> | null>(null);
-  const [drawerInitialVersionId, setDrawerInitialVersionId] = useState<
-    string | undefined
-  >(undefined);
-  const { toast } = useToast();
-
-  const [search, setSearch] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
-
-  const [bulkReviewDialogOpen, setBulkReviewDialogOpen] = useState(false);
-  const [bulkReviewStatus, setBulkReviewStatus] = useState<string>("");
-  const [bulkReviewNotes, setBulkReviewNotes] = useState<string>("");
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  const documents = useMemo(
-    () => documentsPage?.data ?? [],
-    [documentsPage?.data],
-  );
-  const pagination = documentsPage?.pagination;
-  const totalCount = pagination?.totalCount ?? 0;
-  const totalPages = pagination?.totalPages ?? 1;
-  const currentPage = pagination?.currentPage ?? page;
-  const hasNextPage = pagination?.hasNextPage ?? false;
-  const hasPrevPage = pagination?.hasPrevPage ?? false;
-
-  const threadsByRootId = useMemo(() => {
-    const map = new Map<string, DocumentThread<IDocument>>();
-    for (const thread of groupDocumentsIntoThreads(documents)) {
-      map.set(thread.rootId, thread);
-    }
-    return map;
-  }, [documents]);
-
-  useEffect(() => {
-    setSelectedIds(new Set());
-  }, [page, pageSize]);
-
-  const filteredDocuments = useMemo(() => {
-    const baseDocs =
-      viewMode === "threaded"
-        ? Array.from(threadsByRootId.values()).map((t) => t.latestVersion)
-        : documents;
-
-    if (!debouncedSearch) return baseDocs;
-    const query = debouncedSearch.toLowerCase();
-    return baseDocs.filter((doc) => {
-      return (
-        doc.originalName.toLowerCase().includes(query) ||
-        doc.clientName.toLowerCase().includes(query) ||
-        doc.appointmentTitle.toLowerCase().includes(query) ||
-        (doc.description?.toLowerCase().includes(query) ?? false) ||
-        (doc.reviewNotes?.toLowerCase().includes(query) ?? false)
-      );
-    });
-  }, [documents, threadsByRootId, viewMode, debouncedSearch]);
-
-  // "Showing X-Y of Z" values derive from the server pagination envelope so
-  // they remain consistent across pages regardless of client-side search.
-  const showStart = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
-  const showEnd = Math.min(currentPage * pageSize, totalCount);
-
-  const hasActiveFilters =
-    statusFilter !== "all" || typeFilter !== "all" || debouncedSearch !== "";
-
-  const clearFilters = () => {
-    setSearch("");
-    setDebouncedSearch("");
-    onStatusFilterChange("all");
-    onTypeFilterChange("all");
-  };
-
-  // Bulk selection helpers. "On page" here means rows currently visible, i.e.
-  // the server-paginated page intersected with the client-side search.
-  const allOnPageSelected =
-    filteredDocuments.length > 0 &&
-    filteredDocuments.every((d) => selectedIds.has(d.id));
-
-  const toggleSelectAll = () => {
-    if (allOnPageSelected) {
-      const next = new Set(selectedIds);
-      filteredDocuments.forEach((d) => next.delete(d.id));
-      setSelectedIds(next);
-    } else {
-      const next = new Set(selectedIds);
-      filteredDocuments.forEach((d) => next.add(d.id));
-      setSelectedIds(next);
-    }
-  };
-
-  const toggleSelect = (id: string) => {
-    const next = new Set(selectedIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    setSelectedIds(next);
-  };
-
-  const handleBulkStatusUpdate = async (newStatus: string, notes?: string) => {
-    if (selectedIds.size === 0) return;
-    setIsBulkUpdating(true);
-
-    try {
-      const documentIds = Array.from(selectedIds);
-      // #347 — one transactional bulk-review request instead of an N-PATCH
-      // fan-out; the server reports how many it actually updated.
-      const res = await fetch("/api/documents/bulk-review", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          documentIds,
-          reviewStatus: newStatus,
-          reviewNotes: notes?.trim() || null,
-        }),
-      });
-
-      if (!res.ok) throw new Error("Bulk review failed");
-
-      const { data } = await res.json();
-      const updated: number = data?.updated ?? 0;
-      const failed = documentIds.length - updated;
-
-      toast({
-        title: "Bulk Review Complete",
-        description: failed
-          ? `${updated} updated, ${failed} not updated`
-          : `${updated} document${updated !== 1 ? "s" : ""} updated to ${documentReviewStatusBadge(newStatus).label}`,
-        variant: failed ? "destructive" : "default",
-      });
-
-      onRefresh?.();
-      // Only clear the selection + close on full success; on a partial failure
-      // keep the dialog open so the consultant sees what didn't update and can retry.
-      if (failed === 0) {
-        setSelectedIds(new Set());
-        setBulkReviewDialogOpen(false);
-        setBulkReviewStatus("");
-        setBulkReviewNotes("");
-      }
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
-      toast({
-        title: "Error",
-        description: "Failed to update documents",
-        variant: "destructive",
-      });
-    } finally {
-      setIsBulkUpdating(false);
-    }
-  };
-
-  const handleUploadResponse = (document: IDocument) => {
-    setDocumentForResponse(document);
-    setResponseDialogOpen(true);
-  };
-
-  const handleReviewClick = (document: IDocument) => {
-    setSelectedDocument(document);
-    setReviewStatus(document.reviewStatus);
-    setReviewNotes(document.reviewNotes || "");
-    setReviewDialogOpen(true);
-  };
-
-  const handleReviewSubmit = async () => {
-    if (!selectedDocument) return;
-
-    setIsUpdating(true);
-    try {
-      const response = await fetch(
-        `/api/appointments/${selectedDocument.appointmentId}/documents/${selectedDocument.id}`,
-        {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            reviewStatus,
-            reviewNotes: reviewNotes.trim() || null,
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to update review");
-      }
-
-      toast({
-        title: "Review Updated",
-        description: `Document review status updated to ${documentReviewStatusBadge(reviewStatus).label}`,
-      });
-
-      setReviewDialogOpen(false);
-      onRefresh?.();
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
-      console.error("Error updating review:", error);
-      toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to update review",
-        variant: "destructive",
-      });
-    } finally {
-      setIsUpdating(false);
-    }
-  };
-
-  const handleDownload = async (document: IDocument) => {
-    try {
-      const downloadUrl = `/api/appointments/${document.appointmentId}/documents/${document.id}/download`;
-      const link = window.document.createElement("a");
-      link.href = downloadUrl;
-      link.download = document.originalName;
-      window.document.body.appendChild(link);
-      link.click();
-      window.document.body.removeChild(link);
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
-      console.error("Error downloading file:", error);
-      toast({
-        title: "Error",
-        description: "Failed to download file",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleView = (document: IDocument) => {
-    const thread = threadsByRootId.get(document.rootDocumentId ?? document.id);
-    if (thread) {
-      setDrawerInitialVersionId(document.id);
-      setDrawerThread(thread);
-      return;
-    }
-    window.open(
-      `/api/appointments/${document.appointmentId}/documents/${document.id}/download?disposition=inline`,
-      "_blank",
-    );
-  };
-
-  const renderRowActions = (document: IDocument) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8 cursor-pointer">
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem
-          className="cursor-pointer"
-          onClick={() => handleView(document)}
-        >
-          <Eye className="mr-2 h-4 w-4" />
-          Preview & Thread
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          className="cursor-pointer"
-          onClick={() => handleDownload(document)}
-        >
-          <Download className="mr-2 h-4 w-4" />
-          Download
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          className="cursor-pointer"
-          onClick={() => handleUploadResponse(document)}
-        >
-          <Reply className="mr-2 h-4 w-4" />
-          Upload Response
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          className="cursor-pointer"
-          onClick={() => handleReviewClick(document)}
-        >
-          <MessageSquare className="mr-2 h-4 w-4" />
-          Quick Status
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-
-  const columns: ResponsiveColumn<IDocument>[] = [
+function buildConsultantDocumentColumns(
+  threadsByRootId: Map<string, DocumentThread<IDocument>>,
+  onView: (doc: IDocument) => void,
+): ResponsiveColumn<IDocument>[] {
+  return [
     {
       key: "document",
       header: "Deliverable / Document",
@@ -416,7 +95,7 @@ export function DocumentsTab({
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => handleView(document)}
+                  onClick={() => onView(document)}
                   className="truncate text-left text-sm font-medium text-foreground underline-offset-4 hover:underline"
                 >
                   {document.originalName}
@@ -500,6 +179,340 @@ export function DocumentsTab({
       ),
     },
   ];
+}
+
+export function DocumentsTab({
+  documentsPage,
+  isPlaceholderData,
+  onRefresh,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
+  statusFilter,
+  typeFilter,
+  onStatusFilterChange,
+  onTypeFilterChange,
+}: Readonly<ExtendedDocumentsTabProps>) {
+  const [selectedDocument, setSelectedDocument] = useState<IDocument | null>(
+    null,
+  );
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  const [responseDialogOpen, setResponseDialogOpen] = useState(false);
+  const [documentForResponse, setDocumentForResponse] =
+    useState<IDocument | null>(null);
+  const [reviewStatus, setReviewStatus] = useState<string>("");
+  const [reviewNotes, setReviewNotes] = useState<string>("");
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [viewMode, setViewMode] = useState<"threaded" | "all">("threaded");
+  const [drawerRootId, setDrawerRootId] = useState<string | null>(null);
+  const [drawerInitialVersionId, setDrawerInitialVersionId] = useState<
+    string | undefined
+  >(undefined);
+  const { toast } = useToast();
+
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+  const [bulkReviewDialogOpen, setBulkReviewDialogOpen] = useState(false);
+  const [bulkReviewStatus, setBulkReviewStatus] = useState<string>("");
+  const [bulkReviewNotes, setBulkReviewNotes] = useState<string>("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const documents = useMemo(
+    () => documentsPage?.data ?? [],
+    [documentsPage?.data],
+  );
+  const pagination = documentsPage?.pagination;
+  const totalCount = pagination?.totalCount ?? 0;
+  const totalPages = pagination?.totalPages ?? 1;
+  const currentPage = pagination?.currentPage ?? page;
+  const hasNextPage = pagination?.hasNextPage ?? false;
+  const hasPrevPage = pagination?.hasPrevPage ?? false;
+
+  const threadsByRootId = useMemo(() => {
+    const map = new Map<string, DocumentThread<IDocument>>();
+    for (const thread of groupDocumentsIntoThreads(documents)) {
+      map.set(thread.rootId, thread);
+    }
+    return map;
+  }, [documents]);
+
+  const drawerThread = useMemo(
+    () => (drawerRootId ? (threadsByRootId.get(drawerRootId) ?? null) : null),
+    [drawerRootId, threadsByRootId],
+  );
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [page, pageSize]);
+
+  const filteredDocuments = useMemo(() => {
+    const baseDocs =
+      viewMode === "threaded"
+        ? Array.from(threadsByRootId.values()).map((t) => t.latestVersion)
+        : documents;
+
+    if (!debouncedSearch) return baseDocs;
+    const query = debouncedSearch.toLowerCase();
+    return baseDocs.filter((doc) => {
+      return (
+        doc.originalName.toLowerCase().includes(query) ||
+        doc.clientName.toLowerCase().includes(query) ||
+        doc.appointmentTitle.toLowerCase().includes(query) ||
+        (doc.description?.toLowerCase().includes(query) ?? false) ||
+        (doc.reviewNotes?.toLowerCase().includes(query) ?? false)
+      );
+    });
+  }, [documents, threadsByRootId, viewMode, debouncedSearch]);
+
+  const showStart = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const showEnd = Math.min(currentPage * pageSize, totalCount);
+
+  const hasActiveFilters =
+    statusFilter !== "all" || typeFilter !== "all" || debouncedSearch !== "";
+
+  const clearFilters = () => {
+    setSearch("");
+    setDebouncedSearch("");
+    onStatusFilterChange("all");
+    onTypeFilterChange("all");
+  };
+
+  const allOnPageSelected =
+    filteredDocuments.length > 0 &&
+    filteredDocuments.every((d) => selectedIds.has(d.id));
+
+  const toggleSelectAll = () => {
+    if (allOnPageSelected) {
+      const next = new Set(selectedIds);
+      filteredDocuments.forEach((d) => next.delete(d.id));
+      setSelectedIds(next);
+    } else {
+      const next = new Set(selectedIds);
+      filteredDocuments.forEach((d) => next.add(d.id));
+      setSelectedIds(next);
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setSelectedIds(next);
+  };
+
+  const handleBulkStatusUpdate = async (newStatus: string, notes?: string) => {
+    if (selectedIds.size === 0) return;
+    setIsBulkUpdating(true);
+
+    try {
+      const documentIds = Array.from(selectedIds);
+      const res = await fetch("/api/documents/bulk-review", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          documentIds,
+          reviewStatus: newStatus,
+          reviewNotes: notes?.trim() || null,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Bulk review failed");
+
+      const { data } = await res.json();
+      const updated: number = data?.updated ?? 0;
+      const failed = documentIds.length - updated;
+
+      toast({
+        title: "Bulk Review Complete",
+        description: failed
+          ? `${updated} updated, ${failed} not updated`
+          : `${updated} document${updated !== 1 ? "s" : ""} updated to ${documentReviewStatusBadge(newStatus).label}`,
+        variant: failed ? "destructive" : "default",
+      });
+
+      onRefresh?.();
+      if (failed === 0) {
+        setSelectedIds(new Set());
+        setBulkReviewDialogOpen(false);
+        setBulkReviewStatus("");
+        setBulkReviewNotes("");
+      }
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
+      toast({
+        title: "Error",
+        description: "Failed to update documents",
+        variant: "destructive",
+      });
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  const handleUploadResponse = (document: IDocument) => {
+    setDocumentForResponse(document);
+    setResponseDialogOpen(true);
+  };
+
+  const handleReviewClick = (document: IDocument) => {
+    setSelectedDocument(document);
+    setReviewStatus(document.reviewStatus);
+    setReviewNotes(document.reviewNotes || "");
+    setReviewDialogOpen(true);
+  };
+
+  const handleReviewSubmit = async () => {
+    if (!selectedDocument) return;
+
+    setIsUpdating(true);
+    try {
+      const response = await fetch(
+        `/api/appointments/${selectedDocument.appointmentId}/documents/${selectedDocument.id}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            reviewStatus,
+            reviewNotes: reviewNotes.trim() || null,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to update review");
+      }
+
+      toast({
+        title: "Review Updated",
+        description: `Document review status updated to ${documentReviewStatusBadge(reviewStatus).label}`,
+      });
+
+      setReviewDialogOpen(false);
+      onRefresh?.();
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
+      toast({
+        title: "Error",
+        description:
+          error instanceof Error ? error.message : "Failed to update review",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleDownload = async (document: IDocument) => {
+    try {
+      const downloadUrl = `/api/appointments/${document.appointmentId}/documents/${document.id}/download`;
+      const link = window.document.createElement("a");
+      link.href = downloadUrl;
+      link.download = document.originalName;
+      window.document.body.appendChild(link);
+      link.click();
+      window.document.body.removeChild(link);
+    } catch (error) {
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
+      toast({
+        title: "Error",
+        description: "Failed to download file",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleView = useCallback(
+    (document: IDocument) => {
+      const rootId = document.rootDocumentId ?? document.id;
+      if (threadsByRootId.has(rootId)) {
+        setDrawerInitialVersionId(document.id);
+        setDrawerRootId(rootId);
+        return;
+      }
+      window.open(
+        `/api/appointments/${document.appointmentId}/documents/${document.id}/download?disposition=inline`,
+        "_blank",
+      );
+    },
+    [threadsByRootId],
+  );
+
+  const columns = useMemo(
+    () => buildConsultantDocumentColumns(threadsByRootId, handleView),
+    [threadsByRootId, handleView],
+  );
+
+  const renderRowActions = (document: IDocument) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Document actions"
+          className="h-8 w-8 cursor-pointer"
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onClick={() => handleView(document)}
+        >
+          <Eye className="mr-2 h-4 w-4" />
+          Preview & Thread
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onClick={() => void handleDownload(document)}
+        >
+          <Download className="mr-2 h-4 w-4" />
+          Download
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onClick={() => handleUploadResponse(document)}
+        >
+          <Reply className="mr-2 h-4 w-4" />
+          Upload Response
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          onClick={() => handleReviewClick(document)}
+        >
+          <MessageSquare className="mr-2 h-4 w-4" />
+          Quick Status
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   const emptyState = hasActiveFilters ? (
     <div className="py-12 text-center text-muted-foreground">
@@ -569,11 +582,11 @@ export function DocumentsTab({
       />
 
       <div className="overflow-hidden bg-card p-4 text-card-foreground sm:p-6">
-        {/* Search bar and filter dropdowns — stack full-width on phones */}
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="relative w-full min-w-0 sm:w-auto sm:max-w-sm sm:flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
+              aria-label="Search documents by name, learner, or appointment"
               placeholder="Search by name, learner, or appointment..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -581,6 +594,8 @@ export function DocumentsTab({
             />
             {search && (
               <button
+                type="button"
+                aria-label="Clear search"
                 onClick={() => setSearch("")}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
@@ -634,7 +649,6 @@ export function DocumentsTab({
           )}
         </div>
 
-        {/* Results count — driven by the server pagination envelope */}
         {totalCount > 0 && (
           <div className="mb-2 text-sm text-muted-foreground">
             Showing {showStart}-{showEnd} of {totalCount} document
@@ -650,7 +664,6 @@ export function DocumentsTab({
           </div>
         )}
 
-        {/* Bulk action bar */}
         {selectedIds.size > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
             <span className="text-sm font-medium text-foreground">
@@ -686,9 +699,6 @@ export function DocumentsTab({
           empty={emptyState}
         />
 
-        {/* Pagination controls — driven by the server envelope (issue #346).
-          Buttons are disabled while a placeholder page is visible so users
-          can't fire off duplicate requests mid-transition. */}
         {totalPages > 1 && (
           <div className="mt-4 flex items-center justify-between">
             <div className="text-sm text-muted-foreground">
@@ -701,7 +711,7 @@ export function DocumentsTab({
                 onClick={() => onPageChange(page - 1)}
                 disabled={!hasPrevPage || isPlaceholderData}
               >
-                <ChevronLeft className="h-4 w-4 mr-1" />
+                <ChevronLeft className="mr-1 h-4 w-4" />
                 Previous
               </Button>
               <Button
@@ -711,18 +721,17 @@ export function DocumentsTab({
                 disabled={!hasNextPage || isPlaceholderData}
               >
                 Next
-                <ChevronRight className="h-4 w-4 ml-1" />
+                <ChevronRight className="ml-1 h-4 w-4" />
               </Button>
             </div>
           </div>
         )}
 
-        {/* Review Dialog */}
         <ResponsiveModal
           open={reviewDialogOpen}
           onOpenChange={setReviewDialogOpen}
         >
-          <ResponsiveModalContent className="sm:max-w-[425px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalContent className="flex max-h-[90dvh] flex-col overflow-hidden sm:max-w-[425px]">
             <ResponsiveModalHeader className="shrink-0">
               <ResponsiveModalTitle>Review Document</ResponsiveModalTitle>
               <ResponsiveModalDescription>
@@ -730,9 +739,9 @@ export function DocumentsTab({
                 {selectedDocument?.originalName}
               </ResponsiveModalDescription>
             </ResponsiveModalHeader>
-            <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
+            <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto py-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Review Status</label>
+                <p className="text-sm font-medium">Review Status</p>
                 <Select value={reviewStatus} onValueChange={setReviewStatus}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select status" />
@@ -747,8 +756,14 @@ export function DocumentsTab({
                 </Select>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Review Notes</label>
+                <label
+                  htmlFor="review-notes-textarea"
+                  className="text-sm font-medium"
+                >
+                  Review Notes
+                </label>
                 <Textarea
+                  id="review-notes-textarea"
                   placeholder="Add any comments or feedback..."
                   value={reviewNotes}
                   onChange={(e) => setReviewNotes(e.target.value)}
@@ -785,7 +800,7 @@ export function DocumentsTab({
                 Cancel
               </Button>
               <Button
-                onClick={handleReviewSubmit}
+                onClick={() => void handleReviewSubmit()}
                 disabled={isUpdating || !reviewStatus}
               >
                 {isUpdating ? "Updating..." : "Update Review"}
@@ -794,7 +809,6 @@ export function DocumentsTab({
           </ResponsiveModalContent>
         </ResponsiveModal>
 
-        {/* Bulk Review Dialog */}
         <ResponsiveModal
           open={bulkReviewDialogOpen}
           onOpenChange={(open) => {
@@ -805,7 +819,7 @@ export function DocumentsTab({
             }
           }}
         >
-          <ResponsiveModalContent className="sm:max-w-[500px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalContent className="flex max-h-[90dvh] flex-col overflow-hidden sm:max-w-[500px]">
             <ResponsiveModalHeader className="shrink-0">
               <ResponsiveModalTitle>
                 Review {selectedIds.size} Documents
@@ -815,9 +829,9 @@ export function DocumentsTab({
                 documents.
               </ResponsiveModalDescription>
             </ResponsiveModalHeader>
-            <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
+            <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto py-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Review Status</label>
+                <p className="text-sm font-medium">Review Status</p>
                 <Select
                   value={bulkReviewStatus}
                   onValueChange={setBulkReviewStatus}
@@ -835,13 +849,17 @@ export function DocumentsTab({
                 </Select>
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">
+                <label
+                  htmlFor="bulk-review-notes-textarea"
+                  className="text-sm font-medium"
+                >
                   Shared Notes{" "}
                   <span className="font-normal text-muted-foreground">
                     (optional)
                   </span>
                 </label>
                 <Textarea
+                  id="bulk-review-notes-textarea"
                   placeholder="Add notes that will apply to all selected documents..."
                   value={bulkReviewNotes}
                   onChange={(e) => setBulkReviewNotes(e.target.value)}
@@ -849,18 +867,16 @@ export function DocumentsTab({
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Selected Documents
-                </label>
-                <div className="max-h-[200px] overflow-y-auto border rounded-md p-2 space-y-2">
+                <p className="text-sm font-medium">Selected Documents</p>
+                <div className="max-h-[200px] space-y-2 overflow-y-auto rounded-md border p-2">
                   {documents
                     .filter((d) => selectedIds.has(d.id))
                     .map((doc) => (
                       <div
                         key={doc.id}
-                        className="flex items-center justify-between text-sm py-1"
+                        className="flex items-center justify-between py-1 text-sm"
                       >
-                        <span className="truncate mr-2">
+                        <span className="mr-2 truncate">
                           {doc.originalName}
                         </span>
                         <StatusBadge
@@ -882,7 +898,7 @@ export function DocumentsTab({
               </Button>
               <Button
                 onClick={() =>
-                  handleBulkStatusUpdate(bulkReviewStatus, bulkReviewNotes)
+                  void handleBulkStatusUpdate(bulkReviewStatus, bulkReviewNotes)
                 }
                 disabled={isBulkUpdating || !bulkReviewStatus}
               >
@@ -892,7 +908,6 @@ export function DocumentsTab({
           </ResponsiveModalContent>
         </ResponsiveModal>
 
-        {/* Response Upload Dialog */}
         {documentForResponse && (
           <ConsultantResponseUpload
             appointmentId={documentForResponse.appointmentId}
@@ -906,12 +921,11 @@ export function DocumentsTab({
           />
         )}
 
-        {/* Split Slide-Over Document Preview & Review Drawer */}
         <DocumentReviewDrawer
           thread={drawerThread}
           isOpen={Boolean(drawerThread)}
           onClose={() => {
-            setDrawerThread(null);
+            setDrawerRootId(null);
             setDrawerInitialVersionId(undefined);
           }}
           viewerRole="consultant"

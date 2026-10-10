@@ -31,3 +31,11 @@ export function isPreviewableMimeType(
     mimeType === "text/plain"
   );
 }
+
+export function formatContentDisposition(
+  disposition: "inline" | "attachment",
+  originalName: string,
+): string {
+  const asciiFallback = originalName.replace(/[^\x20-\x7E]|["\\]/g, "_");
+  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
+}
