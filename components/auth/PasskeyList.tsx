@@ -150,7 +150,6 @@ export function PasskeyList() {
                     </label>
                     <input
                       id={`passkey-name-${passkey.id}`}
-                      autoFocus
                       autoComplete="off"
                       value={renaming.name}
                       onChange={(e) =>
