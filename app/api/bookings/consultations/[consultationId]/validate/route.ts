@@ -65,6 +65,7 @@ export async function POST(
       authResult.session,
       "consultation",
       consultationId,
+      request.method,
     );
     if (authzError) return authzError;
 

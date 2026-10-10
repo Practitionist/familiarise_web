@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { isWalletFrozen } from "@/lib/payments/wallet-freeze";
+import { providerDomains } from "@/lib/sso/domains";
 
 /**
  * #1527 — the back-office org detail: identity, KYB/GST satellites, billing
@@ -41,8 +42,8 @@ export async function readOrgDetail(orgId: string) {
   const walletFrozen = org.billingAccount
     ? await isWalletFrozen(prisma, org.billingAccount.id)
     : false;
-  // D22: what staff need to approve a provider, i.e. whether the org still
-  // holds a verified DNS claim for its domain (the approval route re-checks).
+  // What staff need to approve a provider: whether the org still holds a
+  // verified DNS claim for every domain it covers (the approval route re-checks).
   const providers = await prisma.ssoProvider.findMany({
     where: { organizationId: orgId },
     select: {
@@ -63,9 +64,45 @@ export async function readOrgDetail(orgId: string) {
   );
   const ssoProviders = providers.map((p) => ({
     ...p,
-    claimVerified: verifiedDomains.has(p.domain),
+    claimVerified: providerDomains(p.domain).every((d) =>
+      verifiedDomains.has(d),
+    ),
   }));
   return { ...org, walletFrozen, ssoProviders };
 }
 
 export type OrgDetail = NonNullable<Awaited<ReturnType<typeof readOrgDetail>>>;
+
+/** Providers waiting for staff approval, oldest first, across every org. */
+export async function readPendingSsoApprovals() {
+  const rows = await prisma.ssoProvider.findMany({
+    where: { domainVerified: false, organizationId: { not: null } },
+    select: {
+      providerId: true,
+      issuer: true,
+      domain: true,
+      createdAt: true,
+      organization: { select: { id: true, name: true } },
+    },
+    orderBy: { createdAt: "asc" },
+    take: 50,
+  });
+  return rows.flatMap((r) =>
+    r.organization
+      ? [
+          {
+            providerId: r.providerId,
+            issuer: r.issuer,
+            domains: providerDomains(r.domain),
+            submittedAt: r.createdAt.toISOString(),
+            orgId: r.organization.id,
+            orgName: r.organization.name,
+          },
+        ]
+      : [],
+  );
+}
+
+export type PendingSsoApproval = Awaited<
+  ReturnType<typeof readPendingSsoApprovals>
+>[number];

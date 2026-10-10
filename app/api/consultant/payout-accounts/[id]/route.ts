@@ -14,6 +14,7 @@ import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
 } from "@/lib/payments/payouts/razorpay-payouts";
+import { requireFreshSession } from "@/lib/auth/step-up";
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
@@ -86,10 +87,12 @@ async function handleReverify(account: PayoutAccountRecord) {
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const stale = requireFreshSession(session);
+    if (stale) return stale;
 
     const { id } = await params;
     const { data: body, error } = await parseJsonRequest(
@@ -173,10 +176,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
  */
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const stale = requireFreshSession(session);
+    if (stale) return stale;
 
     const { id } = await params;
 

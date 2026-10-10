@@ -17,7 +17,7 @@ export async function GET(
     const { appointmentId, documentId } = await params;
 
     // Get user session
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -157,7 +157,10 @@ export async function GET(
       console.error(
         "Supabase admin client not configured. Set SUPABASE_SERVICE_ROLE_KEY to enable document downloads.",
       );
-      Sentry.captureException(new Error("Supabase admin client not configured"), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        new Error("Supabase admin client not configured"),
+        { tags: { subsystem: "appointments" } },
+      );
       return NextResponse.json(
         {
           error: "Storage configuration error",
@@ -168,14 +171,18 @@ export async function GET(
       );
     }
 
-    const { data: fileData, error: downloadError } =
-      await supabaseAdmin.storage
-        .from("documents")
-        .download(document.storagePath);
+    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
+      .from("documents")
+      .download(document.storagePath);
 
     if (downloadError || !fileData) {
       console.error("Supabase download error:", downloadError);
-      Sentry.captureException(downloadError instanceof Error ? downloadError : new Error(String(downloadError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        downloadError instanceof Error
+          ? downloadError
+          : new Error(String(downloadError)),
+        { tags: { subsystem: "appointments" } },
+      );
       return NextResponse.json(
         {
           error: "Download failed",
@@ -206,7 +213,10 @@ export async function GET(
     return response;
   } catch (error) {
     console.error("Document download error:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     return NextResponse.json(
       {
         error: "Server error",

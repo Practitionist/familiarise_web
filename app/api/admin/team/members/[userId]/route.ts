@@ -213,6 +213,7 @@ export const PATCH = withOpsAction(
       };
     },
   },
+  { stepUp: true },
 );
 
 /** The phase-2 half, off the transaction, best-effort by construction. */

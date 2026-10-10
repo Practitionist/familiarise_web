@@ -26,7 +26,7 @@ export default async function OrgRoot({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = await params;
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) redirect("/auth/signin");
 
   if (session.user.role !== "ADMIN") {

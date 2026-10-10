@@ -107,7 +107,9 @@ describe("a user cannot book their own plan", () => {
       lookupStart,
       SRC.indexOf("\nasync function ", lookupStart + 1),
     );
-    expect(lookup).toContain('where: { status: "ACCEPTED" as const }');
+    expect(lookup).toContain(
+      'where: { status: { in: ["PENDING" as const, "ACCEPTED" as const] } }',
+    );
     expect(lookup).toContain("collaboratorProfileIds");
 
     const body = insideLock();

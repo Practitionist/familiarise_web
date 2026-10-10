@@ -34,6 +34,8 @@ const MAX_TENTATIVE_SLOTS = 200;
 const MAX_REFERRAL_VESTS = 50;
 /** Expired credits per breakage run; one Serializable transaction each. */
 const MAX_REFERRAL_BREAKAGE = 500;
+/** Abandoned onboarding drafts are deleted after this many idle days. */
+const ONBOARDING_DRAFT_TTL_DAYS = 90;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -226,13 +228,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         job: "cleanup-auth-tokens",
         run: async () => {
           const { cleanupAuthTokens } =
-            await import("@/scripts/cleanup/cleanup-auth-tokens");
+            await import("@/lib/auth/cleanup-auth-tokens");
           return cleanupAuthTokens();
         },
         summarize: (r) => ({
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
-          passwordResetTokensCleared: r.passwordResetTokensCleared,
+          idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
+          staleInvitationsExpired: r.staleInvitationsExpired,
           totalCleaned: r.totalCleaned,
         }),
         failureMessage: "Failed to cleanup auth tokens",
@@ -356,6 +359,31 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Recording retention sweep failed",
       }),
 
+    // @cleanup-twin expire-onboarding-drafts
+    "expire-onboarding-drafts": () =>
+      cleanupRoute({
+        job: "expire-onboarding-drafts",
+        run: async () => {
+          const { default: prisma } = await import("@/lib/prisma");
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          return withCronLock(
+            "expire-onboarding-drafts",
+            { failMode: "open" },
+            async () => {
+              const cutoff = new Date(
+                Date.now() - ONBOARDING_DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000,
+              );
+              const { count } = await prisma.onboardingDraft.deleteMany({
+                where: { updatedAt: { lt: cutoff } },
+              });
+              return { success: true, deleted: count };
+            },
+          );
+        },
+        summarize: (r) => ({ deleted: r.deleted }),
+        failureMessage: "Failed to expire onboarding drafts",
+      }),
+
     // @cleanup-twin expire-referral-credits
     "expire-referral-credits": () =>
       cleanupRoute({
@@ -414,6 +442,21 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         },
         summarize: (r) => ({ trialsExpired: r.trialsExpired }),
         failureMessage: "Failed to expire unpaid trial sessions",
+      }),
+
+    // @cleanup-twin expire-stale-collaborator-invites
+    "expire-stale-collaborator-invites": () =>
+      cleanupRoute({
+        job: "expire-stale-collaborator-invites",
+        run: async (req) => {
+          const { expireStaleCollaboratorInvites } =
+            await import("@/lib/collaborators/cleanup");
+          return expireStaleCollaboratorInvites(
+            parseLimitParamOrDefault(req, 50),
+          );
+        },
+        summarize: (r) => ({ expired: r.expired, scanned: r.scanned }),
+        failureMessage: "Failed to expire stale collaborator invites",
       }),
 
     // @cleanup-twin gst-outward-register-export
@@ -521,6 +564,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         },
         status: () => 200,
         failureMessage: "System job execution prune failed",
+      }),
+
+    // @cleanup-twin purge-unverified-users
+    "purge-unverified-users": () =>
+      cleanupRoute({
+        job: "purge-unverified-users",
+        run: async (req) => {
+          const { purgeUnverifiedUsers, DEFAULT_PURGE_LIMIT } =
+            await import("@/lib/auth/purge-unverified-users");
+          return purgeUnverifiedUsers({
+            limit: parseLimitParamOrDefault(req, DEFAULT_PURGE_LIMIT),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          purged: r.purged,
+          failed: r.failed,
+        }),
+        failureMessage: "Failed to purge unverified users",
       }),
 
     // @cleanup-twin reconcile-disputes

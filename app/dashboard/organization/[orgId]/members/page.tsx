@@ -43,6 +43,7 @@ export default async function OrgMembersPage({
   // decision 3). The full roster stays members.read (BILLING_ADMIN is
   // operator-blind), so only that grant gets it prefetched below.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "members.directory",
   });
   if (access.error) {

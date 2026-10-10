@@ -26,12 +26,14 @@ import {
 } from "@/lib/enterprise/transitions";
 import {
   MembershipGuardError,
+  assertActorMayManage,
   assertNotTombstone,
   assertRoleChangeAllowed,
   assertStatusChangeAllowed,
 } from "@/lib/enterprise/membership-guards";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { removeMember } from "@/lib/enterprise/member-removal";
+import { revokeOrgManagedUserSessions } from "@/lib/sso/session-sweeps";
 import {
   applyMembershipRoleEffects,
   auditPayoutRecipientChange,
@@ -106,7 +108,7 @@ export async function GET(
   // can enumerate peers' emails/profile ids. Was a MANAGER rank floor, which
   // let BILLING_ADMIN open members the list refuses and kept SUPPORT out of
   // members it can list (#1527 P0-4).
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
 
   const membership = await prisma.membership.findFirst({
@@ -357,6 +359,9 @@ async function applyRoleAndStatusTransitions(
       where: { id: memberId, organizationId: orgId },
       to: patch.status,
     });
+    if (patch.status === "SUSPENDED") {
+      await revokeOrgManagedUserSessions(tx, orgId, current.userId);
+    }
   }
 
   return roleEffects;
@@ -371,7 +376,10 @@ export async function PATCH(
   },
 ) {
   const { orgId, memberId } = await params;
-  const access = await requireOrgAccess(orgId, { requireActive: true });
+  const access = await requireOrgAccess(orgId, {
+    requireActive: true,
+    expectUser: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -460,6 +468,8 @@ export async function PATCH(
           }
 
           assertNotTombstone(current);
+          // Even a label-only edit on an OWNER, MAINTAINER or BILLING_ADMIN row needs an OWNER.
+          if (touchesPeople) assertActorMayManage(actor, current.role);
 
           const roleChanged =
             patch.role !== undefined && patch.role !== current.role;
@@ -563,6 +573,7 @@ export async function DELETE(
   const access = await requireOrgAccess(orgId, {
     permission: "members.manage",
     requireActive: true,
+    expectUser: true,
   });
   if (access.error) return access.error;
 

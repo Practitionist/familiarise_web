@@ -10,9 +10,7 @@ import { withDownloadUrls } from "@/lib/verification/review-route";
  */
 export async function GET() {
   try {
-    // Read-only status check, but force-fresh so a revoked/erased session
-    // stops seeing verification state the moment the row is gone.
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(

@@ -1,61 +1,84 @@
-import * as Sentry from "@sentry/nextjs";
 import { betterAuth } from "better-auth";
-import {
-  APIError,
-  createAuthMiddleware,
-  getSessionFromCtx,
-} from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
-import { admin, customSession, twoFactor } from "better-auth/plugins";
+import { admin, customSession, emailOTP, twoFactor } from "better-auth/plugins";
 import { adminAc, userAc, defaultAc } from "better-auth/plugins/admin/access";
 import { sso } from "@better-auth/sso";
+import { passkey } from "@better-auth/passkey";
 import bcrypt from "bcrypt";
 import prisma from "@/lib/prisma";
+import { scheduleAfter } from "@/lib/api/after-safe";
+import { sendPasswordResetEmail } from "@/lib/email";
+import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
 import {
-  sendWelcomeEmail,
-  sendAccountLinkedEmail,
-  sendPasswordResetEmail,
-  sendVerificationEmail,
-} from "@/lib/email";
-import { syncSubscriber } from "@/lib/novu/subscriber";
-import {
-  shouldRejectSession,
-  lookupEnforcedOrg,
-} from "@/lib/sso/enforce-session";
+  assertSsoAccountClaims,
+  assertSsoAccountUpdate,
+  discardUnfinishedSsoUser,
+} from "@/lib/sso/account-claims";
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import {
+  assertSsoAccountLink,
   assertSsoEmailOnDomain,
   isSsoProviderId,
 } from "@/lib/sso/account-domain";
-import { buildSignupConsentArtifacts } from "@/lib/compliance/dpdp";
-import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
 import {
-  capOperatorExpiry,
+  VERIFICATION_CODE_TTL_SECONDS,
+  accountLifecycle,
+  notifyAccountLinked,
+  notifyExistingAccountSignUp,
+  onPasswordReset,
+  provisionNewUser,
+  sendVerificationCode,
+  userFlags,
+  welcomeVerifiedUser,
+} from "@/lib/auth/account-lifecycle";
+import { reportAuthLogToSentry } from "@/lib/auth/auth-logger";
+import { corePolicy } from "@/lib/auth/core-policy";
+import {
   isOperatorRole,
   refusesOperatorAccount,
   refusesOperatorSession,
 } from "@/lib/auth/operator-session-policy";
+import {
+  authenticationStart,
+  cappedSessionFields,
+  refreshSessionLifetime,
+  sessionMaxAgeMs,
+} from "@/lib/auth/session-lifetime";
+import { supersededSessionRevocation } from "@/lib/auth/supersede-session";
 import { breachedPasswordCheck } from "@/lib/auth/password-policy";
+import {
+  PASSWORD_MAX_BYTES,
+  PASSWORD_MIN_LENGTH,
+} from "@/lib/auth/password-rules";
 import { authRateLimit } from "@/lib/auth/rate-limit";
 import { stripSessionToken } from "@/lib/auth/strip-session-token";
+import { notifySecurityEvents } from "@/lib/auth/security-event-hook";
+import {
+  revokeAllUserSessions,
+  revokeSessionById,
+} from "@/lib/auth/session-revoke";
+import { socialProviderConfig } from "@/lib/auth/social-providers";
+import {
+  assertOperatorMayEnableTwoFactor,
+  assertTwoFactorRequestPolicy,
+  generateBackupCodes,
+  isTwoFactorEnrolment,
+} from "@/lib/auth/two-factor-policy";
+import { assertSensitiveAuthAction } from "@/lib/auth/step-up";
+import {
+  assertOperatorMayRegisterPasskey,
+  operatorPasskeyOptions,
+} from "@/lib/auth/passkey-policy";
+import { sendSecurityEventEmail } from "@/lib/auth/security-email";
 import {
   isSentryIdentityEnabled,
   resolveSentryUserId,
 } from "@/lib/observability/identity";
 
-// STAFF = moderator: read users (a subset of the full admin AC). Shares
-// defaultAc so statements line up. No `session:*`: the plugin's session
-// endpoints return raw tokens, and staff revoke goes through
-// app/api/admin/users/[userId]/sessions/revoke instead.
-//
-// #1132 — `set-role` and `ban` are deliberately NOT granted here. The admin
-// plugin's /admin/set-role authorises on the caller's `user:["set-role"]`
-// permission alone and never compares actor rank to target rank, so holding it
-// let STAFF assign themselves ADMIN — which lib/auth-helpers.ts then treats as
-// OWNER on every organization. This mirrors BACKOFFICE_PERMISSIONS, where
-// `users.moderate` is ADMIN_ONLY. Ban writes already go through lib/moderation
-// via Prisma rather than auth.api.banUser, so nothing legitimate needed it.
+// STAFF = moderator: read users only. No `session:*` (those endpoints return
+// raw tokens) and no `set-role`/`ban`: /admin/set-role never compares ranks.
 const staffAc = defaultAc.newRole({
   user: ["list", "get"],
 });
@@ -63,16 +86,13 @@ const staffAc = defaultAc.newRole({
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
-  trustedOrigins: process.env.BETTER_AUTH_TRUSTED_ORIGINS
-    ? process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(",")
-    : [],
+  trustedOrigins: (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 
-  // #1856 — BetterAuth swallows endpoint exceptions into 500 responses
-  // (nothing ever throws out of `app/api/auth/[...all]`), and schema
-  // errors take a message-only log branch. Without this, an auth-wide
-  // outage is invisible: it lands on console (Netlify function logs)
-  // and never reaches Sentry. Only `error` forwards; every level keeps
-  // its console behavior — see `lib/auth/auth-logger.ts`.
+  // BetterAuth swallows endpoint exceptions into 500s; this forwards its
+  // `error` logs to Sentry (lib/auth/auth-logger.ts).
   logger: {
     log: reportAuthLogToSentry,
   },
@@ -84,6 +104,9 @@ export const auth = betterAuth({
   // server calls are unaffected.
   disabledPaths: [
     "/list-sessions",
+    "/revoke-session",
+    "/revoke-sessions",
+    "/revoke-other-sessions",
     // No caller: these hand out the linked provider's OAuth tokens or let the
     // browser write session fields.
     "/get-access-token",
@@ -93,6 +116,9 @@ export const auth = betterAuth({
     // Email/SMS OTP is not configured; operators use TOTP or backup codes.
     "/two-factor/send-otp",
     "/two-factor/verify-otp",
+    // Session + password would return the TOTP secret, letting a session thief
+    // clone the authenticator. Enrolment shows the URI from /two-factor/enable.
+    "/two-factor/get-totp-uri",
     // The admin plugin's whole HTTP surface. It stays installed for the
     // role/ban columns, the sign-in ban check and the server-side
     // `auth.api.createUser` used by staff onboarding, but its endpoints skip
@@ -115,6 +141,17 @@ export const auth = betterAuth({
     "/admin/remove-user",
     "/admin/set-user-password",
     "/admin/has-permission",
+    // Verification is a 6-digit code (emailOTP below). The link endpoints and
+    // the plugin's OTP sign-in, reset and email-change flows stay unmounted.
+    "/verify-email",
+    "/send-verification-email",
+    "/sign-in/email-otp",
+    "/email-otp/check-verification-otp",
+    "/email-otp/request-password-reset",
+    "/forget-password/email-otp",
+    "/email-otp/reset-password",
+    "/email-otp/request-email-change",
+    "/email-otp/change-email",
     // SSO provider lifecycle. Registration, edits and deletes go through
     // app/api/organizations/[orgId]/sso/providers (org-scoped, audited,
     // server-generated providerId), and approval through the ADMIN door
@@ -135,7 +172,7 @@ export const auth = betterAuth({
     "/sso/callback",
   ],
 
-  // SSO is OIDC-only, but @better-auth/sso 1.7.6 has no switch to leave the
+  // SSO is OIDC-only, but @better-auth/sso 1.7.7 has no switch to leave the
   // SAML endpoints unmounted, and `disabledPaths` matches concrete paths so
   // it cannot cover the `:providerId` ones. `ctx.path` here is the route
   // template, so one prefix check 404s the whole SAML surface.
@@ -153,57 +190,37 @@ export const auth = betterAuth({
           message: "organizationSlug is not supported",
         });
       }
-      // Only operators use 2FA, and a trusted device would let a stolen
-      // password skip the authenticator for 30 days. The UI never offers it.
-      if (
-        (ctx.path === "/two-factor/verify-totp" ||
-          ctx.path === "/two-factor/verify-backup-code") &&
-        ctx.body?.trustDevice
-      ) {
-        throw new APIError("BAD_REQUEST", {
-          message: "Trusted devices are not available.",
-          code: "TRUST_DEVICE_DISABLED",
-        });
-      }
-      // 2FA is mandatory for operators. Recovery from a lost authenticator is
-      // a backup code or an admin reset (app/api/admin/team/members/[userId]/
-      // two-factor), never self-service removal.
-      if (ctx.path === "/two-factor/disable") {
-        const current = await getSessionFromCtx(ctx);
-        if (isOperatorRole((current?.user as { role?: string })?.role)) {
-          throw new APIError("FORBIDDEN", {
-            message: "Two-factor authentication is required for staff.",
-            code: "TWO_FACTOR_REQUIRED",
-          });
-        }
-      }
+      await assertTwoFactorRequestPolicy(ctx);
+      await assertOperatorMayEnableTwoFactor(ctx);
+      await assertSensitiveAuthAction(ctx);
+      await assertOperatorMayRegisterPasskey(ctx);
     }),
-    after: stripSessionToken,
+    after: createAuthMiddleware(async (ctx) => {
+      await notifySecurityEvents(ctx);
+      return stripSessionToken(ctx);
+    }),
   },
 
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
 
-  // #1487 / #1878 — Two-layer rate-limiting architecture:
-  // 1. BetterAuth endpoints (`/api/auth/*`) use `authRateLimit` (lib/auth/rate-limit.ts),
-  //    backed by shared Upstash Redis via customStorage so counters persist across
-  //    serverless function instances instead of resetting per cold start.
-  // 2. Non-BetterAuth routes use Edge (`middleware.ts`) and route-level (`lib/rate-limit.ts`)
-  //    `@upstash/ratelimit` sliding-window limiters. Middleware excludes `/api/auth/*`
-  //    from edge rate-limit rules so auth requests are never double-counted.
+  // Per-IP budgets in Upstash (lib/auth/rate-limit.ts); middleware.ts skips
+  // /api/auth/* so nothing is counted twice.
   rateLimit: authRateLimit,
 
   emailAndPassword: {
     enabled: true,
-    minPasswordLength: 8,
-    maxPasswordLength: 128,
-    // #673 — a credential signup must prove email ownership before it can hold
-    // a session. Without this an attacker can pre-register a victim's address; a
-    // later OAuth login (see accountLinking below) would then auto-link the
-    // real user into the attacker-seeded account (pre-hijacking).
-    // OAuth/SSO are unaffected — the IdP already asserts a verified email.
+    minPasswordLength: PASSWORD_MIN_LENGTH,
+    // bcrypt reads 72 bytes; password-policy.ts also caps the UTF-8 byte length.
+    maxPasswordLength: PASSWORD_MAX_BYTES,
+    // No session until the address is proven, so a pre-registered victim
+    // address cannot be auto-linked into on a later OAuth sign-in. This also
+    // makes a duplicate sign-up answer exactly like a new one.
     requireEmailVerification: true,
+    onExistingUserSignUp: async ({ user }) => {
+      await notifyExistingAccountSignUp(user);
+    },
     password: {
       hash: (password) => bcrypt.hash(password, 12),
       verify: async ({ password, hash }) => {
@@ -231,43 +248,31 @@ export const auth = betterAuth({
     // holds no session, so nothing needs preserving. (changePassword keeps
     // the current session via `revokeOtherSessions: true` instead.)
     revokeSessionsOnPasswordReset: true,
-  },
-
-  emailVerification: {
-    // Send the link on signup. An unverified sign-in attempt is still rejected
-    // (EMAIL_NOT_VERIFIED); the signin UI offers an explicit resend that lands
-    // on /auth/verify-email — sendOnSignIn is left off so we don't also fire a
-    // second link whose callbackURL would be "/".
-    sendOnSignUp: true,
-    // After clicking the link, drop the user straight into an authenticated
-    // session so they land on the callbackURL (our verify-email page) — no
-    // second login.
-    autoSignInAfterVerification: true,
-    expiresIn: 60 * 60, // 1 hour
-    sendVerificationEmail: async ({ user, url }) => {
-      await sendVerificationEmail({
-        email: user.email,
-        name: user.name || "User",
-        verificationUrl: url,
-        userId: user.id,
-      });
+    onPasswordReset: async ({ user }) => {
+      await onPasswordReset(user);
     },
   },
 
-  // Reset and verification tokens are stored as SHA-256, so a leaked
-  // verifications table yields no usable links.
+  // The sender is emailOTP's (overrideDefaultEmailVerification): the code is
+  // typed into the tab that chose the password, so whoever verifies holds both.
+  emailVerification: {
+    sendOnSignUp: true,
+    // Only reached after the password matched, so it proves the password too.
+    sendOnSignIn: true,
+    autoSignInAfterVerification: true,
+    // Credential sign-ups get consent and the welcome mail only now.
+    afterEmailVerification: async (user) => {
+      if (isOperatorRole(userFlags(user).role)) return;
+      await welcomeVerifiedUser(user, { stampConsent: true });
+    },
+  },
+
+  // Reset tokens and OTP identifiers are stored as SHA-256, so a leaked
+  // verifications table yields no usable links or codes.
   verification: { storeIdentifier: "hashed" },
 
-  socialProviders: {
-    google: {
-      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-    },
-    github: {
-      clientId: process.env.GITHUB_CLIENT_ID ?? "",
-      clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
-    },
-  },
+  // Only providers whose client id and secret are configured.
+  socialProviders: socialProviderConfig(),
 
   account: {
     accountLinking: {
@@ -279,23 +284,15 @@ export const auth = betterAuth({
       // email_verified AND the local user's email is verified
       // (requireLocalEmailVerified, default true).
     },
-    // #1861 S1 / #1529 — Account.accessToken/refreshToken are encrypted with
-    // the Better Auth secret; nothing in the app reads them directly. Legacy
-    // plaintext rows keep reading via Better Auth's own fallback
-    // (node_modules/better-auth/dist/oauth2/utils.mjs isLikelyEncrypted) and
-    // vanish at the pre-MVP reset.
+    // OAuth tokens are encrypted with the Better Auth secret; nothing in the
+    // app reads them directly.
     encryptOAuthTokens: true,
-    // #1876 §3 — Explicitly enable OAuth token rotation on every re-sign-in
-    // (BetterAuth's default, stated here so an upstream default change cannot
-    // silently disable it). Ensures accessToken/refreshToken/idToken and
-    // accessTokenExpiresAt are refreshed and re-encrypted under
-    // `encryptOAuthTokens: true` whenever a user signs in via Google/GitHub.
+    // Stated so an upstream default change cannot stop token rotation.
     updateAccountOnSignIn: true,
   },
 
-  // Previously unset, so every cookie and IP attribute was BetterAuth's
-  // implicit default. Each key below is now stated so it is reviewable and a
-  // default change upstream cannot move it silently.
+  // Every cookie and IP attribute is stated so it is reviewable and a default
+  // change upstream cannot move it silently.
   advanced: {
     // Netlify serves over https, so this is already what BetterAuth derives —
     // but "already correct by coincidence" is not the same as asserted, and the
@@ -327,17 +324,24 @@ export const auth = betterAuth({
       // keys would let it rotate through 2^64 buckets.
       ipv6Subnet: 64,
     },
+    // Auth mail is sent after the response (Netlify waitUntil), so response
+    // time no longer reveals whether an address has an account.
+    backgroundTasks: {
+      handler: (promise) => scheduleAfter(() => promise, "auth:background"),
+    },
   },
 
   session: {
     expiresIn: 30 * 24 * 60 * 60, // 30 days
     updateAge: 24 * 60 * 60, // 24 hours
     // Off: every session read hits the database, so a revoke, ban or role
-    // change applies on the very next request instead of up to 5 minutes
-    // later. customSession already queries Prisma on every read, so the
-    // cache saved one indexed lookup. Re-enabling it brings back the stale
-    // window that getCachedSession() and the eslint freshness rule guard.
+    // change applies on the very next request. Lifetime caps for operators
+    // and SSO sessions live in lib/auth/session-lifetime.ts.
     cookieCache: { enabled: false },
+    // Stamped by app/api/user/reauthenticate; read by lib/auth/step-up.ts.
+    additionalFields: {
+      reauthenticatedAt: { type: "date", required: false, input: false },
+    },
   },
 
   user: {
@@ -354,17 +358,22 @@ export const auth = betterAuth({
         defaultValue: false,
         input: false,
       },
+      // Written server-side by onboarding and profile routes, never through
+      // /sign-up/email or /update-user.
       phone: {
         type: "string",
         required: false,
+        input: false,
       },
       timezone: {
         type: "string",
         required: false,
+        input: false,
       },
       address: {
         type: "string",
         required: false,
+        input: false,
       },
       consultantProfileId: {
         type: "string",
@@ -403,159 +412,56 @@ export const auth = betterAuth({
         before: async (user, ctx) => {
           if (ctx?.path?.startsWith("/sso/")) {
             await assertSsoEmailOnDomain(ctx.params?.providerId, user.email);
+            return { data: { emailVerified: true } };
+          }
+          // requireEmailVerification covers email/password only. A social
+          // provider that reports the address unverified (GitHub can) must
+          // not mint a session that claims it.
+          if (
+            ctx?.path?.startsWith("/callback/") &&
+            user.emailVerified !== true
+          ) {
+            throw new APIError("FORBIDDEN", {
+              message: "Verify this email address with the provider first.",
+              code: "EMAIL_NOT_VERIFIED",
+            });
           }
         },
         after: async (user, ctx) => {
-          try {
-            // NOTE: ConsulteeProfile used to be auto-created here for every
-            // signup. It is now lazy — created on the first consumer action
-            // (booking, trial, invite-accept as LEARNER, onboarding when
-            // role=CONSULTEE) via `ensureConsulteeProfile` in
-            // lib/profiles/ensure-consultee-profile.ts. This prevents
-            // org-operators (UserRole.ORG_WORKSPACE) and consultants from
-            // carrying a dangling consumer profile they never use.
-
-            // Upserts, not creates (#1697 item 4): a re-run of this hook
-            // (an SSO auto-provision retry, a replayed signup) used to die
-            // on the userId unique and skip every step below it.
-            await prisma.cookiePreference.upsert({
-              where: { userId: user.id },
-              create: { userId: user.id },
-              update: {},
-            });
-            await prisma.notificationPreference.upsert({
-              where: { userId: user.id },
-              create: { userId: user.id },
-              update: {},
-            });
-
-            // DPDP Act 2023: stamp a ConsentArtifact for the essential
-            // purposes covered by the signup action (account creation
-            // requires data processing for service delivery + video/chat
-            // handoff to Stream.io). MARKETING_COMMS / ANALYTICS consent
-            // is not stamped here — those require an explicit checkbox
-            // on the signup form (P1 follow-up; see #701). When a user
-            // hits the in-app withdrawal flow (/api/.../consent), this
-            // artifact is superseded and `checkConsent` fails closed.
-            //
-            // #1846 — an account created by an SSO sign-in (JIT) was not
-            // made by the person on a signup form, so nothing is stamped
-            // for them here. Their first sign-in into the org shows the
-            // consent step (JoinConsentGate), and accepting an invitation
-            // shows it inline (#1854); both write these same rows.
-            //
-            // An operator account created by an admin (lib/auth/operators.ts,
-            // through `auth.api.createUser`) is not that person's signup
-            // either; they give consent themselves on first sign-in.
-            const ssoProvisioned = ctx?.path?.startsWith("/sso/") ?? false;
-            const operatorCreated = ctx?.path === "/admin/create-user";
-            try {
-              const drafts =
-                ssoProvisioned || operatorCreated
-                  ? []
-                  : buildSignupConsentArtifacts(user.id);
-              for (const draft of drafts) {
-                await prisma.consentArtifact.create({ data: draft });
-              }
-            } catch (consentError) {
-              // Fail open on consent stamping — the user-create hook
-              // shouldn't sink a signup over an audit-trail glitch.
-              //
-              // There is NO backfill job. An earlier version of this comment
-              // claimed a "/consent backfill cron (#701)" would re-create the
-              // rows; that cron was never built, so the comment promised a
-              // recovery path that did not exist and this failure was
-              // permanently unrecoverable for the user.
-              //
-              // The real recovery path, and it is deliberate: `ConsentSection`
-              // renders every purpose with a "Give consent" button, and the
-              // gates are fail-closed, so a user with no artifact is denied at
-              // checkout and at video/chat until they grant it themselves.
-              // That is a degraded experience, not a compliance hole — the
-              // alternative (failing the signup) would trade a recoverable
-              // missing row for a lost account.
-              //
-              // If you want genuine backfill, it has to be built and
-              // documented. Do not restore a reference to it until it exists.
-              console.error(
-                "[AUTH_HOOK] DPDP consent stamp error:",
-                consentError,
-              );
-              Sentry.captureException(
-                consentError instanceof Error
-                  ? consentError
-                  : new Error(String(consentError)),
-                { tags: { subsystem: "auth" }, level: "warning" },
-              );
-            }
-
-            // #1298 — awaited: an un-awaited send is dropped when the instance
-            // freezes after the response (same class as #1616). Operators get
-            // the setup email instead of the consumer welcome.
-            try {
-              if (!operatorCreated) {
-                await sendWelcomeEmail({
-                  email: user.email,
-                  name: user.name || "User",
-                  userId: user.id,
-                });
-              }
-            } catch (err) {
-              console.error("[AUTH_HOOK] Welcome email error:", err);
-              Sentry.captureException(
-                err instanceof Error ? err : new Error(String(err)),
-                { tags: { subsystem: "auth" }, level: "warning" },
-              );
-            }
-
-            // Sync Novu subscriber (fire and forget with error logging).
-            // routingMode is the operator default; workspace owners who later
-            // pick EMAIL_ONLY/BELL_ONLY re-sync via the workspace settings
-            // PATCH + the subscriber hook.
-            const nameParts = (user.name || "User").split(" ");
-            syncSubscriber({
-              userId: user.id,
-              email: user.email,
-              firstName: nameParts[0],
-              lastName: nameParts.slice(1).join(" ") || undefined,
-              routingMode: "BELL_AND_EMAIL",
-            }).catch((err) => {
-              console.error("[AUTH_HOOK] Novu subscriber sync error:", err);
-              Sentry.captureException(
-                err instanceof Error ? err : new Error(String(err)),
-                { tags: { subsystem: "auth" }, level: "warning" },
-              );
-            });
-          } catch (error) {
-            console.error("[AUTH_HOOK] user.create.after error:", error);
-            Sentry.captureException(
-              error instanceof Error ? error : new Error(String(error)),
-              { tags: { subsystem: "auth" } },
-            );
+          await provisionNewUser(user, ctx?.path);
+        },
+      },
+      update: {
+        // Enrolment ends every session; the plugin then mints the enrolling
+        // device's new one.
+        after: async (user, ctx) => {
+          if (isTwoFactorEnrolment(user, ctx?.path)) {
+            await revokeAllUserSessions(prisma, user.id);
+            await sendSecurityEventEmail(user, { kind: "authenticator-added" });
           }
         },
       },
     },
-    // Server-side SSO veto (issue #673). Runs on every session creation path
-    // — credential signin, OAuth signin, SSO signin, signup — just before the
-    // cookie is issued, making this THE enforcement gate: a direct POST to
-    // `/api/auth/sign-in/email` that bypasses our signin UI is rejected here
-    // at the source rather than flagged reactively.
+    // Server-side SSO veto. Runs on every session creation path (credential,
+    // OAuth, SSO, verification) just before the cookie is issued, so it is THE
+    // enforcement gate: a direct POST to `/api/auth/sign-in/email` that
+    // bypasses the sign-in UI is rejected here.
     //
-    // For an enforced email domain only the org's own SSO callback may mint
-    // the session. The hook fails open when the enforcing org has no
-    // staff-approved `ssoProvider` rows — see `lib/sso/enforce-session.ts`.
+    // For an enforced email domain only an approved provider covering that
+    // domain may mint the session, through its SSO callback. Domains no
+    // approved provider covers fail open — see `lib/sso/enforce-session.ts`.
     //
     // The same hook keeps operators on password + TOTP: the twoFactor plugin
     // never challenges a social or SSO callback, so those are refused here
-    // for STAFF/ADMIN (lib/auth/operator-session-policy.ts). It also caps an
-    // operator session at 12 hours; `update.before` holds that on refresh.
+    // for STAFF/ADMIN (lib/auth/operator-session-policy.ts). It also applies
+    // the lifetime caps (lib/auth/session-lifetime.ts); `update.before` holds
+    // them on refresh.
     session: {
       create: {
         before: async (session, ctx) => {
           const user = await prisma.user.findUnique({
             where: { id: session.userId },
-            select: { email: true, role: true },
+            select: { email: true, role: true, twoFactorEnabled: true },
           });
 
           if (refusesOperatorSession(user?.role, ctx?.path)) {
@@ -566,51 +472,53 @@ export const auth = betterAuth({
             });
           }
 
-          const decision = await shouldRejectSession({
-            email: user?.email ?? null,
+          const enforcedOrg = await assertSsoSessionAllowed(prisma, {
+            email: user?.email,
             path: ctx?.path,
             providerId: ctx?.params?.providerId,
-            lookupEnforcedOrg: (domain) => lookupEnforcedOrg(prisma, domain),
           });
 
-          if (decision.reject) {
-            throw new APIError("FORBIDDEN", {
-              message:
-                "This email domain requires SSO sign-in through your organization's provider. Password and Google sign-in are off for it.",
-              code: "SSO_REQUIRED",
-            });
-          }
-
-          if (isOperatorRole(user?.role)) {
-            return {
-              data: {
-                expiresAt: capOperatorExpiry(
-                  session.createdAt ?? new Date(),
-                  session.expiresAt,
-                ),
-              },
-            };
-          }
+          const ssoEnforced =
+            ctx?.path === "/sso/callback/:providerId" &&
+            (enforcedOrg?.registeredProviderIds.length ?? 0) > 0;
+          const maxAgeMs = sessionMaxAgeMs(user, { ssoEnforced });
+          if (maxAgeMs === null) return;
+          const authStart = authenticationStart(
+            ctx?.path,
+            session.userId,
+            ctx?.context.session?.session,
+            new Date(),
+          );
+          return {
+            data: cappedSessionFields(session.expiresAt, authStart, maxAgeMs),
+          };
         },
       },
       update: {
         // Only get-session's sliding refresh writes `expiresAt`, and it has
         // just loaded this session and its user into `ctx.context.session`,
-        // so the clamp needs no query. For an operator the refresh therefore
-        // runs on every read (12h is always within the 30d-minus-1d window);
-        // the write is one row by token, and operators are few.
+        // so the policy needs no query. Returning false makes BetterAuth drop
+        // the cookie and answer no session; the row is revoked first.
         before: async (data, ctx) => {
           const current = ctx?.context.session;
           if (!data.expiresAt || !current) return;
-          if (!isOperatorRole((current.user as { role?: string }).role)) return;
-          return {
-            data: {
-              expiresAt: capOperatorExpiry(
-                new Date(current.session.createdAt),
-                new Date(data.expiresAt),
-              ),
-            },
-          };
+          const decision = refreshSessionLifetime(
+            current.user as { role?: string; twoFactorEnabled?: boolean },
+            current.session,
+            new Date(data.expiresAt),
+            new Date(),
+          );
+          if (decision.kind === "end") {
+            await revokeSessionById(
+              prisma,
+              current.session.userId,
+              current.session.id,
+            );
+            return false;
+          }
+          if (decision.expiresAt) {
+            return { data: { expiresAt: decision.expiresAt } };
+          }
         },
       },
     },
@@ -630,51 +538,53 @@ export const auth = betterAuth({
             });
           }
           if (isSsoProviderId(account.providerId)) {
-            await assertSsoEmailOnDomain(account.providerId, user?.email);
+            try {
+              await assertSsoAccountLink(account, user?.email);
+              await assertSsoAccountClaims(account);
+            } catch (refusal) {
+              await discardUnfinishedSsoUser(account.userId);
+              throw refusal;
+            }
           }
         },
         after: async (account) => {
-          // Send account-linked email for non-credential providers
-          if (account.providerId !== "credential") {
-            try {
-              const user = await prisma.user.findUnique({
-                where: { id: account.userId },
-                select: { email: true, name: true },
-              });
-              if (user?.email) {
-                // #1298 — awaited: an un-awaited send is dropped when the
-                // instance freezes after the response (same class as #1616).
-                try {
-                  await sendAccountLinkedEmail({
-                    email: user.email,
-                    name: user.name || "User",
-                    provider: account.providerId,
-                    userId: account.userId,
-                  });
-                } catch (err) {
-                  console.error("[AUTH_HOOK] Account linked email error:", err);
-                  Sentry.captureException(
-                    err instanceof Error ? err : new Error(String(err)),
-                    { tags: { subsystem: "auth" }, level: "warning" },
-                  );
-                }
-              }
-            } catch (error) {
-              console.error("[AUTH_HOOK] account.create.after error:", error);
-              Sentry.captureException(
-                error instanceof Error ? error : new Error(String(error)),
-                { tags: { subsystem: "auth" } },
-              );
-            }
-          }
+          await notifyAccountLinked(account);
+        },
+      },
+      update: {
+        before: async (account) => {
+          await assertSsoAccountUpdate(account);
         },
       },
     },
   },
 
   plugins: [
-    // Rejects breached passwords on sign-up, reset and change.
+    // Rejects breached and over-72-byte passwords on sign-up, reset and change.
     breachedPasswordCheck,
+
+    // Display-name rules, OTP type restriction, sign-up race answer.
+    corePolicy,
+
+    // Password-changed notice and token cleanup after /change-password.
+    accountLifecycle,
+
+    // Email verification only: the sign-in, reset and email-change flows the
+    // plugin also mounts are listed in `disabledPaths`.
+    emailOTP({
+      overrideDefaultEmailVerification: true,
+      sendVerificationOnSignUp: true,
+      otpLength: 6,
+      expiresIn: VERIFICATION_CODE_TTL_SECONDS,
+      allowedAttempts: 5,
+      storeOTP: "hashed",
+      disableSignUp: true,
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        if (type === "email-verification") {
+          await sendVerificationCode(email, otp);
+        }
+      },
+    }),
 
     // Two-factor: TOTP (authenticator app) + single-use backup codes, used by
     // operators only. Mandatory for STAFF/ADMIN: `session.create.before`
@@ -697,13 +607,19 @@ export const auth = betterAuth({
         amount: 10,
         length: 10,
         storeBackupCodes: "encrypted",
+        customBackupCodesGenerate: generateBackupCodes,
       },
     }),
 
-    // Moderation (#693, starts #725 Tier-1): provides User.banned/banReason/
-    // banExpires, blocks sign-in for banned users, and auto-unbans at sign-in
-    // once banExpires passes (lazy suspension expiry — no cron). Ban writes
-    // happen directly via Prisma in lib/moderation, not auth.api.banUser.
+    // After twoFactor(), which clears `newSession` while a challenge is pending.
+    supersededSessionRevocation,
+    // Operator passkeys: registration is limited to enrolled operators in
+    // hooks.before, and TOTP stays the recovery factor.
+    passkey(operatorPasskeyOptions(process.env.BETTER_AUTH_URL)),
+
+    // Moderation: provides User.banned/banReason/banExpires, blocks sign-in
+    // for banned users and auto-unbans once banExpires passes. Ban writes go
+    // through lib/moderation via Prisma, not auth.api.banUser.
     // defaultRole must be a valid UserRole enum value — the plugin's
     // user.create.before hook otherwise writes "user" and breaks signup.
     admin({
@@ -740,7 +656,7 @@ export const auth = betterAuth({
         banExpires?: Date | null;
       };
 
-      // #693 defense-in-depth: sessions are deleted at ban time and sign-in
+      // Defense in depth: sessions are deleted at ban time and sign-in
       // is plugin-gated, but a session minted in the race window must still
       // resolve as banned. `user` is the row BetterAuth just read (the cookie
       // cache is off), so it is current.
@@ -781,10 +697,6 @@ export const auth = betterAuth({
       // authenticated request reads it — so we keep the payload flat
       // and small, and resolve labels at render time via
       // lib/labels/org-labels.ts instead of precomputing them here.
-      // Legacy fields (kind / billingMode / creditBalance /
-      // organizationProfileId / contractEndDate) were removed in
-      // Checkpoint 8; the dashboard now consumes the capability
-      // booleans + fundingSource directly.
       const organizationMemberships = memberships
         .filter((m) => m.organization.status === "ACTIVE")
         .map((m) => ({
@@ -800,20 +712,9 @@ export const auth = betterAuth({
           walletBalance: m.organization.billingAccount?.walletBalance ?? null,
         }));
 
-      // SSO enforcement: the primary gate lives in
-      // `databaseHooks.session.create.before` (above) — every session-creation
-      // path (credential, OAuth, SSO, signup) is vetoed there when the user's
-      // email domain is under an enforced org and the session did not come
-      // through that org's SSO callback (issue #673).
-      //
-      // A read-time recheck that flagged bypassed sessions via
-      // `ssoEnforcementFailed` used to live here. It was removed: no layout,
-      // guard, or component ever consumed the flag (docs claimed layouts
-      // redirect on it — none did), so it cost two DB round-trips
-      // (lookupEnforcedOrg + account probe) on EVERY session resolution —
-      // the hottest read in the app — for a value nobody read. Re-introduce
-      // enforcement-at-read-time only with an actual consumer; see the SSO
-      // enforcement lifecycle issue for the full plan.
+      // SSO enforcement is decided once, in `session.create.before`; this
+      // hot read does not re-check it. Add a read-time check only together
+      // with a consumer for it.
 
       return {
         user: {
@@ -838,19 +739,21 @@ export const auth = betterAuth({
           twoFactorEnabled: user.twoFactorEnabled === true,
           organizationMemberships,
         },
-        // The token is the cookie's value — a bearer credential. The
-        // browser already holds it (httpOnly); it never needs it in JSON.
-        session: sessionWithoutToken(session),
+        session: publicSession(session),
       };
     }),
     nextCookies(), // Must be last
   ],
 });
 
-function sessionWithoutToken<T extends { token: string }>(
+/**
+ * The token is the cookie's value, a bearer credential the browser already
+ * holds. Impersonation is off, so its column never reaches the client either.
+ */
+function publicSession<T extends { token: string; impersonatedBy?: unknown }>(
   session: T,
-): Omit<T, "token"> {
-  const { token: _token, ...rest } = session;
+): Omit<T, "token" | "impersonatedBy"> {
+  const { token: _token, impersonatedBy: _impersonatedBy, ...rest } = session;
   return rest;
 }
 

@@ -65,6 +65,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "contracts.read",
     canSponsor: true,
   });

@@ -118,8 +118,7 @@ async function deriveBookingState(
 export async function GET(req: NextRequest) {
   try {
     const razorpayClient = getRazorpayClient();
-    // #1584 P1-AZ01 — force-fresh like POST /api/checkout: ?sync=true drives
-    // routeCapturedPayment, so a banned or revoked session must not reach it.
+    // ?sync=true drives routeCapturedPayment, so a banned or revoked session must not reach it.
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;

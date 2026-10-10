@@ -43,8 +43,8 @@ mcp__stream-io__app_get_rate_limits   {}
 
 1. **Server-Action Directive Discipline**:
    - Internal Stream service modules must **not** expose unauthenticated browser-callable RPCs because Stream's server SDK (`STREAM_API_SECRET`) bypasses all Stream permission checks.
-   - `user.action.ts`, `channel.action.ts`, and `meeting.action.ts` have NO `"use server"` for unguarded internal primitives (or require `STREAM_SERVER_TRUSTED` / `getSession(true)` actor verification + `stripStreamUserEmails` PII stripping before any Stream write).
-   - `actions/stream/chat/event-channel.action.ts` is a thin `"use server"` wrapper over `lib/stream/event-channel-service.ts` that verifies `getSession(true)`, rejects banned users, and enforces self/host/privileged authorization before delegating.
+   - `user.action.ts`, `channel.action.ts`, and `meeting.action.ts` have NO `"use server"` for unguarded internal primitives (or require `STREAM_SERVER_TRUSTED` / `getSession()` actor verification + `stripStreamUserEmails` PII stripping before any Stream write).
+   - `actions/stream/chat/event-channel.action.ts` is a thin `"use server"` wrapper over `lib/stream/event-channel-service.ts` that verifies `getSession()` (tri-state: null when signed out, throws `SessionLookupFailedError` when the lookup fails), rejects banned users, and enforces self/host/privileged authorization before delegating.
 2. **Deterministic IDs Without `localeCompare`**:
    - Never derive a channel ID with `localeCompare` (ICU locale order differs across runtimes). Always use UTF-16 code-unit ordering (`a < b ? [a, b] : [b, a]`) via `lib/stream-channel-ids.ts` and `lib/stream-utils.ts`, capped at 64 chars.
 3. **Tokens Require `iat` and Explicit TTL (`exp`)**:

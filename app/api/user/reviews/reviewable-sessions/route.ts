@@ -27,7 +27,7 @@ const QuerySchema = z.object({
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return supportError({
         status: 401,

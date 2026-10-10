@@ -67,6 +67,7 @@ export interface Collaboration {
   revenueShareBps: number;
   status: "PENDING" | "ACCEPTED";
   createdAt: string;
+  payoutAccountReady?: boolean;
   webinarPlan?: {
     id: string;
     title: string;
@@ -94,8 +95,8 @@ export interface Collaboration {
     collaborators: PlanCollaboratorInfo[];
   };
   invitedBy: {
-    user: { name: string | null };
-  };
+    user: { name: string | null; image?: string | null };
+  } | null;
 }
 
 /** A collaboration flattened with its plan type/title/price by the panel. */

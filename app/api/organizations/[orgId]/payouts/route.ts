@@ -27,6 +27,7 @@ import { sumPaise } from "@/lib/payments/utils/money";
 import { createOrgPayoutBatch } from "@/lib/payments/payouts/org-payout-service";
 import { clawbackRecoveredByPayout } from "@/lib/payments/payouts/clawback-recovery";
 import type { PayoutStatus } from "@prisma/client";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 const PayoutStatusSchema = z.enum([
   "PENDING",
@@ -76,7 +77,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "payouts.read",
+  });
   if (access.error) return access.error;
 
   if (!access.org.canHost) {
@@ -188,6 +192,8 @@ export async function POST(
     requireActive: true,
   });
   if (access.error) return access.error;
+  const stale = requireFreshSession(access.session);
+  if (stale) return stale;
 
   if (!access.org.canHost) {
     return NextResponse.json(

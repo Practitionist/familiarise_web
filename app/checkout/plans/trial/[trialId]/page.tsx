@@ -53,7 +53,7 @@ export default async function TrialCheckoutPage({
   // independent, so they run concurrently. The auth check stays after, before
   // any use of either value.
   const [session, trial] = await Promise.all([
-    getSession(true),
+    getSession(),
     prisma.trial.findUnique({
       where: { id: trialId },
       select: {

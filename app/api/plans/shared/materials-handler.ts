@@ -16,10 +16,7 @@ export interface PlanMaterialsConfig {
   planType: PlanType;
   planIdField: string;
   planModel:
-    | "consultationPlan"
-    | "subscriptionPlan"
-    | "webinarPlan"
-    | "classPlan";
+    "consultationPlan" | "subscriptionPlan" | "webinarPlan" | "classPlan";
 }
 
 // Development mode check
@@ -339,7 +336,7 @@ export async function handleGetMaterials(
   config: PlanMaterialsConfig,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -408,7 +405,7 @@ export async function handleUploadMaterial(
   config: PlanMaterialsConfig,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -537,7 +534,7 @@ export async function handleDeleteMaterial(
   materialId: string,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -621,7 +618,7 @@ export async function handleUpdateMaterial(
   materialId: string,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {

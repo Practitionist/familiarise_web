@@ -99,7 +99,7 @@ export async function GET(
   const { orgId, programId } = await params;
   // Any ACTIVE member may call this: an assignee reads the rules of a program
   // they hold a seat in; any other program needs `programs.read` (#1527 P0-2).
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
     return NextResponse.json(
@@ -158,7 +158,7 @@ async function applyProgramPatch(
   },
 ) {
   const { orgId, programId, actorMembershipId, body } = ctx;
-  // Recomputed here: the handler's own copy gates the pre-tx friendly check.
+  // `name`/`status`/`allowedCategories` stay editable on a program in use.
   const touchesMoney = MONEY_FIELDS.some((f) => body[f] !== undefined);
   const current = await tx.program.findFirst({
     where: { id: programId, contract: { organizationId: orgId } },
@@ -178,10 +178,8 @@ async function applyProgramPatch(
     });
   }
 
-  // Wave-3 TOCTOU closure (#1230) — the pre-transaction lock check above
-  // used the global client and can be defeated by a concurrent
-  // first-assignment stamping `configLockedAt` between check and write.
-  // Money-field writes therefore RE-CHECK against this tx's snapshot.
+  // Checked after the org-scoped read, on this tx's snapshot: a money edit on a
+  // program in use would rewrite bookings settled at the old terms.
   if (touchesMoney) {
     const { locked: lockedNow } = await getProgramLockState(programId, tx);
     if (lockedNow) {
@@ -207,8 +205,7 @@ async function applyProgramPatch(
     assertMergedOverageConfigValid({
       programType: current.type,
       fundingSource: current.contract.billingAccount?.fundingSource ?? null,
-      overageBehavior:
-        body.overageBehavior ?? cfg?.overageBehavior ?? "BLOCK",
+      overageBehavior: body.overageBehavior ?? cfg?.overageBehavior ?? "BLOCK",
       overageSurchargeBps:
         body.overageSurchargeBps !== undefined
           ? body.overageSurchargeBps
@@ -434,24 +431,6 @@ export async function PATCH(
   }
   const body = parsed.data;
 
-  // Reject any money-field edit on a program that's already in use — a
-  // retroactive change would rewrite bookings settled at the old terms.
-  // `name`/`status`/`allowedCategories` stay editable always (#777 §B).
-  const touchesMoney = MONEY_FIELDS.some((f) => body[f] !== undefined);
-  if (touchesMoney) {
-    const { locked } = await getProgramLockState(programId);
-    if (locked) {
-      return NextResponse.json(
-        {
-          error:
-            "Program is in use — money config is locked. Only the name can be changed.",
-          code: "PROGRAM_CONFIG_LOCKED",
-        },
-        { status: 409 },
-      );
-    }
-  }
-
   try {
     // CR #1234 r5 — Serializable gives the configLockedAt re-check a shared
     // conflict boundary with the assignment-creation tx (which stamps the
@@ -474,7 +453,9 @@ export async function PATCH(
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
       const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json({ error: err.message, code }, { status });
     }
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),

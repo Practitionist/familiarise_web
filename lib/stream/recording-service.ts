@@ -367,7 +367,6 @@ export class RecordingService {
       const typeConditions: Prisma.RecordingWhereInput[] = [];
 
       if (!filters?.type || filters.type === "webinar") {
-        // Owner's webinar recordings
         typeConditions.push({
           meeting: {
             occurrence: {
@@ -379,7 +378,6 @@ export class RecordingService {
             },
           },
         });
-        // Collaborator's webinar recordings
         typeConditions.push({
           meeting: {
             occurrence: {
@@ -387,7 +385,11 @@ export class RecordingService {
                 webinar: {
                   webinarPlan: {
                     collaborators: {
-                      some: { consultantProfileId, status: "ACCEPTED" },
+                      some: {
+                        consultantProfileId,
+                        status: "ACCEPTED",
+                        tier: "PRESENTER",
+                      },
                     },
                   },
                 },
@@ -398,7 +400,6 @@ export class RecordingService {
       }
 
       if (!filters?.type || filters.type === "class") {
-        // Owner's class recordings
         typeConditions.push({
           meeting: {
             occurrence: {
@@ -410,7 +411,6 @@ export class RecordingService {
             },
           },
         });
-        // Collaborator's class recordings
         typeConditions.push({
           meeting: {
             occurrence: {
@@ -418,7 +418,11 @@ export class RecordingService {
                 class: {
                   classPlan: {
                     collaborators: {
-                      some: { consultantProfileId, status: "ACCEPTED" },
+                      some: {
+                        consultantProfileId,
+                        status: "ACCEPTED",
+                        tier: "PRESENTER",
+                      },
                     },
                   },
                 },
@@ -470,12 +474,10 @@ export class RecordingService {
         });
       }
 
-      // Build status filter - use provided status or default exclusions
       const statusFilter = filters?.status
         ? { status: filters.status }
         : { status: { notIn: ["FAILED", "EXPIRED"] as RecordingStatus[] } };
 
-      // Build search filter
       const searchFilter = filters?.search
         ? { title: { contains: filters.search, mode: "insensitive" as const } }
         : {};
@@ -489,10 +491,49 @@ export class RecordingService {
           : {}),
       };
 
-      const [recordings, total] = await Promise.all([
+      const extendedInclude = {
+        meeting: {
+          include: {
+            occurrence: {
+              include: {
+                appointment: {
+                  include: {
+                    ...consultantRecordingInclude.meeting.include.occurrence
+                      .include.appointment.include,
+                    webinar: {
+                      include: {
+                        webinarPlan: {
+                          select: {
+                            id: true,
+                            title: true,
+                            consultantProfileId: true,
+                          },
+                        },
+                      },
+                    },
+                    class: {
+                      include: {
+                        classPlan: {
+                          select: {
+                            id: true,
+                            title: true,
+                            consultantProfileId: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const [rawRecordings, total] = await Promise.all([
         prisma.recording.findMany({
           where,
-          include: consultantRecordingInclude,
+          include: extendedInclude,
           orderBy: {
             recordedAt: "desc",
           },
@@ -501,6 +542,25 @@ export class RecordingService {
         }),
         prisma.recording.count({ where }),
       ]);
+
+      const recordings = rawRecordings.map((rec) => {
+        const appt = rec.meeting?.occurrence?.appointment;
+        const webinarOwnerId = (
+          appt?.webinar?.webinarPlan as
+            { consultantProfileId?: string | null } | undefined
+        )?.consultantProfileId;
+        const classOwnerId = (
+          appt?.class?.classPlan as
+            { consultantProfileId?: string | null } | undefined
+        )?.consultantProfileId;
+        const isCollaborator =
+          (Boolean(webinarOwnerId) && webinarOwnerId !== consultantProfileId) ||
+          (Boolean(classOwnerId) && classOwnerId !== consultantProfileId);
+        return {
+          ...rec,
+          isCollaborator,
+        };
+      });
 
       return { recordings, total };
     } catch (error) {
@@ -561,6 +621,7 @@ export class RecordingService {
       prisma.appointmentParticipant?.findMany?.({
         where: {
           userId,
+          role: "CONSULTEE",
           ...liveParticipant(),
         },
         select: {
@@ -593,8 +654,6 @@ export class RecordingService {
       }) ?? Promise.resolve([]),
     ]);
 
-    // #689 — drop fully-refunded purchases before deriving entitled plans; a
-    // SUCCEEDED payment whose refunds cover it no longer grants recording access.
     const entitled = enrolledAppointments.filter(isPaymentEntitled);
     const entitledAppointmentIds = new Set(
       entitled
@@ -678,6 +737,7 @@ export class RecordingService {
   }
 
   private static buildConsulteeWhereConditions(params: {
+    userId?: string;
     type?: ConsultantRecordingFilterType;
     webinarScope: WebinarRecordingScope;
     classPlanIds: string[];
@@ -685,6 +745,7 @@ export class RecordingService {
     purchasedRecordingIds: string[];
   }): Prisma.RecordingWhereInput[] {
     const {
+      userId,
       type,
       webinarScope,
       classPlanIds,
@@ -692,6 +753,13 @@ export class RecordingService {
       purchasedRecordingIds,
     } = params;
     const whereConditions: Prisma.RecordingWhereInput[] = [];
+    const consulteeSeatFilter = userId
+      ? {
+          participants: {
+            some: { userId, role: "CONSULTEE" as const, ...liveParticipant() },
+          },
+        }
+      : {};
 
     if (!type || type === "webinar") {
       whereConditions.push(...webinarRecordingWhere(webinarScope));
@@ -702,6 +770,7 @@ export class RecordingService {
         meeting: {
           occurrence: {
             appointment: {
+              ...consulteeSeatFilter,
               class: { classPlanId: { in: classPlanIds } },
             },
           },
@@ -763,6 +832,7 @@ export class RecordingService {
         .filter((id): id is string => Boolean(id));
 
       const whereConditions = this.buildConsulteeWhereConditions({
+        userId,
         type: filters?.type,
         webinarScope,
         classPlanIds,

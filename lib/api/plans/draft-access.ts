@@ -13,7 +13,7 @@ export async function isHiddenDraft(plan: {
   consultantProfileId: string;
 }): Promise<boolean> {
   if (!planSaleRefusal(plan)) return false;
-  const session = await getSession(true).catch((error: unknown) => {
+  const session = await getSession().catch((error: unknown) => {
     reportSentryError(error, { subsystem: "plans", expected: true });
     return null;
   });

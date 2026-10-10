@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    # Weekly Sunday 00:25 UTC: webhook event archival & DPDP consent retention sweeper
+    # Weekly Sunday 00:25 UTC: webhook event archival, DPDP consent retention sweeper, onboarding draft expiry
     - cron: "25 0 * * 0"
     # Weekly Monday 20:00 UTC: create consultant & org payout batches
     - cron: "0 20 * * 1"
@@ -101,7 +101,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|archive-webhook-events|consent-retention-sweeper|create-payout-batch|process-payouts|settle-invoice-accruals|expire-referral-credits|gst-outward-register-export|tds-26q-draft-export|tds-return-draft)
+            ""|all|archive-webhook-events|consent-retention-sweeper|expire-onboarding-drafts|create-payout-batch|process-payouts|settle-invoice-accruals|expire-referral-credits|gst-outward-register-export|tds-26q-draft-export|tds-return-draft)
               ;;
             *)
               echo "::error::Unknown weekly/statutory job slug '${INPUT_JOB}'"
@@ -132,6 +132,21 @@ jobs:
         timeout-minutes: 10
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/compliance/consent-retention-sweeper.ts
+
+      - name: Expire onboarding drafts
+        id: expire-onboarding-drafts
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '25 0 * * 0') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'expire-onboarding-drafts'))
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -X POST -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/cleanup/expire-onboarding-drafts"
 
       - name: Create payout batch
         id: create-payout-batch
@@ -220,6 +235,7 @@ jobs:
           for entry in \
             "archive-webhook-events:${{ steps.archive-webhook-events.outcome }}" \
             "consent-retention-sweeper:${{ steps.consent-retention-sweeper.outcome }}" \
+            "expire-onboarding-drafts:${{ steps.expire-onboarding-drafts.outcome }}" \
             "create-payout-batch:${{ steps.create-payout-batch.outcome }}" \
             "process-payouts:${{ steps.process-payouts.outcome }}" \
             "settle-invoice-accruals:${{ steps.settle-invoice-accruals.outcome }}" \

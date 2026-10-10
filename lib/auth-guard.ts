@@ -1,16 +1,17 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
-import { getSession } from "@/lib/auth-server";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
-import {
-  lookupSession,
-  SessionLookupFailedError,
-} from "@/lib/auth-session-lookup";
+import { lookupSession } from "@/lib/auth-session-lookup";
+import { SessionLookupFailedError } from "@/lib/auth/session-lookup-error";
 import prisma from "@/lib/prisma";
 import { setSentryIdentityFromSession } from "@/lib/observability/identity";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
-import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
+import {
+  canAddConsultantIdentity,
+  isFullyOnboarded,
+} from "@/utils/onboarding-shared";
+import { canUseOnboardingGate } from "@/utils/onboarding-completion";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
 import {
@@ -20,14 +21,8 @@ import {
   resolveBackofficeCapability,
 } from "@/lib/backoffice/capability";
 
-type SessionUser = NonNullable<Awaited<ReturnType<typeof getSession>>>["user"];
-
-const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
-  CONSULTANT: "consultantProfileId",
-  CONSULTEE: "consulteeProfileId",
-  STAFF: "staffProfileId",
-  ORG_WORKSPACE: "orgWorkspaceProfileId",
-};
+/** The onboarding interstitial for invitees and org members. */
+const GATE_PATH = "/onboarding/gate";
 
 /**
  * Redirect to the stale-session cleanup route, which clears cookies and then
@@ -51,7 +46,7 @@ type GuardOptions = { allowUnenrolledOperator?: boolean };
 async function resolveGuardSession({
   allowUnenrolledOperator = false,
 }: GuardOptions = {}) {
-  const lookup = await lookupSession(true);
+  const lookup = await lookupSession();
   if (lookup.kind === "failed")
     throw new SessionLookupFailedError(lookup.cause);
   if (lookup.kind === "none") {
@@ -71,15 +66,6 @@ async function resolveGuardSession({
   return lookup.session;
 }
 
-function hasRequiredProfile(user: SessionUser): boolean {
-  const profileKey = PROFILE_KEY_BY_ROLE[user.role];
-  return !profileKey || !!user[profileKey];
-}
-
-function isFullyOnboarded(user: SessionUser): boolean {
-  return !!user.onboardingCompleted && hasRequiredProfile(user);
-}
-
 /**
  * Require an authenticated session. Redirects to sign-in if no session.
  */
@@ -91,7 +77,11 @@ export async function requireAuth() {
   return session;
 }
 
+type GateUser = { id: string; email: string; emailVerified?: boolean | null };
+
+/** Org members and pending invitees finish at the gate; everyone else in the wizard. */
 async function onboardingRedirectTarget(
+  user: GateUser,
   extraParams?: Record<string, string>,
 ): Promise<string> {
   const params = new URLSearchParams(extraParams);
@@ -99,8 +89,10 @@ async function onboardingRedirectTarget(
   if (safe && !safe.startsWith("/form/onboarding")) {
     params.set("callbackUrl", safe);
   }
+  const base =
+    !extraParams && (await gateEligible(user)) ? GATE_PATH : "/form/onboarding";
   const query = params.toString();
-  return query ? `/form/onboarding?${query}` : "/form/onboarding";
+  return query ? `${base}?${query}` : base;
 }
 
 /**
@@ -111,21 +103,27 @@ export async function requireOnboarded(options: GuardOptions = {}) {
   if (session.user.banned === true) {
     await redirectWithCookieCleanup();
   }
+  // Operators are provisioned by the back office; the consumer wizard refuses them.
+  if (isOperatorRole(session.user.role)) return session;
   if (!session.user.onboardingCompleted) {
-    redirect(await onboardingRedirectTarget());
+    redirect(await onboardingRedirectTarget(session.user));
   }
-  if (!hasRequiredProfile(session.user)) {
-    if (
-      session.user.role === "ORG_WORKSPACE" &&
-      !session.user.orgWorkspaceProfileId
-    ) {
-      const id = await ensureOrgWorkspaceProfile(prisma, session.user.id);
-      return {
-        ...session,
-        user: { ...session.user, orgWorkspaceProfileId: id },
-      };
-    }
-    redirect(await onboardingRedirectTarget({ error: "missing_profile" }));
+  if (!isFullyOnboarded(session.user)) {
+    redirect(
+      await onboardingRedirectTarget(session.user, {
+        error: "missing_profile",
+      }),
+    );
+  }
+  if (
+    session.user.role === "ORG_WORKSPACE" &&
+    !session.user.orgWorkspaceProfileId
+  ) {
+    const id = await ensureOrgWorkspaceProfile(prisma, session.user.id);
+    return {
+      ...session,
+      user: { ...session.user, orgWorkspaceProfileId: id },
+    };
   }
   return session;
 }
@@ -186,9 +184,14 @@ export async function requireBackofficePage(
 
 /**
  * Require that onboarding is NOT fully completed (for the onboarding page).
+ * Org members are sent to the gate: they never run the B2C wizard.
  */
 export async function requireNotOnboarded() {
   const session = await resolveGuardSession();
+  if (isOperatorRole(session.user.role)) redirect("/dashboard");
+  if (!session.user.onboardingCompleted && (await gateEligible(session.user))) {
+    redirect(await gateRedirectFromWizard());
+  }
   if (isFullyOnboarded(session.user)) {
     const current = (await headers()).get("x-pathname") ?? "";
     const query = current.includes("?")
@@ -200,4 +203,26 @@ export async function requireNotOnboarded() {
     if (!wantsAdd) redirect("/dashboard");
   }
   return session;
+}
+
+function gateEligible(user: GateUser): Promise<boolean> {
+  return canUseOnboardingGate(prisma, {
+    id: user.id,
+    email: user.email,
+    emailVerified: user.emailVerified === true,
+  });
+}
+
+/** The wizard URL's `callbackUrl`, carried over to the gate. */
+async function gateRedirectFromWizard(): Promise<string> {
+  const current = (await headers()).get("x-pathname") ?? "";
+  const query = current.includes("?")
+    ? current.slice(current.indexOf("?"))
+    : "";
+  const callback = safeSameOriginPath(
+    new URLSearchParams(query).get("callbackUrl"),
+  );
+  return callback
+    ? `${GATE_PATH}?callbackUrl=${encodeURIComponent(callback)}`
+    : GATE_PATH;
 }

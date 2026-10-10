@@ -26,7 +26,7 @@ export async function GET(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -222,7 +222,10 @@ export async function GET(
       });
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "appointments" } },
+      );
       // Return empty array instead of failing - documents folder might not exist yet
       return NextResponse.json({
         data: [],
@@ -253,7 +256,10 @@ export async function GET(
     });
   } catch (error) {
     console.error("Error fetching appointment documents:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {
@@ -306,7 +312,7 @@ export async function POST(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -386,7 +392,9 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            validation.code === "FILE_TOO_LARGE" ? "File too large" : "Unsupported file type",
+            validation.code === "FILE_TOO_LARGE"
+              ? "File too large"
+              : "Unsupported file type",
           message: validation.message,
           code: validation.code,
         },
@@ -563,7 +571,12 @@ export async function POST(
       });
     } catch (uploadError) {
       console.error("File upload error:", uploadError);
-      Sentry.captureException(uploadError instanceof Error ? uploadError : new Error(String(uploadError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        uploadError instanceof Error
+          ? uploadError
+          : new Error(String(uploadError)),
+        { tags: { subsystem: "appointments" } },
+      );
 
       if (uploadError instanceof Error) {
         if (
@@ -636,49 +649,57 @@ export async function POST(
     try {
       document = await withVersionConflictRetry(() =>
         prisma.$transaction(async (tx) => {
-        let rootDocumentId: string | null = null;
-        let versionNo = 1;
-        if (revisionOf) {
-          const parent = await tx.appointmentDocument.findFirst({
-            where: { id: revisionOf, appointmentId, deletedAt: null },
-            select: { id: true, rootDocumentId: true },
+          let rootDocumentId: string | null = null;
+          let versionNo = 1;
+          if (revisionOf) {
+            const parent = await tx.appointmentDocument.findFirst({
+              where: { id: revisionOf, appointmentId, deletedAt: null },
+              select: { id: true, rootDocumentId: true },
+            });
+            if (!parent) throw new Error("INVALID_REVISION_TARGET");
+            rootDocumentId = parent.rootDocumentId ?? parent.id;
+            const aggregate = await tx.appointmentDocument.aggregate({
+              where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
+              _max: { versionNo: true },
+            });
+            versionNo = (aggregate._max.versionNo ?? 1) + 1;
+          }
+          return tx.appointmentDocument.create({
+            data: {
+              appointmentId,
+              fileName: uploadResult.fileName!,
+              originalName: file.name,
+              fileSize: uploadResult.fileSize!,
+              mimeType: uploadResult.mimeType!,
+              fileUrl: uploadResult.fileUrl!,
+              storagePath: uploadResult.storagePath!,
+              description: description?.trim() || null,
+              reviewStatus: "PENDING",
+              responseToDocumentId: revisionOf,
+              rootDocumentId,
+              versionNo,
+            },
           });
-          if (!parent) throw new Error("INVALID_REVISION_TARGET");
-          rootDocumentId = parent.rootDocumentId ?? parent.id;
-          const aggregate = await tx.appointmentDocument.aggregate({
-            where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
-            _max: { versionNo: true },
-          });
-          versionNo = (aggregate._max.versionNo ?? 1) + 1;
-        }
-        return tx.appointmentDocument.create({
-          data: {
-            appointmentId,
-            fileName: uploadResult.fileName!,
-            originalName: file.name,
-            fileSize: uploadResult.fileSize!,
-            mimeType: uploadResult.mimeType!,
-            fileUrl: uploadResult.fileUrl!,
-            storagePath: uploadResult.storagePath!,
-            description: description?.trim() || null,
-            reviewStatus: "PENDING",
-            responseToDocumentId: revisionOf,
-            rootDocumentId,
-            versionNo,
-          },
-        });
         }),
       );
     } catch (dbError) {
       console.error("Database error saving document:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "appointments" } },
+      );
 
       // Try to clean up uploaded file if database save failed
       try {
         await deleteAppointmentDocument(uploadResult.storagePath!);
       } catch (cleanupError) {
         console.error("Failed to cleanup uploaded file:", cleanupError);
-        Sentry.captureException(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), { tags: { subsystem: "appointments" } });
+        Sentry.captureException(
+          cleanupError instanceof Error
+            ? cleanupError
+            : new Error(String(cleanupError)),
+          { tags: { subsystem: "appointments" } },
+        );
       }
 
       if (
@@ -747,10 +768,9 @@ export async function POST(
             dashboardUrl: scopedHref({
               organizationId: appointment.organizationId,
               surface: "documents",
-              personal:
-                consultantProfileId
-                  ? { kind: "consultant", profileId: consultantProfileId }
-                  : undefined,
+              personal: consultantProfileId
+                ? { kind: "consultant", profileId: consultantProfileId }
+                : undefined,
             }),
           },
           { deferAttempt: true },
@@ -776,7 +796,10 @@ export async function POST(
     );
   } catch (error) {
     console.error("Error uploading document:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {

@@ -15,12 +15,10 @@ import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { useToast } from "@/hooks/use-toast";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import type { Tone } from "@/lib/ui/tone";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 type AccountStatus =
-  | "PENDING_VERIFICATION"
-  | "VERIFIED"
-  | "FAILED_VERIFICATION"
-  | "SUSPENDED";
+  "PENDING_VERIFICATION" | "VERIFIED" | "FAILED_VERIFICATION" | "SUSPENDED";
 
 interface PayoutAccount {
   accountHolderName: string;
@@ -67,11 +65,14 @@ function AccountForm({
 
   const save = useMutation({
     mutationFn: async (body: Record<string, string>) => {
-      const res = await fetch(`/api/organizations/${orgId}/payout-account`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const res = await fetchWithReauth(
+        `/api/organizations/${orgId}/payout-account`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
       const json = await res.json().catch(() => null);
       if (!res.ok) {
         throw new Error(

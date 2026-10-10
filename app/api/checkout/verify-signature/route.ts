@@ -52,8 +52,7 @@ const verifySignatureSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     const razorpayClient = getRazorpayClient();
-    // #1584 P1-AZ01 — force-fresh like POST /api/checkout: this door drives
-    // routeCapturedPayment, so a banned or revoked session must not reach it.
+    // Drives routeCapturedPayment, so a banned or revoked session must not reach it.
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;

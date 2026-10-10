@@ -18,7 +18,7 @@ export default async function PendingCheckoutPage({
   params,
 }: Readonly<{ params: Promise<{ paymentId: string }> }>) {
   const { paymentId } = await params;
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) notFound();
 
   const pending = await readPendingCheckout({

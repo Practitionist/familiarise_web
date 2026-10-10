@@ -3,6 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 /** #1771 K-1 — a door's typed refusal, with the code the route answered. */
 export class OpsDoorError extends Error {
@@ -19,7 +20,7 @@ export async function callOpsDoor(
   url: string,
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(url, {
+  const res = await fetchWithReauth(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

@@ -14,6 +14,9 @@ const AUTHED_FLAG_KEY = "familiarise.auth_authed";
 // used as an authorization signal — see `hooks/useRememberedAuth.ts`.
 const AUTHED_IDENTITY_KEY = "familiarise.auth_identity";
 
+// An org invite token parked for after sign-in; it must not outlive the account.
+const PENDING_ORG_INVITE_KEY = "pendingOrgInviteToken";
+
 export type AuthIdentity = { name: string | null; image: string | null };
 
 export function readAuthedFlag(): boolean | null {
@@ -81,4 +84,10 @@ export function writeAuthedFlag(
 /** Sign-out-facing alias; the clear is the point, so say so at the call site. */
 export function forgetAuthState(): void {
   writeAuthedFlag(false);
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(PENDING_ORG_INVITE_KEY);
+  } catch {
+    // Storage is unavailable outright, so nothing was ever parked.
+  }
 }

@@ -3,7 +3,7 @@ title: The auth schema is frozen at launch; later changes are additive only
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-10-01
+last-reviewed: 2026-10-10
 ---
 
 # ADR 36 — Auth schema freeze
@@ -45,9 +45,21 @@ Two guards keep it that way:
   accounts. It is a no-op where those roles do not exist.
 
 After launch, changes are additive only: new nullable or defaulted columns,
-new tables (passkeys, `jitEnabled`) and new indexes. Renames, drops, type
-changes and new NOT NULL columns without a default need their own ADR and a
-migration plan.
+new tables and new indexes. Renames, drops, type changes and new NOT NULL
+columns without a default need their own ADR and a migration plan.
+
+Additive changes made under this rule so far:
+
+| Model             | Addition                                                                                                                                          | Why                                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `Session`         | `reauthenticatedAt DateTime? @db.Timestamptz`                                                                                                     | Step-up: sensitive actions need it, or `createdAt`, within 15 minutes (`lib/auth/step-up.ts`)    |
+| `Passkey` (table) | `@better-auth/passkey` columns (`credentialID` unique, `publicKey`, `counter`, `deviceType`, `backedUp`, `transports`, `aaguid`), cascade on user | Operator passkeys (`lib/auth/passkey-policy.ts`)                                                 |
+| `SsoProvider`     | `provenAt DateTime? @db.Timestamptz`, `provenByUserId String?`                                                                                    | Enforce-on needs one successful OWNER sign-in through the provider (`lib/sso/provider-proof.ts`) |
+| `OnboardingDraft` | `version Int @default(0)`                                                                                                                         | Compare-and-set on draft saves; a stale tab gets a 409, not a silent overwrite                   |
+
+The `Passkey` table and the `Session.reauthenticatedAt` field are also declared
+to BetterAuth (the passkey plugin and `session.additionalFields`), so the schema
+guard checks them.
 
 ## Alternatives considered
 
@@ -66,14 +78,20 @@ enums) and must run on an empty or disposable database. BetterAuth upgrades
 that add columns now fail CI rather than production. The decisions behind
 this shape (D1–D28 of the #1878 review) are summarized below.
 
-| Decision              | Outcome                                                                                                                                       |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1–D2                 | BetterAuth 1.7.6; keep the two PRs                                                                                                            |
-| D3–D6, D24            | DB-only sessions, no cap, no device columns, 30-day sliding; operators capped at 12h ([ADR 35](34-user-session-visibility-and-revocation.md)) |
-| D7, D25               | Mandatory TOTP for staff/admin only; operators use credential sign-in                                                                         |
-| D8, D23, D26          | Staff created with `createUser` + reset link; ADMIN suspend/reactivate and resend                                                             |
-| D9                    | Impersonation off; `Session.impersonatedBy` kept                                                                                              |
-| D10–D11, D20–D22, D28 | OIDC-only SSO, staff-approved providers, no org plugin ([ADR 06](06-typed-membership-over-betterauth-member.md)), one domain truth            |
-| D12–D14, D27          | BetterAuth rate limiter on Upstash, generic errors, no captcha, own HIBP check                                                                |
-| D15–D16               | Google and GitHub only; CSP report-only at launch                                                                                             |
-| D17–D19               | This freeze, one `REVOKE` sidecar, invitation enums                                                                                           |
+| Decision              | Outcome                                                                                                                                |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| D1–D2                 | BetterAuth 1.7, pinned exactly (1.7.7 today); keep the two PRs                                                                         |
+| D3–D6, D24            | DB-only sessions, no cap, no device columns, 30-day sliding; operators capped ([ADR 35](34-user-session-visibility-and-revocation.md)) |
+| D7, D25               | Mandatory TOTP for staff/admin only; operators use credential sign-in                                                                  |
+| D8, D23, D26          | Staff created with `createUser` + reset link; ADMIN suspend/reactivate and resend                                                      |
+| D9                    | Impersonation off; `Session.impersonatedBy` kept                                                                                       |
+| D10–D11, D20–D22, D28 | OIDC-only SSO, staff-approved providers, no org plugin ([ADR 06](06-typed-membership-over-betterauth-member.md)), one domain truth     |
+| D12–D14, D27          | BetterAuth rate limiter on Upstash, generic errors, no captcha, own HIBP check                                                         |
+| D15–D16               | Google and GitHub only; CSP report-only at launch                                                                                      |
+| D17–D19               | This freeze, one `REVOKE` sidecar, invitation enums                                                                                    |
+
+## Deprecated & Superseded Approaches
+
+- **A planned `jitEnabled` column.** JIT membership is decided by an approved
+  provider covering the user's domain (`lib/sso/jit-membership.ts`); no flag was
+  added, so do not add one.

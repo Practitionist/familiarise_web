@@ -23,7 +23,7 @@ export default async function OrgSettingsPage({
 }>) {
   const { orgId } = await params;
   const sp = await searchParams;
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) notFound();
 
   const tab = Array.isArray(sp.tab) ? sp.tab[0] : sp.tab;

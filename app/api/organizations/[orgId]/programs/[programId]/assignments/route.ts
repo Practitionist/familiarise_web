@@ -54,7 +54,7 @@ export async function GET(
   // Any ACTIVE member may call this, but the roster (every assignee's name,
   // email and spend) is `programs.read`; everyone else gets only their own
   // rows, without consumedPaise (#1527 P0-2).
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
     return NextResponse.json(

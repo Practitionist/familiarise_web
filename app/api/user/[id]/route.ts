@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
+import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
   derivePseudonym,
@@ -16,6 +18,15 @@ import {
 } from "@/lib/compliance/erasure/scrub-user";
 import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
+import { removeCollaboratorStanding } from "@/lib/collaborators/standing";
+import { revokeCollaboratorAccess } from "@/lib/collaborators/service";
+import { notifyCollaboratorWithdrawn } from "@/lib/novu/service";
+import { goHref } from "@/lib/dashboard/go";
+import { getAppUrl } from "@/lib/url";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborators";
+import { scheduleAfter } from "@/lib/api/after-safe";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -43,7 +54,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -82,16 +93,17 @@ export async function PUT(
   try {
     const { id } = await params;
 
-    const session = await getSession(true);
-    if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
+    const auth = await requireApiAuth({ expectUser: true });
+    if (auth.error) return auth.error;
+    const { session } = auth;
+    if (session.user.id !== id && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     // Never `role` or `email`, whatever the body says. A self-edit that set
     // role made any consultee an ADMIN, and an email rewrite skips
     // verification (an account-takeover primitive). Operator roles change on
-    // the Team page; onboarding sets the consumer role through
-    // setOnboardingRoleAction (actions/forms/onboarding.action.ts).
+    // the Team page; onboarding sets the role in its completion transaction.
     const body = await req.json();
     const {
       name,
@@ -174,8 +186,10 @@ export async function PATCH(
   try {
     const { id } = await params;
 
-    const session = await getSession(true);
-    if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
+    const auth = await requireApiAuth({ expectUser: true });
+    if (auth.error) return auth.error;
+    const { session } = auth;
+    if (session.user.id !== id && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -427,8 +441,9 @@ async function executeUserHardDeleteOrFallbackScrub(
   const now = new Date();
   const auditRetainedUntil = new Date(now);
   auditRetainedUntil.setUTCFullYear(auditRetainedUntil.getUTCFullYear() + 7);
-  await prisma.$transaction([
-    prisma.consentArtifact.updateMany({
+  const removedCollaborations = await prisma.$transaction(async (tx) => {
+    const removed = await removeCollaboratorStanding(tx, id);
+    await tx.consentArtifact.updateMany({
       where: { userId: id },
       data: {
         userId: null,
@@ -436,10 +451,44 @@ async function executeUserHardDeleteOrFallbackScrub(
         withdrawnAt: now,
         auditRetainedUntil,
       },
-    }),
-    prisma.session.deleteMany({ where: { userId: id } }),
-    prisma.user.delete({ where: { id } }),
-  ]);
+    });
+    await revokeAllUserSessions(tx, id);
+    await tx.user.delete({ where: { id } });
+    return removed;
+  });
+
+  for (const c of removedCollaborations) {
+    await revokeCollaboratorAccess(c.planType, c.planId, id, { notify: false });
+    if (c.hostUserId) {
+      const hostUserId = c.hostUserId;
+      const planTitle = c.planTitle ?? "Untitled offering";
+      const collaboratorName = c.collaboratorName ?? "A collaborator";
+      const dashboardUrl = `${getAppUrl()}${goHref("expert", "collaborations")}`;
+      scheduleAfter(async () => {
+        await notifyCollaboratorWithdrawn(hostUserId, {
+          collaboratorName,
+          planTitle,
+          planType: c.planType,
+          dashboardUrl,
+        }).catch((e) => Sentry.captureException(e));
+        await sendCollaboratorWithdrawnEmail(
+          {
+            recipientUserId: hostUserId,
+            actorName: collaboratorName,
+            collaboratorName,
+            planTitle,
+            planType: c.planType,
+            role: c.role ?? "CO_HOST",
+            revenueShareBps: c.revenueShareBps,
+            collaboratorId:
+              c.collaboratorId ?? `${c.planType}-${c.planId}-${id}`,
+          },
+          EMAIL_BUDGET_MS.REQUEST,
+        ).catch((e) => Sentry.captureException(e));
+      }, "user.delete.collaborator-withdrawn");
+    }
+  }
+
   const novuErased = await deleteSubscriber(id);
 
   return NextResponse.json(
@@ -459,16 +508,15 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    const session = await getSession(true);
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const isSelfDeletion = session.user.id === id;
-    const isAdmin = session.user.role === "ADMIN";
-    if (!isSelfDeletion && !isAdmin) {
+    const auth = await requireApiAuth({ expectUser: true });
+    if (auth.error) return auth.error;
+    const { session } = auth;
+    // Self-service erasure only; operators erase through the DPDP request queue.
+    if (session.user.id !== id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    const stale = requireFreshSession(session);
+    if (stale) return stale;
 
     const user = await prisma.user.findUnique({ where: { id } });
     if (!user) {

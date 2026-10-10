@@ -19,6 +19,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 
 import type { Payout } from "@/types/payouts";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 interface PayoutListResponse {
   payouts: Payout[];
@@ -55,7 +56,7 @@ async function approvePayout(
   id: string,
   reason: string,
 ): Promise<PayoutActionResult> {
-  const response = await fetch(`/api/admin/payouts/${id}`, {
+  const response = await fetchWithReauth(`/api/admin/payouts/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "approve", reason }),
@@ -71,7 +72,7 @@ async function rejectPayout(
   id: string,
   reason: string,
 ): Promise<PayoutActionResult> {
-  const response = await fetch(`/api/admin/payouts/${id}`, {
+  const response = await fetchWithReauth(`/api/admin/payouts/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "reject", reason }),

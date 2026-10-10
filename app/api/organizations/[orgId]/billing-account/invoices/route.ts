@@ -5,7 +5,8 @@
  * POST manually generates an invoice (vs the daily cron at
  * jobs/billing/generate-subscription-invoices.ts which auto-generates
  * from BillingSubscription.nextInvoiceDate). Useful for one-off line
- * items or for re-issuing a voided invoice.
+ * items or for re-issuing a voided invoice. Platform ops raise the same
+ * invoice through the audited POST /api/admin/organizations/[orgId]/invoices.
  *
  * Every invoice carries its GST breakdown + IRN placeholder. The IRN
  * stays PENDING until the IRP uploader cron (stubbed) populates it.
@@ -16,21 +17,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { deriveGstBreakdown, orgBuyerCountry } from "@/lib/compliance/gst";
-import { lutNumberForSupply } from "@/lib/compliance/lut";
-import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
-import { drawPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
-import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import {
-  supplierStateCode,
-  SupplierStateMismatchError,
-} from "@/lib/payments/billing/consumer-invoice";
-import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
-import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
+  createOrgInvoice,
+  CreateOrgInvoiceSchema,
+  notifyCreatedOrgInvoice,
+} from "@/lib/payments/billing/create-org-invoice";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
-
-const CurrencySchema = z.enum(["INR", "USD", "EUR", "GBP"]);
 
 const InvoiceStatusSchema = z.enum([
   "DRAFT",
@@ -41,34 +35,13 @@ const InvoiceStatusSchema = z.enum([
   "CANCELLED",
 ]);
 
-const LineItemSchema = z.object({
-  description: z.string().min(1).max(500),
-  quantity: z.coerce.number().int().min(1),
-  unitPrice: z.coerce.number().int().min(0),
-});
-
-const CreateBodySchema = z.object({
-  purchaseOrderId: z.string().min(1).nullable().optional(),
-  contractId: z.string().min(1).nullable().optional(),
-  displayCurrency: CurrencySchema.default("INR"),
-  items: z.array(LineItemSchema).min(1),
-  // Due date is caller-provided so the /billing page can render NET-60
-  // or NET-30 depending on contract terms. Server uses it verbatim.
-  dueDate: z.coerce.date(),
-  billingCycleStart: z.coerce.date().nullable().optional(),
-  billingCycleEnd: z.coerce.date().nullable().optional(),
-  // Issued-vs-draft is explicit: a DRAFT invoice isn't billed, an
-  // ISSUED one is. We don't auto-transition on POST because some
-  // callers want to review before sending.
-  issueImmediately: z.coerce.boolean().default(false),
-});
-
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "billing.read",
     canSponsor: true,
   });
@@ -116,7 +89,7 @@ export async function POST(
   });
   if (access.error) return access.error;
 
-  // #677/PM-36 — invoice generation is a statutory-document write.
+  // Invoice generation is a statutory-document write.
   const limited = await applyRateLimit(
     moneyOpsLimiter,
     access.member?.id ?? orgId,
@@ -124,7 +97,7 @@ export async function POST(
   if (limited) return limited;
 
   const raw = await req.json().catch(() => null);
-  const parsed = CreateBodySchema.safeParse(raw);
+  const parsed = CreateOrgInvoiceSchema.safeParse(raw);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid body", detail: parsed.error.flatten() },
@@ -133,281 +106,20 @@ export async function POST(
   }
   const body = parsed.data;
 
-  const org = await prisma.organization.findUnique({
-    where: { id: orgId },
-    select: {
-      id: true,
-      name: true,
-      slug: true,
-      taxInfo: {
-        select: { gstStateCode: true, gstin: true, hsnDefault: true },
-      },
-      dataResidencyRegion: true,
-      billingAccountId: true,
-      invoiceNumberPrefix: true,
-      requiresPO: true,
-    },
-  });
-  if (!org?.billingAccountId) {
-    return NextResponse.json(
-      { error: "Organization does not have a BillingAccount" },
-      { status: 404 },
-    );
-  }
-  if (org.requiresPO && !body.purchaseOrderId) {
-    return NextResponse.json(
-      {
-        error:
-          "This organisation needs a purchase order on every invoice. Choose an active purchase order and try again.",
-        code: "PO_REQUIRED",
-      },
-      { status: 409 },
-    );
-  }
-  // A domestic B2B invoice needs the buyer's declared GST state for its place of supply.
-  const buyerStateCode = org.taxInfo?.gstStateCode ?? null;
-  if (org.dataResidencyRegion === "IN" && !buyerStateCode) {
-    return NextResponse.json(
-      {
-        error:
-          "Add your organisation's GST state in billing settings before raising an invoice.",
-        code: "GST_STATE_REQUIRED",
-      },
-      { status: 409 },
-    );
-  }
-
-  if (body.purchaseOrderId) {
-    const po = await prisma.purchaseOrder.findUnique({
-      where: { id: body.purchaseOrderId },
-      select: { organizationId: true, status: true, currency: true },
-    });
-    if (!po || po.organizationId !== orgId) {
-      return NextResponse.json(
-        { error: "PurchaseOrder does not belong to this organization" },
-        { status: 400 },
-      );
-    }
-    if (po.status !== "ACTIVE") {
-      return NextResponse.json(
-        {
-          error: `PurchaseOrder is ${po.status}; only ACTIVE POs can be invoiced against`,
-        },
-        { status: 409 },
-      );
-    }
-    // #1396 — the claim below decrements `remainingAmountPaise` by this
-    // invoice's INR total. Nothing compared the two currencies, so an invoice
-    // could spend a PO denominated in something else, paise-for-paise. Both
-    // sides are INR today (the writers are narrowed to INR); this refuses the
-    // combination rather than assuming it stays that way.
-    if (po.currency !== body.displayCurrency) {
-      return NextResponse.json(
-        {
-          error: `PurchaseOrder is denominated in ${po.currency}; this invoice is in ${body.displayCurrency}. A PO can only be drawn down by an invoice in its own currency.`,
-          code: "PO_CURRENCY_MISMATCH",
-        },
-        { status: 409 },
-      );
-    }
-  }
-  if (body.contractId) {
-    const contract = await prisma.contract.findUnique({
-      where: { id: body.contractId },
-      select: { organizationId: true },
-    });
-    if (!contract || contract.organizationId !== orgId) {
-      return NextResponse.json(
-        { error: "Contract does not belong to this organization" },
-        { status: 400 },
-      );
-    }
-  }
-
-  // #783 — money is INR-only until the multi-currency ledger lands. Non-INR
-  // invoices aren't supported yet: the subtotal below is summed in
-  // displayCurrency and fed straight into the INR GST breakdown (and stored as
-  // inrEquivalentPaise) with no FX conversion, and fxRateUsed is never written —
-  // a GST-filing defect for a foreign invoice. Reject non-INR until FX is wired;
-  // the dashboard only ever sends INR.
-  if (body.displayCurrency !== "INR") {
-    return NextResponse.json(
-      { error: "Non-INR invoices are not yet supported." },
-      { status: 400 },
-    );
-  }
-
-  const subtotal = body.items.reduce(
-    (sum, item) => sum + item.quantity * item.unitPrice,
-    0,
-  );
-
-  // GST breakdown delegates to the compliance stub. In production the
-  // stub is replaced with the live resolver (place-of-supply + IGST
-  // vs CGST+SGST split); either way we store the numbers at invoice
-  // creation so retroactive tax-rule changes don't rewrite history.
-  // #1447 — GSTIN-first supplier state, fail-closed on a mismatch like the
-  // B2C mint: an ambiguous state would put IGST on an intra-state supply.
-  let supplierState: string;
+  let created;
   try {
-    supplierState = supplierStateCode();
-  } catch (err) {
-    if (!(err instanceof SupplierStateMismatchError)) throw err;
-    // The mismatch text names the GSTIN and the env value — ops detail, not
-    // something an org admin should read off a 503 (CodeRabbit on #1752).
-    Sentry.captureException(err, { tags: { subsystem: "billing" } });
-    return NextResponse.json(
-      { error: "Invoice service is temporarily unavailable." },
-      { status: 503 },
+    created = await prisma.$transaction((tx) =>
+      createOrgInvoice(tx, {
+        orgId,
+        actorMembershipId: access.member.id,
+        input: body,
+      }),
     );
-  }
-  const gst = deriveGstBreakdown({
-    subtotalPaise: subtotal,
-    supplierStateCode: supplierState,
-    buyerStateCode,
-    buyerGstin: org.taxInfo?.gstin ?? null,
-    buyerCountry: orgBuyerCountry(org),
-    hsnCode: org.taxInfo?.hsnDefault,
-  });
-
-  const issuedAt = new Date();
-
-  let invoice;
-  try {
-    invoice = await prisma.$transaction(async (tx) => {
-      // Per-org sequential numbering: counter row atomically reserves the
-      // next seq under (org, fiscal-year) so two concurrent POSTs can't
-      // collide on the @@unique([organizationId, invoiceNumber]) constraint.
-      const { invoiceNumber, fiscalYear } = await generateOrgInvoiceNumber(
-        tx,
-        {
-          id: org.id,
-          slug: org.slug,
-          invoiceNumberPrefix: org.invoiceNumberPrefix,
-        },
-        issuedAt,
-      );
-
-      // PO draw-down through the shared CAS; fails closed with 409
-      // PO_BALANCE_EXCEEDED when the PO no longer covers the total.
-      if (body.purchaseOrderId) {
-        const drawn = await drawPurchaseOrder(tx, {
-          purchaseOrderId: body.purchaseOrderId,
-          organizationId: orgId,
-          currency: body.displayCurrency,
-          amountPaise: gst.totalPaise,
-          now: issuedAt,
-        });
-        if (!drawn) {
-          const err = new Error(
-            "PurchaseOrder balance insufficient or no longer ACTIVE",
-          );
-          Object.assign(err, {
-            httpStatus: 409,
-            code: "PO_BALANCE_EXCEEDED",
-          });
-          throw err;
-        }
-      }
-
-      const created = await tx.organizationInvoice.create({
-        data: {
-          billingAccountId: org.billingAccountId!,
-          organizationId: orgId,
-          purchaseOrderId: body.purchaseOrderId ?? null,
-          contractId: body.contractId ?? null,
-          invoiceNumber,
-          fiscalYear,
-          status: body.issueImmediately ? "ISSUED" : "DRAFT",
-          displayCurrency: body.displayCurrency,
-          inrEquivalentPaise: gst.totalPaise,
-          subtotalPaise: gst.subtotalPaise,
-          igstPaise: gst.igstPaise,
-          cgstPaise: gst.cgstPaise,
-          sgstPaise: gst.sgstPaise,
-          totalPaise: gst.totalPaise,
-          taxRate: gst.igstPaise + gst.cgstPaise + gst.sgstPaise > 0 ? 0.18 : 0,
-          hsnCode: gst.hsnCode,
-          placeOfSupply: gst.placeOfSupply,
-          reverseCharge: gst.reverseCharge,
-          gstin: org.taxInfo?.gstin ?? null,
-          lutNumber: lutNumberForSupply(gst.reason),
-          irpStatus: "PENDING",
-          autoGenerated: false,
-          issuedAt: body.issueImmediately ? new Date() : null,
-          dueDate: body.dueDate,
-          billingCycleStart: body.billingCycleStart ?? null,
-          billingCycleEnd: body.billingCycleEnd ?? null,
-          // #768 — line items as typed children (createMany inside the
-          // same transaction so a failed write rolls back atomically).
-          lineItems: {
-            create: body.items.map((item, idx) => ({
-              position: idx,
-              description: item.description,
-              quantity: item.quantity,
-              unitPricePaise: item.unitPrice,
-            })),
-          },
-        },
-      });
-
-      if (body.issueImmediately) {
-        await postInvoiceIssuedJournal(tx, created.id);
-      }
-
-      await tx.orgAuditLog.create({
-        data: {
-          organizationId: orgId,
-          actorMembershipId: access.member.id,
-          category: "INVOICE",
-          action: AUDIT_ACTIONS.INVOICE.INVOICE_GENERATED,
-          description: `${body.issueImmediately ? "Issued" : "Drafted"} invoice ${invoiceNumber}`,
-          details: {
-            invoiceId: created.id,
-            invoiceNumber,
-            totalPaise: created.totalPaise,
-            status: created.status,
-            placeOfSupply: created.placeOfSupply,
-          },
-        },
-      });
-
-      // Outbound webhook only on ISSUED transitions; a DRAFT invoice
-      // hasn't been "sent" yet — integrators should only see invoices
-      // they need to act on (booking entries, AP queues). Resending on
-      // a later DRAFT→ISSUED PATCH happens in the [invoiceId] route.
-      if (body.issueImmediately) {
-        await dispatchWebhookEvent({
-          prisma: tx,
-          organizationId: orgId,
-          eventType: "invoice.issued",
-          payload: {
-            invoiceId: created.id,
-            invoiceNumber: created.invoiceNumber,
-            totalPaise: created.totalPaise,
-            displayCurrency: created.displayCurrency,
-            dueDate: created.dueDate.toISOString(),
-            purchaseOrderId: created.purchaseOrderId,
-            contractId: created.contractId,
-          },
-        });
-      }
-
-      return created;
-    });
   } catch (err) {
-    const httpStatus =
-      err && typeof err === "object" && "httpStatus" in err
-        ? (err as { httpStatus: number }).httpStatus
-        : null;
-    const code =
-      err && typeof err === "object" && "code" in err
-        ? (err as { code: string }).code
-        : null;
-    if (httpStatus && code) {
+    if (err instanceof OpsRefusal) {
       return NextResponse.json(
-        { error: (err as Error).message, code },
-        { status: httpStatus },
+        { error: err.message, code: err.code },
+        { status: err.httpStatus },
       );
     }
     Sentry.captureException(
@@ -417,22 +129,10 @@ export async function POST(
     throw err;
   }
 
-  // Side-effect: if the invoice was issued on creation, fire the Novu
-  // bell workflow so OWNERs see it immediately (email delivery is via
-  // the `billingEmail` channel configured on the workflow in Novu).
-  if (body.issueImmediately) {
-    const origin = new URL(req.url).origin;
-    notifyOrgInvoiceIssued(orgId, {
-      invoiceNumber: invoice.invoiceNumber,
-      orgName: org.name,
-      totalPaise: invoice.totalPaise,
-      currency: body.displayCurrency,
-      dueDate: body.dueDate.toISOString(),
-      dashboardUrl: `${origin}/dashboard/organization/${orgId}/billing`,
-      // #438 — deep link to the PDF (route caches + 302s to a signed URL).
-      pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoice.id}/pdf`,
-    }).catch((err) => console.error("[notifyOrgInvoiceIssued] failed:", err));
-  }
-
-  return NextResponse.json({ invoice }, { status: 201 });
+  const origin = new URL(req.url).origin;
+  scheduleAfter(
+    () => notifyCreatedOrgInvoice(origin, orgId, created, body),
+    "org-invoice.notify",
+  );
+  return NextResponse.json({ invoice: created.invoice }, { status: 201 });
 }

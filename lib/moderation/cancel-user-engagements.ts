@@ -187,13 +187,14 @@ async function collectConsulteeWork(
       },
       select: { id: true },
     }),
-    // Group events the target merely attends — remove + refund just them.
     prisma.appointmentOccurrence.findMany({
       where: {
         ...futureSlot,
         appointment: {
           OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
-          participants: { some: liveParticipant(targetUserId) },
+          participants: {
+            some: { ...liveParticipant(targetUserId), role: "CONSULTEE" },
+          },
         },
       },
       select: {
