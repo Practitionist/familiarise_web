@@ -13,7 +13,10 @@ import {
   clearSyncCacheForUser,
 } from "@/lib/stream-cache";
 import { upsertUserToStream } from "./user.action";
-import { MANAGED_CHANNEL_PREFIXES } from "@/lib/stream-channel-ids";
+import {
+  collabChannelId,
+  MANAGED_CHANNEL_PREFIXES,
+} from "@/lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
   dmEligibleStatusFilter,
@@ -208,6 +211,267 @@ interface DmPair {
   organizationId: string | null;
 }
 
+async function ensureStreamUserUpserted(userId: string): Promise<boolean> {
+  try {
+    if (
+      isUpsertRefusal(
+        await upsertUserToStream(userId, {
+          serverTrusted: STREAM_SERVER_TRUSTED,
+        }),
+      )
+    ) {
+      streamLogger.info("Skipping channel sync — Stream refused the account", {
+        userId,
+      });
+      initialSyncCompletedUsers.add(userId);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    if (err instanceof ConsentRequiredError) {
+      streamLogger.info("Skipping channel sync — Stream consent not granted", {
+        userId,
+        purposeCode: err.purposeCode,
+      });
+      initialSyncCompletedUsers.add(userId);
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function addHostedPlanCollabChannels(
+  consultantProfileId: string,
+  collabChannelIds: Set<string>,
+): Promise<void> {
+  const [hostedWebinarPlans, hostedClassPlans] = await Promise.all([
+    prisma.webinarPlan?.findMany
+      ? prisma.webinarPlan.findMany({
+          where: {
+            consultantProfileId,
+            collaborators: {
+              some: {
+                status: "ACCEPTED",
+                consultantProfile: { deletedAt: null },
+              },
+            },
+          },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
+    prisma.classPlan?.findMany
+      ? prisma.classPlan.findMany({
+          where: {
+            consultantProfileId,
+            collaborators: {
+              some: {
+                status: "ACCEPTED",
+                consultantProfile: { deletedAt: null },
+              },
+            },
+          },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  for (const plan of hostedWebinarPlans) {
+    collabChannelIds.add(collabChannelId("webinar", plan.id));
+  }
+  for (const plan of hostedClassPlans) {
+    collabChannelIds.add(collabChannelId("class", plan.id));
+  }
+}
+
+function recordActiveCollabRows(
+  eventType: "webinar" | "class",
+  userId: string,
+  tier: string,
+  rows: NormalizedEventRow[],
+  eventIds: { type: EventType; id: string }[],
+  selfHealEvents: { type: "webinar" | "class"; id: string }[],
+  collabPresenterDmPairs: DmPair[],
+): void {
+  for (const row of rows) {
+    if (!isNormalizedEventActive(row)) continue;
+    eventIds.push({ type: eventType, id: row.id });
+    selfHealEvents.push({ type: eventType, id: row.id });
+    if (tier === "PRESENTER") {
+      collabPresenterDmPairs.push(...collectHostedRowDmPairs(userId, row));
+    }
+  }
+}
+
+async function collectAcceptedCollaboratorTargets(
+  userId: string,
+  consultantProfileId: string,
+  collabChannelIds: Set<string>,
+  eventIds: { type: EventType; id: string }[],
+  selfHealEvents: { type: "webinar" | "class"; id: string }[],
+  collabPresenterDmPairs: DmPair[],
+): Promise<void> {
+  if (!prisma.collaborator?.findMany) return;
+
+  const acceptedCollaborations = await prisma.collaborator.findMany({
+    where: {
+      consultantProfileId,
+      status: "ACCEPTED",
+      consultantProfile: { deletedAt: null },
+    },
+    select: {
+      tier: true,
+      webinarPlanId: true,
+      classPlanId: true,
+      webinarPlan: {
+        select: {
+          ...eventPlanRetentionSelect.select,
+          webinars: {
+            where: { status: { in: [...OPENABLE_EVENT_STATUSES] } },
+            select: {
+              id: true,
+              status: true,
+              appointment: eventAppointmentRetentionSelect,
+            },
+          },
+        },
+      },
+      classPlan: {
+        select: {
+          ...eventPlanRetentionSelect.select,
+          classes: {
+            where: { status: { in: [...OPENABLE_EVENT_STATUSES] } },
+            select: {
+              id: true,
+              status: true,
+              schedulingPeriodEndsAt: true,
+              appointment: eventAppointmentRetentionSelect,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  for (const collab of acceptedCollaborations) {
+    if (collab.webinarPlanId) {
+      collabChannelIds.add(collabChannelId("webinar", collab.webinarPlanId));
+      const rows = (collab.webinarPlan?.webinars ?? []).map((w) => ({
+        id: w.id,
+        status: w.status,
+        plan: collab.webinarPlan,
+        appointment: w.appointment,
+      }));
+      recordActiveCollabRows(
+        "webinar",
+        userId,
+        collab.tier,
+        rows,
+        eventIds,
+        selfHealEvents,
+        collabPresenterDmPairs,
+      );
+    }
+    if (collab.classPlanId) {
+      collabChannelIds.add(collabChannelId("class", collab.classPlanId));
+      const rows = (collab.classPlan?.classes ?? []).map((c) => ({
+        id: c.id,
+        status: c.status,
+        fallbackEndsAt: c.schedulingPeriodEndsAt,
+        plan: collab.classPlan,
+        appointment: c.appointment,
+      }));
+      recordActiveCollabRows(
+        "class",
+        userId,
+        collab.tier,
+        rows,
+        eventIds,
+        selfHealEvents,
+        collabPresenterDmPairs,
+      );
+    }
+  }
+}
+
+async function removeStaleManagedChannels(
+  client: ReturnType<typeof getStreamChatClient>,
+  userId: string,
+  expectedChannelIds: Set<string>,
+): Promise<{
+  staleRemovedCount: number;
+  staleFailCount: number;
+  degraded: boolean;
+}> {
+  const BATCH_SIZE = 5;
+  let degraded = false;
+
+  const { channels: streamChannels, truncated } = await queryChannelsPaged(
+    (opts) =>
+      withStreamCircuitBreaker(
+        () =>
+          client.queryChannels(
+            { members: { $in: [userId] } },
+            { created_at: 1 },
+            opts,
+          ),
+        () => {
+          degraded = true;
+          return [];
+        },
+      ),
+  );
+
+  if (degraded) {
+    streamLogger.warn(
+      "Reconciliation degraded — Stream circuit open, no memberships examined",
+      { userId, truncated },
+    );
+  }
+  if (truncated) {
+    streamLogger.warn(
+      "Reconciliation truncated at Stream's offset cap; some memberships were not examined",
+      { userId, examined: streamChannels.length },
+    );
+  }
+
+  const staleChannels = streamChannels.filter(
+    (ch) =>
+      ch.id &&
+      !expectedChannelIds.has(ch.id) &&
+      MANAGED_CHANNEL_PREFIXES.some((prefix) => ch.id!.startsWith(prefix)),
+  );
+
+  let staleRemovedCount = 0;
+  let staleFailCount = 0;
+
+  if (staleChannels.length > 0) {
+    streamLogger.info("Found stale channel memberships, cleaning up", {
+      userId,
+      staleCount: staleChannels.length,
+      staleIds: staleChannels.map((ch) => ch.id),
+    });
+
+    for (let i = 0; i < staleChannels.length; i += BATCH_SIZE) {
+      const batch = staleChannels.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map((ch) => ch.removeMembers([userId])),
+      );
+      for (const res of results) {
+        if (res.status === "fulfilled") staleRemovedCount++;
+        else staleFailCount++;
+      }
+    }
+
+    streamLogger.info("Stale channel cleanup completed", {
+      userId,
+      staleChannelsRemoved: staleRemovedCount,
+      staleFailed: staleFailCount,
+    });
+  }
+
+  return { staleRemovedCount, staleFailCount, degraded };
+}
+
 export async function syncUserEventChannels(
   userId: string,
   force = false,
@@ -260,40 +524,11 @@ export async function syncUserEventChannels(
   const startTime = Date.now();
 
   try {
-    try {
-      if (
-        isUpsertRefusal(
-          await upsertUserToStream(userId, {
-            serverTrusted: STREAM_SERVER_TRUSTED,
-          }),
-        )
-      ) {
-        streamLogger.info(
-          "Skipping channel sync — Stream refused the account",
-          {
-            userId,
-          },
-        );
-        initialSyncCompletedUsers.add(userId);
-        return { success: true, skipped: true };
-      }
-    } catch (err) {
-      if (err instanceof ConsentRequiredError) {
-        streamLogger.info(
-          "Skipping channel sync — Stream consent not granted",
-          {
-            userId,
-            purposeCode: err.purposeCode,
-          },
-        );
-        initialSyncCompletedUsers.add(userId);
-        return { success: true, skipped: true };
-      }
-      throw err;
+    if (!(await ensureStreamUserUpserted(userId))) {
+      return { success: true, skipped: true };
     }
 
     const client = getStreamChatClient();
-
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -308,7 +543,6 @@ export async function syncUserEventChannels(
     }
 
     const eventIds: { type: EventType; id: string }[] = [];
-
     const [webinarData, classData, directDmPairs] = await Promise.all([
       getWebinarDataForUser(userId, user),
       getClassDataForUser(userId, user),
@@ -318,11 +552,50 @@ export async function syncUserEventChannels(
     webinarData.ids.forEach((id) => eventIds.push({ type: "webinar", id }));
     classData.ids.forEach((id) => eventIds.push({ type: "class", id }));
 
+    const collabChannelIds = new Set<string>([
+      ...webinarData.collabChannelIds,
+      ...classData.collabChannelIds,
+    ]);
+    const selfHealEvents: { type: "webinar" | "class"; id: string }[] = [];
+    const collabPresenterDmPairs: DmPair[] = [];
+
+    if (user.consultantProfileId) {
+      await addHostedPlanCollabChannels(
+        user.consultantProfileId,
+        collabChannelIds,
+      );
+      await collectAcceptedCollaboratorTargets(
+        userId,
+        user.consultantProfileId,
+        collabChannelIds,
+        eventIds,
+        selfHealEvents,
+        collabPresenterDmPairs,
+      );
+    }
+
+    if (selfHealEvents.length > 0) {
+      await Promise.allSettled(
+        selfHealEvents.map(({ type, id }) =>
+          addUserToEventChannelInternal(type, id, userId),
+        ),
+      );
+    }
+
+    if (collabChannelIds.size > 0) {
+      await Promise.allSettled(
+        Array.from(collabChannelIds).map((chId) =>
+          client.channel("messaging", chId).addMembers([userId]),
+        ),
+      );
+    }
+
     const mergedDmPairMap = new Map<string, DmPair>();
     for (const pair of [
       ...directDmPairs,
       ...webinarData.dmPairs,
       ...classData.dmPairs,
+      ...collabPresenterDmPairs,
     ]) {
       const chId = getDmChannelId(
         pair.consultantUserId,
@@ -331,90 +604,15 @@ export async function syncUserEventChannels(
       );
       mergedDmPairMap.set(chId, pair);
     }
-    const dmPairs = Array.from(mergedDmPairMap.values());
-
-    streamLogger.debug("Events found for user", {
-      userId,
-      webinars: webinarData.ids.length,
-      classes: classData.ids.length,
-      dmPairs: dmPairs.length,
-      total: eventIds.length,
-    });
 
     const expectedChannelIds = new Set([
       ...eventIds.map(({ type, id }) => getChannelId(type, id)),
+      ...Array.from(collabChannelIds),
       ...Array.from(mergedDmPairMap.keys()),
     ]);
 
-    const BATCH_SIZE = 5;
-    let degraded = false;
-
-    const { channels: streamChannels, truncated } = await queryChannelsPaged(
-      (opts) =>
-        withStreamCircuitBreaker(
-          () =>
-            client.queryChannels(
-              { members: { $in: [userId] } },
-              { created_at: 1 },
-              opts,
-            ),
-          () => {
-            degraded = true;
-            return [];
-          },
-        ),
-    );
-
-    if (degraded) {
-      streamLogger.warn(
-        "Reconciliation degraded — Stream circuit open, no memberships examined",
-        { userId, truncated },
-      );
-    }
-
-    if (truncated) {
-      streamLogger.warn(
-        "Reconciliation truncated at Stream's offset cap; some memberships were not examined",
-        { userId, examined: streamChannels.length },
-      );
-    }
-
-    const staleChannels = streamChannels.filter(
-      (ch) =>
-        ch.id &&
-        !expectedChannelIds.has(ch.id) &&
-        MANAGED_CHANNEL_PREFIXES.some((prefix) => ch.id!.startsWith(prefix)),
-    );
-
-    let staleRemovedCount = 0;
-    let staleFailCount = 0;
-
-    if (staleChannels.length > 0) {
-      streamLogger.info("Found stale channel memberships, cleaning up", {
-        userId,
-        staleCount: staleChannels.length,
-        staleIds: staleChannels.map((ch) => ch.id),
-      });
-
-      for (let i = 0; i < staleChannels.length; i += BATCH_SIZE) {
-        const batch = staleChannels.slice(i, i + BATCH_SIZE);
-
-        const results = await Promise.allSettled(
-          batch.map((ch) => ch.removeMembers([userId])),
-        );
-
-        results.forEach((result) => {
-          if (result.status === "fulfilled") staleRemovedCount++;
-          else staleFailCount++;
-        });
-      }
-
-      streamLogger.info("Stale channel cleanup completed", {
-        userId,
-        staleChannelsRemoved: staleRemovedCount,
-        staleFailed: staleFailCount,
-      });
-    }
+    const { staleRemovedCount, staleFailCount, degraded } =
+      await removeStaleManagedChannels(client, userId, expectedChannelIds);
 
     const duration = Date.now() - startTime;
     streamLogger.info("Channel sync completed", {
@@ -446,10 +644,114 @@ export async function syncUserEventChannels(
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
     );
     streamLogger.error("Channel sync failed", error, { userId });
     throw error;
+  }
+}
+
+async function collectConsultantDmPairs(
+  userId: string,
+  consultantProfileId: string,
+  pairMap: Map<string, DmPair>,
+): Promise<void> {
+  const [consultations, subscriptions] = await Promise.all([
+    prisma.consultation.findMany({
+      where: {
+        consultationPlan: { consultantProfileId },
+        status: dmEligibleStatusFilter(),
+      },
+      include: {
+        requestedBy: { include: { user: { select: { id: true } } } },
+        consultationPlan: { select: { organizationId: true } },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+    prisma.subscription.findMany({
+      where: {
+        subscriptionPlan: { consultantProfileId },
+        status: dmEligibleStatusFilter(),
+      },
+      include: {
+        requestedBy: { include: { user: { select: { id: true } } } },
+        subscriptionPlan: { select: { organizationId: true } },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+  ]);
+  for (const c of [...consultations, ...subscriptions]) {
+    const consulteeUserId = c.requestedBy?.user?.id;
+    if (!consulteeUserId || consulteeUserId === userId) continue;
+    const organizationId = bookingOrgId(c);
+    const channelId = getDmChannelId(userId, consulteeUserId, organizationId);
+    pairMap.set(channelId, {
+      consultantUserId: userId,
+      consulteeUserId,
+      organizationId,
+    });
+  }
+}
+
+async function collectConsulteeDmPairs(
+  userId: string,
+  consulteeProfileId: string,
+  pairMap: Map<string, DmPair>,
+): Promise<void> {
+  const [consultations, subscriptions] = await Promise.all([
+    prisma.consultation.findMany({
+      where: {
+        requestedById: consulteeProfileId,
+        status: dmEligibleStatusFilter(),
+      },
+      include: {
+        consultationPlan: {
+          include: {
+            consultantProfile: {
+              include: { user: { select: { id: true } } },
+            },
+          },
+        },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+    prisma.subscription.findMany({
+      where: {
+        requestedById: consulteeProfileId,
+        status: dmEligibleStatusFilter(),
+      },
+      include: {
+        subscriptionPlan: {
+          include: {
+            consultantProfile: {
+              include: { user: { select: { id: true } } },
+            },
+          },
+        },
+        appointment: { select: { organizationId: true } },
+      },
+    }),
+  ]);
+  for (const c of consultations) {
+    const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
+    if (!consultantUserId || consultantUserId === userId) continue;
+    const organizationId = bookingOrgId(c);
+    const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+    pairMap.set(channelId, {
+      consultantUserId,
+      consulteeUserId: userId,
+      organizationId,
+    });
+  }
+  for (const s of subscriptions) {
+    const consultantUserId = s.subscriptionPlan?.consultantProfile?.user?.id;
+    if (!consultantUserId || consultantUserId === userId) continue;
+    const organizationId = bookingOrgId(s);
+    const channelId = getDmChannelId(consultantUserId, userId, organizationId);
+    pairMap.set(channelId, {
+      consultantUserId,
+      consulteeUserId: userId,
+      organizationId,
+    });
   }
 }
 
@@ -463,108 +765,10 @@ async function getDmPairsForUser(
   const pairMap = new Map<string, DmPair>();
 
   if (user.consultantProfileId) {
-    const [consultations, subscriptions] = await Promise.all([
-      prisma.consultation.findMany({
-        where: {
-          consultationPlan: { consultantProfileId: user.consultantProfileId },
-          status: dmEligibleStatusFilter(),
-        },
-        include: {
-          requestedBy: { include: { user: { select: { id: true } } } },
-          consultationPlan: { select: { organizationId: true } },
-          appointment: { select: { organizationId: true } },
-        },
-      }),
-      prisma.subscription.findMany({
-        where: {
-          subscriptionPlan: { consultantProfileId: user.consultantProfileId },
-          status: dmEligibleStatusFilter(),
-        },
-        include: {
-          requestedBy: { include: { user: { select: { id: true } } } },
-          subscriptionPlan: { select: { organizationId: true } },
-          appointment: { select: { organizationId: true } },
-        },
-      }),
-    ]);
-    for (const c of [...consultations, ...subscriptions]) {
-      const consulteeUserId = c.requestedBy?.user?.id;
-      if (!consulteeUserId || consulteeUserId === userId) continue;
-      const organizationId = bookingOrgId(c);
-      const channelId = getDmChannelId(userId, consulteeUserId, organizationId);
-      pairMap.set(channelId, {
-        consultantUserId: userId,
-        consulteeUserId,
-        organizationId,
-      });
-    }
+    await collectConsultantDmPairs(userId, user.consultantProfileId, pairMap);
   }
-
   if (user.consulteeProfileId) {
-    const [consultations, subscriptions] = await Promise.all([
-      prisma.consultation.findMany({
-        where: {
-          requestedById: user.consulteeProfileId,
-          status: dmEligibleStatusFilter(),
-        },
-        include: {
-          consultationPlan: {
-            include: {
-              consultantProfile: {
-                include: { user: { select: { id: true } } },
-              },
-            },
-          },
-          appointment: { select: { organizationId: true } },
-        },
-      }),
-      prisma.subscription.findMany({
-        where: {
-          requestedById: user.consulteeProfileId,
-          status: dmEligibleStatusFilter(),
-        },
-        include: {
-          subscriptionPlan: {
-            include: {
-              consultantProfile: {
-                include: { user: { select: { id: true } } },
-              },
-            },
-          },
-          appointment: { select: { organizationId: true } },
-        },
-      }),
-    ]);
-    for (const c of consultations) {
-      const consultantUserId = c.consultationPlan?.consultantProfile?.user?.id;
-      if (!consultantUserId || consultantUserId === userId) continue;
-      const organizationId = bookingOrgId(c);
-      const channelId = getDmChannelId(
-        consultantUserId,
-        userId,
-        organizationId,
-      );
-      pairMap.set(channelId, {
-        consultantUserId,
-        consulteeUserId: userId,
-        organizationId,
-      });
-    }
-    for (const s of subscriptions) {
-      const consultantUserId = s.subscriptionPlan?.consultantProfile?.user?.id;
-      if (!consultantUserId || consultantUserId === userId) continue;
-      const organizationId = bookingOrgId(s);
-      const channelId = getDmChannelId(
-        consultantUserId,
-        userId,
-        organizationId,
-      );
-      pairMap.set(channelId, {
-        consultantUserId,
-        consulteeUserId: userId,
-        organizationId,
-      });
-    }
+    await collectConsulteeDmPairs(userId, user.consulteeProfileId, pairMap);
   }
 
   return Array.from(pairMap.values());
@@ -582,8 +786,19 @@ const openableStatusSet = new Set<string>(OPENABLE_EVENT_STATUSES);
 
 const eventPlanRetentionSelect = {
   select: {
+    id: true,
     organizationId: true,
     consultantProfile: { select: { user: { select: { id: true } } } },
+    collaborators: {
+      where: {
+        status: "ACCEPTED" as const,
+        consultantProfile: { deletedAt: null },
+      },
+      select: {
+        tier: true,
+        consultantProfile: { select: { user: { select: { id: true } } } },
+      },
+    },
     organization: {
       select: {
         chatRetentionDays: true,
@@ -604,7 +819,7 @@ const eventAppointmentRetentionSelect = {
     },
     participants: {
       where: liveParticipant(),
-      select: { userId: true },
+      select: { userId: true, role: true },
     },
     occurrences: {
       select: { endsAt: true },
@@ -619,16 +834,23 @@ type EventOrgRetentionShape = {
   streamRecordingRetentionDays?: number | null;
 } | null;
 
+type EventPlanCollaboratorShape = {
+  tier?: string;
+  consultantProfile?: { user?: { id?: string } | null } | null;
+};
+
 type EventPlanRetentionShape = {
+  id?: string;
   organizationId: string | null;
   consultantProfile?: { user?: { id?: string } | null } | null;
+  collaborators?: EventPlanCollaboratorShape[];
   organization?: EventOrgRetentionShape;
 } | null;
 
 type EventAppointmentRetentionShape = {
   organizationId: string | null;
   organization?: EventOrgRetentionShape;
-  participants?: { userId: string }[];
+  participants?: { userId: string; role?: string }[];
   occurrences?: { endsAt: Date }[];
 } | null;
 
@@ -669,7 +891,7 @@ function collectHostedRowDmPairs(
   const orgId = resolveNormalizedEventOrgId(row);
   const pairs: DmPair[] = [];
   for (const p of row.appointment?.participants ?? []) {
-    if (p.userId && p.userId !== userId) {
+    if (p.role === "CONSULTEE" && p.userId && p.userId !== userId) {
       pairs.push({
         consultantUserId: userId,
         consulteeUserId: p.userId,
@@ -680,51 +902,89 @@ function collectHostedRowDmPairs(
   return pairs;
 }
 
-function buildAttendedRowDmPair(
+function buildAttendedRowDmPairs(
   userId: string,
   row: NormalizedEventRow,
   requireConsulteeSeatCheck: boolean,
-): DmPair | null {
-  if (!isRowOpenableForDm(row)) return null;
-  const consultantUserId = row.plan?.consultantProfile?.user?.id;
-  if (!consultantUserId || consultantUserId === userId) return null;
+): DmPair[] {
+  if (!isRowOpenableForDm(row)) return [];
   const hasSeat = (row.appointment?.participants ?? []).some(
-    (p) => p.userId === userId,
+    (p) => p.userId === userId && (!p.role || p.role === "CONSULTEE"),
   );
-  if (requireConsulteeSeatCheck && !hasSeat) return null;
-  return {
-    consultantUserId,
-    consulteeUserId: userId,
-    organizationId: resolveNormalizedEventOrgId(row),
-  };
+  if (requireConsulteeSeatCheck && !hasSeat) return [];
+
+  const orgId = resolveNormalizedEventOrgId(row);
+  const pairs: DmPair[] = [];
+
+  const consultantUserId = row.plan?.consultantProfile?.user?.id;
+  if (consultantUserId && consultantUserId !== userId) {
+    pairs.push({
+      consultantUserId,
+      consulteeUserId: userId,
+      organizationId: orgId,
+    });
+  }
+
+  for (const collab of row.plan?.collaborators ?? []) {
+    if (collab.tier !== "PRESENTER") continue;
+    const collabUserId = collab.consultantProfile?.user?.id;
+    if (collabUserId && collabUserId !== userId) {
+      pairs.push({
+        consultantUserId: collabUserId,
+        consulteeUserId: userId,
+        organizationId: orgId,
+      });
+    }
+  }
+
+  return pairs;
 }
 
 function collectNormalizedEventData(
+  eventType: "webinar" | "class",
   userId: string,
   hostedRows: NormalizedEventRow[],
   collaboratorRows: NormalizedEventRow[],
   attendedRows: NormalizedEventRow[],
   requireConsulteeSeatCheck: boolean,
-): { ids: string[]; dmPairs: DmPair[] } {
+): { ids: string[]; collabChannelIds: string[]; dmPairs: DmPair[] } {
   const ids = new Set<string>();
+  const collabChannelIds = new Set<string>();
   const dmPairs: DmPair[] = [];
 
   for (const row of hostedRows.filter(isNormalizedEventActive)) {
     ids.add(row.id);
+    if ((row.plan?.collaborators?.length ?? 0) > 0 && row.plan?.id) {
+      collabChannelIds.add(collabChannelId(eventType, row.plan.id));
+    }
     dmPairs.push(...collectHostedRowDmPairs(userId, row));
   }
 
   for (const row of collaboratorRows.filter(isNormalizedEventActive)) {
     ids.add(row.id);
+    if (row.plan?.id) {
+      collabChannelIds.add(collabChannelId(eventType, row.plan.id));
+    }
+    const matchingCollab = (row.plan?.collaborators ?? []).find(
+      (c) => c.consultantProfile?.user?.id === userId,
+    );
+    if (matchingCollab?.tier === "PRESENTER") {
+      dmPairs.push(...collectHostedRowDmPairs(userId, row));
+    }
   }
 
   for (const row of attendedRows.filter(isNormalizedEventActive)) {
     ids.add(row.id);
-    const pair = buildAttendedRowDmPair(userId, row, requireConsulteeSeatCheck);
-    if (pair) dmPairs.push(pair);
+    dmPairs.push(
+      ...buildAttendedRowDmPairs(userId, row, requireConsulteeSeatCheck),
+    );
   }
 
-  return { ids: Array.from(ids), dmPairs };
+  return {
+    ids: Array.from(ids),
+    collabChannelIds: Array.from(collabChannelIds),
+    dmPairs,
+  };
 }
 
 async function getWebinarDataForUser(
@@ -733,7 +993,7 @@ async function getWebinarDataForUser(
     consultantProfileId: string | null;
     consulteeProfileId: string | null;
   },
-): Promise<{ ids: string[]; dmPairs: DmPair[] }> {
+): Promise<{ ids: string[]; collabChannelIds: string[]; dmPairs: DmPair[] }> {
   const webinarRetentionSelect = {
     id: true,
     status: true,
@@ -792,6 +1052,7 @@ async function getWebinarDataForUser(
     : [];
 
   return collectNormalizedEventData(
+    "webinar",
     userId,
     (hostedWebinars ?? []).map(toNormalized),
     (collaboratorWebinars ?? []).map(toNormalized),
@@ -806,7 +1067,7 @@ async function getClassDataForUser(
     consultantProfileId: string | null;
     consulteeProfileId: string | null;
   },
-): Promise<{ ids: string[]; dmPairs: DmPair[] }> {
+): Promise<{ ids: string[]; collabChannelIds: string[]; dmPairs: DmPair[] }> {
   const classRetentionSelect = {
     id: true,
     status: true,
@@ -868,6 +1129,7 @@ async function getClassDataForUser(
     : [];
 
   return collectNormalizedEventData(
+    "class",
     userId,
     (hostedClasses ?? []).map(toNormalized),
     (collaboratorClasses ?? []).map(toNormalized),

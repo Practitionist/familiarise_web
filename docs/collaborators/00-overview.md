@@ -1,164 +1,79 @@
-# Collaborator System
+# Collaborator System — Architecture Overview
 
-**Status**: Implemented; merged single-model form since #784
-**Scope**: Webinars and Classes only
+**Scope**: Group Offerings (`WebinarPlan` and `ClassPlan`) across B2C Solo Hosts, Organization-Hosted Plans, and Ownerless Organization Catalog Offerings.
 
 ## Overview
 
-The collaborator system enables multi-creator content on the Familiarise platform. A consultant (the "host") who owns a webinar or class plan can invite other consultants to collaborate with defined roles and revenue shares. Collaborators accept or decline invitations, and when participants pay for the service, earnings are split among all collaborators at settlement time.
+The Collaborator System enables team-taught webinars and classes with deterministic multi-party settlement, role-based real-time audio/video/chat permissions, double-booking conflict prevention, and transactional lifecycle notifications.
 
-This document set was rewritten on 2026-08-14 against the current code. The largest change since the original write-up is #784, which merged the two per-type junction models (`WebinarCollaborator` and `ClassCollaborator`) into one `Collaborator` model, and #768/#772, which replaced the JSON permission override and the float revenue share with typed columns.
+A primary host (consultant owner) or an authorized organization operator (`catalog.manage`) invites verified consultants to a webinar or class plan with an explicit role and gross revenue share (`1%–90%`, stored as integer basis points `100–9000`). Once accepted, collaborators receive automatic Stream Chat coordination and event channel access, Stream Video role assignments, co-host schedule overlap protection, and independent earnings settlement into their own consultant or host-organization ledger accounts.
 
-### Goals
-
-The system exists to make five things possible:
-
-- Team-taught webinars and classes.
-- Fair, transparent revenue sharing with per-collaborator splits.
-- Automated earnings distribution at settlement, including settlement to a collaborator's own host organization (#773).
-- Private communication channels for collaborator coordination.
-- Co-host availability enforced at scheduling time (#784 AE-2); the advisory per-date overlay endpoint was removed in #1580 (C-P1-8).
-
-### Key design decisions
-
-The following table records the load-bearing choices and why each was made.
-
-| Decision                | Choice                                                                                                                                                                                           | Rationale                                                                                                                                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scope                   | Webinars + Classes only                                                                                                                                                                          | Consultations and subscriptions are inherently 1:1                                                                                                                                 |
-| Data model              | One merged `Collaborator` model with a `collaboratorType` discriminator (#784)                                                                                                                   | Two parallel tables duplicated every query and migration                                                                                                                           |
-| Scheduling              | Host-only; co-host availability enforced on webinars and classes (#784 AE-2)                                                                                                                     | Only the owner creates events; a co-host or co-instructor can no longer be silently double-booked, because both the webinar and the class scheduling routes call the guard         |
-| Revenue split           | Host sets it, collaborator accepts or declines                                                                                                                                                   | The owner controls the deal                                                                                                                                                        |
-| Terms after acceptance  | A share or role change on an `ACCEPTED` row is refused with 409; the host removes and re-invites (#1580 C-P0-3)                                                                                  | Flipping the row back to `PENDING` for re-consent would drop the collaborator from every `ACCEPTED`-only reader, and a settlement in that window would pay their share to the host |
-| Cap                     | At most three collaborators per plan in `PENDING` + `ACCEPTED`, and only one of them a co-presenter (`CO_HOST` / `CO_INSTRUCTOR`), enforced in the Serializable invite transaction (#1580 §6)    | The host stays the single accountable party for reviews, CSAT, support and payout, and attribution then names at most one co-presenter                                             |
-| Moderation              | A ban or suspension moves the target's `PENDING` and `ACCEPTED` rows to `REMOVED` and runs the same Stream revocation removal does; reinstatement does not restore them (#1580 C-P0-4)           | A moderated account must not keep a split, a roster, a recording or a public co-host listing, and the host re-invites if they want the person back                                 |
-| Invite and accept gates | An invite, and again an accept, is refused for a deleted, unverified, banned or erased consultant, for one who already holds a seat on the plan's events, and on an archived plan (#1580 C-P1-9) | Standing can change between the two calls, and a collaborator who is also an attendee would be paid back part of their own seat                                                    |
-| Self-withdraw           | A collaborator may withdraw their own `PENDING` or `ACCEPTED` row through the same `REMOVED` path; the host hears it as `collaborator-withdrawn` (#1580 C-P1-7)                                  | Nobody should need the host's action to leave a deal; settled earnings are untouched                                                                                               |
-| Erasure                 | DPDP erasure runs the same flip the ban runs, and the public co-host lists skip soft-deleted profiles (#1580)                                                                                    | An erased consultant must not remain on a split, a roster or a public card                                                                                                         |
-| Notifications           | `ACCEPTED` collaborators are on the recipient lists of booking, cancellation, reschedule, reminder and moderation-cancel sends; a decline reaches the host (#1580 C-P1-5)                        | A co-host who never hears that the event moved cannot show up to it                                                                                                                |
-| Share storage           | Integer basis points (`revenueShareBps`, #772 B5)                                                                                                                                                | Integer money math; the API surface stays in percent                                                                                                                               |
-| Minimum host share      | 10% (collaborator total capped at 90%, enforced in a Serializable transaction)                                                                                                                   | Prevents giving away the entire revenue, race-safely                                                                                                                               |
-| Platform fee            | 20% floored off the gross once; the pool is then split                                                                                                                                           | The owner absorbs rounding as the residual party (#778 §C-2)                                                                                                                       |
-| Permissions             | Four typed booleans (#768 lockdown #12)                                                                                                                                                          | The old JSON override was unauditable and never validated                                                                                                                          |
-| Chat channels           | Auto-created on acceptance                                                                                                                                                                       | Collaborators need a place to coordinate                                                                                                                                           |
-| Video roles             | Presenters only (#1580 C-P1-4)                                                                                                                                                                   | Calls are minted server-side; the owner and the accepted co-presenter hold "end for everyone" and recording, crew join as members, and the Stream role decides nothing             |
-| Org relationship        | Collaborations are org-blind (ADR 18)                                                                                                                                                            | Each collaborator's earnings settle to their own host org independently                                                                                                            |
+```mermaid
+flowchart LR
+    UI["Dashboard & Plan Editor UI\ncomponents/collaborators/*"] --> API["Collaboration REST Routes\napp/api/collaborations/**"]
+    API --> SVC["Collaborator Service\nlib/collaborators/service.ts"]
+    SVC --> DB[("PostgreSQL\nCollaborator / Earnings / Ledger")]
+    SVC --> CHAT["Stream Chat Reconciler\nactions/stream/chat/channel.action.ts"]
+    SVC --> VIDEO["Stream Video SFU\nlib/meetings/access.ts + Kick/Revoke"]
+    SVC --> NOTIF["Novu In-App + Resend Emails\nlib/email/senders/collaborators.ts"]
+    PAY["Payment Confirmation Pipeline\nlib/payments/payouts/earnings-service.ts"] --> SVC
+    PAY --> DB
+    CRON["Cleanup Registry Sweep\nexpireStaleCollaboratorInvites"] --> SVC
+```
 
 ---
 
-## Data model
+## Core Architectural Invariants
 
-One `Collaborator` row links a consultant profile to exactly one plan. The `collaboratorType` discriminator says which kind, and exactly one of `webinarPlanId`/`classPlanId` is set — Postgres CHECK constraints are not Prisma-expressible, so the XOR is app-enforced by `assertCollaboratorPlanXor` in `lib/collaborators/service.ts:33`.
-
-```
-ConsultantProfile ──── owns ────────────► WebinarPlan / ClassPlan
-        │                                        │ 1:many
-        │ collaborates via                       ▼
-        └─────────────────────────────► Collaborator
-                                          collaboratorType  WEBINAR | CLASS
-                                          webinarPlanId?  ⊕  classPlanId?   (XOR)
-                                          role              CollaboratorRole
-                                          revenueShareBps   Int (3000 = 30%)
-                                          canApprovePayment / canViewAnalytics /
-                                          canEditEvent / canSeeAttendees  Boolean
-                                          status            PENDING → ACCEPTED | DECLINED | REMOVED
-                                          invitedById       ConsultantProfile
-                                          respondedAt       DateTime?
-```
-
-### The `Collaborator` model
-
-The model lives at `prisma/schema.prisma:6392`. Its fields are listed below.
-
-| Field                 | Type                 | Description                                                                                 |
-| --------------------- | -------------------- | ------------------------------------------------------------------------------------------- |
-| `id`                  | String               | Primary key (cuid)                                                                          |
-| `consultantProfileId` | String               | The collaborator's profile                                                                  |
-| `collaboratorType`    | `CollaboratorType`   | `WEBINAR` or `CLASS` — mirrors which plan FK is set                                         |
-| `webinarPlanId`       | String?              | Set iff `collaboratorType = WEBINAR`                                                        |
-| `classPlanId`         | String?              | Set iff `collaboratorType = CLASS`                                                          |
-| `role`                | `CollaboratorRole`   | One merged enum; the service rejects a class role on a webinar collaboration and vice versa |
-| `canApprovePayment`   | Boolean              | Typed permission, default `false` (#768)                                                    |
-| `canViewAnalytics`    | Boolean              | Typed permission, default `false` (#768)                                                    |
-| `canEditEvent`        | Boolean              | Typed permission, default `false` (#768)                                                    |
-| `canSeeAttendees`     | Boolean              | Typed permission, default `false`; the only one currently enforced (#768)                   |
-| `revenueShareBps`     | Int                  | Basis points, e.g. 3000 = 30% (#772 B5)                                                     |
-| `status`              | `CollaboratorStatus` | `PENDING`, `ACCEPTED`, `DECLINED`, `REMOVED`                                                |
-| `invitedById`         | String               | The host who sent the invitation                                                            |
-| `respondedAt`         | DateTime?            | When the collaborator responded                                                             |
-
-Uniqueness is a pair of partial-behaving constraints: `@@unique([consultantProfileId, webinarPlanId])` and `@@unique([consultantProfileId, classPlanId])`. Postgres treats NULLs as distinct, so each constraint bites only for its own plan type — a consultant can hold one collaboration per plan.
-
-### Enums
-
-The three enums sit directly below the model (`prisma/schema.prisma:6427`, `:6432`, `:6440`).
-
-```
-CollaboratorType:    WEBINAR | CLASS
-
-CollaboratorStatus:  PENDING   — invitation sent, awaiting response
-                     ACCEPTED  — collaborator accepted
-                     DECLINED  — collaborator declined
-                     REMOVED   — host removed the collaborator (soft delete)
-
-CollaboratorRole (union of the old per-type enums, #784):
-  Webinar subset:  CO_HOST, MODERATOR, GUEST_SPEAKER, TECHNICAL_SUPPORT
-  Class subset:    CO_INSTRUCTOR, TEACHING_ASSISTANT, GUEST_LECTURER, CONTENT_CREATOR
-```
-
-Because the merged DB enum cannot reject a class role on a webinar collaboration the way the old per-type enums did, the subset check lives in the service (`ROLES_BY_PLAN_TYPE` in `lib/collaborators/service.ts:62`, backed by `schemas/collaborators.ts`).
-
-### `ConsultantEarnings` (settlement side)
-
-Settlement writes one `ConsultantEarnings` row per party (`prisma/schema.prisma:5684`). The columns relevant to collaborations are these.
-
-| Field                                                       | Type          | Description                                                                                                                                                  |
-| ----------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `role`                                                      | `EarningRole` | `OWNER` or `COLLABORATOR`                                                                                                                                    |
-| `shareBps`                                                  | Int           | Cached basis-point share of the consultant pool (10000 = 100%); floored per row with the last row absorbing the remainder so the sum is exactly 10000 (#812) |
-| `grossAmount` / `platformFeePaise` / `consultantSharePaise` | BigInt        | Integer paise; the owner's row carries the gross and the marketplace fee, a collaborator's row carries only its share                                        |
-| `paymentId`                                                 | String        | Indexed, not unique — one payment fans out to many earnings rows; uniqueness is `@@unique([paymentId, consultantProfileId, role])`                           |
-
-The full split mechanics, including settlement to a collaborator's host org (#773), are in [03-revenue-sharing.md](./03-revenue-sharing.md).
+| Domain                            | Invariant                                                                                                                                                                                                       | Enforcement Mechanism                                                                                |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Offering Scope**                | Webinars and Classes only; 1:1 consultations and subscriptions are single-instructor                                                                                                                            | Schema foreign keys (`webinarPlanId`, `classPlanId`) + `collaborator_plan_xor` CHECK constraint      |
+| **Single Merged Table**           | All webinar and class collaborations live in one `Collaborator` table discriminated by `collaboratorType`                                                                                                       | `Collaborator` Prisma model + `assertCollaboratorPlanXor()` + SQL CHECK constraint                   |
+| **Seat & Presenter Cap**          | Maximum **3 active** (`PENDING` + `ACCEPTED`) collaborators per plan; maximum **1 active `PRESENTER`** (`CO_HOST` or `CO_INSTRUCTOR`)                                                                           | `Serializable` transaction check in `assertCollaboratorCapTx()` + partial unique SQL indexes         |
+| **Minimum Host Share**            | Collaborator shares (`PENDING` + `ACCEPTED`) never exceed `9000 bps` (`90%`), guaranteeing at least `1000 bps` (`10%`) for the plan owner / host organization                                                   | `validateRevenueSharesTx()` under `Serializable` isolation + client-side `max` guard                 |
+| **Immutable Accepted Terms**      | `role` and `revenueShareBps` on an `ACCEPTED` collaboration cannot be mutated in place (`409 Conflict`); host must remove and re-invite                                                                         | `CollaboratorTermsLockedError` in `updateCollaborator()`                                             |
+| **Single-Fee Gross-Slice Math**   | Gross payment is divided into per-party gross slices first (`floor(gross * bps / 10000)` per collaborator, residual to `OWNER`); each slice has platform/rate-card fee applied **once**                         | `calculateRevenueSplit()` + `planEarningsForPayment()` + `createEarningsFromPayment()`               |
+| **Ownerless Org Catalog Support** | Organization catalog plans with `consultantProfileId: null` settle the owner slice directly to `OrganizationEarnings` (`ORG_PAYABLE`) without requiring a host consultant row                                   | `RevenueSplit` (`consultantProfileId: string \| null`, `organizationId?: string \| null`)            |
+| **Org-Blind Collaborator Splits** | Each accepted collaborator settles their gross slice through their **own** active HOST/HYBRID organization rate card (or standard B2C 20% fee if solo)                                                          | `resolveOrgSplit()` invoked per party without leaking the selling plan's org rate card               |
+| **Learner Seat Exclusion**        | Accepted collaborators hold shadow `AppointmentParticipant` rows with `role: COLLABORATOR`, never consuming paid learner (`role: CONSULTEE`) seats                                                              | Filtered seat counts (`role: "CONSULTEE"`) across booking capacity queries                           |
+| **Immediate Live SFU Revocation** | Removing or withdrawing a collaborator immediately revokes Stream Chat channels and executes Stream Video SFU permission revocation + `kickUser`                                                                | `revokeCollaboratorAccess()` + `revokeOpenCallPresenterRole()`                                       |
+| **14-Day Stale Invite Sweep**     | Unanswered `PENDING` invitations with `updatedAt < now - 14d` transition via CAS `updateMany` to `DECLINED` (`respondedAt = now`), releasing reserved share capacity and emailing both invitee and inviter/host | `expireStaleCollaboratorInvites()` registered in `lib/cron/cleanup-registry.ts` under `withCronLock` |
 
 ---
 
-## File map
+## Source File Map
 
-The table below maps each concern to its source file.
-
-| File                                                             | Purpose                                                                                                                                                                                                   |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/collaborators/service.ts`                                   | Core business logic: invite, respond, update, remove, visibility scoping, revenue split                                                                                                                   |
-| `lib/collaborators/standing.ts`                                  | `removeCollaboratorStanding` — the `PENDING`/`ACCEPTED` → `REMOVED` flip shared by the moderation ban and DPDP erasure (#1580)                                                                            |
-| `lib/collaborators/roles.ts`                                     | `PRESENTER_ROLES` / `isPresenterRole` — the co-presenter set that holds host controls in a call (#1580 C-P1-4)                                                                                            |
-| `lib/collaborators/recipients.ts`                                | `collaboratorUserIds` / `collaboratorUserIdsForEvent` — the `ACCEPTED` recipients spread into notification sends (#1580 C-P1-5)                                                                           |
-| `lib/api/collaborations/member-handlers.ts`                      | `patchCollaborator` / `deleteCollaborator` — the shared bodies of the two `[id]` routes, including the collaborator self-withdraw branch (#1580 C-P2-7)                                                   |
-| `lib/collaborators/availability.ts`                              | `assertCollaboratorsAvailable` and `assertCollaboratorsAvailableForWindows` — the AE-2 co-host double-booking guard, called from the webinar plan route, the class plan route and `SchedulingService` |
-| `lib/payments/payouts/earnings-service.ts`                       | `createEarningsFromPayment` — applies the split at settlement and posts the booking journal                                                                                                               |
-| `app/api/collaborations/webinar/[planId]/route.ts`               | GET/POST webinar collaborators                                                                                                                                                                            |
-| `app/api/collaborations/webinar/[planId]/[id]/route.ts`          | PATCH/DELETE a specific webinar collaborator (thin wrapper over `member-handlers.ts`)                                                                                                                     |
-| `app/api/collaborations/class/[planId]/route.ts`                 | GET/POST class collaborators                                                                                                                                                                              |
-| `app/api/collaborations/class/[planId]/[id]/route.ts`            | PATCH/DELETE a specific class collaborator (thin wrapper over `member-handlers.ts`)                                                                                                                       |
-| `app/api/collaborations/[id]/respond/route.ts`                   | PATCH accept/decline an invitation                                                                                                                                                                        |
-| `app/api/collaborations/route.ts`                                | GET all my collaborations                                                                                                                                                                                 |
-| `app/api/collaborations/webinar/[planId]/revenue-split/route.ts` | GET webinar revenue-split preview                                                                                                                                                                         |
-| `app/api/collaborations/class/[planId]/revenue-split/route.ts`   | GET class revenue-split preview                                                                                                                                                                           |
-| `app/api/participants/webinar/[webinarId]/route.ts`              | Participant roster — the surface `canSeeAttendees` gates                                                                                                                                                  |
-| `components/collaborators/`                                      | `CollaboratorsTab`, `InvitationsPanel`, `HostedPlanCard`, `RevenueSplitBar` and friends                                                                                                                   |
-| `actions/stream/chat/channel.action.ts`                          | `createCollaboratorChannel()`                                                                                                                                                                             |
-| `schemas/collaborators.ts`                                       | Zod schemas, including the per-plan-type role subsets                                                                                                                                                     |
-| `prisma/seedFiles/13b-create-collaborators.ts`                   | Seed data                                                                                                                                                                                                 |
+| Layer                       | File Path                                               | Responsibility                                                                                                                         |
+| --------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **Database & Constraints**  | `prisma/schema.prisma`                                  | `Collaborator`, `ConsultantEarnings`, `OrganizationEarnings`, `AppointmentParticipant` models & enums                                  |
+| **Database Sidecars**       | `prisma/sql/check-constraints.sql`                      | `collaborator_plan_xor` CHECK constraint and partial unique presenter indexes                                                          |
+| **Core Service**            | `lib/collaborators/service.ts`                          | Invite, accept/decline, inline pending edit, host remove, self-withdraw, live SFU/chat revocation, split math, stale expiry            |
+| **Role & Tier Mapping**     | `lib/collaborators/roles.ts`                            | `PRESENTER_ROLES` (`CO_HOST`, `CO_INSTRUCTOR`), `isPresenterRole()`, and `tierForRole()` (`PRESENTER` vs `CREW`)                       |
+| **Schedule Guard**          | `lib/collaborators/availability.ts`                     | `assertCollaboratorsAvailable()` & `assertCollaboratorsAvailableForWindows()` co-host overlap enforcement                              |
+| **Notification Recipients** | `lib/collaborators/recipients.ts`                       | `collaboratorUserIds()` & `collaboratorUserIdsForEvent()` for booking, reschedule, cancellation & reminder fan-out                     |
+| **Moderation & Erasure**    | `lib/collaborators/standing.ts`                         | `removeCollaboratorStanding()` transaction-safe `PENDING`/`ACCEPTED` retirement for bans and DPDP scrubs                               |
+| **API Route Handlers**      | `lib/api/collaborations/member-handlers.ts`             | Shared `PATCH` / `DELETE` route handlers with null-owner & org-admin authorization guards                                              |
+| **REST Endpoints**          | `app/api/collaborations/**`                             | Next.js App Router endpoints for personal/org listing, plan invites, invitation responses, and split previews                          |
+| **Settlement & Ledger**     | `lib/payments/payouts/earnings-service.ts`              | Single-fee gross-slice decomposition, multi-party `ConsultantEarnings` / `OrganizationEarnings`, `booking:<paymentId>` ledger postings |
+| **Transactional Email**     | `lib/email/senders/collaborators.ts`                    | Budgeted Resend senders for `INVITED`, `ACCEPTED`, `DECLINED`, `REMOVED`, `WITHDRAWN`, `EXPIRED`                                       |
+| **Email Templates**         | `emails/collaborations/CollaborationLifecycleEmail.tsx` | React Email template for all 6 collaboration lifecycle events                                                                          |
+| **Dashboard UI**            | `components/collaborators/*`                            | `CollaboratorsTab`, `InvitationsPanel`, `PendingInvitationCard`, `ActiveCollaborationCard`, `HostedPlanCard`                           |
 
 ---
 
-## Related docs
+## Documentation Index
 
-The rest of this folder goes deeper on each area:
+1. [01 — Database Schema & Constraints](./01-database-schema.md)
+2. [02 — Permissions, Roles & Authorization](./02-permissions-and-roles.md)
+3. [03 — Multi-Party Revenue Sharing & Ledger Math](./03-revenue-sharing.md)
+4. [04 — Stream Chat Integration & Moderation](./04-stream-chat-integration.md)
+5. [05 — Stream Video Integration & Live SFU Controls](./05-stream-video-integration.md)
+6. [06 — REST API, Lifecycle Sweeps & Transactional Emails](./06-api-and-lifecycle.md)
 
-- [01 — Architecture & Flows](./01-architecture.md)
-- [02 — API Reference](./02-api-reference.md)
-- [03 — Revenue Sharing](./03-revenue-sharing.md)
-- [04 — Permissions](./04-permissions.md)
-- [05 — Stream Integration](./05-stream-integration.md)
-- [06 — Scheduling Approaches](./06-scheduling-approaches.md)
+---
+
+## Deprecated & Superseded Approaches
+
+- **Separate `WebinarCollaborator` and `ClassCollaborator` Tables**: Previously modeled as two independent Prisma tables with separate services and duplicate migrations. Superseded by the single `Collaborator` table using `collaboratorType` + `collaborator_plan_xor`.
+- **Post-Fee Pool Splitting**: Earlier settlement logic deducted a 20% marketplace fee off the entire booking first and passed the net pool into `calculateRevenueSplit()`, causing org-affiliated collaborators to suffer a second fee deduction when `resolveOrgSplit()` ran against their net share. Superseded by single-fee per-party gross-slice math.
+- **Unenforced Per-Invite Capability Booleans & JSON Overrides**: Earlier schemas carried a free-form `permissions` JSON column (later replaced by `canApprovePayment`, `canViewAnalytics`, `canEditEvent`, `canSeeAttendees`), three of which were never read by any route. Superseded by deterministic `CollaboratorTier` (`PRESENTER` vs `CREW`) derived strictly from `role`.

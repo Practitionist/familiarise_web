@@ -18,11 +18,22 @@ jest.mock("../../lib/stream-client", () => ({
     channel: () => ({ removeMembers: jest.fn(async () => undefined) }),
   })),
   getStreamVideoClient: jest.fn(() => ({
-    video: { call: () => ({ updateCallMembers: mockUpdateCallMembers }) },
+    video: {
+      call: () => ({
+        updateCallMembers: mockUpdateCallMembers,
+        updateUserPermissions: jest.fn(async () => ({})),
+        kickUser: jest.fn(async () => ({})),
+      }),
+    },
   })),
   isExpectedStreamError: () => false,
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
+  removeUserFromEventChannel: jest.fn(async () => ({ success: true })),
+}));
+jest.mock("../../lib/stream/event-channel-service", () => ({
+  addUserToEventChannel: jest.fn(async () => ({ success: true })),
+  checkEventChannelExists: jest.fn(async () => false),
   removeUserFromEventChannel: jest.fn(async () => ({ success: true })),
 }));
 jest.mock("../../lib/novu/service", () => ({
@@ -31,6 +42,18 @@ jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorRemoved: jest.fn(async () => undefined),
   notifyCollaboratorWithdrawn: jest.fn(async () => undefined),
 }));
+jest.mock("../../lib/email/senders/collaborators", () => ({
+  sendCollaboratorInvitedEmail: jest.fn(async () => undefined),
+  sendCollaboratorAcceptedEmail: jest.fn(async () => undefined),
+  sendCollaboratorDeclinedEmail: jest.fn(async () => undefined),
+  sendCollaboratorRemovedEmail: jest.fn(async () => undefined),
+  sendCollaboratorWithdrawnEmail: jest.fn(async () => undefined),
+}));
+jest.mock(
+  "../../utils/organization-roles",
+  () => ({ hasOrgPermission: jest.fn(() => false) }),
+  { virtual: true },
+);
 
 const row = {
   id: "c-1",

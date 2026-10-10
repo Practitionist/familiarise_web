@@ -13,12 +13,8 @@ import {
   updateClassCollaboratorSchema,
   updateWebinarCollaboratorSchema,
 } from "@/schemas/collaborators";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
-/**
- * The PATCH and DELETE bodies of `/api/collaborations/{webinar,class}/[planId]/[id]`.
- * The two route files were byte-for-byte twins apart from the plan model and
- * the Zod schema, so they are thin wrappers over this module (#1580 C-P2-7).
- */
 type PlanType = "webinar" | "class";
 type RouteContext = { params: Promise<{ planId: string; id: string }> };
 
@@ -39,12 +35,6 @@ const captureRouteError = (
   console.error(`Error ${what} ${planType} collaborator:`, error);
 };
 
-/**
- * The plan's owner profile id and the caller's profile id. Either missing is
- * a refusal: comparing `plan?.consultantProfileId` to `ownerProfile?.id` let
- * two undefineds match and waved a stranger through on a plan without an
- * owner (#1580 C-P2-7).
- */
 async function resolveParties(
   planType: PlanType,
   planId: string,
@@ -54,23 +44,50 @@ async function resolveParties(
     planType === "webinar"
       ? prisma.webinarPlan.findUnique({
           where: { id: planId },
-          select: { consultantProfileId: true },
+          select: { consultantProfileId: true, organizationId: true },
         })
       : prisma.classPlan.findUnique({
           where: { id: planId },
-          select: { consultantProfileId: true },
+          select: { consultantProfileId: true, organizationId: true },
         }),
     prisma.consultantProfile.findFirst({
       where: { userId },
       select: { id: true },
     }),
   ]);
-  if (!plan || !callerProfile) return null;
+  if (!plan) return null;
+
+  const isOwner =
+    Boolean(callerProfile?.id) &&
+    plan.consultantProfileId === callerProfile?.id;
+
+  let isOrgAdmin = false;
+  if (!isOwner && plan.organizationId) {
+    const membership = await prisma.membership.findUnique({
+      where: {
+        userId_organizationId: {
+          userId,
+          organizationId: plan.organizationId,
+        },
+      },
+      select: {
+        status: true,
+        role: true,
+        organization: { select: { status: true } },
+      },
+    });
+    isOrgAdmin = Boolean(
+      membership?.status === "ACTIVE" &&
+      membership.organization.status !== "DEACTIVATED" &&
+      hasOrgPermission(membership.role, "catalog.manage"),
+    );
+  }
+
+  if (!callerProfile && !isOrgAdmin) return null;
+
   return {
-    callerProfileId: callerProfile.id,
-    isOwner:
-      plan.consultantProfileId !== null &&
-      plan.consultantProfileId === callerProfile.id,
+    callerProfileId: callerProfile?.id ?? null,
+    canManagePlan: isOwner || isOrgAdmin,
   };
 }
 
@@ -87,7 +104,7 @@ export async function patchCollaborator(
     const { planId, id } = await params;
 
     const parties = await resolveParties(planType, planId, session.user.id);
-    if (!parties?.isOwner) {
+    if (!parties?.canManagePlan) {
       return NextResponse.json(
         { error: "Only the plan owner can update collaborators" },
         { status: 403 },
@@ -115,7 +132,6 @@ export async function patchCollaborator(
     if (error instanceof CollaboratorTermsLockedError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
-    // A re-role into a second presenter is refused by the cap, not a fault (#1580 §6).
     if (error instanceof CollaboratorCapError) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
@@ -150,15 +166,16 @@ export async function deleteCollaborator(
       return NextResponse.json({ error: NOT_A_PARTY }, { status: 403 });
     }
 
-    // The owner removes any row; a collaborator may withdraw their own
-    // PENDING/ACCEPTED row (#1580 C-P1-7), in which case the host is notified.
-    const collab = parties.isOwner
-      ? await removeCollaborator(planType, id, planId)
-      : await removeCollaborator(planType, id, planId, {
-          withdrawnByProfileId: parties.callerProfileId,
-        });
+    let collab = null;
+    if (parties.canManagePlan) {
+      collab = await removeCollaborator(planType, id, planId);
+    } else if (parties.callerProfileId) {
+      collab = await removeCollaborator(planType, id, planId, {
+        withdrawnByProfileId: parties.callerProfileId,
+      });
+    }
     if (!collab) {
-      return parties.isOwner
+      return parties.canManagePlan
         ? NextResponse.json(
             { error: "Failed to remove collaborator" },
             { status: 400 },

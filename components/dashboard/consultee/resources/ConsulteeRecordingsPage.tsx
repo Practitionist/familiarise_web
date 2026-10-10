@@ -2,11 +2,11 @@
 
 import { use, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { ArrowUpDown, Search } from "lucide-react";
 
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { ErrorState } from "@/components/dashboard/ErrorState";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -91,6 +91,7 @@ export function ConsulteeRecordingsPage({
   const { consulteeId } = use(params);
   const [category, setCategory] = useState<ConsulteeRecordingCategory>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["consultee-recordings", consulteeId],
@@ -107,9 +108,34 @@ export function ConsulteeRecordingsPage({
     staleTime: 5 * 60 * 1000,
   });
 
-  const scopedData = useMemo(() => {
+  const recordingsData = useMemo(() => {
     if (!data) return undefined;
-    const purchasedItems = data.purchased ?? [];
+    const hasRecording = (item: EventResource) => item.recordings.length > 0;
+    return {
+      consultations: data.consultations.filter(hasRecording),
+      subscriptions: data.subscriptions.filter(hasRecording),
+      webinars: data.webinars.filter(hasRecording),
+      classes: data.classes.filter(hasRecording),
+      trials: (data.trials ?? []).filter(hasRecording),
+      purchased: (data.purchased ?? []).filter(hasRecording),
+    };
+  }, [data]);
+
+  const totalAnyRecordings = useMemo(() => {
+    if (!recordingsData) return 0;
+    return (
+      recordingsData.consultations.length +
+      recordingsData.subscriptions.length +
+      recordingsData.webinars.length +
+      recordingsData.classes.length +
+      recordingsData.trials.length +
+      recordingsData.purchased.length
+    );
+  }, [recordingsData]);
+
+  const scopedData = useMemo(() => {
+    if (!recordingsData) return undefined;
+    const purchasedItems = recordingsData.purchased;
     const purchasedClasses = purchasedItems.filter(isPurchasedClassRecording);
     const purchasedWebinars = purchasedItems.filter(
       (item) => !isPurchasedClassRecording(item),
@@ -117,8 +143,14 @@ export function ConsulteeRecordingsPage({
     const filterBySearch = (items: EventResource[]) =>
       items.filter((item) => matchesSearch(item, searchQuery));
 
-    const allWebinars = mergeUniqueEvents(data.webinars, purchasedWebinars);
-    const allClasses = mergeUniqueEvents(data.classes, purchasedClasses);
+    const allWebinars = mergeUniqueEvents(
+      recordingsData.webinars,
+      purchasedWebinars,
+    );
+    const allClasses = mergeUniqueEvents(
+      recordingsData.classes,
+      purchasedClasses,
+    );
 
     if (category === "webinar") {
       return {
@@ -140,7 +172,7 @@ export function ConsulteeRecordingsPage({
     }
     if (category === "consultation") {
       return {
-        consultations: filterBySearch(data.consultations),
+        consultations: filterBySearch(recordingsData.consultations),
         subscriptions: [],
         webinars: [],
         classes: [],
@@ -150,7 +182,7 @@ export function ConsulteeRecordingsPage({
     if (category === "subscription") {
       return {
         consultations: [],
-        subscriptions: filterBySearch(data.subscriptions),
+        subscriptions: filterBySearch(recordingsData.subscriptions),
         webinars: [],
         classes: [],
         trials: [],
@@ -166,13 +198,13 @@ export function ConsulteeRecordingsPage({
       };
     }
     return {
-      consultations: filterBySearch(data.consultations),
-      subscriptions: filterBySearch(data.subscriptions),
+      consultations: filterBySearch(recordingsData.consultations),
+      subscriptions: filterBySearch(recordingsData.subscriptions),
       webinars: filterBySearch(allWebinars),
       classes: filterBySearch(allClasses),
-      trials: filterBySearch(data.trials ?? []),
+      trials: filterBySearch(recordingsData.trials),
     };
-  }, [data, category, searchQuery]);
+  }, [recordingsData, category, searchQuery]);
 
   if (isLoading) return <PageSkeleton />;
 
@@ -187,9 +219,28 @@ export function ConsulteeRecordingsPage({
     );
   }
 
-  const purchasedItems = (data?.purchased ?? []).filter((item) =>
-    matchesSearch(item, searchQuery),
-  );
+  if (totalAnyRecordings === 0) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          title="Recordings"
+          description="Recordings of the sessions you've attended and purchased replays"
+        />
+        <ResourcesTab
+          data={recordingsData}
+          artifact="recordings"
+          sortDir={sortDir}
+        />
+      </div>
+    );
+  }
+
+  const purchasedItems = [...(recordingsData?.purchased ?? [])]
+    .filter((item) => matchesSearch(item, searchQuery))
+    .sort((a, b) => {
+      const diff = new Date(a.date).getTime() - new Date(b.date).getTime();
+      return sortDir === "desc" ? -diff : diff;
+    });
   const totalScopedCount =
     (scopedData?.consultations.length ?? 0) +
     (scopedData?.subscriptions.length ?? 0) +
@@ -198,6 +249,7 @@ export function ConsulteeRecordingsPage({
     (scopedData?.trials?.length ?? 0);
   const hasSearchOrCategoryFilter =
     searchQuery.trim().length > 0 || category !== "all";
+  const purchasedCount = recordingsData?.purchased.length ?? 0;
 
   let recordingsContent: React.ReactNode;
   if (category === "purchased" && purchasedItems.length > 0) {
@@ -225,48 +277,50 @@ export function ConsulteeRecordingsPage({
     );
   } else {
     recordingsContent = (
-      <ResourcesTab
-        data={scopedData}
-        artifact="recordings"
-        title="Recordings"
-        subtitle="Recordings of the sessions you've attended and purchased replays"
-      />
+      <ResourcesTab data={scopedData} artifact="recordings" sortDir={sortDir} />
     );
   }
 
   return (
-    <DashboardErrorBoundary>
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            role="tablist"
-            aria-label="Recording categories"
-            className="flex flex-wrap items-center gap-1.5"
-          >
-            {RECORDING_CATEGORIES.map((tab) => {
-              const purchasedCount = data?.purchased?.length ?? 0;
-              const badgeSuffix =
-                tab.value === "purchased" && purchasedCount > 0
-                  ? ` (${purchasedCount})`
-                  : "";
-              return (
-                <Button
-                  key={tab.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={category === tab.value}
-                  variant={category === tab.value ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setCategory(tab.value)}
-                >
-                  {tab.label}
-                  {badgeSuffix}
-                </Button>
-              );
-            })}
-          </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="Recordings"
+        description="Recordings of the sessions you've attended and purchased replays"
+      />
 
-          <div className="relative w-full sm:w-64">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div
+          role="group"
+          aria-label="Filter by offering type"
+          className="flex flex-wrap items-center gap-1.5"
+        >
+          {RECORDING_CATEGORIES.map((tab) => {
+            const badgeSuffix =
+              tab.value === "purchased" && purchasedCount > 0
+                ? ` (${purchasedCount})`
+                : "";
+            return (
+              <Button
+                key={tab.value}
+                type="button"
+                aria-pressed={category === tab.value}
+                variant={category === tab.value ? "default" : "outline"}
+                size="sm"
+                onClick={() => setCategory(tab.value)}
+              >
+                {tab.label}
+                {badgeSuffix}
+              </Button>
+            );
+          })}
+        </div>
+
+        <div
+          role="search"
+          aria-label="Search and sort recordings"
+          className="flex w-full items-center gap-2 sm:w-auto"
+        >
+          <div className="relative flex-1 sm:w-64">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden
@@ -280,10 +334,23 @@ export function ConsulteeRecordingsPage({
               className="pl-8"
             />
           </div>
-        </div>
 
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
+          >
+            <ArrowUpDown className="mr-2 h-4 w-4" />
+            {sortDir === "desc" ? "Newest first" : "Oldest first"}
+          </Button>
+        </div>
+      </div>
+
+      <div aria-live="polite">
+        <h2 className="sr-only">Session recordings</h2>
         {recordingsContent}
       </div>
-    </DashboardErrorBoundary>
+    </div>
   );
 }

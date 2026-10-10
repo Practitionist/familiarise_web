@@ -138,6 +138,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Stale order: the hold lapsed, so refuse before driving the pipeline.
+    if (payment.paymentStatus === "EXPIRED") {
+      return NextResponse.json(
+        {
+          verified: false,
+          error: "ORDER_EXPIRED",
+          paymentStatus: "EXPIRED",
+          orderId: razorpay_order_id,
+        },
+        { status: 409 },
+      );
+    }
+
     // The gateway is the authority on what was actually captured and on the
     // `notes` that select the handler. The signature only proves the pair
     // (order_id, payment_id) came from Razorpay; it carries neither amount nor

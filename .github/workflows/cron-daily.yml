@@ -84,7 +84,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|expire-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|reconcile-orphaned-recordings|wind-down-deactivated-orgs|timeout-member-overages|dunning|wallet-low-balance)
+            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|expire-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|timeout-member-overages|dunning|wallet-low-balance)
               ;;
             *)
               echo "::error::Unknown daily job slug '${INPUT_JOB}'"
@@ -272,6 +272,21 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/stream/expire-event-channels.ts
 
+      - name: Expire stale collaborator invites
+        id: expire-stale-collaborator-invites
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'expire-stale-collaborator-invites'))
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -X POST -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/cleanup/expire-stale-collaborator-invites"
+
       - name: Reconcile orphaned recordings
         id: reconcile-orphaned-recordings
         if: >-
@@ -347,6 +362,7 @@ jobs:
             "reconcile-ledgers:${{ steps.reconcile-ledgers.outcome }}" \
             "msme-payment-alerts:${{ steps.msme-payment-alerts.outcome }}" \
             "expire-event-channels:${{ steps.expire-event-channels.outcome }}" \
+            "expire-stale-collaborator-invites:${{ steps.expire-stale-collaborator-invites.outcome }}" \
             "reconcile-orphaned-recordings:${{ steps.reconcile-orphaned-recordings.outcome }}" \
             "wind-down-deactivated-orgs:${{ steps.wind-down-deactivated-orgs.outcome }}" \
             "timeout-member-overages:${{ steps.timeout-member-overages.outcome }}" \

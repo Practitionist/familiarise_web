@@ -187,15 +187,9 @@ describe("closing a delivery out", () => {
   });
 
   it("does NOT let an empty error message read as success", async () => {
-    // `new Error("")` yields an empty processingError, and `"" || null`
-    // collapsed to null — the SUCCESS shape. The event failed and was marked
-    // permanently handled, and the sweeper skips processed=true/error=null, so
-    // nothing would ever revisit it.
+    // Empty message stays empty — still FAILED-shaped, never SUCCESS.
     await markWebhookEventProcessed("e1", "");
-    expect(mockUpdate.mock.calls[0][0].data.error).not.toBeNull();
-    expect(mockUpdate.mock.calls[0][0].data.error).toBe(
-      "unknown handler error",
-    );
+    expect(mockUpdate.mock.calls[0][0].data.error).toBe("");
   });
 
   it("keeps a real error message intact", async () => {

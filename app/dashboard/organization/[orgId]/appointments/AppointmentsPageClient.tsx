@@ -318,70 +318,75 @@ export function AppointmentsPageClient({ orgId }: { orgId: string }) {
   const tableColumns = useMemo(() => columns(orgId), [orgId]);
 
   const toolbar = (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-      <div className="relative flex-1 min-w-0">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          aria-label="Search plan or member on this page"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search plan or member on this page…"
-          className="pl-8"
-        />
+    <div className="space-y-2">
+      <div
+        role="search"
+        aria-label="Filter organization appointments"
+        className="flex flex-col gap-3 sm:flex-row sm:items-center"
+      >
+        <div className="relative flex-1 min-w-0">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            aria-label="Search plan or member on this page"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search plan or member on this page…"
+            className="pl-8"
+          />
+        </div>
+
+        <Select value={typeFilter ?? "all"} onValueChange={setTypeFilter}>
+          <SelectTrigger className="w-full sm:w-44" aria-label="Type">
+            <SelectValue placeholder="All types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All types</SelectItem>
+            {APPOINTMENT_TYPES.map((t) => (
+              <SelectItem key={t} value={t}>
+                {humanizeEnum(t)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={status} onValueChange={setStatus}>
+          <SelectTrigger className="w-full sm:w-44" aria-label="Status">
+            <SelectValue placeholder="Any status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any status</SelectItem>
+            {STATUS_OPTIONS.map((s) => (
+              <SelectItem key={s} value={s}>
+                {STATUS[s].label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
-
-      <Select value={typeFilter ?? "all"} onValueChange={setTypeFilter}>
-        <SelectTrigger className="w-full sm:w-44" aria-label="Type">
-          <SelectValue placeholder="All types" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All types</SelectItem>
-          {APPOINTMENT_TYPES.map((t) => (
-            <SelectItem key={t} value={t}>
-              {humanizeEnum(t)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <Select value={status} onValueChange={setStatus}>
-        <SelectTrigger className="w-full sm:w-44" aria-label="Status">
-          <SelectValue placeholder="Any status" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Any status</SelectItem>
-          {STATUS_OPTIONS.map((s) => (
-            <SelectItem key={s} value={s}>
-              {STATUS[s].label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {isNarrowed && (
+        <p aria-live="polite" className="text-xs text-muted-foreground">
+          Showing {filtered.length} of {items.length} on this page. Status and
+          search filter the current page only; type filters everything.
+        </p>
+      )}
     </div>
   );
 
-  let listDescription: React.ReactNode =
-    "Sessions booked by members of this organization or scoped to a member's program assignment.";
-  if (suspendedOnly) {
-    listDescription = (
-      <>
-        Sessions booked for members whose membership is suspended.{" "}
-        <Link
-          href={`/dashboard/organization/${orgId}/appointments?tab=everyone`}
-          className="underline underline-offset-2"
-        >
-          Show everyone
-        </Link>
-      </>
-    );
-  } else if (isNarrowed) {
-    listDescription = `Showing ${filtered.length} of ${items.length} on this page. Status and search filter the current page only; type filters everything.`;
-  }
+  const listDescription = suspendedOnly ? (
+    <>
+      Sessions booked for members whose membership is suspended.{" "}
+      <Link
+        href={`/dashboard/organization/${orgId}/appointments?tab=everyone`}
+        className="underline underline-offset-2"
+      >
+        Show everyone
+      </Link>
+    </>
+  ) : undefined;
 
   return (
     <div className="space-y-6">
       <ScopedListTable
-        title="Org appointments"
         description={listDescription}
         isLoading={isLoading}
         isError={isError}

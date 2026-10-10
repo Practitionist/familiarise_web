@@ -413,6 +413,21 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to expire unpaid trial sessions",
       }),
 
+    // @cleanup-twin expire-stale-collaborator-invites
+    "expire-stale-collaborator-invites": () =>
+      cleanupRoute({
+        job: "expire-stale-collaborator-invites",
+        run: async (req) => {
+          const { expireStaleCollaboratorInvites } =
+            await import("@/lib/collaborators/cleanup");
+          return expireStaleCollaboratorInvites(
+            parseLimitParamOrDefault(req, 50),
+          );
+        },
+        summarize: (r) => ({ expired: r.expired, scanned: r.scanned }),
+        failureMessage: "Failed to expire stale collaborator invites",
+      }),
+
     // @cleanup-twin gst-outward-register-export
     "gst-outward-register-export": () =>
       cleanupRoute({

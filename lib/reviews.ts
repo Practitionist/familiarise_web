@@ -2,6 +2,7 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import type {
   AppointmentsType,
+  ReviewActor,
   RatingCause,
   ReviewTrack,
   OccurrenceCompletionStatus,
@@ -248,13 +249,11 @@ export type ScoringTx = {
  * touch, so at READ COMMITTED the second write overwrites an average computed
  * without the first review and the published score stays wrong.
  */
-export async function recomputeConsultantRating(
+async function recomputeSingleConsultantRating(
   tx: ScoringTx,
   consultantProfileId: string,
-  now: Date = new Date(),
+  now: Date,
 ): Promise<void> {
-  // Live rows. An excluded row (#1300 ratings protection) still renders on the
-  // profile, so it stays in `reviewCount`; it just leaves the arithmetic.
   const liveRows = await tx.consultantReview.findMany({
     where: { consultantProfileId, deletedAt: null },
     select: {
@@ -271,8 +270,6 @@ export async function recomputeConsultantRating(
   const one = scoreTrack(oneToOnePoints(rows), MIN_RATED_CLIENTS_ONE_TO_ONE);
   const group = scoreTrack(groupPoints(rows), MIN_RATED_EVENTS_GROUP);
 
-  // #1554 — the blended `rating` / `publishedRating` / `ratingUnitCount` /
-  // `reviewCount` columns are gone with the reset; the two tracks are the score.
   await tx.consultantProfile.update({
     where: { id: consultantProfileId },
     data: {
@@ -283,6 +280,301 @@ export async function recomputeConsultantRating(
       ratingAggregatedAt: now,
     },
   });
+}
+
+function isFullTx(tx: ScoringTx | Tx): tx is Tx {
+  return (
+    "appointment" in tx &&
+    "create" in tx.consultantReview &&
+    "update" in tx.consultantReview
+  );
+}
+
+function collectPresentersByAppointment(
+  appointments: Array<{
+    id: string;
+    webinar: {
+      webinarPlan: {
+        consultantProfileId: string | null;
+        collaborators: Array<{ consultantProfileId: string }>;
+      };
+    } | null;
+    class: {
+      classPlan: {
+        consultantProfileId: string | null;
+        collaborators: Array<{ consultantProfileId: string }>;
+      };
+    } | null;
+  }>,
+  primaryConsultantProfileId: string,
+): {
+  presentersByAppointment: Map<string, string[]>;
+  targetPresenterIds: string[];
+} {
+  const presentersByAppointment = new Map<string, string[]>();
+  const allPresenterIds = new Set<string>();
+
+  for (const appt of appointments) {
+    const plan = appt.webinar?.webinarPlan ?? appt.class?.classPlan;
+    if (plan?.consultantProfileId !== primaryConsultantProfileId) {
+      continue;
+    }
+    const presenterIds = [
+      ...new Set(
+        plan.collaborators
+          .map((c) => c.consultantProfileId)
+          .filter((id) => id !== primaryConsultantProfileId),
+      ),
+    ];
+    if (presenterIds.length > 0) {
+      presentersByAppointment.set(appt.id, presenterIds);
+      for (const id of presenterIds) allPresenterIds.add(id);
+    }
+  }
+
+  return {
+    presentersByAppointment,
+    targetPresenterIds: [...allPresenterIds],
+  };
+}
+
+async function syncPresenterReviewCopy(
+  tx: Tx,
+  presenterId: string,
+  source: {
+    appointmentId: string;
+    consulteeProfileId: string;
+    ratingUnitId: string;
+    rating: number;
+    reviewDescription: string | null;
+    isAnonymous: boolean;
+    ratedOccurrenceAt: Date | null;
+    deletedAt: Date | null;
+    removedBy: ReviewActor | null;
+    excludedFromAggregateAt: Date | null;
+  },
+  existing:
+    | {
+        id: string;
+        rating: number;
+        reviewDescription: string | null;
+        isAnonymous: boolean;
+        deletedAt: Date | null;
+        removedBy: ReviewActor | null;
+        excludedFromAggregateAt: Date | null;
+      }
+    | undefined,
+): Promise<boolean> {
+  if (!existing) {
+    if (source.deletedAt !== null) return false;
+    await tx.consultantReview.create({
+      data: {
+        rating: source.rating,
+        reviewDescription: source.reviewDescription,
+        consultantProfileId: presenterId,
+        consulteeProfileId: source.consulteeProfileId,
+        appointmentId: source.appointmentId,
+        isAnonymous: source.isAnonymous,
+        track: "GROUP",
+        ratingUnitId: source.ratingUnitId,
+        ratedOccurrenceAt: source.ratedOccurrenceAt,
+        excludedFromAggregateAt: source.excludedFromAggregateAt,
+      },
+    });
+    return true;
+  }
+
+  const copyModeratedIndependently =
+    existing.removedBy !== null && existing.removedBy !== source.removedBy;
+  if (copyModeratedIndependently) return false;
+
+  const contentChanged =
+    existing.rating !== source.rating ||
+    existing.reviewDescription !== source.reviewDescription ||
+    existing.isAnonymous !== source.isAnonymous;
+  const moderationChanged =
+    existing.deletedAt?.getTime() !== source.deletedAt?.getTime() ||
+    existing.removedBy !== source.removedBy ||
+    existing.excludedFromAggregateAt?.getTime() !==
+      source.excludedFromAggregateAt?.getTime();
+
+  if (!contentChanged && !moderationChanged) return false;
+
+  await tx.consultantReview.update({
+    where: { id: existing.id },
+    data: {
+      rating: source.rating,
+      reviewDescription: source.reviewDescription,
+      isAnonymous: source.isAnonymous,
+      deletedAt: source.deletedAt,
+      removedBy: source.removedBy,
+      excludedFromAggregateAt: source.excludedFromAggregateAt,
+    },
+  });
+  return true;
+}
+
+/**
+ * Attribute GROUP session reviews (and any subsequent edits, withdrawals, or
+ * moderation changes) on a primary host's profile to accepted PRESENTER
+ * collaborators (`CO_HOST` / `CO_INSTRUCTOR`), preserving unique and removal
+ * check constraints on `ConsultantReview`, and recompute each presenter's score.
+ */
+async function fanOutGroupSessionReviews(
+  tx: Tx,
+  primaryConsultantProfileId: string,
+  now: Date,
+): Promise<void> {
+  const groupReviews = await tx.consultantReview.findMany({
+    where: {
+      consultantProfileId: primaryConsultantProfileId,
+      track: "GROUP",
+      appointmentId: { not: null },
+      ratingUnitId: { not: null },
+    },
+    select: {
+      appointmentId: true,
+      consulteeProfileId: true,
+      ratingUnitId: true,
+      rating: true,
+      reviewDescription: true,
+      isAnonymous: true,
+      ratedOccurrenceAt: true,
+      deletedAt: true,
+      removedBy: true,
+      excludedFromAggregateAt: true,
+    },
+  });
+  if (groupReviews.length === 0) return;
+
+  const appointmentIds = [
+    ...new Set(
+      groupReviews
+        .map((r) => r.appointmentId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const appointments = await tx.appointment.findMany({
+    where: { id: { in: appointmentIds } },
+    select: {
+      id: true,
+      webinar: {
+        select: {
+          webinarPlan: {
+            select: {
+              consultantProfileId: true,
+              collaborators: {
+                where: { status: "ACCEPTED", tier: "PRESENTER" },
+                select: { consultantProfileId: true },
+              },
+            },
+          },
+        },
+      },
+      class: {
+        select: {
+          classPlan: {
+            select: {
+              consultantProfileId: true,
+              collaborators: {
+                where: { status: "ACCEPTED", tier: "PRESENTER" },
+                select: { consultantProfileId: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const { presentersByAppointment, targetPresenterIds } =
+    collectPresentersByAppointment(appointments, primaryConsultantProfileId);
+  if (targetPresenterIds.length === 0) return;
+
+  const consulteeIds = [
+    ...new Set(groupReviews.map((r) => r.consulteeProfileId)),
+  ];
+  const unitIds = [
+    ...new Set(
+      groupReviews
+        .map((r) => r.ratingUnitId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+
+  // Query without `deletedAt: null` because `consultant_review_pair_track_event_key`
+  // enforces uniqueness across all non-null track rows regardless of soft deletion.
+  const existingRows = await tx.consultantReview.findMany({
+    where: {
+      consultantProfileId: { in: targetPresenterIds },
+      consulteeProfileId: { in: consulteeIds },
+      track: "GROUP",
+      ratingUnitId: { in: unitIds },
+    },
+    select: {
+      id: true,
+      consultantProfileId: true,
+      consulteeProfileId: true,
+      ratingUnitId: true,
+      rating: true,
+      reviewDescription: true,
+      isAnonymous: true,
+      deletedAt: true,
+      removedBy: true,
+      excludedFromAggregateAt: true,
+    },
+  });
+  const keyOf = (
+    consultantId: string,
+    consulteeId: string,
+    unitId: string,
+  ): string => `${consultantId}|${consulteeId}|${unitId}`;
+  const existingMap = new Map(
+    existingRows.map((row) => [
+      keyOf(row.consultantProfileId, row.consulteeProfileId, row.ratingUnitId!),
+      row,
+    ]),
+  );
+
+  const dirtyPresenterIds = new Set<string>();
+  for (const source of groupReviews) {
+    if (!source.appointmentId || !source.ratingUnitId) continue;
+    const presenterIds =
+      presentersByAppointment.get(source.appointmentId) ?? [];
+    for (const presenterId of presenterIds) {
+      const existing = existingMap.get(
+        keyOf(presenterId, source.consulteeProfileId, source.ratingUnitId),
+      );
+      const updated = await syncPresenterReviewCopy(
+        tx,
+        presenterId,
+        {
+          ...source,
+          appointmentId: source.appointmentId,
+          ratingUnitId: source.ratingUnitId,
+        },
+        existing,
+      );
+      if (updated) {
+        dirtyPresenterIds.add(presenterId);
+      }
+    }
+  }
+
+  for (const presenterId of dirtyPresenterIds) {
+    await recomputeSingleConsultantRating(tx, presenterId, now);
+  }
+}
+
+export async function recomputeConsultantRating(
+  tx: ScoringTx,
+  consultantProfileId: string,
+  now: Date = new Date(),
+): Promise<void> {
+  await recomputeSingleConsultantRating(tx, consultantProfileId, now);
+  if (isFullTx(tx)) {
+    await fanOutGroupSessionReviews(tx, consultantProfileId, now);
+  }
 }
 
 /** One session a consultee is entitled to review. */

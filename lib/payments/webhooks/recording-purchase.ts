@@ -87,11 +87,12 @@ function resolveReplayCharge(
 }
 
 interface ResolvedPurchasePlanInfo {
-  consultantProfileId: string;
+  consultantProfileId: string | null;
   appointmentType: AppointmentType;
   webinarPlanId: string | null;
   classPlanId: string | null;
-  organizationId: string | null;
+  hostOrganizationId: string | null;
+  visibility?: string | null;
 }
 
 function resolvePurchasePlanInfo(purchase: {
@@ -107,6 +108,7 @@ function resolvePurchasePlanInfo(purchase: {
               id: string;
               consultantProfileId: string | null;
               organizationId?: string | null;
+              visibility?: string | null;
             } | null;
           } | null;
           class?: {
@@ -115,18 +117,21 @@ function resolvePurchasePlanInfo(purchase: {
               id: string;
               consultantProfileId: string | null;
               organizationId?: string | null;
+              visibility?: string | null;
             } | null;
           } | null;
           consultation?: {
             consultationPlan?: {
               id: string;
               consultantProfileId: string | null;
+              visibility?: string | null;
             } | null;
           } | null;
           subscription?: {
             subscriptionPlan?: {
               id: string;
               consultantProfileId: string | null;
+              visibility?: string | null;
             } | null;
           } | null;
         } | null;
@@ -142,24 +147,26 @@ function resolvePurchasePlanInfo(purchase: {
     appointment.organizationId ?? recording?.organizationId ?? null;
 
   const webinarPlan = appointment.webinar?.webinarPlan;
-  if (webinarPlan?.consultantProfileId) {
+  if (webinarPlan?.consultantProfileId || webinarPlan?.organizationId) {
     return {
-      consultantProfileId: webinarPlan.consultantProfileId,
+      consultantProfileId: webinarPlan.consultantProfileId ?? null,
       appointmentType: "WEBINAR",
       webinarPlanId: appointment.webinar?.webinarPlanId ?? webinarPlan.id,
       classPlanId: null,
-      organizationId: webinarPlan.organizationId ?? fallbackOrgId,
+      hostOrganizationId: webinarPlan.organizationId ?? fallbackOrgId,
+      visibility: webinarPlan.visibility ?? null,
     };
   }
 
   const classPlan = appointment.class?.classPlan;
-  if (classPlan?.consultantProfileId) {
+  if (classPlan?.consultantProfileId || classPlan?.organizationId) {
     return {
-      consultantProfileId: classPlan.consultantProfileId,
+      consultantProfileId: classPlan.consultantProfileId ?? null,
       appointmentType: "CLASS",
       webinarPlanId: null,
       classPlanId: appointment.class?.classPlanId ?? classPlan.id,
-      organizationId: classPlan.organizationId ?? fallbackOrgId,
+      hostOrganizationId: classPlan.organizationId ?? fallbackOrgId,
+      visibility: classPlan.visibility ?? null,
     };
   }
 
@@ -170,7 +177,8 @@ function resolvePurchasePlanInfo(purchase: {
       appointmentType: "CONSULTATION",
       webinarPlanId: null,
       classPlanId: null,
-      organizationId: fallbackOrgId,
+      hostOrganizationId: fallbackOrgId,
+      visibility: appointment.consultation.consultationPlan.visibility ?? null,
     };
   }
 
@@ -181,7 +189,8 @@ function resolvePurchasePlanInfo(purchase: {
       appointmentType: "SUBSCRIPTION",
       webinarPlanId: null,
       classPlanId: null,
-      organizationId: fallbackOrgId,
+      hostOrganizationId: fallbackOrgId,
+      visibility: appointment.subscription.subscriptionPlan.visibility ?? null,
     };
   }
 
@@ -444,7 +453,7 @@ async function settleReplaySale(
     gatewayPaymentId: string | undefined;
     chargedPaise: number;
     charge: ReplayCharge;
-    organizationId: string | null;
+    hostOrganizationId: string | null;
     planInfo: ResolvedPurchasePlanInfo;
   },
 ): Promise<CaptureOutcome> {
@@ -454,7 +463,7 @@ async function settleReplaySale(
     gatewayPaymentId,
     chargedPaise,
     charge,
-    organizationId,
+    hostOrganizationId,
     planInfo,
   } = input;
   const payment = orderPayment
@@ -512,7 +521,8 @@ async function settleReplaySale(
           paymentStatus: "SUCCEEDED",
           capturedAt: new Date(),
           description: `${REPLAY_SALE_PREFIX} recording ${input.recordingId}`,
-          organizationId,
+          organizationId:
+            planInfo.visibility === "PUBLIC" ? null : hostOrganizationId,
           legs: cardLeg(chargedPaise, orderId),
           ...(gatewayPaymentId ? { gatewayPaymentId } : {}),
         },
@@ -522,7 +532,10 @@ async function settleReplaySale(
     payment: {
       ...payment,
       appointment: {
-        consultantProfile: { id: planInfo.consultantProfileId },
+        ...(planInfo.consultantProfileId
+          ? { consultantProfile: { id: planInfo.consultantProfileId } }
+          : {}),
+        organizationId: hostOrganizationId,
         webinar: planInfo.webinarPlanId
           ? { webinarPlanId: planInfo.webinarPlanId }
           : null,
@@ -613,6 +626,7 @@ export async function handleRecordingPurchaseSuccess(
                                   id: true,
                                   consultantProfileId: true,
                                   organizationId: true,
+                                  visibility: true,
                                 },
                               },
                             },
@@ -625,6 +639,7 @@ export async function handleRecordingPurchaseSuccess(
                                   id: true,
                                   consultantProfileId: true,
                                   organizationId: true,
+                                  visibility: true,
                                 },
                               },
                             },
@@ -635,6 +650,7 @@ export async function handleRecordingPurchaseSuccess(
                                 select: {
                                   id: true,
                                   consultantProfileId: true,
+                                  visibility: true,
                                 },
                               },
                             },
@@ -645,6 +661,7 @@ export async function handleRecordingPurchaseSuccess(
                                 select: {
                                   id: true,
                                   consultantProfileId: true,
+                                  visibility: true,
                                 },
                               },
                             },
@@ -688,15 +705,17 @@ export async function handleRecordingPurchaseSuccess(
       }
       const charge = resolveReplayCharge(orderId, chargedPaise, notes);
       const planInfo = resolvePurchasePlanInfo(purchase);
-      const organizationId =
-        planInfo?.organizationId ?? purchase.recording?.organizationId ?? null;
+      const hostOrganizationId =
+        planInfo?.hostOrganizationId ??
+        purchase.recording?.organizationId ??
+        null;
       const refundCapture = (paymentIntent: string, reason: string) =>
         stageCaptureRefund(tx, {
           paymentIntent,
           buyerId: purchase.buyerId,
           chargedPaise,
           charge,
-          organizationId,
+          organizationId: null,
           gatewayPaymentId,
           reason,
         });
@@ -780,7 +799,7 @@ export async function handleRecordingPurchaseSuccess(
         gatewayPaymentId,
         chargedPaise,
         charge,
-        organizationId,
+        hostOrganizationId,
         planInfo,
       });
     },

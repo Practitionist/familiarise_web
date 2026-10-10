@@ -12,10 +12,9 @@ export interface ActiveAppointmentsResult {
     activeSubscriptions: number;
     upcomingWebinars: number;
     upcomingClasses: number;
-    /** SCHEDULED / AWAITING_PAYMENT trials occupy a slot like a live booking. */
     activeTrials: number;
-    /** Open reschedule requests still point at the published windows. */
     openReschedules: number;
+    activeCollaborations: number;
   };
   /** Human-readable details string (e.g., "2 pending consultations, 1 active subscription") */
   details?: string;
@@ -29,35 +28,31 @@ type ActiveAppointmentsDb = Pick<
   | "class"
   | "trial"
   | "rescheduleRequest"
+  | "collaborator"
 >;
 
 /**
- * Check if a consultant has any active/pending appointments.
- * Used to validate before allowing schedule type changes.
- *
- * Active appointments include:
- * - Consultations with status: PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED
- * - Subscriptions with status: PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED
- * - Webinars with status: SCHEDULED, IN_PROGRESS (with future slots)
- * - Classes with status: SCHEDULED, IN_PROGRESS
- * - Trials with status: SCHEDULED, AWAITING_PAYMENT (occupancyPolicy treats
- *   both as occupying a slot; they were missing here, so a consultant with an
- *   accepted trial could switch schedule type underneath it)
- * - Reschedule requests still open (RESCHEDULE_OPEN_STATUSES)
- *
- * Takes `db` so the settings PUT can re-run the check inside the transaction
- * that flips scheduleType; the standalone read is a pre-flight only.
+ * Check if a consultant has any active/pending appointments or active upcoming collaborations.
  */
 export async function checkActiveAppointments(
   consultantId: string,
   db: ActiveAppointmentsDb = prisma,
 ): Promise<ActiveAppointmentsResult> {
+  const now = new Date();
   const activeStatuses = [
     "PENDING",
     "APPROVED",
     "APPROVED_PENDING_PAYMENT",
     "SCHEDULED",
   ] as const;
+
+  const futureLiveOccurrence = {
+    deletedAt: null,
+    completionStatus: {
+      notIn: ["CANCELLED" as const, "RESCHEDULED" as const, "VOIDED" as const],
+    },
+    startsAt: { gt: now },
+  };
 
   const [
     pendingConsultations,
@@ -66,6 +61,7 @@ export async function checkActiveAppointments(
     upcomingClasses,
     activeTrials,
     openReschedules,
+    activeCollaborations,
   ] = await Promise.all([
     db.consultation.count({
       where: {
@@ -85,7 +81,7 @@ export async function checkActiveAppointments(
         status: { in: ["SCHEDULED", "IN_PROGRESS"] },
         appointment: {
           occurrences: {
-            some: { startsAt: { gte: new Date() } },
+            some: { startsAt: { gte: now } },
           },
         },
       },
@@ -111,6 +107,44 @@ export async function checkActiveAppointments(
         },
       },
     }),
+    db.collaborator?.count
+      ? db.collaborator.count({
+          where: {
+            consultantProfileId: consultantId,
+            status: "ACCEPTED",
+            OR: [
+              {
+                webinarPlan: {
+                  webinars: {
+                    some: {
+                      deletedAt: null,
+                      status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+                      appointment: {
+                        deletedAt: null,
+                        occurrences: { some: futureLiveOccurrence },
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                classPlan: {
+                  classes: {
+                    some: {
+                      deletedAt: null,
+                      status: { in: ["SCHEDULED", "IN_PROGRESS"] },
+                      appointment: {
+                        deletedAt: null,
+                        occurrences: { some: futureLiveOccurrence },
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        })
+      : Promise.resolve(0),
   ]);
 
   const total =
@@ -119,9 +153,9 @@ export async function checkActiveAppointments(
     upcomingWebinars +
     upcomingClasses +
     activeTrials +
-    openReschedules;
+    openReschedules +
+    activeCollaborations;
 
-  // Build human-readable details
   const detailParts: string[] = [];
   const plural = (n: number, one: string, many = `${one}s`) =>
     `${n} ${n === 1 ? one : many}`;
@@ -145,6 +179,9 @@ export async function checkActiveAppointments(
   if (openReschedules > 0) {
     detailParts.push(plural(openReschedules, "open reschedule request"));
   }
+  if (activeCollaborations > 0) {
+    detailParts.push(plural(activeCollaborations, "upcoming collaboration"));
+  }
 
   return {
     hasActive: total > 0,
@@ -156,6 +193,7 @@ export async function checkActiveAppointments(
       upcomingClasses,
       activeTrials,
       openReschedules,
+      activeCollaborations,
     },
     details: detailParts.length > 0 ? detailParts.join(", ") : undefined,
   };
