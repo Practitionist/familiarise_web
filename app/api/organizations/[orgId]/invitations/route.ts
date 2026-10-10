@@ -54,6 +54,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "invitations.manage",
   });
   if (access.error) return access.error;
@@ -97,6 +98,7 @@ export async function POST(
   // stay blocked by the explicit check here.
   const access = await requireOrgAccess(orgId, {
     permission: "invitations.manage",
+    expectUser: true,
   });
   if (access.error) return access.error;
   // SUSPENDED-only: requireOrgAccess already answers 403 for DEACTIVATED

@@ -40,6 +40,7 @@ export async function GET(
   const { orgId } = id.data;
   try {
     const access = await requireOrgAccess(orgId, {
+      readOnly: true,
       permission: "supportRequests.org",
     });
     if (access.error) return access.error;

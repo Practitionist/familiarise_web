@@ -59,7 +59,8 @@ jest.mock("../../lib/support/service", () => ({
 
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
-  spamLimiter: {},
+  spamLimiter: { id: "spamLimiter" },
+  supportTurnLimiter: { id: "supportTurnLimiter" },
   applyRateLimit: jest.fn(async () => null),
 }));
 
@@ -175,7 +176,7 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
     );
   });
 
-  it("never throttles conversation turns: six consecutive turns all succeed", async () => {
+  it("never throttles conversation turns (SFR-02-04)", async () => {
     mockedRunTurn.mockResolvedValue({
       messages: [],
       nextNodeId: null,
@@ -188,6 +189,28 @@ describe("POST /api/appointments/[appointmentId]/support", () => {
       expect(res.status).toBe(200);
     }
     expect(mockedRunTurn).toHaveBeenCalledTimes(6);
+    expect(applyRateLimit).not.toHaveBeenCalled();
+  });
+
+  it("never calls applyRateLimit across typed turns followed by human chip (SFR-02-04)", async () => {
+    mockedRunTurn.mockResolvedValue({
+      messages: [{ sender: "BOT", body: "How can I help?" }],
+      nextNodeId: "n2",
+      actions: [],
+    });
+    const payloads = [
+      { userMessage: "I could not join the call" },
+      { userMessage: "The host never showed up" },
+      { userMessage: "Please help resolve this" },
+      { chosenOptionId: "human" },
+    ];
+    for (const payload of payloads) {
+      const res = await POST(req("POST", payload), {
+        params: Promise.resolve({ appointmentId: SLUG }),
+      });
+      expect(res.status).toBe(200);
+    }
+    expect(mockedRunTurn).toHaveBeenCalledTimes(payloads.length);
     expect(applyRateLimit).not.toHaveBeenCalled();
   });
 

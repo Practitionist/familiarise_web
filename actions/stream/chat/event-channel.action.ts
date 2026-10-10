@@ -94,7 +94,7 @@ async function requireEventChannelActor(
     allowSelfWithoutEnrollment?: boolean;
   } = {},
 ): Promise<EventChannelActorCheck> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return {
       ok: false,
@@ -134,7 +134,7 @@ export async function checkEventChannelExists(
   eventType: EventType,
   eventId: string,
 ): Promise<boolean> {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id || session.user.banned) {
     return false;
   }
@@ -488,7 +488,7 @@ export async function syncUserEventChannels(
 }> {
   userIdSchema.parse(userId);
 
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     const refusal = new Refusal({
       code: "UNAUTHENTICATED",

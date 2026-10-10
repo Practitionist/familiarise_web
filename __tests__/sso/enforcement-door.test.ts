@@ -11,13 +11,16 @@
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: jest.fn(async () => ({
-    session: { user: { id: "admin_1", role: "ADMIN" } },
+    session: {
+      user: { id: "admin_1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   })),
 }));
 
 const tx = {
   organization: { findUnique: jest.fn() },
-  ssoProvider: { count: jest.fn() },
+  ssoProvider: { count: jest.fn(), findMany: jest.fn(async () => []) },
   organizationSSOSettings: {
     findUnique: jest.fn(),
     upsert: jest.fn(async () => ({ id: "settings_1" })),
@@ -98,9 +101,29 @@ it("refuses to turn enforcement on without an approved provider", async () => {
   expect(tx.opsActionLog.create).not.toHaveBeenCalled();
 });
 
-it("turns enforcement on when a provider is approved", async () => {
+it("refuses to turn enforcement on until an owner has proven a provider", async () => {
+  // approved = 1, proven = 0
+  tx.ssoProvider.count.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+
+  const res = await call({ enforce: true, reason: "customer asked us to" });
+
+  expect(res.status).toBe(409);
+  expect((await res.json()).code).toBe("SSO_NOT_PROVEN");
+  expect(tx.ssoProvider.count).toHaveBeenLastCalledWith({
+    where: {
+      organizationId: "org_1",
+      domainVerified: true,
+      provenAt: { not: null },
+    },
+  });
+  expect(tx.organizationSSOSettings.upsert).not.toHaveBeenCalled();
+});
+
+it("turns enforcement on when a provider is approved and proven", async () => {
   tx.ssoProvider.count.mockResolvedValue(1);
-  tx.organizationSSOSettings.findUnique.mockResolvedValue(null);
+  tx.organizationSSOSettings.findUnique
+    .mockResolvedValueOnce(null)
+    .mockResolvedValueOnce({ enforceSSO: true });
 
   const res = await call({ enforce: true, reason: "customer asked us to" });
 

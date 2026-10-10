@@ -18,7 +18,7 @@ export async function GET(
   { params }: { params: Promise<{ materialId: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -106,7 +106,10 @@ export async function GET(
     } = material;
     return NextResponse.json({ data: materialData });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error fetching material:", error);
     return NextResponse.json(
       {

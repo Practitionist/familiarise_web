@@ -42,6 +42,7 @@ jest.mock("../../lib/auth-client", () => ({
 jest.mock("../../lib/auth/sign-out", () => ({
   __esModule: true,
   signOutEverywhere: jest.fn(),
+  signInHref: () => "/auth/signin?callbackUrl=%2Fdashboard%2Faccount",
 }));
 
 jest.mock("../../components/auth/auth-icons", () => ({
@@ -144,14 +145,17 @@ const session = (id: string, isCurrent: boolean) => ({
   lastSeenAt: "2026-09-28T08:05:00.000Z",
   expiresAt: "2026-10-28T08:00:00.000Z",
   isCurrent,
-  isImpersonated: false,
 });
 
 const okList = (rows: unknown[]) =>
   Promise.resolve({
     ok: true,
     status: 200,
-    json: async () => ({ sessions: rows }),
+    json: async () => ({
+      sessions: rows,
+      total: rows.length,
+      nextCursor: null,
+    }),
   });
 
 async function flush(): Promise<void> {
@@ -341,7 +345,9 @@ describe("SessionsSection load states (#1856)", () => {
     const { signOutEverywhere } = jest.requireMock(
       "../../lib/auth/sign-out",
     ) as unknown as { signOutEverywhere: jest.Mock };
-    expect(signOutEverywhere).toHaveBeenCalledWith("/auth/signin");
+    expect(signOutEverywhere).toHaveBeenCalledWith(
+      "/auth/signin?callbackUrl=%2Fdashboard%2Faccount",
+    );
   });
 
   it("per-row revoke on 429 shows the rate-limit message inline", async () => {

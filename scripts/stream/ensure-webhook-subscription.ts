@@ -14,13 +14,10 @@ import {
   isStreamConfigured,
 } from "../../lib/stream-client";
 import { compareStringsByCodeUnit } from "../../lib/stream/config-fingerprint";
-import {
-  HANDLED_EVENT_TYPES,
-  IGNORED_EVENT_TYPES,
-} from "../../lib/stream/webhook-events";
+import { DESIRED_EVENT_TYPES } from "../../lib/stream/webhook-events";
 
-const DESIRED_EVENT_TYPES = Array.from(
-  new Set<string>([...HANDLED_EVENT_TYPES, ...IGNORED_EVENT_TYPES]),
+const SORTED_DESIRED_EVENT_TYPES = Array.from(
+  new Set(DESIRED_EVENT_TYPES),
 ).sort(compareStringsByCodeUnit);
 
 type IdentifiedHook = EventHook & { id: string };
@@ -33,8 +30,14 @@ function productFor(eventType: string): "chat" | "video" {
     : "video";
 }
 
+function hookProduct(hook: EventHook): string | undefined {
+  return "product" in hook && typeof hook.product === "string"
+    ? hook.product
+    : undefined;
+}
+
 function hookAccepts(hook: EventHook, eventType: string): boolean {
-  const product = (hook as { product?: string }).product;
+  const product = hookProduct(hook);
   if (!product || product === "all") return true;
   return product === productFor(eventType);
 }
@@ -46,6 +49,104 @@ function annotate(message: string): void {
   console.error(
     process.env.GITHUB_ACTIONS ? `::error::${message}` : `ERROR: ${message}`,
   );
+}
+
+export interface HookDriftReport {
+  product: string;
+  receivesAll: boolean;
+  missing: string[];
+  extra: string[];
+  hasDrift: boolean;
+}
+
+export function evaluateHookDrift(
+  hook: IdentifiedHook,
+  eligible: readonly string[],
+): HookDriftReport {
+  const rawTypes = hook.event_types ?? [];
+  const current = new Set(rawTypes);
+  const receivesAll = rawTypes.length === 0 || current.has("*");
+  const eligibleSet = new Set(eligible);
+  const missing = receivesAll ? [] : eligible.filter((t) => !current.has(t));
+  const extra = [...current].filter((t) => t !== "*" && !eligibleSet.has(t));
+  const product = hookProduct(hook) ?? "unscoped";
+  const hasDrift =
+    eligible.length > 0 &&
+    (receivesAll || missing.length > 0 || extra.length > 0);
+  return { product, receivesAll, missing, extra, hasDrift };
+}
+
+function formatDriftReasons(drift: HookDriftReport): string {
+  const reasons: string[] = [];
+  if (drift.receivesAll) reasons.push("wildcard subscription active");
+  if (drift.missing.length > 0) {
+    reasons.push(`missing [${drift.missing.join(", ")}]`);
+  }
+  if (drift.extra.length > 0) {
+    reasons.push(`extra [${drift.extra.join(", ")}]`);
+  }
+  return reasons.join("; ");
+}
+
+function logHookDriftDetails(
+  hook: IdentifiedHook,
+  drift: HookDriftReport,
+  mode: EnsureMode,
+): void {
+  if (drift.receivesAll) {
+    console.log(`  WILDCARD detected (unfiltered delivery across all events)`);
+  }
+  if (drift.missing.length > 0) {
+    console.log(`  MISSING (${drift.missing.length}):`);
+    for (const t of drift.missing) console.log(`    + ${t}`);
+  }
+  if (drift.extra.length > 0) {
+    console.log(`  EXTRA (${drift.extra.length}):`);
+    for (const t of drift.extra) console.log(`    - ${t}`);
+  }
+  if (mode === "check") {
+    annotate(
+      `Stream webhook drift: hook ${hook.id} (${drift.product}) has ${formatDriftReasons(drift)}. ` +
+        `Run scripts/stream/ensure-webhook-subscription.ts --apply.`,
+    );
+  }
+}
+
+function reportUnplaceableEvents(
+  unplaceable: Set<string>,
+  mode: EnsureMode,
+): void {
+  const byProduct = new Map<string, string[]>();
+  for (const t of unplaceable) {
+    const p = productFor(t);
+    byProduct.set(p, [...(byProduct.get(p) ?? []), t]);
+  }
+  console.error(
+    `\n⚠️  ${unplaceable.size} handled event(s) have NO hook that may carry them.`,
+  );
+  for (const [product, types] of byProduct) {
+    console.error(
+      `\n  product '${product}' — no hook on this app is scoped to it:`,
+    );
+    for (const t of [...types].sort(compareStringsByCodeUnit)) {
+      console.error(`    · ${t}`);
+      if (mode === "check") {
+        annotate(
+          `Stream webhook drift: no '${product}' hook can carry ${t}, so the ` +
+            `dispatcher handles an event that is never delivered`,
+        );
+      }
+    }
+    console.error(
+      `  Create a '${product}' webhook in the Stream dashboard pointing at <origin>/api/stream/webhooks.`,
+    );
+  }
+}
+
+function parseCliMode(argv: string[]): EnsureMode {
+  if (argv.includes("--apply")) return "apply";
+  if (argv.includes("--check")) return "check";
+  return "dry-run";
 }
 
 export async function ensureWebhookSubscription(
@@ -76,88 +177,72 @@ export async function ensureWebhookSubscription(
   }
 
   let changed = 0;
-  const widened = new Map<string, string[]>();
-  const unplaceable = new Set(DESIRED_EVENT_TYPES);
+  const reconciled = new Map<string, string[]>();
+  const unplaceable = new Set(SORTED_DESIRED_EVENT_TYPES);
 
   for (const hook of hooks) {
-    const current = new Set(hook.event_types ?? []);
-    const receivesAll = current.has("*");
-
-    const eligible = DESIRED_EVENT_TYPES.filter((t) => hookAccepts(hook, t));
+    const eligible = SORTED_DESIRED_EVENT_TYPES.filter((t) =>
+      hookAccepts(hook, t),
+    );
     for (const t of eligible) unplaceable.delete(t);
+    if (eligible.length === 0) continue;
 
-    const missing = eligible.filter((t) => !receivesAll && !current.has(t));
-    const product = (hook as { product?: string }).product ?? "unscoped";
+    const drift = evaluateHookDrift(hook, eligible);
+    const currentSize = hook.event_types?.length ?? 0;
 
     console.log(
-      `\nhook ${hook.id}  enabled=${hook.enabled}  product=${product}`,
+      `\nhook ${hook.id}  enabled=${hook.enabled}  product=${drift.product}`,
     );
     console.log(`  url: ${hook.webhook_url}`);
     console.log(
-      `  subscribed: ${current.size}${receivesAll ? " (wildcard)" : ""}`,
+      `  subscribed: ${currentSize}${drift.receivesAll ? " (wildcard)" : ""}`,
     );
 
-    if (missing.length === 0) {
-      console.log(`  ✅ already covers every handled ${product} event`);
+    if (!drift.hasDrift) {
+      console.log(
+        `  ✅ matches exact desired ${drift.product} event set (${eligible.length})`,
+      );
       continue;
     }
 
-    console.log(`  MISSING (${missing.length}):`);
-    for (const t of missing) console.log(`    + ${t}`);
+    logHookDriftDetails(hook, drift, mode);
+    changed++;
+
+    if (apply) {
+      reconciled.set(hook.id, [...eligible]);
+      console.log(`  → will set exact ${eligible.length} event types`);
+    }
+  }
+
+  const legacyUrlActive = Boolean(app.app?.webhook_url?.trim());
+  const legacyWildcard =
+    legacyUrlActive && (app.app?.webhook_events ?? []).includes("*");
+  if (legacyWildcard) {
+    console.log(`\nlegacy V1 webhook_url is active with wildcard "*"`);
     if (mode === "check") {
       annotate(
-        `Stream webhook drift: hook ${hook.id} (${product}) is missing ` +
-          `${missing.length} handled event type(s): ${missing.join(", ")}. ` +
+        `Stream webhook drift: legacy V1 webhook_url is active with wildcard "*". ` +
           `Run scripts/stream/ensure-webhook-subscription.ts --apply.`,
       );
     }
     changed++;
-
-    if (!apply) continue;
-
-    const next = Array.from(new Set([...current, ...missing])).sort(
-      compareStringsByCodeUnit,
-    );
-    widened.set(hook.id, next);
-    console.log(`  → will widen to ${next.length} event types`);
   }
 
   if (unplaceable.size > 0) {
-    const byProduct = new Map<string, string[]>();
-    for (const t of unplaceable) {
-      const p = productFor(t);
-      byProduct.set(p, [...(byProduct.get(p) ?? []), t]);
-    }
-    console.error(
-      `\n⚠️  ${unplaceable.size} handled event(s) have NO hook that may carry them.`,
-    );
-    for (const [product, types] of byProduct) {
-      console.error(
-        `\n  product '${product}' — no hook on this app is scoped to it:`,
-      );
-      for (const t of [...types].sort(compareStringsByCodeUnit)) {
-        console.error(`    · ${t}`);
-        if (mode === "check") {
-          annotate(
-            `Stream webhook drift: no '${product}' hook can carry ${t}, so the ` +
-              `dispatcher handles an event that is never delivered`,
-          );
-        }
-      }
-      console.error(
-        `  Create a '${product}' webhook in the Stream dashboard pointing at <origin>/api/stream/webhooks.`,
-      );
-    }
+    reportUnplaceableEvents(unplaceable, mode);
   }
 
-  if (apply && widened.size > 0) {
+  if (apply && (reconciled.size > 0 || legacyWildcard)) {
     const nextHooks = allHooks.map((h) => {
-      const next = h.id ? widened.get(h.id) : undefined;
+      const next = h.id ? reconciled.get(h.id) : undefined;
       return next ? { ...h, event_types: next } : h;
     });
-    await client.updateAppSettings({ event_hooks: nextHooks });
+    await client.updateAppSettings({
+      event_hooks: nextHooks,
+      ...(legacyWildcard ? { webhook_url: "" } : {}),
+    });
     console.log(
-      `\n✅ applied — ${widened.size} hook(s) widened, ${allHooks.length} preserved`,
+      `\n✅ applied — ${reconciled.size} hook(s) updated, ${allHooks.length} preserved`,
     );
   }
 
@@ -171,12 +256,7 @@ export async function ensureWebhookSubscription(
 }
 
 if (require.main === module) {
-  const argv = process.argv;
-  const mode: EnsureMode = argv.includes("--apply")
-    ? "apply"
-    : argv.includes("--check")
-      ? "check"
-      : "dry-run";
+  const mode = parseCliMode(process.argv);
   ensureWebhookSubscription(mode)
     .then((code) => {
       process.exitCode = code;

@@ -1,23 +1,18 @@
 "use client";
 
 /**
- * #1132 — the contact form, wired to POST /api/contact.
- *
- * Previously this markup lived inline in page.tsx as a bare `<form>` with no
- * onSubmit, no action and no `name` attributes on the inputs, so submitting it
- * native-GET'd back to the same page and cleared the fields. Every inquiry —
- * including every enterprise lead, since both /enterprise CTAs link here — was
- * discarded while the page claimed "we typically respond within 24-48 hours".
+ * Contact form wired to POST /api/contact with category deep-linking and
+ * statutory acknowledgement SLA copy.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Loader2 } from "lucide-react";
-import { INQUIRY_CATEGORIES } from "../constants";
+import { ACK_PROMISE_COPY, INQUIRY_CATEGORIES } from "../constants";
 
 type FieldErrors = Partial<Record<string, string[]>>;
 
@@ -33,18 +28,26 @@ const EMPTY = {
 };
 
 export function ContactForm() {
-  // Deep-link support: `/support/...` articles link here with
-  // `?category=<value>`. Validate against the known list before applying so
-  // a crafted URL can never select (or submit) an unknown category.
   const searchParams = useSearchParams();
-  const [values, setValues] = useState(() => {
-    const requested = searchParams.get("category") ?? "";
-    const known = INQUIRY_CATEGORIES.some((c) => c.value === requested);
-    return known ? { ...EMPTY, category: requested } : EMPTY;
-  });
+  const requestedCategory = searchParams.get("category") ?? "";
+  const validCategory = INQUIRY_CATEGORIES.some(
+    (c) => c.value === requestedCategory,
+  )
+    ? requestedCategory
+    : "";
+
+  const [values, setValues] = useState(() => ({
+    ...EMPTY,
+    category: validCategory,
+  }));
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
+  const [trackingRef, setTrackingRef] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+
+  useEffect(() => {
+    setValues((prev) => ({ ...prev, category: validCategory }));
+  }, [validCategory]);
 
   const set = (key: keyof typeof EMPTY) => (value: string) =>
     setValues((v) => ({ ...v, [key]: value }));
@@ -54,6 +57,7 @@ export function ContactForm() {
     setStatus("sending");
     setFormError(null);
     setFieldErrors({});
+    setTrackingRef(null);
 
     try {
       const res = await fetch("/api/contact", {
@@ -62,8 +66,13 @@ export function ContactForm() {
         body: JSON.stringify(values),
       });
 
+      const body = (await res.json().catch(() => null)) as {
+        error?: string;
+        fieldErrors?: FieldErrors;
+        referenceNumber?: string;
+      } | null;
+
       if (!res.ok) {
-        const body = await res.json().catch(() => null);
         setFieldErrors(body?.fieldErrors ?? {});
         setFormError(
           body?.error ??
@@ -73,6 +82,7 @@ export function ContactForm() {
         return;
       }
 
+      setTrackingRef(body?.referenceNumber ?? null);
       setValues(EMPTY);
       setStatus("sent");
     } catch {
@@ -88,11 +98,22 @@ export function ContactForm() {
       <div className="flex flex-col items-center gap-3 py-10 text-center">
         <CheckCircle2 className="h-10 w-10 text-emerald-600" aria-hidden />
         <p className="text-lg font-semibold">Message sent</p>
+        {trackingRef && (
+          <p className="rounded-md bg-muted px-3 py-1 font-mono text-xs text-foreground">
+            Tracking reference: {trackingRef}
+          </p>
+        )}
         <p className="text-sm text-muted-foreground max-w-sm">
-          Thanks for reaching out. We reply within 24-48 hours on business days,
+          Thanks for reaching out. We acknowledge and reply {ACK_PROMISE_COPY}{" "}
           to the email address you gave us.
         </p>
-        <Button variant="outline" onClick={() => setStatus("idle")}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            setTrackingRef(null);
+            setStatus("idle");
+          }}
+        >
           Send another message
         </Button>
       </div>
@@ -116,10 +137,13 @@ export function ContactForm() {
             value={values.firstName}
             onChange={(e) => set("firstName")(e.target.value)}
             aria-invalid={!!err("firstName")}
+            aria-describedby={err("firstName") ? "first-name-error" : undefined}
             required
           />
           {err("firstName") && (
-            <p className="text-xs text-red-600">{err("firstName")}</p>
+            <p id="first-name-error" className="text-xs text-red-600">
+              {err("firstName")}
+            </p>
           )}
         </div>
         <div className="space-y-2">
@@ -133,10 +157,13 @@ export function ContactForm() {
             value={values.lastName}
             onChange={(e) => set("lastName")(e.target.value)}
             aria-invalid={!!err("lastName")}
+            aria-describedby={err("lastName") ? "last-name-error" : undefined}
             required
           />
           {err("lastName") && (
-            <p className="text-xs text-red-600">{err("lastName")}</p>
+            <p id="last-name-error" className="text-xs text-red-600">
+              {err("lastName")}
+            </p>
           )}
         </div>
       </div>
@@ -153,9 +180,14 @@ export function ContactForm() {
           value={values.email}
           onChange={(e) => set("email")(e.target.value)}
           aria-invalid={!!err("email")}
+          aria-describedby={err("email") ? "email-error" : undefined}
           required
         />
-        {err("email") && <p className="text-xs text-red-600">{err("email")}</p>}
+        {err("email") && (
+          <p id="email-error" className="text-xs text-red-600">
+            {err("email")}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -181,10 +213,13 @@ export function ContactForm() {
           value={values.subject}
           onChange={(e) => set("subject")(e.target.value)}
           aria-invalid={!!err("subject")}
+          aria-describedby={err("subject") ? "subject-error" : undefined}
           required
         />
         {err("subject") && (
-          <p className="text-xs text-red-600">{err("subject")}</p>
+          <p id="subject-error" className="text-xs text-red-600">
+            {err("subject")}
+          </p>
         )}
       </div>
 
@@ -200,10 +235,13 @@ export function ContactForm() {
           value={values.message}
           onChange={(e) => set("message")(e.target.value)}
           aria-invalid={!!err("message")}
+          aria-describedby={err("message") ? "message-error" : undefined}
           required
         />
         {err("message") && (
-          <p className="text-xs text-red-600">{err("message")}</p>
+          <p id="message-error" className="text-xs text-red-600">
+            {err("message")}
+          </p>
         )}
       </div>
 
@@ -255,7 +293,7 @@ export function ContactForm() {
       </Button>
 
       <p className="text-xs text-muted-foreground text-center">
-        We typically respond within 24-48 hours during business days
+        We acknowledge and reply {ACK_PROMISE_COPY}.
       </p>
     </form>
   );

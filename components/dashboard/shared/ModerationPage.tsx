@@ -28,6 +28,7 @@ import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { reportReasonLabel } from "@/lib/labels/report-reasons";
+import { formatReportReference } from "@/lib/moderation/report-reference";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -1287,6 +1288,13 @@ export function ModerationPage() {
                     {selectedReport.reportCount > 1
                       ? ` (${selectedReport.reportCount} reports)`
                       : ""}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    A human moderator reviews every report; no automated
+                    decision is used. Notice sent to parties states policy
+                    ground &ldquo;
+                    {reportReasonLabel(selectedReport.reason)}&rdquo; and appeal
+                    reference {formatReportReference(selectedReport.id)}.
                   </p>
                 </div>
                 {selectedReportDetail?.bookingContext && (

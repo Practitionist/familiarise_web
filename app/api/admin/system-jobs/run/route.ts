@@ -25,7 +25,6 @@ import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-ref
 
 // Disputes
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
-import { alertDisputeDeadlines } from "@/scripts/disputes/alert-dispute-deadlines";
 
 // Earnings
 import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
@@ -48,7 +47,7 @@ import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
 import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
 
 // Cleanup
-import { cleanupAuthTokens } from "@/scripts/cleanup/cleanup-auth-tokens";
+import { cleanupAuthTokens } from "@/lib/auth/cleanup-auth-tokens";
 import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
 
@@ -212,7 +211,8 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       cleanedCount: result.totalCleaned,
       verificationTokensDeleted: result.verificationTokensDeleted,
       sessionsDeleted: result.sessionsDeleted,
-      passwordResetTokensCleared: result.passwordResetTokensCleared,
+      idempotencyRecordsDeleted: result.idempotencyRecordsDeleted,
+      staleInvitationsExpired: result.staleInvitationsExpired,
     };
   },
   "reconcile-payment-status": async () => {
@@ -236,15 +236,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       failedCount: result.failedCount,
       discrepanciesCount: result.discrepancies.length,
       errorCount: result.errors.length,
-    };
-  },
-  "alert-dispute-deadlines": async () => {
-    const result = await alertDisputeDeadlines();
-    return {
-      success: result.success,
-      urgentCount: result.urgentCount,
-      criticalCount: result.criticalCount,
-      totalAlerts: result.urgentCount,
     };
   },
   "auto-complete-appointments": async () => {

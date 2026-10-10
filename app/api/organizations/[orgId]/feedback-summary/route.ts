@@ -46,6 +46,7 @@ export async function GET(
   if (!id.ok) return id.response;
   const { orgId } = id.data;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "quality.read",
   });
   if (access.error) return access.error;

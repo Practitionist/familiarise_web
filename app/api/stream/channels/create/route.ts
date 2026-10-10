@@ -15,7 +15,7 @@ import { verifyEventAccess } from "@/lib/stream/chat/access";
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
@@ -148,9 +148,9 @@ export async function POST(req: NextRequest) {
       });
 
       // #B2 Stream.io org tagging — generic admin-created custom channels
-    // are not bound to an org event; pass `null` explicitly so the new
-    // param is unambiguous (vs. forgotten).
-    result = await createChannel({
+      // are not bound to an org event; pass `null` explicitly so the new
+      // param is unambiguous (vs. forgotten).
+      result = await createChannel({
         channelType: channelType as "messaging" | "team",
         channelId,
         channelName,
@@ -169,7 +169,10 @@ export async function POST(req: NextRequest) {
         : "Custom channel created successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Channel creation API error", error);
     return NextResponse.json(
       {

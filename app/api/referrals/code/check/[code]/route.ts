@@ -6,35 +6,24 @@ import {
   readReferralProgramConfig,
   referralTerms,
 } from "@/lib/referrals/program-config";
-import { Ratelimit } from "@upstash/ratelimit";
-import redis from "@/lib/redis";
-
-// Rate limit: 10 requests per minute per IP to prevent brute-force enumeration
-const ratelimit = new Ratelimit({
-  redis: redis as ConstructorParameters<typeof Ratelimit>[0]["redis"],
-  limiter: Ratelimit.slidingWindow(10, "1 m"),
-  prefix: "ratelimit:referral-check",
-});
+import {
+  applyRateLimit,
+  getClientIp,
+  referralCheckLimiter,
+} from "@/lib/rate-limit";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    // Rate limit by IP
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-    const { success, remaining } = await ratelimit.limit(ip);
-
-    if (!success) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        {
-          status: 429,
-          headers: { "X-RateLimit-Remaining": String(remaining) },
-        },
-      );
-    }
+    // Keyed on Netlify's client IP: the first x-forwarded-for hop is client-set.
+    const limited = await applyRateLimit(
+      referralCheckLimiter,
+      getClientIp(req),
+      "referral-check",
+    );
+    if (limited) return limited;
 
     const { code } = await params;
 
@@ -53,16 +42,17 @@ export async function GET(
       });
     }
 
-    // Fetch referrer's name for the signup page banner
+    // First name only: codes are guessable, so the banner must not leak a full name.
     const user = await prisma.user.findUnique({
       where: { id: referralCode.userId },
       select: { name: true },
     });
+    const firstName = user?.name.trim().split(/\s+/)[0] || null;
 
     return NextResponse.json({
       data: {
         valid: true,
-        referrerName: user?.name ?? null,
+        referrerName: firstName,
         terms: referralTerms(await readReferralProgramConfig()),
       },
     });

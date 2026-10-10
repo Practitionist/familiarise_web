@@ -42,12 +42,12 @@ export async function allocateTicketReference(
   tx: Tx,
   now: Date = new Date(),
 ): Promise<string> {
-  const year = now.getUTCFullYear();
+  const istYear = new Date(now.getTime() + 330 * 60_000).getUTCFullYear();
   const counter = await tx.supportTicketCounter.upsert({
-    where: { year },
-    create: { year, nextSeq: 2 }, // seeds the row AND allocates seq 1
+    where: { year: istYear },
+    create: { year: istYear, nextSeq: 2 }, // seeds the row AND allocates seq 1
     update: { nextSeq: { increment: 1 } },
     select: { nextSeq: true },
   });
-  return formatTicketReference(year, counter.nextSeq - 1);
+  return formatTicketReference(istYear, counter.nextSeq - 1);
 }

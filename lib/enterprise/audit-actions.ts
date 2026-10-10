@@ -159,6 +159,11 @@ export const AUDIT_ACTIONS = {
     ORG_SOFT_DELETED: "ORG_SOFT_DELETED",
     SSO_ENABLED: "SSO_ENABLED",
     SSO_DISABLED: "SSO_DISABLED",
+    // Client secret rotated or covered domains changed in place.
+    SSO_PROVIDER_UPDATED: "SSO_PROVIDER_UPDATED",
+    // A sign-in refused for SSO_REQUIRED or SSO_EMAIL_DOMAIN_MISMATCH; at most
+    // one row per email, code and hour.
+    SSO_SIGN_IN_REFUSED: "SSO_SIGN_IN_REFUSED",
     DOMAIN_CLAIMED: "DOMAIN_CLAIMED",
     // Emitted by POST /organizations/[orgId]/domain-claims/[domain]/verify
     // after the DNS TXT record at `_familiarise-verify.<domain>` matches

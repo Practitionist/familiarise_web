@@ -58,6 +58,7 @@ import {
   type PurchaseFunding,
 } from "@/components/booking/CancellationPolicyNote";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -352,7 +353,7 @@ export default function ConsultationCheckoutPage({
       _gateway: string,
       isMockPayment: boolean = false,
     ) => {
-      return fetch("/api/checkout", {
+      return fetchWithIdentity("/api/checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

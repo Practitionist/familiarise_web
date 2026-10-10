@@ -136,7 +136,7 @@ async function resolveTicketEntityLinks(
 
 export async function GET() {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
@@ -192,7 +192,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return supportError({ status: 401, code: "UNAUTHORIZED" });
     }

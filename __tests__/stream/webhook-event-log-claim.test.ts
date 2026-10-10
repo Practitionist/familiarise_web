@@ -47,9 +47,12 @@ jest.mock("../../lib/prisma", () => ({
 
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
+  reportSentryMessage: jest.fn(),
 }));
 
 import prisma from "../../lib/prisma";
+import { scrubWebhookPayload } from "../../lib/logging/webhook-scrub";
+import { reclaimStaleProcessingWebhookEvent } from "../../lib/stream/webhook-receipt";
 import {
   logWebhookEvent,
   markWebhookEventProcessed,
@@ -68,7 +71,7 @@ describe("the FAILED -> retry path", () => {
   it("moves claimedAt forward and leaves receivedAt alone", async () => {
     mockFindUnique.mockResolvedValue({
       id: "r1",
-      processed: true,
+      processed: false,
       error: "boom",
       receivedAt: SIX_MINUTES_AGO,
       claimedAt: null,
@@ -79,22 +82,17 @@ describe("the FAILED -> retry path", () => {
     expect(res.isNew).toBe(true);
     const data = mockUpdateMany.mock.calls[0][0].data;
     expect(data.claimedAt).toBeInstanceOf(Date);
-    // Not the original — that was the bug: the retried row kept a stamp
-    // already past the staleness threshold, so the very next caller treated an
-    // actively-processing event as abandoned.
     expect(data.claimedAt.getTime()).toBeGreaterThan(SIX_MINUTES_AGO.getTime());
-    // #1589 M-P0-03 — receivedAt is the give-up clock; a re-drive never resets it.
     expect(data.receivedAt).toBeUndefined();
   });
 
   it("claims conditionally, so a racing worker loses", async () => {
     mockFindUnique.mockResolvedValue({
       id: "r1",
-      processed: true,
+      processed: false,
       error: "boom",
       receivedAt: SIX_MINUTES_AGO,
     });
-    // Another worker got there first: our conditional write matches no row.
     mockUpdateMany.mockResolvedValue({ count: 0 });
 
     const res = await logWebhookEvent("stream", "e1", "call.ended", {});
@@ -105,10 +103,29 @@ describe("the FAILED -> retry path", () => {
       error: { not: null },
     });
   });
+
+  it("never reclaims terminal permanent: or gave up: webhook errors", async () => {
+    for (const terminalError of [
+      "permanent: schema mismatch",
+      "gave up: payment never arrived",
+    ]) {
+      mockFindUnique.mockResolvedValueOnce({
+        id: "r1",
+        processed: false,
+        error: terminalError,
+        receivedAt: SIX_MINUTES_AGO,
+      });
+
+      const res = await logWebhookEvent("stream", "e1", "call.ended", {});
+
+      expect(res).toEqual({ isNew: false, eventRecordId: "r1" });
+    }
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
 });
 
 describe("the IN-PROGRESS staleness escape", () => {
-  it("scopes the claim to the stamp it read", async () => {
+  it("scopes the claim to processed: false and exact claimedAt", async () => {
     mockFindUnique.mockResolvedValue({
       id: "r1",
       processed: false,
@@ -120,10 +137,9 @@ describe("the IN-PROGRESS staleness escape", () => {
     const res = await logWebhookEvent("stream", "e1", "call.ended", {});
 
     expect(res.isNew).toBe(true);
-    // The read stamp is in the WHERE. That is what makes exactly one of two
-    // racing workers win, instead of both.
-    expect(mockUpdateMany.mock.calls[0][0].where).toMatchObject({
+    expect(mockUpdateMany.mock.calls[0][0].where).toEqual({
       eventId: "e1",
+      processed: false,
       claimedAt: SIX_MINUTES_AGO,
     });
   });
@@ -158,6 +174,52 @@ describe("the IN-PROGRESS staleness escape", () => {
   });
 });
 
+describe("reclaimStaleProcessingWebhookEvent CAS modes", () => {
+  it("Mode 1 matches exact claimedAt (never OR claimedAt: null when prior stamp existed), requires processed: false, and resets error: null", async () => {
+    const prior = new Date("2026-10-01T10:00:00Z");
+    const res = await reclaimStaleProcessingWebhookEvent("ev_m1", prior);
+
+    expect(res.reclaimed).toBe(true);
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: {
+        eventId: "ev_m1",
+        processed: false,
+        claimedAt: prior,
+      },
+      data: {
+        claimedAt: expect.any(Date),
+        error: null,
+        deferCount: { increment: 1 },
+      },
+    });
+  });
+
+  it("Mode 2 filters processed: false with age cutoff and resets error: null", async () => {
+    const res = await reclaimStaleProcessingWebhookEvent("ev_m2", {
+      staleThresholdMs: 60_000,
+    });
+
+    expect(res.reclaimed).toBe(true);
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: {
+        eventId: "ev_m2",
+        processed: false,
+        error: null,
+        deferCount: { lt: 5 },
+        OR: [
+          { claimedAt: { lt: expect.any(Date) } },
+          { claimedAt: null, receivedAt: { lt: expect.any(Date) } },
+        ],
+      },
+      data: {
+        claimedAt: expect.any(Date),
+        error: null,
+        deferCount: { increment: 1 },
+      },
+    });
+  });
+});
+
 describe("the SUCCESS path stays idempotent", () => {
   it("skips a row already processed without error", async () => {
     mockFindUnique.mockResolvedValue({
@@ -181,19 +243,65 @@ describe("closing a delivery out", () => {
     mockUpdate.mockResolvedValue({});
   });
 
-  it("records success as a null error", async () => {
+  it("records success with processed: true, processedAt Date, null error, and non-null claimedAt", async () => {
     await markWebhookEventProcessed("e1", undefined);
-    expect(mockUpdate.mock.calls[0][0].data.error).toBeNull();
+    const data = mockUpdate.mock.calls[0][0].data;
+    expect(data.processed).toBe(true);
+    expect(data.processedAt).toBeInstanceOf(Date);
+    expect(data.claimedAt).toBeInstanceOf(Date);
+    expect(data.error).toBeNull();
   });
 
-  it("does NOT let an empty error message read as success", async () => {
-    // Empty message stays empty — still FAILED-shaped, never SUCCESS.
+  it("stamps non-null claimedAt even when claim.claimedAt is null", async () => {
+    await markWebhookEventProcessed("e1", undefined, { claimedAt: null });
+    const data = mockUpdateMany.mock.calls[0][0].data;
+    expect(data.claimedAt).toBeInstanceOf(Date);
+    expect(data.processed).toBe(true);
+  });
+
+  it("does NOT let an empty error message read as success and keeps processed: false / processedAt: null", async () => {
     await markWebhookEventProcessed("e1", "");
-    expect(mockUpdate.mock.calls[0][0].data.error).toBe("");
+    const data = mockUpdate.mock.calls[0][0].data;
+    expect(data.error).toBe("");
+    expect(data.processed).toBe(false);
+    expect(data.processedAt).toBeNull();
   });
 
-  it("keeps a real error message intact", async () => {
+  it("keeps a real error message intact with processed: false", async () => {
     await markWebhookEventProcessed("e1", "handler exploded");
-    expect(mockUpdate.mock.calls[0][0].data.error).toBe("handler exploded");
+    const data = mockUpdate.mock.calls[0][0].data;
+    expect(data.error).toBe("handler exploded");
+    expect(data.processed).toBe(false);
+    expect(data.processedAt).toBeNull();
+  });
+});
+
+describe("scrubWebhookPayload PII redaction", () => {
+  it("redacts sensitive email/payment/network keys case-insensitively while preserving array shape", () => {
+    const scrubbed = scrubWebhookPayload({
+      to: ["alice@example.com", "bob@example.com"],
+      from: "sender@example.com",
+      Reply_To: "reply@example.com",
+      customer_email: "cust@example.com",
+      customer_phone: "+919999999999",
+      contact: "+918888888888",
+      vpa: "user@okaxis",
+      IP: "203.0.113.10",
+      user_agent: "Mozilla/5.0",
+      eventType: "email.bounced",
+    });
+
+    expect(scrubbed).toEqual({
+      to: ["[redacted]", "[redacted]"],
+      from: "[redacted]",
+      Reply_To: "[redacted]",
+      customer_email: "[redacted]",
+      customer_phone: "[redacted]",
+      contact: "[redacted]",
+      vpa: "[redacted]",
+      IP: "[redacted]",
+      user_agent: "[redacted]",
+      eventType: "email.bounced",
+    });
   });
 });

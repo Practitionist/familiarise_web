@@ -1,5 +1,39 @@
+import crypto from "node:crypto";
 import { verifySignature } from "stream-chat";
 import { streamLogger } from "@/lib/stream-logger";
+
+export const MAX_WEBHOOK_COMPRESSED_BYTES = 512 * 1024;
+export const MAX_WEBHOOK_DECOMPRESSED_BYTES = 2 * 1024 * 1024;
+
+const HEX_SHA256_SIGNATURE_RE = /^[0-9a-f]{64}$/i;
+
+export function isValidStreamSignatureFormat(
+  signature: string | null | undefined,
+): signature is string {
+  return (
+    typeof signature === "string" && HEX_SHA256_SIGNATURE_RE.test(signature)
+  );
+}
+
+/**
+ * Verifies the `x-api-key` header in constant time whenever
+ * `NEXT_PUBLIC_STREAM_API_KEY` (or `expectedApiKey`) is configured.
+ */
+export function verifyStreamApiKeyHeader(
+  apiKeyHeader: string | null | undefined,
+  expectedApiKey: string | undefined = process.env.NEXT_PUBLIC_STREAM_API_KEY,
+): boolean {
+  const expected = expectedApiKey?.trim();
+  if (!expected) return true;
+  const provided = apiKeyHeader?.trim();
+  if (!provided) return false;
+  const actualBuf = Buffer.from(provided, "utf8");
+  const expectedBuf = Buffer.from(expected, "utf8");
+  return (
+    actualBuf.byteLength === expectedBuf.byteLength &&
+    crypto.timingSafeEqual(actualBuf, expectedBuf)
+  );
+}
 
 /**
  * Returns the primary Stream webhook signing secret (STREAM_WEBHOOK_SECRET,
@@ -34,8 +68,10 @@ export function verifyStreamWebhookSignature(
   previousSecret: string | undefined = process.env
     .STREAM_WEBHOOK_SECRET_PREVIOUS,
 ): boolean {
-  if (!signature) {
-    streamLogger.warn("No x-signature header found in Stream webhook request");
+  if (!isValidStreamSignatureFormat(signature)) {
+    streamLogger.warn(
+      "Missing or malformed x-signature header in Stream webhook request",
+    );
     return false;
   }
 

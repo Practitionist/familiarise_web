@@ -48,7 +48,7 @@ const ALLOWED: Record<DisputeStatus, DisputeStatus[]> = {
   // A closed early-warning can still escalate into a formal dispute later.
   WARNING_CLOSED: ["NEEDS_RESPONSE"],
   NEEDS_RESPONSE: ["UNDER_REVIEW", "WON", "LOST", "CHARGE_REFUNDED", "CLOSED"],
-  UNDER_REVIEW: ["WON", "LOST", "CHARGE_REFUNDED", "CLOSED"],
+  UNDER_REVIEW: ["NEEDS_RESPONSE", "WON", "LOST", "CHARGE_REFUNDED", "CLOSED"],
   // Terminal verdicts — no outgoing transitions. CLOSED is Razorpay's
   // ended-without-verdict terminal (refund issued / details provided).
   WON: [],
@@ -74,9 +74,7 @@ export interface EvidenceDeadlineInput {
   nowMs: number;
 }
 
-export function evidenceDeadlinePassed(
-  input: EvidenceDeadlineInput,
-): boolean {
+export function evidenceDeadlinePassed(input: EvidenceDeadlineInput): boolean {
   return !!input.dueBy && input.dueBy.getTime() < input.nowMs;
 }
 
@@ -95,9 +93,7 @@ export function isLegalDisputeTransition(
  * and the machine evolve together (and stay unit-testable without the
  * webhook module graph).
  */
-export function mapDisputeStatus(
-  status: string,
-): DisputeStatus | null {
+export function mapDisputeStatus(status: string): DisputeStatus | null {
   switch (status.toLowerCase()) {
     case "warning_needs_response":
       return "WARNING_NEEDS_RESPONSE";

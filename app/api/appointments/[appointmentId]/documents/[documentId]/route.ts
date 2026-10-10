@@ -58,7 +58,7 @@ async function resolveAppointmentDocument(
       error: NextResponse;
     }
 > {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return {
       error: NextResponse.json(
@@ -199,7 +199,10 @@ export async function GET(
 
     return NextResponse.json({ data: document });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error fetching document:", error);
     return NextResponse.json(
       { error: "Failed to fetch document" },
@@ -216,7 +219,7 @@ export async function PATCH(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -366,7 +369,9 @@ export async function PATCH(
             },
             consultationPlan: {
               select: {
-                consultantProfile: { select: { user: { select: { name: true } } } },
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
               },
             },
           },
@@ -378,7 +383,9 @@ export async function PATCH(
             },
             subscriptionPlan: {
               select: {
-                consultantProfile: { select: { user: { select: { name: true } } } },
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
               },
             },
           },
@@ -416,10 +423,9 @@ export async function PATCH(
             dashboardUrl: scopedHref({
               organizationId: appointmentInfo?.organizationId,
               surface: "appointments",
-              personal:
-                consulteeProfileId
-                  ? { kind: "consultee", profileId: consulteeProfileId }
-                  : undefined,
+              personal: consulteeProfileId
+                ? { kind: "consultee", profileId: consulteeProfileId }
+                : undefined,
             }),
           },
           { deferAttempt: true },
@@ -436,7 +442,10 @@ export async function PATCH(
 
     return NextResponse.json({ data: updatedDocument });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error updating document review:", error);
     return NextResponse.json(
       { error: "Failed to update document review" },
@@ -488,7 +497,10 @@ export async function DELETE(
         : "Document deleted successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error deleting document:", error);
     return NextResponse.json(
       { error: "Failed to delete document" },

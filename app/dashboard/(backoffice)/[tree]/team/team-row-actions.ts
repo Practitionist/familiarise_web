@@ -58,7 +58,7 @@ export const ROW_ACTIONS: Record<RowAction, RowActionSpec> = {
   "reset-2fa": {
     label: "Reset 2FA",
     description:
-      "Their authenticator and backup codes stop working and they are signed out everywhere. Whoever signs in next with their password enrols a new authenticator, so confirm who you are talking to before you do this.",
+      "Their authenticator, backup codes and password stop working and they are signed out everywhere. They get an email to set a new password and enrol a new authenticator, so confirm who you are talking to before you do this.",
     done: "Two-factor reset",
     path: "/two-factor",
     method: "DELETE",
@@ -68,13 +68,13 @@ export const ROW_ACTIONS: Record<RowAction, RowActionSpec> = {
 
 /**
  * The doors that apply to a row. A setup link only until 2FA is enrolled
- * (after that it is just a password reset), and nobody is offered their own
- * suspension: the API refuses it, since it would lock them out of this page.
+ * (after that it is just a password reset). Nobody is offered their own
+ * suspension or 2FA reset: the API refuses both.
  */
 export function actionsFor(row: MemberRow, viewerId: string): RowAction[] {
   const actions: RowAction[] = [];
   if (!row.twoFactorEnabled && !row.banned) actions.push("setup-link");
   if (row.id !== viewerId) actions.push(row.banned ? "reactivate" : "suspend");
-  if (row.twoFactorEnabled) actions.push("reset-2fa");
+  if (row.twoFactorEnabled && row.id !== viewerId) actions.push("reset-2fa");
   return actions;
 }

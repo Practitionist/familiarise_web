@@ -3,20 +3,18 @@
  */
 
 /**
- * #1716 — a session lookup that fails is not "no session". On a cold
- * instance a ~27 s stalled adapter read on a VALID cookie came back as 401
- * and the client offered sign-in to a signed-in consultant. The
- * `customSession` plugin swallows the adapter's rejection into `null`
- * (better-auth 1.6.5, `plugins/custom-session/index.mjs:50`), so the helper
- * has to tell the two apart itself: a thrown lookup, or a null while the
- * session row is live, answers 503 `SESSION_LOOKUP_FAILED` + Retry-After;
- * only a null with no live row is 401.
+ * A session lookup that fails is not "no session". The `customSession`
+ * plugin swallows an adapter rejection into `null`, so `getSession()` settles
+ * a null on a validly signed cookie with one row read: a thrown read, or a
+ * null while the row is live, is a failure (`SessionLookupFailedError`, 503
+ * `SESSION_LOOKUP_FAILED` + Retry-After from the guards); only a null with no
+ * live row is "none" (401).
  */
 
 const getSession = jest.fn();
-jest.mock("../../lib/auth-server", () => ({
+jest.mock("../../lib/auth", () => ({
   __esModule: true,
-  getSession: (...a: unknown[]) => getSession(...a),
+  auth: { api: { getSession: (...a: unknown[]) => getSession(...a) } },
 }));
 
 const cookieGet = jest.fn();
@@ -40,6 +38,11 @@ jest.mock("../../lib/observability/report", () => ({
 
 import { serializeSignedCookie } from "better-call";
 import { requireApiAuth } from "../../lib/auth-helpers";
+import { getSession as getServerSession } from "../../lib/auth-server";
+import { lookupSession } from "../../lib/auth-session-lookup";
+import { SessionLookupFailedError } from "../../lib/auth/session-lookup-error";
+import { cookieSigningSecret } from "../../lib/auth/session-cookie";
+import { apiError } from "../../lib/errors/api-error";
 
 const SECRET = "test-secret-that-is-at-least-32-characters";
 let liveCookie: { value: string };
@@ -62,7 +65,7 @@ beforeEach(() => {
   );
 });
 
-describe("requireApiAuth — session lookup failure is 503, not 401 (#1716)", () => {
+describe("requireApiAuth — session lookup failure is 503, not 401", () => {
   it("answers 503 with Retry-After when the adapter promise rejects", async () => {
     getSession.mockRejectedValue(new Error("connect ETIMEDOUT"));
 
@@ -130,6 +133,85 @@ describe("requireApiAuth — session lookup failure is 503, not 401 (#1716)", ()
       expect(sessionFindUnique).not.toHaveBeenCalled();
     } finally {
       liveCookie = { value: await signedCookieValue("tok_live") };
+    }
+  });
+});
+
+describe("getSession() is tri-state", () => {
+  it("returns the session when the lookup finds one", async () => {
+    const found = { user: { id: "u1", role: "CONSULTEE" }, session: {} };
+    getSession.mockResolvedValue(found);
+    await expect(getServerSession()).resolves.toBe(found);
+    await expect(lookupSession()).resolves.toEqual({
+      kind: "found",
+      session: found,
+    });
+  });
+
+  it("returns null (none) when the cookie's row is gone", async () => {
+    getSession.mockResolvedValue(null);
+    sessionFindUnique.mockResolvedValue(null);
+    await expect(getServerSession()).resolves.toBeNull();
+    await expect(lookupSession()).resolves.toEqual({ kind: "none" });
+  });
+
+  it("throws SessionLookupFailedError when the read rejects or the row is live", async () => {
+    getSession.mockRejectedValue(new Error("connect ETIMEDOUT"));
+    await expect(getServerSession()).rejects.toBeInstanceOf(
+      SessionLookupFailedError,
+    );
+
+    getSession.mockResolvedValue(null);
+    sessionFindUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    await expect(getServerSession()).rejects.toBeInstanceOf(
+      SessionLookupFailedError,
+    );
+    await expect(lookupSession()).resolves.toMatchObject({ kind: "failed" });
+  });
+
+  it("maps the thrown error to 503 + Retry-After through apiError", async () => {
+    const res = apiError({
+      tag: "[test]",
+      error: new SessionLookupFailedError(new Error("stall")),
+    });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("2");
+    await expect(res.json()).resolves.toMatchObject({
+      code: "SESSION_LOOKUP_FAILED",
+    });
+  });
+});
+
+describe("cookie signing secret", () => {
+  it("uses the current BETTER_AUTH_SECRETS entry when rotation is configured", async () => {
+    expect(cookieSigningSecret("2:new-secret, 1:old-secret", "legacy")).toBe(
+      "new-secret",
+    );
+    expect(cookieSigningSecret(undefined, "legacy")).toBe("legacy");
+  });
+
+  it("verifies a cookie signed with the rotated secret", async () => {
+    const rotated = "rotated-secret-that-is-at-least-32-chars";
+    process.env.BETTER_AUTH_SECRETS = `2:${rotated},1:${SECRET}`;
+    const header = await serializeSignedCookie("c", "tok_rot", rotated);
+    const value = header.split(";")[0].slice("c=".length);
+    cookieGet.mockImplementation((name: string) =>
+      name === "__Secure-better-auth.session_token" ? { value } : undefined,
+    );
+    getSession.mockResolvedValue(null);
+    sessionFindUnique.mockResolvedValue({
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    try {
+      expect((await requireApiAuth()).error?.status).toBe(503);
+      expect(sessionFindUnique).toHaveBeenCalledWith({
+        where: { token: "tok_rot" },
+        select: { expiresAt: true },
+      });
+    } finally {
+      delete process.env.BETTER_AUTH_SECRETS;
     }
   });
 });

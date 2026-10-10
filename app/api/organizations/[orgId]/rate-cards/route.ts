@@ -30,7 +30,10 @@ import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { bumpRateCard } from "@/lib/api/organizations/rate-card";
+import {
+  bumpRateCard,
+  DEFAULT_RATE_CARD,
+} from "@/lib/api/organizations/rate-card";
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
@@ -61,6 +64,16 @@ const CreateBodySchema = z
   })
   .refine((v) => v.platformBps + v.orgBps + v.consultantBps === 10_000, {
     message: "platformBps + orgBps + consultantBps must equal 10000",
+  })
+  // The platform fee never drops below the default card's share.
+  .refine((v) => v.platformBps >= DEFAULT_RATE_CARD.platformBps, {
+    message: `platformBps must be at least ${DEFAULT_RATE_CARD.platformBps}`,
+    path: ["platformBps"],
+  })
+  // A backdated card would close the current one in the past and resettle history.
+  .refine((v) => !v.effectiveAt || v.effectiveAt.getTime() >= Date.now(), {
+    message: "effectiveAt cannot be in the past",
+    path: ["effectiveAt"],
   });
 
 export async function GET(
@@ -72,6 +85,7 @@ export async function GET(
   // was open to every member of a host org, but its only screen is Payouts ›
   // Rate cards, and the detail already refused those members.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "payouts.read",
     canHost: true,
   });

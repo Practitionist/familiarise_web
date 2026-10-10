@@ -18,11 +18,13 @@ import prisma from "@/lib/prisma";
 import { acquireLock, releaseLock } from "@/lib/redis";
 import { Refusal } from "@/lib/errors/refusal";
 import { PaymentError } from "@/lib/payments/core/types";
-import { PaymentGateway, PayoutAccountType } from "@prisma/client";
+import { PaymentGateway, PayoutAccountType, Prisma } from "@prisma/client";
 import { PAYOUT_ACCOUNT_SAFE_SELECT } from "@/lib/data/consultant-payout-setup";
 import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
+  summariseFundAccountValidation,
+  type FundAccountValidationEntity,
   type FundAccountValidationSummary,
 } from "./razorpay-payouts";
 
@@ -245,4 +247,139 @@ async function persistVerifiedAccount(
     });
   });
   return { status: "verified", account };
+}
+
+interface ValidationWebhookEntity {
+  id: string;
+  reference_id?: string | null;
+  fund_account?: {
+    id: string;
+    account_type?: string;
+    vpa?: { address?: string };
+  };
+  status?: string;
+  results?: FundAccountValidationEntity["results"];
+  validation_results?: FundAccountValidationEntity["validation_results"];
+  notes?: Record<string, string>;
+}
+
+function resolveValidationSummary(
+  eventType:
+    "fund_account.validation.completed" | "fund_account.validation.failed",
+  entity: ValidationWebhookEntity,
+): FundAccountValidationSummary {
+  let effectiveStatus: "completed" | "failed" = "failed";
+  if (entity.status === "completed" || entity.status === "failed") {
+    effectiveStatus = entity.status;
+  } else if (eventType === "fund_account.validation.completed") {
+    effectiveStatus = "completed";
+  }
+
+  return summariseFundAccountValidation({
+    id: entity.id,
+    entity: "fund_account.validation",
+    status: effectiveStatus,
+    reference_id: entity.reference_id ?? null,
+    results: entity.results,
+    validation_results: entity.validation_results,
+  });
+}
+
+async function applyVerifiedFundAccountUpdate(params: {
+  fundAccountId: string;
+  referenceId: string | null;
+  registeredName: string | null;
+  vpaAddress?: string;
+}): Promise<void> {
+  const { fundAccountId, referenceId, registeredName, vpaAddress } = params;
+  const consultantWhere: Prisma.PayoutAccountWhereInput = {
+    isVerified: false,
+    razorpayFundAccId: fundAccountId,
+    ...(referenceId ? { consultantProfileId: referenceId } : {}),
+  };
+
+  await prisma.payoutAccount.updateMany({
+    where: consultantWhere,
+    data: {
+      isVerified: true,
+      ...(registeredName ? { accountHolderName: registeredName } : {}),
+      ...(vpaAddress ? { upiId: vpaAddress } : {}),
+    },
+  });
+
+  const orgWhere: Prisma.OrganizationPayoutAccountWhereInput = {
+    status: { in: ["PENDING_VERIFICATION", "FAILED_VERIFICATION"] },
+    razorpayFundAccountId: fundAccountId,
+    ...(referenceId ? { id: referenceId } : {}),
+  };
+
+  await prisma.organizationPayoutAccount.updateMany({
+    where: orgWhere,
+    data: {
+      status: "VERIFIED",
+      verifiedAt: new Date(),
+      ...(vpaAddress ? { upiId: vpaAddress } : {}),
+    },
+  });
+}
+
+async function applyFailedFundAccountUpdate(
+  fundAccountId: string | undefined,
+  referenceId: string | null,
+): Promise<void> {
+  let orgFailWhere: Prisma.OrganizationPayoutAccountWhereInput | null = null;
+  if (fundAccountId) {
+    orgFailWhere = {
+      status: "PENDING_VERIFICATION",
+      razorpayFundAccountId: fundAccountId,
+      ...(referenceId ? { id: referenceId } : {}),
+    };
+  } else if (referenceId) {
+    orgFailWhere = {
+      id: referenceId,
+      status: "PENDING_VERIFICATION",
+    };
+  }
+
+  if (orgFailWhere) {
+    await prisma.organizationPayoutAccount.updateMany({
+      where: orgFailWhere,
+      data: {
+        status: "FAILED_VERIFICATION",
+      },
+    });
+  }
+}
+
+export async function handleFundAccountValidationWebhook(
+  eventType:
+    "fund_account.validation.completed" | "fund_account.validation.failed",
+  entity: ValidationWebhookEntity,
+): Promise<void> {
+  const fundAccountId = entity.fund_account?.id;
+  const vpaAddress = entity.fund_account?.vpa?.address;
+  const referenceId =
+    entity.reference_id ||
+    entity.notes?.consultantProfileId ||
+    entity.notes?.organizationPayoutAccountId ||
+    null;
+
+  const summary = resolveValidationSummary(eventType, entity);
+  const isCompletedAndActive =
+    eventType === "fund_account.validation.completed" &&
+    summary.accountStatus === "valid";
+
+  if (isCompletedAndActive) {
+    if (fundAccountId) {
+      await applyVerifiedFundAccountUpdate({
+        fundAccountId,
+        referenceId,
+        registeredName: summary.registeredName,
+        vpaAddress,
+      });
+    }
+    return;
+  }
+
+  await applyFailedFundAccountUpdate(fundAccountId, referenceId);
 }

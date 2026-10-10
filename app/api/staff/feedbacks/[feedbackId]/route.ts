@@ -1,6 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import prisma from "lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -8,13 +7,9 @@ import { goHref } from "@/lib/dashboard/go";
 import { attemptTrigger } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
-import { PlatformFeedbackStatusSchema } from "@/schemas/enums";
+import { PatchFeedbackSchema } from "@/schemas/moderation";
 
-const patchFeedbackSchema = z
-  .object({
-    status: PlatformFeedbackStatusSchema,
-  })
-  .strict();
+const patchFeedbackSchema = PatchFeedbackSchema.strict();
 
 export async function GET(
   req: NextRequest,
@@ -110,7 +105,7 @@ export async function PATCH(
                 status: nextStatus,
                 dashboardUrl: goHref("auto", "feedbacks"),
               },
-              dedupeKey: `platform-feedback:${feedbackId}:${nextStatus}`,
+              dedupeKey: `platform-feedback:${feedbackId}:${existing.status}->${nextStatus}:${Date.now()}`,
             })
           : null;
 

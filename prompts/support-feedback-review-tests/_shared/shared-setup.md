@@ -84,6 +84,16 @@ Every later call sends `-b /tmp/qa-{PR_NUMBER}/consultee1.jar -H "Origin: {PREVI
 
 The back office returns `428 TWO_FACTOR_REQUIRED` with header `X-Auth-Action: enroll-2fa` for staff and admin accounts that have no authenticator, including `/api/admin/disputes` and `/api/staff/*`. Two-factor authentication is mandatory for operators, so a probe of a back-office route before enrolment is BLOCKED, not failed. Lane 01 records which operators are enrolled. If the lanes need the back office, enrol one staff and one admin operator as follows. Enrolment is a database write: record it as a fixture and revert it in lane 06.
 
+### Seed Operator TOTP Helper (Mandatory 2FA Enrolment)
+
+Seeded `STAFF` and `ADMIN` accounts already have `twoFactorEnabled = true` and a deterministic encrypted `"twoFactor"` row derived from `BETTER_AUTH_SECRET` and their email address via `prisma/seedFiles/seed-two-factor.ts`. Whenever signing in as a pre-enrolled seed operator (via browser UI or `POST /api/auth/two-factor/verify-totp`), compute the active 6-digit TOTP code on demand using `computeSeedOperatorTotp(email)`:
+
+```bash
+npx tsx -e 'import { computeSeedOperatorTotp } from "./prisma/seedFiles/seed-two-factor"; console.log(computeSeedOperatorTotp("admin@familiarise.com"));'
+```
+
+Substitute `"admin@familiarise.com"` with the target `STAFF` or `ADMIN` email from `{AUDIT_DIR}/fixtures.json` (with `BETTER_AUTH_SECRET` set in the environment).
+
 ### Enrol through the API
 
 1. Sign in and keep the jar.
@@ -144,8 +154,7 @@ Limits are keyed per route and per user, not shared across routes. Read the limi
 | Ticket attachment upload | `ticket-attachment:` | 5 per hour per user |
 | Ticket attachment delete | `ticket-attachment-del:` | its own budget |
 | Private session rating | `appointment-feedback:` | 5 per hour per user |
-| Public review create (`POST` only) | `reviewWriteLimiter` | 20 per hour per user |
-| Public review edit and delete (`PUT`, `DELETE`) | none | unlimited today |
+| Public review writes (`POST`, `PUT`, `DELETE`) | `reviews:` (`reviewWriteLimiter`) | 20 per hour per user (shared across create, edit and delete) |
 | Platform feedback and `/api/report` | own keys | read from code |
 | Sign-in | per IP | 30 per 15 minutes |
 

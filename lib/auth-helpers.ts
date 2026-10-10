@@ -1,5 +1,8 @@
 import { lookupSession } from "@/lib/auth-session-lookup";
+import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { sessionLookupFailedResponse } from "@/lib/auth/session-lookup-error";
+import { EXPECTED_USER_HEADER } from "@/lib/auth/identity-header";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   setSentryIdentityFromSession,
@@ -27,16 +30,47 @@ type ApiAuthResult =
   | { session: Session; error?: never }
   | { session?: never; error: NextResponse };
 
+type ApiAuthOptions = {
+  /**
+   * Money and IAM writes: refuse with 409 `IDENTITY_CHANGED` when the page
+   * that sent the request was rendered for a different user than the cookie
+   * now carries (another tab signed in as someone else).
+   */
+  expectUser?: boolean;
+};
+
 /**
  * Requires API authentication and returns the session or an error response.
- * Enforces force-fresh session lookup and the 2FA precondition for operators.
+ * Enforces the 2FA precondition for operators.
  */
-export async function requireApiAuth(): Promise<ApiAuthResult> {
+export async function requireApiAuth({
+  expectUser = false,
+}: ApiAuthOptions = {}): Promise<ApiAuthResult> {
   const auth = await requireApiSession();
   if (auth.error) return auth;
   const refused = twoFactorPrecondition(auth.session);
   if (refused) return { error: refused };
+  if (expectUser) {
+    const changed = await identityChanged(auth.session.user.id);
+    if (changed) return { error: changed };
+  }
   return auth;
+}
+
+/** 409 when the caller named an expected user and the session is someone else. */
+async function identityChanged(
+  sessionUserId: string,
+): Promise<NextResponse | null> {
+  const expected = (await headers()).get(EXPECTED_USER_HEADER);
+  if (!expected || expected === sessionUserId) return null;
+  return NextResponse.json(
+    {
+      error:
+        "You signed in as a different account in another tab. Reload to continue.",
+      code: "IDENTITY_CHANGED",
+    },
+    { status: 409, headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 /**
@@ -44,7 +78,7 @@ export async function requireApiAuth(): Promise<ApiAuthResult> {
  * exists and is not banned, nothing more.
  */
 export async function requireApiSession(): Promise<ApiAuthResult> {
-  const lookup = await lookupSession(true);
+  const lookup = await lookupSession();
   if (lookup.kind === "failed") {
     reportSentryError(lookup.cause, {
       subsystem: "auth",
@@ -84,23 +118,6 @@ function twoFactorPrecondition(session: Session): NextResponse | null {
   );
 }
 
-/** Seconds a client waits before retrying a failed session lookup (#1716). */
-export const SESSION_LOOKUP_RETRY_AFTER_SECONDS = 2;
-
-export function sessionLookupFailedResponse(): NextResponse {
-  return NextResponse.json(
-    {
-      error:
-        "We couldn't confirm your session just now. Try again in a moment.",
-      code: "SESSION_LOOKUP_FAILED",
-    },
-    {
-      status: 503,
-      headers: { "Retry-After": String(SESSION_LOOKUP_RETRY_AFTER_SECONDS) },
-    },
-  );
-}
-
 /** Checks if the user has privileged access (ADMIN or STAFF role). */
 export function isPrivileged(role: string | undefined | null): boolean {
   return role === "ADMIN" || role === "STAFF";
@@ -109,12 +126,15 @@ export function isPrivileged(role: string | undefined | null): boolean {
 async function requireRoleGate(
   predicate: (role: UserRole | undefined) => boolean,
   message: string,
+  { expectUser = false }: ApiAuthOptions = {},
 ): Promise<ApiAuthResult> {
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
   if (!predicate(auth.session.user.role as UserRole | undefined)) {
     return { error: forbiddenResponse(message) };
   }
+  const changed = expectUser && (await identityChanged(auth.session.user.id));
+  if (changed) return { error: changed };
   return { session: auth.session };
 }
 
@@ -137,10 +157,12 @@ export async function requirePrivilegedAuth(): Promise<ApiAuthResult> {
 /** Surface-scoped back-office auth. */
 export async function requireBackofficeSurface(
   surface: BackofficeSurface,
+  options: ApiAuthOptions = {},
 ): Promise<ApiAuthResult> {
   return requireRoleGate(
     (role) => !!role && hasBackofficePermission(role, surface),
     "Forbidden — insufficient back-office permissions",
+    options,
   );
 }
 
@@ -332,6 +354,10 @@ export type OrgCapabilityGate = {
   fundingSource?: FundingSource;
   requireActive?: true;
   allowSuspended?: true;
+  /** The caller only reads. A platform ADMIN passes (as an OWNER stub) only on these gates. */
+  readOnly?: true;
+  /** Money/IAM writes: 409 when the page was rendered for another user. */
+  expectUser?: true;
 };
 
 async function fetchOrganizationWithBilling(organizationId: string) {
@@ -464,13 +490,15 @@ function checkMemberPermissionGate(
 /**
  * Require that the session user is an active Membership of the specified
  * organization, holding `opts.permission` when set, and enforce capability
- * and funding-source gates.
+ * and funding-source gates. A platform ADMIN gets a read-only OWNER stub on
+ * `readOnly` gates and a 403 on every other gate; admin writes go through
+ * the audited `/api/admin/*` doors.
  */
 export async function requireOrgAccess(
   organizationId: string,
   opts: OrgCapabilityGate = {},
 ): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  const auth = await requireApiAuth();
+  const auth = await requireApiAuth({ expectUser: opts.expectUser });
   if (auth.error) return { error: auth.error };
 
   const orgLookup = await fetchOrganizationWithBilling(organizationId);
@@ -484,6 +512,18 @@ export async function requireOrgAccess(
 
   const userId = auth.session.user.id;
   if (auth.session.user.role === "ADMIN") {
+    if (opts.readOnly !== true) {
+      return {
+        error: NextResponse.json(
+          {
+            error:
+              "Platform admins have read-only access to organizations — act through the back office.",
+            code: "ADMIN_READ_ONLY",
+          },
+          { status: 403 },
+        ),
+      };
+    }
     setSentryOrgContext({ orgId: org.id, orgRole: "ADMIN" });
     const stub: Membership = {
       id: `__admin_stub_${userId}`,

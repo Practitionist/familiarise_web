@@ -16,7 +16,7 @@ import {
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleValidationService";
-import { getCachedSession, getSession } from "@/lib/auth-server";
+import { getSession } from "@/lib/auth-server";
 import {
   buildOverlapMetaIndex,
   overlapMetaCandidatesFor,
@@ -140,17 +140,12 @@ export async function GET(
     const webinarId = searchParams.get("webinarId");
     const classId = searchParams.get("classId");
 
-    // Both gates below need the caller's identity, and this route is re-hit on
-    // every week-slide — so resolve it ONCE rather than awaiting getSession in
-    // each gate. Still skipped entirely on the public path, where neither
-    // parameter is present and the route stays anonymous.
-    // #1697 item 4 — the busy/free shape reads the session cookie-cached (one
-    // poll a minute per calendar); the privileged detail shape reads fresh so
-    // a demotion or a revoked membership takes effect on the next poll. The
-    // cross-user gate below re-reads the role fresh regardless (#1807).
-    let session: Awaited<ReturnType<typeof getSession>> = null;
-    if (includeAppointmentDetailsRequested) session = await getSession(true);
-    else if (requestedConsulteeUserId) session = await getCachedSession();
+    // Both gates below need the caller's identity, so resolve it once. Skipped
+    // on the public path, where neither parameter is present.
+    const session =
+      includeAppointmentDetailsRequested || requestedConsulteeUserId
+        ? await getSession()
+        : null;
     // Ownership is a fact about the database, not about the session.
     //
     // The session field is a snapshot from when the session was minted, so a
@@ -235,7 +230,7 @@ export async function GET(
       // is unchanged.
       const gateRole =
         !isSelf && !isOwningConsultant
-          ? (await getSession(true))?.user?.role
+          ? (await getSession())?.user?.role
           : session?.user?.role;
       if (
         !isSelf &&
@@ -425,7 +420,11 @@ export async function GET(
       userId: string;
       scheduleType?: string;
       availabilityWindowsWeekly?: WeeklySlot[];
-      availabilityWindowsCustom?: { id: string; startsAt: Date; endsAt: Date }[];
+      availabilityWindowsCustom?: {
+        id: string;
+        startsAt: Date;
+        endsAt: Date;
+      }[];
     };
     const coHostProfiles: CoHostScheduleProfile[] = [];
     if (webinarId || classId) {

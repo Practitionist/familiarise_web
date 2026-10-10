@@ -2,25 +2,46 @@ import crypto from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 
-import prisma from "@/lib/prisma";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
-import { isDbHealthy, logWebhookEvent, markWebhookEventProcessed } from "@/lib/webhooks/event-log";
+import {
+  isDbHealthy,
+  logWebhookEvent,
+  markWebhookEventProcessed,
+} from "@/lib/webhooks/event-log";
+import { processNovuWebhookPayload } from "@/lib/webhooks/novu-handler";
 import {
   MAX_WEBHOOK_BODY_BYTES,
   readBodyWithinCap,
 } from "@/lib/webhooks/read-body";
 import {
-  isNovuDeliveredEvent,
-  isNovuFailureEvent,
-  novuWebhookEventSchema,
-  resolveNovuError,
+  extractNovuTransactionId,
+  novuWebhookPayloadSchema,
   resolveNovuEventType,
-  resolveNovuStatus,
-  resolveNovuTransactionId,
-  verifyNovuWebhookSignature,
+  verifyNovuWebhook,
+  type NovuWebhookPayload,
 } from "@/schemas/webhooks/novu";
 
 export const runtime = "nodejs";
+
+function deriveNovuEventId(
+  event: NovuWebhookPayload,
+  eventType: string,
+  transactionId: string | undefined,
+  verifiedSvixId: string | null,
+  bodyHash: string,
+): string {
+  if (verifiedSvixId) return verifiedSvixId;
+  if (event.id) return event.id;
+  if (event.eventId) return event.eventId;
+  if (transactionId) return `${eventType}:${transactionId}:${bodyHash}`;
+  return `${eventType}:body_${bodyHash}`;
+}
+
+function formatError(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  return JSON.stringify(err) ?? "Unknown error";
+}
 
 export async function POST(req: NextRequest) {
   const declaredBytes = Number(req.headers.get("content-length"));
@@ -38,7 +59,7 @@ export async function POST(req: NextRequest) {
     console.error("NOVU_WEBHOOK_SECRET not configured");
     return NextResponse.json(
       { error: "Webhook secret not configured" },
-      { status: 500 },
+      { status: 503 },
     );
   }
 
@@ -50,14 +71,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Empty body" }, { status: 400 });
   }
 
-  const signature =
-    req.headers.get("x-novu-signature") ?? req.headers.get("novu-signature");
-
-  if (!verifyNovuWebhookSignature(body, signature, secret)) {
+  if (!verifyNovuWebhook(body, req.headers, secret)) {
     await recordSystemEvent({
       category: "WEBHOOK",
       severity: "WARN",
-      message: "Novu webhook HMAC verification failed",
+      message: "Novu webhook signature verification failed",
       context: { provider: "novu" },
     });
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
@@ -78,7 +96,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsedResult = novuWebhookEventSchema.safeParse(rawJson);
+  const parsedResult = novuWebhookPayloadSchema.safeParse(rawJson);
   if (!parsedResult.success) {
     return NextResponse.json(
       { error: "Invalid webhook payload" },
@@ -88,21 +106,26 @@ export async function POST(req: NextRequest) {
 
   const event = parsedResult.data;
   const eventType = resolveNovuEventType(event);
-  const transactionId = resolveNovuTransactionId(event);
-  const status = resolveNovuStatus(event);
-  const deliveryError = resolveNovuError(event);
-
+  const transactionId = extractNovuTransactionId(event);
   const bodyHash = crypto
     .createHash("sha256")
     .update(body)
     .digest("hex")
     .slice(0, 16);
-  const eventId =
-    event.id ??
-    event.eventId ??
-    (transactionId
-      ? `${eventType}:${transactionId}:${bodyHash}`
-      : `${eventType}:body_${bodyHash}`);
+  const verifiedSvixId = req.headers.get("svix-signature")
+    ? req.headers.get("svix-id")
+    : null;
+  const eventId = deriveNovuEventId(
+    event,
+    eventType,
+    transactionId,
+    verifiedSvixId,
+    bodyHash,
+  );
+  const signature =
+    req.headers.get("svix-signature") ??
+    req.headers.get("x-novu-signature") ??
+    req.headers.get("novu-signature");
 
   const { isNew, claim } = await logWebhookEvent(
     "novu",
@@ -116,58 +139,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true, duplicate: true });
   }
 
-  let processingError: string | undefined;
   try {
-    if (isNovuFailureEvent(eventType, status)) {
-      const errorText =
-        deliveryError ?? `Novu delivery failure (${eventType})`;
-      if (transactionId && typeof prisma.notificationOutbox?.updateMany === "function") {
-        await prisma.notificationOutbox.updateMany({
-          where: { transactionId },
-          data: {
-            lastError: errorText,
-          },
-        });
-      }
-      await recordSystemEvent({
-        category: "WEBHOOK",
-        severity: "WARN",
-        message: `Novu notification delivery failed: ${eventType}`,
-        context: {
-          provider: "novu",
-          eventId,
-          eventType,
-          transactionId: transactionId ?? null,
-          subscriberId: event.subscriberId ?? event.data?.subscriberId ?? null,
-          workflowId: event.workflowId ?? event.data?.workflowId ?? null,
-          error: errorText,
-        },
-      });
-    } else if (
-      transactionId &&
-      isNovuDeliveredEvent(eventType, status) &&
-      typeof prisma.notificationOutbox?.updateMany === "function"
-    ) {
-      await prisma.notificationOutbox.updateMany({
-        where: { transactionId, status: "PENDING" },
-        data: {
-          status: "SENT",
-          sentAt: new Date(),
-          nextRetryAt: null,
-          lastError: null,
-        },
-      });
-    }
+    await processNovuWebhookPayload(event, eventId);
   } catch (err) {
-    processingError = err instanceof Error ? err.message : String(err);
+    const processingError = formatError(err);
     Sentry.captureException(err, {
       tags: { subsystem: "notifications", provider: "novu" },
       contexts: { webhook: { eventId, eventType, transactionId } },
     });
-    throw err;
-  } finally {
     await markWebhookEventProcessed(eventId, processingError, claim);
+    return NextResponse.json({ error: "Processing failed" }, { status: 500 });
   }
 
+  await markWebhookEventProcessed(eventId, undefined, claim);
   return NextResponse.json({ received: true });
 }

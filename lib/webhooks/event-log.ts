@@ -1,11 +1,5 @@
 /**
- * Shared webhook bookkeeping: the delivery log that gives every provider
- * idempotency, and the DB-health probe handlers gate on.
- *
- * #1134 P1-2 — moved out of `app/api/webhooks/utils.ts` because the Stream
- * dispatch now lives in `lib/` (so the stuck-event sweeper can re-drive it) and
- * `lib/` may not import from `app/`. `app/api/webhooks/utils.ts` re-exports
- * these, so every existing caller is unchanged.
+ * Shared webhook idempotency ledger and connectivity health probe.
  */
 import { Prisma } from "@prisma/client";
 
@@ -15,23 +9,54 @@ import {
   reportSentryMessage,
 } from "@/lib/observability/report";
 
+export type WebhookClaim = { claimedAt: Date | null };
+
+export function toInputJson(value: unknown): Prisma.InputJsonValue {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(toInputJson);
+  }
+  if (typeof value === "object" && value !== null) {
+    const out: { [key: string]: Prisma.InputJsonValue | null } = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = v === null ? null : toInputJson(v);
+    }
+    return out;
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  return "";
+}
+
+/** Terminal error prefixes skipped by background retry sweeps. */
+export const TERMINAL_ERROR_PREFIXES = ["gave up:", "permanent:"] as const;
+
+/** Formats a permanent unprocessable error marker for `WebhookEvent.error`. */
+export function permanentFailure(reason: string): string {
+  return `permanent: ${reason}`;
+}
+
+/** Returns true when `error` carries a terminal prefix that must never be retried. */
+export function isTerminalWebhookError(error: string | null): boolean {
+  if (error === null) return false;
+  return TERMINAL_ERROR_PREFIXES.some((prefix) => error.startsWith(prefix));
+}
+
 /**
- * Lightweight DB health check for webhook handlers.
- *
- * Returns false when the DB is unreachable or mid-migration.
- * Webhook handlers should return 503 when this is false — payment gateways
- * (Stripe, Razorpay, etc.) will retry the webhook automatically after a
- * delay, so no events are lost.
+ * Lightweight DB connectivity check so webhook handlers return 503 during outages.
  */
 export async function isDbHealthy(): Promise<boolean> {
   try {
-    // ORM connectivity probe (no raw SQL): a LIMIT 1 read proves the connection.
     await prisma.user.findFirst({ select: { id: true } });
     return true;
   } catch (error) {
-    // Handlers 503 on false so gateways retry — correct for a transient
-    // outage, but a persistent non-connectivity fault (e.g. schema drift)
-    // would 503 every webhook forever with no signal. Report it (#1125).
     reportSentryError(error, {
       subsystem: "webhooks",
       op: "isDbHealthy",
@@ -41,22 +66,109 @@ export async function isDbHealthy(): Promise<boolean> {
   }
 }
 
-/**
- * Log webhook event for audit trail and debugging.
- * Prevents duplicate processing via unique eventId constraint.
- *
- * If a previous attempt exists but failed (has error and processed=true),
- * it is eligible for retry — returns isNew: true so the handler re-runs.
- */
-/**
- * The claim a worker holds on a row while it processes it (#1589 M-P0-03):
- * the `claimedAt` value the row carried when this worker took it (null on a
- * fresh row). `markWebhookEventProcessed` fences its completion on it, so a
- * worker whose claim was taken over by the staleness escape cannot finalise
- * the newer worker's row.
- */
-export type WebhookClaim = { claimedAt: Date | null };
+async function resolveExistingWebhookEvent(
+  existing: {
+    id: string;
+    processed: boolean;
+    error: string | null;
+    claimedAt: Date | null;
+    receivedAt: Date;
+  },
+  eventId: string,
+  payload: unknown,
+): Promise<{ isNew: boolean; eventRecordId?: string; claim?: WebhookClaim }> {
+  if (existing.processed && existing.error === null) {
+    console.log(
+      `⚠️ Webhook event ${eventId} already processed successfully, skipping`,
+    );
+    return { isNew: false, eventRecordId: existing.id };
+  }
 
+  if (isTerminalWebhookError(existing.error)) {
+    return { isNew: false, eventRecordId: existing.id };
+  }
+
+  if (existing.error !== null) {
+    const claimedAt = new Date();
+    const claimed = await prisma.webhookEvent.updateMany({
+      where: {
+        eventId,
+        error: { not: null },
+        processed: false,
+        claimedAt: existing.claimedAt,
+        NOT: TERMINAL_ERROR_PREFIXES.map((p) => ({
+          error: { startsWith: p },
+        })),
+      },
+      data: {
+        processed: false,
+        processedAt: null,
+        error: null,
+        claimedAt,
+        payload: toInputJson(payload),
+      },
+    });
+    if (claimed.count === 0) {
+      console.log(
+        `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
+      );
+      return { isNew: false, eventRecordId: existing.id };
+    }
+    console.log(
+      `🔄 Webhook event ${eventId} previously failed, allowing retry`,
+    );
+    return {
+      isNew: true,
+      eventRecordId: existing.id,
+      claim: { claimedAt },
+    };
+  }
+
+  const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+  const claimStamp = existing.claimedAt ?? existing.receivedAt;
+  const age = Date.now() - new Date(claimStamp).getTime();
+  if (age > STALE_THRESHOLD_MS) {
+    const claimedAt = new Date();
+    const claimed = await prisma.webhookEvent.updateMany({
+      where: {
+        eventId,
+        processed: false,
+        claimedAt: existing.claimedAt,
+      },
+      data: {
+        processed: false,
+        processedAt: null,
+        error: null,
+        claimedAt,
+        payload: toInputJson(payload),
+      },
+    });
+    if (claimed.count === 0) {
+      console.log(
+        `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
+      );
+      return { isNew: false, eventRecordId: existing.id };
+    }
+    console.log(
+      `🔄 Webhook event ${eventId} stale (in-progress for ${Math.round(age / 1000)}s), allowing retry`,
+    );
+    return {
+      isNew: true,
+      eventRecordId: existing.id,
+      claim: { claimedAt },
+    };
+  }
+
+  console.log(
+    `⚠️ Webhook event ${eventId} currently being processed, skipping`,
+  );
+  return { isNew: false, eventRecordId: existing.id };
+}
+
+/**
+ * Records an inbound webhook delivery and claims execution rights atomically.
+ * Concurrent workers facing active leases (< 5m) or unique violations receive `isNew: false`.
+ */
 export async function logWebhookEvent(
   provider: string,
   eventId: string,
@@ -65,131 +177,27 @@ export async function logWebhookEvent(
   signature?: string,
 ): Promise<{ isNew: boolean; eventRecordId?: string; claim?: WebhookClaim }> {
   try {
-    // Check if event already exists
     const existing = await prisma.webhookEvent.findUnique({
       where: { eventId },
     });
 
     if (existing) {
-      // Three-state machine using processed + error fields:
-      //   processed=true  + no error  → SUCCESS: skip (idempotent)
-      //   processed=true  + error set → FAILED:  allow retry (reset & re-process)
-      //   processed=false + no error  → IN-PROGRESS: skip (another worker handling it)
-      // This avoids a separate status enum while letting providers like Stream
-      // retry failed events instead of silently dropping them.
-      // If previously processed successfully, skip (true idempotency)
-      if (existing.processed && existing.error == null) {
-        console.log(
-          `⚠️ Webhook event ${eventId} already processed successfully, skipping`,
-        );
-        return { isNew: false, eventRecordId: existing.id };
-      }
-
-      // If previous attempt failed, allow retry by resetting state.
-      //
-      // The claim stamp MUST move with it. The staleness check below measures
-      // the age of the claim, and a retried row that kept its original stamp
-      // was instantly older than the 5-minute threshold, so the in-progress
-      // guard fell open for exactly the rows it exists to protect and two
-      // sweeper workers could claim the same event simultaneously.
-      //
-      // #1589 M-P0-03 — the stamp is `claimedAt`, never `receivedAt`: the
-      // sweeper's 168 h give-up ages on receivedAt, and refreshing it here on
-      // every re-drive kept a crash-looping row young forever (#1205-triage).
-      //
-      // The `updateMany` + count is the claim: two workers racing here, only one
-      // sees `count === 1`, and the loser is told the row is not new. A bare
-      // `update` cannot express that — it succeeds for both.
-      if (existing.error != null) {
-        const claimedAt = new Date();
-        const claimed = await prisma.webhookEvent.updateMany({
-          where: { eventId, error: { not: null } },
-          data: {
-            processed: false,
-            processedAt: null,
-            error: null,
-            claimedAt,
-            payload: payload as Prisma.InputJsonValue,
-          },
-        });
-        if (claimed.count === 0) {
-          console.log(
-            `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
-          );
-          return { isNew: false, eventRecordId: existing.id };
-        }
-        console.log(
-          `🔄 Webhook event ${eventId} previously failed, allowing retry`,
-        );
-        return {
-          isNew: true,
-          eventRecordId: existing.id,
-          claim: { claimedAt },
-        };
-      }
-
-      // Currently being processed (processed=false, no error).
-      // Add staleness check: if the event has been "in progress" for > 5 minutes,
-      // treat it as abandoned (e.g., after() callback didn't run due to crash)
-      // and allow reprocessing.
-      const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-      // The claim is the freshness signal; a never-claimed row ages from arrival.
-      const claimStamp = existing.claimedAt ?? existing.receivedAt;
-      const age = Date.now() - new Date(claimStamp).getTime();
-      if (age > STALE_THRESHOLD_MS) {
-        // Claim it atomically. Reading the age and then writing is check-then-act:
-        // two workers both see the row as stale, both write, and both believe
-        // they own it — so the same event gets processed twice. Scoping the
-        // update to the stamp we read means exactly one write can land.
-        const claimedAt = new Date();
-        const claimed = await prisma.webhookEvent.updateMany({
-          where: { eventId, claimedAt: existing.claimedAt },
-          data: {
-            processed: false,
-            processedAt: null,
-            error: null,
-            claimedAt,
-            payload: payload as Prisma.InputJsonValue,
-          },
-        });
-        if (claimed.count === 0) {
-          console.log(
-            `⚠️ Webhook event ${eventId} claimed by another worker, skipping`,
-          );
-          return { isNew: false, eventRecordId: existing.id };
-        }
-        console.log(
-          `🔄 Webhook event ${eventId} stale (in-progress for ${Math.round(age / 1000)}s), allowing retry`,
-        );
-        return {
-          isNew: true,
-          eventRecordId: existing.id,
-          claim: { claimedAt },
-        };
-      }
-
-      console.log(
-        `⚠️ Webhook event ${eventId} currently being processed, skipping`,
-      );
-      return { isNew: false, eventRecordId: existing.id };
+      return resolveExistingWebhookEvent(existing, eventId, payload);
     }
 
-    // Create new event record
     const event = await prisma.webhookEvent.create({
       data: {
         provider,
         eventId,
         eventType,
-        payload: payload as Prisma.InputJsonValue,
+        payload: toInputJson(payload),
         signature,
         processed: false,
       },
     });
 
-    // A fresh row has never been claimed; its worker's fence is `claimedAt: null`.
     return { isNew: true, eventRecordId: event.id, claim: { claimedAt: null } };
   } catch (error) {
-    // Handle unique constraint violation (race condition)
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -202,63 +210,23 @@ export async function logWebhookEvent(
 }
 
 /**
- * Close out a delivery: `processed=true` always, plus the error if there was one.
- *
- * The docstring used to say "only sets processed=true on success", which the
- * implementation contradicts and has to — `processed=true` with a non-null
- * `error` is the FAILED state that `logWebhookEvent` re-drives. Setting it only
- * on success would leave failures stuck in IN-PROGRESS forever.
- *
- * Empty error stays empty (`??`, not `||`): still FAILED-shaped, never SUCCESS.
+ * Closes out a webhook delivery attempt with a strictly advancing `claimedAt` stamp so completed
+ * or errored rows can never match unclaimed stale-processing predicates or duplicate claims.
  */
-/**
- * Error prefixes that mean "never re-drive this row".
- *
- * The sweeper re-drives any row carrying an error, bounded by a 168-hour
- * give-up window. That is right for a transient failure and wrong for a
- * permanent one: a payload that does not match its schema will not match it in
- * six days either, so the row churns through ~1,000 pointless re-drives and
- * then ages out anyway.
- *
- * `gave up:` was already the terminal marker, written by the sweeper itself
- * when a deferred event ages past the cap, and matched by a string literal in
- * its `where` clause with a comment asking whoever edits it to keep the two in
- * sync by hand. This makes the set a shared constant instead.
- *
- * The prefix is load-bearing; everything after it is for whoever reads the row.
- */
-export const TERMINAL_ERROR_PREFIXES = [
-  // Aged past the give-up window. Written by sweep-stuck-webhook-events.
-  "gave up:",
-  // Structurally impossible to process — schema mismatch. Written at dispatch.
-  "permanent:",
-] as const;
-
-/** Build the prefix marker a permanently-unprocessable row should carry. */
-export function permanentFailure(reason: string): string {
-  return `permanent: ${reason}`;
-}
-
-/** True when this row must never be re-driven, whatever its age. */
-export function isTerminalWebhookError(error: string | null): boolean {
-  if (error == null) return false;
-  return TERMINAL_ERROR_PREFIXES.some((prefix) => error.startsWith(prefix));
-}
-
 export async function markWebhookEventProcessed(
   eventId: string,
   error?: string,
-  /**
-   * The claim this worker holds; when given, the completion is fenced on it so
-   * a worker the staleness escape already superseded writes nothing. The
-   * sweeper re-drive (which stamps its own claim) passes none and stays as-is.
-   */
   claim?: WebhookClaim,
 ): Promise<void> {
+  const hasError = error !== undefined;
+  const nextClaimedAt = new Date(
+    Math.max(Date.now(), (claim?.claimedAt?.getTime() ?? 0) + 1),
+  );
   const data = {
-    processed: true,
-    processedAt: new Date(),
-    error: error === undefined ? null : (error ?? "unknown handler error"),
+    processed: !hasError,
+    processedAt: hasError ? null : new Date(),
+    claimedAt: nextClaimedAt,
+    error: hasError ? error : null,
   };
   if (!claim) {
     await prisma.webhookEvent.update({ where: { eventId }, data });

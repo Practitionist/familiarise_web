@@ -4,7 +4,7 @@
  * `authClient.signOut` directly). That makes the wrapper the one place the
  * cached display identity has to be cleared, so this test pins it: without it,
  * a shared or public device keeps the previous user's name and avatar in
- * localStorage until someone else's session happens to resolve. #636
+ * localStorage until someone else's session happens to resolve.
  */
 jest.mock("better-auth/react", () => ({
   createAuthClient: () => ({
@@ -15,7 +15,7 @@ jest.mock("better-auth/react", () => ({
     signOut: jest.fn(() => Promise.resolve({ data: null })),
     useSession: jest.fn(),
     getSession: jest.fn(),
-    sendVerificationEmail: jest.fn(),
+    emailOtp: {},
   }),
 }));
 // `jest.mock` REPLACES a module wholesale, so this factory has to enumerate
@@ -27,8 +27,12 @@ jest.mock("better-auth/react", () => ({
 jest.mock("better-auth/client/plugins", () => ({
   customSessionClient: () => ({}),
   twoFactorClient: () => ({}),
+  emailOTPClient: () => ({}),
 }));
 jest.mock("@better-auth/sso/client", () => ({ ssoClient: () => ({}) }));
+jest.mock("@better-auth/passkey/client", () => ({
+  passkeyClient: () => ({}),
+}));
 
 import { authClient, signOut } from "@/lib/auth-client";
 import {

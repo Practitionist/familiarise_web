@@ -32,17 +32,28 @@ export function CaseInsertMenu({
   suggested,
   all,
   onInsert,
+  onSelectReply,
 }: Readonly<{
   replies: SavedReply[];
   suggested: ArticleLink[];
   all: ArticleLink[];
   onInsert: (text: string) => void;
+  onSelectReply?: (reply: SavedReply) => void;
 }>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const articles = insertMenuArticles(suggested, all, query);
   const pick = (text: string) => {
     onInsert(text);
+    setOpen(false);
+    setQuery("");
+  };
+  const pickReply = (r: SavedReply) => {
+    if (r.thenStatus && onSelectReply) {
+      onSelectReply(r);
+    } else {
+      onInsert(r.body);
+    }
     setOpen(false);
     setQuery("");
   };
@@ -64,10 +75,15 @@ export function CaseInsertMenu({
                 <button
                   type="button"
                   className={item}
-                  onClick={() => pick(r.body)}
+                  onClick={() => pickReply(r)}
                 >
-                  <span className="block font-medium text-foreground">
-                    {r.title}
+                  <span className="flex items-center justify-between gap-2 font-medium text-foreground">
+                    <span>{r.title}</span>
+                    {r.thenStatus === "RESOLVED" && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                        Send + Resolve
+                      </span>
+                    )}
                   </span>
                   <span className="line-clamp-1 text-xs text-muted-foreground">
                     {r.body}

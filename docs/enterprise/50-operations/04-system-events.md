@@ -16,17 +16,17 @@ last-reviewed: 2026-06-05
 > here too because callers need one place to look up "what string do I
 > emit"), but they are distinct tables with distinct audiences and
 > distinct read paths. If you're deciding where a new event goes: does an
-> *org member* need to see it? → `OrgAuditLog` action. Does only
-> *engineering* need the stack trace? → `SystemEvent` category.
+> _org member_ need to see it? → `OrgAuditLog` action. Does only
+> _engineering_ need the stack trace? → `SystemEvent` category.
 
 Familiarise keeps **two** event streams, not one. This separation
 prevents engineering noise (Prisma stack traces, internal IDs, raw
 worker errors) from leaking into the org-visible audit log.
 
-| Table | Audience | Content |
-|---|---|---|
-| `OrgAuditLog` | Org members (MAINTAINER+ readable) | Clean human prose: "PO WZ-2026-0042 created (INR 500,000)" |
-| `SystemEvent` | Platform admins only | Raw engineering payload: stack frames, Prisma error syntax, HTTP responses |
+| Table         | Audience                           | Content                                                                    |
+| ------------- | ---------------------------------- | -------------------------------------------------------------------------- |
+| `OrgAuditLog` | Org members (MAINTAINER+ readable) | Clean human prose: "PO WZ-2026-0042 created (INR 500,000)"                 |
+| `SystemEvent` | Platform admins only               | Raw engineering payload: stack frames, Prisma error syntax, HTTP responses |
 
 Both can record the **same incident** — a failed data-export job
 writes a clean prose row to `OrgAuditLog` ("Data export bundle failed
@@ -113,7 +113,10 @@ enum SystemEventSeverity { INFO  WARN  ERROR }
 Two helpers in `lib/enterprise/system-events.ts`:
 
 ```ts
-import { recordSystemEvent, recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  recordSystemEvent,
+  recordSystemError,
+} from "@/lib/enterprise/system-events";
 
 // Routine: a normal lifecycle breadcrumb
 await recordSystemEvent({
@@ -128,8 +131,8 @@ await recordSystemEvent({
 await recordSystemError({
   organizationId: orgId,
   category: "DATA_EXPORT",
-  summary: "Data export bundle failed",  // ← prose summary
-  err,                                    // ← raw exception
+  summary: "Data export bundle failed", // ← prose summary
+  err, // ← raw exception
   context: { exportId: job.id },
   correlationId: job.id,
 });
@@ -144,14 +147,18 @@ transaction adjacent to the system event:
 
 ```ts
 await prisma.$transaction(async (tx) => {
-  await tx.orgDataExportJob.update({ where: { id: job.id }, data: { status: "FAILED" } });
+  await tx.orgDataExportJob.update({
+    where: { id: job.id },
+    data: { status: "FAILED" },
+  });
   await tx.orgAuditLog.create({
     data: {
       organizationId: job.organizationId,
       category: "SYSTEM",
       action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_FAILED,
       // CLEAN prose only. Never interpolate err.message here.
-      description: "Data export bundle could not be generated. Engineering notified.",
+      description:
+        "Data export bundle could not be generated. Engineering notified.",
       details: { exportId: job.id },
     },
   });
@@ -191,62 +198,67 @@ archive, and the existing webhook-secret-rotation / data-export rows.
 > ([`expert-lifecycle`](../30-programs-and-lifecycle/03-expert-lifecycle.md)).
 
 ### `MEMBER`
-MEMBER events fire on every change to an organization's human membership roster — from adding or removing a member to role changes and the full invite flow — including the automatic expiry that the `cleanup-stale-invitations` cron emits for 14-day-old pending invites.
 
-| action | Emission point |
-|---|---|
-| `MEMBER_ADDED` / `MEMBER_REACTIVATED` / `MEMBER_REMOVED` | members CRUD routes |
-| `ROLE_CHANGE` / `STATUS_CHANGE` | member PATCH |
-| `INVITE_SENT` / `INVITE_RESENT` / `INVITE_ACCEPTED` / `INVITE_REVOKED` | invite routes |
-| `INVITE_EXPIRED` | `cleanup-stale-invitations` cron (PENDING invite past 14d) |
+MEMBER events fire on every change to an organization's human membership roster — from adding or removing a member to role changes and the full invite flow — including the automatic expiry that the daily `cleanup-auth-tokens` cron emits for pending invites past their `expiresAt`.
+
+| action                                                                                   | Emission point                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MEMBER_ADDED` / `MEMBER_REACTIVATED` / `MEMBER_REMOVED`                                 | members CRUD routes                                                                                                                                                                                                |
+| `ROLE_CHANGE` / `STATUS_CHANGE`                                                          | member PATCH                                                                                                                                                                                                       |
+| `INVITE_SENT` / `INVITE_RESENT` / `INVITE_ACCEPTED` / `INVITE_REVOKED`                   | invite routes                                                                                                                                                                                                      |
+| `INVITE_EXPIRED`                                                                         | `cleanup-auth-tokens` cron (PENDING invite past `expiresAt`)                                                                                                                                                       |
 | `APPOINTMENT_CANCELLED_FOR_ORG` / `APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG` **(#1860)** | an operator cancels, or requests a reschedule of, a member's org-funded 1:1 or subscription booking "Acting for <Org>"; written on the booking's transaction, in MEMBER because the booking is the member's record |
 
 ### `CONTRACT`
+
 CONTRACT events span a contract's entire state machine — creation, countersigning, termination, and natural expiry fired by cron — plus the v2 supersession and auto-renew actions that result from the `advance-program-cycles` / `auto-renew-contracts` jobs.
 
-| action | Emission point |
-|---|---|
-| `CONTRACT_CREATED` / `CONTRACT_SIGNED` / `CONTRACT_TERMINATED` / `CONTRACT_EXPIRED` | contract routes + `expire-contracts` cron |
-| `CONTRACT_SUPERSEDED` **(v2 #779)** | amend/renew/supersede route (manual term replacement) |
-| `CONTRACT_AUTO_RENEWED` **(v2 #779)** | `auto-renew-contracts` cron (mints RENEWAL successor, EXPIREs old) |
+| action                                                                              | Emission point                                                     |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `CONTRACT_CREATED` / `CONTRACT_SIGNED` / `CONTRACT_TERMINATED` / `CONTRACT_EXPIRED` | contract routes + `expire-contracts` cron                          |
+| `CONTRACT_SUPERSEDED` **(v2 #779)**                                                 | amend/renew/supersede route (manual term replacement)              |
+| `CONTRACT_AUTO_RENEWED` **(v2 #779)**                                               | `auto-renew-contracts` cron (mints RENEWAL successor, EXPIREs old) |
 
 ### `PROGRAM`
+
 PROGRAM events cover the full entitlement lifecycle — create, pause, archive, delete, and all assignment mutations — plus the cron-driven cycle rollover that mints a successor assignment at each period boundary.
 
-| action | Emission point |
-|---|---|
-| `PROGRAM_CREATED` / `PROGRAM_PAUSED` / `PROGRAM_DELETED` | program CRUD (DELETE no longer reuses `PROGRAM_PAUSED`) |
-| `PROGRAM_ARCHIVED` **(v2 #777 §B)** | archive/unarchive (soft-hide; financial history preserved) |
-| `PROGRAM_ASSIGNED` / `PROGRAM_ASSIGNMENT_UPDATED` / `PROGRAM_UNASSIGNED` | assignment routes |
-| `PROGRAM_ASSIGNMENT_ROLLED` **(v2 #779)** | `advance-program-cycles` cron — one row per ROLL **and** per CLOSE (`details.closed` distinguishes) |
-| `ASSIGNMENT_CLOSED_BY_CONTRACT` **(#1854)** | `closeContractSeats`, from the manual TERMINATED/EXPIRED cascade and the nightly contract-expiry job: one row per seat the ending contract closed |
-| `RATE_CARD_BUMPED` | rate-card change |
+| action                                                                   | Emission point                                                                                                                                    |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PROGRAM_CREATED` / `PROGRAM_PAUSED` / `PROGRAM_DELETED`                 | program CRUD (DELETE no longer reuses `PROGRAM_PAUSED`)                                                                                           |
+| `PROGRAM_ARCHIVED` **(v2 #777 §B)**                                      | archive/unarchive (soft-hide; financial history preserved)                                                                                        |
+| `PROGRAM_ASSIGNED` / `PROGRAM_ASSIGNMENT_UPDATED` / `PROGRAM_UNASSIGNED` | assignment routes                                                                                                                                 |
+| `PROGRAM_ASSIGNMENT_ROLLED` **(v2 #779)**                                | `advance-program-cycles` cron — one row per ROLL **and** per CLOSE (`details.closed` distinguishes)                                               |
+| `ASSIGNMENT_CLOSED_BY_CONTRACT` **(#1854)**                              | `closeContractSeats`, from the manual TERMINATED/EXPIRED cascade and the nightly contract-expiry job: one row per seat the ending contract closed |
+| `RATE_CARD_BUMPED`                                                       | rate-card change                                                                                                                                  |
 
 ### `WALLET`
+
 Wallet events capture prepaid-balance mutations: a top-up intent (`WALLET_TOPUP`), the confirmed credit once the Razorpay webhook lands, a refund back to the gateway, and any booking-time debit that fails the overdraft guard.
 
-| action | Emission point |
-|---|---|
-| `WALLET_TOPUP` / `WALLET_TOPUP_CONFIRMED` | top-up initiate + webhook confirm |
-| `WALLET_REFUND` | wallet refund |
-| `WALLET_DEBIT_FAILED` | debit attempt with insufficient balance |
+| action                                    | Emission point                          |
+| ----------------------------------------- | --------------------------------------- |
+| `WALLET_TOPUP` / `WALLET_TOPUP_CONFIRMED` | top-up initiate + webhook confirm       |
+| `WALLET_REFUND`                           | wallet refund                           |
+| `WALLET_DEBIT_FAILED`                     | debit attempt with insufficient balance |
 
 ### `INVOICE`
+
 INVOICE events record the full arc of an organization's billing document — from purchase-order creation and invoice generation through payment, overdue escalation, cancellation, and refund — and are the primary audit trail for GST compliance and dunning state.
 
-| action | Emission point |
-|---|---|
-| `PURCHASE_ORDER_CREATED` | PO route |
-| `INVOICE_GENERATED` / `INVOICE_ISSUED` | `generate-subscription-invoices` (daily) + accrual rollup (`settle-invoice-accruals`, monthly) |
-| `INVOICE_OVERDUE` **(v2 #779)** | `dunning` cron stage 1 (ISSUED→OVERDUE, stamps `markedOverdueAt`) |
-| `INVOICE_DUNNING_SUSPENDED` **(#812)** | `dunning` cron stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) when an OVERDUE invoice stays unpaid 7 days past the last reminder; stamps `dunningSuspendedAt` |
-| `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID` | invoice pay flow |
-| `INVOICE_CANCELLED` / `INVOICE_VOIDED` / `INVOICE_REFUNDED` / `REFUND_DENIED` | invoice admin actions |
-| `FUNDING_SOURCE_CHANGED` / `BILLING_ACCOUNT_UPDATED` **(#1860)** | billing-account PATCH; billing-account edits used to write a SETTINGS row and moved here so operations-only readers no longer see a credit limit |
-| `PURCHASE_ORDER_UPDATED` / `PURCHASE_ORDER_DELETED` **(#1860)** | PO money and term edits, and PO deletes |
-| `INVOICE_UPDATED` **(#1860)** | invoice due-date or PDF edits |
-| `REIMBURSEMENTS_EXPORTED` **(#1860)** | the reimbursements export |
-| `INVOICE_ROLLED_UP` | accrual rollup in `settle-invoice-accruals` (parent rolls up child invoices), which absorbed the retired `consolidated-invoice-rollup` job (#813) |
+| action                                                                        | Emission point                                                                                                                                          |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PURCHASE_ORDER_CREATED`                                                      | PO route                                                                                                                                                |
+| `INVOICE_GENERATED` / `INVOICE_ISSUED`                                        | `generate-subscription-invoices` (daily) + accrual rollup (`settle-invoice-accruals`, monthly)                                                          |
+| `INVOICE_OVERDUE` **(v2 #779)**                                               | `dunning` cron stage 1 (ISSUED→OVERDUE, stamps `markedOverdueAt`)                                                                                       |
+| `INVOICE_DUNNING_SUSPENDED` **(#812)**                                        | `dunning` cron stage 3 (`ENABLE_DUNNING_SUSPEND`-gated) when an OVERDUE invoice stays unpaid 7 days past the last reminder; stamps `dunningSuspendedAt` |
+| `INVOICE_PAYMENT_INITIATED` / `INVOICE_PAID`                                  | invoice pay flow                                                                                                                                        |
+| `INVOICE_CANCELLED` / `INVOICE_VOIDED` / `INVOICE_REFUNDED` / `REFUND_DENIED` | invoice admin actions                                                                                                                                   |
+| `FUNDING_SOURCE_CHANGED` / `BILLING_ACCOUNT_UPDATED` **(#1860)**              | billing-account PATCH; billing-account edits used to write a SETTINGS row and moved here so operations-only readers no longer see a credit limit        |
+| `PURCHASE_ORDER_UPDATED` / `PURCHASE_ORDER_DELETED` **(#1860)**               | PO money and term edits, and PO deletes                                                                                                                 |
+| `INVOICE_UPDATED` **(#1860)**                                                 | invoice due-date or PDF edits                                                                                                                           |
+| `REIMBURSEMENTS_EXPORTED` **(#1860)**                                         | the reimbursements export                                                                                                                               |
+| `INVOICE_ROLLED_UP`                                                           | accrual rollup in `settle-invoice-accruals` (parent rolls up child invoices), which absorbed the retired `consolidated-invoice-rollup` job (#813)       |
 
 > Dunning **stage 2** (escalation reminders, 7d cadence × max 3) does
 > **not** emit a distinct audit action — it bumps
@@ -257,69 +269,75 @@ INVOICE events record the full arc of an organization's billing document — fro
 > together in one Serializable transaction.
 
 ### `PAYOUT`
+
 PAYOUT events trace the full disbursement lifecycle — from batch creation and gateway submission through terminal success, failure, or reversal — as well as the earnings hold/release gate and the manual clawback path when a refund hits an already-completed payout.
 
-| action | Emission point |
-|---|---|
-| `PAYOUT_INITIATED` / `PAYOUT_PROCESSED` / `PAYOUT_COMPLETED` / `PAYOUT_CANCELLED` / `PAYOUT_FAILED` | payout pipeline + webhooks |
-| `EARNINGS_HELD` / `EARNINGS_RELEASED` | hold gate + release cron |
-| `PAYOUT_STATUS_OVERRIDDEN` | the org payout PATCH moving a batch to APPROVED; since #1860 its `details` carry `selfApproved: true` when the sole approver of a one-person org approved their own batch |
-| `PAYOUT_RECIPIENT_CHANGED` **(#1854)** | where an EXPERT's org share is paid changed, from the member PATCH or the Org › Payouts expert-routing section, through `auditPayoutRecipientChange` |
-| `PAYOUT_CLAWBACK` | `applyRefundCascade` when a refund hits an already-COMPLETED payout (recovered from the next payout) |
-| `PAYOUT_REVERSED` | `payout.reversed` webhook (bank rejected a submitted transfer). On the org side `markOrgPayoutReversed` writes this audit action; the consultant side `markConsultantPayoutReversed` claims COMPLETED→REVERSED, posts the inverse PAYOUT journal, and re-opens its earnings to READY but has no consultant-scoped audit table, so it logs the equivalent as structured output (#812). |
+| action                                                                                              | Emission point                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PAYOUT_INITIATED` / `PAYOUT_PROCESSED` / `PAYOUT_COMPLETED` / `PAYOUT_CANCELLED` / `PAYOUT_FAILED` | payout pipeline + webhooks                                                                                                                                                                                                                                                                                                                                                            |
+| `EARNINGS_HELD` / `EARNINGS_RELEASED`                                                               | hold gate + release cron                                                                                                                                                                                                                                                                                                                                                              |
+| `PAYOUT_STATUS_OVERRIDDEN`                                                                          | the org payout PATCH moving a batch to APPROVED; since #1860 its `details` carry `selfApproved: true` when the sole approver of a one-person org approved their own batch                                                                                                                                                                                                             |
+| `PAYOUT_RECIPIENT_CHANGED` **(#1854)**                                                              | where an EXPERT's org share is paid changed, from the member PATCH or the Org › Payouts expert-routing section, through `auditPayoutRecipientChange`                                                                                                                                                                                                                                  |
+| `PAYOUT_CLAWBACK`                                                                                   | `applyRefundCascade` when a refund hits an already-COMPLETED payout (recovered from the next payout)                                                                                                                                                                                                                                                                                  |
+| `PAYOUT_REVERSED`                                                                                   | `payout.reversed` webhook (bank rejected a submitted transfer). On the org side `markOrgPayoutReversed` writes this audit action; the consultant side `markConsultantPayoutReversed` claims COMPLETED→REVERSED, posts the inverse PAYOUT journal, and re-opens its earnings to READY but has no consultant-scoped audit table, so it logs the equivalent as structured output (#812). |
 
 ### `SETTINGS`
+
 Configuration changes that affect org identity, access control, or compliance posture all land in SETTINGS — from SSO toggling and domain verification to audit-log exports.
 
-| action | Emission point |
-|---|---|
-| `SETTINGS_CHANGED` | org settings PATCH |
-| `SSO_ENABLED` / `SSO_DISABLED` | SSO config |
-| `DOMAIN_CLAIMED` / `DOMAIN_VERIFIED` / `DOMAIN_RELEASED` | domain-claim routes (DNS TXT verify) |
-| `AUDIT_LOG_EXPORTED` | `GET …/audit/export` (the CSV exporter is itself auditable) |
+| action                                                   | Emission point                                              |
+| -------------------------------------------------------- | ----------------------------------------------------------- |
+| `SETTINGS_CHANGED`                                       | org settings PATCH                                          |
+| `SSO_ENABLED` / `SSO_DISABLED`                           | SSO config                                                  |
+| `DOMAIN_CLAIMED` / `DOMAIN_VERIFIED` / `DOMAIN_RELEASED` | domain-claim routes (DNS TXT verify)                        |
+| `AUDIT_LOG_EXPORTED`                                     | `GET …/audit/export` (the CSV exporter is itself auditable) |
 
 ### `CONSENT`
+
 CONSENT events track the DPDP data-principal lifecycle — a grant when an org records consent on behalf of a user, a withdrawal when that user exercises their §12 erasure right, and a breach report when the platform raises a data-breach incident.
 
-| action | Emission point |
-|---|---|
+| action                                  | Emission point                       |
+| --------------------------------------- | ------------------------------------ |
 | `CONSENT_GRANTED` / `CONSENT_WITHDRAWN` | consent routes (DPDP grant/withdraw) |
-| `DATA_BREACH_REPORTED` | breach intake |
+| `DATA_BREACH_REPORTED`                  | breach intake                        |
 
 ### `CATALOG`
+
 Sponsored-plan visibility is managed through CATALOG events, which fire when an org's billing admin adds a plan to or removes one from the sponsored catalog.
 
-| action | Emission point |
-|---|---|
-| `CATALOG_PLAN_CREATED` | `POST …/catalog` (OWNER adds a sponsored plan) |
-| `CATALOG_PLAN_DEACTIVATED` | `DELETE …/catalog` bulk deactivate (one row, `details.planIds`) |
+| action                                                                                | Emission point                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CATALOG_PLAN_CREATED`                                                                | `POST …/catalog` (OWNER adds a sponsored plan)                                                                                                                                                        |
+| `CATALOG_PLAN_DEACTIVATED`                                                            | `DELETE …/catalog` bulk deactivate (one row, `details.planIds`)                                                                                                                                       |
 | `PLAN_MATERIAL_ADDED` / `PLAN_MATERIAL_UPDATED` / `PLAN_MATERIAL_REMOVED` **(#1860)** | an org role changes a file on an org-owned plan through `materials.manage.orgPlan`; the row targets the delivering expert's membership, and the plan owner's materials GET returns it as `orgChanges` |
 
 ### `SYSTEM`
+
 The catch-all for platform-actor events (the actor is the platform or a
 regulatory surface, not a human member).
 
-| action | Emission point |
-|---|---|
-| `VERIFIED` / `SUSPENDED` / `REACTIVATED` / `DEACTIVATED` | org status machine |
-| `VERIFICATION_REJECTED` / `VERIFICATION_RESUBMITTED` **(v2 #779 §A)** | PENDING_VERIFICATION resubmit loop (admin bounces → OWNER re-submits; org stays PENDING throughout) |
-| `ORG_DELETED` | `DELETE …/[orgId]` (row outlives the org via soft-deleted membership FK) |
-| `AUDIT_PRUNED` | `prune-audit-logs` cron (one summary row/org/run: `{deleted7y,deleted2y,cutoff7y,cutoff2y}`) |
-| `STREAM_RECORDING_DELETED` / `STREAM_CALLS_EXPORTED` / `STREAM_RETENTION_CHANGED` | Stream retention cron + export + settings |
-| `USER_ERASURE_REQUESTED` / `_PROCESSED` / `_REJECTED` / `_SLA_WARNING` | DPDP §12 erasure lifecycle |
-| `DATA_EXPORT_REQUESTED` / `_GENERATED` / `_FAILED` / `_DOWNLOADED` | DPDP §11 access-bundle lifecycle (`process-data-exports` worker writes GENERATED/FAILED) |
+| action                                                                            | Emission point                                                                                      |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `VERIFIED` / `SUSPENDED` / `REACTIVATED` / `DEACTIVATED`                          | org status machine                                                                                  |
+| `VERIFICATION_REJECTED` / `VERIFICATION_RESUBMITTED` **(v2 #779 §A)**             | PENDING_VERIFICATION resubmit loop (admin bounces → OWNER re-submits; org stays PENDING throughout) |
+| `ORG_DELETED`                                                                     | `DELETE …/[orgId]` (row outlives the org via soft-deleted membership FK)                            |
+| `AUDIT_PRUNED`                                                                    | `prune-audit-logs` cron (one summary row/org/run: `{deleted7y,deleted2y,cutoff7y,cutoff2y}`)        |
+| `STREAM_RECORDING_DELETED` / `STREAM_CALLS_EXPORTED` / `STREAM_RETENTION_CHANGED` | Stream retention cron + export + settings                                                           |
+| `USER_ERASURE_REQUESTED` / `_PROCESSED` / `_REJECTED` / `_SLA_WARNING`            | DPDP §12 erasure lifecycle                                                                          |
+| `DATA_EXPORT_REQUESTED` / `_GENERATED` / `_FAILED` / `_DOWNLOADED`                | DPDP §11 access-bundle lifecycle (`process-data-exports` worker writes GENERATED/FAILED)            |
 
 ### `WEBHOOK`
+
 Outbound webhook subsystem (one category for endpoint config + delivery
 results). Delivery rows emit **one summary per final state**, not per
 attempt.
 
-| action | Emission point |
-|---|---|
-| `WEBHOOK_ENDPOINT_CREATED` / `_UPDATED` / `_DELETED` | endpoint CRUD |
-| `WEBHOOK_SECRET_ROTATED` **(v2)** | secret rotation (starts the 24h dual-sign grace — see `monitoring`) |
-| `WEBHOOK_ENDPOINT_PAUSED` / `_RESUMED` | endpoint enable/disable |
-| `WEBHOOK_DELIVERY_SUCCEEDED` / `_FAILED` / `_REDELIVERED` | dispatch worker terminal states |
+| action                                                    | Emission point                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------- |
+| `WEBHOOK_ENDPOINT_CREATED` / `_UPDATED` / `_DELETED`      | endpoint CRUD                                                       |
+| `WEBHOOK_SECRET_ROTATED` **(v2)**                         | secret rotation (starts the 24h dual-sign grace — see `monitoring`) |
+| `WEBHOOK_ENDPOINT_PAUSED` / `_RESUMED`                    | endpoint enable/disable                                             |
+| `WEBHOOK_DELIVERY_SUCCEEDED` / `_FAILED` / `_REDELIVERED` | dispatch worker terminal states                                     |
 
 ## `SystemEvent` category catalogue
 
@@ -357,12 +375,12 @@ without a migration). The conventional values and their current
 emitters — the ones that actually call `recordSystemEvent` /
 `recordSystemError` today (grep verified 2026-06-05):
 
-| category | Emitters (callsites) | Notes |
-|---|---|---|
-| `WEBHOOK` | `app/api/webhooks/razorpay/route.ts` (HMAC verification failed, WARN — both Razorpay + RazorpayX secret paths); `jobs/cleanup/dispatch-outbound-webhooks.ts` (outbound queue backlog > 200, WARN) | inbound tamper/misconfig + outbound queue health |
-| `RECONCILE` | `jobs/reconcile/reconcile-ledgers.ts` (discrepancies found → ERROR; auditor crashed → ERROR) | money-integrity drift |
-| `PAYOUT` | `jobs/payouts/handle-stuck-payouts.ts` (`recordSystemEvent` breadcrumb + `recordSystemError` on permanent failure) | stuck/failed disbursement |
-| `DATA_EXPORT` | DPDP §11 worker failure path (the canonical clean-prose-vs-raw-stack split below) | `correlationId = OrgDataExportJob.id` |
+| category      | Emitters (callsites)                                                                                                                                                                              | Notes                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `WEBHOOK`     | `app/api/webhooks/razorpay/route.ts` (HMAC verification failed, WARN — both Razorpay + RazorpayX secret paths); `jobs/cleanup/dispatch-outbound-webhooks.ts` (outbound queue backlog > 200, WARN) | inbound tamper/misconfig + outbound queue health |
+| `RECONCILE`   | `jobs/reconcile/reconcile-ledgers.ts` (discrepancies found → ERROR; auditor crashed → ERROR)                                                                                                      | money-integrity drift                            |
+| `PAYOUT`      | `jobs/payouts/handle-stuck-payouts.ts` (`recordSystemEvent` breadcrumb + `recordSystemError` on permanent failure)                                                                                | stuck/failed disbursement                        |
+| `DATA_EXPORT` | DPDP §11 worker failure path (the canonical clean-prose-vs-raw-stack split below)                                                                                                                 | `correlationId = OrgDataExportJob.id`            |
 
 Additional `recordSystemError` callsites that flow through the same sink
 (they pass their own `category`): `lib/payments/operations/refund.ts`,
@@ -427,7 +445,7 @@ When matched, the description is replaced with:
 
 The "safe prefix" preserves the user-meaningful header (e.g. "Data
 export bundle failed:") when the prefix itself is clean prose, so the
-OWNER still knows *what kind* of event happened.
+OWNER still knows _what kind_ of event happened.
 
 `sanitizeAuditDetails()` likewise strips known sensitive keys
 (`error`, `stack`, `prismaError`, `errorStack`, `rawError`) from the

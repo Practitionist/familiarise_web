@@ -4,7 +4,7 @@
 | ------------- | ----------------------------------------------------------------------- |
 | Status        | Stable                                                                  |
 | Audience      | All engineers                                                           |
-| Last reviewed | 2026-10-01                                                              |
+| Last reviewed | 2026-10-10                                                              |
 | Source files  | `lib/auth-helpers.ts`, `lib/auth-guard.ts`, `lib/auth/*-permissions.ts` |
 
 This folder answers **what a signed-in user may do**. Who the user is (sessions,
@@ -65,6 +65,8 @@ requireOrgAccess(orgId, {
   fundingSource?: FundingSource,
   requireActive?: true,
   allowSuspended?: true, // refused when combined with `permission`
+  readOnly?: true, // the only gates a platform ADMIN passes (as an OWNER stub)
+  expectUser?: true, // 409 IDENTITY_CHANGED, see §3.1
 });
 ```
 
@@ -80,26 +82,54 @@ Order of checks and their answers:
 | Not a member                                      | 403             | `Not a member of this organization`          |
 | Membership not `ACTIVE` (unless `allowSuspended`) | 403             | `Membership is <status>`                     |
 | Role lacks `permission`                           | 403             | `Forbidden — your role does not grant <key>` |
+| Platform `ADMIN` on a gate without `readOnly`     | 403             | `code: "ADMIN_READ_ONLY"`                    |
 
 Capability gates answer **404**, not 403: a host-only org has no sponsor API, so
 "not found" is the honest answer. A platform `ADMIN` skips the membership and
-permission checks and gets a synthesized `OWNER` membership, but the capability
-gates still apply. There is no rank comparator and no owner-only wrapper; an
+permission checks and gets a synthesized `OWNER` membership
+(`__admin_stub_<userId>`) **only on `readOnly` gates** — GET handlers and the
+org dashboard's server pages; every other gate refuses them with 403
+`ADMIN_READ_ONLY`, and admin writes go through the audited `/api/admin/*` doors
+(`withOpsAction`, e.g. `POST /api/admin/organizations/[orgId]/invoices`). The
+capability gates still apply. `__tests__/enterprise/admin-stub-read-only.test.ts`
+fails a `readOnly` gate outside a GET handler. Every org-route
+`consentArtifact` read names a `dataFiduciary` (this org's `org:<id>` or the
+platform's); another org's fiduciary rows would reveal a member's other
+memberships (`__tests__/enterprise/consent-fiduciary-scope.test.ts`). There is no rank comparator and no owner-only wrapper; an
 owner-only route names an OWNER-only key. A jest pin
 (`__tests__/enterprise/org-route-matrix-pin.test.ts`) fails any org route with
 no matrix key or a rank check.
+
+### 3.1 Step-up and identity guards
+
+Two guards sit on top of the role checks for money and IAM writes.
+
+- **Step-up.** `requireFreshSession(auth)` (`lib/auth/step-up.ts`) answers
+  403 `REAUTH_REQUIRED` unless the session was opened or re-authenticated in
+  the last 15 minutes; the client shows a "Confirm it's you" dialog and
+  retries. It guards the payout, payout-account, refund and self-delete
+  routes. Back-office doors opt in with `withOpsAction(..., { stepUp: true })`:
+  team IAM (add staff, setup link, 2FA reset, member changes), refunds and
+  credits, payout override, and SSO approval and enforcement. BetterAuth's own
+  credential and factor endpoints (`/change-password`, `/two-factor/disable`,
+  passkey registration and others) are gated by `assertSensitiveAuthAction`.
+- **Identity.** `requireApiAuth({ expectUser: true })` and
+  `requireOrgAccess(orgId, { expectUser: true })` compare the
+  `X-Expected-User` header the page sends with the session user and answer
+  409 `IDENTITY_CHANGED` when another tab signed in as someone else. Checkout,
+  instant payouts, invitations and member changes use it.
 
 ## 4. Page guards (`lib/auth-guard.ts`)
 
 Page guards redirect instead of returning a status.
 
-| Guard                                  | Redirects to                                            |
-| -------------------------------------- | ------------------------------------------------------- |
-| `requireAuth()` / `requireOnboarded()` | sign-in (no session or banned) / `/form/onboarding`     |
-| `requireUserRole(roles)`               | `/dashboard`                                            |
-| `requireOperator()`                    | `/auth/two-factor/setup` when 2FA is not enrolled       |
-| `requireOperatorAwaitingTwoFactor()`   | `/dashboard` once enrolled (the setup page's own guard) |
-| `requireBackofficePage(surface, tree)` | `/dashboard`, or the tree's own landing                 |
+| Guard                                  | Redirects to                                                                                                        |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `requireAuth()` / `requireOnboarded()` | sign-in (no session or banned) / `/form/onboarding`, or `/onboarding/gate` for a user with an active org membership |
+| `requireUserRole(roles)`               | `/dashboard`                                                                                                        |
+| `requireOperator()`                    | `/auth/two-factor/setup` when 2FA is not enrolled                                                                   |
+| `requireOperatorAwaitingTwoFactor()`   | `/dashboard` once enrolled (the setup page's own guard)                                                             |
+| `requireBackofficePage(surface, tree)` | `/dashboard`, or the tree's own landing                                                                             |
 
 A session lookup that did not complete throws to the error boundary (retry)
 instead of redirecting. Every `(backoffice)/[tree]` page calls `requireBackofficePage`: layouts do not
@@ -109,14 +139,14 @@ Redirect rules after sign-in are in
 
 ## 5. Status conventions
 
-| Status | Meaning                                                                   |
-| ------ | ------------------------------------------------------------------------- |
-| 401    | No session, expired, or not found                                         |
-| 403    | Signed in but not allowed (role, membership, suspended account)           |
-| 404    | Resource or capability does not exist for this org shape                  |
-| 409    | `ORG_NOT_VERIFIED`: allowed later, once a platform admin verifies the org |
-| 428    | Operator must enrol 2FA first                                             |
-| 503    | Session lookup or schema read did not complete; retry after `Retry-After` |
+| Status | Meaning                                                                                                                          |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| 401    | No session, expired, or not found                                                                                                |
+| 403    | Signed in but not allowed (role, membership, suspended account); `REAUTH_REQUIRED` when step-up is due                           |
+| 404    | Resource or capability does not exist for this org shape                                                                         |
+| 409    | `ORG_NOT_VERIFIED`: allowed later, once a platform admin verifies the org; `IDENTITY_CHANGED`: reload, another tab switched user |
+| 428    | Operator must enrol 2FA first                                                                                                    |
+| 503    | Session lookup or schema read did not complete; retry after `Retry-After`                                                        |
 
 A 503 is never "signed out": the client retries instead of clearing the session.
 Auth error codes and their client handling:

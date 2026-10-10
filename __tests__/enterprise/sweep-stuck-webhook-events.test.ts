@@ -19,7 +19,6 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
-      // claim CAS before each re-drive
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
   },
@@ -30,10 +29,10 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
 jest.mock("../../lib/stream/webhook-dispatch", () => ({
   processStreamEvent: jest.fn(),
 }));
+jest.mock("../../lib/webhooks/novu-handler", () => ({
+  processNovuWebhookPayload: jest.fn(),
+}));
 
-// #476 — the sweep cores are now wrapped in withCronLock; pass through so
-// these unit tests exercise the sweep logic, not the lock (covered in
-// with-cron-lock.test.ts).
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) =>
     fn(),
@@ -49,21 +48,18 @@ jest.mock("../../lib/observability/report", () => ({
 
 import prisma from "../../lib/prisma";
 import { reportSentryMessage } from "../../lib/observability/report";
+import { processNovuWebhookPayload } from "../../lib/webhooks/novu-handler";
 import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dispatch";
 import { sweepStuckWebhookEvents } from "../../scripts/cleanup/sweep-stuck-webhook-events";
 
-const mockWe = (
-  prisma as unknown as {
-    webhookEvent: {
-      findMany: jest.Mock;
-      findUnique: jest.Mock;
-      update: jest.Mock;
-      // #1205-triage — the sweeper's claim CAS before each re-drive.
-      updateMany: jest.Mock;
-    };
-  }
-).webhookEvent;
+const mockWe = {
+  findMany: prisma.webhookEvent.findMany as jest.Mock,
+  findUnique: prisma.webhookEvent.findUnique as jest.Mock,
+  update: prisma.webhookEvent.update as jest.Mock,
+  updateMany: prisma.webhookEvent.updateMany as jest.Mock,
+};
 const mockProcess = processRazorpayWebhookEvent as jest.Mock;
+const mockProcessNovu = processNovuWebhookPayload as jest.Mock;
 
 const stuckRow = (over: Record<string, unknown> = {}) => ({
   eventId: "payment.captured:pay_1",
@@ -78,14 +74,14 @@ const stuckRow = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   mockWe.update.mockResolvedValue({});
+  mockWe.updateMany.mockResolvedValue({ count: 1 });
 });
 
-describe("sweepStuckWebhookEvents (#785)", () => {
-  it("a LOST claim (claimedAt raced) skips the re-drive entirely (#1205-triage)", async () => {
+describe("sweepStuckWebhookEvents", () => {
+  it("a LOST claim (claimedAt raced) skips the re-drive entirely", async () => {
     const ev = stuckRow();
-    (mockWe.findMany as jest.Mock).mockResolvedValue([ev]);
-    // Another driver claimed between selection and claim: CAS misses.
-    (mockWe.updateMany as jest.Mock).mockResolvedValue({ count: 0 });
+    mockWe.findMany.mockResolvedValue([ev]);
+    mockWe.updateMany.mockResolvedValue({ count: 0 });
 
     const result = await sweepStuckWebhookEvents({ staleMinutes: 6 });
 
@@ -93,25 +89,29 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(result.recovered).toBe(0);
   });
 
-  it("the claim CAS keys on claimedAt, not receivedAt (age must survive re-drives)", async () => {
+  it("the claim CAS keys strictly on processed: false and exact claimedAt, resetting error to null", async () => {
     const ev = stuckRow();
-    (mockWe.findMany as jest.Mock).mockResolvedValue([ev]);
-    (mockWe.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
+    mockWe.findMany.mockResolvedValue([ev]);
+    mockWe.updateMany.mockResolvedValue({ count: 1 });
 
     await sweepStuckWebhookEvents({ staleMinutes: 6 });
 
-    const [claim] = (mockWe.updateMany as jest.Mock).mock.calls;
-    expect(claim[0].where).toMatchObject({
+    const [claim] = mockWe.updateMany.mock.calls;
+    expect(claim[0].where).toEqual({
       eventId: ev.eventId,
-      OR: [{ claimedAt: null }, { claimedAt: ev.claimedAt }],
+      processed: false,
+      claimedAt: ev.claimedAt,
     });
-    expect(claim[0].data.claimedAt).toBeInstanceOf(Date);
-    // receivedAt untouched — the give-up cap ages on it.
+    expect(claim[0].data).toEqual({
+      claimedAt: expect.any(Date),
+      error: null,
+      deferCount: { increment: 1 },
+    });
     expect(claim[0].where.receivedAt).toBeUndefined();
     expect(claim[0].data.receivedAt).toBeUndefined();
   });
 
-  it("re-drives a stuck event and reconstructs the full envelope", async () => {
+  it("re-drives a stuck event across razorpay, stream, and novu providers", async () => {
     mockWe.findMany.mockResolvedValue([stuckRow()]);
     mockProcess.mockResolvedValue(undefined);
     mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
@@ -121,24 +121,21 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(r).toMatchObject({ scanned: 1, recovered: 1, stillFailing: 0 });
     expect(reportSentryMessage).not.toHaveBeenCalled();
 
-    // Razorpay and Stream, and BOTH stuck shapes.
     const where = mockWe.findMany.mock.calls[0][0].where;
     expect(where).toMatchObject({
-      provider: { in: ["razorpay", "stream"] },
+      provider: { in: ["razorpay", "stream", "novu"] },
     });
     expect(where.OR).toEqual([
       { processed: false, error: null },
       expect.objectContaining({ error: { not: null } }),
     ]);
-    // The errored branch is age-bounded so a deterministically-failing row
-    // retries for a week and then stops rather than churning forever.
     expect(where.OR[1].receivedAt).toHaveProperty("gte");
-    // envelope reconstruction supplies the fields the schemas demand
+
     const [env, evType, evId] = mockProcess.mock.calls[0];
     expect(env).toMatchObject({
       entity: "event",
       event: "payment.captured",
-      contains: ["payment"], // top-level payload keys
+      contains: ["payment"],
       payload: { payment: { entity: { id: "pay_1" } } },
     });
     expect(typeof env.account_id).toBe("string");
@@ -147,12 +144,36 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(evId).toBe("payment.captured:pay_1");
   });
 
+  it("re-drives a stuck Novu webhook event through processNovuWebhookPayload", async () => {
+    const novuRow = stuckRow({
+      eventId: "evt_novu_stuck_1",
+      eventType: "message.sent",
+      provider: "novu",
+      payload: {
+        id: "evt_novu_stuck_1",
+        type: "message.sent",
+        transactionId: "tx_1",
+      },
+    });
+    mockWe.findMany.mockResolvedValue([novuRow]);
+    mockProcessNovu.mockResolvedValue(undefined);
+    mockWe.findUnique.mockResolvedValue({ error: null, processed: true });
+
+    const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
+
+    expect(r).toMatchObject({ scanned: 1, recovered: 1, stillFailing: 0 });
+    expect(mockProcessNovu).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "message.sent", transactionId: "tx_1" }),
+      "evt_novu_stuck_1",
+    );
+  });
+
   it("a re-drive that still errors counts as stillFailing, not recovered", async () => {
     mockWe.findMany.mockResolvedValue([stuckRow()]);
     mockProcess.mockResolvedValue(undefined);
     mockWe.findUnique.mockResolvedValue({
       error: "handler boom",
-      processed: true,
+      processed: false,
     });
 
     const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
@@ -160,7 +181,6 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(r.recovered).toBe(0);
     expect(r.stillFailing).toBe(1);
     expect(r.errors[0]).toContain("handler boom");
-    // #1756 — exactly one unexpected-error report per run.
     expect(reportSentryMessage).toHaveBeenCalledTimes(1);
     expect(reportSentryMessage).toHaveBeenCalledWith(
       expect.stringContaining("1 re-driven webhook event(s) still failing"),
@@ -168,39 +188,43 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     );
   });
 
-  it("a throw mid-dispatch is caught + the row force-marked (never re-swept forever)", async () => {
+  it("a throw mid-dispatch is caught and CAS-updated with rotated claimedAt + error", async () => {
     mockWe.findMany.mockResolvedValue([stuckRow()]);
     mockProcess.mockRejectedValue(new Error("kaboom"));
 
     const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
 
     expect(r.stillFailing).toBe(1);
-    expect(mockWe.update).toHaveBeenCalledWith(
+    expect(mockWe.updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        where: { eventId: "payment.captured:pay_1" },
-        data: expect.objectContaining({ processed: true }),
+        where: {
+          eventId: "payment.captured:pay_1",
+          processed: false,
+          claimedAt: expect.any(Date),
+        },
+        data: expect.objectContaining({
+          processed: false,
+          processedAt: null,
+          claimedAt: expect.any(Date),
+          error: "sweep-failed: kaboom",
+        }),
       }),
     );
   });
 
-  it("empty scan → no-op", async () => {
+  it("empty scan -> no-op", async () => {
     mockWe.findMany.mockResolvedValue([]);
     const r = await sweepStuckWebhookEvents();
     expect(r).toMatchObject({ scanned: 0, recovered: 0, stillFailing: 0 });
     expect(mockProcess).not.toHaveBeenCalled();
   });
 
-  // #813 — a defer-sentinel handler (refund-before-capture) leaves the row in
-  // the same processed=false/error=null signature it started with. The sweeper
-  // must NOT count that as recovered, and must NOT terminally mark it until it
-  // ages past the give-up cap.
   it("a re-drive that stays deferred is counted as deferred, not recovered", async () => {
-    const recent = new Date(Date.now() - 60 * 60_000); // 1h old, under the cap
+    const recent = new Date(Date.now() - 60 * 60_000);
     mockWe.findMany.mockResolvedValue([
       stuckRow({ eventId: "refund.created:rfnd_1", receivedAt: recent }),
     ]);
     mockProcess.mockResolvedValue(undefined);
-    // dispatch deferred → it skipped the mark, row unchanged
     mockWe.findUnique.mockResolvedValue({ error: null, processed: false });
 
     const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
@@ -215,8 +239,8 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     expect(mockWe.update).not.toHaveBeenCalled();
   });
 
-  it("a deferred event past the give-up cap is terminally marked + counted", async () => {
-    const old = new Date(Date.now() - 200 * 60 * 60_000); // 200h > 168h cap
+  it("a deferred event past the give-up cap is terminally marked via CAS updateMany with rotated claimedAt", async () => {
+    const old = new Date(Date.now() - 200 * 60 * 60_000);
     mockWe.findMany.mockResolvedValue([
       stuckRow({ eventId: "refund.created:rfnd_2", receivedAt: old }),
     ]);
@@ -226,11 +250,17 @@ describe("sweepStuckWebhookEvents (#785)", () => {
     const r = await sweepStuckWebhookEvents({ staleMinutes: 6 });
 
     expect(r).toMatchObject({ deferred: 0, gaveUp: 1, recovered: 0 });
-    expect(mockWe.update).toHaveBeenCalledWith(
+    expect(mockWe.updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        where: { eventId: "refund.created:rfnd_2" },
+        where: {
+          eventId: "refund.created:rfnd_2",
+          processed: false,
+          claimedAt: expect.any(Date),
+        },
         data: expect.objectContaining({
-          processed: true,
+          processed: false,
+          processedAt: null,
+          claimedAt: expect.any(Date),
           error: "gave up: payment never arrived",
         }),
       }),

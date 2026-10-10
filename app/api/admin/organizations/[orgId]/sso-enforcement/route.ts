@@ -6,15 +6,20 @@
  * sign in through the SSO callback, and an org owner locked out by a broken
  * IdP cannot reach their own settings page to switch it off.
  *
- * Turning it on needs an approved provider, as on the org's own settings
- * route. ADMIN only (`organizations.manage`), a reason is required, and
- * `withOpsAction` writes the OpsActionLog row in the same transaction.
+ * Turning it on needs an approved provider an org OWNER has signed in
+ * through, as on the org's own settings route. ADMIN only
+ * (`organizations.manage`), a reason is required, and `withOpsAction` writes
+ * the OpsActionLog row in the same transaction.
  */
 
 import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
-import { revokeEnforcedOrgMemberSessions } from "@/lib/sso/enforce-session";
+import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
+import {
+  countProvenProviders,
+  SSO_NOT_PROVEN_MESSAGE,
+} from "@/lib/sso/provider-proof";
 
 export const POST = withOpsAction(
   "organizations.manage",
@@ -46,6 +51,9 @@ export const POST = withOpsAction(
             "Approve one of this organization's SSO providers before enforcing SSO.",
           );
         }
+        if ((await countProvenProviders(tx, params.orgId)) === 0) {
+          throw new OpsRefusal("SSO_NOT_PROVEN", SSO_NOT_PROVEN_MESSAGE);
+        }
       }
 
       const before = await tx.organizationSSOSettings.findUnique({
@@ -60,7 +68,7 @@ export const POST = withOpsAction(
       });
 
       if (body.enforce && !(before?.enforceSSO ?? false)) {
-        await revokeEnforcedOrgMemberSessions(tx, params.orgId);
+        await revokeEnforcedDomainSessions(tx, params.orgId);
       }
 
       return {
@@ -71,4 +79,5 @@ export const POST = withOpsAction(
       };
     },
   },
+  { stepUp: true },
 );

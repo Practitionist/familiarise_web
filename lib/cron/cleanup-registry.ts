@@ -34,6 +34,8 @@ const MAX_TENTATIVE_SLOTS = 200;
 const MAX_REFERRAL_VESTS = 50;
 /** Expired credits per breakage run; one Serializable transaction each. */
 const MAX_REFERRAL_BREAKAGE = 500;
+/** Abandoned onboarding drafts are deleted after this many idle days. */
+const ONBOARDING_DRAFT_TTL_DAYS = 90;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -143,23 +145,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Cleanup job failed",
       }),
 
-    // @cleanup-twin alert-dispute-deadlines
-    "alert-dispute-deadlines": () =>
-      cleanupRoute({
-        job: "alert-dispute-deadlines",
-        run: async () => {
-          const { alertDisputeDeadlines } =
-            await import("@/scripts/disputes/alert-dispute-deadlines");
-          return alertDisputeDeadlines();
-        },
-        summarize: (r) => ({
-          urgentCount: r.urgentCount,
-          criticalCount: r.criticalCount,
-        }),
-        status: (r) => (r.criticalCount > 0 ? 207 : 200),
-        failureMessage: "Failed to check dispute deadlines",
-      }),
-
     // @cleanup-twin alert-orphaned-payments
     "alert-orphaned-payments": () =>
       cleanupRoute({
@@ -211,7 +196,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         },
         summarize: (r) => ({
           processedEventsDeleted: r.processedEventsDeleted,
+          terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
           failedEventsDeleted: r.failedEventsDeleted,
+          emailEventsDeleted: r.emailEventsDeleted,
+          outboundDeliveriesDeleted: r.outboundDeliveriesDeleted,
           totalDeleted: r.totalDeleted,
         }),
         failureMessage: "Failed to archive webhook events",
@@ -223,13 +211,14 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         job: "cleanup-auth-tokens",
         run: async () => {
           const { cleanupAuthTokens } =
-            await import("@/scripts/cleanup/cleanup-auth-tokens");
+            await import("@/lib/auth/cleanup-auth-tokens");
           return cleanupAuthTokens();
         },
         summarize: (r) => ({
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
-          passwordResetTokensCleared: r.passwordResetTokensCleared,
+          idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
+          staleInvitationsExpired: r.staleInvitationsExpired,
           totalCleaned: r.totalCleaned,
         }),
         failureMessage: "Failed to cleanup auth tokens",
@@ -351,6 +340,31 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         }),
         status: (r) => statusFor(r),
         failureMessage: "Recording retention sweep failed",
+      }),
+
+    // @cleanup-twin expire-onboarding-drafts
+    "expire-onboarding-drafts": () =>
+      cleanupRoute({
+        job: "expire-onboarding-drafts",
+        run: async () => {
+          const { default: prisma } = await import("@/lib/prisma");
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          return withCronLock(
+            "expire-onboarding-drafts",
+            { failMode: "open" },
+            async () => {
+              const cutoff = new Date(
+                Date.now() - ONBOARDING_DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000,
+              );
+              const { count } = await prisma.onboardingDraft.deleteMany({
+                where: { updatedAt: { lt: cutoff } },
+              });
+              return { success: true, deleted: count };
+            },
+          );
+        },
+        summarize: (r) => ({ deleted: r.deleted }),
+        failureMessage: "Failed to expire onboarding drafts",
       }),
 
     // @cleanup-twin expire-referral-credits
@@ -533,6 +547,25 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         },
         status: () => 200,
         failureMessage: "System job execution prune failed",
+      }),
+
+    // @cleanup-twin purge-unverified-users
+    "purge-unverified-users": () =>
+      cleanupRoute({
+        job: "purge-unverified-users",
+        run: async (req) => {
+          const { purgeUnverifiedUsers, DEFAULT_PURGE_LIMIT } =
+            await import("@/lib/auth/purge-unverified-users");
+          return purgeUnverifiedUsers({
+            limit: parseLimitParamOrDefault(req, DEFAULT_PURGE_LIMIT),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          purged: r.purged,
+          failed: r.failed,
+        }),
+        failureMessage: "Failed to purge unverified users",
       }),
 
     // @cleanup-twin reconcile-disputes
@@ -981,6 +1014,27 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedDeletions: r.totalFailedDeletions,
         }),
         failureMessage: "Failed to sync Stream users",
+      }),
+
+    // @cleanup-twin support-sla-sweep
+    "support-sla-sweep": () =>
+      cleanupRoute({
+        job: "support-sla-sweep",
+        run: async (req) => {
+          const { runSupportSlaSweep } =
+            await import("@/lib/support/sla-sweep");
+          return runSupportSlaSweep({ limit: parseLimitParam(req) });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          slaNoticesStaged: r.slaNoticesStaged,
+          orgEscalationEmailsSent: r.orgEscalationEmailsSent,
+          autoClosedCount: r.autoClosedCount,
+          disputeNoticesStaged: r.disputeNoticesStaged,
+          errors: r.errors.length,
+        }),
+        status: (r) => statusFor(r, r.errors.length > 0),
+        failureMessage: "Failed to run support SLA sweep",
       }),
 
     // @cleanup-twin sweep-abandoned-overage-charges

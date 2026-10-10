@@ -17,13 +17,14 @@
  * the same roles) — any member with billing visibility can download.
  * OWNER-only isn't required because the PDF doesn't expose new data —
  * the contents are the same invoice row already readable via the
- * existing /invoices list endpoint.
+ * existing /invoices list endpoint. Platform staff outside the org read it
+ * through the back-office `invoices.read` surface.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { requireBackofficeSurface, requireOrgAccess } from "@/lib/auth-helpers";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import {
   renderOrgInvoicePdf,
@@ -48,9 +49,12 @@ export async function GET(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "billing.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "billing.read",
+  });
   if (access.error) {
-    const privileged = await requirePrivilegedAuth();
+    const privileged = await requireBackofficeSurface("invoices.read");
     if (privileged.error) return access.error;
     const limited = await applyRateLimit(
       moneyOpsLimiter,

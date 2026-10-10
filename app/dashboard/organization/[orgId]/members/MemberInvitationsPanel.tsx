@@ -12,6 +12,7 @@ import {
 } from "@/schemas/organizations";
 import { parseJsonResponse, errorMessageFromBody } from "@/lib/fetch-helpers";
 import type { Tone } from "@/lib/ui/tone";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 const INVITATION_STATUS: Record<string, { label: string; tone: Tone }> = {
   PENDING: { label: "Pending", tone: "caution" },
@@ -56,7 +57,7 @@ async function fetchInvitations(
 }
 
 async function revokeInvitation(orgId: string, invitationId: string) {
-  const res = await fetch(
+  const res = await fetchWithIdentity(
     `/api/organizations/${orgId}/invitations/${invitationId}`,
     { method: "DELETE" },
   );

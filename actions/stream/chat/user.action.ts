@@ -64,7 +64,7 @@ async function requireAuthenticatedStreamActor(
   if (options?.serverTrusted === SERVER_TRUSTED) {
     return { trusted: true, userId: null, role: null };
   }
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to sync Stream user");
   }
@@ -393,8 +393,8 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
   // `"use server"`, so every export is remotely invocable; the previous
   // signature took `currentUserId` from the caller, which let anyone enumerate
   // another user's related parties (names, emails, avatars) by passing their
-  // id. Same cookie-cache-bypass reasoning as assertCanMintToken.
-  const session = await getSession(true);
+  // id.
+  const session = await getSession();
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to search users");
   }

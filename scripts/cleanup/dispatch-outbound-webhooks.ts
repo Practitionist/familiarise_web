@@ -79,7 +79,3 @@ async function dispatchOutboundWebhooksUnlocked(
     errors: tick.errors,
   };
 }
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
-}

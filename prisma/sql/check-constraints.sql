@@ -1033,3 +1033,105 @@ ALTER TABLE "organizations" DROP CONSTRAINT IF EXISTS "org_stream_recording_rete
 -- SPLIT
 ALTER TABLE "organizations" ADD CONSTRAINT "org_stream_recording_retention_days_range"
   CHECK ("streamRecordingRetentionDays" IS NULL OR "streamRecordingRetentionDays" BETWEEN 7 AND 3650);
+
+-- SPLIT
+-- Enforce mutual exclusivity between `processed` and `error` and require `processedAt` iff `processed`.
+DO $$
+BEGIN
+  UPDATE "WebhookEvent"
+  SET "processed" = false, "processedAt" = NULL
+  WHERE "processed" AND "error" IS NOT NULL;
+
+  UPDATE "WebhookEvent"
+  SET "processedAt" = CASE WHEN "processed" THEN COALESCE("processedAt", "receivedAt") ELSE NULL END
+  WHERE ("processed" IS TRUE) IS DISTINCT FROM ("processedAt" IS NOT NULL);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_event_processed_error_exclusive'
+  ) THEN
+    ALTER TABLE "WebhookEvent" ADD CONSTRAINT "webhook_event_processed_error_exclusive"
+      CHECK (NOT ("processed" AND "error" IS NOT NULL));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_event_processed_timestamp_consistent'
+  ) THEN
+    ALTER TABLE "WebhookEvent" ADD CONSTRAINT "webhook_event_processed_timestamp_consistent"
+      CHECK (("processed" IS TRUE) IS NOT DISTINCT FROM ("processedAt" IS NOT NULL));
+  END IF;
+
+  WITH ranked_recordings AS (
+    SELECT
+      "id",
+      ROW_NUMBER() OVER (
+        PARTITION BY "streamRecordingId"
+        ORDER BY
+          ("status" = 'READY') DESC,
+          "updatedAt" DESC NULLS LAST,
+          "createdAt" DESC NULLS LAST,
+          "id" DESC
+      ) AS rn
+    FROM "Recording"
+    WHERE "streamRecordingId" IS NOT NULL
+  )
+  UPDATE "Recording"
+  SET "streamRecordingId" = NULL
+  WHERE "id" IN (SELECT "id" FROM ranked_recordings WHERE rn > 1);
+END $$;
+
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "WebhookEvent_unprocessed_provider_receivedAt_idx"
+  ON "WebhookEvent" ("provider", "receivedAt")
+  WHERE NOT "processed";
+
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "Recording_streamRecordingId_unique_idx"
+  ON "Recording" ("streamRecordingId")
+  WHERE "streamRecordingId" IS NOT NULL;
+
+-- SPLIT
+-- At most one open non-deleted SupportCase per (appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category)
+-- using NULLS NOT DISTINCT so booking-wide (appointmentOccurrenceId IS NULL) and platform-wide cases collide cleanly without merging cross-submitter threads.
+DROP INDEX IF EXISTS "support_case_open_scope_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_open_scope_key"
+  ON "SupportCase" ("appointmentId", "appointmentOccurrenceId", "requesterUserId", "submitterUserId", "category")
+  NULLS NOT DISTINCT
+  WHERE "closedAt" IS NULL AND "deletedAt" IS NULL;
+
+-- SPLIT
+-- At most one primary subject row per SupportCase.
+DROP INDEX IF EXISTS "support_case_subject_primary_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_subject_primary_key"
+  ON "SupportCaseSubject" ("caseId")
+  WHERE "isPrimary" = true;
+
+-- SPLIT
+-- A SupportCase must carry at least a category or a flowKey, an occurrence requires an appointment,
+-- problem links remain strictly one level deep, and CSAT scores stay between 1 and 5.
+ALTER TABLE "SupportCase" DROP CONSTRAINT IF EXISTS "support_case_scope_and_shape_chk";
+-- SPLIT
+ALTER TABLE "SupportCase" ADD CONSTRAINT "support_case_scope_and_shape_chk"
+  CHECK (
+    ("category" IS NOT NULL OR "flowKey" IS NOT NULL)
+    AND ("appointmentOccurrenceId" IS NULL OR "appointmentId" IS NOT NULL)
+    AND ("problemCaseId" IS NULL OR "caseKind" = 'INCIDENT')
+    AND ("csatRating" IS NULL OR ("csatRating" BETWEEN 1 AND 5))
+  );
+
+-- SPLIT
+-- Each SupportCaseEvent belongs to either a unified SupportCase or a pre-cutover SupportTicket.
+ALTER TABLE "SupportCaseEvent" DROP CONSTRAINT IF EXISTS "support_case_event_target_xor";
+-- SPLIT
+ALTER TABLE "SupportCaseEvent" ADD CONSTRAINT "support_case_event_target_xor"
+  CHECK (("caseId" IS NULL) <> ("legacyTicketId" IS NULL));
+
+-- SPLIT
+-- At most one CSAT rating event per pre-cutover SupportTicket.
+DROP INDEX IF EXISTS "support_case_event_legacy_csat_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_event_legacy_csat_key"
+  ON "SupportCaseEvent" ("legacyTicketId")
+  WHERE "kind" = 'CSAT_RATED';
+

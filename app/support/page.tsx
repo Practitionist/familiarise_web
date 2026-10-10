@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { FileText } from "lucide-react";
 
+import { ANTI_SCAM_NOTICE } from "@/app/(pages)/constants";
 import { CategoryGrid } from "./_components/CategoryGrid";
 import { StillStuckCard } from "./_components/StillStuckCard";
 import { SupportSearch } from "./_components/SupportSearch";
@@ -94,13 +95,13 @@ export default function SupportIndexPage() {
               {[
                 {
                   title: "Cancellation & refunds",
-                  body: "Binding policy for every session type.",
+                  body: "Binding policy and refund windows for every session type.",
                   href: "/refund",
                 },
                 {
-                  title: "Pricing & fees",
-                  body: "How expert pricing and fees work.",
-                  href: "/pricing",
+                  title: "Grievance redressal",
+                  body: "Grievance Officer contact, 24h acknowledgement SLA, and statutory appeals.",
+                  href: "/grievance",
                 },
               ].map((card) => (
                 <Link
@@ -116,6 +117,9 @@ export default function SupportIndexPage() {
               ))}
               <StillStuckCard className={CARD_CLASS} />
             </div>
+            <p className="mt-6 text-xs text-muted-foreground">
+              Safety notice: {ANTI_SCAM_NOTICE}
+            </p>
           </div>
         </div>
       </div>

@@ -84,7 +84,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|expire-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|timeout-member-overages|dunning|wallet-low-balance)
+            ""|all|cleanup-auth-tokens|generate-subscription-invoices|cleanup-abandoned-org-top-ups|advance-program-cycles|auto-renew-contracts|reconcile-document-storage|irp-uploader|sweep-abandoned-overage-charges|expire-recordings|prune-system-events|expire-contracts|prune-audit-logs|sweep-verification|prune-system-job-executions|alert-orphaned-payments|purge-deleted-documents|stream-sync|reconcile-ledgers|msme-payment-alerts|expire-event-channels|expire-stale-collaborator-invites|reconcile-orphaned-recordings|wind-down-deactivated-orgs|timeout-member-overages|dunning|wallet-low-balance|purge-unverified-users)
               ;;
             *)
               echo "::error::Unknown daily job slug '${INPUT_JOB}'"
@@ -99,7 +99,13 @@ jobs:
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'cleanup-auth-tokens'))
         timeout-minutes: 5
         continue-on-error: true
-        run: node_modules/.bin/tsx jobs/cleanup/cleanup-auth-tokens.ts
+        env:
+          APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -X POST -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/cleanup/auth-tokens"
 
       - name: Generate subscription invoices
         id: generate-subscription-invoices
@@ -332,6 +338,21 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/billing/wallet-low-balance.ts
 
+      - name: Purge unverified users
+        id: purge-unverified-users
+        if: >-
+          (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'purge-unverified-users'))
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -X POST -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/cleanup/purge-unverified-users"
+
       - name: Check job outcomes and notify on failure
         if: always()
         env:
@@ -367,7 +388,8 @@ jobs:
             "wind-down-deactivated-orgs:${{ steps.wind-down-deactivated-orgs.outcome }}" \
             "timeout-member-overages:${{ steps.timeout-member-overages.outcome }}" \
             "dunning:${{ steps.dunning.outcome }}" \
-            "wallet-low-balance:${{ steps.wallet-low-balance.outcome }}"
+            "wallet-low-balance:${{ steps.wallet-low-balance.outcome }}" \
+            "purge-unverified-users:${{ steps.purge-unverified-users.outcome }}"
           do
             job_name="${entry%%:*}"
             outcome="${entry#*:}"

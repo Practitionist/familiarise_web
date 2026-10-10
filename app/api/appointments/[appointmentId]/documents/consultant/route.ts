@@ -67,28 +67,36 @@ async function loadConsultantAppointment(
       consultation: {
         include: {
           consultationPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
       subscription: {
         include: {
           subscriptionPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
       webinar: {
         include: {
           webinarPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
       class: {
         include: {
           classPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
@@ -105,7 +113,7 @@ export async function POST(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -165,8 +173,7 @@ export async function POST(
     const file = formData.get("file") as File | null;
     const description = formData.get("description") as string | null;
     const responseToDocumentId = formData.get("responseToDocumentId") as
-      | string
-      | null;
+      string | null;
 
     if (!file) {
       return NextResponse.json(
@@ -186,7 +193,9 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            validation.code === "FILE_TOO_LARGE" ? "File too large" : "Unsupported file type",
+            validation.code === "FILE_TOO_LARGE"
+              ? "File too large"
+              : "Unsupported file type",
           message: validation.message,
           code: validation.code,
         },
@@ -254,46 +263,53 @@ export async function POST(
     try {
       document = await withVersionConflictRetry(() =>
         prisma.$transaction(async (tx) => {
-        let rootDocumentId: string | null = null;
-        let versionNo = 1;
-        if (responseToDocumentId) {
-          const parent = await tx.appointmentDocument.findFirst({
-            where: { id: responseToDocumentId, appointmentId, deletedAt: null },
-            select: { id: true, rootDocumentId: true },
+          let rootDocumentId: string | null = null;
+          let versionNo = 1;
+          if (responseToDocumentId) {
+            const parent = await tx.appointmentDocument.findFirst({
+              where: {
+                id: responseToDocumentId,
+                appointmentId,
+                deletedAt: null,
+              },
+              select: { id: true, rootDocumentId: true },
+            });
+            if (!parent) throw new Error("INVALID_RESPONSE_TARGET");
+            rootDocumentId = parent.rootDocumentId ?? parent.id;
+            const aggregate = await tx.appointmentDocument.aggregate({
+              where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
+              _max: { versionNo: true },
+            });
+            versionNo = (aggregate._max.versionNo ?? 1) + 1;
+          }
+          return tx.appointmentDocument.create({
+            data: {
+              fileName: uploadResult.fileName!,
+              originalName: file.name,
+              fileSize: uploadResult.fileSize!,
+              mimeType: uploadResult.mimeType!,
+              fileUrl: uploadResult.fileUrl!,
+              storagePath: uploadResult.storagePath!,
+              description: description || null,
+              uploadedByRole: "CONSULTANT",
+              responseToDocumentId: responseToDocumentId || null,
+              rootDocumentId,
+              versionNo,
+              appointmentId,
+              // Consultant uploads don't need review
+              reviewStatus: "APPROVED",
+              reviewedById: userId, // A8 — FK scalar (#676)
+              reviewedAt: new Date(),
+            },
           });
-          if (!parent) throw new Error("INVALID_RESPONSE_TARGET");
-          rootDocumentId = parent.rootDocumentId ?? parent.id;
-          const aggregate = await tx.appointmentDocument.aggregate({
-            where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
-            _max: { versionNo: true },
-          });
-          versionNo = (aggregate._max.versionNo ?? 1) + 1;
-        }
-        return tx.appointmentDocument.create({
-          data: {
-            fileName: uploadResult.fileName!,
-            originalName: file.name,
-            fileSize: uploadResult.fileSize!,
-            mimeType: uploadResult.mimeType!,
-            fileUrl: uploadResult.fileUrl!,
-            storagePath: uploadResult.storagePath!,
-            description: description || null,
-            uploadedByRole: "CONSULTANT",
-            responseToDocumentId: responseToDocumentId || null,
-            rootDocumentId,
-            versionNo,
-            appointmentId,
-            // Consultant uploads don't need review
-            reviewStatus: "APPROVED",
-            reviewedById: userId, // A8 — FK scalar (#676)
-            reviewedAt: new Date(),
-          },
-        });
         }),
       );
     } catch (dbError) {
       console.error("Database error saving consultant document:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "appointments" } },
+      );
       // Same cleanup contract as the consultee route: a failed save must not
       // strand the stored object.
       try {
@@ -354,8 +370,7 @@ export async function POST(
       apt?.consultation?.requestedBy?.user?.id ||
       apt?.subscription?.requestedBy?.user?.id;
     const consulteeProfileId =
-      apt?.consultation?.requestedBy?.id ||
-      apt?.subscription?.requestedBy?.id;
+      apt?.consultation?.requestedBy?.id || apt?.subscription?.requestedBy?.id;
 
     if (recipientId) {
       after(() =>
@@ -374,21 +389,28 @@ export async function POST(
           dashboardUrl: scopedHref({
             organizationId: apt?.organizationId,
             surface: "appointments",
-            personal:
-              consulteeProfileId
-                ? { kind: "consultee", profileId: consulteeProfileId }
-                : undefined,
+            personal: consulteeProfileId
+              ? { kind: "consultee", profileId: consulteeProfileId }
+              : undefined,
           }),
         }).catch((notifyError) => {
           console.error("Failed to notify consultee of response", notifyError);
-          Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
+          Sentry.captureException(
+            notifyError instanceof Error
+              ? notifyError
+              : new Error(String(notifyError)),
+            { tags: { subsystem: "novu" } },
+          );
         }),
       );
     }
 
     return NextResponse.json({ data: document }, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error uploading consultant document:", error);
     return NextResponse.json(
       {

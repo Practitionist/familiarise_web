@@ -11,7 +11,7 @@ export async function GET(
   { params }: { params: Promise<{ consultantId: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -117,7 +117,10 @@ export async function GET(
       }
     } catch (dbError) {
       console.error("Database error fetching consultant:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "dashboard" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "dashboard" } },
+      );
       return NextResponse.json(
         {
           error: "Database temporarily unavailable",
@@ -308,7 +311,10 @@ export async function GET(
       ]);
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "dashboard" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "dashboard" } },
+      );
 
       // Return an empty page envelope with helpful message instead of failing.
       // Shape must match the success branch so the UI's pagination prop is
@@ -392,7 +398,12 @@ export async function GET(
         };
       } catch (transformError) {
         console.error("Error transforming document:", transformError, doc);
-        Sentry.captureException(transformError instanceof Error ? transformError : new Error(String(transformError)), { tags: { subsystem: "dashboard" } });
+        Sentry.captureException(
+          transformError instanceof Error
+            ? transformError
+            : new Error(String(transformError)),
+          { tags: { subsystem: "dashboard" } },
+        );
 
         // Return a safe fallback version of the document
         return {
@@ -482,7 +493,10 @@ export async function GET(
     });
   } catch (error) {
     console.error("Error fetching consultant documents:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {

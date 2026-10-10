@@ -4,6 +4,8 @@ import { WelcomeEmail } from "@/emails/auth/WelcomeEmail";
 import { PasswordResetEmail } from "@/emails/auth/PasswordResetEmail";
 import { VerificationEmail } from "@/emails/auth/VerificationEmail";
 import { AccountLinkedEmail } from "@/emails/auth/AccountLinkedEmail";
+import { ExistingAccountEmail } from "@/emails/auth/ExistingAccountEmail";
+import { PasswordChangedEmail } from "@/emails/auth/PasswordChangedEmail";
 import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
 import { PaymentFailedEmail } from "@/emails/payments/PaymentFailedEmail";
@@ -44,6 +46,8 @@ export * from "./senders/booking";
 export * from "./senders/money";
 export * from "./senders/onboarding";
 export * from "./senders/people";
+export * from "./senders/security";
+export * from "./senders/sso";
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
 
@@ -161,7 +165,7 @@ export const sendPasswordResetEmail = defineDirectEmailSender<{
   emailType: "PASSWORD_RESET",
   element: PasswordResetEmail({
     name,
-    resetLink: `${getAppUrl()}/auth/reset-password?token=${token}`,
+    resetLink: `${getAppUrl()}/auth/reset-password?token=${encodeURIComponent(token)}`,
     invite,
   }),
   envelope: {
@@ -176,24 +180,58 @@ export const sendPasswordResetEmail = defineDirectEmailSender<{
 
 export const sendVerificationEmail = defineDirectEmailSender<{
   email: string;
-  name: string;
-  verificationUrl: string;
-  userId?: string;
-}>(({ email, name, verificationUrl, userId }) => {
+  otp: string;
+  expiresInMinutes: number;
+}>(({ email, otp, expiresInMinutes }) => {
   if (process.env.NODE_ENV === "development") {
-    console.log(`[verify-email] ${email} -> ${verificationUrl}`);
+    console.log(`[verify-email] ${email} -> ${otp}`);
   }
   return {
     emailType: "EMAIL_VERIFICATION",
-    element: VerificationEmail({ name, verificationLink: verificationUrl }),
+    element: VerificationEmail({ code: otp, expiresInMinutes }),
     envelope: {
       from: SENDERS.onboarding,
       to: email,
-      subject: "Verify your Familiarise email address",
+      subject: "Your Familiarise verification code",
     },
-    defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+    defaults: { budgetMs: EMAIL_BUDGET_MS.AUTH },
   };
 });
+
+export const sendExistingAccountEmail = defineDirectEmailSender<{
+  email: string;
+  userId: string;
+}>(({ email, userId }) => ({
+  emailType: "EXISTING_ACCOUNT_SIGN_UP",
+  element: ExistingAccountEmail({
+    signInUrl: `${getAppUrl()}/auth/signin`,
+    resetUrl: `${getAppUrl()}/auth/forgot-password`,
+  }),
+  envelope: {
+    from: SENDERS.security,
+    to: email,
+    subject: "Someone tried to sign up with your email",
+  },
+  defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+}));
+
+export const sendPasswordChangedEmail = defineDirectEmailSender<{
+  email: string;
+  name: string;
+  userId: string;
+}>(({ email, name, userId }) => ({
+  emailType: "PASSWORD_CHANGED",
+  element: PasswordChangedEmail({
+    name,
+    resetUrl: `${getAppUrl()}/auth/forgot-password`,
+  }),
+  envelope: {
+    from: SENDERS.security,
+    to: email,
+    subject: "Your Familiarise password was changed",
+  },
+  defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+}));
 
 export const sendAccountLinkedEmail = defineDirectEmailSender<{
   email: string;
@@ -214,7 +252,7 @@ export const sendAccountLinkedEmail = defineDirectEmailSender<{
     envelope: {
       from: SENDERS.security,
       to: email,
-      subject: `Your Familiarise account now linked with ${provider}`,
+      subject: `Your Familiarise account is now linked with ${provider}`,
     },
     defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
   }),
@@ -475,6 +513,7 @@ export async function sendContactInquiryEmail(
     subject,
     message,
     category,
+    referenceNumber,
   }: {
     firstName: string;
     lastName: string;
@@ -483,6 +522,7 @@ export async function sendContactInquiryEmail(
     subject: string;
     message: string;
     category?: string | null;
+    referenceNumber?: string | null;
   },
   opts: SendOptions = {},
 ) {
@@ -495,6 +535,9 @@ export async function sendContactInquiryEmail(
       .replace(/"/g, "&quot;");
 
   const rows: Array<[string, string]> = [
+    ...(referenceNumber
+      ? ([["Reference", referenceNumber]] as Array<[string, string]>)
+      : []),
     ["Name", name],
     ["Email", email],
     ["Phone", phone || "—"],
@@ -528,14 +571,18 @@ export async function sendContactInquiryEmail(
     {
       from: SENDERS.notifications,
       to: contactInboxAddress(),
-      subject: `[Contact] ${subject}`,
+      subject: referenceNumber
+        ? `[Grievance ${referenceNumber}] ${subject}`
+        : `[Contact] ${subject}`,
       html,
       text,
       replyTo: email,
     },
     "CONTACT_INQUIRY",
     {
-      entityRef: `contact:${email}`,
+      entityRef: referenceNumber
+        ? `grievance:${referenceNumber}`
+        : `contact:${email}`,
       budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_WAITLIST,
       ...opts,
     },
