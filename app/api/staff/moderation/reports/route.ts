@@ -99,6 +99,37 @@ const REPORT_ORDER_BY: Prisma.ModerationReportOrderByWithRelationInput[] = [
   { createdAt: "desc" },
 ];
 
+function buildModerationFilterWhere(
+  searchParams: URLSearchParams,
+  type?: z.infer<typeof moderationReportsQuerySchema>["type"],
+): Prisma.ModerationReportWhereInput {
+  const assignedToId = searchParams.get("assignedToId");
+  const organizationId = searchParams.get("organizationId");
+  const search = searchParams.get("search");
+  const filterWhere: Prisma.ModerationReportWhereInput = {};
+
+  if (type) filterWhere.type = type;
+  if (assignedToId) {
+    filterWhere.assignedToId =
+      assignedToId === "unassigned" ? null : assignedToId;
+  }
+  if (organizationId) {
+    filterWhere.organizationId =
+      organizationId === "personal" ? null : organizationId;
+  }
+  if (search) {
+    filterWhere.OR = [
+      { id: { contains: search, mode: "insensitive" } },
+      { reason: { contains: search, mode: "insensitive" } },
+      { description: { contains: search, mode: "insensitive" } },
+      { contentText: { contains: search, mode: "insensitive" } },
+      { reportedBy: { name: { contains: search, mode: "insensitive" } } },
+      { targetUser: { name: { contains: search, mode: "insensitive" } } },
+    ];
+  }
+  return filterWhere;
+}
+
 /**
  * GET /api/staff/moderation/reports
  * List moderation reports with filters
@@ -125,32 +156,8 @@ export async function GET(req: NextRequest) {
       );
     }
     const { type, status, page, limit } = parsedQuery.data;
-    const assignedToId = searchParams.get("assignedToId");
-    const organizationId = searchParams.get("organizationId");
-    const search = searchParams.get("search");
     const offset = (page - 1) * limit;
-
-    const filterWhere: Prisma.ModerationReportWhereInput = {};
-
-    if (type) filterWhere.type = type;
-    if (assignedToId) {
-      filterWhere.assignedToId =
-        assignedToId === "unassigned" ? null : assignedToId;
-    }
-    if (organizationId) {
-      filterWhere.organizationId =
-        organizationId === "personal" ? null : organizationId;
-    }
-    if (search) {
-      filterWhere.OR = [
-        { id: { contains: search, mode: "insensitive" } },
-        { reason: { contains: search, mode: "insensitive" } },
-        { description: { contains: search, mode: "insensitive" } },
-        { contentText: { contains: search, mode: "insensitive" } },
-        { reportedBy: { name: { contains: search, mode: "insensitive" } } },
-        { targetUser: { name: { contains: search, mode: "insensitive" } } },
-      ];
-    }
+    const filterWhere = buildModerationFilterWhere(searchParams, type);
 
     const where: Prisma.ModerationReportWhereInput = status
       ? { ...filterWhere, status }

@@ -328,6 +328,43 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   }
 }
 
+function buildLinkedTicketStatusData(
+  linked: {
+    resolvedAt: Date | null;
+    awaitingUserSince: Date | null;
+    pausedSeconds: number;
+  } | null,
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED",
+  isReopening: boolean,
+  now: Date,
+) {
+  const pauseBank =
+    linked?.awaitingUserSince !== null &&
+    linked?.awaitingUserSince !== undefined
+      ? {
+          awaitingUserSince: null,
+          pausedSeconds:
+            linked.pausedSeconds +
+            Math.max(
+              0,
+              Math.floor(
+                (now.getTime() - linked.awaitingUserSince.getTime()) / 1000,
+              ),
+            ),
+        }
+      : {};
+  return {
+    status,
+    lastMessageAt: now,
+    ...pauseBank,
+    ...(status === "RESOLVED" ? { resolvedAt: now } : {}),
+    ...(status === "CLOSED"
+      ? { closedAt: now, resolvedAt: linked?.resolvedAt ?? now }
+      : {}),
+    ...(isReopening ? { resolvedAt: null, closedAt: null } : {}),
+  };
+}
+
 async function persistThreadStatusTx(
   tx: Tx,
   thread: { id: string; supportTicketId: string | null },
@@ -366,21 +403,6 @@ async function persistThreadStatusTx(
   if (updated.count === 0) return 0;
 
   if (thread.supportTicketId) {
-    const pauseBank =
-      linked?.awaitingUserSince !== null &&
-      linked?.awaitingUserSince !== undefined
-        ? {
-            awaitingUserSince: null,
-            pausedSeconds:
-              linked.pausedSeconds +
-              Math.max(
-                0,
-                Math.floor(
-                  (now.getTime() - linked.awaitingUserSince.getTime()) / 1000,
-                ),
-              ),
-          }
-        : {};
     await tx.supportTicket.updateMany({
       where: {
         id: thread.supportTicketId,
@@ -388,16 +410,7 @@ async function persistThreadStatusTx(
           ? { in: ["OPEN", "IN_PROGRESS", "ON_HOLD", "RESOLVED", "CLOSED"] }
           : { notIn: ["CLOSED"] },
       },
-      data: {
-        status,
-        lastMessageAt: now,
-        ...pauseBank,
-        ...(status === "RESOLVED" ? { resolvedAt: now } : {}),
-        ...(status === "CLOSED"
-          ? { closedAt: now, resolvedAt: linked?.resolvedAt ?? now }
-          : {}),
-        ...(isReopening ? { resolvedAt: null, closedAt: null } : {}),
-      },
+      data: buildLinkedTicketStatusData(linked, status, isReopening, now),
     });
   }
   return updated.count;

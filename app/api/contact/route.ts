@@ -21,7 +21,7 @@ import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
 import { allocateTicketReference } from "@/lib/support/reference";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 
-const CATEGORY_VALUES = INQUIRY_CATEGORIES.map((c) => c.value);
+const CATEGORY_SET = new Set<string>(INQUIRY_CATEGORIES.map((c) => c.value));
 
 const ContactBodySchema = z.object({
   firstName: z.string().trim().min(1, "First name is required").max(100),
@@ -32,14 +32,9 @@ const ContactBodySchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(5000),
   category: z
     .string()
-    .refine(
-      (v) =>
-        v === "" ||
-        CATEGORY_VALUES.some((knownCategory) => knownCategory === v),
-      {
-        message: "Unknown inquiry category",
-      },
-    )
+    .refine((v) => v === "" || CATEGORY_SET.has(v), {
+      message: "Unknown inquiry category",
+    })
     .optional()
     .or(z.literal("")),
   // Honeypot: a real person never fills a hidden field. Bots fill everything.

@@ -104,6 +104,31 @@ function slaNoticeTransitions(
   return notices;
 }
 
+function recordPayloadSlaBreach(
+  payload: unknown,
+  ackSet: Set<string>,
+  resSet: Set<string>,
+  stagedKeys: Set<string>,
+): void {
+  if (typeof payload !== "object" || payload === null) return;
+  const ticketId =
+    "ticketId" in payload && typeof payload.ticketId === "string"
+      ? payload.ticketId
+      : null;
+  const activity =
+    "activity" in payload && typeof payload.activity === "string"
+      ? payload.activity
+      : null;
+  if (!ticketId) return;
+  if (activity === "sla-ack-breach") {
+    ackSet.add(ticketId);
+    stagedKeys.add(`sla:${ticketId}:ack:breach`);
+  } else if (activity === "sla-res-breach") {
+    resSet.add(ticketId);
+    stagedKeys.add(`sla:${ticketId}:res:breach`);
+  }
+}
+
 function parseStagedSlaOutboxRows(
   rows: Array<{
     transactionId: string;
@@ -123,7 +148,7 @@ function parseStagedSlaOutboxRows(
     if (!raw) return;
     stagedKeys.add(raw);
     const match = /^sla:(.+):(ack|res):(warn|breach)$/.exec(raw);
-    if (!match || match[3] !== "breach") return;
+    if (match?.[3] !== "breach") return;
     if (match[2] === "ack") ackSet.add(match[1]);
     if (match[2] === "res") resSet.add(match[1]);
   };
@@ -131,23 +156,7 @@ function parseStagedSlaOutboxRows(
   for (const row of rows) {
     recordKeyString(row.transactionId);
     recordKeyString(row.entityRef);
-    if (typeof row.payload === "object" && row.payload !== null) {
-      const ticketId =
-        "ticketId" in row.payload && typeof row.payload.ticketId === "string"
-          ? row.payload.ticketId
-          : null;
-      const activity =
-        "activity" in row.payload && typeof row.payload.activity === "string"
-          ? row.payload.activity
-          : null;
-      if (ticketId && activity === "sla-ack-breach") {
-        ackSet.add(ticketId);
-        stagedKeys.add(`sla:${ticketId}:ack:breach`);
-      } else if (ticketId && activity === "sla-res-breach") {
-        resSet.add(ticketId);
-        stagedKeys.add(`sla:${ticketId}:res:breach`);
-      }
-    }
+    recordPayloadSlaBreach(row.payload, ackSet, resSet, stagedKeys);
   }
 
   return {

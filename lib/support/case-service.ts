@@ -612,6 +612,43 @@ async function advanceAgentPublicTurnState(
   return moved.count > 0;
 }
 
+function isStaleAgentPublicReply(
+  input: AppendSupportCaseTurnInput,
+  lastMessageAt: Date | null,
+): boolean {
+  return Boolean(
+    input.sender === "AGENT" &&
+    !input.isInternal &&
+    input.expectedLastMessageAt &&
+    lastMessageAt &&
+    lastMessageAt.getTime() > new Date(input.expectedLastMessageAt).getTime(),
+  );
+}
+
+async function applyTurnStateUpdate(
+  tx: Tx,
+  existingCase: NonNullable<
+    Awaited<ReturnType<Tx["supportCase"]["findUnique"]>>
+  >,
+  input: AppendSupportCaseTurnInput,
+  now: Date,
+): Promise<boolean> {
+  if (input.sender === "USER") {
+    return advanceUserTurnState(tx, existingCase, input, now);
+  }
+  if (input.sender === "AGENT" && !input.isInternal) {
+    return advanceAgentPublicTurnState(tx, existingCase, input, now);
+  }
+  await tx.supportCase.updateMany({
+    where: { id: input.caseId },
+    data: {
+      messageSeq: { increment: 1 },
+      ...(input.isInternal ? {} : { lastMessageAt: now }),
+    },
+  });
+  return true;
+}
+
 async function executeAppendTurnTx(
   tx: Tx,
   input: AppendSupportCaseTurnInput,
@@ -641,14 +678,7 @@ async function executeAppendTurnTx(
     };
   }
 
-  if (
-    input.sender === "AGENT" &&
-    !input.isInternal &&
-    input.expectedLastMessageAt &&
-    existingCase.lastMessageAt &&
-    existingCase.lastMessageAt.getTime() >
-      new Date(input.expectedLastMessageAt).getTime()
-  ) {
+  if (isStaleAgentPublicReply(input, existingCase.lastMessageAt)) {
     return {
       ok: false as const,
       status: 409 as const,
@@ -658,39 +688,14 @@ async function executeAppendTurnTx(
     };
   }
 
-  if (input.sender === "USER") {
-    const applied = await advanceUserTurnState(tx, existingCase, input, now);
-    if (!applied) {
-      return {
-        ok: false as const,
-        status: 409 as const,
-        code: "CONFLICT" as const,
-        error: "Support case was updated concurrently.",
-      };
-    }
-  } else if (input.sender === "AGENT" && !input.isInternal) {
-    const applied = await advanceAgentPublicTurnState(
-      tx,
-      existingCase,
-      input,
-      now,
-    );
-    if (!applied) {
-      return {
-        ok: false as const,
-        status: 409 as const,
-        code: "CONFLICT" as const,
-        error: "Support case was updated concurrently.",
-      };
-    }
-  } else {
-    await tx.supportCase.updateMany({
-      where: { id: input.caseId },
-      data: {
-        messageSeq: { increment: 1 },
-        ...(input.isInternal ? {} : { lastMessageAt: now }),
-      },
-    });
+  const applied = await applyTurnStateUpdate(tx, existingCase, input, now);
+  if (!applied) {
+    return {
+      ok: false as const,
+      status: 409 as const,
+      code: "CONFLICT" as const,
+      error: "Support case was updated concurrently.",
+    };
   }
 
   const seqHolder = await tx.supportCase.findUniqueOrThrow({
@@ -980,6 +985,31 @@ async function validateOperatorAssigneeTx(
   return Boolean(user && (user.role === "STAFF" || user.role === "ADMIN"));
 }
 
+function buildLifecycleUpdateData(
+  existing: NonNullable<Awaited<ReturnType<Tx["supportCase"]["findUnique"]>>>,
+  input: PatchSupportCaseInput,
+  noteTrimmed: string | null,
+  now: Date,
+): Prisma.SupportCaseUpdateManyMutationInput {
+  const tightened =
+    input.priority && input.priority !== existing.priority
+      ? tightenDeadlinesForPriorityRaise(existing, input.priority, now)
+      : {};
+  return {
+    ...(input.status ? { status: input.status } : {}),
+    ...buildStatusDatesPatch(input.status, existing, now),
+    ...(input.priority ? { priority: input.priority } : {}),
+    ...tightened,
+    ...(input.assignedToId !== undefined
+      ? { assignedToId: input.assignedToId }
+      : {}),
+    ...(input.problemCaseId !== undefined && existing.caseKind === "INCIDENT"
+      ? { problemCaseId: input.problemCaseId }
+      : {}),
+    ...(noteTrimmed ? { messageSeq: { increment: 1 } } : {}),
+  };
+}
+
 async function executePatchLifecycleTx(
   tx: Tx,
   input: PatchSupportCaseInput,
@@ -1016,10 +1046,6 @@ async function executePatchLifecycleTx(
     };
   }
 
-  const tightened =
-    input.priority && input.priority !== existing.priority
-      ? tightenDeadlinesForPriorityRaise(existing, input.priority, now)
-      : {};
   const noteTrimmed = input.note?.trim() || null;
 
   const updated = await tx.supportCase.updateMany({
@@ -1028,19 +1054,7 @@ async function executePatchLifecycleTx(
       updatedAt: new Date(input.expectedUpdatedAt),
       ...(input.status ? {} : { status: { not: "CLOSED" } }),
     },
-    data: {
-      ...(input.status ? { status: input.status } : {}),
-      ...buildStatusDatesPatch(input.status, existing, now),
-      ...(input.priority ? { priority: input.priority } : {}),
-      ...tightened,
-      ...(input.assignedToId !== undefined
-        ? { assignedToId: input.assignedToId }
-        : {}),
-      ...(input.problemCaseId !== undefined && existing.caseKind === "INCIDENT"
-        ? { problemCaseId: input.problemCaseId }
-        : {}),
-      ...(noteTrimmed ? { messageSeq: { increment: 1 } } : {}),
-    },
+    data: buildLifecycleUpdateData(existing, input, noteTrimmed, now),
   });
 
   if (updated.count === 0) {

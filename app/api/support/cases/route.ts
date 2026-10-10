@@ -320,10 +320,7 @@ async function validateCaseScopeAccess(params: {
     }
   }
 
-  if (
-    params.appointmentOccurrenceId &&
-    (!appt || !appt.occurrences || appt.occurrences.length === 0)
-  ) {
+  if (params.appointmentOccurrenceId && !appt?.occurrences?.length) {
     return supportError({
       status: 400,
       code: "VALIDATION_FAILED",
