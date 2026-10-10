@@ -30,7 +30,11 @@ const columns: ResponsiveColumn<Provider>[] = [
       </div>
     ),
   },
-  { key: "domain", header: "Domain", cell: (p) => p.domain },
+  {
+    key: "domain",
+    header: "Domains",
+    cell: (p) => p.domain.split(",").join(", "),
+  },
   {
     key: "claim",
     header: "DNS claim",
@@ -44,7 +48,7 @@ const columns: ResponsiveColumn<Provider>[] = [
 ];
 
 /**
- * D22 — staff approve or revoke an org's SSO providers, and turn the org's SSO
+ * Staff approve or revoke an org's SSO providers, and turn the org's SSO
  * enforcement on or off. The plugin refuses sign-in through a provider until
  * it is approved; the route re-checks the DNS claim and writes the
  * OpsActionLog row. Turning enforcement off is the recovery path when the
@@ -124,7 +128,7 @@ export function OrgSsoProviders({
             description={
               p.domainVerified
                 ? "Sign-in through this provider stops immediately."
-                : `Users at ${p.domain} will be able to sign in through ${p.issuer}.`
+                : `Users at ${p.domain.split(",").join(", ")} will be able to sign in through ${p.issuer}. The org's owners are emailed.`
             }
             confirmLabel={p.domainVerified ? "Revoke" : "Approve"}
             tone={p.domainVerified ? "destructive" : "default"}

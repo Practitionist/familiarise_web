@@ -34,7 +34,8 @@ There is no BetterAuth organization plugin and no `Member` table.
 Concretely: a new graduate student signs in to **IIT Madras** via the campus
 IdP for the first time. The IdP asserts their identity, BetterAuth creates
 the User + Account + Session, and `provisionUser` mints a `LEARNER`
-membership (the locked `defaultRoleForAutoJoin`) before the redirect. No
+membership (the locked `defaultRoleForAutoJoin`) before the redirect, or the
+role of a pending invitation for that email, which it marks accepted. No
 admin touched anything; the student's first page load already sees the
 membership. (IIT Madras is a seeded org; the IdP wiring is the
 operator-configured shape, not part of the seed.)
@@ -77,10 +78,11 @@ The PATCH handler at `app/api/organizations/[orgId]/sso/route.ts`
 rejects any other value with 400. The settings UI shows a locked
 "Learner" label instead of the prior 3-option Select.
 
-If an org needs to promote a new SSO user beyond LEARNER, the
-admin does it explicitly via `/dashboard/organization/[orgId]/members`
-after first signin. That path is audit-logged
-(`MEMBER_ROLE_CHANGED`); JIT auto-join would not be.
+If an org needs a new SSO user above LEARNER, the admin either invites
+that email with the role first (JIT applies a pending invitation's role
+and logs `INVITE_ACCEPTED`) or promotes them via
+`/dashboard/organization/[orgId]/members` after first sign-in
+(`MEMBER_ROLE_CHANGED`).
 
 ### Invariant 2 — Governance gates run once, at sign-in
 
@@ -106,7 +108,7 @@ behind, and the next login retries.
 BetterAuth's session cookie has `session.updateAge: 24h`. The cookie
 carries a snapshot of `organizationMemberships[]` (built by
 `customSession`). If a user's role changes — promoted from LEARNER to
-MANAGER, or removed entirely — their session cookie keeps the *old*
+MANAGER, or removed entirely — their session cookie keeps the _old_
 role payload for up to 24 hours.
 
 Concrete failure mode: an OWNER demoted to LEARNER could keep
@@ -141,10 +143,11 @@ read it once the cookie cache was off.
 
 ## §4 — Operator-facing rules
 
-- After enabling SSO, the first user from each domain who signs in
-  becomes a LEARNER in the org. Admins promote them explicitly via the
-  Members page if the user is meant to be a MANAGER / MAINTAINER /
-  OWNER.
+- After enabling SSO, a user who signs in for the first time becomes a
+  LEARNER in the org, unless a pending invitation for their email names
+  another role. Admins promote anyone else explicitly via the Members page.
+- Removing or suspending a member whose email is on one of the org's
+  verified domains ends their sessions immediately.
 - Role changes propagate to active sessions on the next request.
   No "please re-log-in" message; the user just sees their new
   capabilities appear.
@@ -158,9 +161,9 @@ read it once the cookie cache was off.
 
 The table below maps the symptoms you are most likely to observe back to their probable cause and the fix for each.
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| SSO callback fails with a server error and no session cookie | JIT auto-join transaction failed (non-P2002 error). Check server logs for the thrown error. | Investigate root cause — DB connection, RLS, FK. The narrowed catch surfaces it; the next sign-in retries. |
-| New SSO user signs in but has no org membership | A gate skipped the join: org SUSPENDED / DEACTIVATED, or PENDING_VERIFICATION at the seat cap. | Look for the `SSO` category `JIT auto-join skipped` system event for the org. |
+| Symptom                                                                | Likely cause                                                                                                                     | Fix                                                                                                             |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| SSO callback fails with a server error and no session cookie           | JIT auto-join transaction failed (non-P2002 error). Check server logs for the thrown error.                                      | Investigate root cause — DB connection, RLS, FK. The narrowed catch surfaces it; the next sign-in retries.      |
+| New SSO user signs in but has no org membership                        | A gate skipped the join: org SUSPENDED / DEACTIVATED, or PENDING_VERIFICATION at the seat cap.                                   | Look for the `SSO` category `JIT auto-join skipped` system event for the org.                                   |
 | User keeps acting as old role after promotion, across several requests | `bumpUserSessionGeneration` not called on the mutation path (so the only refresh left is BetterAuth's 24h `updateAge` rotation). | Search route handlers for the mutation; ensure `bumpUserSessionGeneration(tx, userId)` is called inside the tx. |
-| Settings page shows a role dropdown for `defaultRoleForAutoJoin` | A regression of audit Phase A.1. Schema must be `z.literal("LEARNER")`. | Re-check `JitDefaultRoleSchema` + the SSO settings page UI block. |
+| Settings page shows a role dropdown for `defaultRoleForAutoJoin`       | A regression of audit Phase A.1. Schema must be `z.literal("LEARNER")`.                                                          | Re-check `JitDefaultRoleSchema` + the SSO settings page UI block.                                               |

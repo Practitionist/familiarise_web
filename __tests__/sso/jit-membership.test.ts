@@ -3,15 +3,17 @@
  */
 
 /**
- * D11 — SSO JIT writes the typed Membership straight from the sso()
- * provisionUser hook. Covers the gates (org lifecycle, unverified seat cap),
- * idempotent re-login, and the provider-without-org misconfiguration.
+ * SSO JIT writes the typed Membership straight from the sso() provisionUser
+ * hook. Covers the gates (org lifecycle, unverified seat cap), a pending
+ * invitation's role, idempotent re-login, and a provider without an org.
  */
 
 import { Prisma } from "@prisma/client";
 
 const tx = {
   membership: { count: jest.fn(), create: jest.fn() },
+  invitation: { findFirst: jest.fn(), updateMany: jest.fn() },
+  orgAuditLog: { create: jest.fn() },
 };
 const db = {
   membership: { findUnique: jest.fn() },
@@ -32,6 +34,11 @@ jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEvent: (params: unknown) => recordSystemEvent(params),
 }));
 
+const dispatchWebhookEvent = jest.fn(async (_a: unknown) => undefined);
+jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
+  dispatchWebhookEvent: (a: unknown) => dispatchWebhookEvent(a),
+}));
+
 const applyMembershipRoleEffects = jest.fn(
   async (_tx: unknown, _input: unknown) => ({
     consulteeProfileId: "consultee_1",
@@ -49,6 +56,7 @@ import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
 
 const input = {
   userId: "user_1",
+  email: "Asha@Acme.com",
   providerId: "oidc-abc",
   organizationId: "org_1",
 };
@@ -66,6 +74,8 @@ beforeEach(() => {
   db.organization.findUnique.mockResolvedValue(org("ACTIVE"));
   tx.membership.count.mockResolvedValue(0);
   tx.membership.create.mockResolvedValue({ id: "m_1" });
+  tx.invitation.findFirst.mockResolvedValue(null);
+  tx.invitation.updateMany.mockResolvedValue({ count: 1 });
 });
 
 it("creates an ACTIVE membership with the org's auto-join role in a Serializable transaction", async () => {
@@ -103,6 +113,71 @@ it("creates an ACTIVE membership with the org's auto-join role in a Serializable
   // Seat cap only applies to unverified orgs.
   expect(tx.membership.count).not.toHaveBeenCalled();
   expect(recordSystemEvent).not.toHaveBeenCalled();
+});
+
+it("applies a pending invitation's role and marks the invitation accepted", async () => {
+  tx.invitation.findFirst.mockResolvedValue({
+    id: "inv_1",
+    role: "MAINTAINER",
+  });
+
+  await expect(provisionSsoMembership(input)).resolves.toEqual({
+    kind: "joined",
+    organizationId: "org_1",
+    role: "MAINTAINER",
+  });
+
+  expect(tx.invitation.findFirst).toHaveBeenCalledWith({
+    where: {
+      organizationId: "org_1",
+      email: "asha@acme.com",
+      status: "PENDING",
+      expiresAt: { gt: expect.any(Date) },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, role: true },
+  });
+  expect(tx.invitation.updateMany).toHaveBeenCalledWith({
+    where: { id: "inv_1", status: "PENDING" },
+    data: { status: "ACCEPTED", userId: "user_1" },
+  });
+  expect(applyMembershipRoleEffects).toHaveBeenCalledWith(tx, {
+    userId: "user_1",
+    role: "MAINTAINER",
+  });
+  expect(tx.membership.create).toHaveBeenCalledWith({
+    data: expect.objectContaining({ role: "MAINTAINER" }),
+  });
+  expect(tx.orgAuditLog.create).toHaveBeenCalledWith({
+    data: expect.objectContaining({
+      action: "INVITE_ACCEPTED",
+      details: expect.objectContaining({ invitationId: "inv_1" }),
+    }),
+  });
+});
+
+it("falls back to the default role when the invitation was claimed concurrently", async () => {
+  tx.invitation.findFirst.mockResolvedValue({
+    id: "inv_1",
+    role: "MAINTAINER",
+  });
+  tx.invitation.updateMany.mockResolvedValue({ count: 0 });
+
+  await expect(provisionSsoMembership(input)).resolves.toMatchObject({
+    role: "LEARNER",
+  });
+});
+
+it("does not consume an invitation when the seat cap refuses the join", async () => {
+  db.organization.findUnique.mockResolvedValue(org("PENDING_VERIFICATION"));
+  tx.membership.count.mockResolvedValue(UNVERIFIED_ORG_SEAT_CAP);
+  tx.invitation.findFirst.mockResolvedValue({
+    id: "inv_1",
+    role: "MAINTAINER",
+  });
+
+  await provisionSsoMembership(input);
+  expect(tx.invitation.updateMany).not.toHaveBeenCalled();
 });
 
 it("defaults to LEARNER when the org has no SSO settings row", async () => {

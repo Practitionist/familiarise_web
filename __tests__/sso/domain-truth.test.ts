@@ -137,7 +137,7 @@ describe("DELETE domain claim (D21)", () => {
       enforceSSO: false,
     });
     tx.ssoProvider.findMany.mockResolvedValue([
-      { providerId: "oidc-a", domain: "acme.com" },
+      { providerId: "oidc-a", domain: "acme.co.in,acme.com" },
     ]);
 
     const res = await call();
@@ -149,7 +149,7 @@ describe("DELETE domain claim (D21)", () => {
       },
     });
     expect(tx.ssoProvider.updateMany).toHaveBeenCalledWith({
-      where: { organizationId: "org_1", domain: "acme.com" },
+      where: { organizationId: "org_1", providerId: { in: ["oidc-a"] } },
       data: { domainVerified: false },
     });
     expect(tx.orgAuditLog.create).toHaveBeenCalledWith({

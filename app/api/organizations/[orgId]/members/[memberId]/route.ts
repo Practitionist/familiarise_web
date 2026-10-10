@@ -33,6 +33,7 @@ import {
 } from "@/lib/enterprise/membership-guards";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { removeMember } from "@/lib/enterprise/member-removal";
+import { revokeOrgManagedUserSessions } from "@/lib/sso/session-sweeps";
 import {
   applyMembershipRoleEffects,
   auditPayoutRecipientChange,
@@ -426,6 +427,9 @@ export async function PATCH(
               where: { id: memberId, organizationId: orgId },
               to: patch.status,
             });
+            if (patch.status === "SUSPENDED") {
+              await revokeOrgManagedUserSessions(tx, orgId, current.userId);
+            }
           }
 
           const otherData = memberUpdateData(patch, current.role, roleEffects);

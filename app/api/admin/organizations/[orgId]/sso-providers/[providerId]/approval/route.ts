@@ -8,15 +8,17 @@
  * let an org owner route a domain's users to any IdP they control, which is
  * why the plugin's own verify-domain endpoint is disabled.
  *
- * Approval re-checks the DNS TXT proof rather than trusting the create-time
- * check: the claim may have been removed or moved since the provider was
- * registered. ADMIN only (`organizations.manage`), a reason is required, and
- * `withOpsAction` writes the OpsActionLog row in the same transaction.
+ * Approval re-checks that every covered domain still has a verified DNS claim
+ * of this org. ADMIN only (`organizations.manage`), a reason is required,
+ * `withOpsAction` writes the OpsActionLog row in the same transaction, and the
+ * org's OWNERs are emailed after commit.
  */
 
 import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
+import { sendSsoProviderDecisionEmail } from "@/lib/email";
+import { providerDomains } from "@/lib/sso/domains";
 
 export const POST = withOpsAction(
   "organizations.manage",
@@ -27,7 +29,13 @@ export const POST = withOpsAction(
     run: async (tx, { params, body }) => {
       const provider = await tx.ssoProvider.findFirst({
         where: { providerId: params.providerId, organizationId: params.orgId },
-        select: { id: true, domain: true, domainVerified: true },
+        select: {
+          id: true,
+          domain: true,
+          issuer: true,
+          domainVerified: true,
+          organization: { select: { name: true } },
+        },
       });
       if (!provider) {
         throw new OpsRefusal(
@@ -37,20 +45,23 @@ export const POST = withOpsAction(
         );
       }
 
+      const domains = providerDomains(provider.domain);
       if (body.approve) {
-        const claim = await tx.orgDomainClaim.findUnique({
+        const verified = await tx.orgDomainClaim.findMany({
           where: {
-            organizationId_domain: {
-              organizationId: params.orgId,
-              domain: provider.domain,
-            },
+            organizationId: params.orgId,
+            domain: { in: domains },
+            verifiedAt: { not: null },
           },
-          select: { organizationId: true, verifiedAt: true },
+          select: { domain: true },
         });
-        if (claim?.organizationId !== params.orgId || !claim.verifiedAt) {
+        const missing = domains.filter(
+          (d) => !verified.some((c) => c.domain === d),
+        );
+        if (missing.length > 0) {
           throw new OpsRefusal(
             "DOMAIN_NOT_VERIFIED",
-            `This organization has no verified DNS claim for ${provider.domain}, so its provider cannot be approved.`,
+            `This organization has no verified DNS claim for ${missing.join(", ")}, so its provider cannot be approved.`,
           );
         }
       } else if (provider.domainVerified) {
@@ -86,6 +97,16 @@ export const POST = withOpsAction(
           providerId: params.providerId,
           domainVerified: body.approve,
         },
+        afterCommit: () =>
+          sendSsoProviderDecisionEmail({
+            organizationId: params.orgId,
+            orgName: provider.organization?.name ?? "your organisation",
+            providerId: params.providerId,
+            domains,
+            issuer: provider.issuer,
+            reason: body.reason,
+            approved: body.approve,
+          }),
       };
     },
   },

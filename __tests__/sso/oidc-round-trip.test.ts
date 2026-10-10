@@ -58,6 +58,7 @@ const fakePrisma = {
       );
     },
     count: async () => memberships.length,
+    findFirst: async () => null,
     create: async ({ data }: { data: MembershipRow }) => {
       memberships.push(data);
       return data;
@@ -66,9 +67,30 @@ const fakePrisma = {
   organization: {
     findUnique: async () => ({ status: "ACTIVE", ssoSettings: null }),
   },
+  orgDomainClaim: {
+    findFirst: async ({ where }: { where: { domain: string } }) =>
+      where.domain === "acme.test" ? { id: "claim_1" } : null,
+  },
+  invitation: { findFirst: async () => null },
+  orgAuditLog: { create: async () => ({}), findFirst: async () => null },
+  account: {
+    deleteMany: async ({
+      where,
+    }: {
+      where: { userId: string; providerId: string };
+    }) => {
+      const before = db.account.length;
+      db.account = db.account.filter(
+        (a) =>
+          !(a.userId === where.userId && a.providerId === where.providerId),
+      );
+      return { count: before - db.account.length };
+    },
+  },
   ssoProvider: {
     findUnique: async ({ where }: { where: { providerId: string } }) =>
       db.ssoProvider.find((p) => p.providerId === where.providerId) ?? null,
+    updateMany: async () => ({ count: 0 }),
   },
   $transaction: async (fn: (tx: unknown) => unknown) => fn(fakePrisma),
 };
@@ -80,6 +102,9 @@ jest.mock("../../lib/prisma", () => ({
 }));
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEvent: jest.fn(async () => {}),
+}));
+jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
+  dispatchWebhookEvent: jest.fn(async () => undefined),
 }));
 jest.mock("../../lib/api/organizations/membership-transitions", () => ({
   applyMembershipRoleEffects: async () => ({
@@ -109,6 +134,7 @@ const ORG_ID = "org_acme";
 const PROVIDER_ID = "oidc-acme";
 const IDP_USER = { sub: "idp-user-1", email: "asha@acme.test", name: "Asha" };
 let idpUser = IDP_USER;
+let emailVerified = true;
 
 type Db = Record<string, Record<string, unknown>[]>;
 type CookieJar = Map<string, string>;
@@ -213,7 +239,7 @@ beforeAll(async () => {
     (token: { payload: Record<string, unknown> }) => {
       Object.assign(token.payload, {
         ...idpUser,
-        email_verified: true,
+        email_verified: emailVerified,
         aud: CLIENT_ID,
       });
     },
@@ -232,6 +258,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   idpUser = IDP_USER;
+  emailVerified = true;
   memberships.length = 0;
   db = {
     user: [],
@@ -262,7 +289,6 @@ beforeEach(async () => {
         clientId: CLIENT_ID,
         clientSecret: "client-secret",
         discoveryEndpoint,
-        pkce: true,
         discovered,
       }),
     ),
@@ -368,4 +394,16 @@ it("never links an out-of-domain IdP account to an existing user", async () => {
   expect(done.headers.get("location")).toContain("error=");
   expect(db.account).toHaveLength(0);
   expect(db.session).toHaveLength(0);
+});
+
+it("refuses an identity the IdP does not mark email_verified, leaving no link or cookie", async () => {
+  emailVerified = false;
+
+  const { done, jar } = await completeRoundTrip();
+
+  expect(done.status).toBe(403);
+  expect(await done.json()).toMatchObject({ code: "SSO_EMAIL_NOT_VERIFIED" });
+  expect(jar.get("better-auth.session_token")).toBeUndefined();
+  expect(db.account).toHaveLength(0);
+  expect(memberships).toHaveLength(0);
 });

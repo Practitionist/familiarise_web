@@ -49,8 +49,8 @@ normalisation.
 | `/reset-password/*`                    | 10 / hour     | Token in the path, so effectively per token                         |
 | `/verify-email`                        | 30 / hour     | Single-use token                                                    |
 | `/sign-in/social`, `/callback/*`       | 30 / 15 min   | IdP retries on flaky networks; a 429 reads as "Google is broken"    |
-| `/sign-in/sso`                         | 20 / 15 min   | Same                                                                |
-| `/sso/callback`, `/sso/callback/*`     | 30 / 15 min   | Same                                                                |
+| `/sign-in/sso`                         | 300 / 15 min  | Enforce-on signs out a whole office behind one NAT address          |
+| `/sso/callback/*`                      | 1000 / 15 min | State and PKCE are single-use; only a flood ceiling                 |
 | `/get-session`, `/sign-out`            | unlimited     | Read on every page and focus; never strand a user signing out       |
 | anything else                          | 100 / min     | Default                                                             |
 
@@ -61,7 +61,7 @@ come first.
 
 | Scope                         | Route                                            | Budget               | Where   |
 | ----------------------------- | ------------------------------------------------ | -------------------- | ------- |
-| `enterprise.sso-domain-check` | `GET /api/auth/sso/domain-check`                 | 120 / hour per IP    | Edge    |
+| `enterprise.sso-domain-check` | `GET /api/auth/sso/domain-check`                 | 1000 / hour per IP   | Edge    |
 | `enterprise.invite-accept`    | `POST /api/organizations/invitations/accept`     | 60 / hour per IP     | Edge    |
 | session management            | `/api/user/sessions*` except `/current`          | 120 / 15 min per IP  | Edge    |
 | session management, per user  | same                                             | 60 / 15 min per user | Handler |

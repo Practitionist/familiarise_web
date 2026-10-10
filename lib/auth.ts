@@ -19,12 +19,10 @@ import {
   sendVerificationEmail,
 } from "@/lib/email";
 import { syncSubscriber } from "@/lib/novu/subscriber";
-import {
-  shouldRejectSession,
-  lookupEnforcedOrg,
-} from "@/lib/sso/enforce-session";
+import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import {
+  assertSsoAccountLink,
   assertSsoEmailOnDomain,
   isSsoProviderId,
 } from "@/lib/sso/account-domain";
@@ -146,7 +144,7 @@ export const auth = betterAuth({
     "/sso/callback",
   ],
 
-  // SSO is OIDC-only, but @better-auth/sso 1.7.6 has no switch to leave the
+  // SSO is OIDC-only, but @better-auth/sso 1.7.7 has no switch to leave the
   // SAML endpoints unmounted, and `disabledPaths` matches concrete paths so
   // it cannot cover the `:providerId` ones. `ctx.path` here is the route
   // template, so one prefix check 404s the whole SAML surface.
@@ -415,6 +413,7 @@ export const auth = betterAuth({
         before: async (user, ctx) => {
           if (ctx?.path?.startsWith("/sso/")) {
             await assertSsoEmailOnDomain(ctx.params?.providerId, user.email);
+            return { data: { emailVerified: true } };
           }
           // requireEmailVerification covers email/password only. A social
           // provider that reports the address unverified (GitHub can) must
@@ -575,9 +574,9 @@ export const auth = betterAuth({
     // `/api/auth/sign-in/email` that bypasses our signin UI is rejected here
     // at the source rather than flagged reactively.
     //
-    // For an enforced email domain only the org's own SSO callback may mint
-    // the session. The hook fails open when the enforcing org has no
-    // staff-approved `ssoProvider` rows — see `lib/sso/enforce-session.ts`.
+    // For an enforced email domain only an approved provider covering that
+    // domain may mint the session, through its SSO callback. Domains no
+    // approved provider covers fail open — see `lib/sso/enforce-session.ts`.
     //
     // The same hook keeps operators on password + TOTP: the twoFactor plugin
     // never challenges a social or SSO callback, so those are refused here
@@ -599,20 +598,11 @@ export const auth = betterAuth({
             });
           }
 
-          const decision = await shouldRejectSession({
-            email: user?.email ?? null,
+          await assertSsoSessionAllowed(prisma, {
+            email: user?.email,
             path: ctx?.path,
             providerId: ctx?.params?.providerId,
-            lookupEnforcedOrg: (domain) => lookupEnforcedOrg(prisma, domain),
           });
-
-          if (decision.reject) {
-            throw new APIError("FORBIDDEN", {
-              message:
-                "This email domain requires SSO sign-in through your organization's provider. Password and Google sign-in are off for it.",
-              code: "SSO_REQUIRED",
-            });
-          }
 
           if (isOperatorRole(user?.role)) {
             return {
@@ -663,7 +653,7 @@ export const auth = betterAuth({
             });
           }
           if (isSsoProviderId(account.providerId)) {
-            await assertSsoEmailOnDomain(account.providerId, user?.email);
+            await assertSsoAccountLink(account, user?.email);
           }
         },
         after: async (account) => {

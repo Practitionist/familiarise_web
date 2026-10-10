@@ -229,9 +229,9 @@ function SignInContent() {
       if (res.ok) {
         const data = await res.json();
         setSsoCheck(
-          data.enforceSSO
+          data.ssoBody
             ? {
-                enforceSSO: true,
+                enforceSSO: data.enforceSSO === true,
                 organizationName: data.organizationName,
                 ssoBody: data.ssoBody,
               }
@@ -295,9 +295,9 @@ function SignInContent() {
       );
       if (!res.ok) throw new Error("check failed");
       const data = await res.json();
-      if (data.enforceSSO) {
+      if (data.ssoBody) {
         setSsoCheck({
-          enforceSSO: true,
+          enforceSSO: data.enforceSSO === true,
           organizationName: data.organizationName,
           ssoBody: data.ssoBody,
         });
@@ -621,6 +621,17 @@ function SignInContent() {
                 disabled={isLoading}
               >
                 {isLoading ? "Signing In..." : "Sign In with Email"}
+              </Button>
+            )}
+            {ssoCheck && !ssoCheck.enforceSSO && (
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-2 w-full"
+                onClick={handleSSOSignIn}
+                disabled={isLoading}
+              >
+                Sign in with {ssoCheck.organizationName} SSO &rarr;
               </Button>
             )}
             {/* The catalog's next step for the last failure, if this page can

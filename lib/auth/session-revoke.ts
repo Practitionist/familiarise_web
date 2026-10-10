@@ -71,3 +71,22 @@ export async function revokeSessionById(
   });
   return { revoked: count };
 }
+
+/**
+ * End every session of every user whose email is on `domain`, members of an
+ * org or not, except `keepSessionId`. Used when SSO enforcement starts to bite
+ * on a domain.
+ */
+export async function revokeEmailDomainSessions(
+  db: PrismaLike,
+  domain: string,
+  keepSessionId?: string,
+): Promise<RevokeResult> {
+  const { count } = await db.session.deleteMany({
+    where: {
+      user: { email: { endsWith: `@${domain}`, mode: "insensitive" } },
+      ...(keepSessionId ? { id: { not: keepSessionId } } : {}),
+    },
+  });
+  return { revoked: count };
+}

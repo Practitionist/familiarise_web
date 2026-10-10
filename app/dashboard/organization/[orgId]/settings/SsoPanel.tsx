@@ -2,16 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Copy, Check } from "lucide-react";
+import { Plus, Trash2, Copy, Check, KeyRound } from "lucide-react";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
-import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
 import {
   CreateSsoProviderPayloadSchema,
   PatchSsoSettingsPayloadSchema,
   SsoSettingsResponseSchema,
+  UpdateSsoProviderPayloadSchema,
   type CreateSsoProviderPayload,
   type SsoSettingsResponse,
+  type UpdateSsoProviderPayload,
 } from "@/schemas/organizations";
 import {
   parseJsonResponse,
@@ -61,18 +62,22 @@ const providerColumns: ResponsiveColumn<SsoProvider>[] = [
   },
   {
     key: "domain",
-    header: "Domain",
-    cell: (p) => p.domain,
+    header: "Domains",
+    cell: (p) => p.domain.split(",").join(", "),
   },
   {
     key: "status",
     header: "Status",
-    cell: (p) =>
-      p.domainVerified ? (
+    cell: (p) => {
+      if (!p.domainVerified) {
+        return <Badge variant="outline">Awaiting platform approval</Badge>;
+      }
+      return p.provenAt ? (
         <Badge variant="secondary">Active</Badge>
       ) : (
-        <Badge variant="outline">Awaiting platform approval</Badge>
-      ),
+        <Badge variant="outline">Approved — sign in once as an owner</Badge>
+      );
+    },
   },
   {
     key: "idpUrls",
@@ -80,10 +85,7 @@ const providerColumns: ResponsiveColumn<SsoProvider>[] = [
     className: "space-y-1.5 py-3",
     cell: (p) => (
       <div className="space-y-1.5">
-        <CopyableUrl
-          label="Redirect URI"
-          value={deriveCallbackUrl(p.providerId)}
-        />
+        <CopyableUrl label="Redirect URI" value={p.callbackUrl} />
       </div>
     ),
   },
@@ -182,6 +184,29 @@ async function createProvider(
   return body;
 }
 
+async function updateProvider(
+  orgId: string,
+  providerId: string,
+  payload: UpdateSsoProviderPayload,
+) {
+  const validated = validateOutboundPayload(
+    UpdateSsoProviderPayloadSchema,
+    payload,
+  );
+  const res = await fetch(
+    `/api/organizations/${orgId}/sso/providers/${providerId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validated),
+    },
+  );
+  const body = await res.json().catch(() => null);
+  if (!res.ok)
+    throw new Error(errorMessageFromBody(body, "Failed to update provider"));
+  return body;
+}
+
 async function deleteProvider(orgId: string, providerId: string) {
   const res = await fetch(
     `/api/organizations/${orgId}/sso/providers/${providerId}`,
@@ -247,15 +272,16 @@ export function SsoPanel({ orgId }: { orgId: string }) {
   const createProviderMutation = useMutation({
     mutationFn: () => {
       const payload: CreateSsoProviderPayload = {
-        domain: domain.trim(),
+        domains: domain
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean),
         issuer: issuer.trim(),
         providerType: "oidc",
         oidcConfig: {
-          issuer: issuer.trim(),
           clientId: oidcClientId.trim(),
           clientSecret: oidcClientSecret.trim(),
           discoveryEndpoint: oidcDiscoveryUrl.trim(),
-          pkce: true,
         },
       };
       return createProvider(orgId, payload);
@@ -271,6 +297,17 @@ export function SsoPanel({ orgId }: { orgId: string }) {
       setProviderError(null);
     },
     onError: (err: Error) => setProviderError(err.message),
+  });
+
+  const [rotating, setRotating] = useState<string | null>(null);
+  const [newSecret, setNewSecret] = useState("");
+  const rotateSecretMutation = useMutation({
+    mutationFn: (providerId: string) =>
+      updateProvider(orgId, providerId, { clientSecret: newSecret.trim() }),
+    onSuccess: () => {
+      setRotating(null);
+      setNewSecret("");
+    },
   });
 
   const deleteProviderMutation = useMutation({
@@ -299,8 +336,9 @@ export function SsoPanel({ orgId }: { orgId: string }) {
           <CardHeader>
             <CardTitle>Domain policy</CardTitle>
             <CardDescription>
-              Applies to every verified domain claimed by this organization.
-              Enforcement takes effect once an SSO provider is approved.
+              Applies to each verified domain an approved provider covers, once
+              an owner has signed in through that provider. Turning it on signs
+              out everyone else on those domains.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -377,29 +415,39 @@ export function SsoPanel({ orgId }: { orgId: string }) {
               getRowId={(p) => p.id}
               rowActions={(p) =>
                 canEdit && (
-                  // #1527 Q10 — deleting a provider can lock every SSO user
-                  // out, so it takes a typed confirm (it fired on first click).
-                  <ConfirmDialog
-                    title="Delete this SSO provider?"
-                    description={`Members who sign in through ${p.providerId} lose that way in immediately. This can't be undone.`}
-                    confirmLabel="Delete provider"
-                    tone="destructive"
-                    requireTyped={p.providerId}
-                    onConfirm={async () => {
-                      // The DELETE route is keyed on the providerId slug,
-                      // not the row uuid.
-                      await deleteProviderMutation.mutateAsync(p.providerId);
-                    }}
-                    trigger={
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Delete provider"
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
-                    }
-                  />
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Rotate client secret"
+                      onClick={() => setRotating(p.providerId)}
+                    >
+                      <KeyRound className="h-4 w-4" />
+                    </Button>
+                    {/* Deleting a provider can lock every SSO user out, so it
+                      takes a typed confirm. */}
+                    <ConfirmDialog
+                      title="Delete this SSO provider?"
+                      description={`Members who sign in through ${p.providerId} lose that way in immediately. This can't be undone.`}
+                      confirmLabel="Delete provider"
+                      tone="destructive"
+                      requireTyped={p.providerId}
+                      onConfirm={async () => {
+                        // The DELETE route is keyed on the providerId slug,
+                        // not the row uuid.
+                        await deleteProviderMutation.mutateAsync(p.providerId);
+                      }}
+                      trigger={
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Delete provider"
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      }
+                    />
+                  </div>
                 )
               }
               empty={
@@ -411,6 +459,50 @@ export function SsoPanel({ orgId }: { orgId: string }) {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={rotating !== null}
+        onOpenChange={(open) => {
+          if (!open) setRotating(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rotate client secret</DialogTitle>
+            <DialogDescription>
+              Paste the new secret from your identity provider. The redirect URI
+              and approval stay the same, and sign-ins use the new secret
+              immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="rotate-secret">New client secret</Label>
+            <Input
+              id="rotate-secret"
+              type="password"
+              autoComplete="off"
+              value={newSecret}
+              onChange={(e) => setNewSecret(e.target.value)}
+            />
+            {rotateSecretMutation.error && (
+              <p className="text-sm text-red-600">
+                {rotateSecretMutation.error.message}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRotating(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => rotating && rotateSecretMutation.mutate(rotating)}
+              disabled={rotateSecretMutation.isPending || !newSecret.trim()}
+            >
+              {rotateSecretMutation.isPending ? "Saving…" : "Rotate secret"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent>
@@ -424,13 +516,17 @@ export function SsoPanel({ orgId }: { orgId: string }) {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="prov-domain">Domain</Label>
+              <Label htmlFor="prov-domain">Domains</Label>
               <Input
                 id="prov-domain"
                 value={domain}
                 onChange={(e) => setDomain(e.target.value)}
-                placeholder="acme.com"
+                placeholder="acme.com, acme.co.in"
               />
+              <p className="text-xs text-zinc-500">
+                Every verified domain this identity provider signs people in
+                for, separated by commas.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="prov-issuer">Issuer</Label>

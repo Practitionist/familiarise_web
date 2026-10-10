@@ -4,11 +4,11 @@
  *
  * Org-level SSO settings (separate from the individual IdP configs under
  * /sso/providers). This endpoint governs:
- *   - enforceSSO               — require SSO for all sign-ins
+ *   - enforceSSO               — require SSO on every enforceable domain
  *   - defaultRoleForAutoJoin   — role newly auto-joined users receive
  *
- * Which domains are covered is not a setting: it is the org's verified
- * OrgDomainClaim rows.
+ * Which domains are enforced is not a setting: it is the org's verified
+ * OrgDomainClaim rows that an approved provider covers.
  *
  * Settings are upserted on PATCH — the record exists 1:1 with Organization,
  * and missing == defaults (no enforcement / LEARNER default).
@@ -19,14 +19,18 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { readOidcConfig } from "@/lib/prisma-sso-secret-extension";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { JitDefaultRoleSchema } from "@/lib/labels/org-labels";
 import {
   DomainVerificationRequiredError,
   hasVerifiedDomain,
 } from "@/lib/enterprise/governance";
-import { revokeEnforcedOrgMemberSessions } from "@/lib/sso/enforce-session";
+import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
+import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
+import {
+  countProvenProviders,
+  SSO_NOT_PROVEN_MESSAGE,
+} from "@/lib/sso/provider-proof";
 
 const PatchBodySchema = z
   .object({
@@ -84,8 +88,8 @@ async function enforceSsoVersionLock(
   }
 }
 
-// Enforcement only bites through a staff-approved provider (it fails open
-// without one), so turning it on before approval would be a silent no-op.
+// Enforcement only bites through an approved provider, and only one an OWNER
+// has signed in through is known to work.
 async function assertEnforceSsoIsSafe(
   tx: Tx,
   orgId: string,
@@ -102,6 +106,12 @@ async function assertEnforceSsoIsSafe(
       ),
       { httpStatus: 409 },
     );
+  }
+  if ((await countProvenProviders(tx, orgId)) === 0) {
+    throw Object.assign(new Error(SSO_NOT_PROVEN_MESSAGE), {
+      httpStatus: 409,
+      code: "SSO_NOT_PROVEN",
+    });
   }
 }
 
@@ -239,7 +249,7 @@ export async function GET(
         issuer: true,
         domain: true,
         domainVerified: true,
-        oidcConfig: true,
+        provenAt: true,
       },
     }),
     prisma.orgDomainClaim.findMany({
@@ -248,6 +258,8 @@ export async function GET(
     }),
   ]);
 
+  // The secret envelope is never read here; the detail route reports a row
+  // whose config cannot be decrypted.
   return NextResponse.json({
     settings: settings ?? {
       organizationId: orgId,
@@ -255,20 +267,11 @@ export async function GET(
       defaultRoleForAutoJoin: "LEARNER",
       version: 1,
     },
-    providers: providers.map((provider) => {
-      // `oidcConfig` decrypts on read; one unreadable row must not 500 the
-      // whole list. Its detail route reports the failure.
-      const { config, failure } = readOidcConfig(provider);
-      return {
-        id: provider.id,
-        providerId: provider.providerId,
-        issuer: provider.issuer,
-        domain: provider.domain,
-        domainVerified: provider.domainVerified,
-        providerType: config || failure ? "oidc" : null,
-        ...(failure ? { providerMisconfigured: true } : {}),
-      };
-    }),
+    providers: providers.map((provider) => ({
+      ...provider,
+      providerType: "oidc" as const,
+      callbackUrl: deriveCallbackUrl(provider.providerId),
+    })),
     domainClaims: claims,
   });
 }
@@ -308,7 +311,9 @@ export async function PATCH(
 
       const next = await upsertSsoSettings(tx, orgId, body);
       if (body.enforceSSO === true && !(existing?.enforceSSO ?? false)) {
-        await revokeEnforcedOrgMemberSessions(tx, orgId);
+        await revokeEnforcedDomainSessions(tx, orgId, {
+          keepSessionId: access.session.session.id,
+        });
       }
       await writeSsoAuditLog(tx, {
         orgId,

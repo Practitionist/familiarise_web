@@ -3,34 +3,30 @@
  */
 
 /**
- * `/api/auth/sso/domain-check` hands the signin page the `ssoBody` it feeds
- * into BetterAuth's `signIn.sso()` for an enforce-SSO domain, and reads only
- * the provider's id — never its encrypted config — on this pre-auth path.
+ * `/api/auth/sso/domain-check` hands the sign-in page an `ssoBody` whenever an
+ * approved provider covers the domain, enforced or not, and never reads the
+ * provider's encrypted config on this pre-auth path.
  */
 
 import { NextRequest } from "next/server";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: {
-    ssoProvider: { findFirst: jest.fn() },
-    organization: { findUnique: jest.fn() },
-  },
+  default: { organization: { findUnique: jest.fn() } },
 }));
 
 jest.mock("../../lib/sso/enforce-session", () => ({
-  lookupEnforcedOrg: jest.fn(),
+  lookupDomainSso: jest.fn(),
 }));
 
 import prisma from "@/lib/prisma";
-import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
+import { lookupDomainSso } from "@/lib/sso/enforce-session";
 import { GET } from "@/app/api/auth/sso/domain-check/route";
 
 const mockedPrisma = prisma as unknown as {
-  ssoProvider: { findFirst: jest.Mock };
   organization: { findUnique: jest.Mock };
 };
-const mockedLookup = lookupEnforcedOrg as jest.Mock;
+const mockedLookup = lookupDomainSso as jest.Mock;
 
 function makeRequest(email: string) {
   return new NextRequest(
@@ -41,45 +37,44 @@ function makeRequest(email: string) {
 describe("GET /api/auth/sso/domain-check", () => {
   beforeEach(() => {
     mockedLookup.mockReset();
-    mockedPrisma.ssoProvider.findFirst.mockReset();
-    mockedPrisma.organization.findUnique.mockReset();
-    mockedLookup.mockResolvedValue({
-      organizationId: "org-1",
-      registeredProviderIds: ["acme-oidc"],
-    });
     mockedPrisma.organization.findUnique.mockResolvedValue({ name: "Acme" });
   });
 
-  it("hands out ssoBody for an enforced domain with an OIDC provider", async () => {
-    mockedPrisma.ssoProvider.findFirst.mockResolvedValue({
-      providerId: "acme-oidc",
-    });
-
-    const res = await GET(makeRequest("user@acme.com"));
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body.enforceSSO).toBe(true);
-    expect(body.organizationName).toBe("Acme");
-    expect(body.ssoBody).toEqual({
-      providerId: "acme-oidc",
-      domain: "acme.com",
-      callbackURL: expect.stringContaining("/auth/signin"),
-    });
-    expect(mockedPrisma.ssoProvider.findFirst).toHaveBeenCalledWith({
-      // Unapproved providers are invisible: the plugin would refuse them.
-      where: {
-        domain: "acme.com",
+  it.each([true, false])(
+    "hands out ssoBody for a covered domain (enforced=%s)",
+    async (enforced) => {
+      mockedLookup.mockResolvedValue({
         organizationId: "org-1",
-        domainVerified: true,
-      },
-      select: { providerId: true },
-    });
-  });
+        enforced,
+        providerIds: ["acme-oidc", "acme-older"],
+      });
 
-  it("falls through to credentials when the org has no provider", async () => {
-    mockedPrisma.ssoProvider.findFirst.mockResolvedValue(null);
+      const res = await GET(makeRequest("user@ACME.com"));
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(mockedLookup).toHaveBeenCalledWith(prisma, "acme.com");
+      expect(body).toEqual({
+        enforceSSO: enforced,
+        organizationName: "Acme",
+        ssoBody: {
+          providerId: "acme-oidc",
+          domain: "acme.com",
+          callbackURL: expect.stringContaining("/auth/signin"),
+        },
+      });
+    },
+  );
+
+  it("falls through to credentials when no approved provider covers the domain", async () => {
+    mockedLookup.mockResolvedValue(null);
 
     const res = await GET(makeRequest("user@acme.com"));
     expect(await res.json()).toEqual({ enforceSSO: false });
+  });
+
+  it("ignores a malformed email", async () => {
+    const res = await GET(makeRequest("not-an-email"));
+    expect(await res.json()).toEqual({ enforceSSO: false });
+    expect(mockedLookup).not.toHaveBeenCalled();
   });
 });

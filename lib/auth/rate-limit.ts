@@ -139,8 +139,10 @@ export const AUTH_RATE_LIMIT_RULES: NonNullable<
   // and a 429 here reads as "Google sign-in is broken", so these stay loose.
   "/sign-in/social": { window: 15 * MINUTE, max: 30 },
   "/callback/*": { window: 15 * MINUTE, max: 30 },
-  "/sign-in/sso": { window: 15 * MINUTE, max: 20 },
-  "/sso/callback/*": { window: 15 * MINUTE, max: 30 },
+  // Enforce-on signs a whole office out at once behind one NAT address, and
+  // the callback's state and PKCE are single-use, so these only stop floods.
+  "/sign-in/sso": { window: 15 * MINUTE, max: 300 },
+  "/sso/callback/*": { window: 15 * MINUTE, max: 1000 },
 
   // Read on every page load and tab focus, and nothing to guess. Throttling
   // sign-out would strand a user on a device they are trying to leave.

@@ -161,9 +161,9 @@ export const orgDataExportLimiter = makeLimiter(
   "24 h",
   "rl:org-data-export",
 );
-/** 120 per hour per IP — GET /api/auth/sso/domain-check */
+/** 1000 per hour per IP (offices share one NAT address) — GET /api/auth/sso/domain-check */
 export const ssoDomainCheckLimiter = makeLimiter(
-  120,
+  1000,
   "1 h",
   "rl:sso-domain-check",
 );

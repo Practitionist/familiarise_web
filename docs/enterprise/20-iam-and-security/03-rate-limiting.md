@@ -91,29 +91,29 @@ bucket cannot express that spread, and because the keys differ (IP vs
 Keyed per client IP and path. Unlisted paths get the 100/min default.
 `withRetryAfter` mirrors BetterAuth's `X-Retry-After` to `Retry-After`.
 
-| Path (under `/api/auth`)           | Budget        |
-| ---------------------------------- | ------------- |
-| `/sign-in/email`                   | 30 per 15 min |
-| `/change-password`                 | 5 per 15 min  |
-| `/verify-password`                 | 5 per 15 min  |
-| `/two-factor/verify-*`             | 5 per min     |
-| `/two-factor/*`                    | 10 per min    |
-| `/sign-up/email`                   | 10 per hour   |
-| `/request-password-reset`          | 5 per hour    |
-| `/send-verification-email`         | 10 per hour   |
-| `/reset-password`                  | 20 per hour   |
-| `/reset-password/*`                | 10 per hour   |
-| `/verify-email`                    | 30 per hour   |
-| `/sign-in/social`, `/callback/*`   | 30 per 15 min |
-| `/sign-in/sso`                     | 20 per 15 min |
-| `/sso/callback`, `/sso/callback/*` | 30 per 15 min |
-| `/get-session`, `/sign-out`        | not limited   |
+| Path (under `/api/auth`)           | Budget                                          |
+| ---------------------------------- | ----------------------------------------------- |
+| `/sign-in/email`                   | 30 per 15 min                                   |
+| `/change-password`                 | 5 per 15 min                                    |
+| `/verify-password`                 | 5 per 15 min                                    |
+| `/two-factor/verify-*`             | 5 per min                                       |
+| `/two-factor/*`                    | 10 per min                                      |
+| `/sign-up/email`                   | 10 per hour                                     |
+| `/request-password-reset`          | 5 per hour                                      |
+| `/send-verification-email`         | 10 per hour                                     |
+| `/reset-password`                  | 20 per hour                                     |
+| `/reset-password/*`                | 10 per hour                                     |
+| `/verify-email`                    | 30 per hour                                     |
+| `/sign-in/social`, `/callback/*`   | 30 per 15 min                                   |
+| `/sign-in/sso`                     | 300 per 15 min (NAT-sized)                      |
+| `/sso/callback`, `/sso/callback/*` | 1000 per 15 min (state and PKCE are single-use) |
+| `/get-session`, `/sign-out`        | not limited                                     |
 
 ### Edge-enforced (`middleware.ts` → `RATE_LIMIT_RULES`)
 
 | Surface                                                          | Scope / limiter               | Window         | Key            | Skip localhost |
 | ---------------------------------------------------------------- | ----------------------------- | -------------- | -------------- | -------------- |
-| `GET /api/auth/sso/domain-check`                                 | `enterprise.sso-domain-check` | 120 per hour   | IP             | yes            |
+| `GET /api/auth/sso/domain-check`                                 | `enterprise.sso-domain-check` | 1000 per hour  | IP             | yes            |
 | `POST /api/organizations/invitations/accept`                     | `enterprise.invite-accept`    | 60 per hour    | IP             | yes            |
 | `/api/user/sessions*` except `/api/user/sessions/current`        | `sessionMgmtLimiter`          | 120 per 15 min | IP             | yes            |
 | `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | `orgWalletTopUpLimiter`       | 20 per hour    | `org:${orgId}` | yes            |

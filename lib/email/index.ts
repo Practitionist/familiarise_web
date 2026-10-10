@@ -44,6 +44,7 @@ export * from "./senders/booking";
 export * from "./senders/money";
 export * from "./senders/onboarding";
 export * from "./senders/people";
+export * from "./senders/sso";
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
 
