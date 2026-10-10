@@ -374,9 +374,13 @@ export async function POST(
             custom: {
               appointmentId: appt.id,
               appointmentType: appt.appointmentType,
-              ...(planTitle ? { planTitle } : {}),
-              ...(consultantName ? { consultantName } : {}),
-              ...(consulteeName ? { consulteeName } : {}),
+              ...(planTitle ? { planTitle, offeringTitle: planTitle } : {}),
+              ...(consultantName
+                ? { consultantName, hostName: consultantName }
+                : {}),
+              ...(consulteeName
+                ? { consulteeName, guestName: consulteeName }
+                : {}),
               sessionStartsAt: startsAt.toISOString(),
               sessionEndsAt: endsAt.toISOString(),
             },

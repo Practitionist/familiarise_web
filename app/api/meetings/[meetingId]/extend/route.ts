@@ -62,7 +62,7 @@ function buildConflictScope(
   };
   const consultantClauses = consultantProfileId
     ? [
-        { consultantProfileId },
+        { consultantProfileId, appointment: { deletedAt: null } },
         {
           appointment: {
             deletedAt: null,
