@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
+import { Prisma, SupportCaseStatus } from "@prisma/client";
 import { SupportIssueTypeEnum } from "@/schemas/enums";
 import { callbackPhoneSchema } from "@/lib/validation/phone";
 import { stageBell } from "@/lib/novu/stage-bell";

@@ -3,7 +3,7 @@
  * Staff can respond to any support ticket
  */
 
-import { SupportStatus } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { supportError } from "@/lib/api/support-http";
@@ -38,7 +38,7 @@ type PublicReplyGuardFailure = {
 async function guardTicketPublicReplyTx(params: {
   tx: Tx;
   ticketId: string;
-  ticketStatus: SupportStatus;
+  ticketStatus: Prisma.SupportTicketGetPayload<object>["status"];
   ticketAssignedToId: string | null;
   fallbackLastMessageAt: Date | null;
   sessionUserId: string;
