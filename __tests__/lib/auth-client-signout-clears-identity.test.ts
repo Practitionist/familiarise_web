@@ -30,6 +30,9 @@ jest.mock("better-auth/client/plugins", () => ({
   emailOTPClient: () => ({}),
 }));
 jest.mock("@better-auth/sso/client", () => ({ ssoClient: () => ({}) }));
+jest.mock("@better-auth/passkey/client", () => ({
+  passkeyClient: () => ({}),
+}));
 
 import { authClient, signOut } from "@/lib/auth-client";
 import {

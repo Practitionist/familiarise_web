@@ -51,7 +51,7 @@ describe("session token exposure (#1856)", () => {
   });
 
   it("strips the token from the customSession payload", () => {
-    expect(authSrc).toMatch(/session:\s*sessionWithoutToken\(session\)/);
+    expect(authSrc).toMatch(/session:\s*publicSession\(session\)/);
   });
 
   it("keeps the cookie cache off so revocation is immediate", () => {

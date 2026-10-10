@@ -258,7 +258,10 @@ describe("an org-A OWNER cannot reach org B's child resources", () => {
   beforeEach(() => {
     writes.length = 0;
     (requireOrgAccess as jest.Mock).mockResolvedValue({
-      session: { user: { id: "user-A", email: "owner@a.test", role: "USER" } },
+      session: {
+        user: { id: "user-A", email: "owner@a.test", role: "USER" },
+        session: { createdAt: new Date(), reauthenticatedAt: null },
+      },
       member: {
         id: "member-A",
         userId: "user-A",

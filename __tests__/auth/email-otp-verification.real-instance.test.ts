@@ -11,6 +11,7 @@
 
 import { betterAuth } from "better-auth";
 import { memoryAdapter } from "better-auth/adapters/memory";
+import { createAuthMiddleware } from "better-auth/api";
 import { emailOTP } from "better-auth/plugins";
 import { corePolicy } from "../../lib/auth/core-policy";
 import { breachedPasswordCheck } from "../../lib/auth/password-policy";
@@ -61,7 +62,7 @@ const auth = betterAuth({
     },
   },
   verification: { storeIdentifier: "hashed" },
-  hooks: { after: stripSessionToken },
+  hooks: { after: createAuthMiddleware(stripSessionToken) },
   databaseHooks: {
     user: {
       create: {
@@ -144,15 +145,6 @@ describe("email OTP verification", () => {
     expect(sessionCookie(res)).toBe("");
     expect(lastOtp(email)).toMatch(/^\d{6}$/);
 
-    // Sign-in before verifying is refused, and (password proven) a fresh code is sent.
-    const before = otps.length;
-    const signIn = await call("/sign-in/email", { email, password: PASSWORD });
-    expect(signIn.status).toBe(403);
-    await expect(signIn.json()).resolves.toMatchObject({
-      code: "EMAIL_NOT_VERIFIED",
-    });
-    expect(otps.length).toBe(before + 1);
-
     const code = lastOtp(email);
     const wrong = code === "000000" ? "111111" : "000000";
     const bad = await call("/email-otp/verify-email", { email, otp: wrong });
@@ -169,6 +161,19 @@ describe("email OTP verification", () => {
     // The code is single-use.
     const replay = await call("/email-otp/verify-email", { email, otp: code });
     expect(replay.status).toBe(400);
+  });
+
+  it("refuses sign-in before verification and mails a fresh code", async () => {
+    const email = "unverified@example.test";
+    await signUp(email);
+    const before = otps.length;
+    const signIn = await call("/sign-in/email", { email, password: PASSWORD });
+    expect(signIn.status).toBe(403);
+    await expect(signIn.json()).resolves.toMatchObject({
+      code: "EMAIL_NOT_VERIFIED",
+    });
+    expect(otps.length).toBe(before + 1);
+    expect(lastOtp(email)).toMatch(/^\d{6}$/);
   });
 
   it("only sends email-verification codes", async () => {
