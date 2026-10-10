@@ -21,27 +21,23 @@ mcp__stream-io__chat_query_channels   {"filter_conditions": {"type": {"$eq": "me
 mcp__stream-io__app_get_rate_limits   {}
 ```
 
----
-
 ## 2. Architecture Map (`Where Things Live`)
 
-| Subsystem / Concern                     | Primary Files                                                                                                                                                                                                                                  |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Server Clients, Tokens & Breaker**    | `lib/stream-client.ts`, `lib/stream/token-ttl.ts`, `lib/stream/initial-tokens.ts`, `lib/stream/seed-token-cache.ts`, `actions/stream/chat/stream.action.ts`                                                                                    |
-| **Client Connection Store (SSR-Safe)**  | `providers/StreamProvider.tsx` (SDK-free shell), `providers/StreamProviderImpl.tsx` (lazy SDK chunk, gates prefetch on `!isSessionPending && !!sessionUserId`), `lib/stream/connection-store.ts`, `lib/stream/disconnect.ts`                   |
-| **Channel IDs & Batch Helpers**         | `lib/stream-channel-ids.ts`, `lib/stream-utils.ts`, `lib/stream/batch.ts` (`queryChannelsPaged` 30-cap, `createMemberChunk` / `addRemainingMembers` 100-cap), `lib/stream/call-cid.ts` (`STREAM_CALL_TYPE = "default"`, `parseCallCid`)        |
-| **Chat & Event Channel Services**       | `actions/stream/chat/channel.action.ts`, `lib/stream/event-channel-service.ts`, `actions/stream/chat/event-channel.action.ts`, `actions/stream/chat/user.action.ts`, `app/api/stream/channels/open/route.ts`                                   |
-| **4-Part DM Eligibility & Org Scope**   | `lib/stream/dm-eligibility.ts` (`canDirectMessage`, `pairBookingContexts`), `lib/stream/dm-eligibility-statuses.ts` (`DM_ELIGIBLE_STATUSES`, `OPENABLE_EVENT_STATUSES`), `lib/stream/org-channel-filter.ts`                                    |
-| **Elastic Session Envelope & Meetings** | `actions/stream/meetings/meeting.action.ts`, `lib/meetings/access.ts` (`resolveMeetingAccess`), `lib/meetings/duration-cap.ts`, `lib/meetings/room-ready.ts` (`CONSULTEE_JOIN_WINDOW_MS = 15m`, `REJOIN_GRACE_MS = 30m`)                       |
-| **Meetings API Routes**                 | `app/api/meetings/[meetingId]/{join,end,live,extend,recording-consent}/route.ts`                                                                                                                                                               |
-| **Meeting Room UI & Stage Moderation**  | `app/meetings/[id]/components/{MeetingRoom,StageControls,OverrunBanner,RecordingControls}.tsx`, `app/meetings/[id]/session-info.ts`                                                                                                            |
-| **Webhooks & Attendance Settlement**    | `app/api/stream/webhooks/route.ts`, `lib/stream/{webhook-signature,webhook-receipt,webhook-dispatch,session-handlers,call-presence}.ts`, `lib/booking/{session-outcome,session-outcome-sweep}.ts`, `scripts/earnings/release-earnings.ts`      |
-| **Recordings & R2 Multipart Storage**   | `lib/storage/r2-client.ts`, `lib/stream/{recording-storage,recording-transfer-service,recording-service,recording-handlers,recording-consent}.ts`, `app/api/stream/recordings/[recordingId]/{route,publish,preview}/route.ts`                  |
-| **Recordings & Replay Marketplace UI**  | `components/recordings/{RecordingPlayerModal,RecordingManageSheet}.tsx`, `app/explore/recordings/[slug]/page.tsx`, `lib/data/recordings-explore.ts`, `app/api/recordings/[recordingId]/purchase/route.ts`                                      |
-| **DPDP Privacy & Org Wind-Down**        | `lib/compliance/erasure/scrub-user.ts` (`eraseStreamPrincipalFootprint`), `lib/enterprise/member-removal.ts`, `jobs/stream/wind-down-deactivated-orgs.ts`, `scripts/cleanup/retry-moderation-enforcement.ts`                                   |
-| **Control-Plane Provisioning & Sync**   | `scripts/stream/ensure.ts`, `scripts/stream/{ensure-app-settings,ensure-call-type-grants,harden-unused-call-types,ensure-webhook-subscription,stream-sync}.ts`, `jobs/stream/{expire-event-channels,transfer-recordings,expire-recordings}.ts` |
-
----
+| Subsystem / Concern                     | Primary Files                                                                                                                                                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Server Clients, Tokens & Breaker**    | `lib/stream-client.ts`, `lib/stream/token-ttl.ts`, `lib/stream/initial-tokens.ts`, `lib/stream/seed-token-cache.ts`, `actions/stream/chat/stream.action.ts`                                                                                      |
+| **Client Connection Store (SSR-Safe)**  | `providers/StreamProvider.tsx` (SDK-free shell), `providers/StreamProviderImpl.tsx` (lazy SDK chunk, gates prefetch on `!isSessionPending && !!sessionUserId`), `lib/stream/connection-store.ts`, `lib/stream/disconnect.ts`                     |
+| **Channel IDs & Batch Helpers**         | `lib/stream-channel-ids.ts`, `lib/stream-utils.ts`, `lib/stream/batch.ts` (`queryChannelsPaged` 30-cap, `createMemberChunk` / `addRemainingMembers` 100-cap), `lib/stream/call-cid.ts` (`STREAM_CALL_TYPE = "default"`, `parseSlotIdFromCallId`) |
+| **Chat & Event Channel Services**       | `actions/stream/chat/channel.action.ts`, `lib/stream/event-channel-service.ts`, `actions/stream/chat/event-channel.action.ts`, `actions/stream/chat/user.action.ts`, `app/api/stream/channels/open/route.ts`                                     |
+| **4-Part DM Eligibility & Org Scope**   | `lib/stream/dm-eligibility.ts` (`canDirectMessage`, `pairBookingContexts`), `lib/stream/dm-eligibility-statuses.ts` (`DM_ELIGIBLE_STATUSES`, `OPENABLE_EVENT_STATUSES`), `lib/stream/org-channel-filter.ts`                                      |
+| **Elastic Session Envelope & Meetings** | `actions/stream/meetings/meeting.action.ts`, `lib/meetings/access.ts` (`resolveMeetingAccess`), `lib/meetings/duration-cap.ts`, `lib/meetings/room-ready.ts` (`CONSULTEE_JOIN_WINDOW_MS = 15m`, `REJOIN_GRACE_MS = 30m`)                         |
+| **Meetings API Routes**                 | `app/api/meetings/[meetingId]/{join,end,live,extend,recording-consent}/route.ts`                                                                                                                                                                 |
+| **Meeting Room UI & Stage Moderation**  | `app/meetings/[id]/components/{MeetingRoom,StageControls,OverrunBanner,RecordingControls}.tsx`, `app/meetings/[id]/session-info.ts`                                                                                                              |
+| **Webhooks & Attendance Settlement**    | `app/api/stream/webhooks/route.ts`, `lib/stream/{webhook-signature,webhook-receipt,webhook-dispatch,session-handlers,call-presence}.ts`, `lib/booking/{session-outcome,session-outcome-sweep}.ts`, `scripts/earnings/release-earnings.ts`        |
+| **Recordings & R2 Multipart Storage**   | `lib/storage/r2-client.ts`, `lib/stream/{recording-storage,recording-transfer-service,recording-service,recording-handlers,recording-consent}.ts`, `app/api/stream/recordings/[recordingId]/{route,publish,preview}/route.ts`                    |
+| **Recordings & Replay Marketplace UI**  | `components/recordings/{RecordingPlayerModal,RecordingManageSheet}.tsx`, `app/explore/recordings/[slug]/page.tsx`, `lib/data/recordings-explore.ts`, `app/api/recordings/[recordingId]/purchase/route.ts`                                        |
+| **DPDP Privacy & Org Wind-Down**        | `lib/compliance/erasure/scrub-user.ts` (`eraseStreamPrincipalFootprint`), `lib/enterprise/member-removal.ts`, `jobs/stream/wind-down-deactivated-orgs.ts`, `scripts/cleanup/retry-moderation-enforcement.ts`                                     |
+| **Control-Plane Provisioning & Sync**   | `scripts/stream/ensure.ts`, `scripts/stream/{ensure-app-settings,ensure-call-type-grants,harden-unused-call-types,ensure-webhook-subscription,stream-sync}.ts`, `jobs/stream/{expire-event-channels,transfer-recordings,expire-recordings}.ts`   |
 
 ## 3. Server-Action Boundary & Security Rules
 
@@ -55,12 +51,12 @@ mcp__stream-io__app_get_rate_limits   {}
    - Always pass both `exp` and `iat` (`Math.floor(Date.now() / 1000) - 60`) when minting chat or video tokens (`lib/stream-client.ts`). Stream rejects tokens without `iat` once `revoke_tokens_issued_before` is set on a user.
    - Video tokens are **app-wide user tokens** (`generateUserToken`) because `StreamVideoClient` is a tab-wide singleton. Call admission is enforced server-side by `resolveMeetingAccess` (`POST /api/meetings/[meetingId]/join`) plus `default` call-type role grants (`join-call` is stripped from `user`/`guest` and granted only to `call_member` and `co_presenter`). The join route never creates a call; provisioning is the only creator.
    - Stream accepts only `send-audio`, `send-video` and `screenshare` as per-user grants (`updateUserPermissions`), and one other name fails the whole request. Mute, pin and backstage come only from call-type role grants. `call_member` holds just the `-owner` variants of `update-call-permissions`, `mute-users` and `pin-call-track`. Accepted presenter collaborators join as the custom `co_presenter` role (mute, pin, backstage, publish; never `end-call` or `update-call-permissions`).
-4. **Webhook Ingress & Multi-Secret HMAC**:
+4. **Webhook Ingress, Decompression Guard & Exact Event Subscription**:
    - `/api/stream/webhooks` is exempt from `MAINTENANCE_MODE` (`lib/maintenance-edge.ts`) so Stream never trips its circuit breaker during maintenance windows.
+   - Pre-body guards reject malformed `X-Signature` headers (`401`), missing or mismatched `X-Api-Key` headers whenever `NEXT_PUBLIC_STREAM_API_KEY` is configured (`401`), compressed bodies exceeding `MAX_WEBHOOK_COMPRESSED_BYTES = 512 KiB` (`413`), and decompressed payloads exceeding `MAX_WEBHOOK_DECOMPRESSED_BYTES = 2 MiB` (`413`).
    - Verify `X-Signature` against `STREAM_WEBHOOK_SECRET` with constant-time fallback to `STREAM_WEBHOOK_SECRET_PREVIOUS` (`lib/stream/webhook-signature.ts`).
-   - Reject payloads older than 10 minutes (`MAX_WEBHOOK_AGE_MS = 10 * 60 * 1000`), deduplicate on `sha256(rawBody)` in `WebhookEvent`, reclaim stuck `PROCESSING` rows after 5 minutes (`STALE_PROCESSING_MS = 300_000`), and record failures outside rolled-back DB transactions.
-
----
+   - Out-of-window deliveries (`> 10m` old or `> 2m` clock skew) return `200 { status: "ok", ignored: true, reason }` without writing unprunable payloads to Postgres.
+   - Deduplicate on `stream_${X-Webhook-Id}` (falling back to `stream_${eventType}_${sha256(rawBody)}`) in `WebhookEvent`, skip redundant `isDbHealthy()` checks once the delivery receipt claim succeeds, and enforce exact subscription parity (`DESIRED_EVENT_TYPES`, 8 Video events; `[]`, `"*"` on V2 hooks, active V1 `webhook_url` wildcards, and extra events treated as drift) via `scripts/stream/ensure-webhook-subscription.ts`.
 
 ## 4. 4-Part DM & Trial Policy + Contextual Booking Receipt Cards
 
@@ -80,8 +76,6 @@ mcp__stream-io__app_get_rate_limits   {}
 5. **Contextual Booking Receipt Cards (`booking-ctx-`)**:
    - Calling `POST /api/stream/channels/open` with `contextAppointmentId` verifies the appointment links `(userId, counterpartyUserId)` and posts an idempotent message (`id: booking-ctx-${appointmentId}-${eventType}` / `buildBookingContextMessageId`, carrying `booking_context` metadata `booking_appointment_id`, `booking_type`, `booking_title`, `booking_starts_at`) into the shared 1:1 DM thread.
 
----
-
 ## 5. Elastic Session Envelope & 1-to-Many Stage Moderation
 
 - **Join & Overrun Envelope (`lib/meetings/room-ready.ts`, `lib/meetings/duration-cap.ts`)**:
@@ -94,11 +88,11 @@ mcp__stream-io__app_get_rate_limits   {}
   - Hosts go live via `POST /api/meetings/[meetingId]/live` (`call.goLive()`) and manage hand-raises and speaker promotion via `<StageControls />`.
 - **Attendance Outcome & Earnings Hold (`lib/booking/session-outcome.ts`, `scripts/earnings/release-earnings.ts`)**:
   - `RECONNECT_GRACE_MINUTES = 5` merges Wi-Fi drop gaps up to 5 minutes into continuous `MeetingPresence` intervals; overlapping host + learner presence inside `[startsAt - 15m, endsAt + 45m]` counts toward `deliveredMinutes`.
+  - Participant lifecycle webhooks (`call.session_participant_joined` / `left`) execute in a single `$transaction` touching `Meeting -> MeetingPresence -> MeetingAttendance` in order, clamping `firstJoinedAt` via conditional Prisma `updateMany` (`firstJoinedAt: { gt: joinedAt }`) when `left` arrives before `joined`, and closing late-arriving joins immediately (`leftAt = meeting.endedAt`) without wiping prior `lastLeftAt`.
+  - Webinar and class end handlers (`handleSessionEnded` and `handleCallEnded`) run best-effort `reconcileWebinarAttendance` so `MeetingAttendance` is backfilled even when `call.ended` is dropped, and only deliberate host-initiated ends (`endedReason === "call_ended"` with `endedByUserId` null or in `hostUserIds`) trigger `CUT_SHORT` (consultee early exits or network timeouts are not `CUT_SHORT`).
   - When local presence is incomplete, `queryCallParticipantSessions` (`lib/stream/call-presence.ts`) paginates Stream's participant sessions before classifying `HELD` (`COMPLETED`), `CUT_SHORT` (`AWAITING_HUMAN`), or `NO_SHOW_*` (`UNSETTLED_MISS`).
   - `release-earnings.ts` blocks payout release until **all** non-deleted occurrences of an appointment settle, and rescheduling calls `recomputeEarningsHold` to push out `holdUntil` on `ConsultantEarnings` and `OrganizationEarnings`.
   - `reconcile-orphaned-sessions.ts` orders candidates by `occurrence.endsAt: "asc"`, closes open `MeetingPresence` rows (`leftAt = endedAt`), and guards state updates with CAS `updateMany`.
-
----
 
 ## 6. Recordings Architecture & Replay Marketplace
 
@@ -113,8 +107,6 @@ mcp__stream-io__app_get_rate_limits   {}
   - `<RecordingManageSheet />`: Consultant drawer to rename recordings, delete (guarded by atomic `hasBuyers` check against `RecordingPurchase`), upload 60s preview clips and transcripts, and publish/update/unpublish `RecordingListing` items.
   - Consultees access unlocked full-length replays on `/explore/recordings/[slug]` and in the consultee dashboard `"Purchased"` tab.
 
----
-
 ## 7. DPDP Privacy Compliance & Enterprise Organization Lifecycle
 
 - **DPDP `STREAM_DATA_PROCESSING` Consent Gate**:
@@ -126,8 +118,6 @@ mcp__stream-io__app_get_rate_limits   {}
   - Removing an enterprise org member (`lib/enterprise/member-removal.ts`) immediately revokes their Stream token and evicts them from org-tagged channels.
   - Deactivating or deleting an organization runs `jobs/stream/wind-down-deactivated-orgs.ts`, ending active org video calls (`endActiveStreamVideoCalls`) and freezing all org-tagged chat channels (`organization_id: orgId`).
 
----
-
 ## 8. Live Rate Limits, Pinned SDK Version Holds & Operator Commands
 
 ### Live Stream Rate-Limit Ceilings & Batch Pacing
@@ -137,7 +127,7 @@ mcp__stream-io__app_get_rate_limits   {}
 
 ### Pinned SDK Versions (`.github/dependabot.yml` & `package.json`)
 
-- **`@stream-io/node-sdk` (`0.8.10`)**: Server-side Video & App SDK. Verify `npx tsc --noEmit` on `updateCallMembers` call sites and `npx jest __tests__/stream/` before bumping.
+- **`@stream-io/node-sdk` (`0.8.10`)**: Server-side Video & App SDK. Verify `npm exec -- tsc --noEmit` on `updateCallMembers` call sites and `npm exec -- jest __tests__/stream/` before bumping.
 - **`@stream-io/video-react-sdk` (`1.43.3`)**: Video client & WebRTC UI.
 - **`stream-chat-react` (`14.12.1`)**: Chat React UI components (CSS v2 theming tokens imported in `providers/StreamProviderImpl.tsx`).
 - **`stream-chat` held on `9.x` (`9.53.0`)**: `v10` is still RC with breaking `Channel.getConfig()` / `client.configs` removals.
@@ -146,11 +136,9 @@ mcp__stream-io__app_get_rate_limits   {}
 
 ```bash
 # 1. Dry-run control-plane check (app settings, billable permissions + -owner/-any-team suffixes across default/livestream/audio_room/development, 300s inactivity timeout)
-npx tsx scripts/stream/ensure.ts
-
+npm exec -- tsx scripts/stream/ensure.ts
 # 2. Apply control-plane hardening once /api/meetings/[meetingId]/{join,end} are deployed
-npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed
-
+npm exec -- tsx scripts/stream/ensure.ts --apply --routes-are-deployed
 # 3. Verify / apply webhook event subscriptions
-npx tsx scripts/stream/ensure-webhook-subscription.ts --apply
+npm exec -- tsx scripts/stream/ensure-webhook-subscription.ts --apply
 ```

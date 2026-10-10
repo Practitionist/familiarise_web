@@ -1,117 +1,60 @@
-# Webhook Behavior During Maintenance
+# Webhook Behavior During Maintenance & Degraded Operations
 
 ## Overview
 
-All webhook routes (`/api/webhooks/*`) are **exempt from maintenance mode**. This means webhooks from Stripe, Razorpay, and Stream.io will be received and processed regardless of whether the site is in DEGRADED or OFFLINE mode.
+All inbound webhook receivers (`/api/webhooks/*`) are **strictly exempt from edge maintenance mode (`DEGRADED` and `OFFLINE`)**. Payment confirmations, banking reversals, video recording completions, email bounce/complaint suppressions, and notification outbox updates continue ingesting even when interactive user routes are paused.
 
-This is intentional: payment webhooks are critical for completing transactions and must not be blocked.
+---
 
-## Webhook Handlers
+## 1. Provider Delivery Semantics, Timeouts & Failure Modes
 
-| Gateway       | Route                         | Signature Verification             | Idempotency                               |
-| ------------- | ----------------------------- | ---------------------------------- | ----------------------------------------- |
-| **Stripe**    | `POST /api/webhooks/stripe`   | `stripe.webhooks.constructEvent()` | `logWebhookEvent()` with gateway event ID |
-| **Razorpay**  | `POST /api/webhooks/razorpay` | HMAC SHA256 signature              | `logWebhookEvent()` with gateway event ID |
-| **Stream.io** | `POST /api/stream/webhooks/`  | HMAC SHA256 (constant-time)        | `logWebhookEvent()` with event ID         |
+| Provider                 | Route                         | Signature Verification                                                                                                                                                    | Timeout & Vendor Retry Window                                                                           | DB Outage / Migration Response                                                                                                                                                                                                                                                                                              |
+| ------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Razorpay & RazorpayX** | `POST /api/webhooks/razorpay` | `x-razorpay-signature` (`HMAC-SHA256` hex); `RAZORPAY_WEBHOOK_SECRET`, `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`, and `RAZORPAYX_WEBHOOK_SECRET` (`payout.*` & `fund_account.*`) | **5 s** timeout; exponential backoff for **24 hours**, then **auto-disables endpoint**                  | Pre-flight `isDbHealthy()` returns **HTTP `503`** so Razorpay retries without counting as a permanent client error.                                                                                                                                                                                                         |
+| **Stream Video & Chat**  | `POST /api/stream/webhooks`   | `X-Signature` (`HMAC-SHA256` over **uncompressed UTF-8 body** even when gzip-compressed `>256B`) + `X-Api-Key` check                                                      | **6 s** timeout per attempt, **0 ms** backoff, up to **5 attempts** inside **15 seconds total**         | Returns **HTTP `503`** when `recordStreamEventReceipt` fails to persist the receipt before acknowledgement; because Stream's entire retry budget expires in **15 seconds**, `transfer-recordings`, `auto-complete-appointments`, and `reconcile-orphaned-confirmations` heal missed call/recording events via REST polling. |
+| **Resend**               | `POST /api/webhooks/resend`   | Svix Standard Webhooks (`svix-id`, `svix-timestamp`, `svix-signature`, `whsec_` secret, **5-minute** timestamp replay window)                                             | Svix exponential backoff across multiple days                                                           | Single atomic `$transaction(tx)` writes `EmailEvent` + suppression/waitlist/contact/domain mutations; any DB error rolls back and returns **HTTP `500`** so Svix retries cleanly.                                                                                                                                           |
+| **Novu**                 | `POST /api/webhooks/novu`     | Svix Standard Webhooks (`svix-id`, `svix-timestamp`, `svix-signature`, **5-minute** tolerance) with channel `x-novu-signature` HMAC fallback                              | **15 s** timeout; 8 attempts (`0s, 5s, 5m, 30m, 2h, 5h, 10h, +10h`) over **5 days** before auto-disable | Pre-flight `isDbHealthy()` returns **HTTP `503`**; in-flight DB errors record onto `WebhookEvent` for `sweep-stuck-webhook-events`.                                                                                                                                                                                         |
+| **Stripe**               | `POST /api/webhooks/stripe`   | `stripe-signature` via `stripe.webhooks.constructEvent()`                                                                                                                 | **20 s** timeout; exponential backoff up to **3 days** (~15 attempts)                                   | Returns **HTTP `500`/`503`** on DB unavailability so Stripe retries.                                                                                                                                                                                                                                                        |
 
-## Stripe Webhook Events Handled
+---
 
-- `payment_intent.succeeded` -- Payment completed
-- `payment_intent.payment_failed` -- Payment failed
-- `charge.refunded` -- Refund processed
-- `charge.dispute.created` -- Dispute opened
-- `charge.dispute.updated` -- Dispute status changed
-- `charge.dispute.closed` -- Dispute resolved
-- `payout.created` / `payout.paid` / `payout.failed` / `payout.canceled` -- Payout lifecycle
-- `account.updated` -- Connected account changes
-- `transfer.created` / `transfer.reversed` -- Transfer lifecycle
+## 2. Provider-Specific Payload & Protocol Nuances
 
-## Razorpay Webhook Events Handled
+### Stream Video & Chat (`POST /api/stream/webhooks`)
 
-- `payment.captured` -- Payment captured
-- `order.paid` -- Order paid
-- `payment.failed` -- Payment failed
-- `refund.created` / `refund.processed` / `refund.failed` -- Refund lifecycle
-- `payment.dispute.created` / `payment.dispute.won` / `payment.dispute.lost` / `payment.dispute.closed` -- Dispute lifecycle
-- `payout.processed` / `payout.reversed` / `payout.rejected` / `payout.queued` / `payout.pending` / `payout.cancelled` -- Payout lifecycle
+- **Compression & Signature Order**: Stream compresses webhook payloads larger than 256 bytes using gzip, but **`X-Signature` is always computed over the uncompressed UTF-8 JSON bytes**. Decompress first, verify `X-Signature` against the uncompressed UTF-8 payload + `X-Api-Key`, then deduplicate via `X-Webhook-Id`.
+- **V2 `event_hooks` Configuration**: Stream V2 `event_hooks` treat both `event_types: []` and `event_types: ["*"]` as wildcard unfiltered subscriptions; `ensure-webhook-subscription.ts` enforces exact set equality against `DESIRED_EVENT_TYPES` (`product: "video"`).
+- **Handled Events**: `call.recording_started`, `call.recording_stopped`, `call.recording_ready`, `call.recording_failed`, `call.session_participant_joined`, `call.session_participant_left`, `call.session_ended`, and `call.ended` (extracting `user.id` and `reason` for call termination auditing).
 
-## Stream.io Webhook Events Handled
+### Resend (`POST /api/webhooks/resend`)
 
-- `call.recording_started` / `call.recording_stopped` -- Recording lifecycle
-- `call.recording_ready` / `call.recording_failed` -- Recording completion
-- `call.session_ended` / `call.ended` -- Call lifecycle
+- Executes `EmailEvent` creation (`@unique` on `svixId`) and recipient side effects inside **one atomic Prisma `$transaction(tx)`** under `PG_POOL_MAX=1`:
+  - `email.bounced` (`Permanent`), `email.complained`, `email.suppressed`: upserts `EmailSuppression` and marks `Waitlist` (`BOUNCED` / `UNSUBSCRIBED`).
+  - `contact.deleted` & `contact.updated` (when `unsubscribed === true`): suppresses the recipient and marks `Waitlist` (`UNSUBSCRIBED`).
+  - `domain.updated` / `domain.deleted`: calls `recordSystemErrorSafe` after transaction commit if sending domain DNS verification degrades (`failed` / `not_started`) or is deleted.
 
-## Retry Behavior by Provider
+### Novu (`POST /api/webhooks/novu`)
 
-### Stripe
+- Supports both Novu platform Svix outbound webhooks (`svix-id`, `svix-timestamp`, `svix-signature` + nested `data.object.{subscriberId, channel, transactionId, status, error}` envelope) and legacy workflow channel HMAC signatures (`x-novu-signature` / `novu-signature`), advancing `NotificationOutbox` (`PENDING -> SENT` or stamping `lastError`).
 
-- **Retry policy**: Up to 3 days with exponential backoff
-- **Initial retry**: ~1 hour after first failure
-- **Max retries**: ~15 attempts over 3 days
-- **Behavior on 5xx**: Retries with exponential backoff
-- **Behavior on 4xx**: No retry (considered permanent failure)
-- **Dashboard**: Stripe Dashboard > Developers > Webhooks > Failed events
+---
 
-### Razorpay
+## 3. Serverless Freeze Recovery & Schema Migration Discipline
 
-- **Retry policy**: Retries for up to 24 hours
-- **Retry interval**: Exponential backoff starting at ~5 minutes
-- **Max retries**: Multiple attempts over 24 hours
-- **Behavior on failure**: Retries on non-2xx response
-- **Dashboard**: Razorpay Dashboard > Webhooks > Recent Deliveries
+1. **Netlify `after()` Container Freeze Recovery (`sweep-stuck-webhook-events`)**:
+   - Because Razorpay (`5s`) and Stream (`6s`) require immediate `200 OK` responses before running domain logic inside Next.js `after()`, a serverless cold freeze or deployment rollout mid-callback leaves `WebhookEvent` rows in `processed = false, error = null`.
+   - Every 15 minutes on the Netlify ticker (`scripts/cleanup/sweep-stuck-webhook-events.ts`), stale rows (>6 minutes old across `"razorpay"`, `"stream"`, and `"novu"`) are reclaimed via CAS lease fencing (`WebhookClaim` on `claimedAt`) and re-driven inside a per-event execution timeout.
+2. **Zero-Downtime Schema Migrations (`PG_POOL_MAX=1`)**:
+   - Keep maintenance windows **under 15 minutes** so Razorpay (24h window), Novu (5d window), Resend, and Stripe never hit endpoint auto-disable thresholds.
+   - Always apply additive expand-and-contract DDL changes on `WebhookEvent`, `Payment`, `Refund`, `Dispute`, `EmailEvent`, and `Payout` tables; never acquire long-running `ACCESS EXCLUSIVE` locks that would stall `isDbHealthy()` past Razorpay's 5-second timeout.
+   - Run `reconcile-payment-status`, `reconcile-pending-refunds`, `reconcile-disputes`, and `reconcile-payout-status` immediately after concluding any maintenance window.
+3. **Weekly Multi-Table Retention (`archive-webhook-events`)**:
+   - Prunes processed `WebhookEvent` rows, terminal unprocessed `WebhookEvent` rows (`processed = false` with `permanent:` / `gave up:` error), and terminal `OutboundWebhookDelivery` rows after **30 days**, and prunes non-terminal failed `WebhookEvent` rows plus `EmailEvent` rows after **90 days** every Sunday UTC midnight.
 
-## Idempotency Protection
+---
 
-All webhook handlers use `logWebhookEvent()` from `/api/webhooks/utils.ts`:
+## Deprecated & Superseded Approaches
 
-1. **On receive**: Creates a `WebhookEvent` record with a unique `eventId` (gateway event ID + type)
-2. **Duplicate check**: If `eventId` already exists, returns `{ isNew: false }` and handler returns 200 OK immediately
-3. **Processing**: If new, processes the event and calls `markWebhookEventProcessed()` with success/error status
-
-**Database table**: `WebhookEvent`
-
-- `gateway`: STRIPE | RAZORPAY | STREAM
-- `eventId`: Unique identifier from the gateway
-- `eventType`: Event type string
-- `payload`: Full JSON payload
-- `processed`: Boolean
-- `processingError`: Error message if processing failed
-
-This means even if a webhook is retried (due to temporary failure during maintenance), it will not be processed twice.
-
-## What Happens During DB Migration
-
-**Scenario**: Webhook fires while PostgreSQL is mid-migration.
-
-1. Webhook arrives at `/api/webhooks/stripe`
-2. Signature verification passes (no DB needed)
-3. `logWebhookEvent()` attempts INSERT into `WebhookEvent` table
-4. **If DB is unavailable**: INSERT fails, handler returns 500
-5. **Stripe retries** the webhook (exponential backoff)
-6. **If schema changed**: INSERT may fail if `WebhookEvent` table was altered
-7. **If DB is available but tables locked**: INSERT blocks, may timeout
-
-**Key insight**: For short maintenance windows (<1 hour), webhook retries from all gateways provide sufficient coverage. Webhooks that fail during the window will be retried after the DB is back online.
-
-## Risk: Webhook Handler Hits Migrating Schema
-
-The webhook handler does more than just log the event. It also:
-
-- Creates appointments (`handlePaymentSuccess()`)
-- Updates payment records
-- Processes refunds (`handleRefundCreated()`)
-- Tracks disputes (`handleDisputeCreated()`)
-
-If any of these operations reference a table or column that was changed by the migration, the handler will fail even after the DB is back online. In this case:
-
-1. Check Stripe/Razorpay dashboard for failed webhook deliveries
-2. Manually replay failed webhooks after verifying code compatibility
-3. Or run `reconcile-payment-status` job to catch missed payments
-
-## Recommendations
-
-1. **Keep maintenance windows short** (<1 hour) -- all gateways retry for at least 24 hours
-2. **Check webhook logs post-maintenance** -- see [Post-Maintenance Recovery](./07-post-maintenance-recovery.md)
-3. **If migrating WebhookEvent table**: Consider temporarily disabling the idempotency check, or migrate the table first in a separate step
-4. **Monitor Stripe dashboard** during and after maintenance for failed deliveries
-5. **Implemented**: `POST /api/webhooks/razorpay` calls `isDbHealthy()` (`app/api/webhooks/utils.ts`, a `SELECT 1` probe) before processing each event and answers 503 on a DB failure, so Razorpay retries the delivery instead of the handler failing against an unavailable database.
+- **Uncompressed-Assumption Parsing Without Gzip Support**: Superseded by `POST /api/stream/webhooks` decompressing gzip payloads before verifying `X-Signature` over raw UTF-8 text and deduplicating on `X-Webhook-Id`.
+- **Non-Atomic Resend Webhook Writes**: Superseded by single-transaction `EmailEvent` + `EmailSuppression` + `Waitlist` commits so database blips during maintenance return HTTP `500` instead of losing bounce suppressions.
+- **Channel-Only `x-novu-signature` Parsing on Novu Webhooks**: Superseded by dual Svix + HMAC verification and nested `data.object.*` envelope extraction plus `sweep-stuck-webhook-events` coverage.

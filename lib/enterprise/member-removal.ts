@@ -311,16 +311,14 @@ async function removeInTx(
     },
   });
 
-  const [org, actorUser] = await Promise.all([
-    tx.organization.findUnique({
-      where: { id: orgId },
-      select: { name: true, slug: true },
-    }),
-    tx.user.findUnique({
-      where: { id: actorUserId },
-      select: { name: true, email: true },
-    }),
-  ]);
+  const org = await tx.organization.findUnique({
+    where: { id: orgId },
+    select: { name: true, slug: true },
+  });
+  const actorUser = await tx.user.findUnique({
+    where: { id: actorUserId },
+    select: { name: true, email: true },
+  });
   if (!org) {
     return {
       removed: true,

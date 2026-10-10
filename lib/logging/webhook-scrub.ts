@@ -25,18 +25,79 @@
 const EMAIL_RX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
 const PHONE_RX = /^\+?\d[\d\s\-()]{7,}$/;
 
-const SENSITIVE_KEY_RX =
-  /^(email|phone|mobile|contact|vpa|address|billing_address|shipping_address|name|customer_name|first_name|last_name|card|card_number|cvv|password|token|auth|authorization|signature)$/i;
+const SENSITIVE_KEYS = new Set([
+  "email",
+  "phone",
+  "mobile",
+  "to",
+  "from",
+  "reply_to",
+  "customer_email",
+  "customer_phone",
+  "contact",
+  "vpa",
+  "ip",
+  "user_agent",
+  "address",
+  "billing_address",
+  "shipping_address",
+  "name",
+  "customer_name",
+  "first_name",
+  "last_name",
+  "card",
+  "card_number",
+  "cvv",
+  "password",
+  "token",
+  "auth",
+  "authorization",
+  "signature",
+]);
 
-const SENSITIVE_SUFFIX_RX = /_(email|phone|mobile|contact|name|address)$/i;
+const SENSITIVE_SUFFIXES = [
+  "_email",
+  "_phone",
+  "_mobile",
+  "_contact",
+  "_name",
+  "_address",
+  "_ip",
+  "_vpa",
+];
 
 const MAX_DEPTH = 6;
+
+function isSensitiveKey(key: string): boolean {
+  const normalized = key.toLowerCase();
+  if (SENSITIVE_KEYS.has(normalized)) return true;
+  return SENSITIVE_SUFFIXES.some((suffix) => normalized.endsWith(suffix));
+}
+
+function redactFieldValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      item === null || item === undefined ? item : "[redacted]",
+    );
+  }
+  return value === null || value === undefined ? value : "[redacted]";
+}
 
 function redactScalar(value: unknown): unknown {
   if (typeof value !== "string") return value;
   if (EMAIL_RX.test(value)) return "[redacted:email]";
   if (PHONE_RX.test(value.trim())) return "[redacted:phone]";
   return value;
+}
+
+function scrubObject(value: object, depth: number): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    out[key] = isSensitiveKey(key)
+      ? redactFieldValue(entry)
+      : scrub(entry, depth + 1);
+  }
+  return out;
 }
 
 function scrub(value: unknown, depth: number): unknown {
@@ -48,24 +109,14 @@ function scrub(value: unknown, depth: number): unknown {
   }
 
   if (typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-      if (SENSITIVE_KEY_RX.test(key) || SENSITIVE_SUFFIX_RX.test(key)) {
-        // Preserve `null`/`undefined` so log diffs don't fake "new field"
-        out[key] = v == null ? v : "[redacted]";
-        continue;
-      }
-      out[key] = scrub(v, depth + 1);
-    }
-    return out;
+    return scrubObject(value, depth);
   }
 
   return redactScalar(value);
 }
 
 /**
- * Returns a deep-cloned, PII-scrubbed copy of the payload suitable for
- * logging. Never mutates the input.
+ * Returns a deep-cloned, PII-scrubbed copy of the payload suitable for logging.
  */
 export function scrubWebhookPayload(payload: unknown): unknown {
   return scrub(payload, 0);

@@ -56,9 +56,11 @@ describe("handleRecordingStarted — actor and claim time", () => {
 
     expect(mockUpdate).toHaveBeenCalledTimes(1);
     const { data } = mockUpdate.mock.calls[0][0];
-    expect(data).toEqual({ isRecording: true });
+    expect(data).toEqual({
+      isRecording: true,
+      recordingStartedAt: new Date("2026-09-12T22:06:28.522Z"),
+    });
     expect(data).not.toHaveProperty("recordingStartedBy");
-    expect(data).not.toHaveProperty("recordingStartedAt");
   });
 
   it("keeps the route's actor even when the event names a user", async () => {
@@ -79,6 +81,9 @@ describe("handleRecordingStarted — actor and claim time", () => {
       user: { id: "someone-else" },
     });
 
-    expect(mockUpdate.mock.calls[0][0].data).toEqual({ isRecording: true });
+    expect(mockUpdate.mock.calls[0][0].data).toEqual({
+      isRecording: true,
+      recordingStartedAt: new Date("2026-09-12T22:06:28.522Z"),
+    });
   });
 });

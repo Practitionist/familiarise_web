@@ -13,7 +13,6 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -23,6 +22,7 @@ import {
 } from "@/lib/api/organizations/program-helpers";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const CreateBodySchema = z
@@ -103,6 +103,228 @@ export async function GET(
   });
 }
 
+type CreateAssignmentBody = z.infer<typeof CreateBodySchema>;
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+async function assignSingleMembershipInTx(
+  tx: TxClient,
+  args: {
+    orgId: string;
+    programId: string;
+    actorMembershipId: string;
+    singleMembershipId: string;
+    body: CreateAssignmentBody;
+  },
+) {
+  const { orgId, programId, singleMembershipId, body } = args;
+  const membership = await tx.membership.findFirst({
+    where: { id: singleMembershipId, organizationId: orgId },
+    select: { id: true, status: true, userId: true },
+  });
+  if (!membership) {
+    return {
+      ok: false as const,
+      code: "FOREIGN" as const,
+      membershipId: singleMembershipId,
+    };
+  }
+  if (membership.status !== "ACTIVE") {
+    return {
+      ok: false as const,
+      code: "INACTIVE" as const,
+      status: membership.status,
+      membershipId: singleMembershipId,
+    };
+  }
+
+  const { assignment, created } = await claimProgramAssignment(tx, {
+    programId,
+    membershipId: singleMembershipId,
+    periodStart: body.periodStart,
+    periodEnd: body.periodEnd,
+  });
+  if (created) {
+    await adjustActiveSeatCount(tx, { programId, delta: 1 });
+    await tx.program.updateMany({
+      where: { id: programId, configLockedAt: null },
+      data: { configLockedAt: new Date() },
+    });
+    await dispatchWebhookEvent({
+      prisma: tx,
+      organizationId: orgId,
+      eventType: "program.assigned",
+      payload: {
+        assignmentId: assignment.id,
+        programId,
+        membershipId: singleMembershipId,
+        userId: membership.userId,
+        periodStart: body.periodStart.toISOString(),
+        periodEnd: body.periodEnd.toISOString(),
+      },
+    });
+  }
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: orgId,
+      actorMembershipId: args.actorMembershipId,
+      targetMembershipId: singleMembershipId,
+      category: "PROGRAM",
+      action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
+      description: `Assigned membership ${singleMembershipId} to program ${programId}`,
+      details: {
+        programId,
+        membershipId: singleMembershipId,
+        periodStart: body.periodStart.toISOString(),
+        periodEnd: body.periodEnd.toISOString(),
+      },
+    },
+  });
+  return {
+    ok: true as const,
+    assignment,
+    assignments: [assignment],
+  };
+}
+
+async function assignBulkMembershipsInTx(
+  tx: TxClient,
+  args: {
+    orgId: string;
+    programId: string;
+    actorMembershipId: string;
+    targetMembershipIds: string[];
+    body: CreateAssignmentBody;
+  },
+) {
+  const { orgId, programId, targetMembershipIds, body } = args;
+  const foundMemberships = await tx.membership.findMany({
+    where: { id: { in: targetMembershipIds }, organizationId: orgId },
+    select: { id: true, status: true, userId: true },
+  });
+  const membershipById = new Map(foundMemberships.map((m) => [m.id, m]));
+  for (const targetMembershipId of targetMembershipIds) {
+    const membership = membershipById.get(targetMembershipId);
+    if (!membership) {
+      return {
+        ok: false as const,
+        code: "FOREIGN" as const,
+        membershipId: targetMembershipId,
+      };
+    }
+    if (membership.status !== "ACTIVE") {
+      return {
+        ok: false as const,
+        code: "INACTIVE" as const,
+        status: membership.status,
+        membershipId: targetMembershipId,
+      };
+    }
+  }
+
+  const overlapping = await tx.programAssignment.findFirst({
+    where: {
+      programId,
+      membershipId: { in: targetMembershipIds },
+      status: "ACTIVE",
+      periodStart: { lt: body.periodEnd, not: body.periodStart },
+      periodEnd: { gt: body.periodStart },
+    },
+    select: { membershipId: true },
+  });
+  if (overlapping) {
+    throw new ProgramAssignmentOverlapError(
+      programId,
+      overlapping.membershipId,
+    );
+  }
+
+  const existingExact = await tx.programAssignment.findMany({
+    where: {
+      programId,
+      membershipId: { in: targetMembershipIds },
+      periodStart: body.periodStart,
+    },
+    select: { membershipId: true },
+  });
+  const existingExactSet = new Set(existingExact.map((e) => e.membershipId));
+
+  const ins = await tx.programAssignment.createMany({
+    data: targetMembershipIds.map((membershipId) => ({
+      programId,
+      membershipId,
+      periodStart: body.periodStart,
+      periodEnd: body.periodEnd,
+    })),
+    skipDuplicates: true,
+  });
+  const createdCount = ins.count;
+
+  const rows = await tx.programAssignment.findMany({
+    where: {
+      programId,
+      membershipId: { in: targetMembershipIds },
+      periodStart: body.periodStart,
+    },
+  });
+  const rowByMembershipId = new Map(rows.map((r) => [r.membershipId, r]));
+  const createdAssignments = targetMembershipIds
+    .map((id) => rowByMembershipId.get(id))
+    .filter((r): r is NonNullable<typeof r> => Boolean(r));
+
+  await tx.orgAuditLog.createMany({
+    data: targetMembershipIds.map((targetMembershipId) => ({
+      organizationId: orgId,
+      actorMembershipId: args.actorMembershipId,
+      targetMembershipId,
+      category: "PROGRAM" as const,
+      action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
+      description: `Assigned membership ${targetMembershipId} to program ${programId}`,
+      details: {
+        programId,
+        membershipId: targetMembershipId,
+        periodStart: body.periodStart.toISOString(),
+        periodEnd: body.periodEnd.toISOString(),
+      },
+    })),
+  });
+
+  const newlyCreatedAssignments = createdAssignments.filter(
+    (a) => !existingExactSet.has(a.membershipId),
+  );
+  for (const created of newlyCreatedAssignments) {
+    await dispatchWebhookEvent({
+      prisma: tx,
+      organizationId: orgId,
+      eventType: "program.assigned",
+      payload: {
+        assignmentId: created.id,
+        programId,
+        membershipId: created.membershipId,
+        userId: membershipById.get(created.membershipId)?.userId,
+        periodStart: body.periodStart.toISOString(),
+        periodEnd: body.periodEnd.toISOString(),
+      },
+    });
+  }
+
+  if (createdCount > 0) {
+    await adjustActiveSeatCount(tx, {
+      programId,
+      delta: createdCount,
+    });
+    await tx.program.updateMany({
+      where: { id: programId, configLockedAt: null },
+      data: { configLockedAt: new Date() },
+    });
+  }
+
+  return {
+    ok: true as const,
+    assignment: createdAssignments[0],
+    assignments: createdAssignments,
+  };
+}
+
 export async function POST(
   req: NextRequest,
   {
@@ -112,7 +334,6 @@ export async function POST(
   },
 ) {
   const { orgId, programId } = await params;
-  // Seat assign/unassign is programs.assign (OWNER, MAINTAINER, MANAGER).
   const access = await requireOrgAccess(orgId, {
     permission: "programs.assign",
     canSponsor: true,
@@ -142,9 +363,6 @@ export async function POST(
     ),
   );
 
-  // Cross-org guards: program in this org, membership in this org.
-  // One trip to the DB per object keeps the error messages specific —
-  // a single findFirst union would surface a generic "not found".
   const program = await prisma.program.findFirst({
     where: { id: programId, contract: { organizationId: orgId } },
     select: { id: true, status: true },
@@ -159,254 +377,39 @@ export async function POST(
     );
   }
 
-  // Serializable shares the conflict boundary with the PATCH money-config tx
-  // (which re-checks configLockedAt in-scope). Batched reads/writes keep the
-  // round-trip count O(1) across 100 members on PG_POOL_MAX=1.
   try {
     const outcome = await withSerializableRetry(() =>
       prisma.$transaction(
-        async (tx) => {
-          if (targetMembershipIds.length === 1) {
-            const singleMembershipId = targetMembershipIds[0];
-            const membership = await tx.membership.findFirst({
-              where: { id: singleMembershipId, organizationId: orgId },
-              select: { id: true, status: true },
-            });
-            if (!membership) {
-              return {
-                ok: false as const,
-                code: "FOREIGN" as const,
-                membershipId: singleMembershipId,
-              };
-            }
-            if (membership.status !== "ACTIVE") {
-              return {
-                ok: false as const,
-                code: "INACTIVE" as const,
-                status: membership.status,
-                membershipId: singleMembershipId,
-              };
-            }
-
-            const { assignment, created } = await claimProgramAssignment(tx, {
-              programId,
-              membershipId: singleMembershipId,
-              periodStart: body.periodStart,
-              periodEnd: body.periodEnd,
-            });
-            if (created) {
-              await adjustActiveSeatCount(tx, { programId, delta: 1 });
-              await tx.program.updateMany({
-                where: { id: programId, configLockedAt: null },
-                data: { configLockedAt: new Date() },
-              });
-              const endpoints = await tx.webhookEndpoint.findMany({
-                where: {
-                  organizationId: orgId,
-                  status: "ACTIVE",
-                  eventSubscriptions: { has: "program.assigned" },
-                },
-                select: { id: true },
-              });
-              if (endpoints.length > 0) {
-                await tx.outboundWebhookDelivery.createMany({
-                  data: endpoints.map((endpoint) => ({
-                    webhookEndpointId: endpoint.id,
-                    eventType: "program.assigned",
-                    payload: {
-                      assignmentId: assignment.id,
-                      programId,
-                      membershipId: singleMembershipId,
-                      periodStart: body.periodStart.toISOString(),
-                      periodEnd: body.periodEnd.toISOString(),
-                    } satisfies Prisma.InputJsonValue,
-                    status: "PENDING" as const,
-                  })),
-                });
-              }
-            }
-            await tx.orgAuditLog.create({
-              data: {
-                organizationId: orgId,
-                actorMembershipId: access.member.id,
-                targetMembershipId: singleMembershipId,
-                category: "PROGRAM",
-                action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
-                description: `Assigned membership ${singleMembershipId} to program ${programId}`,
-                details: {
-                  programId,
-                  membershipId: singleMembershipId,
-                  periodStart: body.periodStart.toISOString(),
-                  periodEnd: body.periodEnd.toISOString(),
-                },
-              },
-            });
-            return {
-              ok: true as const,
-              assignment,
-              assignments: [assignment],
-            };
-          }
-
-          const foundMemberships = await tx.membership.findMany({
-            where: { id: { in: targetMembershipIds }, organizationId: orgId },
-            select: { id: true, status: true },
-          });
-          const membershipById = new Map(
-            foundMemberships.map((m) => [m.id, m]),
-          );
-          for (const targetMembershipId of targetMembershipIds) {
-            const membership = membershipById.get(targetMembershipId);
-            if (!membership) {
-              return {
-                ok: false as const,
-                code: "FOREIGN" as const,
-                membershipId: targetMembershipId,
-              };
-            }
-            if (membership.status !== "ACTIVE") {
-              return {
-                ok: false as const,
-                code: "INACTIVE" as const,
-                status: membership.status,
-                membershipId: targetMembershipId,
-              };
-            }
-          }
-
-          const overlapping = await tx.programAssignment.findFirst({
-            where: {
-              programId,
-              membershipId: { in: targetMembershipIds },
-              status: "ACTIVE",
-              periodStart: { lt: body.periodEnd, not: body.periodStart },
-              periodEnd: { gt: body.periodStart },
-            },
-            select: { membershipId: true },
-          });
-          if (overlapping) {
-            throw new ProgramAssignmentOverlapError(
-              programId,
-              overlapping.membershipId,
-            );
-          }
-
-          const existingExact = await tx.programAssignment.findMany({
-            where: {
-              programId,
-              membershipId: { in: targetMembershipIds },
-              periodStart: body.periodStart,
-            },
-            select: { membershipId: true },
-          });
-          const existingExactSet = new Set(
-            existingExact.map((e) => e.membershipId),
-          );
-
-          const ins = await tx.programAssignment.createMany({
-            data: targetMembershipIds.map((membershipId) => ({
-              programId,
-              membershipId,
-              periodStart: body.periodStart,
-              periodEnd: body.periodEnd,
-            })),
-            skipDuplicates: true,
-          });
-          const createdCount = ins.count;
-
-          const rows = await tx.programAssignment.findMany({
-            where: {
-              programId,
-              membershipId: { in: targetMembershipIds },
-              periodStart: body.periodStart,
-            },
-          });
-          const rowByMembershipId = new Map(
-            rows.map((r) => [r.membershipId, r]),
-          );
-          const createdAssignments = targetMembershipIds
-            .map((id) => rowByMembershipId.get(id))
-            .filter((r): r is NonNullable<typeof r> => Boolean(r));
-
-          await tx.orgAuditLog.createMany({
-            data: targetMembershipIds.map((targetMembershipId) => ({
-              organizationId: orgId,
-              actorMembershipId: access.member.id,
-              targetMembershipId,
-              category: "PROGRAM" as const,
-              action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
-              description: `Assigned membership ${targetMembershipId} to program ${programId}`,
-              details: {
+        async (tx) =>
+          targetMembershipIds.length === 1
+            ? assignSingleMembershipInTx(tx, {
+                orgId,
                 programId,
-                membershipId: targetMembershipId,
-                periodStart: body.periodStart.toISOString(),
-                periodEnd: body.periodEnd.toISOString(),
-              },
-            })),
-          });
-
-          const newlyCreatedAssignments = createdAssignments.filter(
-            (a) => !existingExactSet.has(a.membershipId),
-          );
-          if (newlyCreatedAssignments.length > 0) {
-            const endpoints = await tx.webhookEndpoint.findMany({
-              where: {
-                organizationId: orgId,
-                status: "ACTIVE",
-                eventSubscriptions: { has: "program.assigned" },
-              },
-              select: { id: true },
-            });
-            if (endpoints.length > 0) {
-              await tx.outboundWebhookDelivery.createMany({
-                data: newlyCreatedAssignments.flatMap((created) =>
-                  endpoints.map((endpoint) => ({
-                    webhookEndpointId: endpoint.id,
-                    eventType: "program.assigned",
-                    payload: {
-                      assignmentId: created.id,
-                      programId,
-                      membershipId: created.membershipId,
-                      periodStart: body.periodStart.toISOString(),
-                      periodEnd: body.periodEnd.toISOString(),
-                    } satisfies Prisma.InputJsonValue,
-                    status: "PENDING" as const,
-                  })),
-                ),
-              });
-            }
-          }
-
-          if (createdCount > 0) {
-            await adjustActiveSeatCount(tx, {
-              programId,
-              delta: createdCount,
-            });
-            await tx.program.updateMany({
-              where: { id: programId, configLockedAt: null },
-              data: { configLockedAt: new Date() },
-            });
-          }
-
-          return {
-            ok: true as const,
-            assignment: createdAssignments[0],
-            assignments: createdAssignments,
-          };
-        },
+                actorMembershipId: access.member.id,
+                singleMembershipId: targetMembershipIds[0],
+                body,
+              })
+            : assignBulkMembershipsInTx(tx, {
+                orgId,
+                programId,
+                actorMembershipId: access.member.id,
+                targetMembershipIds,
+                body,
+              }),
         { isolationLevel: "Serializable" },
       ),
     );
 
     if (!outcome.ok) {
+      const extraMember = body.membershipIds
+        ? { membershipId: outcome.membershipId }
+        : {};
       if (outcome.code === "FOREIGN") {
         return NextResponse.json(
           {
             error: "Membership does not belong to this organization",
             code: "MEMBERSHIP_FOREIGN",
-            ...(body.membershipIds
-              ? { membershipId: outcome.membershipId }
-              : {}),
+            ...extraMember,
           },
           { status: 400 },
         );
@@ -415,7 +418,7 @@ export async function POST(
         {
           error: `Cannot assign a ${outcome.status} membership to a program`,
           code: "MEMBERSHIP_NOT_ACTIVE",
-          ...(body.membershipIds ? { membershipId: outcome.membershipId } : {}),
+          ...extraMember,
         },
         { status: 409 },
       );
