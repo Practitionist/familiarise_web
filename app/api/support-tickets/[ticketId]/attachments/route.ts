@@ -9,7 +9,6 @@ import prisma from "@/lib/prisma";
 import {
   uploadSupportTicketAttachment,
   deleteSupportTicketAttachment,
-  getManualBucketInstructions,
 } from "@/lib/supabase";
 import { UserRole } from "@prisma/client";
 import {
@@ -19,7 +18,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { DeleteSupportAttachmentSchema } from "@/schemas/support";
-import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { documentUploadLimiter, applyRateLimit } from "@/lib/rate-limit";
 import * as Sentry from "@sentry/nextjs";
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
@@ -83,10 +82,24 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   }
 }
 
+/** Staff work across many cases, so only a customer's churn on one ticket is throttled. */
+async function limitCustomerAttachmentChurn(
+  verb: "upload" | "delete",
+  userId: string,
+  ticketId: string,
+  isStaffOrAdmin: boolean,
+): Promise<NextResponse | null> {
+  if (isStaffOrAdmin) return null;
+  return applyRateLimit(
+    documentUploadLimiter,
+    `ticket-attachment-${verb}:${userId}:${ticketId}`,
+  );
+}
+
 async function verifyTicketAttachmentAccess(
   sessionUserId: string,
   ticketId: string,
-): Promise<NextResponse | null> {
+): Promise<{ error: NextResponse } | { isStaffOrAdmin: boolean }> {
   const user = await prisma.user.findUnique({
     where: { id: sessionUserId },
     select: { role: true },
@@ -101,18 +114,24 @@ async function verifyTicketAttachmentAccess(
   });
 
   if (!ticket) {
-    return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+    return {
+      error: NextResponse.json({ error: "Ticket not found" }, { status: 404 }),
+    };
   }
 
   if (ticket.userId !== sessionUserId && !isStaffOrAdmin) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return {
+      error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    };
   }
 
   if (ticket.status === "CLOSED") {
-    return NextResponse.json(
-      { error: "Cannot upload attachments to a closed ticket" },
-      { status: 400 },
-    );
+    return {
+      error: NextResponse.json(
+        { error: "Cannot upload attachments to a closed ticket" },
+        { status: 400 },
+      ),
+    };
   }
 
   const existingCount = await prisma.supportTicketAttachment.count({
@@ -120,13 +139,15 @@ async function verifyTicketAttachmentAccess(
   });
 
   if (existingCount >= 5) {
-    return NextResponse.json(
-      { error: "Maximum 5 attachments allowed per ticket" },
-      { status: 400 },
-    );
+    return {
+      error: NextResponse.json(
+        { error: "Maximum 5 attachments allowed per ticket" },
+        { status: 400 },
+      ),
+    };
   }
 
-  return null;
+  return { isStaffOrAdmin };
 }
 
 /**
@@ -142,15 +163,17 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     const { ticketId } = await params;
 
-    const accessError = await verifyTicketAttachmentAccess(
+    const access = await verifyTicketAttachmentAccess(
       session.user.id,
       ticketId,
     );
-    if (accessError) return accessError;
+    if ("error" in access) return access.error;
 
-    const rl = await applyRateLimit(
-      spamLimiter,
-      `ticket-attachment:${session.user.id}`,
+    const rl = await limitCustomerAttachmentChurn(
+      "upload",
+      session.user.id,
+      ticketId,
+      access.isStaffOrAdmin,
     );
     if (rl) return rl;
 
@@ -183,17 +206,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       !mimeType ||
       !storagePath
     ) {
-      const isBucketError =
-        uploadResult.error?.includes("bucket") ||
-        uploadResult.error?.includes("storage");
-
+      Sentry.captureMessage("Support attachment upload failed", {
+        level: "warning",
+        tags: { subsystem: "support" },
+        extra: { ticketId, reason: uploadResult.error },
+      });
       return NextResponse.json(
         {
-          error: "Upload failed",
-          message: uploadResult.error,
-          ...(isBucketError && {
-            instructions: getManualBucketInstructions("support-attachments"),
-          }),
+          error:
+            "We couldn't upload that file. Use a PDF, Word document, image or text file under 10 MB and try again.",
         },
         { status: 400 },
       );
@@ -266,12 +287,6 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const rl = await applyRateLimit(
-      spamLimiter,
-      `ticket-attachment-del:${session.user.id}`,
-    );
-    if (rl) return rl;
-
     const { ticketId } = await params;
     const body = DeleteSupportAttachmentSchema.safeParse(
       await req.json().catch(() => null),
@@ -316,6 +331,14 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
         { status: 400 },
       );
     }
+
+    const rl = await limitCustomerAttachmentChurn(
+      "delete",
+      session.user.id,
+      ticketId,
+      isStaffOrAdmin,
+    );
+    if (rl) return rl;
 
     // Storage first: on failure the row survives so the delete can be retried.
     if (!(await deleteSupportTicketAttachment(attachment.storagePath))) {

@@ -152,3 +152,28 @@ check.
 | 1   | Suspension is time-boxed (365 days at most) and lifts itself at the next sign-in after `banExpires`. There is no permanent off-boarding action. |
 | 2   | Recovering the last ADMIN needs database access.                                                                                                |
 | 3   | No passkeys yet. A new table only, so it is additive under ADR 36.                                                                              |
+
+## 7. Two-factor is mandatory, and what that means for seeds and QA
+
+Two-factor authentication is a deliberate, standing requirement for every `STAFF` and `ADMIN` account. There is no "skip for now" and no grace period, and customers and experts never meet a 2FA wall. The reasoning is blast radius: one operator session can read every customer's contact details and support transcripts and can issue refunds, hold earnings, remove reviews and ban accounts, while a customer session exposes only that customer's own data. Passwords alone are the usual route into support tooling, and a second factor defeats both phishing and credential stuffing. This is the platform's policy choice rather than a statutory mandate; it is evidence of "reasonable security safeguards" and is not named by the DPDP Rules or CERT-In's directions.
+
+The rules the code enforces:
+
+- The `/two-factor/disable` endpoint answers 403 `TWO_FACTOR_REQUIRED` for an operator (`hooks.before` in `lib/auth.ts`). An operator cannot turn their own second factor off, so a stuck active session cannot "disable 2FA" and that is correct behaviour, not a defect.
+- Recovery is a backup code, or an ADMIN **Reset 2FA** from the Team page, which deletes the `TwoFactor` row, clears `twoFactorEnabled` and ends every session in one transaction.
+- An un-enrolled operator is sent to `/auth/two-factor/setup` by `requireOperator`, and every back-office API behind the operator precondition answers 428 `TWO_FACTOR_REQUIRED` with `X-Auth-Action: enroll-2fa`; routes that read `getSession()` directly answer 401.
+
+Two gaps remain open under issue #2033 and are stated here so nobody assumes they are closed:
+
+| Gap                          | Today                                                                                                                                                                  | Intended                                                                                                                                                                       |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Seed operators               | The seed creates staff and admin accounts (only with `SEED_WITH_STAFF=true`) with no second factor, so every back-office API answers 428 until someone enrols by hand. | Seeded operators are pre-enrolled with a per-account TOTP secret derived from `BETTER_AUTH_SECRET` and the user id, never one published constant, plus a small code generator. |
+| The setup page is a dead end | `/auth/two-factor/setup` renders only a heading and the enrolment form, with no sign-out, no back link and no explanation of why the requirement exists.               | A sign-out button, a link back to the public site, a short explanation, and a "saved my backup codes" confirmation before continuing.                                          |
+
+Until those land, a QA run that needs a back-office session enrols one staff and one admin account by hand, then reverts the enrolment by SQL afterwards, because the self-service disable is refused by design. The prompt suite's shared setup describes that recipe.
+
+## Deprecated & Superseded Approaches
+
+- **Self-service 2FA removal for operators**: refused by design; the only removals are the ADMIN reset and a database-level recovery of the last admin.
+- **Trusted devices for operators**: refused (`TRUST_DEVICE_DISABLED`), because a stolen password would otherwise skip the authenticator for 30 days.
+- **A published constant TOTP secret for seed operators**: rejected for #2033, since a known password on a shared database plus a known secret would cancel the second factor.

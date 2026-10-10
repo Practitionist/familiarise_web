@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { supportError } from "@/lib/api/support-http";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
@@ -304,10 +305,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const body: unknown = await req.json().catch(() => null);
     const result = UpdateSupportTicketSchema.safeParse(body);
     if (!result.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: result.error.issues },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: result.error.flatten(),
+        context: { route: "staff.support-tickets", action: "update" },
+      });
     }
     const validatedData = result.data;
     // ON_HOLD stays readable on existing rows but has no write path until it is a real feature.
@@ -328,6 +331,18 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
 
     if (!existing) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+    }
+
+    // Assignee and priority are frozen once closed; only a status change (reopen) is accepted.
+    if (existing.status === "CLOSED" && !validatedData.status) {
+      return NextResponse.json(
+        {
+          error:
+            "This request is closed, so its assignee and priority can't be changed. Reopen it first.",
+          code: "TICKET_CLOSED",
+        },
+        { status: 400 },
+      );
     }
 
     if (

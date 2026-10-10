@@ -23,7 +23,19 @@ import {
   resolveReviewableSession,
 } from "@/lib/reviews";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { publicCacheHeaders } from "@/lib/api/cdn-cache";
 import { z } from "zod";
+
+/** The CDN keys on exactly the query keys GET reads; bounded so junk values cannot mint cache entries. */
+const LIST_CACHE_HEADERS = publicCacheHeaders({
+  sMaxAge: 120,
+  staleWhileRevalidate: 300,
+  varyQuery: ["rating", "consultantId", "search"],
+});
+const ListBounds = z.object({
+  consultantId: z.string().max(64).nullable(),
+  search: z.string().max(120).nullable(),
+});
 
 async function recordReviewRevisionIfChanged(
   tx: Tx,
@@ -65,8 +77,17 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const rating = searchParams.get("rating");
-    const consultantId = searchParams.get("consultantId");
-    const searchTerm = searchParams.get("search");
+    const bounded = ListBounds.safeParse({
+      consultantId: searchParams.get("consultantId"),
+      search: searchParams.get("search"),
+    });
+    if (!bounded.success) {
+      return NextResponse.json(
+        { error: "consultantId or search is too long" },
+        { status: 400 },
+      );
+    }
+    const { consultantId, search: searchTerm } = bounded.data;
 
     const whereClause: Prisma.ConsultantReviewWhereInput = {};
 
@@ -124,9 +145,7 @@ export async function GET(req: NextRequest) {
       { data: sanitisePublicReviews(reviews) },
       {
         status: 200,
-        headers: {
-          "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300",
-        },
+        headers: LIST_CACHE_HEADERS,
       },
     );
   } catch (error) {

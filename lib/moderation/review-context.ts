@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { exclusionUnpublishesScore } from "@/lib/reviews";
 
 export interface ReviewReportSignal {
   hasRefund: boolean;
@@ -152,4 +153,24 @@ export async function readReviewReportContext(
     openSupportCount,
     signals,
   };
+}
+
+/** Whether excluding this review from the rating would take the expert's published score below the publication gate. */
+export async function readExclusionDropsBelowGate(
+  reviewId: string,
+): Promise<boolean> {
+  const review = await prisma.consultantReview.findUnique({
+    where: { id: reviewId },
+    select: { consultantProfileId: true },
+  });
+  if (!review) return false;
+  const counted = await prisma.consultantReview.findMany({
+    where: {
+      consultantProfileId: review.consultantProfileId,
+      deletedAt: null,
+      excludedFromAggregateAt: null,
+    },
+    select: { id: true, rating: true, track: true, ratingUnitId: true },
+  });
+  return exclusionUnpublishesScore(counted, reviewId);
 }

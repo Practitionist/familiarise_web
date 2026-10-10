@@ -22,11 +22,10 @@ export interface InboxRow {
   key: string;
   kind: "ticket" | "thread";
   scope: "session" | "platform";
+  /** Name only: contact fields are on the case detail, never the list. */
   requester: {
     id: string;
     name: string | null;
-    email: string | null;
-    phone?: string | null;
     callbackRequested?: boolean;
   };
   subject: string;

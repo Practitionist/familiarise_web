@@ -6,6 +6,7 @@ import { CreateFeedbackSchema } from "@/schemas/feedbacks";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
+import { supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
 export async function GET() {
   try {
@@ -62,10 +63,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const result = CreateFeedbackSchema.safeParse(body);
     if (!result.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: result.error.issues },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: result.error.flatten(),
+        context: { route: "user.feedbacks", action: "create" },
+      });
     }
     const validatedData = result.data;
 
