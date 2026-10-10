@@ -185,7 +185,9 @@ export function LeadsManagement() {
                     <SelectTrigger className="w-36" id={`status-${lead.id}`}>
                       {/* Current status is excluded from the successor
                           items, so render its label as the trigger value. */}
-                      <SelectValue>{STATUS_LABEL[lead.status]}</SelectValue>
+                      <SelectValue>
+                        {STATUS_LABEL[lead.status]}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {/* Only reachable targets — mirrors the route's

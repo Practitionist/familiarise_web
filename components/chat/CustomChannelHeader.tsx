@@ -50,9 +50,7 @@ export const CustomChannelHeader = () => {
           </Avatar>
           {displayInfo.isGroupDM && (
             <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-primary rounded-full border border-card flex items-center justify-center">
-              <span className="text-[8px] text-primary-foreground font-bold">
-                G
-              </span>
+              <span className="text-[8px] text-primary-foreground font-bold">G</span>
             </div>
           )}
         </div>

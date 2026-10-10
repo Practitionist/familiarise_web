@@ -100,18 +100,20 @@ export default function LearningProfileForm({
         skillsToDevelop: consulteeData.skillsToDevelop ?? [],
         budgetPreference: consulteeData.budgetPreference ?? null,
       } satisfies ProfileFormData,
-      educationList: (user?.education ?? []).map((edu): EducationForm => ({
-        id: edu.id,
-        institution: edu.institution,
-        institutionDomain: edu.institutionDomain ?? undefined,
-        degree: edu.degree,
-        fieldOfStudy: edu.fieldOfStudy ?? undefined,
-        startYear: edu.startYear ?? undefined,
-        endYear: edu.endYear ?? undefined,
-        grade: edu.grade ?? undefined,
-        activities: edu.activities ?? undefined,
-        description: edu.description ?? undefined,
-      })),
+      educationList: (user?.education ?? []).map(
+        (edu): EducationForm => ({
+          id: edu.id,
+          institution: edu.institution,
+          institutionDomain: edu.institutionDomain ?? undefined,
+          degree: edu.degree,
+          fieldOfStudy: edu.fieldOfStudy ?? undefined,
+          startYear: edu.startYear ?? undefined,
+          endYear: edu.endYear ?? undefined,
+          grade: edu.grade ?? undefined,
+          activities: edu.activities ?? undefined,
+          description: edu.description ?? undefined,
+        }),
+      ),
       workExperienceList: (user?.workExperiences ?? []).map(
         (we): WorkExperienceForm => ({
           id: we.id,

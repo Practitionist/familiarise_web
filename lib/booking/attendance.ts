@@ -76,7 +76,9 @@ export interface SessionParties {
  *   is a consultant-fault refund, so auto-complete owns these as before.
  */
 export type AttendanceVerdict =
-  "consultant-attended" | "consultant-absent" | "inconclusive";
+  | "consultant-attended"
+  | "consultant-absent"
+  | "inconclusive";
 
 /** Every session that actually happened on a booking's slots. */
 export function meetingsOf<S extends AttendedSession>(

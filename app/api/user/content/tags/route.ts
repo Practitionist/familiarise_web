@@ -39,10 +39,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(tags);
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "user" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
     return apiError({ tag: "[Tags.GET]", error });
   }
 }
@@ -82,7 +79,10 @@ export async function POST(request: NextRequest) {
     // Validate tag name for format, gibberish, and profanity
     const validation = validateTagName(name);
     if (!validation.valid) {
-      return NextResponse.json({ error: validation.error }, { status: 400 });
+      return NextResponse.json(
+        { error: validation.error },
+        { status: 400 },
+      );
     }
 
     // Verify domain exists before upserting
@@ -90,7 +90,10 @@ export async function POST(request: NextRequest) {
       where: { id: domainId },
     });
     if (!domain) {
-      return NextResponse.json({ error: "Domain not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Domain not found" },
+        { status: 404 },
+      );
     }
 
     const tag = await prisma.tag.upsert({

@@ -956,7 +956,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           !currentSub ||
           currentSub.deletedAt ||
           (currentSub.status &&
-            !["APPROVED", "SCHEDULED", "COMPLETED"].includes(currentSub.status))
+            !["APPROVED", "SCHEDULED", "COMPLETED"].includes(
+              currentSub.status,
+            ))
         ) {
           subscriptionBecameInactive = true;
           return null;

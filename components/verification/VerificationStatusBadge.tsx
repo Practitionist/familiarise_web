@@ -10,7 +10,10 @@ import {
 } from "@/components/ui/tooltip";
 
 export type VerificationStatus =
-  "PENDING_VERIFICATION" | "UNDER_REVIEW" | "VERIFIED" | "REJECTED";
+  | "PENDING_VERIFICATION"
+  | "UNDER_REVIEW"
+  | "VERIFIED"
+  | "REJECTED";
 
 interface VerificationStatusBadgeProps {
   status: VerificationStatus;

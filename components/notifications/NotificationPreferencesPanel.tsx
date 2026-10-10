@@ -33,9 +33,9 @@ interface NotificationPreferences {
 
 /** Keys that map to boolean values — used for Switch toggle fields. */
 type BooleanPreferenceKey = {
-  [
-    K in keyof NotificationPreferences
-  ]: NotificationPreferences[K] extends boolean ? K : never;
+  [K in keyof NotificationPreferences]: NotificationPreferences[K] extends boolean
+    ? K
+    : never;
 }[keyof NotificationPreferences];
 
 interface ToggleField {

@@ -68,7 +68,8 @@ export type RespondOutcome = { done: true } | { done: false; reason: string };
  * `restoredFully` to report and callers branch on `done` first.
  */
 export type DeclineOutcome =
-  { done: true; restoredFully: boolean } | { done: false; reason: string };
+  | { done: true; restoredFully: boolean }
+  | { done: false; reason: string };
 
 export async function acceptProposal(args: {
   rescheduleRequestId: string;

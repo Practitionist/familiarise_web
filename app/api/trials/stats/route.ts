@@ -43,10 +43,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ data });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "trials" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "trials" } });
     console.error("Error fetching trial stats:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial stats" },

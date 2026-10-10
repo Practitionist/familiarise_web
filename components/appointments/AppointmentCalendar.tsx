@@ -211,17 +211,17 @@ export function AppointmentCalendar({
       </div>
 
       <div className="flex flex-wrap items-center gap-3 px-4 py-2 border-t border-border">
-        {(Object.entries(KIND_DOT) as Array<[AppointmentKind, string]>).map(
-          ([kind, dot]) => (
-            <span
-              key={kind}
-              className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
-            >
-              <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
-              {kind.charAt(0) + kind.slice(1).toLowerCase()}
-            </span>
-          ),
-        )}
+        {(
+          Object.entries(KIND_DOT) as Array<[AppointmentKind, string]>
+        ).map(([kind, dot]) => (
+          <span
+            key={kind}
+            className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
+          >
+            <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
+            {kind.charAt(0) + kind.slice(1).toLowerCase()}
+          </span>
+        ))}
         <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           <span className="h-2.5 w-4 rounded border border-dashed border-border" />
           Awaiting confirmation

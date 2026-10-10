@@ -2,12 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowLeft,
-  Building2,
-  ChevronRight,
-  type LucideIcon,
-} from "lucide-react";
+import { ArrowLeft, Building2, ChevronRight, type LucideIcon } from "lucide-react";
 import { NotificationInbox } from "@/components/notifications/NotificationInbox";
 
 export interface DashboardContextBarBadge {
@@ -131,16 +126,12 @@ export function DashboardContextBar({
           {breadcrumbs.map((raw, i) => {
             const crumb = normalizeCrumb(raw);
             const isLast = i === breadcrumbs.length - 1;
-            const className =
-              isLast && !crumb.href
-                ? "text-zinc-900 dark:text-zinc-100 font-semibold truncate"
-                : "text-zinc-500 dark:text-zinc-400 truncate hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors";
+            const className = isLast && !crumb.href
+              ? "text-zinc-900 dark:text-zinc-100 font-semibold truncate"
+              : "text-zinc-500 dark:text-zinc-400 truncate hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors";
 
             return (
-              <span
-                key={`${crumb.label}-${i}`}
-                className="flex items-center gap-1 min-w-0"
-              >
+              <span key={`${crumb.label}-${i}`} className="flex items-center gap-1 min-w-0">
                 <ChevronRight className="h-3.5 w-3.5 text-zinc-300 dark:text-zinc-600 shrink-0" />
                 {crumb.href ? (
                   <Link href={crumb.href} className={className}>

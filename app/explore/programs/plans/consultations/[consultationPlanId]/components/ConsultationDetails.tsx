@@ -136,9 +136,7 @@ export function ConsultationDetails({
                     >
                       <div className="relative w-11 h-11 flex-shrink-0">
                         <Image
-                          src={
-                            consultant.user?.image ?? "/placeholder-user.jpg"
-                          }
+                          src={consultant.user?.image ?? "/placeholder-user.jpg"}
                           alt={expertName}
                           fill
                           className="rounded-xl object-cover"

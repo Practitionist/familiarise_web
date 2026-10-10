@@ -396,12 +396,7 @@ export function EnterpriseVerticalTimeline({
   return (
     <section className="py-16 md:py-24 bg-muted">
       <div className="container mx-auto px-4 md:px-6 max-w-3xl">
-        <SectionHeading
-          eyebrow={eyebrow}
-          title={title}
-          intro={intro}
-          align="left"
-        />
+        <SectionHeading eyebrow={eyebrow} title={title} intro={intro} align="left" />
         <ol className="relative space-y-0 border-l border-border ml-3 md:ml-4">
           {steps.map((step, i) => (
             <motion.li
@@ -534,10 +529,7 @@ export function EnterpriseComparison({
               </h3>
               <ul className="space-y-3 mb-6">
                 {col.points.map((point) => (
-                  <li
-                    key={point}
-                    className="flex gap-2 text-sm text-muted-foreground"
-                  >
+                  <li key={point} className="flex gap-2 text-sm text-muted-foreground">
                     <Check className="w-4 h-4 text-foreground shrink-0 mt-0.5" />
                     <span>{point}</span>
                   </li>

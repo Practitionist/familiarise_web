@@ -5,7 +5,10 @@
  * Query `onError` handler can show a meaningful message inline.
  */
 
-import type { PatchSettingsBody, SettingsGetResponse } from "./types";
+import type {
+  PatchSettingsBody,
+  SettingsGetResponse,
+} from "./types";
 
 export async function fetchSettings(
   orgWorkspaceId: string,

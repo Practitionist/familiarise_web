@@ -71,10 +71,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ data: topics }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "topics" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "topics" } });
     console.error("Error fetching topics:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching topics" },

@@ -76,8 +76,5 @@ export async function POST(
     );
   }
 
-  return NextResponse.json({
-    status: "unfrozen",
-    billingAccountId: account.id,
-  });
+  return NextResponse.json({ status: "unfrozen", billingAccountId: account.id });
 }

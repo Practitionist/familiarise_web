@@ -122,8 +122,9 @@ export async function stampTrialEarningsOnCancel(
 ): Promise<number> {
   const now = args.now ?? new Date();
   let whereScope:
-    { paymentId: string } | { payment: { appointmentId: string } } | null =
-    null;
+    | { paymentId: string }
+    | { payment: { appointmentId: string } }
+    | null = null;
   if (args.paymentId) {
     whereScope = { paymentId: args.paymentId };
   } else if (args.appointmentId) {

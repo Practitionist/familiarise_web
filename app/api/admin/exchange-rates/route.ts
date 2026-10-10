@@ -63,10 +63,7 @@ export async function POST() {
       refreshedAt: new Date().toISOString(),
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error refreshing exchange rate cache:", error);
     return NextResponse.json(
       { success: false, message: "Failed to refresh exchange rate cache" },

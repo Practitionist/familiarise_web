@@ -84,13 +84,7 @@ async function triggerMany(
   opts?: TriggerOptions,
 ): Promise<StagedTrigger[]> {
   return collectStaged(
-    await triggerForMultiple(
-      workflowId,
-      subscriberIds,
-      payload,
-      undefined,
-      opts,
-    ),
+    await triggerForMultiple(workflowId, subscriberIds, payload, undefined, opts),
   );
 }
 
@@ -101,13 +95,7 @@ async function triggerManyZoned(
   opts?: TriggerOptions,
 ): Promise<StagedTrigger[]> {
   return collectStaged(
-    await triggerForMultipleZoned(
-      workflowId,
-      subscriberIds,
-      build,
-      undefined,
-      opts,
-    ),
+    await triggerForMultipleZoned(workflowId, subscriberIds, build, undefined, opts),
   );
 }
 
@@ -129,11 +117,7 @@ export async function rosterForOrg(
 }
 
 export const OPERATOR_ROLES: MemberRole[] = ["OWNER", "MAINTAINER"];
-export const VISIBILITY_ROLES: MemberRole[] = [
-  "OWNER",
-  "MAINTAINER",
-  "MANAGER",
-];
+export const VISIBILITY_ROLES: MemberRole[] = ["OWNER", "MAINTAINER", "MANAGER"];
 export const OWNER_ONLY: MemberRole[] = ["OWNER"];
 
 // ============================================================================
@@ -161,16 +145,11 @@ function defineOrgRosterNotifier<TInput extends { orgName: string }>(
     opts?: TriggerOptions,
   ): Promise<StagedTrigger[]> => {
     const recipients = await rosterForOrg(orgId, roles, opts?.tx ?? prisma);
-    const id =
-      typeof workflowId === "function" ? workflowId(payload) : workflowId;
+    const id = typeof workflowId === "function" ? workflowId(payload) : workflowId;
     return triggerMany(
       id,
       recipients,
-      {
-        ...notificationScope(orgId, payload.orgName),
-        ...payload,
-        ...mapPayload(payload),
-      } as NovuPayload,
+      { ...notificationScope(orgId, payload.orgName), ...payload, ...mapPayload(payload) } as NovuPayload,
       opts,
     );
   };
@@ -190,12 +169,7 @@ function defineOrgZonedRosterNotifier<TInput extends { orgName: string }>(
     return triggerManyZoned(
       workflowId,
       recipients,
-      (tz) =>
-        ({
-          ...notificationScope(orgId, payload.orgName),
-          ...payload,
-          ...mapPayload(payload, tz),
-        }) as NovuPayload,
+      (tz) => ({ ...notificationScope(orgId, payload.orgName), ...payload, ...mapPayload(payload, tz) }) as NovuPayload,
       opts,
     );
   };
@@ -216,35 +190,21 @@ function defineOrgAssigneeRosterNotifier<TInput extends { orgName: string }>(
     return triggerMany(
       workflowId,
       recipients,
-      {
-        ...notificationScope(orgId, payload.orgName),
-        ...payload,
-      } as NovuPayload,
+      { ...notificationScope(orgId, payload.orgName), ...payload } as NovuPayload,
       opts,
     );
   };
 }
 
-function defineOrgMemberNotifier<
-  TInput extends { organizationId?: string | null },
->(
+function defineOrgMemberNotifier<TInput extends { organizationId?: string | null }>(
   workflowId: NovuWorkflowId,
   mapPayload: (payload: TInput) => Record<string, unknown>,
 ) {
-  return (
-    memberUserId: string,
-    payload: TInput,
-    opts?: TriggerOptions,
-  ): Promise<StagedTrigger[]> =>
+  return (memberUserId: string, payload: TInput, opts?: TriggerOptions): Promise<StagedTrigger[]> =>
     triggerMany(
       workflowId,
       [memberUserId],
-      {
-        organizationId: payload.organizationId ?? null,
-        scope: "org",
-        ...payload,
-        ...mapPayload(payload),
-      } as NovuPayload,
+      { organizationId: payload.organizationId ?? null, scope: "org", ...payload, ...mapPayload(payload) } as NovuPayload,
       opts,
     );
 }
@@ -268,83 +228,75 @@ export async function notifyOrgInviteSent(
   return triggerOne(W.ORG_INVITE_SENT, inviteeEmail, wire, opts);
 }
 
-export const notifyOrgInviteAccepted =
-  defineOrgRosterNotifier<OrgInviteAcceptedPayload>(
-    W.ORG_INVITE_ACCEPTED,
-    OPERATOR_ROLES,
-  );
+export const notifyOrgInviteAccepted = defineOrgRosterNotifier<OrgInviteAcceptedPayload>(
+  W.ORG_INVITE_ACCEPTED,
+  OPERATOR_ROLES,
+);
 
-export const notifyOrgInvoiceIssued =
-  defineOrgZonedRosterNotifier<OrgInvoiceIssuedInput>(
-    W.ORG_INVOICE_ISSUED,
-    OWNER_ONLY,
-    (p, tz): Partial<OrgInvoiceIssuedPayload> => ({
-      total: formatNotificationMoney(p.totalPaise, p.currency),
-      dueDate: zonedDate(p.dueDate, tz),
-      dueDateIso: p.dueDate,
-    }),
-  );
+export const notifyOrgInvoiceIssued = defineOrgZonedRosterNotifier<OrgInvoiceIssuedInput>(
+  W.ORG_INVOICE_ISSUED,
+  OWNER_ONLY,
+  (p, tz): Partial<OrgInvoiceIssuedPayload> => ({
+    total: formatNotificationMoney(p.totalPaise, p.currency),
+    dueDate: zonedDate(p.dueDate, tz),
+    dueDateIso: p.dueDate,
+  }),
+);
 
-export const notifyOrgInvoicePaid =
-  defineOrgZonedRosterNotifier<OrgInvoicePaidInput>(
-    W.ORG_INVOICE_PAID,
-    OWNER_ONLY,
-    (p, tz): Partial<OrgInvoicePaidPayload> => ({
-      total: formatNotificationMoney(p.totalPaise, p.currency),
-      paidAt: zonedDate(p.paidAt, tz),
-      paidAtIso: p.paidAt,
-    }),
-  );
+export const notifyOrgInvoicePaid = defineOrgZonedRosterNotifier<OrgInvoicePaidInput>(
+  W.ORG_INVOICE_PAID,
+  OWNER_ONLY,
+  (p, tz): Partial<OrgInvoicePaidPayload> => ({
+    total: formatNotificationMoney(p.totalPaise, p.currency),
+    paidAt: zonedDate(p.paidAt, tz),
+    paidAtIso: p.paidAt,
+  }),
+);
 
-export const notifyOrgInvoiceOverdue =
-  defineOrgRosterNotifier<OrgInvoiceOverdueInput>(
-    W.ORG_INVOICE_OVERDUE,
-    VISIBILITY_ROLES,
-    (p): Partial<OrgInvoiceOverduePayload> => ({
-      total: formatNotificationMoney(p.totalPaise, p.currency),
-    }),
-  );
+export const notifyOrgInvoiceOverdue = defineOrgRosterNotifier<OrgInvoiceOverdueInput>(
+  W.ORG_INVOICE_OVERDUE,
+  VISIBILITY_ROLES,
+  (p): Partial<OrgInvoiceOverduePayload> => ({
+    total: formatNotificationMoney(p.totalPaise, p.currency),
+  }),
+);
 
-export const notifyMemberOverageTimedOut =
-  defineOrgMemberNotifier<OrgMemberOverageTimedOutInput>(
-    W.ORG_MEMBER_OVERAGE_TIMED_OUT,
-    (p): Partial<OrgMemberOverageTimedOutPayload> => ({
-      amount: formatNotificationMoney(p.amountPaise, p.currency),
-    }),
-  );
+export const notifyMemberOverageTimedOut = defineOrgMemberNotifier<OrgMemberOverageTimedOutInput>(
+  W.ORG_MEMBER_OVERAGE_TIMED_OUT,
+  (p): Partial<OrgMemberOverageTimedOutPayload> => ({
+    amount: formatNotificationMoney(p.amountPaise, p.currency),
+  }),
+);
 
-export const notifyOrgLicenseRenewalUpcoming =
-  defineOrgZonedRosterNotifier<OrgLicenseRenewalUpcomingInput>(
-    W.ORG_LICENSE_RENEWAL_UPCOMING,
-    OWNER_ONLY,
-    (p, tz): Partial<OrgLicenseRenewalUpcomingPayload> => ({
-      cycle: p.cycle.toLowerCase(),
-      cycleCode: p.cycle,
-      renewalDate: zonedDate(p.renewalDate, tz),
-      renewalDateIso: p.renewalDate,
-      expectedTotal: formatNotificationMoney(p.expectedTotalPaise, p.currency),
-    }),
-  );
+export const notifyOrgLicenseRenewalUpcoming = defineOrgZonedRosterNotifier<OrgLicenseRenewalUpcomingInput>(
+  W.ORG_LICENSE_RENEWAL_UPCOMING,
+  OWNER_ONLY,
+  (p, tz): Partial<OrgLicenseRenewalUpcomingPayload> => ({
+    cycle: p.cycle.toLowerCase(),
+    cycleCode: p.cycle,
+    renewalDate: zonedDate(p.renewalDate, tz),
+    renewalDateIso: p.renewalDate,
+    expectedTotal: formatNotificationMoney(p.expectedTotalPaise, p.currency),
+  }),
+);
 
-export const notifyOrgDataExportReady =
-  defineOrgZonedRosterNotifier<OrgDataExportReadyInput>(
-    W.ORG_DATA_EXPORT_READY,
-    OWNER_ONLY,
-    (p, tz): Partial<OrgDataExportReadyPayload> => ({
-      expiresAt: zonedDate(p.expiresAt, tz),
-      expiresAtIso: p.expiresAt,
-    }),
-  );
+export const notifyOrgDataExportReady = defineOrgZonedRosterNotifier<OrgDataExportReadyInput>(
+  W.ORG_DATA_EXPORT_READY,
+  OWNER_ONLY,
+  (p, tz): Partial<OrgDataExportReadyPayload> => ({
+    expiresAt: zonedDate(p.expiresAt, tz),
+    expiresAtIso: p.expiresAt,
+  }),
+);
 
-export const notifyOrgWalletTopupConfirmed =
-  defineOrgRosterNotifier<OrgWalletTopupConfirmedInput>(
-    W.ORG_WALLET_TOPUP_CONFIRMED,
-    OWNER_ONLY,
-    (p): Partial<OrgWalletTopupConfirmedPayload> => ({
-      amount: formatNotificationMoney(p.amountPaise, p.currency),
-      newBalance: formatNotificationMoney(p.newBalancePaise, p.currency),
-    }),
-  );
+export const notifyOrgWalletTopupConfirmed = defineOrgRosterNotifier<OrgWalletTopupConfirmedInput>(
+  W.ORG_WALLET_TOPUP_CONFIRMED,
+  OWNER_ONLY,
+  (p): Partial<OrgWalletTopupConfirmedPayload> => ({
+    amount: formatNotificationMoney(p.amountPaise, p.currency),
+    newBalance: formatNotificationMoney(p.newBalancePaise, p.currency),
+  }),
+);
 
 export const notifyOrgWalletLow = defineOrgRosterNotifier<OrgWalletLowInput>(
   W.ORG_WALLET_LOW,
@@ -355,50 +307,43 @@ export const notifyOrgWalletLow = defineOrgRosterNotifier<OrgWalletLowInput>(
   }),
 );
 
-export const notifyOrgPayoutCompleted =
-  defineOrgRosterNotifier<OrgPayoutCompletedInput>(
-    W.ORG_PAYOUT_COMPLETED,
-    VISIBILITY_ROLES,
-    (p): Partial<OrgPayoutCompletedPayload> => ({
-      amount: formatNotificationMoney(p.amountPaise, p.currency),
-      withheld: withheldMoney(p.tdsAmountPaise, p.currency),
-    }),
-  );
+export const notifyOrgPayoutCompleted = defineOrgRosterNotifier<OrgPayoutCompletedInput>(
+  W.ORG_PAYOUT_COMPLETED,
+  VISIBILITY_ROLES,
+  (p): Partial<OrgPayoutCompletedPayload> => ({
+    amount: formatNotificationMoney(p.amountPaise, p.currency),
+    withheld: withheldMoney(p.tdsAmountPaise, p.currency),
+  }),
+);
 
-export const notifyOrgPayoutFailed =
-  defineOrgRosterNotifier<OrgPayoutFailedInput>(
-    (p) =>
-      p.kind === "REVERSED" ? W.ORG_PAYOUT_REVERSED : W.ORG_PAYOUT_FAILED,
-    VISIBILITY_ROLES,
-    (p): Partial<OrgPayoutFailedPayload> => ({
-      reason: p.reason?.trim() ? p.reason : "no reason was given",
-      amount: formatNotificationMoney(p.amountPaise, p.currency),
-      withheld: withheldMoney(p.tdsAmountPaise, p.currency),
-    }),
-  );
+export const notifyOrgPayoutFailed = defineOrgRosterNotifier<OrgPayoutFailedInput>(
+  (p) => (p.kind === "REVERSED" ? W.ORG_PAYOUT_REVERSED : W.ORG_PAYOUT_FAILED),
+  VISIBILITY_ROLES,
+  (p): Partial<OrgPayoutFailedPayload> => ({
+    reason: p.reason?.trim() ? p.reason : "no reason was given",
+    amount: formatNotificationMoney(p.amountPaise, p.currency),
+    withheld: withheldMoney(p.tdsAmountPaise, p.currency),
+  }),
+);
 
-export const notifyOrgProgramExhausted =
-  defineOrgAssigneeRosterNotifier<OrgProgramExhaustedPayload>(
-    W.ORG_PROGRAM_EXHAUSTED,
-    OPERATOR_ROLES,
-  );
+export const notifyOrgProgramExhausted = defineOrgAssigneeRosterNotifier<OrgProgramExhaustedPayload>(
+  W.ORG_PROGRAM_EXHAUSTED,
+  OPERATOR_ROLES,
+);
 
-export const notifyOrgProgramCapNear =
-  defineOrgAssigneeRosterNotifier<OrgProgramCapNearPayload>(
-    W.ORG_PROGRAM_CAP_NEAR,
-    OPERATOR_ROLES,
-  );
+export const notifyOrgProgramCapNear = defineOrgAssigneeRosterNotifier<OrgProgramCapNearPayload>(
+  W.ORG_PROGRAM_CAP_NEAR,
+  OPERATOR_ROLES,
+);
 
-export const notifyOrgProgramOverageDue =
-  defineOrgMemberNotifier<OrgProgramOverageDueInput>(
-    W.ORG_PROGRAM_OVERAGE_DUE,
-    (p): Partial<OrgProgramOverageDuePayload> => ({
-      amount: formatNotificationMoney(p.amountPaise, ORG_DEFAULT_CURRENCY),
-    }),
-  );
+export const notifyOrgProgramOverageDue = defineOrgMemberNotifier<OrgProgramOverageDueInput>(
+  W.ORG_PROGRAM_OVERAGE_DUE,
+  (p): Partial<OrgProgramOverageDuePayload> => ({
+    amount: formatNotificationMoney(p.amountPaise, ORG_DEFAULT_CURRENCY),
+  }),
+);
 
-export const notifyOrgSsoProviderDeleted =
-  defineOrgRosterNotifier<OrgSsoProviderDeletedPayload>(
-    W.ORG_SSO_PROVIDER_DELETED,
-    OWNER_ONLY,
-  );
+export const notifyOrgSsoProviderDeleted = defineOrgRosterNotifier<OrgSsoProviderDeletedPayload>(
+  W.ORG_SSO_PROVIDER_DELETED,
+  OWNER_ONLY,
+);

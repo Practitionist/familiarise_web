@@ -7,7 +7,10 @@
 import type { AppointmentKind } from "@/lib/appointments/view-model";
 
 export type ConsulteeDestructiveAction =
-  "cancel-booking" | "cancel-trial" | "leave-event" | "none";
+  | "cancel-booking"
+  | "cancel-trial"
+  | "leave-event"
+  | "none";
 
 /** Reschedule is 1:1 only — group events are organiser-managed; trials have no path. */
 export function consulteeMayReschedule(kind: AppointmentKind): boolean {

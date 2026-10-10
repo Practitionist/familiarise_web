@@ -93,7 +93,11 @@ type CancelRefund = {
   amountRefundedPaise: number;
   refundPct: number;
   status?:
-    "REFUNDED" | "PENDING" | "FAILED" | "NOTHING_REFUNDABLE" | "POLICY_ZERO";
+    | "REFUNDED"
+    | "PENDING"
+    | "FAILED"
+    | "NOTHING_REFUNDABLE"
+    | "POLICY_ZERO";
   requiresManualReview?: boolean;
   /**
    * Which rail returned the money. The cancel route has answered this since
@@ -279,7 +283,8 @@ export function useEventActions({
       if (!isExpectedRefusal(error)) {
         console.error("Error requesting reschedule:", error);
       }
-      const code = error instanceof ApiResponseError ? error.code : undefined;
+      const code =
+        error instanceof ApiResponseError ? error.code : undefined;
       // #1863 — RESCHEDULE_ALREADY_OPEN is the one refusal here that is not a
       // dead end: the request they just made DID land, the first click won, and
       // the proposal is sitting on the appointment detail page waiting for an
@@ -298,7 +303,9 @@ export function useEventActions({
         // NOT destructive when one is already open: nothing failed. Their first
         // click is sitting there waiting for an answer, and a red toast saying
         // "couldn't" is the wrong story about their own booking.
-        ...(alreadyOpen ? {} : { variant: "destructive" as const }),
+        ...(alreadyOpen
+          ? {}
+          : { variant: "destructive" as const }),
         // The proposal card is rendered by the appointment detail client, so
         // that is where "open it" goes — and only where the id is known, since
         // the org detail route resolves it differently and has no such card.

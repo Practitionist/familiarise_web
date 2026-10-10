@@ -824,40 +824,41 @@ export async function processOrgPayout(payoutId: string): Promise<{
         },
       ),
     1,
-  ).then(async (result) => {
-    if (!liveEnabled || !result.claimed || result.status !== "PROCESSING") {
-      return {
-        status: result.status,
-        submittedToGateway: result.submittedToGateway,
-        claimed: result.claimed,
-      };
-    }
-
-    try {
-      await submitOrgPayoutToGateway(payoutId);
-      return {
-        status: "PROCESSING" as const,
-        submittedToGateway: true,
-        claimed: true,
-      };
-    } catch (err) {
-      const cls = classifyGatewaySubmissionError(err);
-      if (cls === "PERMANENT_4XX") {
-        reportSentryError(err, { subsystem: "payments", expected: true });
-        await markPayoutFailedFromSubmission(
-          payoutId,
-          err instanceof Error ? err.message : String(err),
-        );
+  )
+    .then(async (result) => {
+      if (!liveEnabled || !result.claimed || result.status !== "PROCESSING") {
         return {
-          status: "FAILED" as PayoutStatus,
+          status: result.status,
+          submittedToGateway: result.submittedToGateway,
+          claimed: result.claimed,
+        };
+      }
+
+      try {
+        await submitOrgPayoutToGateway(payoutId);
+        return {
+          status: "PROCESSING" as const,
           submittedToGateway: true,
           claimed: true,
         };
+      } catch (err) {
+        const cls = classifyGatewaySubmissionError(err);
+        if (cls === "PERMANENT_4XX") {
+          reportSentryError(err, { subsystem: "payments", expected: true });
+          await markPayoutFailedFromSubmission(
+            payoutId,
+            err instanceof Error ? err.message : String(err),
+          );
+          return {
+            status: "FAILED" as PayoutStatus,
+            submittedToGateway: true,
+            claimed: true,
+          };
+        }
+        reportSentryError(err, { subsystem: "payments" });
+        throw err;
       }
-      reportSentryError(err, { subsystem: "payments" });
-      throw err;
-    }
-  });
+    });
 }
 
 async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
@@ -1343,7 +1344,12 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     const orgTdsRateBps = payout.tdsRateAppliedBps;
     const hasOrgTdsRate = orgTdsRateBps !== null && orgTdsRateBps > 0;
     if (orgTds > 0 && hasOrgTdsRate) {
-      await recordOrgPayoutCompletionTdsInTx(tx, payout, orgTds, orgTdsRateBps);
+      await recordOrgPayoutCompletionTdsInTx(
+        tx,
+        payout,
+        orgTds,
+        orgTdsRateBps,
+      );
     }
 
     return {

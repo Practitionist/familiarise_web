@@ -370,8 +370,10 @@ export async function GET(
         "Consultant";
       const type =
         (apt?.appointmentType?.toLowerCase() as
-          "consultation" | "subscription" | "webinar" | "class") ||
-        "consultation";
+          | "consultation"
+          | "subscription"
+          | "webinar"
+          | "class") || "consultation";
 
       // Gateway-pending payments expire based on expiresAt or default to 30 min from creation
       const expiresAt =

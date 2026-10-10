@@ -13,7 +13,12 @@ import type { MemberRole } from "@prisma/client";
 import { hasOrgPermission, type OrgSurface } from "@/lib/auth/org-permissions";
 
 export type OrgSettingsKey =
-  "general" | "branding" | "sso" | "billing" | "webhooks" | "data-exports";
+  | "general"
+  | "branding"
+  | "sso"
+  | "billing"
+  | "webhooks"
+  | "data-exports";
 
 export interface OrgSettingsSection {
   key: OrgSettingsKey;

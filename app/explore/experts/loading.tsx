@@ -13,7 +13,10 @@ export default function Loading() {
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-12">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="h-72 bg-muted rounded-2xl animate-pulse" />
+            <div
+              key={i}
+              className="h-72 bg-muted rounded-2xl animate-pulse"
+            />
           ))}
         </div>
       </div>

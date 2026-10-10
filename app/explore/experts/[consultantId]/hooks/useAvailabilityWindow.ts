@@ -7,11 +7,11 @@ import { useRef, type MutableRefObject } from "react";
 import type { TIntervalTiming } from "@/types/slots";
 
 /**
- * One day of the availability-with-allocation grid answer.
- *
- * The endpoint keys days `yyyy-MM-dd` in the requested timezone and returns
- * the slot timings plus the allocation overlay the pricing panel needs.
- */
+  * One day of the availability-with-allocation grid answer.
+  *
+  * The endpoint keys days `yyyy-MM-dd` in the requested timezone and returns
+  * the slot timings plus the allocation overlay the pricing panel needs.
+  */
 export type AvailabilityDaySlots = (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: "available" | "partially-booked" | "fully-booked";

@@ -262,7 +262,8 @@ export async function getRazorpayDispute(
     disputeId: entity.id ?? disputeId,
     status: rawStatus as DisputeStatus,
     evidence: (entity.evidence ?? undefined) as
-      Record<string, unknown> | undefined,
+      | Record<string, unknown>
+      | undefined,
     // The fetch entity carries no refundability signal, so derive it the way
     // the seed does: a lost or refunded charge is no longer refundable.
     isChargeRefundable:

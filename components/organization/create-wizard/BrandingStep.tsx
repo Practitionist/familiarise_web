@@ -118,7 +118,10 @@ export function BrandingStep({
 
       {/* Preview card */}
       <div className="rounded-xl border border-zinc-200 overflow-hidden">
-        <div className="h-16" style={{ backgroundColor: primaryColor }} />
+        <div
+          className="h-16"
+          style={{ backgroundColor: primaryColor }}
+        />
         <div className="p-4 flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-zinc-100 flex items-center justify-center overflow-hidden shrink-0">
             <Building2 className="w-5 h-5 text-zinc-400" />
@@ -127,7 +130,10 @@ export function BrandingStep({
             <p className="font-medium text-sm">
               {initialData.name || "Your Organization"}
             </p>
-            <p className="text-xs" style={{ color: secondaryColor }}>
+            <p
+              className="text-xs"
+              style={{ color: secondaryColor }}
+            >
               {initialData.industry || "Industry"} &middot; {fundingLabel}
             </p>
           </div>
@@ -139,7 +145,11 @@ export function BrandingStep({
           Back
         </Button>
         <div className="flex gap-2">
-          <Button type="button" variant="ghost" onClick={() => onNext({})}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onNext({})}
+          >
             Skip for now
           </Button>
           <Button type="submit" disabled={isSubmitting}>

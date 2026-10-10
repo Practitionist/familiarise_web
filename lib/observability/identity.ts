@@ -391,7 +391,8 @@ function mergeUser(
   let current: Record<string, unknown> | undefined;
   try {
     current = Sentry.getIsolationScope().getUser() as
-      Record<string, unknown> | undefined;
+      | Record<string, unknown>
+      | undefined;
   } catch {
     // The scope cannot be read, so nothing on it can be trusted as belonging to
     // THIS request. Remembering the last user seen process-wide and merging
@@ -491,7 +492,8 @@ export function setSentryIdentity(identity: SentryIdentity): void {
   let actorChanged = false;
   try {
     const current = Sentry.getIsolationScope().getUser() as
-      { id?: unknown } | undefined;
+      | { id?: unknown }
+      | undefined;
     if (current?.id !== undefined && current.id !== resolvedUserId) {
       owned = ACTOR_IDENTITY_KEYS;
       actorChanged = true;

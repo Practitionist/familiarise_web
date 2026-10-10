@@ -20,7 +20,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       await requireOwnConsultantProfile();
     if (profileError) return profileError;
     const { validationId } = await params;
-    const outcome = await settleReversePennyDrop(profileId, validationId);
+    const outcome = await settleReversePennyDrop(
+      profileId,
+      validationId,
+    );
     return NextResponse.json(outcome, {
       headers: { "Cache-Control": "no-store" },
     });

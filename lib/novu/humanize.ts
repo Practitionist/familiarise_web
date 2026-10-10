@@ -224,9 +224,7 @@ function rawRefundReasonLabel(raw: string): string | undefined {
   // Whole-event cancellation: the parenthetical is a CancellationReason
   // member or the cancel route's "cancelled" default (which would read
   // "cancelled (cancelled)" if kept).
-  const whole = raw.match(
-    /^whole-event (class|webinar) cancellation \((.*)\)$/i,
-  );
+  const whole = raw.match(/^whole-event (class|webinar) cancellation \((.*)\)$/i);
   if (whole) {
     const kind = whole[1].toLowerCase();
     const inner = whole[2].trim();
@@ -248,9 +246,7 @@ function rawRefundReasonLabel(raw: string): string | undefined {
   }
 
   // Credit-funded seat leaving mid-series: credits come back, not cash.
-  const credits = raw.match(
-    /^left (class|webinar) \S+ — credits restored in full$/i,
-  );
+  const credits = raw.match(/^left (class|webinar) \S+ — credits restored in full$/i);
   if (credits) {
     return `left the ${credits[1].toLowerCase()} early; credits restored in full`;
   }
@@ -399,17 +395,21 @@ const COLLABORATOR_ROLE_LABEL: Record<string, string> = {
   TEACHING_ASSISTANT: "Teaching assistant",
 };
 
-export function collaboratorRoleLabel(role: string | null | undefined): string {
+export function collaboratorRoleLabel(
+  role: string | null | undefined,
+): string {
   const raw = role?.trim();
   if (!raw) return "Collaborator";
   const key = raw.toUpperCase().replace(/[\s-]+/g, "_");
-  return Object.hasOwn(COLLABORATOR_ROLE_LABEL, key)
-    ? COLLABORATOR_ROLE_LABEL[key]
-    : key
-        .toLowerCase()
-        .split("_")
-        .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-        .join(" ");
+  return (
+    Object.hasOwn(COLLABORATOR_ROLE_LABEL, key)
+      ? COLLABORATOR_ROLE_LABEL[key]
+      : key
+          .toLowerCase()
+          .split("_")
+          .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+          .join(" ")
+  );
 }
 
 /**
@@ -430,9 +430,11 @@ export function supportTicketStatusLabel(
 ): string {
   // Own-key: a hostile status like "toString" would otherwise resolve the
   // inherited function instead of falling through to the spaced fallback.
-  return Object.hasOwn(SUPPORT_TICKET_STATUS_LABEL, status)
-    ? SUPPORT_TICKET_STATUS_LABEL[status as SupportTicketStatus]
-    : status.toLowerCase().replace(/_/g, " ");
+  return (
+    Object.hasOwn(SUPPORT_TICKET_STATUS_LABEL, status)
+      ? SUPPORT_TICKET_STATUS_LABEL[status as SupportTicketStatus]
+      : status.toLowerCase().replace(/_/g, " ")
+  );
 }
 
 /**

@@ -25,11 +25,7 @@ export async function GET(request: NextRequest) {
 
     const consultantProfile = await prisma.consultantProfile.findFirst({
       // Public endpoint — gate to verified, non-deleted profiles (#946)
-      where: {
-        userId: parsedUserId.data.userId,
-        verificationStatus: "VERIFIED",
-        deletedAt: null,
-      },
+      where: { userId: parsedUserId.data.userId, verificationStatus: "VERIFIED", deletedAt: null },
       select: {
         ...consultantPublicScalars,
         user: {
@@ -60,10 +56,7 @@ export async function GET(request: NextRequest) {
       data: consultantPublicApiSchema.parse(consultantProfile),
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error fetching consultant profile:", error);
     return NextResponse.json(
       {

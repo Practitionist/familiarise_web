@@ -12,10 +12,7 @@ export async function GET() {
     return NextResponse.json(stats);
   } catch (error) {
     console.error("Admin stats error:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     return NextResponse.json(
       { error: "Failed to fetch admin stats" },
       { status: 500 },

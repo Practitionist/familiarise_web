@@ -24,29 +24,26 @@
 // Patterns considered "engineering noise" that should never reach an
 // org member. Each entry is a (label, RegExp) tuple; matches replace
 // the line with a redaction marker.
-const ENGINEERING_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> =
-  [
-    // Prisma-style argument enumerations leak the entire schema.
-    // Matches "Invalid `prisma.*.findUnique()` invocation" or any
-    // surfaced ProgramWhereInput-style schema names.
-    {
-      label: "Prisma error",
-      pattern: /Invalid\s+`prisma\.[a-zA-Z]+\.[a-zA-Z]+\(\)`\s+invocation/i,
-    },
-    {
-      label: "Prisma schema",
-      pattern:
-        /\b[A-Z][a-zA-Z]*(?:WhereInput|ScalarFilter|RelationFilter|UpdateInput|CreateInput|OrderByInput|UncheckedCreateInput)\b/,
-    },
-    // Node stack frames.
-    { label: "stack trace", pattern: /\bat\s+[^\s]+\s+\(.*:\d+:\d+\)/ },
-    { label: "stack trace", pattern: /node:internal\//i },
-    // Bare JSON blobs in the description — `details` is the right home.
-    { label: "JSON payload", pattern: /\{\s*"[^"]+"\s*:\s*"[^"]{40,}"/ },
-  ];
+const ENGINEERING_PATTERNS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  // Prisma-style argument enumerations leak the entire schema.
+  // Matches "Invalid `prisma.*.findUnique()` invocation" or any
+  // surfaced ProgramWhereInput-style schema names.
+  {
+    label: "Prisma error",
+    pattern: /Invalid\s+`prisma\.[a-zA-Z]+\.[a-zA-Z]+\(\)`\s+invocation/i,
+  },
+  {
+    label: "Prisma schema",
+    pattern: /\b[A-Z][a-zA-Z]*(?:WhereInput|ScalarFilter|RelationFilter|UpdateInput|CreateInput|OrderByInput|UncheckedCreateInput)\b/,
+  },
+  // Node stack frames.
+  { label: "stack trace", pattern: /\bat\s+[^\s]+\s+\(.*:\d+:\d+\)/ },
+  { label: "stack trace", pattern: /node:internal\//i },
+  // Bare JSON blobs in the description — `details` is the right home.
+  { label: "JSON payload", pattern: /\{\s*"[^"]+"\s*:\s*"[^"]{40,}"/ },
+];
 
-const REDACTION =
-  "[redacted — engineering details available to platform admins only]";
+const REDACTION = "[redacted — engineering details available to platform admins only]";
 
 /**
  * Sanitize a single audit-log description string. Returns the original
@@ -107,9 +104,7 @@ export function sanitizeAuditDetails(
     "rawError",
   ]);
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(
-    details as Record<string, unknown>,
-  )) {
+  for (const [key, value] of Object.entries(details as Record<string, unknown>)) {
     if (SENSITIVE_KEYS.has(key)) continue;
     out[key] = value;
   }

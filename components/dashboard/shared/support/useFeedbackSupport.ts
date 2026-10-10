@@ -59,8 +59,7 @@ export function useFeedbackSupport(scopeId: string) {
   const { data: feedbacksData } = useQuery(consulteeQueries.feedback);
   const { data: ticketsData } = useQuery(consulteeQueries.supportTickets);
   const feedbacks = (feedbacksData ?? []) as unknown as PlatformFeedback[];
-  const tickets = (ticketsData ??
-    []) as unknown as SupportTicketWithResponses[];
+  const tickets = (ticketsData ?? []) as unknown as SupportTicketWithResponses[];
 
   const invalidateFeedbacks = () =>
     queryClient.invalidateQueries({
@@ -100,9 +99,7 @@ export function useFeedbackSupport(scopeId: string) {
         // Envelope-aware: prefer the coded copy, fall back to the server's
         // user-safe `error` (the old `errorData.message` field never existed).
         const payload = await response.json().catch(() => ({}));
-        throw new Error(
-          describeSupportError(payload, "Failed to submit your feedback"),
-        );
+        throw new Error(describeSupportError(payload, "Failed to submit your feedback"));
       }
 
       toast({
@@ -188,9 +185,7 @@ export function useFeedbackSupport(scopeId: string) {
 
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(
-          describeSupportError(payload, "Failed to submit your response"),
-        );
+        throw new Error(describeSupportError(payload, "Failed to submit your response"));
       }
 
       toast({

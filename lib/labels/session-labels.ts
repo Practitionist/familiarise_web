@@ -367,7 +367,9 @@ export const recordingStatusBadge = (
 // exist against the payment).
 
 export type PaymentDisplayStatus =
-  PaymentStatus | "REFUNDED" | "PARTIALLY_REFUNDED";
+  | PaymentStatus
+  | "REFUNDED"
+  | "PARTIALLY_REFUNDED";
 
 export const PAYMENT_STATUS_BADGE: Record<
   PaymentDisplayStatus,

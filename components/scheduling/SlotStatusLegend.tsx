@@ -45,7 +45,9 @@ export function SlotStatusLegend({
         const token = SLOT_STATUS_TOKENS[key];
         const count = counts?.get(key);
         const label =
-          count === undefined ? token.label : `${token.label} · ${count}`;
+          count === undefined
+            ? token.label
+            : `${token.label} · ${count}`;
         return (
           <li
             key={key}

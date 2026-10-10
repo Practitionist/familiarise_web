@@ -381,7 +381,9 @@ export async function POST(
         });
       } catch (rollupErr) {
         Sentry.captureException(
-          rollupErr instanceof Error ? rollupErr : new Error(String(rollupErr)),
+          rollupErr instanceof Error
+            ? rollupErr
+            : new Error(String(rollupErr)),
           {
             tags: {
               subsystem: "enterprise",

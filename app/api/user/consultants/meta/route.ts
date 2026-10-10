@@ -17,10 +17,7 @@ export async function GET(_req: NextRequest) {
       },
     );
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     return apiError({ tag: "[ConsultantsMeta.GET]", error });
   }
 }

@@ -86,12 +86,7 @@ export async function getOperatorInvoices(
   const search = filters.search ?? null;
   const orgId = filters.orgId ?? null;
   const limit = sanitizePagination(filters.limit, 20, 1, 200);
-  const offset = sanitizePagination(
-    filters.offset,
-    0,
-    0,
-    Number.MAX_SAFE_INTEGER,
-  );
+  const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
 
   // Build where clause
   const where: Prisma.PaymentWhereInput = {};

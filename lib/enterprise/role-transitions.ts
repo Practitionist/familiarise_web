@@ -17,7 +17,10 @@
 
 import type { MemberRole } from "@prisma/client";
 
-const BLOCKED_PAIRS = new Set<string>(["LEARNER>EXPERT", "EXPERT>LEARNER"]);
+const BLOCKED_PAIRS = new Set<string>([
+  "LEARNER>EXPERT",
+  "EXPERT>LEARNER",
+]);
 
 export function isBlockedRoleTransition(
   from: MemberRole,

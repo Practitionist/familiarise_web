@@ -46,14 +46,11 @@ export type SupportErrorCode =
 /** Default user-facing copy per code — every string safe to show verbatim. */
 const USER_COPY: Record<SupportErrorCode, string> = {
   UNAUTHORIZED: "Please sign in to continue.",
-  INVALID_ID:
-    "This link looks broken — open the session from your dashboard and try again.",
-  VALIDATION_FAILED:
-    "Some details are missing or invalid. Please check and retry.",
+  INVALID_ID: "This link looks broken — open the session from your dashboard and try again.",
+  VALIDATION_FAILED: "Some details are missing or invalid. Please check and retry.",
   NOT_FOUND: "We couldn't find that anymore — it may have been removed.",
   FORBIDDEN: "You don't have access to this.",
-  RATE_LIMITED:
-    "You're doing that a bit too quickly — try again in a few minutes.",
+  RATE_LIMITED: "You're doing that a bit too quickly — try again in a few minutes.",
   CONFLICT: "That was just updated somewhere else. Refresh and try again.",
   INTERNAL: "Something went wrong on our side. Please try again in a moment.",
 };
@@ -164,9 +161,7 @@ export async function parseRouteParams<S extends z.ZodTypeAny>(
   schema: S,
   raw: unknown,
   context: Record<string, unknown>,
-): Promise<
-  { ok: true; data: z.infer<S> } | { ok: false; response: NextResponse }
-> {
+): Promise<{ ok: true; data: z.infer<S> } | { ok: false; response: NextResponse }> {
   // Route handlers hand us the `params` PROMISE — awaiting a plain value is a
   // no-op, so both call styles work.
   const parsed = schema.safeParse(await raw);

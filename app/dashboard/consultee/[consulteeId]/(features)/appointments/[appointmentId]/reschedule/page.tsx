@@ -121,9 +121,9 @@ export default async function RescheduleAppointmentPage({
             Trial sessions can&apos;t be rescheduled
           </h1>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            A trial is a one-off taster at the time your consultant offered. If
-            it no longer works, cancel it and request a new one, or message your
-            consultant.
+            A trial is a one-off taster at the time your consultant offered.
+            If it no longer works, cancel it and request a new one, or message
+            your consultant.
           </p>
           <Button variant="outline" size="sm" className="mt-4" asChild>
             <Link href={`/dashboard/consultee/${consulteeId}/appointments`}>

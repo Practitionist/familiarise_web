@@ -60,7 +60,9 @@ export async function findTentativeOccurrenceIdsForEvent(
     appointment?: Partial<Pick<(typeof prisma)["appointment"], "findMany">>;
   },
   where:
-    { webinarId: string } | { classId: string } | { subscriptionId: string },
+    | { webinarId: string }
+    | { classId: string }
+    | { subscriptionId: string },
 ): Promise<string[]> {
   const rows =
     (await db.appointment?.findMany?.({
@@ -129,9 +131,7 @@ export function categorizeValidationErrors(args: {
       }
     } else if (error.startsWith("[WEEKLY_LIMIT]")) {
       const message = error.replace("[WEEKLY_LIMIT] ", "");
-      const sessionsMatch = message.match(
-        /has (\d+) sessions but max is (\d+)/,
-      );
+      const sessionsMatch = message.match(/has (\d+) sessions but max is (\d+)/);
       const weekMatch = message.match(/Week of (.+?) has/);
       if (sessionsMatch && weekMatch) {
         weeklyDistributionErrors.push({

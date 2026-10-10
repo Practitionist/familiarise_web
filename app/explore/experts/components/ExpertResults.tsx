@@ -5,7 +5,10 @@ import { Search } from "lucide-react";
 import { memo, type RefObject } from "react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { ConsultantCard } from "./ConsultantCard";
-import { groupConsultantsByDomain, type IExpertsMetaData } from "../utils";
+import {
+  groupConsultantsByDomain,
+  type IExpertsMetaData,
+} from "../utils";
 
 interface ExpertResultsProps {
   consultants: IConsultantCardData[];
@@ -65,7 +68,10 @@ function ExpertResultsImpl({
     return (
       <div className="mt-8 min-h-[400px] space-y-6">
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-36 animate-pulse rounded-xl bg-muted" />
+          <div
+            key={i}
+            className="h-36 animate-pulse rounded-xl bg-muted"
+          />
         ))}
       </div>
     );
@@ -151,7 +157,10 @@ function ExpertResultsImpl({
       {isLoadingMore && (
         <div className="space-y-4 py-6">
           {[1, 2].map((i) => (
-            <div key={i} className="h-28 animate-pulse rounded-xl bg-muted" />
+            <div
+              key={i}
+              className="h-28 animate-pulse rounded-xl bg-muted"
+            />
           ))}
         </div>
       )}

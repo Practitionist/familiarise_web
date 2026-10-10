@@ -243,10 +243,7 @@ export function DocumentsTab({
         setBulkReviewNotes("");
       }
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       toast({
         title: "Error",
         description: "Failed to update documents",
@@ -301,10 +298,7 @@ export function DocumentsTab({
       setReviewDialogOpen(false);
       onRefresh?.();
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error updating review:", error);
       toast({
         title: "Error",
@@ -327,10 +321,7 @@ export function DocumentsTab({
       link.click();
       window.document.body.removeChild(link);
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Error downloading file:", error);
       toast({
         title: "Error",
@@ -347,7 +338,11 @@ export function DocumentsTab({
   const renderRowActions = (document: IDocument) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8 cursor-pointer">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 cursor-pointer"
+        >
           <MoreHorizontal className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
@@ -391,9 +386,7 @@ export function DocumentsTab({
       primary: true,
       cell: (document) => (
         <div className="flex items-center gap-3">
-          <div className="shrink-0">
-            {getDocumentTypeIcon(document.mimeType)}
-          </div>
+          <div className="shrink-0">{getDocumentTypeIcon(document.mimeType)}</div>
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-foreground">
               {document.originalName}
@@ -478,13 +471,9 @@ export function DocumentsTab({
   const emptyState = hasActiveFilters ? (
     <div className="py-12 text-center text-muted-foreground">
       <Search className="mx-auto mb-4 h-12 w-12 text-muted-foreground/40" />
-      <p className="text-lg font-medium text-foreground">
-        No matching documents
-      </p>
+      <p className="text-lg font-medium text-foreground">No matching documents</p>
       {debouncedSearch && (
-        <p className="mt-1 text-sm">
-          No results for &quot;{debouncedSearch}&quot;
-        </p>
+        <p className="mt-1 text-sm">No results for &quot;{debouncedSearch}&quot;</p>
       )}
       <Button
         variant="outline"
@@ -523,342 +512,329 @@ export function DocumentsTab({
       />
 
       <div className="overflow-hidden bg-card p-4 text-card-foreground sm:p-6">
-        {/* Search bar and filter dropdowns — stack full-width on phones */}
-        <div className="mb-4 flex flex-wrap items-center gap-3">
-          <div className="relative w-full min-w-0 sm:w-auto sm:max-w-sm sm:flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search by name, learner, or appointment..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 pr-9"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          <Select value={statusFilter} onValueChange={onStatusFilterChange}>
-            <SelectTrigger className="w-full sm:w-[160px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              {REVIEW_STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {documentReviewStatusBadge(s).label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={typeFilter} onValueChange={onTypeFilterChange}>
-            <SelectTrigger className="w-full sm:w-[160px]">
-              <SelectValue placeholder="Type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              {APPOINTMENT_TYPES.map((type) => (
-                <SelectItem key={type} value={type}>
-                  {type}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={String(pageSize)}
-            onValueChange={(value) => onPageSizeChange(Number(value))}
-          >
-            <SelectTrigger className="w-full sm:w-[120px]">
-              <SelectValue placeholder="Page size" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="10">10 / page</SelectItem>
-              <SelectItem value="25">25 / page</SelectItem>
-              <SelectItem value="50">50 / page</SelectItem>
-            </SelectContent>
-          </Select>
-          {hasActiveFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              Clear Filters
-            </Button>
+      {/* Search bar and filter dropdowns — stack full-width on phones */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative w-full min-w-0 sm:w-auto sm:max-w-sm sm:flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search by name, learner, or appointment..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 pr-9"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
           )}
         </div>
-
-        {/* Results count — driven by the server pagination envelope */}
-        {totalCount > 0 && (
-          <div className="mb-2 text-sm text-muted-foreground">
-            Showing {showStart}-{showEnd} of {totalCount} document
-            {totalCount !== 1 ? "s" : ""}
-            {debouncedSearch &&
-              filteredDocuments.length !== documents.length && (
-                <>
-                  {" "}
-                  ({filteredDocuments.length} match
-                  {filteredDocuments.length !== 1 ? "es" : ""} on this page)
-                </>
-              )}
-          </div>
+        <Select value={statusFilter} onValueChange={onStatusFilterChange}>
+          <SelectTrigger className="w-full sm:w-[160px]">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            {REVIEW_STATUSES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {documentReviewStatusBadge(s).label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={typeFilter} onValueChange={onTypeFilterChange}>
+          <SelectTrigger className="w-full sm:w-[160px]">
+            <SelectValue placeholder="Type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            {APPOINTMENT_TYPES.map((type) => (
+              <SelectItem key={type} value={type}>
+                {type}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={String(pageSize)}
+          onValueChange={(value) => onPageSizeChange(Number(value))}
+        >
+          <SelectTrigger className="w-full sm:w-[120px]">
+            <SelectValue placeholder="Page size" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="10">10 / page</SelectItem>
+            <SelectItem value="25">25 / page</SelectItem>
+            <SelectItem value="50">50 / page</SelectItem>
+          </SelectContent>
+        </Select>
+        {hasActiveFilters && (
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            Clear Filters
+          </Button>
         )}
+      </div>
 
-        {/* Bulk action bar */}
-        {selectedIds.size > 0 && (
-          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
-            <span className="text-sm font-medium text-foreground">
-              {selectedIds.size} selected
-            </span>
-            <Button
-              size="sm"
-              onClick={() => setBulkReviewDialogOpen(true)}
-              disabled={isBulkUpdating}
-            >
-              {isBulkUpdating ? "Updating..." : "Review Selected"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSelectedIds(new Set())}
-            >
-              Clear Selection
-            </Button>
-          </div>
-        )}
+      {/* Results count — driven by the server pagination envelope */}
+      {totalCount > 0 && (
+        <div className="mb-2 text-sm text-muted-foreground">
+          Showing {showStart}-{showEnd} of {totalCount} document
+          {totalCount !== 1 ? "s" : ""}
+          {debouncedSearch && filteredDocuments.length !== documents.length && (
+            <>
+              {" "}
+              ({filteredDocuments.length} match
+              {filteredDocuments.length !== 1 ? "es" : ""} on this page)
+            </>
+          )}
+        </div>
+      )}
 
-        <ResponsiveTable<IDocument>
-          columns={columns}
-          rows={filteredDocuments}
-          getRowId={(d) => d.id}
-          selectable
-          selectedIds={selectedIds}
-          onToggle={toggleSelect}
-          onToggleAll={toggleSelectAll}
-          allSelected={allOnPageSelected && filteredDocuments.length > 0}
-          rowActions={renderRowActions}
-          empty={emptyState}
-        />
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
+          <span className="text-sm font-medium text-foreground">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            size="sm"
+            onClick={() => setBulkReviewDialogOpen(true)}
+            disabled={isBulkUpdating}
+          >
+            {isBulkUpdating ? "Updating..." : "Review Selected"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Clear Selection
+          </Button>
+        </div>
+      )}
 
-        {/* Pagination controls — driven by the server envelope (issue #346).
+      <ResponsiveTable<IDocument>
+        columns={columns}
+        rows={filteredDocuments}
+        getRowId={(d) => d.id}
+        selectable
+        selectedIds={selectedIds}
+        onToggle={toggleSelect}
+        onToggleAll={toggleSelectAll}
+        allSelected={allOnPageSelected && filteredDocuments.length > 0}
+        rowActions={renderRowActions}
+        empty={emptyState}
+      />
+
+      {/* Pagination controls — driven by the server envelope (issue #346).
           Buttons are disabled while a placeholder page is visible so users
           can't fire off duplicate requests mid-transition. */}
-        {totalPages > 1 && (
-          <div className="mt-4 flex items-center justify-between">
-            <div className="text-sm text-muted-foreground">
-              Page {currentPage} of {totalPages}
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">
+            Page {currentPage} of {totalPages}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPageChange(page - 1)}
+              disabled={!hasPrevPage || isPlaceholderData}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onPageChange(page + 1)}
+              disabled={!hasNextPage || isPlaceholderData}
+            >
+              Next
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Review Dialog */}
+      <ResponsiveModal open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
+        <ResponsiveModalContent className="sm:max-w-[425px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
+            <ResponsiveModalTitle>Review Document</ResponsiveModalTitle>
+            <ResponsiveModalDescription>
+              Update the review status and add notes for{" "}
+              {selectedDocument?.originalName}
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
+          <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Review Status</label>
+              <Select value={reviewStatus} onValueChange={setReviewStatus}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {REVIEW_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {documentReviewStatusBadge(s).label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onPageChange(page - 1)}
-                disabled={!hasPrevPage || isPlaceholderData}
-              >
-                <ChevronLeft className="h-4 w-4 mr-1" />
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onPageChange(page + 1)}
-                disabled={!hasNextPage || isPlaceholderData}
-              >
-                Next
-                <ChevronRight className="h-4 w-4 ml-1" />
-              </Button>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Review Notes</label>
+              <Textarea
+                placeholder="Add any comments or feedback..."
+                value={reviewNotes}
+                onChange={(e) => setReviewNotes(e.target.value)}
+                className="min-h-[100px]"
+              />
+            </div>
+            {selectedDocument && (
+              <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                <p>
+                  <strong>Learner:</strong> {selectedDocument.clientName}
+                </p>
+                <p>
+                  <strong>File:</strong> {selectedDocument.originalName}
+                </p>
+                <p>
+                  <strong>Size:</strong>{" "}
+                  {formatFileSize(selectedDocument.fileSize)}
+                </p>
+                {selectedDocument.description && (
+                  <p>
+                    <strong>Description:</strong> {selectedDocument.description}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+          <ResponsiveModalFooter className="shrink-0">
+            <Button
+              variant="outline"
+              onClick={() => setReviewDialogOpen(false)}
+              disabled={isUpdating}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleReviewSubmit}
+              disabled={isUpdating || !reviewStatus}
+            >
+              {isUpdating ? "Updating..." : "Update Review"}
+            </Button>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
+
+      {/* Bulk Review Dialog */}
+      <ResponsiveModal
+        open={bulkReviewDialogOpen}
+        onOpenChange={(open) => {
+          setBulkReviewDialogOpen(open);
+          if (!open) {
+            setBulkReviewStatus("");
+            setBulkReviewNotes("");
+          }
+        }}
+      >
+        <ResponsiveModalContent className="sm:max-w-[500px] max-h-[90dvh] overflow-hidden flex flex-col">
+          <ResponsiveModalHeader className="shrink-0">
+            <ResponsiveModalTitle>
+              Review {selectedIds.size} Documents
+            </ResponsiveModalTitle>
+            <ResponsiveModalDescription>
+              Set a review status and optional notes for all selected documents.
+            </ResponsiveModalDescription>
+          </ResponsiveModalHeader>
+          <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Review Status</label>
+              <Select value={bulkReviewStatus} onValueChange={setBulkReviewStatus}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {REVIEW_STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {documentReviewStatusBadge(s).label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Shared Notes{" "}
+                <span className="font-normal text-muted-foreground">
+                  (optional)
+                </span>
+              </label>
+              <Textarea
+                placeholder="Add notes that will apply to all selected documents..."
+                value={bulkReviewNotes}
+                onChange={(e) => setBulkReviewNotes(e.target.value)}
+                className="min-h-[100px]"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Selected Documents</label>
+              <div className="max-h-[200px] overflow-y-auto border rounded-md p-2 space-y-2">
+                {documents
+                  .filter((d) => selectedIds.has(d.id))
+                  .map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="flex items-center justify-between text-sm py-1"
+                    >
+                      <span className="truncate mr-2">{doc.originalName}</span>
+                      <StatusBadge
+                        {...documentReviewStatusBadge(doc.reviewStatus)}
+                        size="sm"
+                      />
+                    </div>
+                  ))}
+              </div>
             </div>
           </div>
-        )}
+          <ResponsiveModalFooter className="shrink-0">
+            <Button
+              variant="outline"
+              onClick={() => setBulkReviewDialogOpen(false)}
+              disabled={isBulkUpdating}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                handleBulkStatusUpdate(bulkReviewStatus, bulkReviewNotes)
+              }
+              disabled={isBulkUpdating || !bulkReviewStatus}
+            >
+              {isBulkUpdating ? "Updating..." : "Review All"}
+            </Button>
+          </ResponsiveModalFooter>
+        </ResponsiveModalContent>
+      </ResponsiveModal>
 
-        {/* Review Dialog */}
-        <ResponsiveModal
-          open={reviewDialogOpen}
-          onOpenChange={setReviewDialogOpen}
-        >
-          <ResponsiveModalContent className="sm:max-w-[425px] max-h-[90dvh] overflow-hidden flex flex-col">
-            <ResponsiveModalHeader className="shrink-0">
-              <ResponsiveModalTitle>Review Document</ResponsiveModalTitle>
-              <ResponsiveModalDescription>
-                Update the review status and add notes for{" "}
-                {selectedDocument?.originalName}
-              </ResponsiveModalDescription>
-            </ResponsiveModalHeader>
-            <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Review Status</label>
-                <Select value={reviewStatus} onValueChange={setReviewStatus}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {REVIEW_STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {documentReviewStatusBadge(s).label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Review Notes</label>
-                <Textarea
-                  placeholder="Add any comments or feedback..."
-                  value={reviewNotes}
-                  onChange={(e) => setReviewNotes(e.target.value)}
-                  className="min-h-[100px]"
-                />
-              </div>
-              {selectedDocument && (
-                <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
-                  <p>
-                    <strong>Learner:</strong> {selectedDocument.clientName}
-                  </p>
-                  <p>
-                    <strong>File:</strong> {selectedDocument.originalName}
-                  </p>
-                  <p>
-                    <strong>Size:</strong>{" "}
-                    {formatFileSize(selectedDocument.fileSize)}
-                  </p>
-                  {selectedDocument.description && (
-                    <p>
-                      <strong>Description:</strong>{" "}
-                      {selectedDocument.description}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-            <ResponsiveModalFooter className="shrink-0">
-              <Button
-                variant="outline"
-                onClick={() => setReviewDialogOpen(false)}
-                disabled={isUpdating}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleReviewSubmit}
-                disabled={isUpdating || !reviewStatus}
-              >
-                {isUpdating ? "Updating..." : "Update Review"}
-              </Button>
-            </ResponsiveModalFooter>
-          </ResponsiveModalContent>
-        </ResponsiveModal>
-
-        {/* Bulk Review Dialog */}
-        <ResponsiveModal
-          open={bulkReviewDialogOpen}
-          onOpenChange={(open) => {
-            setBulkReviewDialogOpen(open);
-            if (!open) {
-              setBulkReviewStatus("");
-              setBulkReviewNotes("");
-            }
+      {/* Response Upload Dialog */}
+      {documentForResponse && (
+        <ConsultantResponseUpload
+          appointmentId={documentForResponse.appointmentId}
+          responseToDocument={documentForResponse}
+          isOpen={responseDialogOpen}
+          onClose={() => {
+            setResponseDialogOpen(false);
+            setDocumentForResponse(null);
           }}
-        >
-          <ResponsiveModalContent className="sm:max-w-[500px] max-h-[90dvh] overflow-hidden flex flex-col">
-            <ResponsiveModalHeader className="shrink-0">
-              <ResponsiveModalTitle>
-                Review {selectedIds.size} Documents
-              </ResponsiveModalTitle>
-              <ResponsiveModalDescription>
-                Set a review status and optional notes for all selected
-                documents.
-              </ResponsiveModalDescription>
-            </ResponsiveModalHeader>
-            <div className="min-h-0 flex-1 grid gap-4 overflow-y-auto py-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Review Status</label>
-                <Select
-                  value={bulkReviewStatus}
-                  onValueChange={setBulkReviewStatus}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {REVIEW_STATUSES.map((s) => (
-                      <SelectItem key={s} value={s}>
-                        {documentReviewStatusBadge(s).label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Shared Notes{" "}
-                  <span className="font-normal text-muted-foreground">
-                    (optional)
-                  </span>
-                </label>
-                <Textarea
-                  placeholder="Add notes that will apply to all selected documents..."
-                  value={bulkReviewNotes}
-                  onChange={(e) => setBulkReviewNotes(e.target.value)}
-                  className="min-h-[100px]"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Selected Documents
-                </label>
-                <div className="max-h-[200px] overflow-y-auto border rounded-md p-2 space-y-2">
-                  {documents
-                    .filter((d) => selectedIds.has(d.id))
-                    .map((doc) => (
-                      <div
-                        key={doc.id}
-                        className="flex items-center justify-between text-sm py-1"
-                      >
-                        <span className="truncate mr-2">
-                          {doc.originalName}
-                        </span>
-                        <StatusBadge
-                          {...documentReviewStatusBadge(doc.reviewStatus)}
-                          size="sm"
-                        />
-                      </div>
-                    ))}
-                </div>
-              </div>
-            </div>
-            <ResponsiveModalFooter className="shrink-0">
-              <Button
-                variant="outline"
-                onClick={() => setBulkReviewDialogOpen(false)}
-                disabled={isBulkUpdating}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={() =>
-                  handleBulkStatusUpdate(bulkReviewStatus, bulkReviewNotes)
-                }
-                disabled={isBulkUpdating || !bulkReviewStatus}
-              >
-                {isBulkUpdating ? "Updating..." : "Review All"}
-              </Button>
-            </ResponsiveModalFooter>
-          </ResponsiveModalContent>
-        </ResponsiveModal>
-
-        {/* Response Upload Dialog */}
-        {documentForResponse && (
-          <ConsultantResponseUpload
-            appointmentId={documentForResponse.appointmentId}
-            responseToDocument={documentForResponse}
-            isOpen={responseDialogOpen}
-            onClose={() => {
-              setResponseDialogOpen(false);
-              setDocumentForResponse(null);
-            }}
-            onSuccess={onRefresh}
-          />
-        )}
+          onSuccess={onRefresh}
+        />
+      )}
       </div>
     </>
   );

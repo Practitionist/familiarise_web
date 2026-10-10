@@ -70,10 +70,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(payment);
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Admin payment details error:", error);
     return NextResponse.json(
       { error: "Failed to fetch payment details" },

@@ -46,10 +46,7 @@ export type CycleDecision =
   /** Mint the successor + mark old ROLLED. */
   | { action: "ROLL"; reason: "AUTORENEW" }
   /** Claim old → CLOSED; no successor. */
-  | {
-      action: "CLOSE";
-      reason: "CONTRACT_INACTIVE" | "AUTORENEW_OFF" | "CLAMPED";
-    };
+  | { action: "CLOSE"; reason: "CONTRACT_INACTIVE" | "AUTORENEW_OFF" | "CLAMPED" };
 
 /**
  * Roll-vs-close decision table (#779 locked decision #3):
@@ -58,9 +55,7 @@ export type CycleDecision =
  *   successor end > effectiveTo      → CLOSE (CLAMPED)  // don't outlive the term
  *   else                             → ROLL  (AUTORENEW)
  */
-export function decideCycleTransition(
-  input: CycleDecisionInput,
-): CycleDecision {
+export function decideCycleTransition(input: CycleDecisionInput): CycleDecision {
   if (input.contractStatus !== "ACTIVE") {
     return { action: "CLOSE", reason: "CONTRACT_INACTIVE" };
   }
@@ -88,6 +83,8 @@ export function resolveProgramCycle(program: {
   creditPoolConfig: { cycle: BillingCycle } | null;
 }): BillingCycle | null {
   return (
-    program.licensedSeatConfig?.cycle ?? program.creditPoolConfig?.cycle ?? null
+    program.licensedSeatConfig?.cycle ??
+    program.creditPoolConfig?.cycle ??
+    null
   );
 }

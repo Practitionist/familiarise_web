@@ -82,10 +82,7 @@ export function ConsultantResponseUpload({
       onClose();
       onSuccess?.();
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
       console.error("Upload error:", error);
       toast({
         title: "Upload failed",

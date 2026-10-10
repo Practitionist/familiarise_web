@@ -66,9 +66,7 @@ export function TrialScheduleCalendar({
   );
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
   const [slotTimings, setSlotTimings] = useState<TIntervalTiming[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
-    null,
-  );
+  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(null);
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
 
   const durationInHours = trialDurationMinutes / 60;
@@ -249,7 +247,9 @@ export function TrialScheduleCalendar({
     <div className="space-y-6">
       {/* Header */}
       <div className="border-b border-gray-200 pb-4">
-        <h2 className="text-xl font-semibold text-gray-900">Schedule Trial</h2>
+        <h2 className="text-xl font-semibold text-gray-900">
+          Schedule Trial
+        </h2>
         <p className="text-sm text-gray-500 mt-1">
           {consulteeUserName
             ? `Select a ${trialDurationMinutes}-minute slot for the trial session with ${consulteeUserName}`

@@ -482,9 +482,8 @@ export async function approvePayout(
       const makerCheckerRequired =
         process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
       const activeAdminCount =
-        typeof (
-          prisma as { user?: { count?: (args: unknown) => Promise<number> } }
-        ).user?.count === "function"
+        typeof (prisma as { user?: { count?: (args: unknown) => Promise<number> } })
+          .user?.count === "function"
           ? await prisma.user.count({ where: { role: "ADMIN" } })
           : 2;
       if (makerCheckerRequired && activeAdminCount > 1) {
@@ -951,8 +950,9 @@ async function isMakerCheckerDisbursementBlocked(
   const makerCheckerRequired =
     process.env.PAYOUT_MAKER_CHECKER_REQUIRED !== "false";
   const activeAdminCount =
-    typeof (prisma as { user?: { count?: (args: unknown) => Promise<number> } })
-      .user?.count === "function"
+    typeof (
+      prisma as { user?: { count?: (args: unknown) => Promise<number> } }
+    ).user?.count === "function"
       ? await prisma.user.count({ where: { role: "ADMIN" } })
       : 2;
   if (!makerCheckerRequired || activeAdminCount <= 1) {
@@ -1237,7 +1237,8 @@ async function handleProcessSinglePayoutError(
   providerPayoutId: string | undefined,
   submittedToGateway: boolean,
 ): Promise<PayoutResult> {
-  const errorMessage = error instanceof Error ? error.message : "Unknown error";
+  const errorMessage =
+    error instanceof Error ? error.message : "Unknown error";
 
   // If the gateway already accepted the transfer, quarantine in PROCESSING with earnings linked to prevent double-disbursement.
   if (providerPayoutId) {

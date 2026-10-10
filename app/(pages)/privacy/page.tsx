@@ -168,8 +168,7 @@ export default function PrivacyPolicyPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-6 mb-2">
-                3.5 Itemised Purpose &amp; Retention Schedule (DPDP Act 2023
-                &amp; Rule 3)
+                3.5 Itemised Purpose &amp; Retention Schedule (DPDP Act 2023 &amp; Rule 3)
               </h3>
               <p>
                 In accordance with Section 5 of the Digital Personal Data
@@ -197,9 +196,9 @@ export default function PrivacyPolicyPage() {
                     <tr>
                       <td className="p-2 align-top">
                         <strong>Account &amp; Identity</strong> (name, email,
-                        phone, timezone, role, professional bio/credentials,
-                        date of birth for 18+ age verification under DPDP
-                        &sect;9 / Fourth Schedule Part B Item 6)
+                        phone, timezone, role, professional bio/credentials, date
+                        of birth for 18+ age verification under DPDP &sect;9 /
+                        Fourth Schedule Part B Item 6)
                       </td>
                       <td className="p-2 align-top">
                         <strong>Service &amp; Account</strong> (
@@ -209,8 +208,7 @@ export default function PrivacyPolicyPage() {
                       </td>
                       <td className="p-2 align-top">
                         <strong>Core (Required)</strong> — Retained while
-                        account is active; scrubbed on account erasure
-                        (&sect;12).
+                        account is active; scrubbed on account erasure (&sect;12).
                       </td>
                     </tr>
                     <tr>
@@ -253,9 +251,7 @@ export default function PrivacyPolicyPage() {
                         earnings, payouts, PAN/TDS &amp; GST ledger rows)
                       </td>
                       <td className="p-2 align-top">
-                        <strong>
-                          Financial Settlement &amp; Statutory Tax
-                        </strong>{" "}
+                        <strong>Financial Settlement &amp; Statutory Tax</strong>{" "}
                         (<code>PRIMARY_PROCESSING</code> &amp; DPDP
                         &sect;12(3)/&sect;8(7)(b))
                       </td>
@@ -340,20 +336,15 @@ export default function PrivacyPolicyPage() {
                 </li>
                 <li>
                   <strong>GetStream.io:</strong> Video conferencing and
-                  real-time chat communication (
-                  <code>STREAM_DATA_PROCESSING</code>)
+                  real-time chat communication (<code>STREAM_DATA_PROCESSING</code>)
                 </li>
                 <li>
-                  <strong>
-                    Cloud Database &amp; Storage (Supabase / Neon):
-                  </strong>{" "}
+                  <strong>Cloud Database &amp; Storage (Supabase / Neon):</strong>{" "}
                   Encrypted database hosting, verification document storage, and
                   backups
                 </li>
                 <li>
-                  <strong>
-                    Email &amp; Notification Providers (Resend / Novu):
-                  </strong>{" "}
+                  <strong>Email &amp; Notification Providers (Resend / Novu):</strong>{" "}
                   Transactional booking notifications and consented marketing
                   emails
                 </li>
@@ -525,8 +516,7 @@ export default function PrivacyPolicyPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                7.4 Data Portability &amp; Summary of Personal Data (DPDP
-                &sect;11)
+                7.4 Data Portability &amp; Summary of Personal Data (DPDP &sect;11)
               </h3>
               <ul>
                 <li>
@@ -543,9 +533,7 @@ export default function PrivacyPolicyPage() {
               </ul>
 
               <h3 className="text-xl font-semibold mt-4 mb-2">
-                7.5 Consent Withdrawal, Grievance Redressal &amp; Data
-                Protection Board of India (DPDP &sect;6, &sect;12, &sect;13
-                &amp; &sect;14)
+                7.5 Consent Withdrawal, Grievance Redressal &amp; Data Protection Board of India (DPDP &sect;6, &sect;12, &sect;13 &amp; &sect;14)
               </h3>
               <ul>
                 <li>
@@ -565,8 +553,10 @@ export default function PrivacyPolicyPage() {
                   your account and deliver bookings. Under DPDP &sect;6(4)–(6)
                   and &sect;12, you may withdraw core consent at any time by
                   selecting{" "}
-                  <strong>Withdraw core consent &amp; delete account</strong> in{" "}
-                  <strong>Settings &rarr; Account</strong>. If you have active
+                  <strong>
+                    Withdraw core consent &amp; delete account
+                  </strong>{" "}
+                  in <strong>Settings &rarr; Account</strong>. If you have active
                   upcoming sessions or unsettled payouts/disputes, we will guide
                   you to complete or cancel them first; upon erasure, your
                   personal identifiers are permanently scrubbed while statutory

@@ -63,11 +63,7 @@ function ProgramResultsImpl({
                 delay: Math.min(index * 0.05, 0.6),
               }}
             >
-              <ProgramCard
-                program={item}
-                variant="grid"
-                viewerOrgs={viewerOrgs}
-              />
+              <ProgramCard program={item} variant="grid" viewerOrgs={viewerOrgs} />
             </motion.div>
           ))}
         </div>
@@ -84,11 +80,7 @@ function ProgramResultsImpl({
                 delay: Math.min(index * 0.05, 0.6),
               }}
             >
-              <ProgramCard
-                program={item}
-                variant="list"
-                viewerOrgs={viewerOrgs}
-              />
+              <ProgramCard program={item} variant="list" viewerOrgs={viewerOrgs} />
             </motion.div>
           ))}
         </div>

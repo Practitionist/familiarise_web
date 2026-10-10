@@ -42,7 +42,9 @@ export default function PayoutsChart({ data }: PayoutsChartProps) {
             tickLine={false}
             axisLine={false}
             tickFormatter={(value: number) =>
-              value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value)
+              value >= 1000
+                ? `${(value / 1000).toFixed(1)}k`
+                : String(value)
             }
           />
           <Tooltip

@@ -57,7 +57,8 @@ export function groupReleasableSessions(
 function isWithinLeadTime(session: ReleasableSession, minLeadHours: number) {
   if (minLeadHours <= 0) return false;
   return (
-    (session.startTime.getTime() - Date.now()) / (1000 * 60 * 60) < minLeadHours
+    (session.startTime.getTime() - Date.now()) / (1000 * 60 * 60) <
+    minLeadHours
   );
 }
 

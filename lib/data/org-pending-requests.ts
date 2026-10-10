@@ -80,26 +80,28 @@ export async function readOrgPendingRequests(
     }),
   ]);
 
-  return [
-    ...consultations.map((c) => ({
-      id: c.id,
-      appointmentId: c.appointment?.id ?? null,
-      kind: "CONSULTATION" as const,
-      planTitle: c.consultationPlan.title,
-      learnerName: c.requestedBy.user.name,
-      expertName: c.consultationPlan.consultantProfile.user.name,
-      requestedAt: c.requestedAt.toISOString(),
-    })),
-    ...subscriptions.map((s) => ({
-      id: s.id,
-      appointmentId: s.appointment?.id ?? null,
-      kind: "SUBSCRIPTION" as const,
-      planTitle: s.subscriptionPlan.title,
-      learnerName: s.requestedBy.user.name,
-      expertName: s.subscriptionPlan.consultantProfile.user.name,
-      requestedAt: s.requestedAt.toISOString(),
-    })),
-  ]
-    .sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1))
-    .slice(0, PENDING_TAKE);
+  return (
+    [
+      ...consultations.map((c) => ({
+        id: c.id,
+        appointmentId: c.appointment?.id ?? null,
+        kind: "CONSULTATION" as const,
+        planTitle: c.consultationPlan.title,
+        learnerName: c.requestedBy.user.name,
+        expertName: c.consultationPlan.consultantProfile.user.name,
+        requestedAt: c.requestedAt.toISOString(),
+      })),
+      ...subscriptions.map((s) => ({
+        id: s.id,
+        appointmentId: s.appointment?.id ?? null,
+        kind: "SUBSCRIPTION" as const,
+        planTitle: s.subscriptionPlan.title,
+        learnerName: s.requestedBy.user.name,
+        expertName: s.subscriptionPlan.consultantProfile.user.name,
+        requestedAt: s.requestedAt.toISOString(),
+      })),
+    ]
+      .sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1))
+      .slice(0, PENDING_TAKE)
+  );
 }

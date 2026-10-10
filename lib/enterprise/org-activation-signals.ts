@@ -117,8 +117,7 @@ export async function resolveActivationSignals(orgId: string): Promise<{
   for (const a of meteredAssignments) {
     let pct: number | null = null;
     if (a.program.type === "CREDIT_POOL") {
-      const budget =
-        (a.program.creditPoolConfig?.creditBudgetPerCycle ?? 0) * 100;
+      const budget = (a.program.creditPoolConfig?.creditBudgetPerCycle ?? 0) * 100;
       if (budget > 0) pct = (a.consumedPaise / budget) * 100;
     } else {
       const cap = a.program.licensedSeatConfig?.coveredEngagementsPerCycle;

@@ -29,7 +29,11 @@ import { getAppUrl } from "@/lib/url";
  */
 
 type Surface =
-  "appointments" | "requests" | "recordings" | "earnings" | "documents";
+  | "appointments"
+  | "requests"
+  | "recordings"
+  | "earnings"
+  | "documents";
 
 /**
  * Multi-recipient safe. `organizationId` null means B2C.

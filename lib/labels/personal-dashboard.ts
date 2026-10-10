@@ -65,7 +65,12 @@ export function resolvePersonalDashboardHref(
 }
 
 export type DashboardFacetKind =
-  "expert" | "client" | "workspace" | "organization" | "admin" | "staff";
+  | "expert"
+  | "client"
+  | "workspace"
+  | "organization"
+  | "admin"
+  | "staff";
 
 export interface DashboardFacet {
   kind: DashboardFacetKind;

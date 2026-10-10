@@ -221,7 +221,6 @@ export function HomeTab({
             startsAt: slot.startsAt,
             endsAt: slot.endsAt,
             completionStatus: slot.completionStatus,
-            meeting: slot.meeting ?? null,
             title: getAppointmentTypeAndPlan(a),
           })),
         ),

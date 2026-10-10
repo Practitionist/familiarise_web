@@ -10,9 +10,7 @@ export const FeatureItem = ({ icon, label, value }: FeatureItemProps) => (
       {icon}
     </div>
     <div className="min-w-0">
-      <p className="text-xs text-muted-foreground uppercase tracking-wide">
-        {label}
-      </p>
+      <p className="text-xs text-muted-foreground uppercase tracking-wide">{label}</p>
       <p className="text-sm font-semibold text-foreground">{value}</p>
     </div>
   </div>

@@ -393,7 +393,10 @@ function parseLicensePricingOverride(
     }
     return { licenseFeePaise };
   }
-  if (draft.licenseModel === "PER_SEAT" && draft.ratePerSeatINR.trim() !== "") {
+  if (
+    draft.licenseModel === "PER_SEAT" &&
+    draft.ratePerSeatINR.trim() !== ""
+  ) {
     const licenseRatePerSeatPaise = parsePositiveInrToPaise(
       draft.ratePerSeatINR,
     );
@@ -634,9 +637,7 @@ function ContractFinancialTermsFields({
           checked={autoRenew}
           onCheckedChange={(v) => onAutoRenewChange(v === true)}
         />
-        <span className="text-sm">
-          Auto-renew when effective-to date passes
-        </span>
+        <span className="text-sm">Auto-renew when effective-to date passes</span>
       </label>
     </>
   );
@@ -870,7 +871,9 @@ function SupersedeContractDialog({
     const current = contractRef.current;
     setReason("AMENDMENT");
     setEffectiveFrom(new Date().toISOString().slice(0, 10));
-    setEffectiveTo(current.effectiveTo ? current.effectiveTo.slice(0, 10) : "");
+    setEffectiveTo(
+      current.effectiveTo ? current.effectiveTo.slice(0, 10) : "",
+    );
     setPaymentTermsDays(String(current.paymentTermsDays));
     setAutoRenew(current.autoRenew);
     setLicenseModel(current.subscription?.model ?? "FLAT_FEE");
@@ -1040,7 +1043,10 @@ function SupersedeContractDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={supersedeMutation.isPending}>
+          <Button
+            onClick={handleSubmit}
+            disabled={supersedeMutation.isPending}
+          >
             {supersedeMutation.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin mr-1" /> Superseding…

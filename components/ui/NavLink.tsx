@@ -54,10 +54,8 @@ export function LinkPendingIcon({
   );
 }
 
-export interface NavLinkProps extends Omit<
-  React.ComponentProps<typeof Link>,
-  "href"
-> {
+export interface NavLinkProps
+  extends Omit<React.ComponentProps<typeof Link>, "href"> {
   href: React.ComponentProps<typeof Link>["href"];
   children: React.ReactNode;
   /** Extra classes applied to the inline pending spinner. */

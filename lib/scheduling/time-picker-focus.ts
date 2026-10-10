@@ -41,20 +41,18 @@ interface DatedSlot {
 function liveSlotsInOrder(
   subject: Pick<TimePickerSubject, "slots">,
 ): DatedSlot[] {
-  return (
-    (subject.slots ?? [])
-      .filter((slot) => !DEAD_STATUSES.has(slot.completionStatus ?? ""))
-      // A10 tombstone (#676). Filtered here rather than at each call site
-      // because every surface feeding this resolver reads its slots straight
-      // off a relation that keeps deleted rows.
-      .filter((slot) => !slot.deletedAt)
-      .map((slot) => ({
-        at: new Date(slot.startsAt),
-        isTentative: Boolean(slot.isTentative),
-      }))
-      .filter((entry) => Number.isFinite(entry.at.getTime()))
-      .sort((a, b) => a.at.getTime() - b.at.getTime())
-  );
+  return (subject.slots ?? [])
+    .filter((slot) => !DEAD_STATUSES.has(slot.completionStatus ?? ""))
+    // A10 tombstone (#676). Filtered here rather than at each call site
+    // because every surface feeding this resolver reads its slots straight
+    // off a relation that keeps deleted rows.
+    .filter((slot) => !slot.deletedAt)
+    .map((slot) => ({
+      at: new Date(slot.startsAt),
+      isTentative: Boolean(slot.isTentative),
+    }))
+    .filter((entry) => Number.isFinite(entry.at.getTime()))
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
 }
 
 /**
@@ -143,8 +141,10 @@ export function focusGridPosition(
   at: Date,
   timeZone: string,
 ): FocusGridPosition {
-  const { year, month, day, hour, minute } =
-    ScheduleCalculationService.wallClock(at, timeZone);
+  const { year, month, day, hour, minute } = ScheduleCalculationService.wallClock(
+    at,
+    timeZone,
+  );
   return {
     year,
     month,

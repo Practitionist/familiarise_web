@@ -17,10 +17,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "programs" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "programs" } });
     console.error("Error fetching program stats:", error);
     return NextResponse.json(
       { error: "Failed to fetch program stats" },

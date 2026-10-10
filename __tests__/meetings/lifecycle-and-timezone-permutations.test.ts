@@ -48,44 +48,43 @@ jest.mock("../../lib/stream-client", () => ({
   })),
 }));
 
+const proxy =
+  (fn: jest.Mock) =>
+  (...args: unknown[]) =>
+    fn(...args);
+
 jest.mock("../../lib/prisma", () => {
-  const client: Record<string, unknown> = {
+  const txClient: Record<string, unknown> = {
     consentArtifact: {
       findFirst: jest.fn().mockResolvedValue({ id: "consent-1" }),
     },
     meeting: {
-      findUnique: (...a: unknown[]) => mockMeetingFindUnique(...a),
-      updateMany: (...a: unknown[]) => mockMeetingUpdateMany(...a),
+      findUnique: proxy(mockMeetingFindUnique),
+      updateMany: proxy(mockMeetingUpdateMany),
     },
     meetingAttendance: {
-      upsert: (...a: unknown[]) => mockAttendanceUpsert(...a),
-      updateMany: (...a: unknown[]) => mockAttendanceUpdateMany(...a),
+      upsert: proxy(mockAttendanceUpsert),
+      updateMany: proxy(mockAttendanceUpdateMany),
     },
     meetingPresence: {
-      findFirst: (...a: unknown[]) => mockPresenceFindFirst(...a),
-      create: (...a: unknown[]) => mockPresenceCreate(...a),
-      updateMany: (...a: unknown[]) => mockPresenceUpdateMany(...a),
+      findFirst: proxy(mockPresenceFindFirst),
+      create: proxy(mockPresenceCreate),
+      updateMany: proxy(mockPresenceUpdateMany),
     },
     appointmentParticipant: {
-      findFirst: (...a: unknown[]) => mockParticipantFindFirst(...a),
-      updateMany: (...a: unknown[]) => mockParticipantUpdateMany(...a),
+      findFirst: proxy(mockParticipantFindFirst),
+      updateMany: proxy(mockParticipantUpdateMany),
     },
     appointmentOccurrence: {
-      findFirst: (...a: unknown[]) => mockOccurrenceFindFirst(...a),
-      updateMany: (...a: unknown[]) => mockOccurrenceUpdateMany(...a),
+      findFirst: proxy(mockOccurrenceFindFirst),
+      updateMany: proxy(mockOccurrenceUpdateMany),
     },
-    user: {
-      findUnique: (...a: unknown[]) => mockUserFindUnique(...a),
-    },
-    collaborator: {
-      findFirst: jest.fn().mockResolvedValue(null),
-    },
+    user: { findUnique: proxy(mockUserFindUnique) },
+    collaborator: { findFirst: jest.fn().mockResolvedValue(null) },
   };
-  client.$transaction = (fn: (tx: typeof client) => unknown) => fn(client);
-  return {
-    __esModule: true,
-    default: client,
-  };
+  txClient.$transaction = (run: (tx: typeof txClient) => unknown) =>
+    run(txClient);
+  return { __esModule: true, default: txClient };
 });
 
 jest.mock("../../lib/stream-logger", () => ({

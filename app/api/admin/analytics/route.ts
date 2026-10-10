@@ -154,10 +154,7 @@ export async function GET() {
       topDomains: formattedTopDomains,
     });
   } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "admin" } },
-    );
+    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
     console.error("Error fetching analytics:", error);
     return NextResponse.json(
       { error: "Internal server error" },

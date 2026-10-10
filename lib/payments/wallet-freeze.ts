@@ -31,8 +31,7 @@ import prisma from "@/lib/prisma";
 
 const FREEZE_CATEGORY = "WALLET_FREEZE";
 const UNFREEZE_CATEGORY = "WALLET_UNFREEZE";
-const freezeKey = (billingAccountId: string) =>
-  `wallet-freeze:${billingAccountId}`;
+const freezeKey = (billingAccountId: string) => `wallet-freeze:${billingAccountId}`;
 
 export class WalletFrozenError extends Error {
   public readonly httpStatus = 409;
@@ -72,10 +71,7 @@ function freezeEventData(params: FreezeWriteParams & { reason: string }) {
     category: FREEZE_CATEGORY,
     severity: "ERROR" as const,
     message: `Wallet spend FROZEN for billing account ${params.billingAccountId}: ${params.reason}`,
-    context: {
-      billingAccountId: params.billingAccountId,
-      reason: params.reason,
-    } as Prisma.InputJsonObject,
+    context: { billingAccountId: params.billingAccountId, reason: params.reason } as Prisma.InputJsonObject,
     correlationId: freezeKey(params.billingAccountId),
   };
 }
@@ -83,11 +79,9 @@ function freezeEventData(params: FreezeWriteParams & { reason: string }) {
 /** Freeze wallet spend for one account. Idempotent — no-op if already frozen.
  *  Write failures PROPAGATE (see #1205-triage note above); the reconcile job's
  *  own error handling pages on them. Returns true when it wrote a new event. */
-export async function freezeWalletSpend(
-  params: FreezeWriteParams & {
-    reason: string;
-  },
-): Promise<boolean> {
+export async function freezeWalletSpend(params: FreezeWriteParams & {
+  reason: string;
+}): Promise<boolean> {
   if (await isWalletFrozen(prisma, params.billingAccountId)) return false;
   await prisma.systemEvent.create({ data: freezeEventData(params) });
   return true;
@@ -105,12 +99,10 @@ export async function freezeWalletSpend(
  *  being silently cleared by a later-dated UNFREEZE. Returns false (409 at
  *  the route) when not frozen or when the concurrent-write abort fires.
  *  Write failures propagate. */
-export async function unfreezeWalletSpend(
-  params: FreezeWriteParams & {
-    actorUserId: string;
-    reason: string;
-  },
-): Promise<boolean> {
+export async function unfreezeWalletSpend(params: FreezeWriteParams & {
+  actorUserId: string;
+  reason: string;
+}): Promise<boolean> {
   try {
     return await prisma.$transaction(
       async (tx) => {

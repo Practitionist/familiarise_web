@@ -99,11 +99,7 @@ export function NextUpHero({
                 <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground shrink-0">
                   {KIND_LABEL[vm.kind]}
                 </span>
-                <StatusBadge
-                  {...eventUnionStatusBadge(vm.status)}
-                  withDot
-                  size="sm"
-                />
+                <StatusBadge {...eventUnionStatusBadge(vm.status)} withDot size="sm" />
               </div>
               <p className="text-sm text-muted-foreground mt-0.5 truncate">
                 with {vm.counterpart.name}

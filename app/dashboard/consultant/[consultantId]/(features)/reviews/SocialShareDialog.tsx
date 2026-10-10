@@ -87,7 +87,11 @@ export function SocialShareDialog({
             className="text-sm"
           />
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" onClick={() => void copyPostText()}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void copyPostText()}
+            >
               {copied ? (
                 <Check className="mr-1.5 h-3.5 w-3.5" />
               ) : (

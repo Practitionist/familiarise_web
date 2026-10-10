@@ -8,7 +8,8 @@
 import type { Refusal, RefusalShape } from "./refusal";
 
 export type ActionResult<T> =
-  { ok: true; data: T } | { ok: false; refusal: RefusalShape };
+  | { ok: true; data: T }
+  | { ok: false; refusal: RefusalShape };
 
 export function okResult<T>(data: T): ActionResult<T> {
   return { ok: true, data };

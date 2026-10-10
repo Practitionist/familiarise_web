@@ -78,7 +78,12 @@ export function orgFiltersToSearchParams(
   appendList(params, "size", filters.sizes);
   if (filters.capability) params.set("capability", filters.capability);
   if (filters.hasExperts) params.set("hasExperts", "true");
-  setIfChanged(params, "sort", filters.sort, DEFAULT_ORGANISATION_FILTERS.sort);
+  setIfChanged(
+    params,
+    "sort",
+    filters.sort,
+    DEFAULT_ORGANISATION_FILTERS.sort,
+  );
   return params.toString();
 }
 

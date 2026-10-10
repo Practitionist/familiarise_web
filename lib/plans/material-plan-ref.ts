@@ -5,7 +5,10 @@
  */
 
 export type MaterialPlanType =
-  "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+  | "CONSULTATION"
+  | "SUBSCRIPTION"
+  | "WEBINAR"
+  | "CLASS";
 
 export interface MaterialPlanRefInput {
   consultationPlan?: { id: string; title: string } | null;

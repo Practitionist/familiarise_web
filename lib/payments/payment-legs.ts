@@ -54,7 +54,9 @@ import type { PaymentLegSource } from "@prisma/client";
  *                      accruals; one per source, partials net into it.
  */
 type PaymentLegSourceRefKind =
-  "GATEWAY_PAYMENT_ID" | "PROGRAM_ASSIGNMENT_ID" | "REFERRAL_CREDIT_USAGE_ID";
+  | "GATEWAY_PAYMENT_ID"
+  | "PROGRAM_ASSIGNMENT_ID"
+  | "REFERRAL_CREDIT_USAGE_ID";
 
 export function sourceRefKindFor(
   source: PaymentLegSource,
@@ -104,7 +106,10 @@ type PaymentLegInput =
     }
   | {
       source:
-        "WALLET" | "INVOICE_ACCRUAL" | "OVERAGE_INVOICE_ACCRUAL" | "LICENSE";
+        | "WALLET"
+        | "INVOICE_ACCRUAL"
+        | "OVERAGE_INVOICE_ACCRUAL"
+        | "LICENSE";
       amountPaise: number;
       programAssignmentId: string;
     };

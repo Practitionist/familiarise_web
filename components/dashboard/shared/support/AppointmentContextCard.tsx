@@ -60,7 +60,10 @@ export function AppointmentContextCard({
 
   return (
     <div
-      className={cn("p-4 rounded-xl bg-muted border border-border", className)}
+      className={cn(
+        "p-4 rounded-xl bg-muted border border-border",
+        className,
+      )}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
