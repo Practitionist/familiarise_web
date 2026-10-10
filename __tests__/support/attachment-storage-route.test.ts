@@ -13,12 +13,6 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(async () => ({ user: { id: "owner" } })),
 }));
 
-jest.mock("../../lib/rate-limit", () => ({
-  __esModule: true,
-  applyRateLimit: jest.fn(async () => null),
-  spamLimiter: {},
-}));
-
 jest.mock("../../lib/supabase", () => ({
   __esModule: true,
   uploadSupportTicketAttachment: jest.fn(),
@@ -29,6 +23,7 @@ jest.mock("../../lib/supabase", () => ({
 
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
+  spamLimiter: {},
   documentUploadLimiter: {},
   applyRateLimit: jest.fn(async () => null),
 }));

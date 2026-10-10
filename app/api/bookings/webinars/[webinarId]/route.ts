@@ -26,7 +26,12 @@ export async function GET(
   try {
     const { webinarId } = await params;
 
-    const authz = await authorizeEventAccess(session, "webinar", webinarId);
+    const authz = await authorizeEventAccess(
+      session,
+      "webinar",
+      webinarId,
+      request.method,
+    );
     if (authz) return authz;
 
     const webinarData = await prisma.webinar.findUniqueOrThrow({

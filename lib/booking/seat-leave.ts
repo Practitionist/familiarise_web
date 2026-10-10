@@ -281,6 +281,7 @@ export async function quoteSeatLeave(
       where: {
         appointment: eventFilter(kind, eventId),
         ...liveParticipant(userId),
+        role: "CONSULTEE",
       },
       select: {
         id: true,
@@ -340,7 +341,11 @@ export async function leaveEventSeat(args: {
     prisma.$transaction(
       async (tx) => {
         const seat = await tx.appointmentParticipant.findFirst({
-          where: { appointment: filter, ...liveParticipant(args.userId) },
+          where: {
+            appointment: filter,
+            ...liveParticipant(args.userId),
+            role: "CONSULTEE",
+          },
           select: {
             id: true,
             appointmentId: true,
@@ -362,11 +367,10 @@ export async function leaveEventSeat(args: {
             seat,
           );
         }
-        // #1554 — the participant row IS the seat; the live-status CAS makes a
-        // concurrent removal's loser match zero rows, so nothing refunds twice.
         const count = await releaseParticipant(tx, {
           appointment: filter,
           userId: args.userId,
+          role: "CONSULTEE",
         });
         return count > 0 ? { seat, plan } : null;
       },

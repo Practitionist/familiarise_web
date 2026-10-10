@@ -271,22 +271,21 @@ describe("#773 multi-party booking journal", () => {
       [COLLAB_INDEP_PROFILE]: null, // independent — full share, no org legs
     });
 
-    // 100_000 gross + 18_000 GST, charged 118_000. Primary 10/5/85 card:
-    // fee 10_000, LearnPro 5_000, pool 85_000. Odd-paise shares exercise the
-    // #778 §C floors: the owner's 42_501 is the pool remainder after the
-    // collaborator floors (residual-to-OWNER, calculateRevenueSplit), and the
-    // hosted collab's 25_499 re-splits on ORG_ANOTHER's card with floors —
-    // fee 2_549, net 21_674, org absorbs the remainder 1_276.
+    // 100_000 pre-fee gross + 18_000 GST = 118_000 charged.
+    // Pre-fee gross slices sum to exact payment.originalAmount (100_000):
+    // - Owner (50_000 on 10/5/85 card): fee 5_000, org 2_500, consultant 42_500
+    // - Hosted collab (30_000 on 10/5/85 card): fee 3_000, org 1_500, consultant 25_500
+    // - Independent collab (20_000 on 20% B2C card): fee 4_000, consultant 16_000
     mockedCalculateSplit.mockResolvedValue([
-      { consultantProfileId: PRIMARY_PROFILE, share: 42_501, role: "OWNER" },
+      { consultantProfileId: PRIMARY_PROFILE, share: 50_000, role: "OWNER" },
       {
         consultantProfileId: COLLAB_HOST_PROFILE,
-        share: 25_499,
+        share: 30_000,
         role: "CO_HOST",
       },
       {
         consultantProfileId: COLLAB_INDEP_PROFILE,
-        share: 17_000,
+        share: 20_000,
         role: "CO_HOST",
       },
     ]);
@@ -318,77 +317,77 @@ describe("#773 multi-party booking journal", () => {
     // Funding side: legacy CASH (no PaymentLegs), no discount gap.
     expect(legAmount(txn, "DEBIT", "CASH|_|_|INR")).toBe(118_000);
 
-    // Per-party credits. PLATFORM_FEE = primary 10_000 + hosted collab's
-    // org-card slice 2_549 (one summed leg).
-    expect(legAmount(txn, "CREDIT", "PLATFORM_FEE|_|_|INR")).toBe(12_549);
+    // Single fee per slice: 5_000 (owner) + 3_000 (hosted collab) + 4_000 (indep collab) = 12_000.
+    expect(legAmount(txn, "CREDIT", "PLATFORM_FEE|_|_|INR")).toBe(12_000);
     expect(
       legAmount(txn, "CREDIT", `CONSULTANT_PAYABLE|_|${PRIMARY_PROFILE}|INR`),
-    ).toBe(42_501);
-    // Hosted collaborator: NET of ORG_ANOTHER's cut.
+    ).toBe(42_500);
+    // Hosted collaborator: NET of ORG_ANOTHER's rate card cut + fee.
     expect(
       legAmount(
         txn,
         "CREDIT",
         `CONSULTANT_PAYABLE|_|${COLLAB_HOST_PROFILE}|INR`,
       ),
-    ).toBe(21_674);
-    // Independent collaborator: full share.
+    ).toBe(25_500);
+    // Independent collaborator: single 20% B2C fee deducted from gross slice.
     expect(
       legAmount(
         txn,
         "CREDIT",
         `CONSULTANT_PAYABLE|_|${COLLAB_INDEP_PROFILE}|INR`,
       ),
-    ).toBe(17_000);
+    ).toBe(16_000);
     expect(legAmount(txn, "CREDIT", `ORG_PAYABLE|${ORG_LEARNPRO}|_|INR`)).toBe(
-      5_000,
+      2_500,
     );
     expect(legAmount(txn, "CREDIT", `ORG_PAYABLE|${ORG_ANOTHER}|_|INR`)).toBe(
-      1_276,
+      1_500,
     );
     expect(legAmount(txn, "CREDIT", "GST_PAYABLE|_|_|INR")).toBe(18_000);
 
     // The cached rows mirror the journal (EARNINGS_LEDGER_DRIFT contract):
-    // hosted collab's ConsultantEarnings carries the NET + the fee slice.
+    // each collaborator's ConsultantEarnings carries its single-fee slice + net share.
     const hostedRow = capturedEarnings.find(
       (e) => e.consultantProfileId === COLLAB_HOST_PROFILE,
     );
     expect(hostedRow).toMatchObject({
-      consultantSharePaise: 21_674,
-      platformFeePaise: 2_549,
+      consultantSharePaise: 25_500,
+      platformFeePaise: 3_000,
     });
     const indepRow = capturedEarnings.find(
       (e) => e.consultantProfileId === COLLAB_INDEP_PROFILE,
     );
     expect(indepRow).toMatchObject({
-      consultantSharePaise: 17_000,
-      platformFeePaise: 0,
+      consultantSharePaise: 16_000,
+      platformFeePaise: 4_000,
     });
     const anotherOrgRow = capturedOrgEarnings.find(
       (r) => r.organizationId === ORG_ANOTHER,
     );
     expect(anotherOrgRow).toMatchObject({
-      grossAmountPaise: 25_499,
-      platformFeePaise: 2_549,
-      orgSharePaise: 1_276,
-      consultantSharePaise: 21_674,
+      grossAmountPaise: 30_000,
+      platformFeePaise: 3_000,
+      orgSharePaise: 1_500,
+      consultantSharePaise: 25_500,
     });
   });
 
-  it("floors the marketplace platform fee (#778 §C-2) — the consultant pool absorbs the remainder", async () => {
-    // No HOST orgs anywhere → flat PLATFORM_FEE_PERCENTAGE (20%) path.
+  it("floors the marketplace platform fee — each party's slice absorbs its floor remainder", async () => {
+    // No HOST orgs anywhere -> flat 20% B2C fee per party slice.
     setMembershipMap({
       [PRIMARY_PROFILE]: null,
       [COLLAB_INDEP_PROFILE]: null,
     });
 
-    // 99_999 × 20% = 19_999.8 → floor 19_999 (round would mint 20_000 and
-    // shave the pool); pool = 80_000, split 60_000 owner + 20_000 collab.
+    // Pre-fee gross slices sum to 99_999:
+    // - Owner (74_999): fee floor(74_999 * 20%) = 14_999, net = 60_000
+    // - Independent collab (25_000): fee floor(25_000 * 20%) = 5_000, net = 20_000
     mockedCalculateSplit.mockResolvedValue([
-      { consultantProfileId: PRIMARY_PROFILE, share: 60_000, role: "OWNER" },
+      { consultantProfileId: PRIMARY_PROFILE, share: 74_999, role: "OWNER" },
       {
         consultantProfileId: COLLAB_INDEP_PROFILE,
-        share: 20_000,
+        share: 25_000,
         role: "CO_HOST",
       },
     ]);
@@ -432,10 +431,10 @@ describe("#773 multi-party booking journal", () => {
       [COLLAB_HOST_PROFILE]: { orgId: ORG_ANOTHER },
     });
     mockedCalculateSplit.mockResolvedValue([
-      { consultantProfileId: PRIMARY_PROFILE, share: 59_501, role: "OWNER" },
+      { consultantProfileId: PRIMARY_PROFILE, share: 70_000, role: "OWNER" },
       {
         consultantProfileId: COLLAB_HOST_PROFILE,
-        share: 25_499,
+        share: 30_000,
         role: "CO_HOST",
       },
     ]);

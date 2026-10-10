@@ -90,6 +90,7 @@ export async function POST(
       authResult.session,
       "subscription",
       subscriptionId,
+      request.method,
     );
     if (authzError) return authzError;
 

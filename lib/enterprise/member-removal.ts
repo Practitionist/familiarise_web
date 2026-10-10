@@ -15,14 +15,19 @@ import {
 } from "@/lib/enterprise/membership-guards";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import { recomputeConsultantIsIndependent } from "@/lib/api/organizations/membership-transitions";
-import { notifyOrgExpertRemoved } from "@/lib/novu/service";
+import {
+  notifyCollaboratorWithdrawn,
+  notifyOrgExpertRemoved,
+} from "@/lib/novu/service";
 import type { OrgExpertRemovedPayload } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import {
   attemptOnboardingEmail,
+  EMAIL_BUDGET_MS,
   stageOrgMembershipChangedEmail,
   type StagedOnboardingEmail,
 } from "@/lib/email";
+import { sendCollaboratorWithdrawnEmail } from "@/lib/email/senders/collaborators";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import {
   getStreamChatClient,
@@ -36,6 +41,11 @@ import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
 import { queryOrgTaggedChannels } from "@/lib/stream/event-channel-service";
 import { liveParticipant } from "@/lib/booking/participants";
+import { getAppUrl } from "@/lib/url";
+import {
+  revokeCollaboratorAccess,
+  type PlanType,
+} from "@/lib/collaborators/service";
 
 export const STREAM_REVOCATION_RETRY_WINDOW_HOURS = 72;
 
@@ -52,10 +62,149 @@ export interface RemoveMemberInput {
 
 export type RemoveMemberResult = { removed: boolean };
 
+interface RevokedOrgCollaboration {
+  collaboratorId: string;
+  planType: PlanType;
+  planId: string;
+  planTitle: string;
+  collaboratorName: string;
+  role: string;
+  revenueShareBps: number;
+  hostUserId: string | null;
+}
+
 interface PostCommit {
   removedUserId: string | null;
   expertNotice: { userId: string; payload: OrgExpertRemovedPayload } | null;
   email: StagedOnboardingEmail | null;
+  revokedCollaborations: RevokedOrgCollaboration[];
+}
+
+async function validateSelfLeaveObligations(
+  tx: Tx,
+  current: GuardedMembership & { id: string; userId: string },
+  input: RemoveMemberInput,
+  now: Date,
+): Promise<RemovalObligations> {
+  if (
+    input.actor.membershipId !== input.memberId ||
+    current.userId !== input.actorUserId
+  ) {
+    throw Object.assign(new Error("Cannot leave on behalf of another member"), {
+      httpStatus: 403,
+    });
+  }
+  if (current.role === "OWNER" && current.status === "ACTIVE") {
+    await assertNotLastOwner(tx, input.orgId, input.memberId);
+  }
+  const rawObligations = await countRemovalObligations(tx, current, now);
+  const obligations = input.releaseActiveSeats
+    ? { ...rawObligations, liveSeats: 0 }
+    : rawObligations;
+  const total = Object.values(obligations).reduce((sum, n) => sum + n, 0);
+  if (total > 0) {
+    throw new MembershipGuardError(
+      "MEMBER_HAS_OBLIGATIONS",
+      "You still have upcoming sessions or money in progress under this organization. Settle or cancel those before leaving.",
+      409,
+      { ...obligations },
+    );
+  }
+  return obligations;
+}
+
+async function collectAndCancelOrgCollaborations(
+  tx: Tx,
+  orgId: string,
+  userId: string,
+  now: Date,
+): Promise<RevokedOrgCollaboration[]> {
+  if (!tx.collaborator?.findMany) return [];
+  const orgCollabs = await tx.collaborator.findMany({
+    where: {
+      status: { in: ["PENDING", "ACCEPTED"] },
+      consultantProfile: { userId },
+      OR: [
+        { webinarPlan: { organizationId: orgId } },
+        { classPlan: { organizationId: orgId } },
+      ],
+    },
+    include: {
+      consultantProfile: {
+        select: { user: { select: { name: true, email: true } } },
+      },
+      webinarPlan: {
+        select: {
+          id: true,
+          title: true,
+          consultantProfile: {
+            select: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
+        },
+      },
+      classPlan: {
+        select: {
+          id: true,
+          title: true,
+          consultantProfile: {
+            select: {
+              user: { select: { id: true, name: true, email: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (orgCollabs.length === 0) return [];
+
+  await tx.collaborator.updateMany({
+    where: {
+      id: { in: orgCollabs.map((c) => c.id) },
+      status: { in: ["PENDING", "ACCEPTED"] },
+    },
+    data: { status: "REMOVED" },
+  });
+  await tx.appointmentParticipant.updateMany({
+    where: {
+      userId,
+      role: "COLLABORATOR",
+      status: { not: "CANCELLED" },
+      appointment: {
+        deletedAt: null,
+        occurrences: {
+          some: { startsAt: { gt: now }, deletedAt: null },
+        },
+        OR: [
+          { webinar: { webinarPlan: { organizationId: orgId } } },
+          { class: { classPlan: { organizationId: orgId } } },
+        ],
+      },
+    },
+    data: { status: "CANCELLED" },
+  });
+
+  const revoked: RevokedOrgCollaboration[] = [];
+  for (const c of orgCollabs) {
+    const plan = c.webinarPlan ?? c.classPlan;
+    if (!plan) continue;
+    const planType: PlanType = c.webinarPlan ? "webinar" : "class";
+    revoked.push({
+      collaboratorId: c.id,
+      planType,
+      planId: plan.id,
+      planTitle: plan.title,
+      collaboratorName:
+        c.consultantProfile.user.name ??
+        c.consultantProfile.user.email ??
+        "Collaborator",
+      role: String(c.role),
+      revenueShareBps: c.revenueShareBps,
+      hostUserId: plan.consultantProfile?.user.id ?? null,
+    });
+  }
+  return revoked;
 }
 
 async function removeInTx(
@@ -69,13 +218,13 @@ async function removeInTx(
   if (!current) {
     throw Object.assign(new Error("Member not found"), { httpStatus: 404 });
   }
-  // Idempotent: a repeat removal is a no-op that still succeeds.
   if (current.status === "REMOVED" || current.status === "ERASED") {
     return {
       removed: false,
       removedUserId: null,
       expertNotice: null,
       email: null,
+      revokedCollaborations: [],
     };
   }
 
@@ -85,28 +234,7 @@ async function removeInTx(
   let forced = false;
 
   if (isSelfLeave) {
-    if (actor.membershipId !== memberId || current.userId !== actorUserId) {
-      throw Object.assign(
-        new Error("Cannot leave on behalf of another member"),
-        { httpStatus: 403 },
-      );
-    }
-    if (current.role === "OWNER" && current.status === "ACTIVE") {
-      await assertNotLastOwner(tx, orgId, memberId);
-    }
-    const rawObligations = await countRemovalObligations(tx, current, now);
-    obligations = input.releaseActiveSeats
-      ? { ...rawObligations, liveSeats: 0 }
-      : rawObligations;
-    const total = Object.values(obligations).reduce((sum, n) => sum + n, 0);
-    if (total > 0) {
-      throw new MembershipGuardError(
-        "MEMBER_HAS_OBLIGATIONS",
-        "You still have upcoming sessions or money in progress under this organization. Settle or cancel those before leaving.",
-        409,
-        { ...obligations },
-      );
-    }
+    obligations = await validateSelfLeaveObligations(tx, current, input, now);
   } else {
     const res = await assertRemovable(tx, {
       membership: current,
@@ -122,8 +250,6 @@ async function removeInTx(
     forced = res.forced;
   }
 
-  // The CAS makes a concurrent double removal 409 instead of re-running the
-  // cascade.
   await transitionMembership(tx, {
     where: { id: memberId, organizationId: orgId },
     to: "REMOVED",
@@ -132,12 +258,13 @@ async function removeInTx(
     await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
   }
 
-  // Past OrganizationEarnings stay untouched: delivered sessions are settled
-  // commitments, and no new org split accrues once the EXPERT row is gone.
-  //
-  // Live seats close at `now` so a removed or self-exiting member's seat stops
-  // counting against the program cap and billed seat count. ROLLED/CLOSED rows
-  // are never re-stamped.
+  const revokedCollaborations = await collectAndCancelOrgCollaborations(
+    tx,
+    orgId,
+    current.userId,
+    now,
+  );
+
   const terminated = await tx.programAssignment.updateMany({
     where: {
       membershipId: memberId,
@@ -168,7 +295,6 @@ async function removeInTx(
     },
   });
 
-  // In the tx so a rollback also drops the delivery row.
   await dispatchWebhookEvent({
     prisma: tx,
     organizationId: orgId,
@@ -197,6 +323,7 @@ async function removeInTx(
       removedUserId: current.userId,
       expertNotice: null,
       email: null,
+      revokedCollaborations,
     };
   }
   const actorName = actorUser?.name ?? actorUser?.email ?? "An operator";
@@ -206,6 +333,7 @@ async function removeInTx(
       removed: true,
       removedUserId: current.userId,
       email: null,
+      revokedCollaborations,
       expertNotice: {
         userId: current.userId,
         payload: {
@@ -235,6 +363,7 @@ async function removeInTx(
     removedUserId: current.userId,
     expertNotice: null,
     email,
+    revokedCollaborations,
   };
 }
 
@@ -605,8 +734,72 @@ export async function revokeMemberStreamAccess(input: {
   };
 }
 
+function dispatchRevokedCollaborationNotices(
+  revokedCollaborations: Awaited<
+    ReturnType<typeof removeInTx>
+  >["revokedCollaborations"],
+): void {
+  for (const c of revokedCollaborations) {
+    if (!c.hostUserId) continue;
+    const hostUserId = c.hostUserId;
+    const dashboardUrl = `${getAppUrl()}${goHref("expert", "collaborations")}`;
+    scheduleAfter(async () => {
+      await notifyCollaboratorWithdrawn(hostUserId, {
+        collaboratorName: c.collaboratorName,
+        planTitle: c.planTitle,
+        planType: c.planType,
+        dashboardUrl,
+      }).catch((e) => Sentry.captureException(e));
+      await sendCollaboratorWithdrawnEmail(
+        {
+          recipientUserId: hostUserId,
+          actorName: c.collaboratorName,
+          collaboratorName: c.collaboratorName,
+          planTitle: c.planTitle,
+          planType: c.planType,
+          role: c.role,
+          revenueShareBps: c.revenueShareBps,
+          collaboratorId: c.collaboratorId,
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      ).catch((e) => Sentry.captureException(e));
+    }, "org.member-removal.collaborator-withdrawn");
+  }
+}
+
+async function revokeRemovedMemberStream(
+  orgId: string,
+  removedUserId: string,
+): Promise<void> {
+  try {
+    const revocation = await revokeMemberStreamAccess({
+      userId: removedUserId,
+      orgId,
+    });
+    if (!revocation.complete) {
+      Sentry.captureException(
+        new Error(
+          `Partial Stream revocation on org member removal: ${revocation.failures.join("; ")}`,
+        ),
+        {
+          tags: { subsystem: "stream", op: "org.member-removal" },
+          extra: { orgId, userId: removedUserId },
+        },
+      );
+    }
+  } catch (streamErr) {
+    Sentry.captureException(
+      streamErr instanceof Error ? streamErr : new Error(String(streamErr)),
+      {
+        tags: { subsystem: "stream", op: "org.member-removal" },
+        extra: { orgId, userId: removedUserId },
+      },
+    );
+  }
+}
+
 /**
- * Runs the removal Serializable (N4: the last-OWNER count must not write-skew)
+ * Runs the removal Serializable (the last-OWNER count must not write-skew)
  * and fires the notices after commit. Throws `MembershipGuardError` or an
  * `httpStatus`-tagged error for the caller to map.
  */
@@ -640,31 +833,11 @@ export async function removeMember(
   }
   if (result.removedUserId) {
     const removedUserId = result.removedUserId;
-    try {
-      const revocation = await revokeMemberStreamAccess({
-        userId: removedUserId,
-        orgId: input.orgId,
-      });
-      if (!revocation.complete) {
-        Sentry.captureException(
-          new Error(
-            `Partial Stream revocation on org member removal: ${revocation.failures.join("; ")}`,
-          ),
-          {
-            tags: { subsystem: "stream", op: "org.member-removal" },
-            extra: { orgId: input.orgId, userId: removedUserId },
-          },
-        );
-      }
-    } catch (streamErr) {
-      Sentry.captureException(
-        streamErr instanceof Error ? streamErr : new Error(String(streamErr)),
-        {
-          tags: { subsystem: "stream", op: "org.member-removal" },
-          extra: { orgId: input.orgId, userId: removedUserId },
-        },
-      );
+    for (const c of result.revokedCollaborations) {
+      await revokeCollaboratorAccess(c.planType, c.planId, removedUserId);
     }
+    dispatchRevokedCollaborationNotices(result.revokedCollaborations);
+    await revokeRemovedMemberStream(input.orgId, removedUserId);
   }
   return { removed: result.removed };
 }

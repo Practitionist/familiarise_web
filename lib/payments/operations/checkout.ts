@@ -898,7 +898,8 @@ export async function calculateAmountAndValidate(
           p.visibility as (typeof MARKETPLACE_VISIBILITY)[number],
         ) &&
         (!validatedData.organizationId ||
-          (p.organizationId && p.organizationId !== validatedData.organizationId))
+          (p.organizationId &&
+            p.organizationId !== validatedData.organizationId))
       ) {
         throw new Error(`${label} is not available`);
       }
@@ -1023,7 +1024,7 @@ export async function calculateAmountAndValidate(
               include: {
                 occurrences: true,
                 participants: {
-                  where: liveParticipant(),
+                  where: { ...liveParticipant(), role: "CONSULTEE" },
                   select: { userId: true },
                 },
               },
@@ -1079,7 +1080,7 @@ export async function calculateAmountAndValidate(
               include: {
                 occurrences: true,
                 participants: {
-                  where: liveParticipant(),
+                  where: { ...liveParticipant(), role: "CONSULTEE" },
                   select: { userId: true },
                 },
               },
@@ -1818,7 +1819,7 @@ async function readEventCapacity(
         appointment: {
           include: {
             participants: {
-              where: liveParticipant(),
+              where: { ...liveParticipant(), role: "CONSULTEE" },
               select: { userId: true },
             },
           },
@@ -1841,7 +1842,7 @@ async function readEventCapacity(
       appointment: {
         include: {
           participants: {
-            where: liveParticipant(),
+            where: { ...liveParticipant(), role: "CONSULTEE" },
             select: { userId: true },
           },
         },
@@ -2013,13 +2014,9 @@ async function verifyPlanExistsInsideLock(
   /** ACCEPTED collaborators' profile ids; only webinar and class plans have any. */
   collaboratorProfileIds: string[];
 }> {
-  // ADR 18 — also surface the plan's consultant + org ownership so the
-  // allowlist/exclusivity checks below reuse this lookup.
   const select = { consultantProfileId: true, organizationId: true } as const;
-  // #1580 C-P0-2 — the self-booking guard below also refuses an ACCEPTED
-  // collaborator, who would otherwise be paid back part of their own seat.
   const collaborators = {
-    where: { status: "ACCEPTED" as const },
+    where: { status: { in: ["PENDING" as const, "ACCEPTED" as const] } },
     select: { consultantProfileId: true },
   };
   let plan: {
@@ -2568,7 +2565,7 @@ async function revalidateInsideLock(
               include: {
                 occurrences: true,
                 participants: {
-                  where: liveParticipant(),
+                  where: { ...liveParticipant(), role: "CONSULTEE" },
                   select: { userId: true },
                 },
               },
@@ -2628,7 +2625,7 @@ async function revalidateInsideLock(
               include: {
                 occurrences: true,
                 participants: {
-                  where: liveParticipant(),
+                  where: { ...liveParticipant(), role: "CONSULTEE" },
                   select: { userId: true },
                 },
               },
@@ -3204,7 +3201,7 @@ export async function handleWebinarCheckout(
         include: {
           occurrences: true,
           participants: {
-            where: liveParticipant(),
+            where: { ...liveParticipant(), role: "CONSULTEE" },
             select: { userId: true },
           },
         },
@@ -3291,7 +3288,7 @@ export async function handleWebinarCheckout(
       include: {
         occurrences: true,
         participants: {
-          where: liveParticipant(),
+          where: { ...liveParticipant(), role: "CONSULTEE" },
           select: { userId: true },
         },
       },
@@ -3371,7 +3368,7 @@ export async function handleClassCheckout(
             orderBy: { startsAt: "asc" },
           },
           participants: {
-            where: liveParticipant(),
+            where: { ...liveParticipant(), role: "CONSULTEE" },
             select: { userId: true },
           },
         },
@@ -4981,15 +4978,11 @@ export async function handleCheckout(
         if (appointmentIdForChannels) {
           scheduleAfter(async () => {
             try {
-              const { ensureChannelsForAppointment } = await import(
-                "@/lib/payments/webhooks/ensure-channels"
-              );
+              const { ensureChannelsForAppointment } =
+                await import("@/lib/payments/webhooks/ensure-channels");
               await ensureChannelsForAppointment(appointmentIdForChannels);
             } catch (channelErr) {
-              console.error(
-                "[checkout.ensure-channels] failed:",
-                channelErr,
-              );
+              console.error("[checkout.ensure-channels] failed:", channelErr);
             }
           }, "checkout.ensure-channels");
         }

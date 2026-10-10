@@ -7,7 +7,10 @@ import {
   getHostedCollaborations,
   getOrgHostedCollaborations,
 } from "@/lib/collaborators/service";
-import { resolveOrgScope } from "@/lib/api/scope/parse";
+import {
+  ORG_SCOPE_READABLE_STATUSES,
+  resolveOrgScope,
+} from "@/lib/api/scope/parse";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 const EMPTY_COLLABORATIONS = {
@@ -17,12 +20,6 @@ const EMPTY_COLLABORATIONS = {
   hostedClassPlans: [],
 };
 
-/**
- * #1527 P1-8 — `?orgScope=<orgId>&view=org`: every plan the org hosts with
- * collaborators, for an ACTIVE member holding `catalog.manage` there (Catalog
- * › Collaborators). Read-only and org-scoped; received invitations are
- * personal and never part of this view. `null` = not this view.
- */
 async function orgHostedView(
   request: NextRequest,
   userId: string,
@@ -32,10 +29,15 @@ async function orgHostedView(
   if (searchParams.get("view") !== "org" || !orgId) return null;
   const membership = await prisma.membership.findUnique({
     where: { userId_organizationId: { userId, organizationId: orgId } },
-    select: { status: true, role: true },
+    select: {
+      status: true,
+      role: true,
+      organization: { select: { status: true } },
+    },
   });
   if (
     membership?.status !== "ACTIVE" ||
+    !ORG_SCOPE_READABLE_STATUSES.includes(membership.organization.status) ||
     !hasOrgPermission(membership.role, "catalog.manage")
   ) {
     return NextResponse.json(
@@ -53,10 +55,6 @@ async function orgHostedView(
   });
 }
 
-// #org-appts / #1025 — hosted-plan collaborators split by the PLAN's
-// org-ness: org-hosted plans belong in the org dashboard, B2C plans in the
-// personal one. `?orgScope=` picks the hosted-plan slice; received
-// invitations (getMyCollaborations) always aggregate personally.
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession(true);
@@ -76,6 +74,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = request.nextUrl;
+    const rawOrgScope = searchParams.get("orgScope");
     const memberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
       select: {
@@ -85,12 +84,15 @@ export async function GET(request: NextRequest) {
         organization: { select: { status: true } },
       },
     });
+    const matchedMembership = rawOrgScope
+      ? memberships.find((m) => m.organizationId === rawOrgScope)
+      : undefined;
     const scopeResolution = resolveOrgScope({
-      raw: searchParams.get("orgScope"),
+      raw: rawOrgScope,
       memberships,
+      orgStatus: matchedMembership?.organization.status,
       userRole: session.user.role,
       userId: session.user.id,
-      // Self-scoped to the caller's own hosted plans — no cross-tenant leak.
       allowAllForOwner: true,
     });
     if (!scopeResolution.ok) {
@@ -117,7 +119,10 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "collaborations" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "collaborations" } },
+    );
     console.error("Error fetching collaborations:", error);
     return NextResponse.json(
       { error: "Failed to fetch collaborations" },
