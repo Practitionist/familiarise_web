@@ -251,6 +251,370 @@ export async function GET(
   }
 }
 
+async function loadQuestionOrNotFound(callId: string, questionId: string) {
+  const rawStored = await redis.get(stageQuestionRedisKey(callId, questionId));
+  return parseStoredStageQuestion(rawStored);
+}
+
+function questionNotFoundResponse() {
+  return NextResponse.json(
+    {
+      error: "Question not found or has expired.",
+      reason: "question_not_found",
+    },
+    { status: 404 },
+  );
+}
+
+async function handleAskAction(
+  resolvedCallId: string,
+  userId: string,
+  role: string | null,
+  text: string,
+  nowIso: string,
+) {
+  const authorName = await resolveAuthorDisplayName(userId);
+  const question: StageQuestion = {
+    id: `qa_${randomUUID()}`,
+    text,
+    authorId: userId,
+    authorName,
+    authorRole: role === "host" ? "host" : "participant",
+    createdAt: nowIso,
+    upvoterIds: [],
+    status: "open",
+    answerText: null,
+    answeredByName: null,
+    answeredAt: null,
+  };
+
+  await saveStageQuestion(resolvedCallId, question);
+  await broadcastCallCustomEvent(resolvedCallId, userId, {
+    type: STAGE_QA_EVENT_TYPES.QUESTION_ASKED,
+    question,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    action: "ask",
+    question,
+  });
+}
+
+async function handleToggleUpvoteAction(
+  resolvedCallId: string,
+  userId: string,
+  questionId: string,
+) {
+  const storedQuestion = await loadQuestionOrNotFound(
+    resolvedCallId,
+    questionId,
+  );
+  if (!storedQuestion) return questionNotFoundResponse();
+
+  const upvotersKey = stageQuestionUpvotersKey(
+    resolvedCallId,
+    storedQuestion.id,
+  );
+  const removed = await redis.srem(upvotersKey, userId);
+  if (removed === 0) {
+    await redis.sadd(upvotersKey, userId);
+  }
+  await redis.pexpire(upvotersKey, STAGE_QUESTION_TTL_MS);
+
+  const updated = await hydrateQuestionWithUpvoters(
+    resolvedCallId,
+    storedQuestion,
+  );
+
+  await broadcastCallCustomEvent(resolvedCallId, userId, {
+    type: STAGE_QA_EVENT_TYPES.QUESTION_UPDATED,
+    question: updated,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    action: "toggle_upvote",
+    question: updated,
+  });
+}
+
+async function handleSendChatAction(
+  resolvedCallId: string,
+  userId: string,
+  role: string | null,
+  appointment: Awaited<ReturnType<typeof guardMeetingRoute>> extends
+    { ok: false; response: NextResponse } | { ok: true; access: infer A }
+    ? A extends { appointment: infer Appt }
+      ? Appt
+      : never
+    : never,
+  text: string,
+  nowIso: string,
+) {
+  const authorName = await resolveAuthorDisplayName(userId);
+  const messageId = `chat_${randomUUID()}`;
+
+  const initialMessage: StageChatMessage = {
+    id: messageId,
+    text,
+    authorId: userId,
+    authorName,
+    authorRole: role === "host" ? "host" : "participant",
+    createdAt: nowIso,
+    reactions: {},
+    streamMessageId: null,
+  };
+
+  // Persist room message to Redis first so retries never mirror orphaned duplicates to Stream Chat.
+  await saveStageChatMessage(resolvedCallId, initialMessage);
+
+  const streamMessageId = await mirrorChatMessageToStreamChannel({
+    appointment,
+    senderUserId: userId,
+    text,
+    callId: resolvedCallId,
+    roomMessageId: messageId,
+  });
+
+  const message: StageChatMessage = streamMessageId
+    ? { ...initialMessage, streamMessageId }
+    : initialMessage;
+
+  if (streamMessageId) {
+    await saveStageChatMessage(resolvedCallId, message);
+  }
+
+  await broadcastCallCustomEvent(resolvedCallId, userId, {
+    type: STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_SENT,
+    message,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    action: "send_chat",
+    message,
+  });
+}
+
+async function handleToggleReactionAction(
+  resolvedCallId: string,
+  userId: string,
+  messageId: string,
+  emoji: string,
+) {
+  const rawStored = await redis.get(
+    stageChatRedisKey(resolvedCallId, messageId),
+  );
+  const storedMessage = parseStoredStageChatMessage(rawStored);
+  if (!storedMessage) {
+    return NextResponse.json(
+      {
+        error: "Message not found or has expired.",
+        reason: "message_not_found",
+      },
+      { status: 404 },
+    );
+  }
+
+  const reactionKey = stageChatReactionKey(
+    resolvedCallId,
+    storedMessage.id,
+    emoji,
+  );
+  const removed = await redis.srem(reactionKey, userId);
+  if (removed === 0) {
+    await redis.sadd(reactionKey, userId);
+  }
+  await redis.pexpire(reactionKey, STAGE_QUESTION_TTL_MS);
+
+  const updated = await hydrateMessageWithReactions(
+    resolvedCallId,
+    storedMessage,
+  );
+
+  await broadcastCallCustomEvent(resolvedCallId, userId, {
+    type: STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_UPDATED,
+    message: updated,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    action: "toggle_reaction",
+    message: updated,
+  });
+}
+
+async function handleAnswerAction(
+  resolvedCallId: string,
+  userId: string,
+  appointment: Awaited<ReturnType<typeof guardMeetingRoute>> extends
+    { ok: false; response: NextResponse } | { ok: true; access: infer A }
+    ? A extends { appointment: infer Appt }
+      ? Appt
+      : never
+    : never,
+  questionId: string,
+  answerText: string | undefined,
+  nowIso: string,
+) {
+  const storedQuestion = await loadQuestionOrNotFound(
+    resolvedCallId,
+    questionId,
+  );
+  if (!storedQuestion) return questionNotFoundResponse();
+
+  const answeredByName = await resolveAuthorDisplayName(userId);
+  const nextAnswerText =
+    answerText?.trim() || storedQuestion.answerText || null;
+  const shouldMirrorAnswer =
+    storedQuestion.status !== "answered" ||
+    storedQuestion.answerText !== nextAnswerText;
+
+  const updatedMeta: StageQuestion = {
+    ...storedQuestion,
+    status: "answered",
+    answerText: nextAnswerText,
+    answeredByName,
+    answeredAt: nowIso,
+  };
+
+  await saveStageQuestion(resolvedCallId, updatedMeta);
+  const updated = await hydrateQuestionWithUpvoters(
+    resolvedCallId,
+    updatedMeta,
+  );
+
+  await broadcastCallCustomEvent(resolvedCallId, userId, {
+    type: STAGE_QA_EVENT_TYPES.QUESTION_UPDATED,
+    question: updated,
+  });
+
+  if (shouldMirrorAnswer) {
+    await mirrorAnsweredQuestionToStreamChannel({
+      appointment,
+      hostUserId: userId,
+      callId: resolvedCallId,
+      question: updated,
+    });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    action: "answer",
+    question: updated,
+  });
+}
+
+async function handleReopenAction(
+  resolvedCallId: string,
+  userId: string,
+  questionId: string,
+) {
+  const storedQuestion = await loadQuestionOrNotFound(
+    resolvedCallId,
+    questionId,
+  );
+  if (!storedQuestion) return questionNotFoundResponse();
+
+  const updatedMeta: StageQuestion = {
+    ...storedQuestion,
+    status: "open",
+  };
+
+  await saveStageQuestion(resolvedCallId, updatedMeta);
+  const updated = await hydrateQuestionWithUpvoters(
+    resolvedCallId,
+    updatedMeta,
+  );
+
+  await broadcastCallCustomEvent(resolvedCallId, userId, {
+    type: STAGE_QA_EVENT_TYPES.QUESTION_UPDATED,
+    question: updated,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    action: "reopen",
+    question: updated,
+  });
+}
+
+async function handlePinAction(
+  resolvedCallId: string,
+  userId: string,
+  questionId: string,
+  nowIso: string,
+) {
+  const storedQuestion = await loadQuestionOrNotFound(
+    resolvedCallId,
+    questionId,
+  );
+  if (!storedQuestion) return questionNotFoundResponse();
+
+  const banner: StagePinnedBanner = {
+    questionId: storedQuestion.id,
+    text: storedQuestion.text,
+    authorId: storedQuestion.authorId,
+    authorName: storedQuestion.authorName,
+    authorRole: storedQuestion.authorRole,
+    pinnedByUserId: userId,
+    pinnedAt: nowIso,
+  };
+
+  await withStreamCircuitBreaker(async () => {
+    const call = await updateCallStageBanner(resolvedCallId, banner);
+    await call.sendCallEvent({
+      user_id: userId,
+      custom: {
+        type: STAGE_QA_EVENT_TYPES.BANNER_PINNED,
+        banner,
+      },
+    });
+  });
+
+  streamLogger.info("Pinned Q&A question on stage", {
+    hostUserId: userId,
+    questionId: banner.questionId,
+    meetingId: resolvedCallId,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    action: "pin",
+    banner,
+  });
+}
+
+async function handleUnpinAction(
+  resolvedCallId: string,
+  userId: string,
+  nowIso: string,
+) {
+  await withStreamCircuitBreaker(async () => {
+    const call = await updateCallStageBanner(resolvedCallId, null);
+    await call.sendCallEvent({
+      user_id: userId,
+      custom: {
+        type: STAGE_QA_EVENT_TYPES.BANNER_UNPINNED,
+        unpinnedByUserId: userId,
+        unpinnedAt: nowIso,
+      },
+    });
+  });
+
+  streamLogger.info("Cleared pinned Q&A banner from stage", {
+    hostUserId: userId,
+    meetingId: resolvedCallId,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    action: "unpin",
+    banner: null,
+  });
+}
+
 /**
  * POST /api/meetings/[meetingId]/qa
  * Server-authoritative controller for Live Q&A (`ask`, `toggle_upvote`, `answer`,
@@ -270,7 +634,6 @@ export async function POST(
     meetingIdForLog = meetingId;
 
     const appointmentType = resolveAppointmentType(access.appointment);
-
     if (!isInCallChatAllowed(appointmentType)) {
       return NextResponse.json(
         {
@@ -297,153 +660,39 @@ export async function POST(
     const resolvedCallId = toCallId(access.streamCallId ?? meetingId);
     const nowIso = new Date().toISOString();
 
-    if (payload.action === "ask") {
-      const authorName = await resolveAuthorDisplayName(userId);
-      const question: StageQuestion = {
-        id: `qa_${randomUUID()}`,
-        text: payload.text,
-        authorId: userId,
-        authorName,
-        authorRole: access.role === "host" ? "host" : "participant",
-        createdAt: nowIso,
-        upvoterIds: [],
-        status: "open",
-        answerText: null,
-        answeredByName: null,
-        answeredAt: null,
-      };
-
-      await saveStageQuestion(resolvedCallId, question);
-      await broadcastCallCustomEvent(resolvedCallId, userId, {
-        type: STAGE_QA_EVENT_TYPES.QUESTION_ASKED,
-        question,
-      });
-
-      return NextResponse.json({
-        ok: true,
-        action: "ask",
-        question,
-      });
-    }
-
-    if (payload.action === "toggle_upvote") {
-      const rawStored = await redis.get(
-        stageQuestionRedisKey(resolvedCallId, payload.questionId),
-      );
-      const storedQuestion = parseStoredStageQuestion(rawStored);
-      if (!storedQuestion) {
-        return NextResponse.json(
-          {
-            error: "Question not found or has expired.",
-            reason: "question_not_found",
-          },
-          { status: 404 },
+    switch (payload.action) {
+      case "ask":
+        return await handleAskAction(
+          resolvedCallId,
+          userId,
+          access.role,
+          payload.text,
+          nowIso,
         );
-      }
-
-      const upvotersKey = stageQuestionUpvotersKey(
-        resolvedCallId,
-        storedQuestion.id,
-      );
-      const removed = await redis.srem(upvotersKey, userId);
-      if (removed === 0) {
-        await redis.sadd(upvotersKey, userId);
-      }
-      await redis.pexpire(upvotersKey, STAGE_QUESTION_TTL_MS);
-
-      const updated = await hydrateQuestionWithUpvoters(
-        resolvedCallId,
-        storedQuestion,
-      );
-
-      await broadcastCallCustomEvent(resolvedCallId, userId, {
-        type: STAGE_QA_EVENT_TYPES.QUESTION_UPDATED,
-        question: updated,
-      });
-
-      return NextResponse.json({
-        ok: true,
-        action: "toggle_upvote",
-        question: updated,
-      });
-    }
-
-    if (payload.action === "send_chat") {
-      const authorName = await resolveAuthorDisplayName(userId);
-      const messageId = `chat_${randomUUID()}`;
-      const streamMessageId = await mirrorChatMessageToStreamChannel({
-        appointment: access.appointment,
-        senderUserId: userId,
-        text: payload.text,
-        callId: resolvedCallId,
-        roomMessageId: messageId,
-      });
-
-      const message: StageChatMessage = {
-        id: messageId,
-        text: payload.text,
-        authorId: userId,
-        authorName,
-        authorRole: access.role === "host" ? "host" : "participant",
-        createdAt: nowIso,
-        reactions: {},
-        streamMessageId,
-      };
-
-      await saveStageChatMessage(resolvedCallId, message);
-      await broadcastCallCustomEvent(resolvedCallId, userId, {
-        type: STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_SENT,
-        message,
-      });
-
-      return NextResponse.json({
-        ok: true,
-        action: "send_chat",
-        message,
-      });
-    }
-
-    if (payload.action === "toggle_reaction") {
-      const rawStored = await redis.get(
-        stageChatRedisKey(resolvedCallId, payload.messageId),
-      );
-      const storedMessage = parseStoredStageChatMessage(rawStored);
-      if (!storedMessage) {
-        return NextResponse.json(
-          {
-            error: "Message not found or has expired.",
-            reason: "message_not_found",
-          },
-          { status: 404 },
+      case "toggle_upvote":
+        return await handleToggleUpvoteAction(
+          resolvedCallId,
+          userId,
+          payload.questionId,
         );
-      }
-
-      const reactionKey = stageChatReactionKey(
-        resolvedCallId,
-        storedMessage.id,
-        payload.emoji,
-      );
-      const removed = await redis.srem(reactionKey, userId);
-      if (removed === 0) {
-        await redis.sadd(reactionKey, userId);
-      }
-      await redis.pexpire(reactionKey, STAGE_QUESTION_TTL_MS);
-
-      const updated = await hydrateMessageWithReactions(
-        resolvedCallId,
-        storedMessage,
-      );
-
-      await broadcastCallCustomEvent(resolvedCallId, userId, {
-        type: STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_UPDATED,
-        message: updated,
-      });
-
-      return NextResponse.json({
-        ok: true,
-        action: "toggle_reaction",
-        message: updated,
-      });
+      case "send_chat":
+        return await handleSendChatAction(
+          resolvedCallId,
+          userId,
+          access.role,
+          access.appointment,
+          payload.text,
+          nowIso,
+        );
+      case "toggle_reaction":
+        return await handleToggleReactionAction(
+          resolvedCallId,
+          userId,
+          payload.messageId,
+          payload.emoji,
+        );
+      default:
+        break;
     }
 
     if (!canManageStageBanner(access.role)) {
@@ -466,172 +715,32 @@ export async function POST(
       );
     }
 
-    if (payload.action === "answer") {
-      const rawStored = await redis.get(
-        stageQuestionRedisKey(resolvedCallId, payload.questionId),
-      );
-      const storedQuestion = parseStoredStageQuestion(rawStored);
-      if (!storedQuestion) {
-        return NextResponse.json(
-          {
-            error: "Question not found or has expired.",
-            reason: "question_not_found",
-          },
-          { status: 404 },
+    switch (payload.action) {
+      case "answer":
+        return await handleAnswerAction(
+          resolvedCallId,
+          userId,
+          access.appointment,
+          payload.questionId,
+          payload.answerText,
+          nowIso,
         );
-      }
-
-      const answeredByName = await resolveAuthorDisplayName(userId);
-      const nextAnswerText =
-        payload.answerText?.trim() || storedQuestion.answerText || null;
-      const shouldMirrorAnswer =
-        storedQuestion.status !== "answered" ||
-        storedQuestion.answerText !== nextAnswerText;
-
-      const updatedMeta: StageQuestion = {
-        ...storedQuestion,
-        status: "answered",
-        answerText: nextAnswerText,
-        answeredByName,
-        answeredAt: nowIso,
-      };
-
-      await saveStageQuestion(resolvedCallId, updatedMeta);
-      const updated = await hydrateQuestionWithUpvoters(
-        resolvedCallId,
-        updatedMeta,
-      );
-
-      await broadcastCallCustomEvent(resolvedCallId, userId, {
-        type: STAGE_QA_EVENT_TYPES.QUESTION_UPDATED,
-        question: updated,
-      });
-
-      if (shouldMirrorAnswer) {
-        await mirrorAnsweredQuestionToStreamChannel({
-          appointment: access.appointment,
-          hostUserId: userId,
-          callId: resolvedCallId,
-          question: updated,
-        });
-      }
-
-      return NextResponse.json({
-        ok: true,
-        action: "answer",
-        question: updated,
-      });
-    }
-
-    if (payload.action === "reopen") {
-      const rawStored = await redis.get(
-        stageQuestionRedisKey(resolvedCallId, payload.questionId),
-      );
-      const storedQuestion = parseStoredStageQuestion(rawStored);
-      if (!storedQuestion) {
-        return NextResponse.json(
-          {
-            error: "Question not found or has expired.",
-            reason: "question_not_found",
-          },
-          { status: 404 },
+      case "reopen":
+        return await handleReopenAction(
+          resolvedCallId,
+          userId,
+          payload.questionId,
         );
-      }
-
-      const updatedMeta: StageQuestion = {
-        ...storedQuestion,
-        status: "open",
-      };
-
-      await saveStageQuestion(resolvedCallId, updatedMeta);
-      const updated = await hydrateQuestionWithUpvoters(
-        resolvedCallId,
-        updatedMeta,
-      );
-
-      await broadcastCallCustomEvent(resolvedCallId, userId, {
-        type: STAGE_QA_EVENT_TYPES.QUESTION_UPDATED,
-        question: updated,
-      });
-
-      return NextResponse.json({
-        ok: true,
-        action: "reopen",
-        question: updated,
-      });
-    }
-
-    if (payload.action === "pin") {
-      const rawStored = await redis.get(
-        stageQuestionRedisKey(resolvedCallId, payload.questionId),
-      );
-      const storedQuestion = parseStoredStageQuestion(rawStored);
-      if (!storedQuestion) {
-        return NextResponse.json(
-          {
-            error: "Question not found or has expired.",
-            reason: "question_not_found",
-          },
-          { status: 404 },
+      case "pin":
+        return await handlePinAction(
+          resolvedCallId,
+          userId,
+          payload.questionId,
+          nowIso,
         );
-      }
-
-      const banner: StagePinnedBanner = {
-        questionId: storedQuestion.id,
-        text: storedQuestion.text,
-        authorId: storedQuestion.authorId,
-        authorName: storedQuestion.authorName,
-        authorRole: storedQuestion.authorRole,
-        pinnedByUserId: userId,
-        pinnedAt: nowIso,
-      };
-
-      await withStreamCircuitBreaker(async () => {
-        const call = await updateCallStageBanner(resolvedCallId, banner);
-        await call.sendCallEvent({
-          user_id: userId,
-          custom: {
-            type: STAGE_QA_EVENT_TYPES.BANNER_PINNED,
-            banner,
-          },
-        });
-      });
-
-      streamLogger.info("Pinned Q&A question on stage", {
-        hostUserId: userId,
-        questionId: banner.questionId,
-        meetingId: resolvedCallId,
-      });
-
-      return NextResponse.json({
-        ok: true,
-        action: "pin",
-        banner,
-      });
+      case "unpin":
+        return await handleUnpinAction(resolvedCallId, userId, nowIso);
     }
-
-    await withStreamCircuitBreaker(async () => {
-      const call = await updateCallStageBanner(resolvedCallId, null);
-      await call.sendCallEvent({
-        user_id: userId,
-        custom: {
-          type: STAGE_QA_EVENT_TYPES.BANNER_UNPINNED,
-          unpinnedByUserId: userId,
-          unpinnedAt: nowIso,
-        },
-      });
-    });
-
-    streamLogger.info("Cleared pinned Q&A banner from stage", {
-      hostUserId: userId,
-      meetingId: resolvedCallId,
-    });
-
-    return NextResponse.json({
-      ok: true,
-      action: "unpin",
-      banner: null,
-    });
   } catch (error) {
     if (error instanceof StreamUnavailableError) {
       streamLogger.warn("Meeting Q&A unavailable — Stream circuit open", {

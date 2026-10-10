@@ -35,6 +35,15 @@ type AppointmentForMirroring = {
   trial?: unknown;
 };
 
+function resolveAppointmentKind(
+  appointment: AppointmentForMirroring,
+): string | null {
+  if (appointment.appointmentType) return appointment.appointmentType;
+  if (appointment.webinar?.id) return "WEBINAR";
+  if (appointment.class?.id) return "CLASS";
+  return null;
+}
+
 /**
  * Resolves the canonical Stream Chat channel for a session:
  * - 1:1 Consultations & Subscriptions -> persistent DM (`dm-*` / `dmo-*`)
@@ -46,14 +55,7 @@ export async function resolveCanonicalMeetingChannel(
 ): Promise<CanonicalMeetingChannel | null> {
   if (!appointment) return null;
 
-  const type =
-    appointment.appointmentType ??
-    (appointment.webinar?.id
-      ? "WEBINAR"
-      : appointment.class?.id
-        ? "CLASS"
-        : null);
-
+  const type = resolveAppointmentKind(appointment);
   if (!type || type === "TRIAL") return null;
 
   if (appointment.webinar?.id) {

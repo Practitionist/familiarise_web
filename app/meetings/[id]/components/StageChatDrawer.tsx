@@ -13,7 +13,7 @@ import { cn } from "@/utils/tailwind";
 interface StageChatDrawerProps {
   messages: StageChatMessage[];
   currentUserId?: string;
-  onSendMessage: (text: string) => Promise<void>;
+  onSendMessage: (text: string) => Promise<boolean>;
   onToggleReaction: (
     messageId: string,
     emoji: ChatReactionEmoji,
@@ -26,11 +26,14 @@ const URL_SPLIT_PATTERN = /(https?:\/\/[^\s]+)/g;
 
 function renderMessageTextWithLinks(text: string) {
   const parts = text.split(URL_SPLIT_PATTERN);
-  return parts.map((part, idx) => {
+  let offset = 0;
+  return parts.map((part) => {
+    const startOffset = offset;
+    offset += part.length;
     if (/^https?:\/\/[^\s]+$/.test(part)) {
       return (
         <a
-          key={`${idx}-${part}`}
+          key={`link-${startOffset}-${part}`}
           href={part}
           target="_blank"
           rel="noopener noreferrer"
@@ -40,7 +43,7 @@ function renderMessageTextWithLinks(text: string) {
         </a>
       );
     }
-    return <span key={idx}>{part}</span>;
+    return <span key={`text-${startOffset}`}>{part}</span>;
   });
 }
 
@@ -73,8 +76,10 @@ export function StageChatDrawer({
     if (!trimmed || isSubmitting) return;
     setSubmitError(null);
     try {
-      await onSendMessage(trimmed);
-      setDraft("");
+      const ok = await onSendMessage(trimmed);
+      if (ok) {
+        setDraft("");
+      }
     } catch (err) {
       setSubmitError(
         err instanceof Error
@@ -145,11 +150,8 @@ export function StageChatDrawer({
                 </div>
 
                 {isPickerOpen && (
-                  <div
-                    role="group"
-                    aria-label="Quick emoji reactions"
-                    className="mt-2 flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-950 p-1 shadow-lg"
-                  >
+                  <fieldset className="mt-2 m-0 flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-950 p-1 shadow-lg">
+                    <legend className="sr-only">Quick emoji reactions</legend>
                     {ALLOWED_CHAT_EMOJIS.map((emoji) => {
                       const reactedByMe = Boolean(
                         currentUserId &&
@@ -172,7 +174,7 @@ export function StageChatDrawer({
                         </button>
                       );
                     })}
-                  </div>
+                  </fieldset>
                 )}
 
                 <p className="mt-1 break-words whitespace-pre-wrap text-sm text-zinc-100">

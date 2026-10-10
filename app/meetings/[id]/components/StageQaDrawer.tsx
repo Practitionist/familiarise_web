@@ -23,9 +23,12 @@ interface StageQaDrawerProps {
   activeBanner: StagePinnedBanner | null;
   isHost: boolean;
   currentUserId?: string;
-  onAskQuestion: (text: string) => Promise<void>;
+  onAskQuestion: (text: string) => Promise<boolean>;
   onToggleUpvote: (questionId: string) => Promise<void>;
-  onAnswerQuestion: (questionId: string, answerText?: string) => Promise<void>;
+  onAnswerQuestion: (
+    questionId: string,
+    answerText?: string,
+  ) => Promise<boolean>;
   onReopenQuestion: (questionId: string) => Promise<void>;
   onPinQuestion: (question: StageQuestion) => Promise<void>;
   onUnpinQuestion: () => Promise<void>;
@@ -35,6 +38,15 @@ interface StageQaDrawerProps {
 
 type QaFilter = "all" | "open" | "answered";
 type QaSort = "popular" | "recent";
+
+function getQuestionCardClasses(
+  isPinned: boolean,
+  isAnswered: boolean,
+): string {
+  if (isPinned) return "border-amber-500/50 bg-amber-500/10";
+  if (isAnswered) return "border-emerald-500/30 bg-zinc-900/50";
+  return "border-zinc-800 bg-zinc-900/60 hover:border-zinc-700";
+}
 
 export function StageQaDrawer({
   questions,
@@ -85,8 +97,10 @@ export function StageQaDrawer({
     if (!trimmed || isSubmitting) return;
     setSubmitError(null);
     try {
-      await onAskQuestion(trimmed);
-      setDraft("");
+      const ok = await onAskQuestion(trimmed);
+      if (ok) {
+        setDraft("");
+      }
     } catch (err) {
       setSubmitError(
         err instanceof Error
@@ -100,9 +114,11 @@ export function StageQaDrawer({
     e.preventDefault();
     if (isSubmitting) return;
     const text = replyDraft.trim();
-    await onAnswerQuestion(questionId, text || undefined);
-    setReplyDraft("");
-    setReplyingToId(null);
+    const ok = await onAnswerQuestion(questionId, text || undefined);
+    if (ok) {
+      setReplyDraft("");
+      setReplyingToId(null);
+    }
   };
 
   const visibleError = externalError ?? submitError;
@@ -180,11 +196,7 @@ export function StageQaDrawer({
                 key={q.id}
                 className={cn(
                   "rounded-xl border p-3 transition-colors",
-                  isPinned
-                    ? "border-amber-500/50 bg-amber-500/10"
-                    : isAnswered
-                      ? "border-emerald-500/30 bg-zinc-900/50"
-                      : "border-zinc-800 bg-zinc-900/60 hover:border-zinc-700",
+                  getQuestionCardClasses(isPinned, isAnswered),
                 )}
               >
                 <div className="flex items-center justify-between gap-2">

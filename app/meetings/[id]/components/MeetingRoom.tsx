@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   CallParticipantsList,
   CallStatsButton,
@@ -70,16 +70,7 @@ import {
   isInCallChatAllowed,
   isOneToManyAppointmentType,
 } from "@/lib/meetings/room-ready";
-import {
-  normalizeStageBannerFromCustomData,
-  STAGE_QA_EVENT_TYPES,
-  stageChatMessageSchema,
-  stageQuestionSchema,
-  type ChatReactionEmoji,
-  type StageChatMessage,
-  type StagePinnedBanner,
-  type StageQuestion,
-} from "@/lib/meetings/stage-qa";
+import { useRoomQaAndChat, type SideDrawerTab } from "./useRoomQaAndChat";
 
 export { isInCallChatAllowed };
 
@@ -166,17 +157,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const router = useRouter();
   const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
-  const [activeSideTab, setActiveSideTab] = useState<
-    "participants" | "chat" | "qa" | null
-  >(null);
-  const [questions, setQuestions] = useState<StageQuestion[]>([]);
-  const [chatMessages, setChatMessages] = useState<StageChatMessage[]>([]);
-  const [unreadChatCount, setUnreadChatCount] = useState(0);
-  const [activeBanner, setActiveBanner] = useState<StagePinnedBanner | null>(
-    null,
-  );
-  const [qaError, setQaError] = useState<string | null>(null);
-  const [isQaSubmitting, setIsQaSubmitting] = useState(false);
+  const [activeSideTab, setActiveSideTab] = useState<SideDrawerTab>(null);
   const [exit, setExit] = useState<"leaving" | "ending" | null>(null);
   const handleEnding = useCallback(() => setExit("ending"), []);
   const call = useCall();
@@ -215,427 +196,28 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     ? "720p"
     : "480p";
 
-  // Always address meeting API routes with Stream call.id, never DB Meeting.id.
-  const targetCallId = call?.id ?? "";
-  const activeSideTabRef = useRef<"participants" | "chat" | "qa" | null>(null);
-
-  useEffect(() => {
-    activeSideTabRef.current = activeSideTab;
-    if (activeSideTab === "chat") {
-      setUnreadChatCount(0);
-    }
-  }, [activeSideTab]);
-
-  // Hydrate existing room Q&A questions and chat messages on mount or rejoin.
-  useEffect(() => {
-    if (!targetCallId || !inCallChatAllowed) return;
-    let cancelled = false;
-
-    const hydrate = async () => {
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-        );
-        if (!res.ok || cancelled) return;
-        const body = await res.json().catch(() => null);
-        if (!body || cancelled) return;
-
-        if (Array.isArray(body.questions)) {
-          const validQuestions = body.questions
-            .map((item: unknown) => stageQuestionSchema.safeParse(item))
-            .filter((r: { success: boolean }) => r.success)
-            .map((r: { data: StageQuestion }) => r.data);
-
-          setQuestions((prev) => {
-            const byId = new Map<string, StageQuestion>();
-            for (const q of validQuestions) byId.set(q.id, q);
-            for (const q of prev) if (!byId.has(q.id)) byId.set(q.id, q);
-            return Array.from(byId.values()).sort((a, b) =>
-              a.createdAt.localeCompare(b.createdAt),
-            );
-          });
-        }
-
-        if (Array.isArray(body.messages)) {
-          const validMessages = body.messages
-            .map((item: unknown) => stageChatMessageSchema.safeParse(item))
-            .filter((r: { success: boolean }) => r.success)
-            .map((r: { data: StageChatMessage }) => r.data);
-
-          setChatMessages((prev) => {
-            const byId = new Map<string, StageChatMessage>();
-            for (const m of validMessages) byId.set(m.id, m);
-            for (const m of prev) if (!byId.has(m.id)) byId.set(m.id, m);
-            return Array.from(byId.values()).sort((a, b) =>
-              a.createdAt.localeCompare(b.createdAt),
-            );
-          });
-        }
-      } catch {
-        // Real-time events remain active even if initial hydration fails transiently.
-      }
-    };
-
-    void hydrate();
-    return () => {
-      cancelled = true;
-    };
-  }, [targetCallId, inCallChatAllowed]);
-
-  useEffect(() => {
-    if (!inCallChatAllowed) return;
-    const syncedBanner = normalizeStageBannerFromCustomData(
-      callCustomData as Record<string, unknown> | undefined,
-    );
-    setActiveBanner(syncedBanner);
-  }, [callCustomData, inCallChatAllowed]);
-
-  // Subscribe to real-time Q&A, chat messages, emoji reactions, and stage banner events.
-  useEffect(() => {
-    if (!call || !inCallChatAllowed || typeof call.on !== "function") return;
-
-    const handleCustomEvent = (event: { custom?: Record<string, unknown> }) => {
-      const custom = event?.custom;
-      if (!custom || typeof custom.type !== "string") return;
-
-      if (custom.type === STAGE_QA_EVENT_TYPES.QUESTION_ASKED) {
-        const parsedQuestion = stageQuestionSchema.safeParse(custom.question);
-        if (!parsedQuestion.success) return;
-        const incoming = parsedQuestion.data;
-        setQuestions((prev) =>
-          prev.some((item) => item.id === incoming.id)
-            ? prev
-            : [...prev, incoming],
-        );
-      } else if (custom.type === STAGE_QA_EVENT_TYPES.QUESTION_UPDATED) {
-        const parsedQuestion = stageQuestionSchema.safeParse(custom.question);
-        if (!parsedQuestion.success) return;
-        const updated = parsedQuestion.data;
-        setQuestions((prev) =>
-          prev.some((item) => item.id === updated.id)
-            ? prev.map((item) => (item.id === updated.id ? updated : item))
-            : [...prev, updated],
-        );
-      } else if (custom.type === STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_SENT) {
-        const parsedMessage = stageChatMessageSchema.safeParse(custom.message);
-        if (!parsedMessage.success) return;
-        const incoming = parsedMessage.data;
-        setChatMessages((prev) => {
-          if (prev.some((item) => item.id === incoming.id)) return prev;
-          return [...prev, incoming];
-        });
-        if (activeSideTabRef.current !== "chat") {
-          setUnreadChatCount((c) => c + 1);
-        }
-      } else if (custom.type === STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_UPDATED) {
-        const parsedMessage = stageChatMessageSchema.safeParse(custom.message);
-        if (!parsedMessage.success) return;
-        const updated = parsedMessage.data;
-        setChatMessages((prev) =>
-          prev.some((item) => item.id === updated.id)
-            ? prev.map((item) => (item.id === updated.id ? updated : item))
-            : [...prev, updated],
-        );
-      } else if (custom.type === STAGE_QA_EVENT_TYPES.BANNER_PINNED) {
-        const normalized = normalizeStageBannerFromCustomData({
-          activeStageBanner: custom.banner,
-        });
-        if (normalized) {
-          setActiveBanner(normalized);
-        }
-      } else if (custom.type === STAGE_QA_EVENT_TYPES.BANNER_UNPINNED) {
-        setActiveBanner(null);
-      }
-    };
-
-    const unsubscribe = call.on("custom", handleCustomEvent as never);
-    return () => {
-      if (typeof unsubscribe === "function") {
-        unsubscribe();
-      }
-    };
-  }, [call, inCallChatAllowed]);
-
-  const handleSendChatMessage = useCallback(
-    async (text: string) => {
-      if (!targetCallId) return;
-      setQaError(null);
-      setIsQaSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "send_chat", text }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(body?.error ?? "Failed to send message");
-        }
-        const parsed = stageChatMessageSchema.safeParse(body?.message);
-        if (parsed.success) {
-          setChatMessages((prev) =>
-            prev.some((m) => m.id === parsed.data.id)
-              ? prev
-              : [...prev, parsed.data],
-          );
-        }
-      } finally {
-        setIsQaSubmitting(false);
-      }
-    },
-    [targetCallId],
-  );
-
-  const handleToggleChatReaction = useCallback(
-    async (messageId: string, emoji: ChatReactionEmoji) => {
-      if (!targetCallId) return;
-      setQaError(null);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "toggle_reaction",
-              messageId,
-              emoji,
-            }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setQaError(body?.error ?? "Failed to update reaction");
-          return;
-        }
-        const parsed = stageChatMessageSchema.safeParse(body?.message);
-        if (parsed.success) {
-          setChatMessages((prev) =>
-            prev.map((m) => (m.id === parsed.data.id ? parsed.data : m)),
-          );
-        }
-      } catch (err) {
-        setQaError(
-          err instanceof Error ? err.message : "Failed to update reaction",
-        );
-      }
-    },
-    [targetCallId],
-  );
-
-  const handleAskQuestion = useCallback(
-    async (text: string) => {
-      if (!targetCallId) return;
-      setQaError(null);
-      setIsQaSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "ask", text }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(body?.error ?? "Failed to send question");
-        }
-        const parsed = stageQuestionSchema.safeParse(body?.question);
-        if (parsed.success) {
-          setQuestions((prev) =>
-            prev.some((q) => q.id === parsed.data.id)
-              ? prev
-              : [...prev, parsed.data],
-          );
-        }
-      } finally {
-        setIsQaSubmitting(false);
-      }
-    },
-    [targetCallId],
-  );
-
-  const handleToggleUpvote = useCallback(
-    async (questionId: string) => {
-      if (!targetCallId) return;
-      setQaError(null);
-      setIsQaSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "toggle_upvote", questionId }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setQaError(body?.error ?? "Failed to update vote");
-          return;
-        }
-        const parsed = stageQuestionSchema.safeParse(body?.question);
-        if (parsed.success) {
-          setQuestions((prev) =>
-            prev.map((q) => (q.id === parsed.data.id ? parsed.data : q)),
-          );
-        }
-      } catch (err) {
-        setQaError(
-          err instanceof Error ? err.message : "Failed to update vote",
-        );
-      } finally {
-        setIsQaSubmitting(false);
-      }
-    },
-    [targetCallId],
-  );
-
-  const handleAnswerQuestion = useCallback(
-    async (questionId: string, answerText?: string) => {
-      if (!targetCallId || !isHost) return;
-      setQaError(null);
-      setIsQaSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "answer",
-              questionId,
-              answerText,
-            }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setQaError(body?.error ?? "Failed to mark question answered");
-          return;
-        }
-        const parsed = stageQuestionSchema.safeParse(body?.question);
-        if (parsed.success) {
-          setQuestions((prev) =>
-            prev.map((q) => (q.id === parsed.data.id ? parsed.data : q)),
-          );
-        }
-      } catch (err) {
-        setQaError(
-          err instanceof Error
-            ? err.message
-            : "Failed to mark question answered",
-        );
-      } finally {
-        setIsQaSubmitting(false);
-      }
-    },
-    [targetCallId, isHost],
-  );
-
-  const handleReopenQuestion = useCallback(
-    async (questionId: string) => {
-      if (!targetCallId || !isHost) return;
-      setQaError(null);
-      setIsQaSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "reopen", questionId }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setQaError(body?.error ?? "Failed to reopen question");
-          return;
-        }
-        const parsed = stageQuestionSchema.safeParse(body?.question);
-        if (parsed.success) {
-          setQuestions((prev) =>
-            prev.map((q) => (q.id === parsed.data.id ? parsed.data : q)),
-          );
-        }
-      } catch (err) {
-        setQaError(
-          err instanceof Error ? err.message : "Failed to reopen question",
-        );
-      } finally {
-        setIsQaSubmitting(false);
-      }
-    },
-    [targetCallId, isHost],
-  );
-
-  const handlePinQuestion = useCallback(
-    async (question: StageQuestion) => {
-      if (!targetCallId || !isHost) return;
-      setQaError(null);
-      setIsQaSubmitting(true);
-      try {
-        const res = await fetch(
-          `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "pin",
-              questionId: question.id,
-            }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setQaError(body?.error ?? "Failed to pin question");
-          return;
-        }
-        if (body?.banner) {
-          setActiveBanner(body.banner);
-        }
-      } catch (err) {
-        setQaError(
-          err instanceof Error ? err.message : "Failed to pin question",
-        );
-      } finally {
-        setIsQaSubmitting(false);
-      }
-    },
-    [targetCallId, isHost],
-  );
-
-  const handleUnpinQuestion = useCallback(async () => {
-    if (!targetCallId || !isHost) return;
-    setQaError(null);
-    setIsQaSubmitting(true);
-    try {
-      const res = await fetch(
-        `/api/meetings/${encodeURIComponent(targetCallId)}/qa`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "unpin" }),
-        },
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setQaError(body?.error ?? "Failed to unpin question");
-        return;
-      }
-      setActiveBanner(null);
-    } catch (err) {
-      setQaError(
-        err instanceof Error ? err.message : "Failed to unpin question",
-      );
-    } finally {
-      setIsQaSubmitting(false);
-    }
-  }, [targetCallId, isHost]);
+  const {
+    questions,
+    chatMessages,
+    unreadChatCount,
+    activeBanner,
+    qaError,
+    isQaSubmitting,
+    handleSendChatMessage,
+    handleToggleChatReaction,
+    handleAskQuestion,
+    handleToggleUpvote,
+    handleAnswerQuestion,
+    handleReopenQuestion,
+    handlePinQuestion,
+    handleUnpinQuestion,
+  } = useRoomQaAndChat({
+    call,
+    callCustomData,
+    inCallChatAllowed,
+    isHost,
+    activeSideTab,
+  });
 
   useEffect(() => {
     if (
@@ -838,35 +420,45 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               </button>
             </div>
 
-            {activeSideTab === "chat" && inCallChatAllowed ? (
-              <StageChatDrawer
-                messages={chatMessages}
-                currentUserId={session?.user?.id}
-                onSendMessage={handleSendChatMessage}
-                onToggleReaction={handleToggleChatReaction}
-                isSubmitting={isQaSubmitting}
-                error={qaError}
-              />
-            ) : activeSideTab === "qa" && inCallChatAllowed ? (
-              <StageQaDrawer
-                questions={questions}
-                activeBanner={activeBanner}
-                isHost={isHost}
-                currentUserId={session?.user?.id}
-                onAskQuestion={handleAskQuestion}
-                onToggleUpvote={handleToggleUpvote}
-                onAnswerQuestion={handleAnswerQuestion}
-                onReopenQuestion={handleReopenQuestion}
-                onPinQuestion={handlePinQuestion}
-                onUnpinQuestion={handleUnpinQuestion}
-                isSubmitting={isQaSubmitting}
-                error={qaError}
-              />
-            ) : (
-              <div className="h-[calc(100%-60px)] overflow-y-auto">
-                <CallParticipantsList onClose={() => setActiveSideTab(null)} />
-              </div>
-            )}
+            {(() => {
+              if (activeSideTab === "chat" && inCallChatAllowed) {
+                return (
+                  <StageChatDrawer
+                    messages={chatMessages}
+                    currentUserId={session?.user?.id}
+                    onSendMessage={handleSendChatMessage}
+                    onToggleReaction={handleToggleChatReaction}
+                    isSubmitting={isQaSubmitting}
+                    error={qaError}
+                  />
+                );
+              }
+              if (activeSideTab === "qa" && inCallChatAllowed) {
+                return (
+                  <StageQaDrawer
+                    questions={questions}
+                    activeBanner={activeBanner}
+                    isHost={isHost}
+                    currentUserId={session?.user?.id}
+                    onAskQuestion={handleAskQuestion}
+                    onToggleUpvote={handleToggleUpvote}
+                    onAnswerQuestion={handleAnswerQuestion}
+                    onReopenQuestion={handleReopenQuestion}
+                    onPinQuestion={handlePinQuestion}
+                    onUnpinQuestion={handleUnpinQuestion}
+                    isSubmitting={isQaSubmitting}
+                    error={qaError}
+                  />
+                );
+              }
+              return (
+                <div className="h-[calc(100%-60px)] overflow-y-auto">
+                  <CallParticipantsList
+                    onClose={() => setActiveSideTab(null)}
+                  />
+                </div>
+              );
+            })()}
           </div>
 
           {activeSideTab && (
