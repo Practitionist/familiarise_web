@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 
 import { getSession } from "@/lib/auth-server";
+import { isPreviewableMimeType } from "@/lib/documents/urls";
 
 export async function GET(
   request: NextRequest,
@@ -41,6 +42,11 @@ export async function GET(
     const appointmentWhereClause: Prisma.AppointmentWhereInput = {
       id: appointmentId,
     };
+
+    const disposition =
+      request.nextUrl.searchParams.get("disposition") === "inline"
+        ? "inline"
+        : "attachment";
 
     if (!isDevelopment) {
       appointmentWhereClause.OR = [
@@ -89,17 +95,38 @@ export async function GET(
             ],
           },
         },
+        // User is part of trial session
+        {
+          trial: {
+            OR: [
+              {
+                consulteeProfile: {
+                  user: {
+                    id: userId,
+                  },
+                },
+              },
+              {
+                subscriptionPlan: {
+                  consultantProfile: {
+                    user: {
+                      id: userId,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
       ];
     }
 
-    // First verify user has access to the appointment. Only consultation/
-    // subscription bookings are reachable via the auth filter above, so those
-    // are the statuses we need for the terminal check (DOC-1).
     const appointment = await prisma.appointment.findFirst({
       where: appointmentWhereClause,
       include: {
         consultation: { select: { status: true } },
         subscription: { select: { status: true } },
+        trial: { select: { status: true } },
       },
     });
 
@@ -116,9 +143,6 @@ export async function GET(
       );
     }
 
-    // DOC-1 (#694) — block byte streaming once the parent booking is terminal;
-    // identity-only authorization previously kept files downloadable after a
-    // cancel/refund.
     if (isBookingTerminal(appointment)) {
       return NextResponse.json(
         {
@@ -131,11 +155,11 @@ export async function GET(
       );
     }
 
-    // Now find the document
     const document = await prisma.appointmentDocument.findFirst({
       where: {
         id: documentId,
         appointmentId,
+        deletedAt: null,
       },
     });
 
@@ -152,12 +176,14 @@ export async function GET(
       );
     }
 
-    // Download file from Supabase — require admin client for private bucket access
     if (!supabaseAdmin) {
       console.error(
         "Supabase admin client not configured. Set SUPABASE_SERVICE_ROLE_KEY to enable document downloads.",
       );
-      Sentry.captureException(new Error("Supabase admin client not configured"), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        new Error("Supabase admin client not configured"),
+        { tags: { subsystem: "appointments" } },
+      );
       return NextResponse.json(
         {
           error: "Storage configuration error",
@@ -168,14 +194,18 @@ export async function GET(
       );
     }
 
-    const { data: fileData, error: downloadError } =
-      await supabaseAdmin.storage
-        .from("documents")
-        .download(document.storagePath);
+    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
+      .from("documents")
+      .download(document.storagePath);
 
     if (downloadError || !fileData) {
       console.error("Supabase download error:", downloadError);
-      Sentry.captureException(downloadError instanceof Error ? downloadError : new Error(String(downloadError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        downloadError instanceof Error
+          ? downloadError
+          : new Error(String(downloadError)),
+        { tags: { subsystem: "appointments" } },
+      );
       return NextResponse.json(
         {
           error: "Download failed",
@@ -187,15 +217,20 @@ export async function GET(
       );
     }
 
-    // Convert blob to buffer
     const buffer = Buffer.from(await fileData.arrayBuffer());
+    const effectiveDisposition =
+      disposition === "inline" && isPreviewableMimeType(document.mimeType)
+        ? "inline"
+        : "attachment";
 
-    // Create response with proper headers for download
     const response = new NextResponse(buffer, {
       status: 200,
       headers: {
         "Content-Type": document.mimeType || "application/octet-stream",
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(document.originalName)}"`,
+        "Content-Disposition": `${effectiveDisposition}; filename="${encodeURIComponent(document.originalName)}"`,
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy":
+          "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
         "Content-Length": buffer.length.toString(),
         "Cache-Control": "no-cache, no-store, must-revalidate",
         Pragma: "no-cache",
@@ -206,7 +241,10 @@ export async function GET(
     return response;
   } catch (error) {
     console.error("Document download error:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     return NextResponse.json(
       {
         error: "Server error",

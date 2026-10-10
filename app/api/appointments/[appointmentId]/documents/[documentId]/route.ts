@@ -1,7 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { Prisma, type AppointmentDocument } from "@prisma/client";
+import {
+  DocumentReviewStatus,
+  Prisma,
+  type AppointmentDocument,
+} from "@prisma/client";
+import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
 import type { Session } from "@/lib/auth";
@@ -95,7 +100,6 @@ async function resolveAppointmentDocument(
   if (!isDevelopment) {
     const userId = session.user.id;
     const consulteeBranches = [
-      // User is the consultee
       {
         consultation: {
           requestedBy: {
@@ -105,10 +109,18 @@ async function resolveAppointmentDocument(
           },
         },
       },
-      // User is part of subscription (consultee)
       {
         subscription: {
           requestedBy: {
+            user: {
+              id: userId,
+            },
+          },
+        },
+      },
+      {
+        trial: {
+          consulteeProfile: {
             user: {
               id: userId,
             },
@@ -122,7 +134,6 @@ async function resolveAppointmentDocument(
           ? consulteeBranches
           : [
               ...consulteeBranches,
-              // User is the consultant
               {
                 consultation: {
                   consultationPlan: {
@@ -134,9 +145,19 @@ async function resolveAppointmentDocument(
                   },
                 },
               },
-              // User is part of subscription (consultant)
               {
                 subscription: {
+                  subscriptionPlan: {
+                    consultantProfile: {
+                      user: {
+                        id: userId,
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                trial: {
                   subscriptionPlan: {
                     consultantProfile: {
                       user: {
@@ -199,7 +220,10 @@ export async function GET(
 
     return NextResponse.json({ data: document });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error fetching document:", error);
     return NextResponse.json(
       { error: "Failed to fetch document" },
@@ -229,8 +253,15 @@ export async function PATCH(
     }
 
     const { appointmentId, documentId } = await params;
-    const body = await request.json();
-    const { reviewStatus, reviewNotes } = body;
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body", code: "INVALID_INPUT" },
+        { status: 400 },
+      );
+    }
 
     // Review decisions mutate consultee-visible state; throttle like uploads.
     if (session?.user?.id) {
@@ -259,7 +290,6 @@ export async function PATCH(
     if (!isDevelopment) {
       whereClause.appointment = {
         OR: [
-          // User is the consultant for consultation
           {
             consultation: {
               consultationPlan: {
@@ -271,9 +301,19 @@ export async function PATCH(
               },
             },
           },
-          // User is the consultant for subscription
           {
             subscription: {
+              subscriptionPlan: {
+                consultantProfile: {
+                  user: {
+                    id: session.user.id,
+                  },
+                },
+              },
+            },
+          },
+          {
+            trial: {
               subscriptionPlan: {
                 consultantProfile: {
                   user: {
@@ -287,7 +327,6 @@ export async function PATCH(
       };
     }
 
-    // Verify user is the consultant for this appointment
     const document = await prisma.appointmentDocument.findFirst({
       where: whereClause,
     });
@@ -305,56 +344,55 @@ export async function PATCH(
       );
     }
 
-    // Valid review statuses
-    const validStatuses = [
-      "PENDING",
-      "IN_REVIEW",
-      "APPROVED",
-      "REJECTED",
-      "NEEDS_REVISION",
-    ];
-    if (reviewStatus && !validStatuses.includes(reviewStatus)) {
+    const patchSchema = z.object({
+      reviewStatus: z.nativeEnum(DocumentReviewStatus).optional(),
+      reviewNotes: z.string().trim().max(2000).nullish(),
+    });
+    const parsedPatch = patchSchema.safeParse(body);
+    if (!parsedPatch.success) {
       return NextResponse.json(
-        { error: "Invalid review status" },
+        {
+          error: "Invalid review payload",
+          details: parsedPatch.error.flatten(),
+        },
         { status: 400 },
       );
     }
 
-    // Transition guard — APPROVED/REJECTED are terminal. Reopening a decided
-    // review would rewrite history the consultee was already notified about;
-    // corrections go through a threaded upload instead.
+    const { reviewStatus: validStatus, reviewNotes: validNotes } =
+      parsedPatch.data;
+
     if (
-      reviewStatus &&
+      validStatus &&
       !isReviewTransitionAllowed(
         document.reviewStatus as ReviewStatus,
-        reviewStatus as ReviewStatus,
+        validStatus as ReviewStatus,
       )
     ) {
       return NextResponse.json(
         {
           error: "Invalid transition",
-          message: `A ${document.reviewStatus.toLowerCase()} document can no longer move to ${reviewStatus}. Upload or request a threaded revision instead.`,
+          message: `A ${document.reviewStatus.toLowerCase()} document can no longer move to ${validStatus}. Upload or request a threaded revision instead.`,
           code: "INVALID_REVIEW_TRANSITION",
         },
         { status: 409 },
       );
     }
 
-    // Update document review status
     const updatedDocument = await prisma.appointmentDocument.update({
       where: {
         id: documentId,
       },
       data: {
-        ...(reviewStatus && { reviewStatus }),
-        ...(reviewNotes && { reviewNotes }),
-        ...(reviewStatus && { reviewedAt: new Date() }),
-        ...(reviewStatus && { reviewedById: session.user.id }), // A8 — FK scalar (#676)
+        ...(validStatus && { reviewStatus: validStatus }),
+        ...(validNotes !== undefined && {
+          reviewNotes: validNotes === "" ? null : validNotes,
+        }),
+        ...(validStatus && { reviewedAt: new Date() }),
+        ...(validStatus && { reviewedById: session.user.id }),
       },
     });
 
-    // Tell the consultee their submission moved. One recipient, known side →
-    // scopedHref links straight at the right dashboard.
     const appointmentInfo = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       select: {
@@ -366,7 +404,9 @@ export async function PATCH(
             },
             consultationPlan: {
               select: {
-                consultantProfile: { select: { user: { select: { name: true } } } },
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
               },
             },
           },
@@ -378,7 +418,23 @@ export async function PATCH(
             },
             subscriptionPlan: {
               select: {
-                consultantProfile: { select: { user: { select: { name: true } } } },
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
+              },
+            },
+          },
+        },
+        trial: {
+          select: {
+            consulteeProfile: {
+              select: { id: true, user: { select: { id: true } } },
+            },
+            subscriptionPlan: {
+              select: {
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
               },
             },
           },
@@ -387,18 +443,21 @@ export async function PATCH(
     });
     const recipientId =
       appointmentInfo?.consultation?.requestedBy?.user?.id ||
-      appointmentInfo?.subscription?.requestedBy?.user?.id;
+      appointmentInfo?.subscription?.requestedBy?.user?.id ||
+      appointmentInfo?.trial?.consulteeProfile?.user?.id;
     const consulteeProfileId =
       appointmentInfo?.consultation?.requestedBy?.id ||
-      appointmentInfo?.subscription?.requestedBy?.id;
+      appointmentInfo?.subscription?.requestedBy?.id ||
+      appointmentInfo?.trial?.consulteeProfile?.id;
     const reviewerName =
       appointmentInfo?.consultation?.consultationPlan?.consultantProfile?.user
         ?.name ||
       appointmentInfo?.subscription?.subscriptionPlan?.consultantProfile?.user
         ?.name ||
+      appointmentInfo?.trial?.subscriptionPlan?.consultantProfile?.user?.name ||
       "The consultant";
 
-    if (recipientId && reviewStatus) {
+    if (recipientId && validStatus) {
       // #1861 P2r — the review update already committed above with no open
       // transaction to piggyback on; stage the outbox row now (awaited,
       // before the response) and defer only the delivery attempt.
@@ -409,17 +468,16 @@ export async function PATCH(
             ...notificationScope(appointmentInfo?.organizationId),
             appointmentId,
             documentId,
-            reviewStatus: reviewStatus as ReviewStatus,
-            reviewNotes: reviewNotes || undefined,
+            reviewStatus: validStatus as ReviewStatus,
+            reviewNotes: validNotes || undefined,
             originalName: document.originalName,
             consultantName: reviewerName,
             dashboardUrl: scopedHref({
               organizationId: appointmentInfo?.organizationId,
               surface: "appointments",
-              personal:
-                consulteeProfileId
-                  ? { kind: "consultee", profileId: consulteeProfileId }
-                  : undefined,
+              personal: consulteeProfileId
+                ? { kind: "consultee", profileId: consulteeProfileId }
+                : undefined,
             }),
           },
           { deferAttempt: true },
@@ -436,7 +494,10 @@ export async function PATCH(
 
     return NextResponse.json({ data: updatedDocument });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error updating document review:", error);
     return NextResponse.json(
       { error: "Failed to update document review" },
@@ -488,7 +549,10 @@ export async function DELETE(
         : "Document deleted successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error deleting document:", error);
     return NextResponse.json(
       { error: "Failed to delete document" },

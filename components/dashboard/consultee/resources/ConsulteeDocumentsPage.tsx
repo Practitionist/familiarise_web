@@ -1,26 +1,51 @@
 "use client";
 
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ExternalLink } from "lucide-react";
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import {
+  Download,
+  ExternalLink,
+  Eye,
+  FileText,
+  FileUp,
+  MessageSquare,
+  Search,
+} from "lucide-react";
 
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { TablePagination } from "@/components/dashboard/TablePagination";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import { DocumentReviewDrawer } from "@/components/documents/DocumentReviewDrawer";
 import { useListParams } from "@/hooks/useListParams";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
+import {
+  groupDocumentsIntoThreads,
+  type DocumentThread,
+} from "@/lib/documents/document-review";
+import {
+  getAppointmentDocumentUrl,
+  getPlanMaterialUrl,
+} from "@/lib/documents/urls";
+import { formatFileSize } from "@/lib/documents/document-utils";
 import type {
   ConsulteeDocumentRow,
   ConsulteeDocumentsPayload,
   ConsulteeMaterialRow,
 } from "@/lib/data/consultee-documents";
 
-// Type-only import above: lib/data pulls prisma, which a client bundle cannot.
 const PAGE_SIZE = 20;
 
 const DATE = new Intl.DateTimeFormat("en-IN", {
@@ -29,100 +54,203 @@ const DATE = new Intl.DateTimeFormat("en-IN", {
   year: "numeric",
 });
 
-function FileLink({ href, name }: Readonly<{ href: string; name: string }>) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-flex max-w-full items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
-    >
-      <span className="truncate">{name}</span>
-      <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
-    </a>
-  );
-}
+const STATUS_CHIPS = [
+  { value: "", label: "All" },
+  { value: "NEEDS_REVISION", label: "Needs revision" },
+  { value: "IN_REVIEW", label: "In review" },
+  { value: "PENDING", label: "Pending" },
+  { value: "APPROVED", label: "Approved" },
+] as const;
 
 async function fetchDocuments(
   consulteeId: string,
   page: number,
+  statusFilter: string,
 ): Promise<ConsulteeDocumentsPayload> {
   const offset = (page - 1) * PAGE_SIZE;
+  const qs = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    offset: String(offset),
+  });
+  if (statusFilter) {
+    qs.set("status", statusFilter);
+  }
   const res = await fetch(
-    `/api/dashboard/consultee/${consulteeId}/documents?limit=${PAGE_SIZE}&offset=${offset}`,
+    `/api/dashboard/consultee/${consulteeId}/documents?${qs.toString()}`,
   );
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return res.json();
 }
 
-/**
- * The consultee Documents page (#1527 §7.1): every file for the learner's
- * bookings in one place — their uploads and the expert's responses (paged),
- * and the plan materials of what they booked. Recordings are their own page,
- * so the vendor recording-sync button no longer sits here.
- */
 export function ConsulteeDocumentsPage({
   consulteeId,
 }: Readonly<{ consulteeId: string }>) {
   const basePath = `/dashboard/consultee/${consulteeId}`;
+  const queryClient = useQueryClient();
   const { page, setPage } = useListParams();
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [search, setSearch] = useState<string>("");
+  const [drawerThread, setDrawerThread] =
+    useState<DocumentThread<ConsulteeDocumentRow> | null>(null);
+
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["consultee-documents", consulteeId, "all", page],
-    queryFn: () => fetchDocuments(consulteeId, page),
+    queryKey: ["consultee-documents", consulteeId, page],
+    queryFn: () => fetchDocuments(consulteeId, page, ""),
     placeholderData: keepPreviousData,
   });
 
-  const fileColumns: ResponsiveColumn<ConsulteeDocumentRow>[] = [
+  const threads = useMemo(() => {
+    const grouped = groupDocumentsIntoThreads(data?.data ?? []);
+    const statusMatched = statusFilter
+      ? grouped.filter((t) => t.effectiveStatus === statusFilter)
+      : grouped;
+    if (!search.trim()) return statusMatched;
+    const q = search.trim().toLowerCase();
+    return statusMatched.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.latestVersion.appointmentTitle.toLowerCase().includes(q) ||
+        (t.latestVersion.consultantName?.toLowerCase().includes(q) ?? false) ||
+        (t.effectiveReviewNotes?.toLowerCase().includes(q) ?? false),
+    );
+  }, [data?.data, statusFilter, search]);
+
+  const filteredMaterials = useMemo(() => {
+    const items = data?.materials ?? [];
+    if (!search.trim()) return items;
+    const q = search.trim().toLowerCase();
+    return items.filter(
+      (m) =>
+        m.originalName.toLowerCase().includes(q) ||
+        m.planTitle.toLowerCase().includes(q) ||
+        (m.consultantName?.toLowerCase().includes(q) ?? false),
+    );
+  }, [data?.materials, search]);
+
+  const threadColumns: ResponsiveColumn<
+    DocumentThread<ConsulteeDocumentRow>
+  >[] = [
     {
-      key: "name",
-      header: "File",
+      key: "deliverable",
+      header: "Deliverable",
       primary: true,
-      cell: (doc) => <FileLink href={doc.fileUrl} name={doc.originalName} />,
-    },
-    {
-      key: "booking",
-      header: "Booking",
-      cell: (doc) => (
-        <Link
-          href={`${basePath}/appointments/${doc.appointmentId}`}
-          className="text-foreground underline-offset-4 hover:underline"
-        >
-          {doc.appointmentTitle}
-        </Link>
+      cell: (thread) => (
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setDrawerThread(thread)}
+              className="inline-flex items-center gap-1.5 text-left font-medium text-foreground underline-offset-4 hover:underline"
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{thread.title}</span>
+            </button>
+            <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+              v{thread.latestVersion.versionNo ?? thread.versionCount}
+            </Badge>
+            {thread.versionCount > 1 && (
+              <span className="text-[11px] text-muted-foreground">
+                ({thread.versionCount} versions)
+              </span>
+            )}
+          </div>
+          {thread.effectiveReviewNotes && (
+            <p className="inline-flex max-w-md items-start gap-1 text-xs text-muted-foreground">
+              <MessageSquare className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
+              <span className="line-clamp-1">
+                {thread.effectiveReviewNotes}
+              </span>
+            </p>
+          )}
+        </div>
       ),
     },
     {
-      key: "from",
-      header: "From",
-      cell: (doc) => (
-        <span className="text-muted-foreground">
-          {doc.uploadedByRole === "CONSULTANT"
-            ? (doc.consultantName ?? "Your expert")
-            : "You"}
-        </span>
+      key: "booking",
+      header: "Session / Offering",
+      cell: (thread) => (
+        <div className="space-y-0.5">
+          <Link
+            href={`${basePath}/appointments/${thread.appointmentId}`}
+            className="block font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            {thread.latestVersion.appointmentTitle}
+          </Link>
+          {thread.latestVersion.consultantName && (
+            <span className="block text-xs text-muted-foreground">
+              with {thread.latestVersion.consultantName}
+            </span>
+          )}
+        </div>
       ),
     },
     {
       key: "status",
-      header: "Review",
-      cell: (doc) =>
-        doc.uploadedByRole === "CONSULTEE" ? (
-          <StatusBadge
-            {...documentReviewStatusBadge(doc.reviewStatus)}
-            size="sm"
-          />
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        ),
+      header: "Status",
+      cell: (thread) => (
+        <StatusBadge
+          {...documentReviewStatusBadge(thread.effectiveStatus)}
+          size="sm"
+        />
+      ),
     },
     {
-      key: "date",
-      header: "Date",
-      cell: (doc) => (
-        <span className="whitespace-nowrap text-muted-foreground">
-          {DATE.format(new Date(doc.uploadedAt))}
+      key: "updated",
+      header: "Updated",
+      cell: (thread) => (
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
+          {DATE.format(new Date(thread.updatedAt))}
         </span>
       ),
+    },
+    {
+      key: "actions",
+      header: "",
+      cell: (thread) => {
+        const needsRevision = thread.effectiveStatus === "NEEDS_REVISION";
+        return (
+          <div className="flex items-center justify-end gap-1.5">
+            {needsRevision && (
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 px-2.5 text-xs"
+                onClick={() => setDrawerThread(thread)}
+              >
+                <FileUp className="mr-1 h-3 w-3" />
+                Upload v{thread.versionCount + 1}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setDrawerThread(thread)}
+            >
+              <Eye className="mr-1 h-3 w-3" />
+              Preview
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+            >
+              <a
+                href={getAppointmentDocumentUrl(
+                  thread.appointmentId,
+                  thread.latestVersion.id,
+                  "attachment",
+                )}
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span className="sr-only">Download</span>
+              </a>
+            </Button>
+          </div>
+        );
+      },
     },
   ];
 
@@ -131,11 +259,28 @@ export function ConsulteeDocumentsPage({
       key: "name",
       header: "Material",
       primary: true,
-      cell: (m) => <FileLink href={m.fileUrl} name={m.originalName} />,
+      cell: (m) => (
+        <div className="space-y-0.5">
+          <a
+            href={getPlanMaterialUrl(m.id, "inline")}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <span className="truncate">{m.originalName}</span>
+            <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+          </a>
+          <p className="text-[11px] text-muted-foreground">
+            {formatFileSize(m.fileSize)}
+            {m.description ? ` · ${m.description}` : ""}
+          </p>
+        </div>
+      ),
     },
     {
       key: "plan",
-      header: "Plan",
+      header: "Plan / Offering",
       cell: (m) => <span className="text-foreground">{m.planTitle}</span>,
     },
     {
@@ -149,9 +294,28 @@ export function ConsulteeDocumentsPage({
       key: "date",
       header: "Added",
       cell: (m) => (
-        <span className="whitespace-nowrap text-muted-foreground">
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
           {DATE.format(new Date(m.uploadedAt))}
         </span>
+      ),
+    },
+    {
+      key: "download",
+      header: "",
+      cell: (m) => (
+        <div className="flex justify-end">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+          >
+            <a href={getPlanMaterialUrl(m.id, "attachment")}>
+              <Download className="mr-1 h-3.5 w-3.5" />
+              Download
+            </a>
+          </Button>
+        </div>
       ),
     },
   ];
@@ -159,29 +323,64 @@ export function ConsulteeDocumentsPage({
   const isFirstLoad = isLoading && !data;
 
   return (
-    <div>
+    <div className="space-y-4">
       <PageHeader
         title="Documents"
-        description="Your files, your expert's responses and the materials for the sessions you've booked"
+        description="Your deliverable review threads, expert feedback, and handouts for booked offerings"
       />
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative w-full max-w-xs">
+          <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search files, sessions, feedback..."
+            className="h-9 pl-8 text-sm"
+          />
+        </div>
+      </div>
+
       <UrlTabs
         tabs={[
           {
             value: "files",
-            label: data ? `Your bookings · ${data.count}` : "Your bookings",
+            label: data ? `Deliverables · ${threads.length}` : "Deliverables",
             content: (
               <div className="space-y-3">
-                <ResponsiveTable<ConsulteeDocumentRow>
-                  columns={fileColumns}
-                  rows={data?.data ?? []}
-                  getRowId={(doc) => doc.id}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {STATUS_CHIPS.map((chip) => {
+                    const active = statusFilter === chip.value;
+                    return (
+                      <Button
+                        key={chip.label}
+                        type="button"
+                        size="sm"
+                        variant={active ? "default" : "outline"}
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          setStatusFilter(chip.value);
+                          setPage(1);
+                        }}
+                      >
+                        {chip.label}
+                      </Button>
+                    );
+                  })}
+                </div>
+
+                <ResponsiveTable<DocumentThread<ConsulteeDocumentRow>>
+                  columns={threadColumns}
+                  rows={threads}
+                  getRowId={(t) => t.rootId}
                   isLoading={isFirstLoad}
                   error={error}
                   onRetry={() => void refetch()}
                   empty={
                     <p className="py-8 text-center text-sm text-muted-foreground">
-                      No files yet. Upload documents from a confirmed booking,
-                      and your expert&apos;s responses land here too.
+                      No deliverables match your filters yet. Upload documents
+                      from a confirmed booking to start a review thread.
                     </p>
                   }
                 />
@@ -199,25 +398,38 @@ export function ConsulteeDocumentsPage({
           {
             value: "materials",
             label: data
-              ? `Plan materials · ${data.materials.length}`
+              ? `Plan materials · ${filteredMaterials.length}`
               : "Plan materials",
             content: (
               <ResponsiveTable<ConsulteeMaterialRow>
                 columns={materialColumns}
-                rows={data?.materials ?? []}
+                rows={filteredMaterials}
                 getRowId={(m) => m.id}
                 isLoading={isFirstLoad}
                 error={error}
                 onRetry={() => void refetch()}
                 empty={
                   <p className="py-8 text-center text-sm text-muted-foreground">
-                    Handouts your experts attach to their plans appear here.
+                    Handouts attached to your booked plans appear here.
                   </p>
                 }
               />
             ),
           },
         ]}
+      />
+
+      <DocumentReviewDrawer
+        thread={drawerThread}
+        isOpen={Boolean(drawerThread)}
+        onClose={() => setDrawerThread(null)}
+        viewerRole="consultee"
+        canUpload
+        onUpdated={() => {
+          void queryClient.invalidateQueries({
+            queryKey: ["consultee-documents", consulteeId],
+          });
+        }}
       />
     </div>
   );

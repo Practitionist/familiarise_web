@@ -18,10 +18,23 @@ jest.mock("../../lib/auth-server", () => ({
   __esModule: true,
   getSession: jest.fn(),
 }));
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: { appointmentDocument: { updateMany: jest.fn() } },
-}));
+jest.mock("../../lib/prisma", () => {
+  const txClient = {
+    appointmentDocument: {
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
+    },
+  };
+  return {
+    __esModule: true,
+    default: {
+      ...txClient,
+      $transaction: jest.fn((fn: (tx: typeof txClient) => unknown) =>
+        fn(txClient),
+      ),
+    },
+  };
+});
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
   applyRateLimit: jest.fn().mockResolvedValue(null),
@@ -30,6 +43,7 @@ jest.mock("../../lib/rate-limit", () => ({
 
 const mockedGetSession = getSession as jest.Mock;
 const mockedApplyRateLimit = applyRateLimit as jest.Mock;
+const mockedFindMany = prisma.appointmentDocument.findMany as jest.Mock;
 const mockedUpdateMany = prisma.appointmentDocument.updateMany as jest.Mock;
 
 function req(body: unknown) {
@@ -53,6 +67,30 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockedApplyRateLimit.mockResolvedValue(null);
   mockedGetSession.mockResolvedValue({ user: { id: "consultant-user-1" } });
+  mockedFindMany.mockResolvedValue([
+    {
+      id: "d1",
+      appointmentId: "apt-1",
+      originalName: "draft-1.pdf",
+      appointment: {
+        organizationId: null,
+        consultation: null,
+        subscription: null,
+        trial: null,
+      },
+    },
+    {
+      id: "d2",
+      appointmentId: "apt-1",
+      originalName: "draft-2.pdf",
+      appointment: {
+        organizationId: null,
+        consultation: null,
+        subscription: null,
+        trial: null,
+      },
+    },
+  ]);
   mockedUpdateMany.mockResolvedValue({ count: 2 });
 });
 
@@ -75,9 +113,7 @@ describe("PATCH /api/documents/bulk-review", () => {
   });
 
   it("400s on an empty document list", async () => {
-    const res = await PATCH(
-      req({ documentIds: [], reviewStatus: "APPROVED" }),
-    );
+    const res = await PATCH(req({ documentIds: [], reviewStatus: "APPROVED" }));
     expect(res.status).toBe(400);
     expect(mockedUpdateMany).not.toHaveBeenCalled();
   });
@@ -116,8 +152,8 @@ describe("PATCH /api/documents/bulk-review", () => {
 
     const arg = mockedUpdateMany.mock.calls[0][0];
     expect(arg.where.id).toEqual({ in: ["d1", "d2"] });
-    // Ownership is enforced through the appointment's consultant relations.
-    expect(arg.where.appointment.OR).toHaveLength(2);
+    // Ownership is enforced through the appointment's consultant relations (consultation, subscription, trial).
+    expect(arg.where.appointment.OR).toHaveLength(3);
     expect(arg.data.reviewStatus).toBe("APPROVED");
     expect(arg.data.reviewedById).toBe("consultant-user-1");
     expect(arg.data.reviewedAt).toBeInstanceOf(Date);

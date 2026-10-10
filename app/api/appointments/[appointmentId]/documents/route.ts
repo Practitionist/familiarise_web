@@ -12,6 +12,7 @@ import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 import {
   MAX_DOCS_PER_APPOINTMENT,
+  MAX_VERSIONS_PER_THREAD,
   validateDocumentUpload,
   withVersionConflictRetry,
 } from "@/lib/documents/document-review";
@@ -51,20 +52,16 @@ export async function GET(
       );
     }
 
-    // In development mode with explicit bypass flag, allow access to any appointment's documents for testing
-    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
     const isDevelopment =
       process.env.NODE_ENV === "development" &&
       process.env.DEV_BYPASS_AUTH === "true";
 
-    // Build access control conditions - bypass in development
     const whereClause: Prisma.AppointmentWhereInput = {
       id: appointmentId,
     };
 
     if (!isDevelopment) {
       whereClause.OR = [
-        // User is the consultee
         {
           consultation: {
             requestedBy: {
@@ -74,7 +71,6 @@ export async function GET(
             },
           },
         },
-        // User is the consultant
         {
           consultation: {
             consultationPlan: {
@@ -86,7 +82,6 @@ export async function GET(
             },
           },
         },
-        // User is part of subscription
         {
           subscription: {
             OR: [
@@ -109,10 +104,31 @@ export async function GET(
             ],
           },
         },
+        {
+          trial: {
+            OR: [
+              {
+                consulteeProfile: {
+                  user: {
+                    id: session.user.id,
+                  },
+                },
+              },
+              {
+                subscriptionPlan: {
+                  consultantProfile: {
+                    user: {
+                      id: session.user.id,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
       ];
     }
 
-    // Verify user has access to this appointment
     const appointment = await prisma.appointment.findFirst({
       where: whereClause,
       include: {
@@ -146,6 +162,21 @@ export async function GET(
             },
           },
         },
+        trial: {
+          include: {
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: { name: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -162,9 +193,6 @@ export async function GET(
       );
     }
 
-    // DOC-1 (#694) — block listing once the parent booking is terminal
-    // (cancelled/refunded/rejected/expired); prior code only checked requester
-    // identity, leaving documents visible after a refund.
     if (isBookingTerminal(appointment)) {
       return NextResponse.json(
         {
@@ -177,16 +205,17 @@ export async function GET(
       );
     }
 
-    // Get appointment details for better error context
     const appointmentTitle =
       appointment.consultation?.consultationPlan?.title ||
       appointment.subscription?.subscriptionPlan?.title ||
+      appointment.trial?.subscriptionPlan?.title ||
       "Unknown Appointment";
     const consultantName =
       appointment.consultation?.consultationPlan?.consultantProfile?.user
         ?.name ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user
         ?.name ||
+      appointment.trial?.subscriptionPlan?.consultantProfile?.user?.name ||
       "Unknown Consultant";
 
     // Fetch documents - this should never fail, even if folder doesn't exist
@@ -222,7 +251,10 @@ export async function GET(
       });
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "appointments" } },
+      );
       // Return empty array instead of failing - documents folder might not exist yet
       return NextResponse.json({
         data: [],
@@ -253,7 +285,10 @@ export async function GET(
     });
   } catch (error) {
     console.error("Error fetching appointment documents:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {
@@ -386,7 +421,9 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            validation.code === "FILE_TOO_LARGE" ? "File too large" : "Unsupported file type",
+            validation.code === "FILE_TOO_LARGE"
+              ? "File too large"
+              : "Unsupported file type",
           message: validation.message,
           code: validation.code,
         },
@@ -425,10 +462,18 @@ export async function POST(
             },
           },
         },
+        {
+          trial: {
+            consulteeProfile: {
+              user: {
+                id: session.user.id,
+              },
+            },
+          },
+        },
       ];
     }
 
-    // Verify user has access to this appointment and get consultee ID
     const appointment = await prisma.appointment.findFirst({
       where: uploadWhereClause,
       include: {
@@ -472,6 +517,26 @@ export async function POST(
             },
           },
         },
+        trial: {
+          include: {
+            consulteeProfile: {
+              include: {
+                user: true,
+              },
+            },
+            subscriptionPlan: {
+              include: {
+                consultantProfile: {
+                  include: {
+                    user: {
+                      select: { id: true, name: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -488,10 +553,10 @@ export async function POST(
       );
     }
 
-    // Get consultee ID from appointment or use session user ID as fallback for dev mode
     const consulteeId =
       appointment.consultation?.requestedBy?.id ||
       appointment.subscription?.requestedBy?.id ||
+      appointment.trial?.consulteeProfile?.id ||
       (isDevelopment ? session.user.id : null);
 
     if (!consulteeId) {
@@ -506,38 +571,26 @@ export async function POST(
       );
     }
 
-    // A revision must point at a document on THIS appointment. Without the
-    // check, a caller could thread their upload onto any document id they
-    // guessed and have it render inside someone else's review history.
-    //
-    // Checked BEFORE the upload: rejecting afterwards returned 400 without
-    // deleting the object already written to storage, unlike the DB-failure
-    // branch below which does clean up. Every rejected revision leaked a file.
-    // The lookup needs only `appointmentId`, which is verified above.
-    //
-    // DOC quota — live (non-deleted) docs per appointment are capped; without
-    // it 10MB × unlimited rows is an unbounded storage bill at scale.
     if (
+      !revisionOf &&
       (await prisma.appointmentDocument.count({
-        where: { appointmentId, deletedAt: null },
+        where: { appointmentId, rootDocumentId: null, deletedAt: null },
       })) >= MAX_DOCS_PER_APPOINTMENT
     ) {
       return NextResponse.json(
         {
           error: "Document limit reached",
-          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} documents. Please delete an unreviewed upload or continue in a new appointment.`,
+          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads. Please upload a revision to an existing thread or delete an unreviewed upload.`,
           code: "DOCUMENT_LIMIT_REACHED",
         },
         { status: 400 },
       );
     }
 
-    // A revision must point at a document on THIS appointment — validated
-    // BEFORE the upload so a rejection can't leak the stored object.
     if (revisionOf) {
       const parent = await prisma.appointmentDocument.findFirst({
         where: { id: revisionOf, appointmentId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, rootDocumentId: true },
       });
       if (!parent) {
         return NextResponse.json(
@@ -546,6 +599,23 @@ export async function POST(
             message:
               "The document this revision replaces was not found on this appointment.",
             code: "INVALID_REVISION_TARGET",
+          },
+          { status: 400 },
+        );
+      }
+      const rootId = parent.rootDocumentId ?? parent.id;
+      const versionCount = await prisma.appointmentDocument.count({
+        where: {
+          deletedAt: null,
+          OR: [{ id: rootId }, { rootDocumentId: rootId }],
+        },
+      });
+      if (versionCount >= MAX_VERSIONS_PER_THREAD) {
+        return NextResponse.json(
+          {
+            error: "Version limit reached",
+            message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
+            code: "VERSION_LIMIT_REACHED",
           },
           { status: 400 },
         );
@@ -563,7 +633,12 @@ export async function POST(
       });
     } catch (uploadError) {
       console.error("File upload error:", uploadError);
-      Sentry.captureException(uploadError instanceof Error ? uploadError : new Error(String(uploadError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        uploadError instanceof Error
+          ? uploadError
+          : new Error(String(uploadError)),
+        { tags: { subsystem: "appointments" } },
+      );
 
       if (uploadError instanceof Error) {
         if (
@@ -636,49 +711,57 @@ export async function POST(
     try {
       document = await withVersionConflictRetry(() =>
         prisma.$transaction(async (tx) => {
-        let rootDocumentId: string | null = null;
-        let versionNo = 1;
-        if (revisionOf) {
-          const parent = await tx.appointmentDocument.findFirst({
-            where: { id: revisionOf, appointmentId, deletedAt: null },
-            select: { id: true, rootDocumentId: true },
+          let rootDocumentId: string | null = null;
+          let versionNo = 1;
+          if (revisionOf) {
+            const parent = await tx.appointmentDocument.findFirst({
+              where: { id: revisionOf, appointmentId, deletedAt: null },
+              select: { id: true, rootDocumentId: true },
+            });
+            if (!parent) throw new Error("INVALID_REVISION_TARGET");
+            rootDocumentId = parent.rootDocumentId ?? parent.id;
+            const aggregate = await tx.appointmentDocument.aggregate({
+              where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
+              _max: { versionNo: true },
+            });
+            versionNo = (aggregate._max.versionNo ?? 1) + 1;
+          }
+          return tx.appointmentDocument.create({
+            data: {
+              appointmentId,
+              fileName: uploadResult.fileName!,
+              originalName: file.name,
+              fileSize: uploadResult.fileSize!,
+              mimeType: uploadResult.mimeType!,
+              fileUrl: uploadResult.fileUrl!,
+              storagePath: uploadResult.storagePath!,
+              description: description?.trim() || null,
+              reviewStatus: "PENDING",
+              responseToDocumentId: revisionOf,
+              rootDocumentId,
+              versionNo,
+            },
           });
-          if (!parent) throw new Error("INVALID_REVISION_TARGET");
-          rootDocumentId = parent.rootDocumentId ?? parent.id;
-          const aggregate = await tx.appointmentDocument.aggregate({
-            where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
-            _max: { versionNo: true },
-          });
-          versionNo = (aggregate._max.versionNo ?? 1) + 1;
-        }
-        return tx.appointmentDocument.create({
-          data: {
-            appointmentId,
-            fileName: uploadResult.fileName!,
-            originalName: file.name,
-            fileSize: uploadResult.fileSize!,
-            mimeType: uploadResult.mimeType!,
-            fileUrl: uploadResult.fileUrl!,
-            storagePath: uploadResult.storagePath!,
-            description: description?.trim() || null,
-            reviewStatus: "PENDING",
-            responseToDocumentId: revisionOf,
-            rootDocumentId,
-            versionNo,
-          },
-        });
         }),
       );
     } catch (dbError) {
       console.error("Database error saving document:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "appointments" } },
+      );
 
       // Try to clean up uploaded file if database save failed
       try {
         await deleteAppointmentDocument(uploadResult.storagePath!);
       } catch (cleanupError) {
         console.error("Failed to cleanup uploaded file:", cleanupError);
-        Sentry.captureException(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), { tags: { subsystem: "appointments" } });
+        Sentry.captureException(
+          cleanupError instanceof Error
+            ? cleanupError
+            : new Error(String(cleanupError)),
+          { tags: { subsystem: "appointments" } },
+        );
       }
 
       if (
@@ -711,19 +794,23 @@ export async function POST(
     // survives the handler; failures are logged, never surfaced as 500s.
     const consultantUserId =
       appointment.consultation?.consultationPlan?.consultantProfile?.user?.id ||
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id;
+      appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id ||
+      appointment.trial?.subscriptionPlan?.consultantProfile?.user?.id;
     const consultantProfileId =
       appointment.consultation?.consultationPlan?.consultantProfile?.id ||
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.id;
+      appointment.subscription?.subscriptionPlan?.consultantProfile?.id ||
+      appointment.trial?.subscriptionPlan?.consultantProfile?.id;
     const consulteeName =
       appointment.consultation?.requestedBy?.user?.name ||
       appointment.subscription?.requestedBy?.user?.name ||
+      appointment.trial?.consulteeProfile?.user?.name ||
       "The consultee";
     const consultantName =
       appointment.consultation?.consultationPlan?.consultantProfile?.user
         ?.name ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user
         ?.name ||
+      appointment.trial?.subscriptionPlan?.consultantProfile?.user?.name ||
       "your consultant";
 
     if (consultantUserId) {
@@ -747,10 +834,9 @@ export async function POST(
             dashboardUrl: scopedHref({
               organizationId: appointment.organizationId,
               surface: "documents",
-              personal:
-                consultantProfileId
-                  ? { kind: "consultant", profileId: consultantProfileId }
-                  : undefined,
+              personal: consultantProfileId
+                ? { kind: "consultant", profileId: consultantProfileId }
+                : undefined,
             }),
           },
           { deferAttempt: true },
@@ -761,6 +847,7 @@ export async function POST(
     const appointmentTitle =
       appointment.consultation?.consultationPlan?.title ||
       appointment.subscription?.subscriptionPlan?.title ||
+      appointment.trial?.subscriptionPlan?.title ||
       "your appointment";
 
     const devModeMessage = isDevelopment
@@ -776,7 +863,10 @@ export async function POST(
     );
   } catch (error) {
     console.error("Error uploading document:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {

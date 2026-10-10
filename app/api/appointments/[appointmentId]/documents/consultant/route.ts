@@ -11,6 +11,7 @@ import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 import {
   MAX_DOCS_PER_APPOINTMENT,
+  MAX_VERSIONS_PER_THREAD,
   validateDocumentUpload,
   withVersionConflictRetry,
 } from "@/lib/documents/document-review";
@@ -22,10 +23,6 @@ const isDevelopment = () =>
   process.env.NODE_ENV === "development" &&
   process.env.DEV_BYPASS_AUTH === "true";
 
-/**
- * Load the appointment iff the caller delivers it (any of the four plan
- * arms). Kept out of the handler so POST reads linearly — Sonar S3776.
- */
 async function loadConsultantAppointment(
   appointmentId: string,
   userId: string,
@@ -43,6 +40,13 @@ async function loadConsultantAppointment(
       },
       {
         subscription: {
+          subscriptionPlan: {
+            consultantProfile: { user: { id: userId } },
+          },
+        },
+      },
+      {
+        trial: {
           subscriptionPlan: {
             consultantProfile: { user: { id: userId } },
           },
@@ -67,28 +71,45 @@ async function loadConsultantAppointment(
       consultation: {
         include: {
           consultationPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
       subscription: {
         include: {
           subscriptionPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
+          },
+        },
+      },
+      trial: {
+        include: {
+          subscriptionPlan: {
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
       webinar: {
         include: {
           webinarPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
       class: {
         include: {
           classPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
@@ -142,10 +163,10 @@ export async function POST(
       );
     }
 
-    // Get consultant ID
     const consultantId =
       appointment.consultation?.consultationPlan?.consultantProfile?.id ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.id ||
+      appointment.trial?.subscriptionPlan?.consultantProfile?.id ||
       appointment.webinar?.webinarPlan?.consultantProfile?.id ||
       appointment.class?.classPlan?.consultantProfile?.id;
 
@@ -160,13 +181,11 @@ export async function POST(
       );
     }
 
-    // Parse form data
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const description = formData.get("description") as string | null;
     const responseToDocumentId = formData.get("responseToDocumentId") as
-      | string
-      | null;
+      string | null;
 
     if (!file) {
       return NextResponse.json(
@@ -179,14 +198,14 @@ export async function POST(
       );
     }
 
-    // Size/type parity with the consultee route — one shared gate so the two
-    // roles' limits can never drift apart again.
     const validation = validateDocumentUpload(file);
     if (!validation.ok) {
       return NextResponse.json(
         {
           error:
-            validation.code === "FILE_TOO_LARGE" ? "File too large" : "Unsupported file type",
+            validation.code === "FILE_TOO_LARGE"
+              ? "File too large"
+              : "Unsupported file type",
           message: validation.message,
           code: validation.code,
         },
@@ -194,17 +213,16 @@ export async function POST(
       );
     }
 
-    // Quota + response-target validation BEFORE uploading (a post-upload
-    // rejection leaks the stored object).
     if (
+      !responseToDocumentId &&
       (await prisma.appointmentDocument.count({
-        where: { appointmentId, deletedAt: null },
+        where: { appointmentId, rootDocumentId: null, deletedAt: null },
       })) >= MAX_DOCS_PER_APPOINTMENT
     ) {
       return NextResponse.json(
         {
           error: "Document limit reached",
-          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} documents.`,
+          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads.`,
           code: "DOCUMENT_LIMIT_REACHED",
         },
         { status: 400 },
@@ -214,7 +232,7 @@ export async function POST(
     if (responseToDocumentId) {
       const parent = await prisma.appointmentDocument.findFirst({
         where: { id: responseToDocumentId, appointmentId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, rootDocumentId: true },
       });
       if (!parent) {
         return NextResponse.json(
@@ -224,6 +242,23 @@ export async function POST(
             code: "NOT_FOUND",
           },
           { status: 404 },
+        );
+      }
+      const rootId = parent.rootDocumentId ?? parent.id;
+      const versionCount = await prisma.appointmentDocument.count({
+        where: {
+          deletedAt: null,
+          OR: [{ id: rootId }, { rootDocumentId: rootId }],
+        },
+      });
+      if (versionCount >= MAX_VERSIONS_PER_THREAD) {
+        return NextResponse.json(
+          {
+            error: "Version limit reached",
+            message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
+            code: "VERSION_LIMIT_REACHED",
+          },
+          { status: 400 },
         );
       }
     }
@@ -254,46 +289,53 @@ export async function POST(
     try {
       document = await withVersionConflictRetry(() =>
         prisma.$transaction(async (tx) => {
-        let rootDocumentId: string | null = null;
-        let versionNo = 1;
-        if (responseToDocumentId) {
-          const parent = await tx.appointmentDocument.findFirst({
-            where: { id: responseToDocumentId, appointmentId, deletedAt: null },
-            select: { id: true, rootDocumentId: true },
+          let rootDocumentId: string | null = null;
+          let versionNo = 1;
+          if (responseToDocumentId) {
+            const parent = await tx.appointmentDocument.findFirst({
+              where: {
+                id: responseToDocumentId,
+                appointmentId,
+                deletedAt: null,
+              },
+              select: { id: true, rootDocumentId: true },
+            });
+            if (!parent) throw new Error("INVALID_RESPONSE_TARGET");
+            rootDocumentId = parent.rootDocumentId ?? parent.id;
+            const aggregate = await tx.appointmentDocument.aggregate({
+              where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
+              _max: { versionNo: true },
+            });
+            versionNo = (aggregate._max.versionNo ?? 1) + 1;
+          }
+          return tx.appointmentDocument.create({
+            data: {
+              fileName: uploadResult.fileName!,
+              originalName: file.name,
+              fileSize: uploadResult.fileSize!,
+              mimeType: uploadResult.mimeType!,
+              fileUrl: uploadResult.fileUrl!,
+              storagePath: uploadResult.storagePath!,
+              description: description || null,
+              uploadedByRole: "CONSULTANT",
+              responseToDocumentId: responseToDocumentId || null,
+              rootDocumentId,
+              versionNo,
+              appointmentId,
+              // Consultant uploads don't need review
+              reviewStatus: "APPROVED",
+              reviewedById: userId, // A8 — FK scalar (#676)
+              reviewedAt: new Date(),
+            },
           });
-          if (!parent) throw new Error("INVALID_RESPONSE_TARGET");
-          rootDocumentId = parent.rootDocumentId ?? parent.id;
-          const aggregate = await tx.appointmentDocument.aggregate({
-            where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
-            _max: { versionNo: true },
-          });
-          versionNo = (aggregate._max.versionNo ?? 1) + 1;
-        }
-        return tx.appointmentDocument.create({
-          data: {
-            fileName: uploadResult.fileName!,
-            originalName: file.name,
-            fileSize: uploadResult.fileSize!,
-            mimeType: uploadResult.mimeType!,
-            fileUrl: uploadResult.fileUrl!,
-            storagePath: uploadResult.storagePath!,
-            description: description || null,
-            uploadedByRole: "CONSULTANT",
-            responseToDocumentId: responseToDocumentId || null,
-            rootDocumentId,
-            versionNo,
-            appointmentId,
-            // Consultant uploads don't need review
-            reviewStatus: "APPROVED",
-            reviewedById: userId, // A8 — FK scalar (#676)
-            reviewedAt: new Date(),
-          },
-        });
         }),
       );
     } catch (dbError) {
       console.error("Database error saving consultant document:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "appointments" } },
+      );
       // Same cleanup contract as the consultee route: a failed save must not
       // strand the stored object.
       try {
@@ -344,18 +386,28 @@ export async function POST(
             },
           },
         },
+        trial: {
+          select: {
+            consulteeProfile: {
+              select: { id: true, user: { select: { id: true, name: true } } },
+            },
+          },
+        },
       },
     });
     const consulteeName =
       apt?.consultation?.requestedBy?.user?.name ||
       apt?.subscription?.requestedBy?.user?.name ||
+      apt?.trial?.consulteeProfile?.user?.name ||
       "The consultee";
     const recipientId =
       apt?.consultation?.requestedBy?.user?.id ||
-      apt?.subscription?.requestedBy?.user?.id;
+      apt?.subscription?.requestedBy?.user?.id ||
+      apt?.trial?.consulteeProfile?.user?.id;
     const consulteeProfileId =
       apt?.consultation?.requestedBy?.id ||
-      apt?.subscription?.requestedBy?.id;
+      apt?.subscription?.requestedBy?.id ||
+      apt?.trial?.consulteeProfile?.id;
 
     if (recipientId) {
       after(() =>
@@ -374,21 +426,28 @@ export async function POST(
           dashboardUrl: scopedHref({
             organizationId: apt?.organizationId,
             surface: "appointments",
-            personal:
-              consulteeProfileId
-                ? { kind: "consultee", profileId: consulteeProfileId }
-                : undefined,
+            personal: consulteeProfileId
+              ? { kind: "consultee", profileId: consulteeProfileId }
+              : undefined,
           }),
         }).catch((notifyError) => {
           console.error("Failed to notify consultee of response", notifyError);
-          Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
+          Sentry.captureException(
+            notifyError instanceof Error
+              ? notifyError
+              : new Error(String(notifyError)),
+            { tags: { subsystem: "novu" } },
+          );
         }),
       );
     }
 
     return NextResponse.json({ data: document }, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error uploading consultant document:", error);
     return NextResponse.json(
       {
