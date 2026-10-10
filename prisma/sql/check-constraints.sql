@@ -1035,6 +1035,61 @@ ALTER TABLE "organizations" ADD CONSTRAINT "org_stream_recording_retention_days_
   CHECK ("streamRecordingRetentionDays" IS NULL OR "streamRecordingRetentionDays" BETWEEN 7 AND 3650);
 
 -- SPLIT
+-- Enforce mutual exclusivity between `processed` and `error` and require `processedAt` iff `processed`.
+DO $$
+BEGIN
+  UPDATE "WebhookEvent"
+  SET "processed" = false, "processedAt" = NULL
+  WHERE "processed" AND "error" IS NOT NULL;
+
+  UPDATE "WebhookEvent"
+  SET "processedAt" = CASE WHEN "processed" THEN COALESCE("processedAt", "receivedAt") ELSE NULL END
+  WHERE ("processed" IS TRUE) IS DISTINCT FROM ("processedAt" IS NOT NULL);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_event_processed_error_exclusive'
+  ) THEN
+    ALTER TABLE "WebhookEvent" ADD CONSTRAINT "webhook_event_processed_error_exclusive"
+      CHECK (NOT ("processed" AND "error" IS NOT NULL));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_event_processed_timestamp_consistent'
+  ) THEN
+    ALTER TABLE "WebhookEvent" ADD CONSTRAINT "webhook_event_processed_timestamp_consistent"
+      CHECK (("processed" IS TRUE) IS NOT DISTINCT FROM ("processedAt" IS NOT NULL));
+  END IF;
+
+  WITH ranked_recordings AS (
+    SELECT
+      "id",
+      ROW_NUMBER() OVER (
+        PARTITION BY "streamRecordingId"
+        ORDER BY
+          ("status" = 'READY') DESC,
+          "updatedAt" DESC NULLS LAST,
+          "createdAt" DESC NULLS LAST,
+          "id" DESC
+      ) AS rn
+    FROM "Recording"
+    WHERE "streamRecordingId" IS NOT NULL
+  )
+  UPDATE "Recording"
+  SET "streamRecordingId" = NULL
+  WHERE "id" IN (SELECT "id" FROM ranked_recordings WHERE rn > 1);
+END $$;
+
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "WebhookEvent_unprocessed_provider_receivedAt_idx"
+  ON "WebhookEvent" ("provider", "receivedAt")
+  WHERE NOT "processed";
+
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "Recording_streamRecordingId_unique_idx"
+  ON "Recording" ("streamRecordingId")
+  WHERE "streamRecordingId" IS NOT NULL;
+
+-- SPLIT
 -- At most one open non-deleted SupportCase per (appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category)
 -- using NULLS NOT DISTINCT so booking-wide (appointmentOccurrenceId IS NULL) and platform-wide cases collide cleanly without merging cross-submitter threads.
 DROP INDEX IF EXISTS "support_case_open_scope_key";
@@ -1079,5 +1134,4 @@ DROP INDEX IF EXISTS "support_case_event_legacy_csat_key";
 CREATE UNIQUE INDEX IF NOT EXISTS "support_case_event_legacy_csat_key"
   ON "SupportCaseEvent" ("legacyTicketId")
   WHERE "kind" = 'CSAT_RATED';
-
 

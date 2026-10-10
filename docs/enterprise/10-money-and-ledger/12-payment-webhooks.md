@@ -3,189 +3,103 @@ title: Payment webhooks (inbound)
 band: 10-money-and-ledger
 audience: sde3
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-10
 ---
 
 # Payment webhooks (inbound)
 
-**What this covers:** the **inbound** gateway webhooks (Razorpay → us) that mutate money state — captures, refunds, payouts, and disputes — from signature verification through to the handlers that move the ledger. This is the opposite direction from the org-facing **outbound** webhook product (us → an org's HRIS/ERP), which is documented in [outbound webhooks](../40-compliance-and-data/04-outbound-webhooks.md); do not confuse the two — inbound webhooks are how money truth _arrives_, outbound webhooks are how lifecycle events _leave_.
-
-The inbound pipeline is the authoritative source of asynchronous money state: a synchronous gateway API response is only an acknowledgement, and the real outcome (`processed`, `failed`, `won`, `lost`) always arrives here by webhook.
+**What this covers:** the **inbound** gateway webhooks (Razorpay & RazorpayX → Familiarise) that mutate money state — captures, checkout failures, refunds, payouts, reverse penny drop validations, and disputes — from signature verification through CAS-fenced execution to ledger postings and recovery sweeps. Outbound enterprise webhooks (Familiarise → tenant HRIS/ERP) are documented separately in [outbound webhooks](../40-compliance-and-data/04-outbound-webhooks.md).
 
 ---
 
-## 1. The ingestion pipeline
+## 1. Ingestion Pipeline, CAS Fencing & Freeze Recovery
 
-A Razorpay webhook enters at the route `app/api/webhooks/razorpay/route.ts`, is verified and deduplicated synchronously, then dispatched asynchronously so the route can return HTTP 200 inside Razorpay's 5-second timeout. The dispatch switch itself lives in a Next-agnostic module, `app/api/webhooks/razorpay-dispatch.ts`, so the stuck-event sweeper can replay through the exact same handler routing.
+Inbound Razorpay and RazorpayX webhooks arrive at `POST /api/webhooks/razorpay` (`app/api/webhooks/razorpay/route.ts`), verify authenticity against raw request bytes, check Postgres availability (`503` when unreachable so Razorpay backs off for up to 24h), record an idempotent claim on `WebhookEvent`, and return HTTP `200` well inside Razorpay's strict **5-second** timeout before running domain handlers via Next.js `after()`.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant RZP as Razorpay
-    participant Route as /api/webhooks/razorpay
-    participant Verify as verifyWebhookSignature
-    participant Log as logWebhookEvent
-    participant Disp as processRazorpayWebhookEvent
-    participant H as handlers (utils.ts)
+    participant RZP as "Razorpay / RazorpayX"
+    participant Route as "POST /api/webhooks/razorpay"
+    participant Sig as "signature.ts"
+    participant Log as "logWebhookEvent (event-log.ts)"
+    participant Disp as "processRazorpayWebhookEvent"
+    participant Sweep as "sweep-stuck-webhook-events"
 
-    RZP->>Route: POST + x-razorpay-signature
-    Route->>Verify: HMAC-SHA256(body, secret), timing-safe compare
-    alt invalid signature
-        Verify-->>Route: false (payout.* may retry with RazorpayX secret)
-        Route-->>RZP: 400 + record WEBHOOK WARN
+    RZP->>Route: "POST raw body + x-razorpay-signature"
+    Route->>Sig: "HMAC-SHA256(rawBody) -> current / previous / RazorpayX (payout.* & fund_account.*)"
+    alt "Invalid HMAC"
+        Sig-->>Route: "false"
+        Route-->>RZP: "400 + WEBHOOK WARN SystemEvent"
     end
-    Route->>Route: isDbHealthy? else 503 (gateway retries)
-    Route->>Log: eventId = eventType:entityId — insert WebhookEvent
-    alt duplicate eventId
-        Log-->>Route: isNew=false
-        Route-->>RZP: 200 { duplicate: true }
+    Route->>Log: "isDbHealthy() check -> 503 if DB unreachable"
+    Route->>Log: "Synthesize tamper-proof eventId = eventType:entityId:sha256(rawBody)[0..16]"
+    alt "Already Succeeded or Active In-Flight Claim"
+        Log-->>Route: "isNew = false"
+        Route-->>RZP: "200 { duplicate: true }"
     end
-    Route-->>RZP: 200 (immediately)
-    Route->>Disp: after() callback (async)
-    Disp->>H: switch(eventType) → handler
-    H->>Disp: markWebhookEventProcessed (records error on failure)
+    Route-->>RZP: "200 OK (flushed < 5s)"
+    Route->>Disp: "after() async callback with WebhookClaim(claimedAt)"
+    alt "Container Freezes or Handler Throws / Defers"
+        Sweep->>Log: "reclaimStaleProcessingWebhookEvent (>6m) with new claimedAt"
+        Sweep->>Disp: "Re-drive inside per-event timeout under PG_POOL_MAX=1"
+    end
+    Disp->>Log: "markWebhookEventProcessed fenced on WHERE claimedAt = claim.claimedAt"
 ```
 
-The first stage is **signature verification**. `verifyWebhookSignature` (`app/api/webhooks/utils.ts`) computes `HMAC-SHA256(rawBody, RAZORPAY_WEBHOOK_SECRET)` as hex, validates the incoming signature is exactly 64 hex chars and equal length, and compares with `crypto.timingSafeEqual` so the check cannot be timed. The pattern, condensed:
+### Multi-Secret Verification & Tamper-Proof `eventId` Synthesis
 
-```ts
-const expected = crypto.createHmac("sha256", secret).update(body).digest("hex");
-if (signature.length !== 64) return { isValid: false, body };
-const sigBuf = Buffer.from(signature, "hex");
-const expectedBuf = Buffer.from(expected, "hex");
-if (sigBuf.length !== expectedBuf.length) return { isValid: false, body };
-return { isValid: crypto.timingSafeEqual(sigBuf, expectedBuf), body };
-```
-
-A failed verification is rejected with HTTP 400 and recorded as a `WEBHOOK` warning (repeated failures are a tamper/misconfig signal). For `payout.*` events only, the route re-verifies with a separate `RAZORPAYX_WEBHOOK_SECRET` when the main secret fails, since RazorpayX may sign with its own key. After verification the route runs a lightweight `isDbHealthy` probe and returns 503 if the database is unreachable, so the gateway retries rather than dropping the event.
-
-The second stage is **persistence and dedup**. The route builds a composite `eventId` of the form `eventType:entityId` — pulling the entity id from `payload.{payment|order|refund|dispute|payout}.entity.id`, falling back to `account_id` or a SHA-256 of the body — so a `payment.captured` and a `refund.created` for the same entity never collide on one idempotency key. `logWebhookEvent` then upserts a `WebhookEvent` row keyed on the unique `eventId`; a duplicate returns `isNew=false` and the route answers 200 with `{ duplicate: true }` without processing.
-
-The third stage is **asynchronous dispatch**. The route returns 200 immediately and runs `processRazorpayWebhookEvent` in Next's `after()` callback, which switches on `eventType` to the right handler and, in its `finally`, calls `markWebhookEventProcessed` to stamp success or record the handler error for retry.
-
-The **replay path** exists because the `after()` callback runs _after_ the 200 is sent: if the process crashes mid-callback the `WebhookEvent` row is left `processed=false, error=null` and the gateway, having seen the 200, never retries. The `sweep-stuck-webhook-events` cron (`jobs/cleanup/sweep-stuck-webhook-events.ts`, ~every 10 minutes) finds those rows older than ~6 minutes (but younger than 72 hours), reconstructs an envelope, and re-drives them through the same `processRazorpayWebhookEvent`. Because the handlers are idempotent, the replay either completes the side effects (recovered) or stamps the error (surfaced for review). The same `processed=false, error=null` shape is also produced deliberately by a defer-sentinel handler: a Razorpay refund webhook that arrives **before** its payment is captured is deferred (left unprocessed) rather than failed, so the sweeper re-drives it once the capture lands instead of losing it permanently. To stop an unknown payment from churning forever, the sweeper terminally caps a deferred event once it ages past `giveUpAfterHours` (7 days), stamping it processed with a "gave up: payment never arrived" error (#813).
+1. **Multi-Secret Isolation (`signature.ts`)**: `RAZORPAY_WEBHOOK_SECRET` (`current`) and optional rotation secret `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` (`previous`) are checked first. If neither matches, `RAZORPAYX_WEBHOOK_SECRET` is tested **only** when `isPayoutEventName(rawBody)` confirms `event.startsWith("payout.") || event.startsWith("fund_account.")` — preventing payout credentials from ever forging customer payment events.
+2. **Why `${eventType}:${entityId}:${sha256(rawBody).slice(0, 16)}` Is Mandatory**:
+   - Raw `x-razorpay-event-id` headers are **unsigned** (`x-razorpay-signature` hashes body bytes only), allowing trivial header-mutation replay amplification.
+   - Plain `${eventType}:${entityId}` without a payload hash drops legitimate subsequent updates on the same entity (e.g., consecutive `payout.updated` webhooks when `status_details` changes followed later by bank `utr` assignment on one `pout_...`, or multi-round `payment.dispute.action_required` / `pre_arbitration` updates on one `disp_...`).
+   - Appending `sha256(rawBody).slice(0, 16)` keeps deduplication 100% bound to signature-authenticated bytes while collapsing exact delivery retries and letting genuine state progressions through.
 
 ---
 
-## 2. Idempotency design
+## 2. Multi-Layer Idempotency & `PG_POOL_MAX=1` Concurrency Discipline
 
-The pipeline survives at-least-once delivery, concurrent workers, and cron re-drives because money state is protected at three independent layers, each making a retry a no-op.
+Serverless instances execute with **`PG_POOL_MAX=1`**. Every transaction inside webhook handlers passes the transaction client `tx` explicitly to every downstream helper, ledger posting (`postLedgerTxn`), and earnings CAS mutation — never calling the global `prisma` client inside `$transaction`.
 
-`WebhookEvent.eventId` is `@unique` and is the **first** gate: a redelivered event with the same `eventType:entityId` is caught by `logWebhookEvent`, which returns `isNew=false` and skips processing entirely. (The three-state machine on `processed`/`error` also lets a _failed_ attempt be retried while a successfully-processed one stays skipped, and a >5-minute in-progress row is treated as abandoned and re-eligible.)
+Money state is defended across four independent gates:
 
-`Refund.cascadedAt` is the **second** gate, for the refund side effects specifically. `applyRefundCascade` claims it `null → now()` with a conditional `updateMany` and no-ops if the claim count is zero, so even if the same refund arrives by webhook, by the backstop cron, and by an app call at once, exactly one runs the earnings/leg/wallet/ledger reversal. See [refunds §2](10-refunds.md).
-
-`LedgerTransaction.idempotencyKey` is the **third** gate, at the money-movement layer. Every posting carries a per-flow key (`refund:<refundId>`, `topup-refund:<paymentId>`, `chargeback:<disputeId>`, `invoicepaid:<invoiceId>`), and `postLedgerTxn` returns `created=false` on a duplicate key without writing a second journal entry — so even a handler that runs twice posts money once. The [money model overview §4a](01-money-model-overview.md) explains why keys are per-flow rather than per-request.
-
----
-
-## 3. Event catalog
-
-The table below lists the Razorpay events the dispatcher consumes, grouped by domain, with the handler outcome for each. Events the gateway emits that we do **not** consume are listed afterward.
-
-| Domain  | Event                                                                             | Handler outcome                                                                                                                                                                                                                                                       |
-| ------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| payment | `payment.captured`                                                                | Route by `notes.type`: org top-up → `confirmTopUp`, invoice → mark `PAID`, overage → overage handler, else B2C `handlePaymentSuccess`.                                                                                                                                |
-| payment | `order.paid`                                                                      | Same routing as `payment.captured` but at the order level (no payment id); the org top-up branch defers to `payment.captured`.                                                                                                                                        |
-| payment | `payment.failed`                                                                  | Org top-up → delete pending placeholder; invoice → clear stored order id for retry; else B2C `handlePaymentFailure`.                                                                                                                                                  |
-| refund  | `refund.created`                                                                  | Resolve `payment_id` → `order_id`, then `handleRefundCreated` (status `created`/`pending` → `PENDING`). If the underlying payment is not yet captured, the event is **deferred** (left unprocessed) and re-driven by the stuck-event sweeper rather than lost (#813). |
-| refund  | `refund.processed`                                                                | `handleRefundCreated` with status `processed` → `SUCCEEDED`, runs `applyRefundCascade`. Same before-capture deferral applies.                                                                                                                                         |
-| refund  | `refund.failed`                                                                   | `handleRefundCreated` with forced status `failed` → `FAILED`.                                                                                                                                                                                                         |
-| refund  | `refund.speed_changed`                                                            | **Log-only** — no state change (see below).                                                                                                                                                                                                                           |
-| dispute | `payment.dispute.created`                                                         | `handleDisputeCreated`: create `Dispute`, hold earnings, map `open` → `NEEDS_RESPONSE`.                                                                                                                                                                               |
-| dispute | `payment.dispute.won`                                                             | `handleDisputeUpdated(id, "won", null)` → `WON`, release held earnings.                                                                                                                                                                                               |
-| dispute | `payment.dispute.lost`                                                            | `handleDisputeUpdated(id, "lost", null)` → `LOST`, refund earnings + org chargeback.                                                                                                                                                                                  |
-| dispute | `payment.dispute.closed`                                                          | `handleDisputeUpdated(id, status, null)` — but `closed` mis-maps (see below).                                                                                                                                                                                         |
-| payout  | `payout.processed` / `reversed` / `rejected` / `queued` / `pending` / `cancelled` | `handleRazorpayPayoutWebhook`: org payout reconciler first, else consultant payout path.                                                                                                                                                                              |
-
-The events the gateway emits but the dispatcher does **not** consume — falling through to the dispatcher's `default` ("Unhandled Razorpay event type") — are:
-
-- `refund.speed_changed` is technically consumed but **log-only**: we discard `speed_requested`/`speed_processed` and the fee credit-back. 🟡 Material for support/finance only — see [refunds §3](10-refunds.md).
-- `payout.updated` has no case; intermediate payout updates are dropped and we wait for a terminal `payout.*`. Low impact.
-
-`payment.dispute.under_review` and `payment.dispute.action_required` (#789) do have a dispatch case: both route through `handleDisputeUpdated`, with `mapDisputeStatus` mapping `under_review` to `UNDER_REVIEW` and `action_required` to `NEEDS_RESPONSE`, so neither signal is dropped.
-
-`order.paid` now carries `payload.payment.entity` when Razorpay ships it (#1582 F-P0-01), so `routeCapturedPayment` receives the captured amount and the `pay_*` id off that event too; the org branch still refuses to mark an invoice PAID when the id is absent.
-
-Separately, `mapDisputeStatus` has no `closed` case, so `payment.dispute.closed` (which _is_ dispatched) mis-maps a terminal dispute to `NEEDS_RESPONSE`. 🟡 See [disputes §4, Gap 1](11-disputes.md).
+1. **`WebhookEvent.eventId` (`@unique`) + `WebhookClaim` CAS Fencing**: Prevents concurrent duplicate execution and fences `markWebhookEventProcessed` on `where: { eventId, claimedAt: claim.claimedAt }` so an unfreezing Netlify container whose 5-minute claim expired cannot overwrite a sweeper worker's result.
+2. **`Payment.gatewayPaymentId` (`@unique`) + Single-Writer Capture Rule**: `Payment.paymentStatus = SUCCEEDED` and `Payment.gatewayPaymentId = pay_...` are written exclusively by `handlePaymentSuccess` (invoked across webhook capture, `/api/checkout/verify-signature`, and `/api/checkout/verify?sync=true` via shared `routeCapturedPayment`). Subsequent `refund.*` and `payment.dispute.*` webhooks resolve `pay_... -> Payment` via indexed local lookup without blocking on external REST API calls.
+3. **`Refund.cascadedAt` & In-Place Placeholder Adoption**: Outbound refunds reserve a `pending_<uuid>` row (`Refund.id`) passed in `metadata: { reservationId: Refund.id }`. When `refund.created` / `refund.processed` arrives first, `handleRefundCreated` adopts the `pending_<uuid>` row in place (`refundId = rfnd_...`), and `applyRefundCascade` atomically claims `cascadedAt: null -> now()` via CAS `updateMany`.
+4. **`LedgerTransaction.idempotencyKey` (`@unique`)**: Enforces exact once-only journal postings (`booking:<paymentId>`, `refund:<refundId>`, `chargeback:<disputeId>`, `payout-reversal:<payoutId>`, `invoicepaid:<invoiceId>`).
 
 ---
 
-## 4. Payment status machine
+## 3. Domain Lifecycle Rules & Distributed Edge Cases
 
-`PaymentStatus` (`prisma/schema.prisma`) has four values, and the webhook events drive the transitions between them.
-
-```mermaid
-stateDiagram-v2
-    [*] --> PENDING: order created at checkout
-    PENDING --> SUCCEEDED: payment.captured / order.paid
-    PENDING --> FAILED: payment.failed
-    PENDING --> EXPIRED: checkout TTL elapses (no capture)
-    SUCCEEDED --> [*]
-    FAILED --> [*]
-    EXPIRED --> [*]
-```
-
-A `Payment` is created in `PENDING` when checkout creates the gateway order. A successful capture (`payment.captured` or `order.paid`) flips it to `SUCCEEDED` via `handlePaymentSuccess`; a gateway failure (`payment.failed`) flips it to `FAILED` via `handlePaymentFailure`. `EXPIRED` is not driven by a webhook but by the **checkout TTL**: an order that is never captured before its time-to-live elapses is expired by cleanup rather than by a gateway event. Only a `SUCCEEDED` payment is refundable — `refundPayment` rejects any payment not in `SUCCEEDED`.
+| Domain                           | Events Consumed                                                                                                | Distributed Invariants Enforced                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Checkout Captures & Failures** | `payment.captured`, `order.paid`, `payment.failed`                                                             | `payment.captured` / `order.paid` routes by `notes.type` (`credit_purchase`, `invoice_payment`, `overage_member`, `recording_purchase`, or B2C booking). On `payment.failed`, `handlePaymentFailure` checks `paymentStatus === "SUCCEEDED"` inside its transaction to ignore late failures on already-paid orders; active checkout holds (`expiresAt > now()`) are **preserved** without overwriting customer-facing `Payment.description` and wallet/referral credits remain locked while the buyer retries inside Razorpay Checkout on the same `order_id`. |
+| **Refunds**                      | `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`                                  | Adopts `pending_<uuid>` reservations in place via `notes.reservationId`; returns `DeferSignal` if `refund.*` overtakes `payment.captured` so `sweep-stuck-webhook-events` replays it cleanly once capture commits.                                                                                                                                                                                                                                                                                                                                            |
+| **Disputes & Chargebacks**       | `payment.dispute.created`, `under_review`, `action_required`, `won`, `lost`, `closed`                          | `action_required` (including `pre_arbitration` escalations) transitions `UNDER_REVIEW -> NEEDS_RESPONSE` and refreshes `dueBy`. On `won` / `closed`, `HELD` earnings release **only** when `tx.dispute.count({ where: { paymentId, id: { not: dispute.id }, status: { notIn: ["WON", "LOST", "CHARGE_REFUNDED", "CLOSED", "WARNING_CLOSED"] } } }) === 0`. Out-of-order `created` (before payment exists) and `updated` (before dispute exists) return `DeferSignal`.                                                                                         |
+| **RazorpayX Payouts**            | `payout.initiated`, `updated`, `processed`, `reversed`, `failed`, `rejected`, `queued`, `pending`, `cancelled` | Non-terminal webhooks keep consultant payouts at `PROCESSING`; terminal `COMPLETED` transitions exclude terminal statuses via CAS `WHERE`. `OrganizationPayout` falls back to `reference_id` when `gatewayPayoutId` is null. `markConsultantPayoutReversed` and `markOrgPayoutReversed` settle `COMPLETED -> REVERSED` (inverse journal + `PAID -> READY` earnings + TDS reversal) and pre-settlement `REVERSED` (`BATCHED -> READY` detach without inverse journal) inside **one atomic `$transaction(tx)`**.                                                |
+| **Account Validation (RPD)**     | `fund_account.validation.completed`, `fund_account.validation.failed`                                          | Verifies `PayoutAccount` / `OrganizationPayoutAccount` via CAS `updateMany` when `status === "completed"` and `accountStatus === "valid"` (strictly matched on `fund_account.id`), and transitions `OrganizationPayoutAccount` (`PENDING_VERIFICATION -> FAILED_VERIFICATION`) on failed validations using `razorpayFundAccountId` or `id: referenceId` when `fund_account` is `null`.                                                                                                                                                                        |
 
 ---
 
-## 4a. The gateway payment id, and why a refund used to need a network call
+## 4. State-as-Outbox Post-Capture Side Effects & Auto-Refunds
 
-Razorpay's `Payment.paymentIntent` column holds the **order** id (`order_…`), because that is what checkout creates and what the capture events name. Refund and dispute webhooks, however, identify their subject by the **payment** id (`pay_…`), and until #1353 nothing on our side stored one. The dispatcher therefore had to translate: for every `refund.*` event it called `payments.fetch(payment_id)` purely to read back the `order_id`. When that call failed — a gateway blip, an expired credential, a cold instance timing out — the dispatcher passed the `pay_…` id through unchanged, `handleRefundCreated` looked it up against `paymentIntent`, found nothing, and returned a `DeferSignal`. The event then sat unprocessed while the stuck-event sweeper re-drove it for up to seven days against a payment that had been captured all along.
+Post-capture external network side effects never block the Phase 1 Serializable ledger commit:
 
-`Payment.gatewayPaymentId` closes that. The confirmation pipeline persists the `pay_…` id at capture, in the same Phase 1 update that flips the row to `SUCCEEDED` — ADR 21 already makes that the single writer of the payment's capture truth, and the gateway id is part of that truth, so no second writer is introduced. The column is unique, so two Payment rows can never claim the same gateway capture.
-
-Downstream, `handleRefundCreated` and `handleDisputeCreated` resolve their payment with one `findFirst` whose `OR` accepts **either** id, and the dispatcher now reads our own row first and calls `payments.fetch` only when the database has never seen that capture. The gateway call is a fallback for rows written before this change, not the only path. For disputes the benefit is larger still: a failed lookup used to mean the dispute could not be linked to a payment at all, which raised a `CRITICAL_DISPUTE_UNLINKED` page and left disputed earnings payable until the six-hourly reconcile cron noticed.
-
-## 4b. State-as-outbox for the post-capture legs
-
-Some of what a capture owes the buyer cannot happen inside the confirmation transaction. Creating their Stream chat channel is outbound network work, so it runs after the commit and is deliberately not awaited. That made it invisible when it failed: a crash or a Stream outage in that window left a confirmed, paid booking with no conversation, and the only trace was a Sentry event.
-
-Rather than introduce a queue table, the row that already records the work carries the completion stamp. `Appointment.chatChannelEnsuredAt` is written only once the channel calls have actually returned, which turns "confirmed, paid, and still `NULL`" into an exact query for the work that was lost. `reconcile-orphaned-confirmations` runs that query as its second pass and calls back into the same `ensureChannelsForAppointment` the live path uses. `WebhookEvent.deferCount` is the same idea one layer up: a deferral leaves the row looking exactly like a crash, so counting the deferrals is the only mark that path leaves behind, and it is what the sweeper alerts on. This is the pattern ADR 27 describes in full.
-
-The capture webhook's auto-refunds follow the same pattern since #1853 (bucket B of #1846). Five Phase-2 branches refund a capture that funds no booking: a capture after the hold was released, an amount mismatch, a capture after the booking was cancelled, a double-booking loser, and a GiST-overlap loser. Each used to call the refund door exactly once after commit, and before #1853 the double-booking and capture-after-cancel branches wrote no marker at all, so a gateway 5xx or a killed function left the buyer charged with no booking and nothing to move the money back. Phase 1 now stamps `Auto-refund pending: <reason>. Booking NOT confirmed.` on `Payment.description` in the same transaction that decides the refund (`lib/payments/webhooks/auto-refund-marker.ts`), which makes a SUCCEEDED payment carrying that prefix an exact work queue.
-
-The `retry-auto-refunds` sweep (`scripts/payments/retry-auto-refunds.ts`) drains that queue on the five-minute ticker every 15 minutes, ten payments per run with a 20-second budget, and an hourly GitHub Actions run at minute 37 is the backstop; its HTTP twin is `/api/cleanup/retry-auto-refunds`, and it is listed in `FINANCIAL_JOB_NAMES`. The sweep leaves a payment alone until fifteen minutes after its last update so the webhook's own attempt can finish, and it then skips a payment with a PENDING refund (reconcile-refunds owns it) or a live dispute, refunds through `refundBookingPayment`, releases a double-booking loser's tentative hold once the money is back, and rewrites the marker to `Auto-refunded:`. After three failed gateway refunds the marker becomes `Auto-refund stuck:`, one SystemError pages an operator, and the route answers 207 for that run, so an operator refunds the payment by hand instead of the sweep retrying it forever.
-
-## 5. Monitoring and archival
-
-Three concerns keep the inbound pipeline observable and bounded: replay of crashed events, archival of old rows, and alerting on verification failures.
-
-The **stuck-event sweeper** (`sweep-stuck-webhook-events`, §1) is the primary recovery mechanism — it re-drives `processed=false, error=null` events that an `after()` crash left behind, which would otherwise become the highest-blast-radius zombies (PAID money with an ISSUED invoice, uncredited top-ups, unpersisted chargebacks). The sweeper also drains the deliberate before-capture deferrals (a `refund.created`/`refund.processed` whose payment is not yet captured), giving each one up to a 7-day `giveUpAfterHours` window before it is terminally capped so an unknown payment cannot churn indefinitely (#813). Its sister, the **archive cron** (`archive-webhook-events`, weekly), deletes processed events older than 30 days and failed/errored events older than 90 days, keeping the table lean while retaining failures long enough to debug. **Alerting** rides on the row state: a handler error is stamped on `WebhookEvent.error` (surfaced by the sweeper's `stillFailing` count), and a signature-verification failure is recorded as a `WEBHOOK` warning via `recordSystemEvent`, since repeated HMAC failures indicate tampering or a secret misconfiguration. Since #1356 a deferral is alertable too. Each time a handler answers with a `DeferSignal` the dispatcher increments `WebhookEvent.deferCount`, and the sweeper raises one Sentry warning per run naming every event that has either deferred five times or been unprocessed for more than an hour. That closes the gap the seven-day give-up cap left: the cap is the point at which we abandon an event, not a point at which anybody is told about it. The org-relevant operator surfaces are absorbed from `docs/payments/webhooks/01-monitoring.md`.
+- **Stream Channel Provisioning (`Appointment.chatChannelEnsuredAt`)**: Written only after Stream channel creation succeeds post-commit; `reconcile-orphaned-confirmations` heals confirmed paid appointments where `chatChannelEnsuredAt IS NULL`.
+- **Automatic Unfulfilled Capture Refunds (`Payment.description` Marker)**: Captures arriving on released holds, GiST overlap losers, cancelled bookings, or amount mismatches stamp `Auto-refund pending: <reason>. Booking NOT confirmed.` inside Phase 1 and drain idempotently via `retry-auto-refunds`.
 
 ---
 
-### Related docs
+## 5. Sweeping, Alerting & Multi-Table Retention
 
-- [Outbound webhooks](../40-compliance-and-data/04-outbound-webhooks.md) — the org-facing webhook _product_ (us → external), the opposite direction from this doc.
-- [Refunds](10-refunds.md) — the `refund.*` events and the cascade they trigger.
-- [Disputes](11-disputes.md) — the `payment.dispute.*` events and the three dispatch/mapping gaps.
-- [Ledger & postings](03-ledger-and-postings.md) — `postLedgerTxn` idempotency keys.
-- B2C / gateway-generic details: [`docs/payments/webhooks/`](../../payments/webhooks/README.md).
-- Ground truth: `app/api/webhooks/razorpay/route.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `app/api/webhooks/utils.ts`, `jobs/cleanup/sweep-stuck-webhook-events.ts`, `jobs/cleanup/archive-webhook-events.ts`.
+1. **`sweep-stuck-webhook-events` (`scripts/cleanup/sweep-stuck-webhook-events.ts`)**: Scans stale (`>6m`) unprocessed, failed, or deferred rows across `"razorpay"`, `"stream"`, and `"novu"` under `withCronLock("sweep-stuck-webhook-events", { failMode: "closed" })`, enforcing per-event timeouts (`Promise.race`), single-event batch Sentry alerts (`deferCount >= 5` or age `> 1h`), and a 7-day (`168h`) `gave up:` cap.
+2. **`archive-webhook-events` (`scripts/cleanup/archive-webhook-events.ts`)**: Runs weekly (Sunday 00:00 UTC) to prune processed `WebhookEvent` rows (>30d), failed `WebhookEvent` rows (**90 days**), aged `EmailEvent` records (**90 days**), and terminal `OutboundWebhookDelivery` records (>30d).
 
-## The webhook is not the only path, but it is the only shape (ADR 21)
+---
 
-Three paths can observe that a Razorpay payment succeeded: this webhook, the
-client's return from the checkout modal (`/api/checkout/verify-signature`), and
-the on-demand sync (`/api/checkout/verify?sync=true`). All three now call the
-same `routeCapturedPayment` in `app/api/webhooks/razorpay-dispatch.ts`, which
-selects a handler from `notes.type` exactly as the webhook switch does.
+## Deprecated & Superseded Approaches
 
-None of them writes `Payment.paymentStatus` directly, and that restriction is
-the whole point rather than a stylistic preference. `handlePaymentSuccess`
-returns early when it finds a payment already `SUCCEEDED`, on the reasonable
-assumption that the status implies the pipeline ran. The moment a second writer
-can set that status without running the pipeline, the guard stops meaning "this
-work is done" and starts meaning "this work will never be done" — and the
-booking, the earnings, the `booking:<paymentId>` journal entry and the
-capture-amount parity check are all skipped for a payment that was really
-charged. ADR 21 records the full reasoning.
-
-The practical consequence for a non-webhook caller is that it must fetch the
-payment from Razorpay before routing. A signature proves the `(order_id,
-payment_id)` pair is genuine but carries neither the captured amount nor the
-notes, and both are needed. When that fetch fails, the caller reports
-`pendingConfirmation` and leaves the work to the webhook; it must never fall
-back to writing the status, because that reintroduces the defect.
+- **Direct `Payment.paymentStatus = SUCCEEDED` Writes in `/api/checkout/verify-signature`**: Superseded by routing all confirmation paths through `routeCapturedPayment` -> `handlePaymentSuccess`, eliminating skipped appointments, missing earnings, and unposted ledger entries when client signature verification raced ahead of webhooks.
+- **Unconditional Slot Destruction & Wallet Credit Restoration on `payment.failed`**: Superseded by preserving unexpired holds (`expiresAt > now()`) because Razorpay Checkout fires `payment.failed` on intermediate failed card/UPI attempts within one `order_id`.
+- **Multi-Query Non-Atomic Payout Reversals & Unconditional `COMPLETED` Overwrites**: Superseded by single-transaction `markConsultantPayoutReversed(tx)` / `markOrgPayoutReversed(tx)` and CAS exclusion of `FAILED` rows during `payout.processed`.

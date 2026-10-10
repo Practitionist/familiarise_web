@@ -953,14 +953,15 @@ export async function scrubUser(
       // Fan webhook events so integrators see the deprovisioning.
       // The data payload uses pseudonymousId — never the raw userId or
       // email — to keep with the erasure semantics.
+      const orgMembership = memberships.find((m) => m.organizationId === orgId);
       await dispatchWebhookEvent({
         prisma: tx,
         organizationId: orgId,
         eventType: "member.removed",
         payload: {
-          membershipId: memberships
-            .filter((m) => m.organizationId === orgId)
-            .map((m) => m.id)[0],
+          membershipId: orgMembership?.id,
+          role: orgMembership?.role,
+          previousStatus: orgMembership?.status,
           pseudonymousId,
           source: "dpdp_erasure",
           erasedAt: now.toISOString(),

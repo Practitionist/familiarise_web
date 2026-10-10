@@ -64,6 +64,7 @@ jest.mock("../../lib/enterprise/system-events", () => {
   return {
     recordSystemError,
     recordSystemErrorSafe: recordSystemError,
+    recordSystemEventSafe: recordSystemError,
   };
 });
 

@@ -1,47 +1,93 @@
 /**
- * B5 stuck-webhook sweeper (#785, task #10).
- *
- * The webhook routes return HTTP 200 synchronously BEFORE the `after()` callback
- * runs the money side-effects. If the process crashes mid-callback, the
- * WebhookEvent row is left `processed=false, error=null` and is NEVER re-driven —
- * Razorpay stops retrying once it sees the 200, and the 5-min staleness
- * window only fires on a redelivery that will never come. The result is the
- * highest-blast-radius zombie: PAID money with an ISSUED invoice, frozen ACCRUED
- * overages, uncredited wallet top-ups, frozen tentative appointments,
- * unpersisted chargebacks.
- *
- * This sweeper actively re-dispatches those stuck events through the SAME handler
- * routing the live route uses (processRazorpayWebhookEvent). The handlers are
- * idempotent (ledger idempotency keys + status guards), so a replay is safe:
- * it either completes the side-effects (recovered) or stamps the error
- * (surfaced for review) — either way the row is no longer stuck.
+ * Background recovery sweeper that re-drives inbound webhook events left unprocessed
+ * or transiently failed across Razorpay, Stream, and Novu handlers.
  */
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { processNovuWebhookPayload } from "@/lib/webhooks/novu-handler";
 import { processRazorpayWebhookEvent } from "@/app/api/webhooks/razorpay-dispatch";
 import { processStreamEvent } from "@/lib/stream/webhook-dispatch";
 import { reclaimStaleProcessingWebhookEvent } from "@/lib/stream/webhook-receipt";
-import type { RazorpayWebhookEnvelope } from "@/schemas/webhooks/razorpay";
+import { novuWebhookPayloadSchema } from "@/schemas/webhooks/novu";
+import { razorpayWebhookEnvelopeSchema } from "@/schemas/webhooks/razorpay";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { TERMINAL_ERROR_PREFIXES } from "@/lib/webhooks/event-log";
+import {
+  isTerminalWebhookError,
+  permanentFailure,
+  TERMINAL_ERROR_PREFIXES,
+  type WebhookClaim,
+} from "@/lib/webhooks/event-log";
 import { reportSentryMessage } from "@/lib/observability/report";
 
-/**
- * The terminal marker written when a deferred event ages past the give-up cap.
- *
- * The prefix comes from TERMINAL_ERROR_PREFIXES so the writer and the selector
- * below cannot drift. They used to be two string literals kept in sync by a
- * comment asking the next editor to remember.
- */
-/** #1356 6.2 — deferrals past this count are no longer plausible arrival races. */
 const DEFER_ALERT_THRESHOLD = 5;
-/** #1356 6.2 — an event unprocessed this long has missed every ordinary retry. */
 const ALERT_AGE_HOURS = 1;
+const PER_EVENT_TIMEOUT_MS = 15_000;
+
+const streamEventPayloadSchema = z
+  .object({
+    call_cid: z.string().optional(),
+  })
+  .passthrough();
+
+interface StuckWebhookRow {
+  eventId: string;
+  eventType: string;
+  provider: string;
+  payload: unknown;
+  signature?: string | null;
+  receivedAt: Date;
+  claimedAt: Date | null;
+  processed: boolean;
+  deferCount: number;
+}
+
+interface SweepCounters {
+  recovered: number;
+  stillFailing: number;
+  deferred: number;
+  gaveUp: number;
+  errors: string[];
+}
+
+function toErrorMessage(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  return JSON.stringify(error) ?? "Unknown error";
+}
 
 function giveUpReason(provider: string): string {
-  return provider === "stream"
-    ? "gave up: Stream event never became processable"
-    : "gave up: payment never arrived";
+  if (provider === "stream") {
+    return "gave up: Stream event never became processable";
+  }
+  if (provider === "novu") {
+    return "gave up: Novu event never became processable";
+  }
+  return "gave up: payment never arrived";
+}
+
+async function withEventTimeout<T>(
+  eventId: string,
+  task: () => Promise<T>,
+  timeoutMs = PER_EVENT_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      task(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `Handler timed out after ${timeoutMs}ms for event ${eventId}`,
+            ),
+          );
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export interface SweepResult {
@@ -49,38 +95,21 @@ export interface SweepResult {
   scanned: number;
   recovered: number;
   stillFailing: number;
-  // #813 — re-driven but still DEFERRED (row left processed=false/error=null by
-  // a defer-sentinel handler, e.g. refund-before-capture): will retry next sweep.
   deferred: number;
-  // #813 — deferred events that aged past giveUpAfterHours and were terminally
-  // capped (processed=true, error='gave up: …' — see giveUpReason).
   gaveUp: number;
   errors: string[];
 }
 
 export interface SweepOptions {
-  /** Skip events newer than this — avoids racing an in-flight after() callback. */
+  /** Skip events newer than this window to avoid racing active webhook requests. */
   staleMinutes?: number;
-  /**
-   * #812: No longer a hard lower bound on the scan — kept only as the threshold
-   * past which we WARN that a stuck event has aged out of the old 72h window.
-   * Sweeping is still safe at any age (idempotency keys + status guards), and
-   * the archive retains failed rows 90d, so a lower floor here orphaned events
-   * stuck between 72h and 90d (no actor). Defaults to the old 72h.
-   */
+  /** Warn threshold in hours for long-standing stuck webhook rows. */
   maxAgeHours?: number;
-  /**
-   * #813 — terminal cap for events a defer-sentinel handler keeps deferring (the
-   * awaited row never arrives, e.g. a refund whose payment was never captured).
-   * Past this age the sweeper force-marks them processed so they stop churning.
-   * Defaults to 168h (7 days).
-   */
+  /** Terminal age cap in hours after which deferred events stop retrying. */
   giveUpAfterHours?: number;
   limit?: number;
 }
 
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function sweepStuckWebhookEvents(
   opts: SweepOptions = {},
 ): Promise<SweepResult> {
@@ -89,6 +118,290 @@ export async function sweepStuckWebhookEvents(
     { failMode: "closed" },
     () => sweepStuckWebhookEventsUnlocked(opts),
   );
+}
+
+function emitBatchWarningsIfNeeded(
+  stuck: StuckWebhookRow[],
+  warnOlderThan: Date,
+  warnAgeHours: number,
+  alertOlderThan: Date,
+  alertState: { warnedAged: boolean; alertedStalling: boolean },
+): void {
+  if (!alertState.warnedAged) {
+    const aged = stuck.filter((ev) => ev.receivedAt < warnOlderThan);
+    if (aged.length > 0) {
+      alertState.warnedAged = true;
+      console.warn(
+        `⚠️  Sweeping ${aged.length} stuck webhook event(s) older than ${warnAgeHours}h ` +
+          `(oldest: ${aged[0].eventId} @ ${aged[0].receivedAt.toISOString()})`,
+      );
+    }
+  }
+
+  if (!alertState.alertedStalling) {
+    const stalling = stuck.filter(
+      (ev) =>
+        !ev.processed &&
+        (ev.deferCount >= DEFER_ALERT_THRESHOLD ||
+          ev.receivedAt < alertOlderThan),
+    );
+    if (stalling.length > 0) {
+      alertState.alertedStalling = true;
+      Sentry.captureMessage(
+        `sweep-stuck-webhook-events: ${stalling.length} webhook event(s) still unprocessed ` +
+          `(deferCount >= ${DEFER_ALERT_THRESHOLD} or older than ${ALERT_AGE_HOURS}h)`,
+        {
+          level: "warning",
+          tags: { subsystem: "payments", job: "sweep-stuck-webhook-events" },
+          contexts: {
+            stuckWebhooks: {
+              count: stalling.length,
+              events: stalling.slice(0, 20).map((ev) => ({
+                eventId: ev.eventId,
+                provider: ev.provider,
+                eventType: ev.eventType,
+                deferCount: ev.deferCount,
+                receivedAt: ev.receivedAt.toISOString(),
+              })),
+            },
+          },
+        },
+      );
+    }
+  }
+}
+
+async function dispatchClaimedStuckEvent(
+  ev: StuckWebhookRow,
+  claim: WebhookClaim,
+): Promise<string | null> {
+  if (ev.provider === "novu") {
+    const parsedNovu = novuWebhookPayloadSchema.safeParse(ev.payload);
+    if (!parsedNovu.success) {
+      return "invalid Novu webhook payload";
+    }
+    await withEventTimeout(ev.eventId, () =>
+      processNovuWebhookPayload(parsedNovu.data, ev.eventId),
+    );
+    const rotatedClaimedAt = new Date();
+    await prisma.webhookEvent.updateMany({
+      where: {
+        eventId: ev.eventId,
+        processed: false,
+        claimedAt: claim.claimedAt,
+      },
+      data: {
+        processed: true,
+        processedAt: rotatedClaimedAt,
+        claimedAt: rotatedClaimedAt,
+        error: null,
+      },
+    });
+    return null;
+  }
+
+  if (ev.provider === "stream") {
+    const parsedStream = streamEventPayloadSchema.safeParse(ev.payload);
+    const callCid = parsedStream.success
+      ? parsedStream.data.call_cid
+      : undefined;
+    await withEventTimeout(ev.eventId, () =>
+      processStreamEvent(
+        ev.payload,
+        ev.eventType,
+        ev.eventId,
+        ev.signature ?? undefined,
+        { call_cid: callCid },
+        { claimAlreadyHeld: true, claim },
+      ),
+    );
+    return null;
+  }
+
+  const payloadKeys =
+    typeof ev.payload === "object" &&
+    ev.payload !== null &&
+    !Array.isArray(ev.payload)
+      ? Object.keys(ev.payload)
+      : [];
+  const parsedEnvelope = razorpayWebhookEnvelopeSchema.safeParse({
+    entity: "event",
+    account_id: "swept",
+    event: ev.eventType,
+    contains: payloadKeys,
+    created_at: Math.floor(ev.receivedAt.getTime() / 1000),
+    payload: ev.payload,
+  });
+  if (!parsedEnvelope.success) {
+    return "invalid Razorpay webhook payload";
+  }
+
+  await withEventTimeout(ev.eventId, () =>
+    processRazorpayWebhookEvent(
+      parsedEnvelope.data,
+      ev.eventType,
+      ev.eventId,
+      claim,
+    ),
+  );
+  return null;
+}
+
+async function markWebhookEventFailed(
+  ev: StuckWebhookRow,
+  claim: WebhookClaim,
+  msg: string,
+): Promise<void> {
+  const rotatedClaimedAt = new Date();
+  await prisma.webhookEvent
+    .updateMany({
+      where: {
+        eventId: ev.eventId,
+        processed: false,
+        claimedAt: claim.claimedAt,
+      },
+      data: {
+        processed: false,
+        processedAt: null,
+        claimedAt: rotatedClaimedAt,
+        error: `sweep-failed: ${msg}`,
+        ...(ev.provider !== "razorpay" ? { deferCount: { increment: 1 } } : {}),
+      },
+    })
+    .catch(() => {});
+}
+
+async function settleDispatchedEventOutcome(
+  ev: StuckWebhookRow,
+  claim: WebhookClaim,
+  giveUpOlderThan: Date,
+  giveUpAfterHours: number,
+  counts: SweepCounters,
+): Promise<void> {
+  const after = await prisma.webhookEvent.findUnique({
+    where: { eventId: ev.eventId },
+    select: { error: true, processed: true },
+  });
+
+  if (after?.error !== null && after?.error !== undefined) {
+    if (ev.provider !== "razorpay" && !isTerminalWebhookError(after.error)) {
+      await prisma.webhookEvent
+        .updateMany({
+          where: {
+            eventId: ev.eventId,
+            processed: false,
+          },
+          data: { deferCount: { increment: 1 } },
+        })
+        .catch(() => {});
+    }
+    counts.stillFailing++;
+    counts.errors.push(`${ev.eventId}: ${after.error}`);
+    return;
+  }
+
+  if (after && !after.processed) {
+    if (ev.receivedAt < giveUpOlderThan) {
+      const rotatedClaimedAt = new Date();
+      await prisma.webhookEvent
+        .updateMany({
+          where: {
+            eventId: ev.eventId,
+            processed: false,
+            claimedAt: claim.claimedAt,
+          },
+          data: {
+            processed: false,
+            processedAt: null,
+            claimedAt: rotatedClaimedAt,
+            error: giveUpReason(ev.provider),
+          },
+        })
+        .catch(() => {});
+      counts.gaveUp++;
+      counts.errors.push(`${ev.eventId}: ${giveUpReason(ev.provider)}`);
+      console.warn(
+        `🛑 Gave up on stuck webhook ${ev.eventId} (deferred since ${ev.receivedAt.toISOString()}, past ${giveUpAfterHours}h cap)`,
+      );
+      return;
+    }
+
+    if (ev.provider !== "razorpay") {
+      await prisma.webhookEvent
+        .updateMany({
+          where: {
+            eventId: ev.eventId,
+            processed: false,
+            claimedAt: claim.claimedAt,
+          },
+          data: { deferCount: { increment: 1 } },
+        })
+        .catch(() => {});
+    }
+
+    counts.deferred++;
+    console.log(`⏳ Stuck webhook ${ev.eventId} still deferred — will retry`);
+    return;
+  }
+
+  counts.recovered++;
+  console.log(`✅ Re-drove stuck webhook ${ev.eventId}`);
+}
+
+async function processOneStuckEvent(
+  ev: StuckWebhookRow,
+  giveUpOlderThan: Date,
+  giveUpAfterHours: number,
+  counts: SweepCounters,
+): Promise<boolean> {
+  const { reclaimed, claim } = await reclaimStaleProcessingWebhookEvent(
+    ev.eventId,
+    ev.claimedAt,
+  );
+  if (!reclaimed) {
+    console.log(
+      `⏭️ Skipping ${ev.eventId} — claimed by another driver since selection`,
+    );
+    return false;
+  }
+
+  try {
+    const invalidReason = await dispatchClaimedStuckEvent(ev, claim);
+    if (invalidReason !== null) {
+      const rotatedClaimedAt = new Date();
+      await prisma.webhookEvent.updateMany({
+        where: {
+          eventId: ev.eventId,
+          processed: false,
+          claimedAt: claim.claimedAt,
+        },
+        data: {
+          processed: false,
+          processedAt: null,
+          claimedAt: rotatedClaimedAt,
+          error: permanentFailure(invalidReason),
+        },
+      });
+      counts.stillFailing++;
+      counts.errors.push(`${ev.eventId}: ${invalidReason}`);
+      return true;
+    }
+
+    await settleDispatchedEventOutcome(
+      ev,
+      claim,
+      giveUpOlderThan,
+      giveUpAfterHours,
+      counts,
+    );
+  } catch (e) {
+    counts.stillFailing++;
+    const msg = toErrorMessage(e);
+    counts.errors.push(`${ev.eventId}: ${msg}`);
+    await markWebhookEventFailed(ev, claim, msg);
+  }
+
+  return true;
 }
 
 async function sweepStuckWebhookEventsUnlocked(
@@ -104,19 +417,20 @@ async function sweepStuckWebhookEventsUnlocked(
   const alertOlderThan = new Date(startMs - ALERT_AGE_HOURS * 3_600_000);
   const giveUpOlderThan = new Date(startMs - giveUpAfterHours * 3_600_000);
 
-  const errors: string[] = [];
+  const counts: SweepCounters = {
+    recovered: 0,
+    stillFailing: 0,
+    deferred: 0,
+    gaveUp: 0,
+    errors: [],
+  };
+  const alertState = { warnedAged: false, alertedStalling: false };
   let scanned = 0;
-  let recovered = 0;
-  let stillFailing = 0;
-  let deferred = 0;
-  let gaveUp = 0;
-  let warnedAged = false;
-  let alertedStalling = false;
 
   while (Date.now() - startMs < 15_000) {
     const stuck = await prisma.webhookEvent.findMany({
       where: {
-        provider: { in: ["razorpay", "stream"] },
+        provider: { in: ["razorpay", "stream", "novu"] },
         receivedAt: { lt: staleBefore },
         AND: [
           {
@@ -144,167 +458,40 @@ async function sweepStuckWebhookEventsUnlocked(
     if (stuck.length === 0) break;
     scanned += stuck.length;
 
-    if (!warnedAged) {
-      const aged = stuck.filter((ev) => ev.receivedAt < warnOlderThan);
-      if (aged.length > 0) {
-        warnedAged = true;
-        console.warn(
-          `⚠️  Sweeping ${aged.length} stuck webhook event(s) older than ${warnAgeHours}h ` +
-            `(oldest: ${aged[0].eventId} @ ${aged[0].receivedAt.toISOString()}) — ` +
-            `these were orphaned by the removed lower-age floor.`,
-        );
-      }
-    }
-
-    if (!alertedStalling) {
-      const stalling = stuck.filter(
-        (ev) =>
-          !ev.processed &&
-          (ev.deferCount >= DEFER_ALERT_THRESHOLD ||
-            ev.receivedAt < alertOlderThan),
-      );
-      if (stalling.length > 0) {
-        alertedStalling = true;
-        Sentry.captureMessage(
-          `sweep-stuck-webhook-events: ${stalling.length} webhook event(s) still unprocessed ` +
-            `(deferCount >= ${DEFER_ALERT_THRESHOLD} or older than ${ALERT_AGE_HOURS}h)`,
-          {
-            level: "warning",
-            tags: { subsystem: "payments", job: "sweep-stuck-webhook-events" },
-            contexts: {
-              stuckWebhooks: {
-                count: stalling.length,
-                events: stalling.slice(0, 20).map((ev) => ({
-                  eventId: ev.eventId,
-                  provider: ev.provider,
-                  eventType: ev.eventType,
-                  deferCount: ev.deferCount,
-                  receivedAt: ev.receivedAt.toISOString(),
-                })),
-              },
-            },
-          },
-        );
-      }
-    }
+    emitBatchWarningsIfNeeded(
+      stuck,
+      warnOlderThan,
+      warnAgeHours,
+      alertOlderThan,
+      alertState,
+    );
 
     let passProgress = 0;
-
     for (const ev of stuck) {
-      const { reclaimed, claim } = await reclaimStaleProcessingWebhookEvent(
-        ev.eventId,
-        ev.claimedAt,
+      const claimed = await processOneStuckEvent(
+        ev,
+        giveUpOlderThan,
+        giveUpAfterHours,
+        counts,
       );
-      if (!reclaimed) {
-        console.log(
-          `⏭️ Skipping ${ev.eventId} — claimed by another driver since selection`,
-        );
-        continue;
-      }
-      passProgress++;
-
-      const payloadKeys = Object.keys(
-        (ev.payload ?? {}) as Record<string, unknown>,
-      );
-      const envelope = {
-        entity: "event",
-        account_id: "swept",
-        event: ev.eventType,
-        contains: payloadKeys,
-        created_at: Math.floor(ev.receivedAt.getTime() / 1000),
-        payload: ev.payload,
-      } as unknown as RazorpayWebhookEnvelope;
-
-      try {
-        if (ev.provider === "stream") {
-          const streamEvent = ev.payload as { call_cid?: string } | null;
-          await processStreamEvent(
-            ev.payload,
-            ev.eventType,
-            ev.eventId,
-            ev.signature ?? undefined,
-            { call_cid: streamEvent?.call_cid },
-            { claimAlreadyHeld: true, claim },
-          );
-        } else {
-          // processRazorpayWebhookEvent catches handler errors and marks the row
-          // processed (stamping error on failure) in its finally — so this both
-          // re-runs the side-effects AND clears the stuck flag.
-          await processRazorpayWebhookEvent(
-            envelope,
-            ev.eventType,
-            ev.eventId,
-            claim,
-          );
-        }
-        const after = await prisma.webhookEvent.findUnique({
-          where: { eventId: ev.eventId },
-          select: { error: true, processed: true },
-        });
-        if (after?.error != null) {
-          stillFailing++;
-          errors.push(`${ev.eventId}: ${after.error}`);
-        } else if (after && !after.processed) {
-          // #813 — still the defer signature (processed=false/error=null): a
-          // defer-sentinel handler left it for the next sweep. Terminally cap once
-          // it ages past giveUpAfterHours so an unknown payment can't churn forever.
-          if (ev.receivedAt < giveUpOlderThan) {
-            await prisma.webhookEvent
-              .update({
-                where: { eventId: ev.eventId },
-                data: {
-                  processed: true,
-                  // Provider-specific: this sweep now covers Stream as well as
-                  // Razorpay, and stamping a Stream session event "payment never
-                  // arrived" sends whoever reads the row looking for a payment
-                  // that was never involved.
-                  error: giveUpReason(ev.provider),
-                },
-              })
-              .catch(() => {});
-            gaveUp++;
-            errors.push(`${ev.eventId}: ${giveUpReason(ev.provider)}`);
-            console.warn(
-              `🛑 Gave up on stuck webhook ${ev.eventId} (deferred since ${ev.receivedAt.toISOString()}, past ${giveUpAfterHours}h cap)`,
-            );
-          } else {
-            deferred++;
-            console.log(
-              `⏳ Stuck webhook ${ev.eventId} still deferred — will retry`,
-            );
-          }
-        } else {
-          recovered++;
-          console.log(`✅ Re-drove stuck webhook ${ev.eventId}`);
-        }
-      } catch (e) {
-        stillFailing++;
-        const msg = e instanceof Error ? e.message : String(e);
-        errors.push(`${ev.eventId}: ${msg}`);
-        // The dispatch normally marks the row, but guard so a throw here can't
-        // leave it stuck to be re-swept forever.
-        await prisma.webhookEvent
-          .update({
-            where: { eventId: ev.eventId },
-            data: { processed: true, error: `sweep-failed: ${msg}` },
-          })
-          .catch(() => {});
-      }
+      if (claimed) passProgress++;
     }
 
     if (stuck.length < BATCH_SIZE || passProgress === 0) break;
   }
 
-  // #1756 — one page per run: the route's 207 and the job log reach no one.
-  if (stillFailing > 0) {
+  if (counts.stillFailing > 0) {
     reportSentryMessage(
-      `sweep-stuck-webhook-events: ${stillFailing} re-driven webhook event(s) still failing`,
+      `sweep-stuck-webhook-events: ${counts.stillFailing} re-driven webhook event(s) still failing`,
       {
         subsystem: "jobs",
         op: "sweep-stuck-webhook-events",
         level: "error",
         expected: false,
-        extra: { stillFailing, errors: errors.slice(0, 20) },
+        extra: {
+          stillFailing: counts.stillFailing,
+          errors: counts.errors.slice(0, 20),
+        },
       },
     );
   }
@@ -312,14 +499,10 @@ async function sweepStuckWebhookEventsUnlocked(
   return {
     success: true,
     scanned,
-    recovered,
-    stillFailing,
-    deferred,
-    gaveUp,
-    errors,
+    recovered: counts.recovered,
+    stillFailing: counts.stillFailing,
+    deferred: counts.deferred,
+    gaveUp: counts.gaveUp,
+    errors: counts.errors,
   };
-}
-
-export async function disconnectDatabase(): Promise<void> {
-  await prisma.$disconnect();
 }

@@ -222,6 +222,21 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
           // A licence fee is billed once, so its GST is booked here and nowhere else.
           await postInvoiceIssuedJournal(tx, invoice.id);
 
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId: sub.contract.organization.id,
+            eventType: "invoice.issued",
+            payload: {
+              invoiceId: invoice.id,
+              invoiceNumber,
+              totalPaise: gst.totalPaise,
+              displayCurrency: Currency.INR,
+              dueDate: dueDate.toISOString(),
+              purchaseOrderId: null,
+              contractId: sub.contract.id,
+            },
+          });
+
           return {
             claimed: true as const,
             invoiceId: invoice.id,
@@ -236,9 +251,6 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
 
       if (result.claimed) {
         generated++;
-        // #438 — email the issued invoice (bell + billingEmail channel). No
-        // request in a cron, so build the origin from getAppUrl(). Fire-and-
-        // forget, mirroring notifyOrgLicenseRenewalUpcoming below.
         const origin = getAppUrl();
         const orgId = sub.contract.organization.id;
         await notifyOrgInvoiceIssued(orgId, {
@@ -251,25 +263,6 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
           pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
         }).catch((err) =>
           console.error("[cron] notifyOrgInvoiceIssued failed:", err),
-        );
-        // E2E-audit P1 fix — cron-issued invoices never emitted
-        // `invoice.issued`, so integrators (HRIS/ERP) only ever saw
-        // manually-created invoices. Same payload shape as the manual route.
-        await dispatchWebhookEvent({
-          prisma,
-          organizationId: orgId,
-          eventType: "invoice.issued",
-          payload: {
-            invoiceId: result.invoiceId,
-            invoiceNumber: result.invoiceNumber,
-            totalPaise: result.totalPaise,
-            displayCurrency: Currency.INR,
-            dueDate: dueDate.toISOString(),
-            purchaseOrderId: null,
-            contractId: sub.contract.id,
-          },
-        }).catch((err) =>
-          console.error("[cron] invoice.issued webhook failed:", err),
         );
       } else {
         console.log(

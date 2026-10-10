@@ -110,7 +110,7 @@ Owns the support lifecycle, human/bot transcript cursor, speakable `FAM-<YYYY>-<
 
 ### Live Sidecar Verification (`scripts/ci/check-db-sidecars.ts`)
 
-Because standalone `prisma db push` does not apply `CHECK` constraints, triggers, or partial unique indexes, `npm run db:sidecars` applies `prisma/sql/*.sql` and [`scripts/ci/check-db-sidecars.ts`](../../scripts/ci/check-db-sidecars.ts) parses `prisma/sql` dynamically to assert all **100 live sidecar objects** (**72 constraints**, **20 indexes**, **8 triggers**) across `pg_constraint`, `pg_indexes`, and `pg_trigger` in schema `public`. Check drift read-only via `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`.
+Because standalone `prisma db push` does not apply `CHECK` constraints, triggers, or partial unique indexes, `npm run db:sidecars` applies `prisma/sql/*.sql` and [`scripts/ci/check-db-sidecars.ts`](../../scripts/ci/check-db-sidecars.ts) parses `prisma/sql` dynamically to assert all **104 live sidecar objects** (**74 constraints**, **22 indexes**, **8 triggers**) across `pg_constraint`, `pg_indexes`, and `pg_trigger` in schema `public`. Check drift read-only via `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`.
 
 ---
 
@@ -129,4 +129,4 @@ Because standalone `prisma db push` does not apply `CHECK` constraints, triggers
 - **Unbounded legacy CSAT events & dual-parent `SupportCaseEvent` rows**:
   - Blocked at commit by `"support_case_event_legacy_csat_key"` (`WHERE "kind" = 'CSAT_RATED'`) and `"support_case_event_target_xor"`.
 - **Standalone `npm run db:push:schema` without `db:sidecars`**:
-  - Always chain `db:sidecars` and verify all `100` live sidecar objects (`72` constraints, `20` indexes, `8` triggers) via `scripts/ci/check-db-sidecars.ts`.
+  - Always chain `db:sidecars` and verify all `104` live sidecar objects (`74` constraints, `22` indexes, `8` triggers) via `scripts/ci/check-db-sidecars.ts`.
