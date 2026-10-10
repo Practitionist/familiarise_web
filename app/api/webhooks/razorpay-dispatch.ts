@@ -40,7 +40,10 @@ import {
   type RazorpayWebhookEnvelope,
 } from "@/schemas/webhooks/razorpay";
 import { handleFundAccountValidationWebhook } from "@/lib/payments/payouts/reverse-penny-drop";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { reportSentryError } from "@/lib/observability/report";
@@ -52,6 +55,8 @@ const refundEntitySchema = z.object({
   amount: z.number(),
   currency: z.string().optional(),
   status: z.string(),
+  speed_requested: z.string().nullable().optional(),
+  speed_processed: z.string().nullable().optional(),
   notes: razorpayNotesSchema,
 });
 
@@ -71,8 +76,6 @@ const payoutEntitySchema = z.object({
   id: z.string(),
   status: z.string(),
   failure_reason: z.string().nullable().optional(),
-  // Official RazorpayX docs mark top-level `failure_reason` as deprecated in
-  // favor of `status_details: { description, source, reason }`.
   status_details: z
     .object({
       description: z.string().nullable().optional(),
@@ -82,11 +85,17 @@ const payoutEntitySchema = z.object({
     .passthrough()
     .nullable()
     .optional(),
-  // A1+A8: bank-side UTR. Present on `payout.processed`; absent on
-  // queued/initiated/pending. Plumbed through to OrganizationPayout.gatewayUtr.
+  error: z
+    .object({
+      code: z.string().nullable().optional(),
+      description: z.string().nullable().optional(),
+      source: z.string().nullable().optional(),
+      reason: z.string().nullable().optional(),
+    })
+    .passthrough()
+    .nullable()
+    .optional(),
   utr: z.string().nullable().optional(),
-  // #1846 N1 — our payout row id, sent as `reference_id` at creation. It
-  // matches a consultant payout whose submit reply was lost.
   reference_id: z.string().nullable().optional(),
 });
 
@@ -264,8 +273,9 @@ export async function processRazorpayWebhookEvent(
         }
         if (razorpayClient) {
           try {
-            const rzpPayment = await razorpayClient.payments.fetch(
-              refundEvent.payment_id,
+            const rzpPayment = await withRazorpaySdkTimeout(
+              "payments.fetch",
+              () => razorpayClient.payments.fetch(refundEvent.payment_id),
             );
             if (rzpPayment.order_id) {
               paymentIntentId = rzpPayment.order_id;
@@ -322,8 +332,9 @@ export async function processRazorpayWebhookEvent(
         }
         if (razorpayClient) {
           try {
-            const rzpPayment = await razorpayClient.payments.fetch(
-              failedRefundEvent.payment_id,
+            const rzpPayment = await withRazorpaySdkTimeout(
+              "payments.fetch",
+              () => razorpayClient.payments.fetch(failedRefundEvent.payment_id),
             );
             if (rzpPayment.order_id) {
               failedPaymentIntentId = rzpPayment.order_id;
@@ -365,9 +376,31 @@ export async function processRazorpayWebhookEvent(
       }
 
       case "refund.speed_changed": {
-        console.log(
-          `📄 Refund speed changed: ${event.payload?.refund?.entity?.id}`,
+        const speedEvent = refundEntitySchema.parse(
+          event.payload?.refund?.entity,
         );
+        const existingRefund = await prisma.refund.findFirst({
+          where: { refundId: speedEvent.id },
+          select: { id: true, status: true, metadata: true },
+        });
+        if (existingRefund) {
+          const prevMeta =
+            existingRefund.metadata &&
+            typeof existingRefund.metadata === "object" &&
+            !Array.isArray(existingRefund.metadata)
+              ? existingRefund.metadata
+              : {};
+          await prisma.refund.updateMany({
+            where: { id: existingRefund.id, status: existingRefund.status },
+            data: {
+              metadata: {
+                ...prevMeta,
+                speedRequested: speedEvent.speed_requested ?? null,
+                speedProcessed: speedEvent.speed_processed ?? null,
+              },
+            },
+          });
+        }
         break;
       }
 
@@ -499,6 +532,8 @@ export async function processRazorpayWebhookEvent(
           payoutEvent.failure_reason ??
           payoutEvent.status_details?.description ??
           payoutEvent.status_details?.reason ??
+          payoutEvent.error?.description ??
+          payoutEvent.error?.reason ??
           undefined;
         await handleRazorpayPayoutWebhook(eventType, {
           id: payoutEvent.id,

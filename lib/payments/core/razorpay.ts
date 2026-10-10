@@ -326,10 +326,9 @@ export async function createRazorpayOrder({
     );
   }
 
-  // BUG-C: Validate amount is positive before creating payment order
-  if (amount <= 0) {
+  if (!Number.isSafeInteger(amount) || amount < 100) {
     throw new PaymentError(
-      "Payment amount must be greater than zero",
+      "Razorpay order amount must be an integer of at least 100 paise (INR 1.00)",
       "INVALID_AMOUNT",
       "RAZORPAY",
     );

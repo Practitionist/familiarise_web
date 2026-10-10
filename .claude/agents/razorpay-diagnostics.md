@@ -9,6 +9,7 @@ color: red
 ## Before you start
 
 **Read these first under `.claude/skills/finance/references/razorpay/`:**
+
 1. `references/this-repo.md` — exact env var names, file paths, and architecture in this repo.
 2. `references/debugging.md` — symptom-to-cause playbook for orders, webhooks, refunds, disputes, and RazorpayX payouts.
 3. `references/go-live.md` — PM-10 boot guards and production checklist.
@@ -33,9 +34,8 @@ Inspect `.env.local`, `.env`, and `.env.example` (never print secret values — 
 3. **RazorpayX Payouts & Fund Account Validation**:
    - `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, `RAZORPAYX_ACCOUNT_NUMBER` (falls back to `RAZORPAY_KEY_ID` / `RAZORPAY_SECRET` in non-prod only if unset)
    - `ENABLE_LIVE_PAYOUTS` (`"true"` required in production for live payouts)
-   - `RAZORPAY_RPD_VPA` (optional platform VPA for Reverse Penny Drop fallback)
 4. **PM-10 Production Guards**:
-   - Check `lib/payments/core/razorpay.ts` (`assertNoTestKeysInLiveProduction`) and `lib/payments/payouts/razorpay-payouts.ts` (`assertNoTestKeysInLivePayouts`) to confirm `rzp_test_` keys are blocked when `NODE_ENV=production` on live deploys.
+   - Check `lib/payments/core/razorpay.ts` and `lib/payments/payouts/razorpay-payouts.ts` (`getRazorpayPayoutsService`) to confirm `rzp_test_` keys are blocked when `NODE_ENV=production` on live deploys.
 
 ---
 

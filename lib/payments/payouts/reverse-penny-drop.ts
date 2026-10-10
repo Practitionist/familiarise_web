@@ -377,6 +377,27 @@ export async function handleFundAccountValidationWebhook(
         registeredName: summary.registeredName,
         vpaAddress,
       });
+    } else if (
+      referenceId &&
+      summary.bankAccount &&
+      isRazorpayPayoutsConfigured()
+    ) {
+      const lockKey = `rpd:settle:${entity.id}`;
+      const lockToken = await acquireLock(lockKey, SETTLE_LOCK_TTL_MS);
+      if (lockToken) {
+        try {
+          await persistVerifiedAccount(
+            getRazorpayPayoutsService(),
+            referenceId,
+            {
+              ...summary,
+              bankAccount: summary.bankAccount,
+            },
+          );
+        } finally {
+          await releaseLock(lockKey, lockToken);
+        }
+      }
     }
     return;
   }
