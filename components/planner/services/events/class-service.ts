@@ -202,17 +202,9 @@ export class ClassService {
           ...(plan?.recordingEnabled !== undefined
             ? { recordingEnabled: plan.recordingEnabled }
             : {}),
-          ...(plan?.recordingStoragePolicy !== undefined
-            ? {
-                recordingStoragePolicy: plan.recordingStoragePolicy as
-                  "STREAM_ONLY" | "PERMANENT",
-              }
-            : {}),
         }
       : {
           recordingEnabled: defaultRecording.recordingEnabled,
-          recordingStoragePolicy: defaultRecording.recordingStoragePolicy as
-            "STREAM_ONLY" | "PERMANENT",
         };
 
     // Build base payload with required fields

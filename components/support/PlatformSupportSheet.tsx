@@ -50,6 +50,8 @@ interface LocalMessage {
 let localSeq = 0;
 const nextLocalId = () => `local-${++localSeq}`;
 
+const HUMAN_EXIT_LABEL = "Talk to a person";
+
 interface PlatformFlow {
   id: string;
   title: string;
@@ -112,6 +114,7 @@ export function PlatformSupportSheet({
   const [feedback, setFeedback] = useState("");
   const [bareHumanLabel, setBareHumanLabel] = useState<string | null>(null);
   const [bareHumanDetails, setBareHumanDetails] = useState("");
+  const [bareHumanUrgent, setBareHumanUrgent] = useState(false);
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -136,6 +139,8 @@ export function PlatformSupportSheet({
       nodeId?: string | null;
       chosenOptionId?: string;
       userMessage?: string;
+      /** The customer flagged the hand-off as urgent. */
+      urgent?: boolean;
       /** Client-only sitting marker — see `sittingRef`. Never sent. */
       epoch: number;
       /** Client-only label of the pressed chip — see onSuccess. Never sent. */
@@ -225,6 +230,7 @@ export function PlatformSupportSheet({
     setDone(null);
     setBareHumanLabel(null);
     setBareHumanDetails("");
+    setBareHumanUrgent(false);
     turn.mutate({
       flowId: flow.id,
       chosenLabel: flow.title,
@@ -241,6 +247,7 @@ export function PlatformSupportSheet({
     setFeedback("");
     setBareHumanLabel(null);
     setBareHumanDetails("");
+    setBareHumanUrgent(false);
   };
 
   // #705 — the "leave feedback" terminal used to say the entry was "read and
@@ -474,12 +481,15 @@ export function PlatformSupportSheet({
                   const details = bareHumanDetails.trim();
                   if (details.length < 20) return;
                   const targetNode = nodeId;
+                  const urgent = bareHumanUrgent;
                   setBareHumanLabel(null);
                   setBareHumanDetails("");
+                  setBareHumanUrgent(false);
                   turn.mutate({
                     flowId: flowId!,
                     nodeId: targetNode,
                     userMessage: `Speak to someone: ${details}`,
+                    urgent,
                     epoch: sittingRef.current,
                   });
                 }}
@@ -496,6 +506,15 @@ export function PlatformSupportSheet({
                   disabled={turn.isPending}
                   placeholder="What went wrong, and what would you like us to do?"
                 />
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={bareHumanUrgent}
+                    onChange={(e) => setBareHumanUrgent(e.target.checked)}
+                    disabled={turn.isPending}
+                  />
+                  <span>This is urgent</span>
+                </label>
                 <div className="flex items-center justify-end gap-2">
                   <Button
                     type="button"
@@ -504,6 +523,7 @@ export function PlatformSupportSheet({
                     onClick={() => {
                       setBareHumanLabel(null);
                       setBareHumanDetails("");
+                      setBareHumanUrgent(false);
                     }}
                   >
                     Back
@@ -530,19 +550,33 @@ export function PlatformSupportSheet({
                         size="sm"
                         disabled={turn.isPending}
                         onClick={() =>
-                          turn.mutate({
-                            flowId: flowId!,
-                            nodeId,
-                            chosenOptionId: o.id,
-                            chosenLabel: o.label,
-                            epoch: sittingRef.current,
-                          })
+                          // A flow's own human option opens the same details + urgency form as the exit.
+                          o.label === HUMAN_EXIT_LABEL
+                            ? setBareHumanLabel(o.label)
+                            : turn.mutate({
+                                flowId: flowId!,
+                                nodeId,
+                                chosenOptionId: o.id,
+                                chosenLabel: o.label,
+                                epoch: sittingRef.current,
+                              })
                         }
                       >
                         {o.label}
                       </Button>
                     ))}
                   </div>
+                )}
+                {/* The human exit stays one tap away at every prompt, not only in the General flow. */}
+                {options.every((o) => o.label !== HUMAN_EXIT_LABEL) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={turn.isPending}
+                    onClick={() => setBareHumanLabel(HUMAN_EXIT_LABEL)}
+                  >
+                    {HUMAN_EXIT_LABEL}
+                  </Button>
                 )}
                 <form
                   className="flex items-center gap-2"

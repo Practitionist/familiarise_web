@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { reportReasonLabel } from "@/lib/labels/report-reasons";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -80,6 +81,8 @@ type ModerationReportItem = ModerationReport & {
 
 type ModerationReportDetailWithContext = ModerationReportDetail & {
   bookingContext?: ReportBookingContext | null;
+  /** Excluding the reported review would take the expert's score below the publication gate. */
+  exclusionDropsBelowGate?: boolean;
 };
 
 // #1527 — one tone map for report statuses (was a local colour switch).
@@ -992,7 +995,9 @@ export function ModerationPage() {
                                   </Badge>
                                 )}
                               </span>
-                              <span>Reason: {report.reason}</span>
+                              <span>
+                                Reason: {reportReasonLabel(report.reason)}
+                              </span>
                               {report.reportCount > 1 && (
                                 <span>{report.reportCount} reports</span>
                               )}
@@ -1216,6 +1221,33 @@ export function ModerationPage() {
                     </p>
                   </div>
                 )}
+                {selectedReport.review && (
+                  <div className="rounded-lg border p-3 text-sm">
+                    <Label className="text-sm font-medium">
+                      Reported review
+                    </Label>
+                    <p className="mt-1 text-muted-foreground">
+                      {selectedReport.review.rating} out of 5 stars for{" "}
+                      {selectedReport.review.consultantProfile.user.name ??
+                        "Unknown expert"}
+                    </p>
+                    {selectedReport.review.reviewDescription && (
+                      <p className="mt-1 whitespace-pre-wrap break-words">
+                        {selectedReport.review.reviewDescription}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {selectedReportDetail?.exclusionDropsBelowGate && (
+                  <p
+                    role="note"
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+                  >
+                    Excluding this review from the rating would take this expert
+                    below the minimum needed to publish a score, so their rating
+                    would stop showing.
+                  </p>
+                )}
                 {selectedReport.description && (
                   <div>
                     <Label className="text-sm font-medium">
@@ -1251,7 +1283,7 @@ export function ModerationPage() {
                 <div>
                   <Label className="text-sm font-medium">Reason</Label>
                   <p className="text-sm text-muted-foreground">
-                    {selectedReport.reason}
+                    {reportReasonLabel(selectedReport.reason)}
                     {selectedReport.reportCount > 1
                       ? ` (${selectedReport.reportCount} reports)`
                       : ""}

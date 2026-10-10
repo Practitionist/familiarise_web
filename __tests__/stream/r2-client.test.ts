@@ -5,7 +5,6 @@
 import {
   isR2Configured,
   createR2PresignedGetUrl,
-  uploadR2Object,
   streamMultipartToR2,
   deleteR2Object,
 } from "@/lib/storage/r2-client";
@@ -17,10 +16,10 @@ describe("lib/storage/r2-client", () => {
   beforeEach(() => {
     process.env = {
       ...originalEnv,
-      R2_ACCOUNT_ID: "test-account-123",
+      R2_S3_ENDPOINT: "https://test-account-123.r2.cloudflarestorage.com",
       R2_ACCESS_KEY_ID: "test-access-key",
       R2_SECRET_ACCESS_KEY: "test-secret-key",
-      R2_RECORDINGS_BUCKET: "familiarise-recordings",
+      R2_BUCKET: "familiarise-recordings",
     };
   });
 
@@ -64,35 +63,6 @@ describe("lib/storage/r2-client", () => {
     });
   });
 
-  describe("uploadR2Object", () => {
-    it("uploads an object via signed PUT", async () => {
-      const fetchMock = jest.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        headers: { get: (h: string) => (h === "etag" ? '"etag-put"' : null) },
-        text: async () => "",
-      });
-      global.fetch = fetchMock as unknown as typeof fetch;
-
-      const res = await uploadR2Object({
-        key: "previews/rec-1.mp4",
-        body: new Uint8Array([1, 2, 3, 4]),
-        contentType: "video/mp4",
-      });
-
-      expect(res.etag).toBe('"etag-put"');
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe(
-        "https://test-account-123.r2.cloudflarestorage.com/familiarise-recordings/previews/rec-1.mp4",
-      );
-      expect(init.method).toBe("PUT");
-      const headers = init.headers as Record<string, string>;
-      expect(headers.authorization).toContain("AWS4-HMAC-SHA256");
-      expect(headers["content-type"]).toBe("video/mp4");
-    });
-  });
-
   describe("streamMultipartToR2", () => {
     it("uses single PUT when stream fits within a single part", async () => {
       const fetchMock = jest.fn().mockResolvedValue({
@@ -119,12 +89,15 @@ describe("lib/storage/r2-client", () => {
 
       expect(result).toEqual({
         key: "recordings/small.mp4",
-        bucket: "familiarise-recordings",
         size: 4,
         parts: 1,
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("PUT");
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe(
+        "https://test-account-123.r2.cloudflarestorage.com/familiarise-recordings/recordings/small.mp4",
+      );
+      expect(init.method).toBe("PUT");
     });
 
     it("executes S3 multipart upload when stream exceeds partSize", async () => {
@@ -181,6 +154,48 @@ describe("lib/storage/r2-client", () => {
       expect(fetchMock).toHaveBeenCalledTimes(4);
     });
 
+    it("rejects and aborts when CompleteMultipartUpload returns an error inside a 200", async () => {
+      const ok = (body: string, etag: string | null = null) => ({
+        ok: true,
+        status: 200,
+        headers: { get: (h: string) => (h === "etag" ? etag : null) },
+        text: async () => body,
+      });
+      const fetchMock = jest
+        .fn()
+        .mockResolvedValueOnce(
+          ok(
+            "<InitiateMultipartUploadResult><UploadId>u-1</UploadId></InitiateMultipartUploadResult>",
+          ),
+        )
+        .mockResolvedValueOnce(ok("", '"etag-1"'))
+        .mockResolvedValueOnce(ok("", '"etag-2"'))
+        .mockResolvedValueOnce(
+          ok(
+            "<Error><Code>InternalError</Code><Message>retry</Message></Error>",
+          ),
+        )
+        .mockResolvedValueOnce(ok(""));
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(6 * 1024 * 1024));
+          controller.enqueue(new Uint8Array(1024));
+          controller.close();
+        },
+      });
+
+      await expect(
+        streamMultipartToR2({
+          key: "recordings/err.mp4",
+          stream,
+          partSize: 5 * 1024 * 1024,
+        }),
+      ).rejects.toThrow(/CompleteMultipartUpload error InternalError/);
+      expect((fetchMock.mock.calls[4][1] as RequestInit).method).toBe("DELETE");
+    });
+
     it("aborts multipart upload if a part upload fails", async () => {
       const fetchMock = jest
         .fn()
@@ -225,6 +240,186 @@ describe("lib/storage/r2-client", () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(3);
       expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe("DELETE");
+    });
+  });
+
+  describe("streamMultipartToR2 part shaping, cancellation and XML", () => {
+    type FetchInit = RequestInit & { body?: Uint8Array };
+
+    /** Answers every R2 call; records each request's init. */
+    function r2FetchMock() {
+      let part = 0;
+      return jest.fn(async (url: string, init: FetchInit) => {
+        if (init.method === "POST" && url.includes("uploads")) {
+          return {
+            ok: true,
+            status: 200,
+            text: async (): Promise<string> =>
+              "<InitiateMultipartUploadResult><UploadId>u-1</UploadId></InitiateMultipartUploadResult>",
+          };
+        }
+        if (init.method === "POST") {
+          return {
+            ok: true,
+            status: 200,
+            text: async (): Promise<string> =>
+              "<CompleteMultipartUploadResult/>",
+          };
+        }
+        part += 1;
+        return {
+          ok: true,
+          status: 200,
+          headers: {
+            get: (h: string) => (h === "etag" ? `"etag-${part}&<x>"` : null),
+          },
+          text: async (): Promise<string> => "",
+        };
+      });
+    }
+
+    const partBodies = (fetchMock: jest.Mock) =>
+      fetchMock.mock.calls
+        .filter(
+          ([url, init]) => init.method === "PUT" && /partNumber=/.test(url),
+        )
+        .map(([, init]) => (init as FetchInit).body as Uint8Array);
+
+    it("uploads a full part as soon as it is buffered once multipart has started", async () => {
+      const fetchMock = r2FetchMock();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const pushes = [new Uint8Array(5), new Uint8Array(3), new Uint8Array(2)];
+      const callsBeforeRead: number[] = [];
+      const stream = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            callsBeforeRead.push(fetchMock.mock.calls.length);
+            const next = pushes.shift();
+            if (next) controller.enqueue(next);
+            else controller.close();
+          },
+        },
+        // Pull only on an actual read, so the count reflects the upload loop.
+        { highWaterMark: 0 },
+      );
+
+      const result = await streamMultipartToR2({
+        key: "recordings/k.mp4",
+        stream,
+        partSize: 4,
+      });
+
+      // After the 3-byte chunk, 4 bytes are buffered: part 2 goes before the next read.
+      expect(callsBeforeRead[2]).toBe(3);
+      expect(result).toEqual({ key: "recordings/k.mp4", size: 10, parts: 3 });
+      // R2 requires every non-final part to be the same size.
+      expect(partBodies(fetchMock).map((b) => b.byteLength)).toEqual([4, 4, 2]);
+    });
+
+    it("sends each part as a view over its buffer instead of a copy", async () => {
+      const fetchMock = r2FetchMock();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(9));
+          controller.close();
+        },
+      });
+
+      await streamMultipartToR2({ key: "k.mp4", stream, partSize: 4 });
+
+      const [first] = partBodies(fetchMock);
+      expect(first.byteLength).toBe(4);
+      expect(first.buffer.byteLength).toBeGreaterThan(first.byteLength);
+    });
+
+    it("passes the caller's signal to every upload request", async () => {
+      const fetchMock = r2FetchMock();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const controller = new AbortController();
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(9));
+          c.close();
+        },
+      });
+
+      await streamMultipartToR2({
+        key: "k.mp4",
+        stream,
+        partSize: 4,
+        signal: controller.signal,
+      });
+
+      expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(5);
+      for (const [, init] of fetchMock.mock.calls) {
+        expect((init as FetchInit).signal).toBe(controller.signal);
+      }
+    });
+
+    it("aborts the upload with its own deadline after the caller's signal fired", async () => {
+      const controller = new AbortController();
+      const fetchMock = jest.fn(async (url: string, init: FetchInit) => {
+        if (init.method === "POST" && url.includes("uploads")) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () =>
+              "<InitiateMultipartUploadResult><UploadId>u-1</UploadId></InitiateMultipartUploadResult>",
+          };
+        }
+        if (init.method === "PUT") {
+          controller.abort();
+          throw new DOMException("aborted", "AbortError");
+        }
+        return { ok: true, status: 204, text: async () => "" };
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(9));
+          c.close();
+        },
+      });
+
+      await expect(
+        streamMultipartToR2({
+          key: "k.mp4",
+          stream,
+          partSize: 4,
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow("aborted");
+
+      const abortCall = fetchMock.mock.calls.find(
+        ([, init]) => init.method === "DELETE",
+      );
+      expect(abortCall).toBeDefined();
+      const abortSignal = (abortCall?.[1] as FetchInit).signal;
+      expect(abortSignal).toBeInstanceOf(AbortSignal);
+      expect(abortSignal).not.toBe(controller.signal);
+      expect(abortSignal?.aborted).toBe(false);
+    });
+
+    it("XML-escapes part ETags in CompleteMultipartUpload", async () => {
+      const fetchMock = r2FetchMock();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new Uint8Array(5));
+          c.close();
+        },
+      });
+
+      await streamMultipartToR2({ key: "k.mp4", stream, partSize: 4 });
+
+      const complete = fetchMock.mock.calls.find(
+        ([url, init]) => init.method === "POST" && !url.includes("uploads"),
+      );
+      const xml = Buffer.from(
+        (complete?.[1] as FetchInit).body as Uint8Array,
+      ).toString("utf8");
+      expect(xml).toContain("<ETag>&quot;etag-1&amp;&lt;x&gt;&quot;</ETag>");
     });
   });
 

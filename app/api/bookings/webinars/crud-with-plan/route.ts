@@ -5,6 +5,7 @@ import {
   liveParticipant,
   recordParticipants,
 } from "@/lib/booking/participants";
+import { refuseForeignProfileReassignment } from "@/lib/api/plans/profile-reassignment";
 import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -175,7 +176,7 @@ export async function POST(request: NextRequest) {
       status,
       certificateProvided,
       recordingEnabled,
-      recordingStoragePolicy,
+      shareRecordingsWithAllAttendees,
     } = validatedData;
 
     // Verify ownership - user must own this consultant profile
@@ -291,7 +292,7 @@ export async function POST(request: NextRequest) {
               faqs: faqCreateNested(faqs),
               certificateProvided,
               recordingEnabled,
-              recordingStoragePolicy,
+              shareRecordingsWithAllAttendees,
               consultantProfile: { connect: { id: consultantProfileId } },
               topics:
                 topicIds.length > 0
@@ -526,7 +527,7 @@ export async function PATCH(request: NextRequest) {
       priceCurrency,
       certificateProvided,
       recordingEnabled,
-      recordingStoragePolicy,
+      shareRecordingsWithAllAttendees,
     } = validatedData;
 
     // Find or create topics by name if provided
@@ -586,10 +587,17 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // Get the webinar instance - use the provided webinarId or the first one associated with the plan
+    const reassignmentRefusal = await refuseForeignProfileReassignment(
+      session.user.id,
+      existingPlan.consultantProfileId,
+      consultantProfileId,
+    );
+    if (reassignmentRefusal) return reassignmentRefusal;
+
+    // A supplied webinarId must name an instance of this plan; otherwise use its first.
     const webinarToUpdate = webinarId
-      ? await prisma.webinar.findUnique({
-          where: { id: webinarId },
+      ? await prisma.webinar.findFirst({
+          where: { id: webinarId, webinarPlanId: id },
           include: {
             appointment: {
               include: {
@@ -601,6 +609,13 @@ export async function PATCH(request: NextRequest) {
       : existingPlan.webinars.length > 0
         ? existingPlan.webinars[0]
         : null;
+
+    if (webinarId && !webinarToUpdate) {
+      return NextResponse.json(
+        { error: `Webinar ${webinarId} not found on plan ${id}` },
+        { status: 404 },
+      );
+    }
 
     if (
       !webinarToUpdate &&
@@ -713,8 +728,9 @@ export async function PATCH(request: NextRequest) {
             updateData.certificateProvided = certificateProvided;
           if (recordingEnabled !== undefined)
             updateData.recordingEnabled = recordingEnabled;
-          if (recordingStoragePolicy !== undefined)
-            updateData.recordingStoragePolicy = recordingStoragePolicy;
+          if (shareRecordingsWithAllAttendees !== undefined)
+            updateData.shareRecordingsWithAllAttendees =
+              shareRecordingsWithAllAttendees;
           if (learningOutcomes !== undefined)
             updateData.learningOutcomes = learningOutcomes;
           if (subtitle !== undefined) updateData.subtitle = subtitle;
@@ -873,7 +889,7 @@ export async function PATCH(request: NextRequest) {
             }
             const ownerChanged = Boolean(
               consultantProfileId &&
-                consultantProfileId !== existingPlan.consultantProfileId,
+              consultantProfileId !== existingPlan.consultantProfileId,
             );
 
             // 8. Replace the appointment's live slot run (#1071) when times change.
@@ -1002,7 +1018,10 @@ export async function PATCH(request: NextRequest) {
                   );
                 }
               }
-            } else if ((publishing || ownerChanged) && updatedWebinar.appointment) {
+            } else if (
+              (publishing || ownerChanged) &&
+              updatedWebinar.appointment
+            ) {
               // #2010 — publishing a DRAFT webinar or transferring a webinar's
               // consultantProfileId without resending scheduledAt: verify co-host
               // and target host availability, then synchronize the occurrence(s).

@@ -39,6 +39,7 @@ const turnSchema = z
       .transform((s) => stripCallbackTags(s).trim())
       .pipe(z.string().max(2000))
       .optional(),
+    urgent: z.boolean().optional(),
   })
   .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
     message: "A turn needs a category, a chosen option, or a message",

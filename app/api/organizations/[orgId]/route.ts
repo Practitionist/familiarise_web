@@ -34,6 +34,7 @@ import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { endActiveStreamVideoCalls } from "@/lib/stream/event-channel-service";
+import { MIN_ORG_RETENTION_DAYS } from "@/lib/stream/recording-retention";
 
 const ORG_DELETED_CALL_REASON = "org_deleted";
 
@@ -107,6 +108,14 @@ const PatchBodySchema = z
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
     isPublic: z.boolean().optional(),
+    // Owner-only via settings.ownerFields; null follows the platform schedule.
+    streamRecordingRetentionDays: z
+      .number()
+      .int()
+      .min(MIN_ORG_RETENTION_DAYS)
+      .max(3650)
+      .nullable()
+      .optional(),
     expectedVersion: z.coerce.number().int().min(1).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -442,6 +451,9 @@ function buildOrganizationUpdateData(
       defaultRefundPolicy: body.defaultRefundPolicy,
     }),
     ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
+    ...(body.streamRecordingRetentionDays !== undefined && {
+      streamRecordingRetentionDays: body.streamRecordingRetentionDays,
+    }),
   };
 }
 
@@ -518,7 +530,8 @@ export async function PATCH(
       body.defaultRefundPolicy !== undefined ||
       body.isPublic !== undefined ||
       body.msmeStatus !== undefined ||
-      body.msmeWrittenAgreementOnFile !== undefined)
+      body.msmeWrittenAgreementOnFile !== undefined ||
+      body.streamRecordingRetentionDays !== undefined)
   ) {
     return NextResponse.json(
       {
@@ -648,6 +661,27 @@ export async function PATCH(
               details: { patch: body },
             },
           });
+
+          // Retention drives automatic deletion, so it gets its own filterable row.
+          if (
+            body.streamRecordingRetentionDays !== undefined &&
+            body.streamRecordingRetentionDays !==
+              current.streamRecordingRetentionDays
+          ) {
+            await tx.orgAuditLog.create({
+              data: {
+                organizationId: orgId,
+                actorMembershipId: access.member.id,
+                category: "SYSTEM",
+                action: AUDIT_ACTIONS.SYSTEM.STREAM_RETENTION_CHANGED,
+                description: "Recording retention window changed",
+                details: {
+                  previous: current.streamRecordingRetentionDays,
+                  next: body.streamRecordingRetentionDays,
+                },
+              },
+            });
+          }
 
           return next;
         },

@@ -15,8 +15,6 @@ import {
   handleRecordingStopped,
   handleRecordingReady,
   handleRecordingFailed,
-  StreamRecordingReadyEvent,
-  StreamRecordingFailedEvent,
 } from "@/lib/stream/recording-handlers";
 import {
   handleSessionEnded,
@@ -70,26 +68,22 @@ const streamCallBaseEventSchema = z.object({
   created_at: z.string(),
 });
 
-// Recording ready event schema
-const streamRecordingReadySchema = streamCallBaseEventSchema.extend({
+export const streamRecordingReadySchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.recording_ready"),
   call_recording: z.object({
     filename: z.string(),
     url: z.string(),
     start_time: z.string(),
     end_time: z.string(),
+    session_id: z.string().optional(),
   }),
 });
 
-// Recording failed event schema
-const streamRecordingFailedSchema = streamCallBaseEventSchema.extend({
+// Stream sends no error detail on a failed recording, only which egress failed.
+export const streamRecordingFailedSchema = streamCallBaseEventSchema.extend({
   type: z.literal("call.recording_failed"),
-  error: z
-    .object({
-      message: z.string().optional(),
-      code: z.string().optional(),
-    })
-    .optional(),
+  egress_id: z.string(),
+  recording_type: z.string(),
 });
 
 // Recording started schema
@@ -258,11 +252,13 @@ const EVENT_HANDLERS = {
     streamRecordingStoppedSchema,
     handleRecordingStopped,
   ),
-  "call.recording_ready": entry(streamRecordingReadySchema, (e) =>
-    handleRecordingReady(e as StreamRecordingReadyEvent),
+  "call.recording_ready": entry(
+    streamRecordingReadySchema,
+    handleRecordingReady,
   ),
-  "call.recording_failed": entry(streamRecordingFailedSchema, (e) =>
-    handleRecordingFailed(e as StreamRecordingFailedEvent),
+  "call.recording_failed": entry(
+    streamRecordingFailedSchema,
+    handleRecordingFailed,
   ),
   "call.session_ended": entry(streamSessionEndedSchema, (e) =>
     handleSessionEnded(e as StreamSessionEndedEvent),

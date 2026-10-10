@@ -38,6 +38,9 @@ const RecordingControls = ({
     isRecordingRef.current = isRecording;
   }, [isRecording]);
 
+  // The host mounts a button-only and an indicator copy; only one may announce.
+  const announces = !showOnlyButton;
+
   // Subscribe to call recording state changes
   useEffect(() => {
     if (!call) return;
@@ -53,30 +56,31 @@ const RecordingControls = ({
     const unsubscribe = call.on("call.recording_started", () => {
       setIsRecording(true);
       setIsLoading(false);
-      toast({
-        title: "Recording Started",
-        description: "The session is now being recorded.",
-      });
+      if (announces)
+        toast({
+          title: "Recording Started",
+          description: "The session is now being recorded.",
+        });
     });
 
     const unsubscribeStopped = call.on("call.recording_stopped", () => {
       setIsRecording(false);
       setIsLoading(false);
       setRecordingDuration(0);
-      toast({
-        title: "Recording Stopped",
-        description: "The recording has been saved.",
-      });
+      if (announces)
+        // Neutral: a consent decline also stops the recording, and discards it.
+        toast({ title: "Recording stopped." });
     });
 
     const unsubscribeFailed = call.on("call.recording_failed", () => {
       setIsRecording(false);
       setIsLoading(false);
-      toast({
-        title: "Recording Failed",
-        description: "There was an error with the recording.",
-        variant: "destructive",
-      });
+      if (announces)
+        toast({
+          title: "Recording Failed",
+          description: "There was an error with the recording.",
+          variant: "destructive",
+        });
     });
 
     const unsubscribeUpdated = call.on("call.updated", () => {
@@ -97,7 +101,7 @@ const RecordingControls = ({
       unsubscribeFailed();
       unsubscribeUpdated();
     };
-  }, [call, toast]);
+  }, [call, toast, announces]);
 
   // Recording duration timer
   useEffect(() => {

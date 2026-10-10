@@ -11,10 +11,10 @@
  * Auth stays with the route: it resolves the scope via `libraryScopeFor`.
  */
 
-import type {
-  DocumentUploadRole,
-  Prisma,
+import {
   RecordingStatus,
+  type DocumentUploadRole,
+  type Prisma,
 } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
@@ -44,6 +44,12 @@ const OCCURRENCES_PER_SESSION = 200;
 const LIVE_RECORDING: Prisma.RecordingWhereInput = {
   status: { notIn: ["FAILED", "EXPIRED"] },
 };
+/** Statuses GET /api/stream/recordings/[id] can mint a playback URL for. */
+const PLAYABLE_STATUSES: ReadonlySet<RecordingStatus> = new Set([
+  RecordingStatus.READY,
+  RecordingStatus.TRANSFERRING,
+  RecordingStatus.AVAILABLE,
+]);
 
 export interface OrgLibraryArgs {
   orgId: string;
@@ -445,11 +451,7 @@ export async function readOrgLibraryRecordings(
                 durationInMinutes: true,
                 recordedAt: true,
                 status: true,
-                ...(mine && {
-                  thumbnailUrl: true,
-                  storagePath: true,
-                  recordingUrl: true,
-                }),
+                ...(mine && { thumbnailUrl: true }),
               },
             },
           },
@@ -458,11 +460,9 @@ export async function readOrgLibraryRecordings(
     },
   } satisfies Prisma.AppointmentSelect;
 
-  type Recording = Omit<LibraryRecording, "recordedAt" | "playbackUrl"> & {
+  type Recording = Omit<LibraryRecording, "recordedAt" | "playable"> & {
     recordedAt: Date;
     thumbnailUrl: string | null;
-    storagePath: string | null;
-    recordingUrl: string | null;
   };
   type Row = SessionShape & {
     occurrences: {
@@ -483,45 +483,41 @@ export async function readOrgLibraryRecordings(
       ? await lateJoinRecordingAccess(userId)
       : null;
 
-  const groups = await Promise.all(
-    rows.map(async (row) => {
-      const session = toSession(row, row.occurrences[0]?.startsAt ?? null);
-      let recordings: LibraryRecording[];
-      if (mine) {
-        const lateJoinAccess =
-          lateJoin && row.class
-            ? {
-                access: lateJoin,
-                classId: row.class.id,
-                classPlanId: row.class.classPlanId,
-              }
-            : undefined;
-        recordings = (await extractRecordings([row], lateJoinAccess)).map(
-          (r) => ({
-            id: r.id,
-            title: r.title,
-            recordedAt: r.recordedAt.toISOString(),
-            durationInMinutes: r.durationInMinutes,
-            status: r.status as RecordingStatus,
-            playbackUrl: r.playbackUrl,
-          }),
-        );
-      } else {
-        recordings = visibleSessionRecordings([row]).map((r) => ({
-          id: r.id,
-          title: r.title,
-          recordedAt: r.recordedAt.toISOString(),
-          durationInMinutes: r.durationInMinutes,
-          status: r.status,
-          playbackUrl: null,
-        }));
-      }
-      return {
-        session,
-        files: keepNamed(recordings, session, query.q, (r) => r.title),
-      };
-    }),
-  );
+  const groups = rows.map((row) => {
+    const session = toSession(row, row.occurrences[0]?.startsAt ?? null);
+    let recordings: LibraryRecording[];
+    if (mine) {
+      const lateJoinAccess =
+        lateJoin && row.class
+          ? {
+              access: lateJoin,
+              classId: row.class.id,
+              classPlanId: row.class.classPlanId,
+            }
+          : undefined;
+      recordings = extractRecordings([row], lateJoinAccess).map((r) => ({
+        id: r.id,
+        title: r.title,
+        recordedAt: r.recordedAt.toISOString(),
+        durationInMinutes: r.durationInMinutes,
+        status: r.status,
+        playable: PLAYABLE_STATUSES.has(r.status),
+      }));
+    } else {
+      recordings = visibleSessionRecordings([row]).map((r) => ({
+        id: r.id,
+        title: r.title,
+        recordedAt: r.recordedAt.toISOString(),
+        durationInMinutes: r.durationInMinutes,
+        status: r.status,
+        playable: false,
+      }));
+    }
+    return {
+      session,
+      files: keepNamed(recordings, session, query.q, (r) => r.title),
+    };
+  });
 
   // A late joiner's hidden sessions drop out of the page; `total` still
   // counts them (the rule runs on the rows, not in the count).

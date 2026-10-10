@@ -80,7 +80,6 @@ export const NOVU_WORKFLOWS = {
   // Recordings
   RECORDING_AVAILABLE: "recording-available",
   RECORDING_FAILED: "recording-failed",
-  RECORDING_EXPIRING: "recording-expiring",
 
   // Documents
   DOCUMENT_UPLOADED: "document-uploaded",
@@ -437,27 +436,13 @@ export type RecordingPayload = NotificationScope & {
   appointmentTypeCode?: string;
   consultantName: string;
   consulteeName?: string;
-  recordingUrl: string;
   dashboardUrl: string;
 };
 
 export type RecordingFailedPayload = {
   streamCallId: string;
-  errorMessage?: string;
   dashboardUrl: string;
 };
-
-export type RecordingExpiringPayload = {
-  recordingCount: number;
-  expiresAt: string;
-  expiresAtIso?: string;
-  dashboardUrl: string;
-};
-
-export type RecordingExpiringInput = Omit<
-  RecordingExpiringPayload,
-  "expiresAtIso"
->;
 
 export type DocumentUploadedPayload = NotificationScope & {
   appointmentId: string;

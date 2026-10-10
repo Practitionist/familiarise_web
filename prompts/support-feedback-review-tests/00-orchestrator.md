@@ -47,6 +47,8 @@ The lanes are strictly sequential, because they share fixture rows, rate-limit b
 | 5 | `05-moderation-platform-feedback-disputes.md` | Dispute rows restored |
 | 6 | `06-cleanup-and-sentry.md` | Global tag sweep returns zero rows |
 
+If any lane stops, fails or is abandoned, still run lane 06 against everything already written before reporting; the cleanup gate in section 7 applies to every run, finished or not.
+
 Give each lane its prompt file, the run parameters, the path to the previous lane's report (`{AUDIT_DIR}/0N-report.md`), and the handoff table it must honour.
 
 ## 4. After each lane

@@ -47,7 +47,6 @@ export interface EventResource {
     title: string;
     durationInMinutes: number;
     recordedAt: string;
-    playbackUrl: string | null;
     thumbnailUrl: string | null;
     status: string;
     previewTranscript?: string | null;
@@ -237,9 +236,9 @@ export function EventResourceCard({
               <div className="space-y-2">
                 {event.recordings.map((rec) => {
                   const canWatch =
-                    Boolean(rec.playbackUrl) ||
                     rec.status === "AVAILABLE" ||
-                    rec.status === "READY";
+                    rec.status === "READY" ||
+                    rec.status === "TRANSFERRING";
                   return (
                     <div
                       key={rec.id}
@@ -310,7 +309,6 @@ export function EventResourceCard({
                 title: activeRecording.title,
                 recordedAt: activeRecording.recordedAt,
                 durationInMinutes: activeRecording.durationInMinutes,
-                playbackUrl: activeRecording.playbackUrl,
                 previewTranscript: activeRecording.previewTranscript ?? null,
                 planTitle: event.planTitle,
               }

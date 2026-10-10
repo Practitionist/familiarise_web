@@ -39,7 +39,6 @@ export interface RecordingPlayerItem {
   recordedAt?: DateOrIsoString;
   resolution?: string | null;
   storageType?: string | null;
-  streamUrlExpiresAt?: DateOrIsoString;
   previewTranscript?: string | null;
   planType?: string | null;
   planTitle?: string | null;
@@ -77,21 +76,12 @@ function formatDuration(minutes: number | null | undefined): string | null {
 
 function computeStorageBadge(
   storageType?: string | null,
-  streamUrlExpiresAt?: DateOrIsoString,
 ): { label: string; permanent: boolean } | null {
   if (storageType === "PLATFORM") {
-    return { label: "Permanent Cloud Storage", permanent: true };
-  }
-  if (streamUrlExpiresAt) {
-    const expiresMs = new Date(streamUrlExpiresAt).getTime() - Date.now();
-    const days = Math.max(0, Math.ceil(expiresMs / (1000 * 60 * 60 * 24)));
-    return {
-      label: days > 0 ? `Expires in ${days}d` : "Expired",
-      permanent: false,
-    };
+    return { label: "Saved to library", permanent: true };
   }
   if (storageType === "STREAM_S3") {
-    return { label: "Temporary Stream Storage", permanent: false };
+    return { label: "Saving to library", permanent: false };
   }
   return null;
 }
@@ -287,10 +277,7 @@ export function RecordingPlayerModal({
   const durationMins =
     recording.durationMinutes ?? recording.durationInMinutes ?? null;
   const formattedDuration = formatDuration(durationMins);
-  const storageBadge = computeStorageBadge(
-    recording.storageType,
-    recording.streamUrlExpiresAt,
-  );
+  const storageBadge = computeStorageBadge(recording.storageType);
   const fetchedTranscript =
     resolvedPlayback?.recordingId === recording.id
       ? (resolvedPlayback.previewTranscript ?? null)

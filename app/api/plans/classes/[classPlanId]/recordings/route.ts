@@ -8,7 +8,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
-import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
 import { isPrivileged } from "@/lib/auth-helpers";
 import {
@@ -110,24 +109,20 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         };
     const recordings = all.filter((r) => !hiddenFromLateJoiner(r, lateJoin));
 
-    // Map recordings to response format (async — presigned URLs)
-    const formattedRecordings = await Promise.all(
-      recordings.map(async (recording) => ({
-        id: recording.id,
-        title: recording.title,
-        durationInMinutes: recording.durationInMinutes,
-        recordedAt: recording.recordedAt,
-        status: recording.status,
-        storageType: recording.storageType,
-        playbackUrl: await getBestRecordingUrl(recording),
-        thumbnailUrl: recording.thumbnailUrl,
-        resolution: recording.resolution,
-        previewClipUrl: recording.previewClipUrl,
-        previewClipDuration: recording.previewClipDuration,
-        streamUrlExpiresAt: recording.streamUrlExpiresAt,
-        createdAt: recording.createdAt,
-      })),
-    );
+    const formattedRecordings = recordings.map((recording) => ({
+      id: recording.id,
+      title: recording.title,
+      durationInMinutes: recording.durationInMinutes,
+      recordedAt: recording.recordedAt,
+      status: recording.status,
+      storageType: recording.storageType,
+      thumbnailUrl: recording.thumbnailUrl,
+      resolution: recording.resolution,
+      previewClipUrl: recording.previewClipUrl,
+      previewClipDuration: recording.previewClipDuration,
+      streamUrlExpiresAt: recording.streamUrlExpiresAt,
+      createdAt: recording.createdAt,
+    }));
 
     return NextResponse.json({
       planId: classPlanId,

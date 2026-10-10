@@ -18,10 +18,7 @@
 import type { LucideIcon } from "lucide-react";
 
 export type OfferingType =
-  | "consultation"
-  | "subscription"
-  | "webinar"
-  | "class";
+  "consultation" | "subscription" | "webinar" | "class";
 
 /**
  * How a field renders. Deliberately a closed set: a manifest that can express
@@ -72,6 +69,8 @@ export interface FieldSpec {
    * another's 3-up for no reason.
    */
   span?: 2 | 3 | 6;
+  /** Rendered only while this sibling switch is on. */
+  shownWhen?: string;
 }
 
 export interface SectionSpec {

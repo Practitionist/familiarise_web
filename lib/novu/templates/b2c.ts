@@ -666,18 +666,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Recording failed",
-      body: "A recording could not be saved{% if payload.errorMessage %}: {{payload.errorMessage}}{% endif %}. The call itself was not affected.",
-      redirect: "dashboardUrl",
-    },
-  },
-  {
-    workflowId: W.RECORDING_EXPIRING,
-    name: "Recordings expiring",
-    description: "The host, before Stream-only recordings lapse (STR-3).",
-    category: "appointments",
-    inApp: {
-      subject: "Recordings expiring",
-      body: "{{payload.recordingCount}} recording{% if payload.recordingCount != 1 %}s{% endif %} will expire on {{payload.expiresAt}}. Download anything you want to keep before then.",
+      body: "A recording could not be saved. The call itself was not affected.",
       redirect: "dashboardUrl",
     },
   },

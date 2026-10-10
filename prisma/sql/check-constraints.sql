@@ -986,3 +986,10 @@ ALTER TABLE "CreditPoolConfig" ADD CONSTRAINT "credit_pool_config_pricing_sane"
     AND ("priceCapPerEngagementPaise" IS NULL OR "priceCapPerEngagementPaise" > 0)
   );
 
+
+-- SPLIT
+-- Org recording-retention cap: NULL follows the platform schedule; a set cap stays inside the PATCH route's 7..3650 range.
+ALTER TABLE "organizations" DROP CONSTRAINT IF EXISTS "org_stream_recording_retention_days_range";
+-- SPLIT
+ALTER TABLE "organizations" ADD CONSTRAINT "org_stream_recording_retention_days_range"
+  CHECK ("streamRecordingRetentionDays" IS NULL OR "streamRecordingRetentionDays" BETWEEN 7 AND 3650);

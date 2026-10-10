@@ -41,14 +41,29 @@ const ACTIONABLE_OPEN_STATUSES: DisputeStatus[] = [
   "WARNING_NEEDS_RESPONSE",
 ];
 
-const DISPUTE_PAYMENT_INCLUDE = {
+/** List rows never carry evidence, billing details or internal notes; those live on the detail view behind `disputes.manage`. */
+const DISPUTE_LIST_SELECT = {
+  id: true,
+  disputeId: true,
+  amountPaise: true,
+  currency: true,
+  status: true,
+  reason: true,
+  paymentGateway: true,
+  paymentId: true,
+  dueBy: true,
+  isChargeRefundable: true,
+  evidenceSubmittedAt: true,
+  assignedToUserId: true,
+  createdAt: true,
+  updatedAt: true,
   payment: {
     select: {
       id: true,
       paymentIntent: true,
     },
   },
-} satisfies Prisma.DisputeInclude;
+} satisfies Prisma.DisputeSelect;
 
 async function loadDisputePage(params: {
   where: Prisma.DisputeWhereInput;
@@ -66,7 +81,7 @@ async function loadDisputePage(params: {
       orderBy: isActionableOpen
         ? [{ dueBy: { sort: "asc", nulls: "last" } }, { createdAt: "desc" }]
         : [{ createdAt: "desc" }],
-      include: DISPUTE_PAYMENT_INCLUDE,
+      select: DISPUTE_LIST_SELECT,
     });
   }
 
@@ -93,7 +108,7 @@ async function loadDisputePage(params: {
             { dueBy: { sort: "asc", nulls: "last" } },
             { createdAt: "desc" },
           ],
-          include: DISPUTE_PAYMENT_INCLUDE,
+          select: DISPUTE_LIST_SELECT,
         })
       : Promise.resolve([]),
     closedTake > 0
@@ -102,7 +117,7 @@ async function loadDisputePage(params: {
           skip: closedSkip,
           take: closedTake,
           orderBy: [{ createdAt: "desc" }],
-          include: DISPUTE_PAYMENT_INCLUDE,
+          select: DISPUTE_LIST_SELECT,
         })
       : Promise.resolve([]),
   ]);
