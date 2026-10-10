@@ -14,13 +14,6 @@ export interface AuthTokenCleanupResult {
   timestamp: string;
 }
 
-export interface StaleInvitationsCleanupResult {
-  success: boolean;
-  expired: number;
-  errors: string[];
-  timestamp: string;
-}
-
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -68,7 +61,7 @@ async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
     errors.push(`Idempotency cleanup: ${messageOf(error)}`);
   }
 
-  const inviteResult = await cleanupStaleInvitationsUnlocked(now);
+  const inviteResult = await expireStaleInvitations(now);
   staleInvitationsExpired = inviteResult.expired;
   for (const err of inviteResult.errors) {
     errors.push(`Stale invitation cleanup: ${err}`);
@@ -97,15 +90,9 @@ async function cleanupAuthTokensUnlocked(): Promise<AuthTokenCleanupResult> {
 }
 
 /** Expires lapsed PENDING invitations, writing one MEMBER/INVITE_EXPIRED audit row each. */
-export async function cleanupStaleInvitations(): Promise<StaleInvitationsCleanupResult> {
-  return withCronLock("cleanup-stale-invitations", { failMode: "open" }, () =>
-    cleanupStaleInvitationsUnlocked(),
-  );
-}
-
-async function cleanupStaleInvitationsUnlocked(
-  now: Date = new Date(),
-): Promise<StaleInvitationsCleanupResult> {
+async function expireStaleInvitations(
+  now: Date,
+): Promise<{ expired: number; errors: string[] }> {
   const errors: string[] = [];
   let expired = 0;
 
@@ -124,16 +111,11 @@ async function cleanupStaleInvitationsUnlocked(
     for (const invite of candidates) {
       try {
         const didExpire = await prisma.$transaction(async (tx) => {
-          const fresh = await tx.invitation.findUnique({
-            where: { id: invite.id },
-            select: { status: true },
-          });
-          if (!fresh || fresh.status !== "PENDING") return false;
-
-          await tx.invitation.update({
-            where: { id: invite.id },
+          const { count } = await tx.invitation.updateMany({
+            where: { id: invite.id, status: "PENDING", expiresAt: { lt: now } },
             data: { status: "EXPIRED" },
           });
+          if (count === 0) return false;
 
           await tx.orgAuditLog.create({
             data: {
@@ -161,10 +143,5 @@ async function cleanupStaleInvitationsUnlocked(
     errors.push(messageOf(err));
   }
 
-  return {
-    success: errors.length === 0,
-    expired,
-    errors,
-    timestamp: now.toISOString(),
-  };
+  return { expired, errors };
 }

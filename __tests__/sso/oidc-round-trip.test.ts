@@ -18,7 +18,8 @@
  *   so Prisma-level behaviour (unique constraints, the SsoProvider secret
  *   encryption extension) and lib/auth.ts's other plugins and databaseHooks
  *   (SSO enforcement veto, welcome email, customSession) are not exercised.
- *   Only its email-domain check is wired in, the way lib/auth.ts calls it.
+ *   Only its email-domain check and the claim-refusal redirect after-hook are
+ *   wired in, the way lib/auth.ts calls them.
  * - The JIT module's own Prisma calls hit a small in-memory fake, and
  *   `applyMembershipRoleEffects` is stubbed; the gate logic itself has unit
  *   coverage in jit-membership.test.ts.
@@ -30,6 +31,7 @@
 import { generateKeyPair, exportJWK } from "jose";
 import { OAuth2Server } from "oauth2-mock-server";
 import { betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { sso } from "@better-auth/sso";
 
@@ -87,6 +89,21 @@ const fakePrisma = {
       return { count: before - db.account.length };
     },
   },
+  session: {
+    findFirst: async ({ where }: { where: { userId: string } }) => {
+      const time = (r: Record<string, unknown>) =>
+        r.createdAt instanceof Date ? r.createdAt.getTime() : 0;
+      const rows = db.session
+        .filter((r) => r.userId === where.userId)
+        .sort((a, b) => time(b) - time(a));
+      return rows[0] ? { id: rows[0].id } : null;
+    },
+    deleteMany: async ({ where }: { where: { id: string } }) => {
+      const before = db.session.length;
+      db.session = db.session.filter((r) => r.id !== where.id);
+      return { count: before - db.session.length };
+    },
+  },
   ssoProvider: {
     findUnique: async ({ where }: { where: { providerId: string } }) =>
       db.ssoProvider.find((p) => p.providerId === where.providerId) ?? null,
@@ -119,6 +136,7 @@ jest.mock("../../lib/enterprise/outbound-webhooks/ssrf-guard", () => ({
 }));
 
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
+import { ssoClaimRefusalRedirect } from "@/lib/sso/claim-refusal-redirect";
 import {
   assertSsoEmailOnDomain,
   isSsoProviderId,
@@ -161,6 +179,9 @@ function buildAuth() {
     trustedOrigins: [issuer],
     database: memoryAdapter(db),
     plugins: [sso(ssoPluginOptions)],
+    hooks: {
+      after: createAuthMiddleware(async (ctx) => ssoClaimRefusalRedirect(ctx)),
+    },
     databaseHooks: {
       user: {
         create: {
@@ -396,14 +417,33 @@ it("never links an out-of-domain IdP account to an existing user", async () => {
   expect(db.session).toHaveLength(0);
 });
 
-it("refuses an identity the IdP does not mark email_verified, leaving no link or cookie", async () => {
+it("refuses an identity the IdP does not mark email_verified, redirecting to sign-in with no link, session or cookie", async () => {
   emailVerified = false;
 
   const { done, jar } = await completeRoundTrip();
 
-  expect(done.status).toBe(403);
-  expect(await done.json()).toMatchObject({ code: "SSO_EMAIL_NOT_VERIFIED" });
+  expect(done.status).toBe(302);
+  expect(done.headers.get("location")).toBe(
+    "/auth/signin?error=SSO_EMAIL_NOT_VERIFIED",
+  );
   expect(jar.get("better-auth.session_token")).toBeUndefined();
   expect(db.account).toHaveLength(0);
+  expect(db.session).toHaveLength(0);
   expect(memberships).toHaveLength(0);
+});
+
+it("a refused re-login keeps the user's earlier session and ends only the new one", async () => {
+  await completeRoundTrip();
+  expect(db.session).toHaveLength(1);
+  const [earlier] = db.session;
+  emailVerified = false;
+
+  const { done, jar } = await completeRoundTrip();
+
+  expect(done.status).toBe(302);
+  expect(done.headers.get("location")).toBe(
+    "/auth/signin?error=SSO_EMAIL_NOT_VERIFIED",
+  );
+  expect(jar.get("better-auth.session_token")).toBeUndefined();
+  expect(db.session).toEqual([earlier]);
 });

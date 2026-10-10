@@ -122,10 +122,7 @@ export default function ConsultantVerificationForm({
     onNext({
       verificationLinkedinUrl: linkedinUrl,
       verificationNotes: notes,
-      // The submitted list must be the one that was just checked. It used to
-      // send `documents` — every row, including `uploading` and `error` ones —
-      // so a draft that passed this non-empty check still carried unsubmittable
-      // rows to the write boundary (#1869).
+      // Only persisted documents that passed the check above are submitted.
       verificationDocuments: completedDocuments,
     });
   };

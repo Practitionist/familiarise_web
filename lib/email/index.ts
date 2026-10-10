@@ -165,8 +165,7 @@ export const sendPasswordResetEmail = defineDirectEmailSender<{
   emailType: "PASSWORD_RESET",
   element: PasswordResetEmail({
     name,
-    // `email` fills the reset page's hidden username field for password managers.
-    resetLink: `${getAppUrl()}/auth/reset-password?token=${encodeURIComponent(token)}&email=${encodeURIComponent(email)}`,
+    resetLink: `${getAppUrl()}/auth/reset-password?token=${encodeURIComponent(token)}`,
     invite,
   }),
   envelope: {

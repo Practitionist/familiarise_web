@@ -11,6 +11,7 @@ import prisma from "@/lib/prisma";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
+import { ssoClaimRefusalRedirect } from "@/lib/sso/claim-refusal-redirect";
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import {
   assertSsoAccountLink,
@@ -191,6 +192,8 @@ export const auth = betterAuth({
       await assertOperatorMayRegisterPasskey(ctx);
     }),
     after: createAuthMiddleware(async (ctx) => {
+      const ssoRefusal = ssoClaimRefusalRedirect(ctx);
+      if (ssoRefusal) return ssoRefusal;
       await notifySecurityEvents(ctx);
       return stripSessionToken(ctx);
     }),

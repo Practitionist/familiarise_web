@@ -44,14 +44,28 @@ function reportAuthFailure(error: unknown, op: string): void {
   reportSentryError(error, { subsystem: "auth", op, level: "warning" });
 }
 
+/** Novu holds the address, so only proven (verified) users get a subscriber. */
+function syncVerifiedSubscriber(user: LifecycleUser): void {
+  const nameParts = (user.name || "User").split(" ");
+  syncSubscriber({
+    userId: user.id,
+    email: user.email,
+    firstName: nameParts[0],
+    lastName: nameParts.slice(1).join(" ") || undefined,
+    routingMode: "BELL_AND_EMAIL",
+  }).catch((error) => reportAuthFailure(error, "novu-subscriber-sync"));
+}
+
 /**
- * The first moment a person has proven their address: stamp the sign-up DPDP
- * consent (unless they never saw the sign-up form) and send the welcome mail.
+ * The first moment a person has proven their address: create their Novu
+ * subscriber, stamp the sign-up DPDP consent (unless they never saw the
+ * sign-up form) and send the welcome mail.
  */
 export async function welcomeVerifiedUser(
   user: LifecycleUser,
   opts: { stampConsent: boolean },
 ): Promise<void> {
+  syncVerifiedSubscriber(user);
   if (opts.stampConsent) {
     // Fails open: ConsentSection lets the user grant it, and every consent
     // gate fails closed until they do.
@@ -96,21 +110,14 @@ export async function provisionNewUser(
       update: {},
     });
 
-    const operatorCreated = path === "/admin/create-user";
-    if (user.emailVerified && !operatorCreated) {
+    if (!user.emailVerified) return;
+    if (path === "/admin/create-user") {
+      syncVerifiedSubscriber(user);
+    } else {
       await welcomeVerifiedUser(user, {
         stampConsent: !(path?.startsWith("/sso/") ?? false),
       });
     }
-
-    const nameParts = (user.name || "User").split(" ");
-    syncSubscriber({
-      userId: user.id,
-      email: user.email,
-      firstName: nameParts[0],
-      lastName: nameParts.slice(1).join(" ") || undefined,
-      routingMode: "BELL_AND_EMAIL",
-    }).catch((error) => reportAuthFailure(error, "novu-subscriber-sync"));
   } catch (error) {
     reportAuthFailure(error, "user-create-after");
   }

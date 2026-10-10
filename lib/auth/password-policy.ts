@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
+import { z } from "zod";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import { PASSWORD_MAX_BYTES, passwordTooLong } from "@/lib/auth/password-rules";
 
@@ -45,10 +46,15 @@ async function breachCount(password: string): Promise<number> {
   return 0;
 }
 
+const passwordFieldsSchema = z
+  .object({ newPassword: z.unknown(), password: z.unknown() })
+  .partial();
+
 /** The chosen password in a sign-up, reset or change-password body. */
 export function chosenPassword(body: unknown): string | null {
-  const fields = body as { password?: unknown; newPassword?: unknown } | null;
-  const password = fields?.newPassword ?? fields?.password;
+  const parsed = passwordFieldsSchema.safeParse(body);
+  if (!parsed.success) return null;
+  const password = parsed.data.newPassword ?? parsed.data.password;
   return typeof password === "string" && password.length > 0 ? password : null;
 }
 

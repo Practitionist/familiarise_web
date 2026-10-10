@@ -23,6 +23,7 @@ import {
   CreateOrgInvoiceSchema,
   notifyCreatedOrgInvoice,
 } from "@/lib/payments/billing/create-org-invoice";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 
 const InvoiceStatusSchema = z.enum([
@@ -128,6 +129,10 @@ export async function POST(
     throw err;
   }
 
-  notifyCreatedOrgInvoice(new URL(req.url).origin, orgId, created, body);
+  const origin = new URL(req.url).origin;
+  scheduleAfter(
+    () => notifyCreatedOrgInvoice(origin, orgId, created, body),
+    "org-invoice.notify",
+  );
   return NextResponse.json({ invoice: created.invoice }, { status: 201 });
 }

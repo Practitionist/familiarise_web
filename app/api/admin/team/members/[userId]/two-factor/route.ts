@@ -90,11 +90,23 @@ export const DELETE = withOpsAction(
           passwordRotated: true,
         },
         response: { userId, sessionsRevoked: revoked },
+        // Independent sends: a failed setup link must not suppress the security notice.
         afterCommit: async () => {
-          await sendOperatorSetupLink(target.email);
-          await sendSecurityEventEmail(target, {
-            kind: "two-factor-reset-by-admin",
-          });
+          const results = await Promise.allSettled([
+            sendOperatorSetupLink(target.email),
+            sendSecurityEventEmail(target, {
+              kind: "two-factor-reset-by-admin",
+            }),
+          ]);
+          const failures = results.flatMap((r) =>
+            r.status === "rejected" ? [r.reason] : [],
+          );
+          if (failures.length > 0) {
+            throw new AggregateError(
+              failures,
+              "two-factor reset emails failed",
+            );
+          }
         },
       };
     },

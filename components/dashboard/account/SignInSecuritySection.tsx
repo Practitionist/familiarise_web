@@ -307,6 +307,9 @@ export function SessionsSection() {
   // `sessions` here would re-create `load` on every setSessions and
   // re-trigger the mount effect into a refetch loop.
   const hasLoadedRef = useRef(false);
+  // Bumped by every full reload, so a page fetched for an older list is dropped.
+  const listGenerationRef = useRef(0);
+  const loadingMoreRef = useRef(false);
   // One error event per mount: a broken backend 500ing for every visitor
   // must not turn every Retry click into a Sentry event (quota), and
   // 401 (dead session — an expected flow) and 429 (the limiter working
@@ -331,11 +334,13 @@ export function SessionsSection() {
   );
 
   const load = useCallback(async () => {
+    const generation = ++listGenerationRef.current;
     setIsLoading(true);
     setLoadError(null);
     let status: number | null = null;
     try {
       const res = await fetch("/api/user/sessions");
+      if (generation !== listGenerationRef.current) return;
       // 401 means THIS session is gone (revoked elsewhere, expired) —
       // retrying the same dead cookie is futile, so say so instead of
       // offering a Retry that can never succeed. Anything else (500,
@@ -347,11 +352,13 @@ export function SessionsSection() {
       status = res.status;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as SessionsPage;
+      if (generation !== listGenerationRef.current) return;
       setSessions(body.sessions);
       setTotal(body.total);
       setNextCursor(body.nextCursor);
       hasLoadedRef.current = true;
     } catch (error) {
+      if (generation !== listGenerationRef.current) return;
       reportLoadFailure(status, error);
       // Stale list beats no list: a refresh failure keeps the last known
       // rows (flagged by toast) instead of blanking the section — but a
@@ -365,7 +372,7 @@ export function SessionsSection() {
         setLoadError("retryable");
       }
     } finally {
-      setIsLoading(false);
+      if (generation === listGenerationRef.current) setIsLoading(false);
     }
   }, [reportLoadFailure, toast]);
 
@@ -374,7 +381,9 @@ export function SessionsSection() {
   }, [load]);
 
   const loadMore = useCallback(async () => {
-    if (!nextCursor) return;
+    if (!nextCursor || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    const generation = listGenerationRef.current;
     setIsLoading(true);
     try {
       const res = await fetch(
@@ -382,13 +391,22 @@ export function SessionsSection() {
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as SessionsPage;
-      setSessions((prev) => [...(prev ?? []), ...body.sessions]);
+      if (generation !== listGenerationRef.current) return;
+      setSessions((prev) => {
+        const seen = new Set((prev ?? []).map((s) => s.id));
+        return [
+          ...(prev ?? []),
+          ...body.sessions.filter((s) => !seen.has(s.id)),
+        ];
+      });
       setTotal(body.total);
       setNextCursor(body.nextCursor);
     } catch {
+      if (generation !== listGenerationRef.current) return;
       toast({ title: "Couldn't load more sessions", variant: "destructive" });
     } finally {
-      setIsLoading(false);
+      loadingMoreRef.current = false;
+      if (generation === listGenerationRef.current) setIsLoading(false);
     }
   }, [nextCursor, toast]);
 

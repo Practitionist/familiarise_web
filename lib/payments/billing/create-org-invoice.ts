@@ -32,7 +32,7 @@ export const CreateOrgInvoiceSchema = z.object({
   billingCycleStart: z.coerce.date().nullable().optional(),
   billingCycleEnd: z.coerce.date().nullable().optional(),
   // A DRAFT invoice isn't billed; some callers review before issuing.
-  issueImmediately: z.coerce.boolean().default(false),
+  issueImmediately: z.boolean().default(false),
 });
 
 export type CreateOrgInvoiceInput = z.infer<typeof CreateOrgInvoiceSchema>;
@@ -278,16 +278,16 @@ export async function createOrgInvoice(
 
 export type CreatedOrgInvoice = Awaited<ReturnType<typeof createOrgInvoice>>;
 
-/** After commit: tell the org's OWNERs an invoice was issued on creation. */
-export function notifyCreatedOrgInvoice(
+/** After commit: tell the org's OWNERs an invoice was issued on creation. Run via `scheduleAfter`. */
+export async function notifyCreatedOrgInvoice(
   origin: string,
   orgId: string,
   created: CreatedOrgInvoice,
   input: CreateOrgInvoiceInput,
-): void {
+): Promise<void> {
   if (!input.issueImmediately) return;
   const { invoice, orgName } = created;
-  notifyOrgInvoiceIssued(orgId, {
+  await notifyOrgInvoiceIssued(orgId, {
     invoiceNumber: invoice.invoiceNumber,
     orgName,
     totalPaise: invoice.totalPaise,
@@ -295,5 +295,5 @@ export function notifyCreatedOrgInvoice(
     dueDate: input.dueDate.toISOString(),
     dashboardUrl: `${origin}/dashboard/organization/${orgId}/billing`,
     pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoice.id}/pdf`,
-  }).catch((err) => console.error("[notifyOrgInvoiceIssued] failed:", err));
+  });
 }

@@ -10,10 +10,16 @@
  */
 
 const accountDeleteMany = jest.fn(async (_a: unknown) => ({ count: 1 }));
+const sessionFindFirst = jest.fn(async (_a: unknown) => ({ id: "s_new" }));
+const sessionDeleteMany = jest.fn(async (_a: unknown) => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     account: { deleteMany: (a: unknown) => accountDeleteMany(a) },
+    session: {
+      findFirst: (a: unknown) => sessionFindFirst(a),
+      deleteMany: (a: unknown) => sessionDeleteMany(a),
+    },
   },
 }));
 const provisionSsoMembership = jest.fn();
@@ -175,6 +181,13 @@ describe("provisionUser", () => {
     expect(accountDeleteMany).toHaveBeenCalledWith({
       where: { userId: "u_1", providerId: "oidc-acme" },
     });
+    expect(sessionFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "u_1" },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    expect(sessionDeleteMany).toHaveBeenCalledWith({ where: { id: "s_new" } });
     expect(provisionSsoMembership).not.toHaveBeenCalled();
     expect(stampProviderProven).not.toHaveBeenCalled();
   });

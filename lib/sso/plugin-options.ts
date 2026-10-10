@@ -31,6 +31,13 @@ export const ssoPluginOptions = {
       await prisma.account.deleteMany({
         where: { userId: user.id, providerId: provider.providerId },
       });
+      // The plugin created this login's session just before calling us.
+      const orphan = await prisma.session.findFirst({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      if (orphan) await prisma.session.deleteMany({ where: { id: orphan.id } });
       throw refusal;
     }
     const domain = emailDomain(user.email);

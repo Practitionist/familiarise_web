@@ -61,9 +61,7 @@ function TwoFactorChallenge() {
   // finished this challenge, in which case the session exists and the code is moot.
   const redirectIfSignedIn = useCallback(async (): Promise<boolean> => {
     try {
-      const { data } = await authClient.getSession({
-        query: { disableCookieCache: true },
-      });
+      const { data } = await authClient.getSession();
       if (!data?.user) return false;
       router.replace(destination);
       return true;

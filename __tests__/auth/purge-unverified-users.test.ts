@@ -5,6 +5,7 @@
 const mockFindMany = jest.fn();
 const mockDeleteMany = jest.fn();
 const mockReport = jest.fn();
+const mockRemoveSubscriber = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -18,6 +19,9 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_name: string, _opts: unknown, fn: () => Promise<unknown>) =>
     fn(),
+}));
+jest.mock("../../lib/novu/subscriber", () => ({
+  removeSubscriber: (...args: unknown[]) => mockRemoveSubscriber(...args),
 }));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryMessage: (...args: unknown[]) => mockReport(...args),
@@ -64,6 +68,7 @@ describe("unverifiedUserPurgeWhere", () => {
 describe("purgeUnverifiedUsers", () => {
   it("re-applies the predicate in each delete and reports failures once", async () => {
     mockFindMany.mockResolvedValue([{ id: "u1" }, { id: "u2" }, { id: "u3" }]);
+    mockRemoveSubscriber.mockResolvedValue(undefined);
     mockDeleteMany
       .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 0 }) // verified mid-run
@@ -87,5 +92,30 @@ describe("purgeUnverifiedUsers", () => {
       failed: 1,
     });
     expect(mockReport).toHaveBeenCalledTimes(1);
+    expect(mockRemoveSubscriber.mock.calls).toEqual([["u1"]]);
+  });
+
+  it("deletes the Novu subscriber of each purged user and reports its failures in the one run report", async () => {
+    mockFindMany.mockResolvedValue([{ id: "u1" }, { id: "u2" }]);
+    mockDeleteMany.mockResolvedValue({ count: 1 });
+    mockRemoveSubscriber
+      .mockRejectedValueOnce(new Error("novu down"))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await purgeUnverifiedUsers({ now: NOW });
+
+    expect(mockRemoveSubscriber.mock.calls).toEqual([["u1"], ["u2"]]);
+    expect(result).toEqual({
+      success: true,
+      scanned: 2,
+      purged: 2,
+      failed: 0,
+    });
+    expect(mockReport).toHaveBeenCalledTimes(1);
+    expect(mockReport.mock.calls[0][1].extra).toMatchObject({
+      failed: 0,
+      subscriberDeleteFailed: 1,
+      subscriberUserIds: ["u1"],
+    });
   });
 });

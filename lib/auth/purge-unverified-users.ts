@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { removeSubscriber } from "@/lib/novu/subscriber";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 export const UNVERIFIED_ACCOUNT_TTL_DAYS = 7;
@@ -63,22 +64,33 @@ export async function purgeUnverifiedUsers(
 
       let purged = 0;
       const failures: string[] = [];
+      const subscriberFailures: string[] = [];
       for (const { id } of candidates) {
+        let count = 0;
         try {
-          const { count } = await prisma.user.deleteMany({
+          ({ count } = await prisma.user.deleteMany({
             where: { ...where, id },
-          });
+          }));
           purged += count;
         } catch {
           failures.push(id);
         }
+        // Best effort: users synced before verification gated Novu still have one.
+        if (count > 0) {
+          await removeSubscriber(id).catch(() => subscriberFailures.push(id));
+        }
       }
 
-      if (failures.length > 0) {
+      if (failures.length > 0 || subscriberFailures.length > 0) {
         reportSentryMessage("UNVERIFIED_USER_PURGE_FAILURES", {
           subsystem: "auth",
           level: "warning",
-          extra: { failed: failures.length, userIds: failures.slice(0, 20) },
+          extra: {
+            failed: failures.length,
+            userIds: failures.slice(0, 20),
+            subscriberDeleteFailed: subscriberFailures.length,
+            subscriberUserIds: subscriberFailures.slice(0, 20),
+          },
         });
       }
       return {

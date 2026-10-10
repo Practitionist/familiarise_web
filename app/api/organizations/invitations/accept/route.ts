@@ -288,9 +288,8 @@ export async function POST(req: NextRequest) {
 
       // #729 §AC4/AC5 + #819 — who-is-acting identity rule. Accepting an
       // invitation is the USER'S OWN consenting action, so the lightweight
-      // ConsulteeProfile may be lazy-created here (lib/auth.ts names
-      // "invite-accept as LEARNER" as a sanctioned creation point — gating
-      // it broke sponsored-employee onboarding). EXPERT stays strict: a
+      // ConsulteeProfile may be lazy-created here (a sanctioned creation
+      // point; see lib/profiles/ensure-consultee-profile.ts). EXPERT stays strict: a
       // consultant identity carries domain/rates/verification/payout
       // prerequisites that no invite click can substitute for. SSO JIT keeps
       // its own lazy path; there is no admin direct-add any more (#1846).

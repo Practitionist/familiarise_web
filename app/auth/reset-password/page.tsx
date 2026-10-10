@@ -42,8 +42,6 @@ function ResetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
-  // Lets password managers file the new password under the right account.
-  const accountEmail = searchParams.get("email") ?? "";
   // Better Auth redirects here with `?error=` when the link's token is bad.
   const linkError = searchParams.get("error");
 
@@ -204,16 +202,6 @@ function ResetPasswordContent() {
 
         {token && (
           <form className="mt-8 space-y-6" onSubmit={handleResetPassword}>
-            <input
-              type="email"
-              name="username"
-              autoComplete="username"
-              value={accountEmail}
-              readOnly
-              tabIndex={-1}
-              aria-hidden="true"
-              className="sr-only"
-            />
             <div className="grid gap-2">
               <Label htmlFor="password">New Password</Label>
               <Input

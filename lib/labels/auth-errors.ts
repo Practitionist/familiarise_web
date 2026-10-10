@@ -236,6 +236,26 @@ export const AUTH_ERROR_COPY = {
     "Sign in with SSO first",
     "An organisation owner must complete one successful SSO sign-in before SSO can be required for everyone.",
   ),
+  SSO_ID_TOKEN_MISSING: entry(
+    "Your organisation's sign-in didn't finish",
+    `Your identity provider didn't send the details we need. Try again, and if it keeps happening ask your organisation's administrator to check the SSO setup or contact ${SUPPORT}.`,
+    "retry",
+  ),
+  SSO_EMAIL_NOT_VERIFIED: entry(
+    "Your organisation hasn't confirmed this email",
+    "Your identity provider didn't confirm that this email address belongs to you. Ask your organisation's administrator to verify it, then sign in again.",
+    "contact-support",
+  ),
+  SSO_HOSTED_DOMAIN_MISMATCH: entry(
+    "Use your work account",
+    "That looks like a personal account. Sign in with the account your organisation gave you, not a personal one.",
+    "retry",
+  ),
+  SSO_ACCOUNT_ALREADY_LINKED: entry(
+    "This account uses a different organisation sign-in",
+    "It's already connected to another identity at your organisation's provider. Sign in with that account, or ask your organisation's administrator for help.",
+    "sign-in",
+  ),
   // OAuth and SSO callbacks redirect with lowercase codes; lookup upper-cases them.
   ACCOUNT_NOT_LINKED: entry(
     "Reset your password to connect this account",

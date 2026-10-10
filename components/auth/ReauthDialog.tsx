@@ -115,13 +115,18 @@ function ReauthForm({
   const signInWithPasskey = async () => {
     setBusy(true);
     setError(null);
-    const result = await authClient.signIn.passkey();
-    setBusy(false);
-    if (result.error) {
+    try {
+      const result = await authClient.signIn.passkey();
+      if (result.error) {
+        setError("Your passkey wasn't accepted. Try again or use your code.");
+        return;
+      }
+      onDone(true);
+    } catch {
       setError("Your passkey wasn't accepted. Try again or use your code.");
-      return;
+    } finally {
+      setBusy(false);
     }
-    onDone(true);
   };
 
   const signInAgainHref = `/auth/signin?callbackUrl=${encodeURIComponent(

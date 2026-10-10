@@ -309,6 +309,11 @@ export function SsoPanel({ orgId }: { orgId: string }) {
       setNewSecret("");
     },
   });
+  const closeRotate = () => {
+    setRotating(null);
+    setNewSecret("");
+    rotateSecretMutation.reset();
+  };
 
   const deleteProviderMutation = useMutation({
     mutationFn: (id: string) => deleteProvider(orgId, id),
@@ -463,7 +468,7 @@ export function SsoPanel({ orgId }: { orgId: string }) {
       <Dialog
         open={rotating !== null}
         onOpenChange={(open) => {
-          if (!open) setRotating(null);
+          if (!open) closeRotate();
         }}
       >
         <DialogContent>
@@ -491,7 +496,7 @@ export function SsoPanel({ orgId }: { orgId: string }) {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRotating(null)}>
+            <Button variant="outline" onClick={closeRotate}>
               Cancel
             </Button>
             <Button
