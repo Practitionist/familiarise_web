@@ -39,6 +39,7 @@ interface ResourcesTabProps {
   title?: string;
   subtitle?: string;
   sortDir?: "desc" | "asc";
+  onSortDirChange?: (dir: "desc" | "asc") => void;
 }
 
 const EVENT_TYPES = [
@@ -131,6 +132,7 @@ export function ResourcesTab({
   title,
   subtitle,
   sortDir: externalSortDir,
+  onSortDirChange,
 }: ResourcesTabProps) {
   const [internalSortDir, setInternalSortDir] = useState<"desc" | "asc">(
     "desc",
@@ -322,13 +324,18 @@ export function ResourcesTab({
             <SelectItem value="completed">Completed only</SelectItem>
           </SelectContent>
         </Select>
-        {externalSortDir === undefined && (
+        {(externalSortDir === undefined || onSortDirChange) && (
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              setInternalSortDir((d) => (d === "desc" ? "asc" : "desc"))
-            }
+            onClick={() => {
+              const nextDir = sortDir === "desc" ? "asc" : "desc";
+              if (onSortDirChange) {
+                onSortDirChange(nextDir);
+              } else {
+                setInternalSortDir(nextDir);
+              }
+            }}
           >
             <ArrowUpDown className="h-4 w-4 mr-2" />
             {sortDir === "desc" ? "Newest first" : "Oldest first"}

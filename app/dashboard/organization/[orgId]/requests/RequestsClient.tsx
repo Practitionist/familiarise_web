@@ -3,10 +3,9 @@
 import { RequestsInbox } from "@/components/dashboard/shared/requests/RequestsInbox";
 
 /**
- * This organisation's Requests inbox (#1775): the same component the
- * consultant tree mounts, pointed at one org through `?orgScope=<orgId>` —
- * the bookings reads exclude org-funded rows when that param is absent, which
- * is how an org-sponsored subscription once went paid and never scheduled.
+ * Organization Requests inbox: mounts the shared RequestsInbox scoped to one
+ * organization via `?orgScope=<orgId>` — personal bookings reads exclude
+ * org-funded rows when that param is absent.
  *
  * `consultantProfileId` is the VIEWER's delivering profile: allocation is a
  * delivery act, so the allocate links stay in the consultant tree. No RSC

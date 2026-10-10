@@ -75,6 +75,7 @@ export function UrlTabs({
   const onValueChange = useCallback(
     (value: string) => {
       setLocalActive(value);
+      onTabChange?.(value);
       const params = new URLSearchParams(window.location.search);
       params.set(paramName, value);
       // Panels that paginate all read the same `?page=`. Without this, moving
@@ -88,7 +89,7 @@ export function UrlTabs({
         replaceUrl(target);
       }
     },
-    [paramName, pathname],
+    [onTabChange, paramName, pathname],
   );
 
   if (!active) return null;

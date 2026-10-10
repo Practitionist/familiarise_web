@@ -99,7 +99,11 @@ export function ExpertPayoutRoutingPanel({
         confirmLabel="Change routing"
         onConfirm={() => change(row)}
         trigger={
-          <Button size="sm" variant="ghost">
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Change payout routing for ${row.name ?? "expert"}`}
+          >
             Change
           </Button>
         }

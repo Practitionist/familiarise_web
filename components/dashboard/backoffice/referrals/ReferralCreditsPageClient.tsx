@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
@@ -2347,7 +2348,11 @@ function ProgramAndFeeConfigTabPanel({
 export function ReferralCreditsPageClient() {
   const { can } = useBackofficeCapability();
   const canManage = can("referrals.manage");
-  const [activeTab, setActiveTab] = useState("credits");
+  const searchParams = useSearchParams();
+  const rawTab = searchParams?.get("tab");
+  const [activeTab, setActiveTab] = useState(
+    rawTab === "waivers" || rawTab === "config" ? rawTab : "credits",
+  );
   const [issueOpen, setIssueOpen] = useState(false);
   const [grantOpen, setGrantOpen] = useState(false);
 

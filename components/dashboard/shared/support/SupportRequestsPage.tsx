@@ -16,10 +16,9 @@ export interface SupportRequestsPageProps {
 }
 
 /**
- * Support requests (#1527): your private conversations with the Familiarise
- * team, as URL tabs — Requests (Sessions · Platform) and Feedback. Articles
- * live only in the public Help Center; this page links a few beside the
- * request entry points. The old `help` route and `?tab=help` go to `/support`.
+ * Support requests: private conversations with the Familiarise team as URL tabs
+ * — Requests (Sessions · Platform) and Feedback — alongside contextual links
+ * to Help Center articles.
  */
 export function SupportRequestsPage({
   profileId,
