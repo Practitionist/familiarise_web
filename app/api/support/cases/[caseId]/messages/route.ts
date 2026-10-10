@@ -27,6 +27,24 @@ interface RouteParams {
   params: Promise<{ caseId: string }>;
 }
 
+function buildTurnAppendParams(params: {
+  caseId: string;
+  userId: string;
+  staff: boolean;
+  data: z.infer<typeof PostMessageBodySchema>;
+}) {
+  const { caseId, userId, staff, data } = params;
+  return {
+    caseId,
+    authorUserId: userId,
+    sender: staff ? ("AGENT" as const) : ("USER" as const),
+    body: data.body,
+    isInternal: staff ? data.isInternal : false,
+    clientTurnId: data.clientTurnId,
+    expectedLastMessageAt: staff ? data.expectedLastMessageAt : undefined,
+  };
+}
+
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const id = await parseRouteParams(CaseIdParamsSchema, params, {
     route: "support.case.messages",
@@ -78,17 +96,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const result = await appendSupportCaseTurn({
-      caseId,
-      authorUserId: user.id,
-      sender: staff ? "AGENT" : "USER",
-      body: parsed.data.body,
-      isInternal: staff ? parsed.data.isInternal : false,
-      clientTurnId: parsed.data.clientTurnId,
-      expectedLastMessageAt: staff
-        ? parsed.data.expectedLastMessageAt
-        : undefined,
-    });
+    const result = await appendSupportCaseTurn(
+      buildTurnAppendParams({
+        caseId,
+        userId: user.id,
+        staff,
+        data: parsed.data,
+      }),
+    );
 
     if (!result.ok) {
       return NextResponse.json(

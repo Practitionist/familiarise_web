@@ -3,6 +3,7 @@
  * Staff can respond to any support ticket
  */
 
+import { SupportStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { supportError } from "@/lib/api/support-http";
@@ -27,6 +28,65 @@ const StaffCreateResponseSchema = CreateSupportResponseSchema.extend({
 
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
+}
+
+type PublicReplyGuardFailure = {
+  ok: false;
+  code: "NEW_CUSTOMER_MESSAGE" | "CLOSED";
+};
+
+async function guardTicketPublicReplyTx(params: {
+  tx: Tx;
+  ticketId: string;
+  ticketStatus: SupportStatus;
+  ticketAssignedToId: string | null;
+  fallbackLastMessageAt: Date | null;
+  sessionUserId: string;
+  expectedDate: Date | undefined;
+  now: Date;
+}): Promise<PublicReplyGuardFailure | null> {
+  const {
+    tx,
+    ticketId,
+    ticketStatus,
+    ticketAssignedToId,
+    fallbackLastMessageAt,
+    sessionUserId,
+    expectedDate,
+    now,
+  } = params;
+  const collisionClause = expectedDate
+    ? {
+        OR: [{ lastMessageAt: null }, { lastMessageAt: { lte: expectedDate } }],
+      }
+    : {};
+  const moved = await tx.supportTicket.updateMany({
+    where: {
+      id: ticketId,
+      status: { not: "CLOSED" },
+      ...collisionClause,
+    },
+    data: {
+      status: ticketStatus === "OPEN" ? "IN_PROGRESS" : ticketStatus,
+      ...(ticketAssignedToId === null ? { assignedToId: sessionUserId } : {}),
+      lastMessageAt: now,
+    },
+  });
+  if ((moved?.count ?? 0) > 0) return null;
+
+  const current = await tx.supportTicket.findUnique({
+    where: { id: ticketId },
+    select: { status: true, lastMessageAt: true },
+  });
+  const latestMessageAt = current?.lastMessageAt ?? fallbackLastMessageAt;
+  if (
+    expectedDate &&
+    latestMessageAt &&
+    latestMessageAt.getTime() > expectedDate.getTime()
+  ) {
+    return { ok: false, code: "NEW_CUSTOMER_MESSAGE" };
+  }
+  return { ok: false, code: "CLOSED" };
 }
 
 async function mirrorStaffReplyToThread(
@@ -105,63 +165,36 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       !validatedData.isInternal && validatedData.expectedLastMessageAt
         ? new Date(validatedData.expectedLastMessageAt)
         : undefined;
-    const collisionGuard = expectedDate
-      ? {
-          OR: [
-            { lastMessageAt: null },
-            { lastMessageAt: { lte: expectedDate } },
-          ],
-        }
-      : {};
+
+    if (
+      expectedDate &&
+      ticket.lastMessageAt &&
+      ticket.lastMessageAt.getTime() > expectedDate.getTime()
+    ) {
+      return NextResponse.json(
+        {
+          code: "NEW_CUSTOMER_MESSAGE",
+          error:
+            "Customer replied since you opened this case. Review their message before sending.",
+        },
+        { status: 409 },
+      );
+    }
 
     const txOutcome = await prisma.$transaction(
       async (tx) => {
         if (!validatedData.isInternal) {
-          const picked =
-            ticket.status === "OPEN"
-              ? await tx.supportTicket.updateMany({
-                  where: {
-                    id: ticketId,
-                    status: "OPEN",
-                    ...collisionGuard,
-                  },
-                  data: {
-                    status: "IN_PROGRESS",
-                    assignedToId: ticket.assignedToId ?? session.user.id,
-                    lastMessageAt: now,
-                  },
-                })
-              : { count: 0 };
-          if ((picked?.count ?? 0) === 0) {
-            const touched = await tx.supportTicket.updateMany({
-              where: {
-                id: ticketId,
-                status: { not: "CLOSED" },
-                ...collisionGuard,
-              },
-              data: { lastMessageAt: now },
-            });
-            if ((touched?.count ?? 0) === 0) {
-              if (expectedDate) {
-                const current = await tx.supportTicket.findUnique({
-                  where: { id: ticketId },
-                  select: { lastMessageAt: true },
-                });
-                const latestLastMessageAt =
-                  current?.lastMessageAt ?? ticket.lastMessageAt;
-                if (
-                  latestLastMessageAt &&
-                  latestLastMessageAt.getTime() > expectedDate.getTime()
-                ) {
-                  return {
-                    ok: false as const,
-                    code: "NEW_CUSTOMER_MESSAGE" as const,
-                  };
-                }
-              }
-              return { ok: false as const, code: "CLOSED" as const };
-            }
-          }
+          const failure = await guardTicketPublicReplyTx({
+            tx,
+            ticketId,
+            ticketStatus: ticket.status,
+            ticketAssignedToId: ticket.assignedToId,
+            fallbackLastMessageAt: ticket.lastMessageAt,
+            sessionUserId: session.user.id,
+            expectedDate,
+            now,
+          });
+          if (failure) return failure;
         }
 
         const created = await tx.supportResponse.create({

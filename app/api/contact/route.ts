@@ -44,6 +44,88 @@ const ContactBodySchema = z.object({
   website: z.string().max(200).optional(),
 });
 
+const LEAD_CATEGORIES = new Set(["enterprise", "team-training"]);
+
+async function recordContactLeadIfApplicable(
+  data: z.infer<typeof ContactBodySchema>,
+): Promise<void> {
+  if (!LEAD_CATEGORIES.has(data.category ?? "")) return;
+  const dayBucket = new Date().toISOString().slice(0, 10);
+  const submissionKey = createHash("sha256")
+    .update(
+      JSON.stringify([
+        dayBucket,
+        data.email.toLowerCase(),
+        data.firstName,
+        data.lastName,
+        data.phone ?? "",
+        data.subject,
+        data.message,
+        data.category ?? "",
+      ]),
+    )
+    .digest("hex");
+  try {
+    await prisma.lead.create({
+      data: {
+        submissionKey,
+        sourceCategory: data.category ?? "",
+        companyName: null,
+        contactName: `${data.firstName} ${data.lastName}`.trim(),
+        contactEmail: data.email,
+        phone: data.phone || null,
+        subject: data.subject,
+        message: data.message,
+      },
+    });
+  } catch (err) {
+    if (!(
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    )) {
+      throw err;
+    }
+  }
+}
+
+async function recordPublicGrievanceTicket(
+  data: z.infer<typeof ContactBodySchema>,
+): Promise<string | null> {
+  if (data.category !== "grievance") return null;
+  const session = await getSession().catch(() => null);
+  const sessionUserId = session?.user?.id ?? null;
+
+  return prisma.$transaction(async (tx) => {
+    const fallbackOwner = sessionUserId
+      ? null
+      : await tx.user.findFirst({
+          where: { role: { in: ["ADMIN", "STAFF"] } },
+          select: { id: true },
+          orderBy: { createdAt: "asc" },
+        });
+    const userId = sessionUserId ?? fallbackOwner?.id ?? null;
+    if (!userId) return null;
+
+    const now = new Date();
+    const ref = await allocateTicketReference(tx, now);
+    const name = `${data.firstName} ${data.lastName}`.trim();
+    await tx.supportTicket.create({
+      data: {
+        referenceNumber: ref,
+        title: `[Grievance] ${data.subject || "Public Grievance"}`,
+        description: `Submitted via public form by ${name} <${data.email}>\n\n${data.message}`,
+        category: "GRIEVANCE",
+        status: "OPEN",
+        priority: "HIGH",
+        userId,
+        lastMessageAt: now,
+        ...slaDeadlinesFor("HIGH", now),
+      },
+    });
+    return ref;
+  });
+}
+
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
 
@@ -68,88 +150,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true }, { status: 202 });
   }
 
-  const LEAD_CATEGORIES = new Set(["enterprise", "team-training"]);
-  if (LEAD_CATEGORIES.has(parsed.data.category ?? "")) {
-    const dayBucket = new Date().toISOString().slice(0, 10);
-    const submissionKey = createHash("sha256")
-      .update(
-        JSON.stringify([
-          dayBucket,
-          parsed.data.email.toLowerCase(),
-          parsed.data.firstName,
-          parsed.data.lastName,
-          parsed.data.phone ?? "",
-          parsed.data.subject,
-          parsed.data.message,
-          parsed.data.category ?? "",
-        ]),
-      )
-      .digest("hex");
-    try {
-      await prisma.lead.create({
-        data: {
-          submissionKey,
-          sourceCategory: parsed.data.category ?? "",
-          companyName: null,
-          contactName:
-            `${parsed.data.firstName} ${parsed.data.lastName}`.trim(),
-          contactEmail: parsed.data.email,
-          phone: parsed.data.phone || null,
-          subject: parsed.data.subject,
-          message: parsed.data.message,
-        },
-      });
-    } catch (err) {
-      if (!(
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
-      )) {
-        throw err;
-      }
-    }
-  }
-
-  const session =
-    parsed.data.category === "grievance"
-      ? await getSession().catch(() => null)
-      : null;
-  const sessionUserId = session?.user?.id ?? null;
-
-  const referenceNumber =
-    parsed.data.category === "grievance"
-      ? await prisma.$transaction(async (tx) => {
-          const fallbackOwner = sessionUserId
-            ? null
-            : await tx.user.findFirst({
-                where: { role: { in: ["ADMIN", "STAFF"] } },
-                select: { id: true },
-                orderBy: { createdAt: "asc" },
-              });
-          const userId = sessionUserId ?? fallbackOwner?.id ?? null;
-          if (!userId) {
-            return null;
-          }
-
-          const now = new Date();
-          const ref = await allocateTicketReference(tx, now);
-          const name =
-            `${parsed.data.firstName} ${parsed.data.lastName}`.trim();
-          await tx.supportTicket.create({
-            data: {
-              referenceNumber: ref,
-              title: `[Grievance] ${parsed.data.subject || "Public Grievance"}`,
-              description: `Submitted via public form by ${name} <${parsed.data.email}>\n\n${parsed.data.message}`,
-              category: "GRIEVANCE",
-              status: "OPEN",
-              priority: "HIGH",
-              userId,
-              lastMessageAt: now,
-              ...slaDeadlinesFor("HIGH", now),
-            },
-          });
-          return ref;
-        })
-      : null;
+  await recordContactLeadIfApplicable(parsed.data);
+  const referenceNumber = await recordPublicGrievanceTicket(parsed.data);
 
   const result = await sendContactInquiryEmail({
     firstName: parsed.data.firstName,

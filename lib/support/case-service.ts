@@ -352,11 +352,10 @@ async function validateProblemCaseTargetTx(
     where: { id: problemCaseId },
     select: { id: true, caseKind: true, deletedAt: true },
   });
-  return Boolean(
-    target &&
-    target.deletedAt === null &&
+  return (
+    target?.deletedAt === null &&
     target.caseKind === "PROBLEM" &&
-    target.id !== currentCaseId,
+    target.id !== currentCaseId
   );
 }
 
@@ -1114,23 +1113,11 @@ function buildLifecycleUpdateData(
   };
 }
 
-async function executePatchLifecycleTx(
+async function validatePatchLifecyclePreconditionsTx(
   tx: Tx,
   input: PatchSupportCaseInput,
-  now: Date,
+  existing: { id: string; status: SupportCaseStatus },
 ) {
-  const existing = await tx.supportCase.findUnique({
-    where: { id: input.caseId },
-  });
-  if (!existing) {
-    return {
-      ok: false as const,
-      status: 404 as const,
-      code: "NOT_FOUND" as const,
-      error: "Support case not found.",
-    };
-  }
-
   if (existing.status === "CLOSED" && !input.status) {
     return {
       ok: false as const,
@@ -1165,6 +1152,33 @@ async function executePatchLifecycleTx(
       error: "Assignee must be a staff or admin operator.",
     };
   }
+
+  return null;
+}
+
+async function executePatchLifecycleTx(
+  tx: Tx,
+  input: PatchSupportCaseInput,
+  now: Date,
+) {
+  const existing = await tx.supportCase.findUnique({
+    where: { id: input.caseId },
+  });
+  if (!existing) {
+    return {
+      ok: false as const,
+      status: 404 as const,
+      code: "NOT_FOUND" as const,
+      error: "Support case not found.",
+    };
+  }
+
+  const preconditionFailure = await validatePatchLifecyclePreconditionsTx(
+    tx,
+    input,
+    existing,
+  );
+  if (preconditionFailure) return preconditionFailure;
 
   const noteTrimmed = input.note?.trim() || null;
 
@@ -1218,10 +1232,12 @@ async function executePatchLifecycleTx(
       : [];
 
   if (input.status === "RESOLVED" && existing.status !== "RESOLVED") {
-    await stageCaseResolutionCsatPromptTx(tx, existing, input.actorId, now);
-    for (const inc of cascadedIncidents) {
-      await stageCaseResolutionCsatPromptTx(tx, inc, input.actorId, now);
-    }
+    await Promise.all([
+      stageCaseResolutionCsatPromptTx(tx, existing, input.actorId, now),
+      ...cascadedIncidents.map((inc) =>
+        stageCaseResolutionCsatPromptTx(tx, inc, input.actorId, now),
+      ),
+    ]);
   }
 
   const refreshed = await tx.supportCase.findUniqueOrThrow({

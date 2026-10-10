@@ -480,13 +480,13 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
   });
 
   test("Compliance constants publish Grievance Officer details and 24-hour acknowledgment without placeholders or invented values", () => {
+    const expectedMailbox =
+      process.env.CONTACT_INBOX_ADDRESS?.trim() || "support@practitionist.com";
     expect(ACK_PROMISE_COPY).toBe("within 24 hours");
     expect(COMPANY_INFO.name).toBe("Practitionist (OPC) Private Limited");
     expect(COMPANY_INFO.jurisdiction).toBe("Haryana, India");
-    if (!process.env.CONTACT_INBOX_ADDRESS) {
-      expect(COMPANY_INFO.email).toBe("support@practitionist.com");
-      expect(GRIEVANCE_OFFICER.email).toBe("support@practitionist.com");
-    }
+    expect(COMPANY_INFO.email).toBe(expectedMailbox);
+    expect(GRIEVANCE_OFFICER.email).toBe(expectedMailbox);
     expect(ANTI_SCAM_NOTICE).toContain("never ask for your OTP");
     expect(INQUIRY_CATEGORIES.some((c) => c.value === "grievance")).toBe(true);
     const dumped = JSON.stringify({
@@ -497,9 +497,9 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
     expect(dumped).not.toMatch(/\[[A-Z0-9_ ]+\]/);
     expect(dumped).not.toContain("+91-80-4710-8000");
     expect(dumped).not.toContain("Bengaluru");
-    if (!process.env.CONTACT_INBOX_ADDRESS) {
-      expect(dumped).not.toContain("familiarisenow.com");
-    }
+    expect(
+      expectedMailbox === "support@practitionist.com" ? dumped : "",
+    ).not.toContain("familiarisenow.com");
   });
 
   test("POST /api/contact creates SupportTicket in the same transaction as allocateTicketReference for public grievances and skips allocation when zero operators exist", async () => {
@@ -623,7 +623,7 @@ describe("Moderation, Disputes, Compliance & Reviews regressions", () => {
 
     const writtenDescription: string =
       mockModerationReport.updateMany.mock.calls[0][0].data.description;
-    expect(writtenDescription.length).toBe(4000);
+    expect(writtenDescription).toHaveLength(4000);
     expect(
       writtenDescription.endsWith(
         "\nReporter 16 (HARASSMENT_OR_ABUSE): Latest reporter statement must never be truncated away",

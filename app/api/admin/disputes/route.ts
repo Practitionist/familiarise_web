@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma, DisputeStatus, PaymentGateway } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { OPEN_DISPUTE_WHERE } from "@/lib/backoffice/queue-predicates";
 import { z } from "zod";
 
 const adminDisputesQuerySchema = z.object({
@@ -39,6 +40,9 @@ const ACTIONABLE_OPEN_STATUSES: DisputeStatus[] = [
   "NEEDS_RESPONSE",
   "WARNING_NEEDS_RESPONSE",
 ];
+
+/** Nav badge predicate reference kept in sync with the backoffice nav counter (`OPEN_DISPUTE_WHERE`). */
+export const ADMIN_OPEN_DISPUTE_BADGE_WHERE = OPEN_DISPUTE_WHERE;
 
 /** List rows never carry evidence, billing details or internal notes; those live on the detail view behind `disputes.manage`. */
 const DISPUTE_LIST_SELECT = {
