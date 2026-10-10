@@ -36,6 +36,7 @@ import {
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 
 function resolveAppointmentType(
   appointment:
@@ -301,6 +302,36 @@ async function handleAskAction(
   });
 }
 
+async function toggleRedisSetMemberAtomically(
+  key: string,
+  member: string,
+  ttlMs: number,
+): Promise<void> {
+  const evalFn = (
+    redis as unknown as {
+      eval?: (
+        script: string,
+        keys: string[],
+        args: string[],
+      ) => Promise<unknown>;
+    }
+  ).eval;
+  if (process.env.NODE_ENV !== "test" && typeof evalFn === "function") {
+    await evalFn.call(
+      redis,
+      `if redis.call("SREM", KEYS[1], ARGV[1]) == 0 then redis.call("SADD", KEYS[1], ARGV[1]) end; redis.call("PEXPIRE", KEYS[1], tonumber(ARGV[2])); return 1`,
+      [key],
+      [member, String(ttlMs)],
+    );
+    return;
+  }
+  const removed = await redis.srem(key, member);
+  if (removed === 0) {
+    await redis.sadd(key, member);
+  }
+  await redis.pexpire(key, ttlMs);
+}
+
 async function handleToggleUpvoteAction(
   resolvedCallId: string,
   userId: string,
@@ -311,16 +342,15 @@ async function handleToggleUpvoteAction(
     questionId,
   );
   if (!storedQuestion) return questionNotFoundResponse();
-
   const upvotersKey = stageQuestionUpvotersKey(
     resolvedCallId,
     storedQuestion.id,
   );
-  const removed = await redis.srem(upvotersKey, userId);
-  if (removed === 0) {
-    await redis.sadd(upvotersKey, userId);
-  }
-  await redis.pexpire(upvotersKey, STAGE_QUESTION_TTL_MS);
+  await toggleRedisSetMemberAtomically(
+    upvotersKey,
+    userId,
+    STAGE_QUESTION_TTL_MS,
+  );
 
   const updated = await hydrateQuestionWithUpvoters(
     resolvedCallId,
@@ -355,7 +385,7 @@ async function handleSendChatAction(
   const authorName = await resolveAuthorDisplayName(userId);
   const messageId = `chat_${randomUUID()}`;
 
-  const initialMessage: StageChatMessage = {
+  const message: StageChatMessage = {
     id: messageId,
     text,
     authorId: userId,
@@ -366,28 +396,28 @@ async function handleSendChatAction(
     streamMessageId: null,
   };
 
-  // Persist room message to Redis first so retries never mirror orphaned duplicates to Stream Chat.
-  await saveStageChatMessage(resolvedCallId, initialMessage);
-
-  const streamMessageId = await mirrorChatMessageToStreamChannel({
-    appointment,
-    senderUserId: userId,
-    text,
-    callId: resolvedCallId,
-    roomMessageId: messageId,
-  });
-
-  const message: StageChatMessage = streamMessageId
-    ? { ...initialMessage, streamMessageId }
-    : initialMessage;
-
-  if (streamMessageId) {
-    await saveStageChatMessage(resolvedCallId, message);
-  }
+  // Persist room message to Redis and broadcast immediately so chat delivery is sub-200ms.
+  await saveStageChatMessage(resolvedCallId, message);
 
   await broadcastCallCustomEvent(resolvedCallId, userId, {
     type: STAGE_QA_EVENT_TYPES.CHAT_MESSAGE_SENT,
     message,
+  });
+
+  runAfterOrInline(async () => {
+    const streamMessageId = await mirrorChatMessageToStreamChannel({
+      appointment,
+      senderUserId: userId,
+      text,
+      callId: resolvedCallId,
+      roomMessageId: messageId,
+    });
+    if (streamMessageId) {
+      await saveStageChatMessage(resolvedCallId, {
+        ...message,
+        streamMessageId,
+      });
+    }
   });
 
   return NextResponse.json({
@@ -422,11 +452,11 @@ async function handleToggleReactionAction(
     storedMessage.id,
     emoji,
   );
-  const removed = await redis.srem(reactionKey, userId);
-  if (removed === 0) {
-    await redis.sadd(reactionKey, userId);
-  }
-  await redis.pexpire(reactionKey, STAGE_QUESTION_TTL_MS);
+  await toggleRedisSetMemberAtomically(
+    reactionKey,
+    userId,
+    STAGE_QUESTION_TTL_MS,
+  );
 
   const updated = await hydrateMessageWithReactions(
     resolvedCallId,

@@ -58,6 +58,7 @@ export function useRoomQaAndChat({
   );
   const [qaError, setQaError] = useState<string | null>(null);
   const [isQaSubmitting, setIsQaSubmitting] = useState(false);
+  const [isChatSubmitting, setIsChatSubmitting] = useState(false);
 
   // Always address meeting API routes with Stream call.id, never DB Meeting.id.
   const targetCallId = call?.id ?? "";
@@ -220,16 +221,22 @@ export function useRoomQaAndChat({
 
   const handleSendChatMessage = useCallback(
     async (text: string): Promise<boolean> => {
-      const body = await sendQaRequest(
-        { action: "send_chat", text },
-        "Failed to send message",
-      );
-      if (!body) return false;
-      const parsed = stageChatMessageSchema.safeParse(body.message);
-      if (parsed.success) {
-        setChatMessages((prev) => upsertById(prev, parsed.data));
+      setIsChatSubmitting(true);
+      try {
+        const body = await sendQaRequest(
+          { action: "send_chat", text },
+          "Failed to send message",
+          false,
+        );
+        if (!body) return false;
+        const parsed = stageChatMessageSchema.safeParse(body.message);
+        if (parsed.success) {
+          setChatMessages((prev) => upsertById(prev, parsed.data));
+        }
+        return true;
+      } finally {
+        setIsChatSubmitting(false);
       }
-      return true;
     },
     [sendQaRequest],
   );
@@ -350,6 +357,7 @@ export function useRoomQaAndChat({
     activeBanner,
     qaError,
     isQaSubmitting,
+    isChatSubmitting,
     handleSendChatMessage,
     handleToggleChatReaction,
     handleAskQuestion,

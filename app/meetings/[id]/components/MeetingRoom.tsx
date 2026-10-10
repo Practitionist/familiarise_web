@@ -203,6 +203,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
     activeBanner,
     qaError,
     isQaSubmitting,
+    isChatSubmitting,
     handleSendChatMessage,
     handleToggleChatReaction,
     handleAskQuestion,
@@ -349,8 +350,10 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           )}
 
           <div
+            inert={!activeSideTab || undefined}
+            aria-hidden={!activeSideTab}
             className={cn(
-              "fixed right-0 top-0 h-full w-full sm:w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
+              "fixed right-0 top-0 h-full w-full sm:w-80 pb-20 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
               activeSideTab ? "translate-x-0" : "translate-x-full",
             )}
           >
@@ -413,6 +416,8 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 </button>
               </div>
               <button
+                type="button"
+                aria-label="Close panel"
                 onClick={() => setActiveSideTab(null)}
                 className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
               >
@@ -428,7 +433,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                     currentUserId={session?.user?.id}
                     onSendMessage={handleSendChatMessage}
                     onToggleReaction={handleToggleChatReaction}
-                    isSubmitting={isQaSubmitting}
+                    isSubmitting={isChatSubmitting}
                     error={qaError}
                   />
                 );
@@ -469,9 +474,9 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
           )}
         </div>
 
-        <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center justify-center px-4 py-4">
-            <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
+            <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
               <SpeakingWhileMutedNotification>
                 <ToggleAudioPublishingButton />
               </SpeakingWhileMutedNotification>
@@ -492,6 +497,8 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               )}
 
               <button
+                type="button"
+                aria-label="Leave call"
                 onClick={async () => {
                   await cleanupAndNavigate(getDashboardUrl());
                 }}
@@ -505,7 +512,11 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors">
+                  <button
+                    type="button"
+                    aria-label="Change layout"
+                    className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                  >
                     <LayoutList className="w-5 h-5 text-white" />
                   </button>
                 </DropdownMenuTrigger>
