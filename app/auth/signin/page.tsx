@@ -23,10 +23,11 @@ import {
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { markExpectedUnreachable } from "@/lib/auth/expected-auth-failures";
-import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { useState, useEffect, useMemo, useCallback, Suspense } from "react";
+import { useSignedInRedirect } from "../useSignedInRedirect";
+import { stashPendingVerificationEmail } from "../pending-verification";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
 
 /** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
@@ -45,7 +46,7 @@ function SignInContent() {
   const router = useRouter();
   const { toast } = useToast();
   const searchParams = useSearchParams();
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, refetch: refetchSession } = useSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -53,7 +54,12 @@ function SignInContent() {
   const [ssoCheck, setSsoCheck] = useState<{
     enforceSSO: boolean;
     organizationName: string;
-    ssoBody: { providerId: string; domain: string; callbackURL: string };
+    ssoBody: {
+      providerId: string;
+      domain: string;
+      callbackURL: string;
+      errorCallbackURL: string;
+    };
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
   // The sentence under the input the server refused, cleared on retype.
@@ -102,23 +108,12 @@ function SignInContent() {
     ? `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`
     : "/auth/signin";
 
-  const sessionUser = session?.user;
-  useEffect(() => {
-    if (!sessionUser) return;
-    // Server pages treat an operator without 2FA as signed out.
-    if (
-      isOperatorRole(sessionUser.role) &&
-      sessionUser.twoFactorEnabled !== true
-    ) {
-      router.replace("/auth/two-factor/setup");
-      return;
-    }
-    router.replace(
-      sessionUser.onboardingCompleted
-        ? callbackUrl || "/dashboard"
-        : onboardingUrl,
-    );
-  }, [sessionUser, router, callbackUrl, onboardingUrl]);
+  const signedInTarget = useCallback(
+    (user: { onboardingCompleted?: boolean | null }) =>
+      user.onboardingCompleted ? callbackUrl || "/dashboard" : onboardingUrl,
+    [callbackUrl, onboardingUrl],
+  );
+  useSignedInRedirect(session?.user, refetchSession, signedInTarget);
 
   if (isPending) {
     return <AuthFormSkeleton />;
@@ -162,6 +157,7 @@ function SignInContent() {
     providerId: string;
     domain: string;
     callbackURL: string;
+    errorCallbackURL: string;
   }) => {
     try {
       const res = await signIn.sso(ssoBody);
@@ -251,11 +247,11 @@ function SignInContent() {
         // The server emails a fresh code alongside EMAIL_NOT_VERIFIED.
         if (copy.needsVerification) {
           settle({ title: copy.title, description: copy.description });
-          const verifyUrl = `/auth/verify-email?email=${encodeURIComponent(email)}`;
+          stashPendingVerificationEmail(email);
           router.push(
             callbackUrl
-              ? `${verifyUrl}&callbackUrl=${encodeURIComponent(callbackUrl)}`
-              : verifyUrl,
+              ? `/auth/verify-email?callbackUrl=${encodeURIComponent(callbackUrl)}`
+              : "/auth/verify-email",
           );
           return;
         }

@@ -34,6 +34,10 @@ jest.mock("../../hooks/use-toast", () => ({
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import VerifyEmail from "@/app/auth/verify-email/page";
+import {
+  readPendingVerificationEmail,
+  stashPendingVerificationEmail,
+} from "@/app/auth/pending-verification";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -56,7 +60,11 @@ function resendButton(): HTMLButtonElement {
 }
 
 async function renderPage(query: string) {
-  mockQuery = query;
+  const params = new URLSearchParams(query);
+  const email = params.get("email");
+  if (email) stashPendingVerificationEmail(email);
+  params.delete("email");
+  mockQuery = params.toString();
   await act(async () => {
     root.render(<VerifyEmail />);
   });
@@ -71,6 +79,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  sessionStorage.clear();
   jest.useRealTimers();
 });
 
@@ -104,6 +113,7 @@ describe("verify email code page", () => {
       expect.objectContaining({ email: "ada@example.com", otp: "123456" }),
     );
     expect(mockReplace).toHaveBeenCalledWith("/checkout/1");
+    expect(readPendingVerificationEmail()).toBeNull();
   });
 
   it("sends a not-yet-onboarded user to onboarding with the callback", async () => {

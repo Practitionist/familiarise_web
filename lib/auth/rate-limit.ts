@@ -122,6 +122,9 @@ export const AUTH_RATE_LIMIT_RULES: NonNullable<
   // consecutive failures for 15 minutes, whichever IP they come from.
   "/two-factor/verify-*": { window: MINUTE, max: 5 },
   "/two-factor/*": { window: MINUTE, max: 10 },
+  // Passkey sign-in is a full credential; management is a handful of clicks.
+  "/passkey/verify-authentication": { window: 15 * MINUTE, max: 30 },
+  "/passkey/*": { window: MINUTE, max: 20 },
 
   // Account creation and the mail-sending endpoints: each call costs sending
   // reputation and can be aimed at anyone's inbox. One household or office

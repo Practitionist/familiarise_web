@@ -232,6 +232,11 @@ export const AUTH_ERROR_COPY = {
     `Sign in another way, or ask your administrator to check the SSO setup. Still stuck? Contact ${SUPPORT}.`,
     "contact-support",
   ),
+  SSO_ORGANIZATION_INACTIVE: entry(
+    "Your organisation's sign-in is paused",
+    `Your organisation's account is suspended, so its single sign-on is off. Ask your administrator, or contact ${SUPPORT}.`,
+    "contact-support",
+  ),
   SSO_NOT_PROVEN: entry(
     "Sign in with SSO first",
     "An organisation owner must complete one successful SSO sign-in before SSO can be required for everyone.",

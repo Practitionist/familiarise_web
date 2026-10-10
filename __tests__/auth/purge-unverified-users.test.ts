@@ -61,6 +61,10 @@ describe("unverifiedUserPurgeWhere", () => {
       appointmentParticipations: { none: {} },
       referralCredits: { none: {} },
       memberships: { none: {} },
+      erasureRequests: { none: {} },
+      dpdpGrievances: { none: {} },
+      supportTickets: { none: {} },
+      recordingPurchases: { none: {} },
     });
   });
 });

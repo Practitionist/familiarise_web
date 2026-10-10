@@ -18,8 +18,8 @@
  *   so Prisma-level behaviour (unique constraints, the SsoProvider secret
  *   encryption extension) and lib/auth.ts's other plugins and databaseHooks
  *   (SSO enforcement veto, welcome email, customSession) are not exercised.
- *   Only its email-domain check and the claim-refusal redirect after-hook are
- *   wired in, the way lib/auth.ts calls them.
+ *   Only the SSO account hooks (domain check, IdP claim checks and the
+ *   unfinished-user cleanup) are wired in, the way lib/auth.ts calls them.
  * - The JIT module's own Prisma calls hit a small in-memory fake, and
  *   `applyMembershipRoleEffects` is stubbed; the gate logic itself has unit
  *   coverage in jit-membership.test.ts.
@@ -31,7 +31,6 @@
 import { generateKeyPair, exportJWK } from "jose";
 import { OAuth2Server } from "oauth2-mock-server";
 import { betterAuth } from "better-auth";
-import { createAuthMiddleware } from "better-auth/api";
 import { memoryAdapter } from "better-auth/adapters/memory";
 import { sso } from "@better-auth/sso";
 
@@ -75,33 +74,16 @@ const fakePrisma = {
   },
   invitation: { findFirst: async () => null },
   orgAuditLog: { create: async () => ({}), findFirst: async () => null },
-  account: {
-    deleteMany: async ({
-      where,
-    }: {
-      where: { userId: string; providerId: string };
-    }) => {
-      const before = db.account.length;
-      db.account = db.account.filter(
-        (a) =>
-          !(a.userId === where.userId && a.providerId === where.providerId),
-      );
-      return { count: before - db.account.length };
-    },
-  },
-  session: {
-    findFirst: async ({ where }: { where: { userId: string } }) => {
-      const time = (r: Record<string, unknown>) =>
-        r.createdAt instanceof Date ? r.createdAt.getTime() : 0;
-      const rows = db.session
-        .filter((r) => r.userId === where.userId)
-        .sort((a, b) => time(b) - time(a));
-      return rows[0] ? { id: rows[0].id } : null;
-    },
+  user: {
+    // discardUnfinishedSsoUser: only a row with no account and no session.
     deleteMany: async ({ where }: { where: { id: string } }) => {
-      const before = db.session.length;
-      db.session = db.session.filter((r) => r.id !== where.id);
-      return { count: before - db.session.length };
+      const unfinished = (u: Record<string, unknown>) =>
+        u.id === where.id &&
+        !db.account.some((a) => a.userId === where.id) &&
+        !db.session.some((x) => x.userId === where.id);
+      const before = db.user.length;
+      db.user = db.user.filter((u) => !unfinished(u));
+      return { count: before - db.user.length };
     },
   },
   ssoProvider: {
@@ -116,6 +98,9 @@ jest.mock("../../lib/prisma", () => ({
   get default() {
     return fakePrisma;
   },
+}));
+jest.mock("../../lib/novu/subscriber", () => ({
+  deleteSubscriber: jest.fn(async () => true),
 }));
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemEvent: jest.fn(async () => {}),
@@ -136,7 +121,11 @@ jest.mock("../../lib/enterprise/outbound-webhooks/ssrf-guard", () => ({
 }));
 
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
-import { ssoClaimRefusalRedirect } from "@/lib/sso/claim-refusal-redirect";
+import {
+  assertSsoAccountClaims,
+  assertSsoAccountUpdate,
+  discardUnfinishedSsoUser,
+} from "@/lib/sso/account-claims";
 import {
   assertSsoEmailOnDomain,
   isSsoProviderId,
@@ -153,6 +142,7 @@ const PROVIDER_ID = "oidc-acme";
 const IDP_USER = { sub: "idp-user-1", email: "asha@acme.test", name: "Asha" };
 let idpUser = IDP_USER;
 let emailVerified = true;
+let omitIdToken = false;
 
 type Db = Record<string, Record<string, unknown>[]>;
 type CookieJar = Map<string, string>;
@@ -179,9 +169,6 @@ function buildAuth() {
     trustedOrigins: [issuer],
     database: memoryAdapter(db),
     plugins: [sso(ssoPluginOptions)],
-    hooks: {
-      after: createAuthMiddleware(async (ctx) => ssoClaimRefusalRedirect(ctx)),
-    },
     databaseHooks: {
       user: {
         create: {
@@ -201,9 +188,16 @@ function buildAuth() {
             const user = await ctx?.context.internalAdapter.findUserById(
               account.userId,
             );
-            await assertSsoEmailOnDomain(account.providerId, user?.email);
+            try {
+              await assertSsoEmailOnDomain(account.providerId, user?.email);
+              await assertSsoAccountClaims(account);
+            } catch (refusal) {
+              await discardUnfinishedSsoUser(account.userId);
+              throw refusal;
+            }
           },
         },
+        update: { before: assertSsoAccountUpdate },
       },
     },
   });
@@ -215,7 +209,11 @@ async function signInThroughIdp(providerId = PROVIDER_ID) {
     new Request(`${APP}/api/auth/sign-in/sso`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: APP },
-      body: JSON.stringify({ providerId, callbackURL: "/dashboard" }),
+      body: JSON.stringify({
+        providerId,
+        callbackURL: "/dashboard",
+        errorCallbackURL: "/auth/signin",
+      }),
     }),
   );
   storeCookies(start, jar);
@@ -271,6 +269,12 @@ beforeAll(async () => {
       res.body = { ...idpUser, email_verified: true };
     },
   );
+  idp.service.on(
+    "beforeResponse",
+    (res: { body: Record<string, unknown>; statusCode: number }) => {
+      if (omitIdToken) delete res.body.id_token;
+    },
+  );
 });
 
 afterAll(async () => {
@@ -280,6 +284,7 @@ afterAll(async () => {
 beforeEach(async () => {
   idpUser = IDP_USER;
   emailVerified = true;
+  omitIdToken = false;
   memberships.length = 0;
   db = {
     user: [],
@@ -423,10 +428,11 @@ it("refuses an identity the IdP does not mark email_verified, redirecting to sig
   const { done, jar } = await completeRoundTrip();
 
   expect(done.status).toBe(302);
-  expect(done.headers.get("location")).toBe(
-    "/auth/signin?error=SSO_EMAIL_NOT_VERIFIED",
+  expect(done.headers.get("location")).toMatch(
+    /^\/auth\/signin\?error=SSO_EMAIL_NOT_VERIFIED/,
   );
   expect(jar.get("better-auth.session_token")).toBeUndefined();
+  expect(db.user).toHaveLength(0);
   expect(db.account).toHaveLength(0);
   expect(db.session).toHaveLength(0);
   expect(memberships).toHaveLength(0);
@@ -441,9 +447,28 @@ it("a refused re-login keeps the user's earlier session and ends only the new on
   const { done, jar } = await completeRoundTrip();
 
   expect(done.status).toBe(302);
-  expect(done.headers.get("location")).toBe(
-    "/auth/signin?error=SSO_EMAIL_NOT_VERIFIED",
+  expect(done.headers.get("location")).toMatch(
+    /^\/auth\/signin\?error=SSO_EMAIL_NOT_VERIFIED/,
   );
   expect(jar.get("better-auth.session_token")).toBeUndefined();
   expect(db.session).toEqual([earlier]);
+  // The existing link survives, so a different subject still cannot link in.
+  expect(db.account).toHaveLength(1);
+  expect(db.user).toHaveLength(1);
+});
+
+it("refuses a returning login whose IdP omits the id_token", async () => {
+  await completeRoundTrip();
+  const [earlier] = db.session;
+  omitIdToken = true;
+
+  const { done, jar } = await completeRoundTrip();
+
+  expect(done.status).toBe(302);
+  expect(done.headers.get("location")).toMatch(
+    /^\/auth\/signin\?error=SSO_ID_TOKEN_MISSING/,
+  );
+  expect(jar.get("better-auth.session_token")).toBeUndefined();
+  expect(db.session).toEqual([earlier]);
+  expect(db.account).toHaveLength(1);
 });

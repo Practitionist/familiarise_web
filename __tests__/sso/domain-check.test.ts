@@ -60,6 +60,7 @@ describe("GET /api/auth/sso/domain-check", () => {
           providerId: "acme-oidc",
           domain: "acme.com",
           callbackURL: expect.stringContaining("/auth/signin"),
+          errorCallbackURL: expect.stringMatching(/\/auth\/signin$/),
         },
       });
     },

@@ -38,7 +38,9 @@ import { markExpectedUnreachable } from "@/lib/auth/expected-auth-failures";
 import { cn } from "@/utils/tailwind";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSignedInRedirect } from "../useSignedInRedirect";
+import { stashPendingVerificationEmail } from "../pending-verification";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
 
 /** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
@@ -88,7 +90,7 @@ function SignUpContent() {
   const searchParams = useSearchParams();
   const referralCode = searchParams.get("ref");
   const callbackUrl = searchParams.get("callbackUrl");
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, refetch: refetchSession } = useSession();
   const socialProviders = useConfiguredSocialProviders();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -99,7 +101,12 @@ function SignUpContent() {
   const [ssoCheck, setSsoCheck] = useState<{
     enforceSSO: boolean;
     organizationName: string;
-    ssoBody: { providerId: string; domain: string; callbackURL: string };
+    ssoBody: {
+      providerId: string;
+      domain: string;
+      callbackURL: string;
+      errorCallbackURL: string;
+    };
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
   // The sentence under the input that was refused, cleared on retype.
@@ -129,15 +136,14 @@ function SignUpContent() {
     : "/auth/signup";
 
   // Replace, never push: /auth/* in history makes Back bounce forward again.
-  const sessionUser = session?.user;
-  useEffect(() => {
-    if (!sessionUser) return;
-    router.replace(
-      sessionUser.onboardingCompleted
+  const signedInTarget = useCallback(
+    (user: { onboardingCompleted?: boolean | null }) =>
+      user.onboardingCompleted
         ? safeCallbackUrl || "/dashboard"
         : onboardingUrl,
-    );
-  }, [sessionUser, router, safeCallbackUrl, onboardingUrl]);
+    [safeCallbackUrl, onboardingUrl],
+  );
+  useSignedInRedirect(session?.user, refetchSession, signedInTarget);
 
   // Stashed at first touch so it survives OAuth and verification; applied on
   // the onboarding landing. No code here never wipes an earlier stash.
@@ -266,8 +272,12 @@ function SignUpContent() {
       // New and existing emails answer identically; the code entry page is
       // the next step either way.
       settle({ title: "Check your email for a 6-digit code" });
-      const verifyUrl = `/auth/verify-email?email=${encodeURIComponent(email)}`;
-      router.push(callbackQuery ? `${verifyUrl}&${callbackQuery}` : verifyUrl);
+      stashPendingVerificationEmail(email);
+      router.push(
+        callbackQuery
+          ? `/auth/verify-email?${callbackQuery}`
+          : "/auth/verify-email",
+      );
     };
 
     try {

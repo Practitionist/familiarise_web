@@ -56,6 +56,26 @@ export function verifiedSessionToken(
   return null;
 }
 
+const SESSION_COOKIE_NAMES = [
+  ...SESSION_TOKEN_COOKIES,
+  "__Secure-better-auth.session_data",
+  "better-auth.session_data",
+] as const;
+
+/**
+ * Appends deletions for every session cookie. A `__Secure-` cookie is only
+ * overwritten by a Set-Cookie that is itself Secure.
+ */
+export function expireSessionCookies(headers: Headers): void {
+  for (const name of SESSION_COOKIE_NAMES) {
+    const secure = name.startsWith("__Secure-") ? "; Secure" : "";
+    headers.append(
+      "Set-Cookie",
+      `${name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure}`,
+    );
+  }
+}
+
 /** A cookie value out of a raw `Cookie` request header. */
 export function cookieFromHeader(
   header: string | null,

@@ -3,24 +3,26 @@
  */
 
 /**
- * IdP claim checks run in `provisionUser` on every SSO login: the IdP must
- * vouch for the email, Google must assert a covered `hd`, and Entra's
- * `xms_edov` must be true when it is sent. A refused login drops the link it
- * made, so the refused identity cannot block the real one.
+ * IdP claim checks run in the SSO account hooks on every login, before any
+ * session exists: the IdP must vouch for the email, Google must assert a
+ * covered `hd`, and Entra's `xms_edov` must be true when it is sent. A refused
+ * first login removes only the user row that callback created.
  */
 
-const accountDeleteMany = jest.fn(async (_a: unknown) => ({ count: 1 }));
-const sessionFindFirst = jest.fn(async (_a: unknown) => ({ id: "s_new" }));
-const sessionDeleteMany = jest.fn(async (_a: unknown) => ({ count: 1 }));
+const providerFindUnique = jest.fn(async (_a: unknown) => ({
+  domain: "acme.co.in,acme.com",
+}));
+const userDeleteMany = jest.fn(async (_a: unknown) => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    account: { deleteMany: (a: unknown) => accountDeleteMany(a) },
-    session: {
-      findFirst: (a: unknown) => sessionFindFirst(a),
-      deleteMany: (a: unknown) => sessionDeleteMany(a),
-    },
+    ssoProvider: { findUnique: (a: unknown) => providerFindUnique(a) },
+    user: { deleteMany: (a: unknown) => userDeleteMany(a) },
   },
+}));
+const deleteSubscriber = jest.fn(async (_id: string) => true);
+jest.mock("../../lib/novu/subscriber", () => ({
+  deleteSubscriber: (id: string) => deleteSubscriber(id),
 }));
 const provisionSsoMembership = jest.fn();
 jest.mock("../../lib/sso/jit-membership", () => ({
@@ -37,6 +39,10 @@ import {
   type IdTokenClaims,
 } from "@/lib/sso/idp-claims";
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
+import {
+  assertSsoAccountClaims,
+  discardUnfinishedSsoUser,
+} from "@/lib/sso/account-claims";
 
 const COVERED = ["acme.com", "acme.co.in"];
 
@@ -134,6 +140,60 @@ describe("decodeIdTokenClaims", () => {
   );
 });
 
+describe("assertSsoAccountClaims", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("accepts a verified identity on a covered domain", async () => {
+    await expect(
+      assertSsoAccountClaims({
+        providerId: "oidc-acme",
+        idToken: idToken({ iss: "https://idp.acme.com", email_verified: true }),
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("refuses an unverified email from the id_token being stored", async () => {
+    await expect(
+      assertSsoAccountClaims({
+        providerId: "oidc-acme",
+        idToken: idToken({
+          iss: "https://idp.acme.com",
+          email_verified: false,
+        }),
+      }),
+    ).rejects.toMatchObject({ body: { code: "SSO_EMAIL_NOT_VERIFIED" } });
+  });
+
+  it("refuses an account write with no id_token", async () => {
+    await expect(
+      assertSsoAccountClaims({ providerId: "oidc-acme", idToken: null }),
+    ).rejects.toMatchObject({ body: { code: "SSO_ID_TOKEN_MISSING" } });
+  });
+});
+
+describe("discardUnfinishedSsoUser", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("deletes only a fresh user with no account and no session", async () => {
+    await discardUnfinishedSsoUser("u_new");
+    expect(userDeleteMany).toHaveBeenCalledWith({
+      where: {
+        id: "u_new",
+        accounts: { none: {} },
+        sessions: { none: {} },
+        createdAt: { gt: expect.any(Date) },
+      },
+    });
+    expect(deleteSubscriber).toHaveBeenCalledWith("u_new");
+  });
+
+  it("leaves an established user alone", async () => {
+    userDeleteMany.mockResolvedValueOnce({ count: 0 });
+    await discardUnfinishedSsoUser("u_existing");
+    expect(deleteSubscriber).not.toHaveBeenCalled();
+  });
+});
+
 describe("provisionUser", () => {
   const provider = {
     providerId: "oidc-acme",
@@ -141,13 +201,6 @@ describe("provisionUser", () => {
     domain: "acme.co.in,acme.com",
   };
   const user = { id: "u_1", email: "asha@acme.co.in" };
-  const run = (token: string) =>
-    ssoPluginOptions.provisionUser({
-      user,
-      userInfo: {},
-      token: { idToken: token },
-      provider,
-    } as unknown as Parameters<typeof ssoPluginOptions.provisionUser>[0]);
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -159,7 +212,12 @@ describe("provisionUser", () => {
   });
 
   it("joins the org and offers the login as provider proof", async () => {
-    await run(idToken({ iss: "https://idp.acme.com", email_verified: true }));
+    await ssoPluginOptions.provisionUser({
+      user,
+      userInfo: {},
+      token: {},
+      provider,
+    } as unknown as Parameters<typeof ssoPluginOptions.provisionUser>[0]);
     expect(provisionSsoMembership).toHaveBeenCalledWith({
       userId: "u_1",
       email: "asha@acme.co.in",
@@ -171,24 +229,5 @@ describe("provisionUser", () => {
       organizationId: "org_1",
       userId: "u_1",
     });
-    expect(accountDeleteMany).not.toHaveBeenCalled();
-  });
-
-  it("refuses an unverified email, drops the new link and joins nothing", async () => {
-    await expect(
-      run(idToken({ iss: "https://idp.acme.com", email_verified: false })),
-    ).rejects.toMatchObject({ body: { code: "SSO_EMAIL_NOT_VERIFIED" } });
-    expect(accountDeleteMany).toHaveBeenCalledWith({
-      where: { userId: "u_1", providerId: "oidc-acme" },
-    });
-    expect(sessionFindFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: "u_1" },
-        orderBy: { createdAt: "desc" },
-      }),
-    );
-    expect(sessionDeleteMany).toHaveBeenCalledWith({ where: { id: "s_new" } });
-    expect(provisionSsoMembership).not.toHaveBeenCalled();
-    expect(stampProviderProven).not.toHaveBeenCalled();
   });
 });

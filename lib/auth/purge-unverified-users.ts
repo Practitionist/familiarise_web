@@ -10,7 +10,8 @@ export const DEFAULT_PURGE_LIMIT = 200;
 /**
  * A never-verified consumer created with a password more than 7 days ago
  * that nothing hangs off: no other sign-in method, profile, booking, payment,
- * invoice, referral credit or membership. Re-applied in the delete itself, so
+ * invoice, referral credit, membership, erasure request, grievance, support
+ * ticket or recording purchase. Re-applied in the delete itself, so
  * a user who verifies mid-run is never removed.
  */
 export function unverifiedUserPurgeWhere(now: Date): Prisma.UserWhereInput {
@@ -33,6 +34,10 @@ export function unverifiedUserPurgeWhere(now: Date): Prisma.UserWhereInput {
     appointmentParticipations: { none: {} },
     referralCredits: { none: {} },
     memberships: { none: {} },
+    erasureRequests: { none: {} },
+    dpdpGrievances: { none: {} },
+    supportTickets: { none: {} },
+    recordingPurchases: { none: {} },
   };
 }
 

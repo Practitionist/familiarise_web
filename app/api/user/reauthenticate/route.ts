@@ -7,6 +7,12 @@ import { requireApiAuth } from "@/lib/auth-helpers";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import prisma from "@/lib/prisma";
 import { applyRateLimit, reauthLimiter } from "@/lib/rate-limit";
+import { sendSecurityEventEmail } from "@/lib/auth/security-email";
+import {
+  isTwoFactorLocked,
+  recordTwoFactorFailure,
+  resetTwoFactorFailures,
+} from "@/lib/auth/two-factor-lockout";
 
 const bodySchema = z.object({
   password: z.string().min(1).max(128),
@@ -28,7 +34,7 @@ function refuse(status: number, code: string, error: string) {
  * passkey sign-in instead, which mints a session that is fresh by creation.
  */
 export async function POST(req: NextRequest) {
-  const authResult = await requireApiAuth();
+  const authResult = await requireApiAuth({ expectUser: true });
   if (authResult.error) return authResult.error;
   const { session, user } = authResult.session;
 
@@ -72,6 +78,14 @@ export async function POST(req: NextRequest) {
   }
 
   if (operator && totpCode) {
+    // The plugin does not count codes checked with a live session; this does.
+    if (await isTwoFactorLocked(prisma, user.id)) {
+      return refuse(
+        429,
+        "ACCOUNT_TEMPORARILY_LOCKED",
+        "Too many incorrect codes. Try again in 15 minutes.",
+      );
+    }
     try {
       await auth.api.verifyTOTP({
         body: { code: totpCode },
@@ -79,10 +93,24 @@ export async function POST(req: NextRequest) {
       });
     } catch (err) {
       if (err instanceof APIError) {
+        await recordTwoFactorFailure(prisma, user.id);
+        if (await isTwoFactorLocked(prisma, user.id)) {
+          const lock = await prisma.twoFactor.findUnique({
+            where: { userId: user.id },
+            select: { lockedUntil: true },
+          });
+          if (lock?.lockedUntil) {
+            await sendSecurityEventEmail(user, {
+              kind: "two-factor-locked",
+              lockedUntil: lock.lockedUntil,
+            });
+          }
+        }
         return refuse(400, "INVALID_CODE", "That code is not correct.");
       }
       throw err;
     }
+    await resetTwoFactorFailures(prisma, user.id);
   }
 
   const stamped = await prisma.session.updateMany({

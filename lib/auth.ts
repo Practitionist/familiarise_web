@@ -11,7 +11,11 @@ import prisma from "@/lib/prisma";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { sendPasswordResetEmail } from "@/lib/email";
 import { assertSsoSessionAllowed } from "@/lib/sso/enforce-session";
-import { ssoClaimRefusalRedirect } from "@/lib/sso/claim-refusal-redirect";
+import {
+  assertSsoAccountClaims,
+  assertSsoAccountUpdate,
+  discardUnfinishedSsoUser,
+} from "@/lib/sso/account-claims";
 import { ssoPluginOptions } from "@/lib/sso/plugin-options";
 import {
   assertSsoAccountLink,
@@ -192,8 +196,6 @@ export const auth = betterAuth({
       await assertOperatorMayRegisterPasskey(ctx);
     }),
     after: createAuthMiddleware(async (ctx) => {
-      const ssoRefusal = ssoClaimRefusalRedirect(ctx);
-      if (ssoRefusal) return ssoRefusal;
       await notifySecurityEvents(ctx);
       return stripSessionToken(ctx);
     }),
@@ -536,11 +538,22 @@ export const auth = betterAuth({
             });
           }
           if (isSsoProviderId(account.providerId)) {
-            await assertSsoAccountLink(account, user?.email);
+            try {
+              await assertSsoAccountLink(account, user?.email);
+              await assertSsoAccountClaims(account);
+            } catch (refusal) {
+              await discardUnfinishedSsoUser(account.userId);
+              throw refusal;
+            }
           }
         },
         after: async (account) => {
           await notifyAccountLinked(account);
+        },
+      },
+      update: {
+        before: async (account) => {
+          await assertSsoAccountUpdate(account);
         },
       },
     },

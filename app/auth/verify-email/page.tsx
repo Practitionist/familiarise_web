@@ -16,6 +16,10 @@ import {
 } from "@/components/auth/AuthErrorAffordance";
 import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
 import { emailOtp, useSession } from "@/lib/auth-client";
+import {
+  clearPendingVerificationEmail,
+  readPendingVerificationEmail,
+} from "../pending-verification";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -53,21 +57,25 @@ function VerifyEmailContent() {
   const signInUrl = callbackUrl
     ? `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`
     : "/auth/signin";
-  const emailParam = EmailSchema.safeParse(searchParams.get("email") ?? "");
-  const presetEmail = emailParam.success ? emailParam.data : null;
-
-  const [email, setEmail] = useState(presetEmail ?? "");
+  // Sign-up and sign-in send a code, then stash the address for this tab.
+  const [presetEmail, setPresetEmail] = useState<string | null>(null);
+  const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [verified, setVerified] = useState(false);
   const [resending, setResending] = useState(false);
-  // Sign-up and sign-in send a code before linking here with `?email=`.
-  const [cooldown, setCooldown] = useState(
-    presetEmail ? RESEND_COOLDOWN_SECONDS : 0,
-  );
+  const [cooldown, setCooldown] = useState(0);
   const [errorCopy, setErrorCopy] = useState<AuthErrorCopy | null>(null);
   const verifyRetryAfter = useRetryAfterCapture();
   const resendRetryAfter = useRetryAfterCapture();
+
+  useEffect(() => {
+    const stashed = EmailSchema.safeParse(readPendingVerificationEmail() ?? "");
+    if (!stashed.success) return;
+    setPresetEmail(stashed.data);
+    setEmail(stashed.data);
+    setCooldown(RESEND_COOLDOWN_SECONDS);
+  }, []);
 
   const sessionUser = session?.user;
   useEffect(() => {
@@ -149,6 +157,7 @@ function VerifyEmailContent() {
         return;
       }
       setVerified(true);
+      clearPendingVerificationEmail();
       const onboarded = OnboardedSchema.safeParse(data.user);
       router.replace(
         onboarded.success ? callbackUrl || "/dashboard" : onboardingUrl,

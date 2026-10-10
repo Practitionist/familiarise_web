@@ -113,10 +113,18 @@ export async function provisionNewUser(
     if (!user.emailVerified) return;
     if (path === "/admin/create-user") {
       syncVerifiedSubscriber(user);
+    } else if (path?.startsWith("/sso/")) {
+      // A refused SSO login deletes the user it just created (account hooks),
+      // so greet only a user still present once the callback has answered.
+      scheduleAfter(async () => {
+        const kept = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { id: true },
+        });
+        if (kept) await welcomeVerifiedUser(user, { stampConsent: false });
+      }, "auth:sso-welcome");
     } else {
-      await welcomeVerifiedUser(user, {
-        stampConsent: !(path?.startsWith("/sso/") ?? false),
-      });
+      await welcomeVerifiedUser(user, { stampConsent: true });
     }
   } catch (error) {
     reportAuthFailure(error, "user-create-after");
@@ -165,22 +173,44 @@ export async function notifyExistingAccountSignUp(
 }
 
 /**
+ * Stored identifiers of the user's emailOTP codes, matching BetterAuth's
+ * `${type}-otp-${email}` key under `verification.storeIdentifier: "hashed"`.
+ */
+export function emailOtpVerificationIdentifiers(email: string): string[] {
+  const normalized = email.toLowerCase();
+  return ["email-verification", "forget-password"].map((type) =>
+    createHash("sha256")
+      .update(`${type}-otp-${normalized}`)
+      .digest("base64url"),
+  );
+}
+
+/**
  * After a reset or change: every outstanding single-use token bound to the
- * user (other reset links, pending 2FA challenges) dies, and the owner is told.
+ * user (other reset links, pending 2FA challenges, emailed codes) dies, and
+ * the owner is told.
  * A completed reset also proves the inbox, so it verifies the address.
  */
 export async function onPasswordChanged(
   user: LifecycleUser,
   opts: { viaReset: boolean; notify: boolean; welcomeIfVerified: boolean },
 ): Promise<void> {
-  await prisma.verification.deleteMany({ where: { value: user.id } });
+  await prisma.verification.deleteMany({
+    where: {
+      OR: [
+        { value: user.id },
+        { identifier: { in: emailOtpVerificationIdentifiers(user.email) } },
+      ],
+    },
+  });
   if (opts.viaReset) {
     const verified = await prisma.user.updateMany({
       where: { id: user.id, emailVerified: false },
       data: { emailVerified: true },
     });
+    // No consent notice is shown on reset; the onboarding gate collects it.
     if (verified.count === 1 && opts.welcomeIfVerified) {
-      await welcomeVerifiedUser(user, { stampConsent: true });
+      await welcomeVerifiedUser(user, { stampConsent: false });
     }
   }
   if (opts.notify) {

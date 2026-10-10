@@ -11,7 +11,7 @@ import {
   canAddConsultantIdentity,
   isFullyOnboarded,
 } from "@/utils/onboarding-shared";
-import { hasActiveMembership } from "@/utils/onboarding-completion";
+import { canUseOnboardingGate } from "@/utils/onboarding-completion";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import type { BackofficeSurface } from "@/lib/auth/backoffice-permissions";
 import {
@@ -77,9 +77,11 @@ export async function requireAuth() {
   return session;
 }
 
-/** Org members (invite, SSO JIT) finish at the gate; everyone else in the wizard. */
+type GateUser = { id: string; email: string; emailVerified?: boolean | null };
+
+/** Org members and pending invitees finish at the gate; everyone else in the wizard. */
 async function onboardingRedirectTarget(
-  userId: string,
+  user: GateUser,
   extraParams?: Record<string, string>,
 ): Promise<string> {
   const params = new URLSearchParams(extraParams);
@@ -88,9 +90,7 @@ async function onboardingRedirectTarget(
     params.set("callbackUrl", safe);
   }
   const base =
-    !extraParams && (await hasActiveMembership(prisma, userId))
-      ? GATE_PATH
-      : "/form/onboarding";
+    !extraParams && (await gateEligible(user)) ? GATE_PATH : "/form/onboarding";
   const query = params.toString();
   return query ? `${base}?${query}` : base;
 }
@@ -103,12 +103,14 @@ export async function requireOnboarded(options: GuardOptions = {}) {
   if (session.user.banned === true) {
     await redirectWithCookieCleanup();
   }
+  // Operators are provisioned by the back office; the consumer wizard refuses them.
+  if (isOperatorRole(session.user.role)) return session;
   if (!session.user.onboardingCompleted) {
-    redirect(await onboardingRedirectTarget(session.user.id));
+    redirect(await onboardingRedirectTarget(session.user));
   }
   if (!isFullyOnboarded(session.user)) {
     redirect(
-      await onboardingRedirectTarget(session.user.id, {
+      await onboardingRedirectTarget(session.user, {
         error: "missing_profile",
       }),
     );
@@ -186,10 +188,8 @@ export async function requireBackofficePage(
  */
 export async function requireNotOnboarded() {
   const session = await resolveGuardSession();
-  if (
-    !session.user.onboardingCompleted &&
-    (await hasActiveMembership(prisma, session.user.id))
-  ) {
+  if (isOperatorRole(session.user.role)) redirect("/dashboard");
+  if (!session.user.onboardingCompleted && (await gateEligible(session.user))) {
     redirect(await gateRedirectFromWizard());
   }
   if (isFullyOnboarded(session.user)) {
@@ -203,6 +203,14 @@ export async function requireNotOnboarded() {
     if (!wantsAdd) redirect("/dashboard");
   }
   return session;
+}
+
+function gateEligible(user: GateUser): Promise<boolean> {
+  return canUseOnboardingGate(prisma, {
+    id: user.id,
+    email: user.email,
+    emailVerified: user.emailVerified === true,
+  });
 }
 
 /** The wizard URL's `callbackUrl`, carried over to the gate. */

@@ -2,8 +2,8 @@
  * POST /api/admin/organizations/[orgId]/invoices
  *
  * Platform ops raise a manual invoice for an org (the back-office composer).
- * ADMIN only (`invoices.manage`), a reason is required, and `withOpsAction`
- * writes the OpsActionLog row in the invoice's transaction.
+ * ADMIN only (`invoices.manage`) on a freshly re-authenticated session, a
+ * reason is required, and `withOpsAction` writes the OpsActionLog row in the invoice's transaction.
  */
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
@@ -61,4 +61,5 @@ export const POST = withOpsAction(
       };
     },
   },
+  { stepUp: true },
 );

@@ -18,8 +18,9 @@ import { drawPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
 
 const LineItemSchema = z.object({
   description: z.string().min(1).max(500),
-  quantity: z.coerce.number().int().min(1),
-  unitPrice: z.coerce.number().int().min(0),
+  quantity: z.coerce.number().int().min(1).max(100_000),
+  // Paise; ₹10 crore per unit.
+  unitPrice: z.coerce.number().int().min(0).max(10_000_000_000),
 });
 
 export const CreateOrgInvoiceSchema = z.object({
@@ -166,6 +167,16 @@ export async function createOrgInvoice(
     buyerCountry: orgBuyerCountry(org),
     hsnCode: org.taxInfo?.hsnDefault,
   });
+  if (
+    !Number.isSafeInteger(subtotal) ||
+    !Number.isSafeInteger(gst.totalPaise)
+  ) {
+    throw new OpsRefusal(
+      "INVOICE_AMOUNT_TOO_LARGE",
+      "The invoice total is too large. Split it into smaller invoices.",
+      400,
+    );
+  }
 
   const issuedAt = new Date();
   // The counter row reserves the next seq under (org, fiscal year).

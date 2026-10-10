@@ -3,6 +3,7 @@ import { APIError, getSessionFromCtx } from "better-auth/api";
 import type { GenericEndpointContext } from "better-auth";
 import { z } from "zod";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
+import { authUserFields } from "@/lib/auth/step-up";
 
 const withRole = z.object({ role: z.string().nullish() });
 
@@ -46,6 +47,27 @@ export async function assertTwoFactorRequestPolicy(
       message: "Trusted devices are not available.",
       code: "TRUST_DEVICE_DISABLED",
     });
+  }
+  // With a live session the plugin skips its lockout counters, so over HTTP a
+  // session may only verify a code to finish enrolment. Step-up goes through
+  // /api/user/reauthenticate, which counts failures (a server call, no request).
+  if (
+    ctx.request &&
+    (ctx.path === "/two-factor/verify-totp" ||
+      ctx.path === "/two-factor/verify-backup-code")
+  ) {
+    const holder = await getSessionFromCtx(ctx);
+    const enrolled = authUserFields.safeParse(holder?.user);
+    if (
+      holder &&
+      (ctx.path === "/two-factor/verify-backup-code" ||
+        (enrolled.success && enrolled.data.twoFactorEnabled === true))
+    ) {
+      throw new APIError("FORBIDDEN", {
+        message: "This session has already passed two-factor authentication.",
+        code: "TWO_FACTOR_ALREADY_VERIFIED",
+      });
+    }
   }
   if (ctx.path !== "/two-factor/disable") return;
   const current = await getSessionFromCtx(ctx);

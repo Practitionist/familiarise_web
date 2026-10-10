@@ -168,17 +168,22 @@ export default function AuthSyncProvider() {
     }
 
     if (!authed) {
+      // While the server's verdict is pending, keep the remembered state and
+      // `previousAuthedRef`: a 503 must not count as signed out, and focus
+      // revalidation needs the ref. checkSession leaves on a confirmed "gone".
       if (prevAuthed === true) {
         void checkSession(true);
-      } else if (prevAuthed === undefined && readAuthedFlag() === true) {
+        return;
+      }
+      if (prevAuthed === undefined && readAuthedFlag() === true) {
         // Cold load: the session died while the tab was closed. Only a
         // protected page needs the server's verdict; elsewhere, just forget.
         if (isProtectedPath(window.location.pathname)) {
           previousAuthedRef.current = true;
           void checkSession(true);
-        } else {
-          forgetAuthState();
+          return;
         }
+        forgetAuthState();
       }
     }
 

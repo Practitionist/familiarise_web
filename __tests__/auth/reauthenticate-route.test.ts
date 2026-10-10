@@ -14,6 +14,11 @@ import { isFreshSession, requireFreshSession } from "@/lib/auth/step-up";
 const mockDb = {
   account: { findFirst: jest.fn() },
   session: { updateMany: jest.fn() },
+  twoFactor: {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(),
+  },
 };
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -37,7 +42,11 @@ jest.mock("../../lib/auth", () => ({
 const mockRequireApiAuth = jest.fn();
 jest.mock("../../lib/auth-helpers", () => ({
   __esModule: true,
-  requireApiAuth: () => mockRequireApiAuth(),
+  requireApiAuth: (opts: unknown) => mockRequireApiAuth(opts),
+}));
+const mockSecurityEmail = jest.fn();
+jest.mock("../../lib/auth/security-email", () => ({
+  sendSecurityEventEmail: (...a: unknown[]) => mockSecurityEmail(...a),
 }));
 jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
@@ -73,6 +82,69 @@ beforeEach(() => {
   mockDb.session.updateMany.mockResolvedValue({ count: 1 });
   mockVerifyPassword.mockResolvedValue({ status: true });
   mockVerifyTOTP.mockResolvedValue({});
+  mockDb.twoFactor.findUnique.mockResolvedValue({ lockedUntil: null });
+  mockDb.twoFactor.update.mockResolvedValue({ failedVerificationCount: 1 });
+  mockDb.twoFactor.updateMany.mockResolvedValue({ count: 1 });
+});
+
+describe("step-up two-factor lockout", () => {
+  it("checks the caller's expected user", async () => {
+    signedIn("CONSULTEE");
+    await call({ password: "pw" });
+    expect(mockRequireApiAuth).toHaveBeenCalledWith({ expectUser: true });
+  });
+
+  it("refuses an operator whose two-factor is locked, without checking the code", async () => {
+    signedIn("STAFF");
+    mockDb.twoFactor.findUnique.mockResolvedValue({
+      lockedUntil: new Date(Date.now() + 60_000),
+    });
+    const res = await call({ password: "pw", totpCode: "123456" });
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "ACCOUNT_TEMPORARILY_LOCKED",
+    });
+    expect(mockVerifyTOTP).not.toHaveBeenCalled();
+    expect(mockDb.session.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("counts a wrong code and locks on the tenth, emailing the user", async () => {
+    signedIn("STAFF");
+    mockVerifyTOTP.mockRejectedValue(new APIError("UNAUTHORIZED"));
+    mockDb.twoFactor.update.mockResolvedValue({ failedVerificationCount: 10 });
+    const lockedUntil = new Date(Date.now() + 900_000);
+    mockDb.twoFactor.findUnique
+      .mockResolvedValueOnce({ lockedUntil: null })
+      .mockResolvedValue({ lockedUntil });
+
+    const res = await call({ password: "pw", totpCode: "123456" });
+
+    expect(res.status).toBe(400);
+    expect(mockDb.twoFactor.update).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+      data: { failedVerificationCount: { increment: 1 } },
+      select: { failedVerificationCount: true },
+    });
+    expect(mockDb.twoFactor.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ lockedUntil: expect.any(Date) }),
+      }),
+    );
+    expect(mockSecurityEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "u1" }),
+      { kind: "two-factor-locked", lockedUntil },
+    );
+  });
+
+  it("resets the failure count after a correct code", async () => {
+    signedIn("STAFF");
+    const res = await call({ password: "pw", totpCode: "123456" });
+    expect(res.status).toBe(200);
+    expect(mockDb.twoFactor.updateMany).toHaveBeenCalledWith({
+      where: { userId: "u1" },
+      data: { failedVerificationCount: 0 },
+    });
+  });
 });
 
 describe("POST /api/user/reauthenticate", () => {

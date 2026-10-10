@@ -65,29 +65,44 @@ export const POST = withOpsAction(
           );
         }
       } else if (provider.domainVerified) {
-        // Same rule as the org-side delete: enforcement with no approved
-        // provider fails open, so revoking the last one would silently undo it.
+        // Same rule as the org-side delete: enforcement needs another approved,
+        // owner-proven provider to survive this one being revoked.
         const settings = await tx.organizationSSOSettings.findUnique({
           where: { organizationId: params.orgId },
           select: { enforceSSO: true },
         });
-        const approved = settings?.enforceSSO
+        const otherProven = settings?.enforceSSO
           ? await tx.ssoProvider.count({
-              where: { organizationId: params.orgId, domainVerified: true },
+              where: {
+                organizationId: params.orgId,
+                domainVerified: true,
+                provenAt: { not: null },
+                id: { not: provider.id },
+              },
             })
           : Infinity;
-        if (approved <= 1) {
+        if (otherProven === 0) {
           throw new OpsRefusal(
             "LAST_APPROVED_SSO_PROVIDER",
-            "This is the organization's last approved provider and SSO is enforced. Turn enforcement off first.",
+            "SSO is enforced and no other approved provider has been proven by an owner sign-in. Turn enforcement off first.",
           );
         }
       }
 
-      await tx.ssoProvider.update({
-        where: { id: provider.id },
-        data: { domainVerified: body.approve },
+      // CAS on the approval state; a revoked provider must be proven again.
+      const { count } = await tx.ssoProvider.updateMany({
+        where: { id: provider.id, domainVerified: provider.domainVerified },
+        data: body.approve
+          ? { domainVerified: true }
+          : { domainVerified: false, provenAt: null, provenByUserId: null },
       });
+      if (count === 0) {
+        throw new OpsRefusal(
+          "SSO_PROVIDER_CHANGED",
+          "This provider was changed in another session. Reload and retry.",
+          409,
+        );
+      }
 
       return {
         target: { kind: "SsoProvider", id: provider.id },

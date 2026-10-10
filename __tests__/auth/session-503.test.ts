@@ -93,6 +93,20 @@ describe("GET /api/auth/get-session", () => {
     expect((await getSession()).status).toBe(200);
   });
 
+  it("expires the browser's dead session cookie when the row is gone", async () => {
+    sessionFindUnique.mockResolvedValue(null);
+    const res = await getSession();
+    const cleared = res.headers.getSetCookie();
+    expect(cleared).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^__Secure-better-auth\.session_token=; .*Max-Age=0.*; Secure$/,
+        ),
+        expect.stringMatching(/^better-auth\.session_token=; .*Max-Age=0/),
+      ]),
+    );
+  });
+
   it("passes the null through with no cookie, without a row read", async () => {
     const res = await getSession(false);
     expect(res.status).toBe(200);

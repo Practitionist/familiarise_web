@@ -2,6 +2,7 @@ import { APIError, getSessionFromCtx } from "better-auth/api";
 import type { GenericEndpointContext } from "better-auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { EXPECTED_USER_HEADER } from "@/lib/auth/identity-header";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 
 /** A session counts as freshly authenticated for this long. */
@@ -55,6 +56,9 @@ const STEP_UP_AUTH_PATHS: ReadonlySet<string> = new Set([
   "/change-password",
   "/change-email",
   "/passkey/generate-register-options",
+  "/passkey/verify-registration",
+  "/passkey/delete-passkey",
+  "/passkey/update-passkey",
 ]);
 
 const ENROLLED_OPERATOR_PATHS: ReadonlySet<string> = new Set([
@@ -76,6 +80,14 @@ export async function assertSensitiveAuthAction(
   }
   const current = await getSessionFromCtx(ctx);
   if (!current) return;
+  // A tab rendered for another account must not change this one's credentials.
+  const expected = ctx.request?.headers.get(EXPECTED_USER_HEADER);
+  if (expected && expected !== current.user.id) {
+    throw new APIError("CONFLICT", {
+      message: "You are signed in as a different account in this browser.",
+      code: "IDENTITY_CHANGED",
+    });
+  }
   const user = authUserFields.parse(current.user);
   if (
     ENROLLED_OPERATOR_PATHS.has(path) &&

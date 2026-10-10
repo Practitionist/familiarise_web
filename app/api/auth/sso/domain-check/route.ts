@@ -52,6 +52,8 @@ export async function GET(req: NextRequest) {
       providerId,
       domain,
       callbackURL: `${APP_URL}/auth/signin?ssoCallback=1&callbackUrl=${encodeURIComponent(orgHome)}`,
+      // Every refusal in the callback redirects here with `?error=<code>`.
+      errorCallbackURL: `${APP_URL}/auth/signin`,
     },
   });
 }

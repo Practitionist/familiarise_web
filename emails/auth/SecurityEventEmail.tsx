@@ -11,6 +11,7 @@ import {
 export type SecurityEvent =
   | { kind: "authenticator-added" }
   | { kind: "passkey-added"; passkeyName: string | null }
+  | { kind: "passkey-removed" }
   | { kind: "backup-codes-regenerated" }
   | { kind: "backup-code-used"; remaining: number }
   | { kind: "two-factor-reset-by-admin" }
@@ -34,6 +35,8 @@ export function securityEventSubject(event: SecurityEvent): string {
       return "An authenticator app was added to your Familiarise account";
     case "passkey-added":
       return "A passkey was added to your Familiarise account";
+    case "passkey-removed":
+      return "A passkey was removed from your Familiarise account";
     case "backup-codes-regenerated":
       return "Your Familiarise backup codes were regenerated";
     case "backup-code-used":
@@ -64,6 +67,10 @@ function eventLines(
         event.passkeyName
           ? `A new passkey, "${event.passkeyName}", was added to your account on ${when}. It can now be used to sign in.`
           : `A new passkey was added to your account on ${when}. It can now be used to sign in.`,
+      ];
+    case "passkey-removed":
+      return [
+        `A passkey was removed from your account on ${when}. It can no longer be used to sign in.`,
       ];
     case "backup-codes-regenerated":
       return [

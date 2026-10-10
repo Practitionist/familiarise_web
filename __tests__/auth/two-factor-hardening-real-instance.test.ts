@@ -161,6 +161,43 @@ describe("two-factor hardening on a real instance", () => {
     });
   });
 
+  it("refuses a session holder's HTTP 2FA checks, which the plugin does not count", async () => {
+    const cookie = await enrolledOperator("oracle@example.test");
+    for (const p of [
+      "/two-factor/verify-totp",
+      "/two-factor/verify-backup-code",
+    ]) {
+      const res = await post(p, { code: "123456" }, cookie);
+      expect(res.status).toBe(403);
+      await expect(res.json()).resolves.toMatchObject({
+        code: "TWO_FACTOR_ALREADY_VERIFIED",
+      });
+    }
+  });
+
+  it("refuses a credential change from a tab rendered for another account", async () => {
+    const cookie = await signUp("switched@example.test", "CONSULTEE");
+    const res = await auth.handler(
+      new Request(`${APP}/api/auth/change-password`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: APP,
+          cookie,
+          "x-expected-user": "someone-else",
+        },
+        body: JSON.stringify({
+          currentPassword: PASSWORD,
+          newPassword: "another-horse-2",
+        }),
+      }),
+    );
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "IDENTITY_CHANGED",
+    });
+  });
+
   it("refuses credential changes for an unenrolled operator", async () => {
     const cookie = await signUp("unenrolled@example.test", "ADMIN");
     const res = await post(

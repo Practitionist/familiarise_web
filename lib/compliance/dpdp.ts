@@ -90,6 +90,7 @@
 
 import { createHash } from "node:crypto";
 import prisma, { type Tx } from "@/lib/prisma";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import {
   SIGNUP_PURPOSES,
   TERMS_VERSION,
@@ -430,17 +431,21 @@ export async function withdrawConsent(
   // Currently: log a WARN SystemEvent so ops can see who withdrew what and
   // when. The checkout path (validateSlotAvailability) independently
   // checks this consent fail-closed at booking time.
+  // After the response, so it never takes the pool's one connection from a
+  // caller's open transaction.
   if (purposeCode === "SESSION_BOOKING" && count > 0) {
-    const { recordSystemEvent } =
-      await import("@/lib/enterprise/system-events");
-    void recordSystemEvent({
-      organizationId: null,
-      category: "CONSENT",
-      severity: "WARN",
-      message: `User ${userId} withdrew SESSION_BOOKING consent — new bookings will be blocked at checkout`,
-      context: { purposeCode, withdrawnCount: count },
-      correlationId: userId,
-    });
+    scheduleAfter(async () => {
+      const { recordSystemEvent } =
+        await import("@/lib/enterprise/system-events");
+      await recordSystemEvent({
+        organizationId: null,
+        category: "CONSENT",
+        severity: "WARN",
+        message: `User ${userId} withdrew SESSION_BOOKING consent — new bookings will be blocked at checkout`,
+        context: { purposeCode, withdrawnCount: count },
+        correlationId: userId,
+      });
+    }, "consent:session-booking-withdrawn");
   }
 
   return { withdrawnCount: count };

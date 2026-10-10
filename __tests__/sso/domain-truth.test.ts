@@ -80,14 +80,22 @@ describe("DELETE provider", () => {
     });
   });
 
-  it("refuses to delete the last approved provider while SSO is enforced", async () => {
+  it("refuses to delete the last approved, proven provider while SSO is enforced", async () => {
     tx.ssoProvider.count.mockResolvedValue(0);
     const res = await call();
     expect(res.status).toBe(409);
+    expect(tx.ssoProvider.count).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org_1",
+        domainVerified: true,
+        provenAt: { not: null },
+        id: { not: "row_a" },
+      },
+    });
     expect(tx.ssoProvider.delete).not.toHaveBeenCalled();
   });
 
-  it("deletes when another approved provider remains", async () => {
+  it("deletes when another proven provider remains", async () => {
     tx.ssoProvider.count.mockResolvedValue(1);
     const res = await call();
     expect(res.status).toBe(204);

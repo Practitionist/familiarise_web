@@ -46,9 +46,14 @@ const applyMembershipRoleEffects = jest.fn(
     payoutRecipient: "SELF" as const,
   }),
 );
+const recomputeConsultantIsIndependent = jest.fn(
+  async (_tx: unknown, _id: string) => undefined,
+);
 jest.mock("../../lib/api/organizations/membership-transitions", () => ({
   applyMembershipRoleEffects: (t: unknown, input: unknown) =>
     applyMembershipRoleEffects(t, input),
+  recomputeConsultantIsIndependent: (t: unknown, id: string) =>
+    recomputeConsultantIsIndependent(t, id),
 }));
 
 import { provisionSsoMembership } from "@/lib/sso/jit-membership";
@@ -61,9 +66,14 @@ const input = {
   organizationId: "org_1",
 };
 
-function org(status: string, defaultRoleForAutoJoin?: string) {
+function org(
+  status: string,
+  defaultRoleForAutoJoin?: string,
+  capabilities = { canSponsor: true, canHost: true },
+) {
   return {
     status,
+    ...capabilities,
     ssoSettings: defaultRoleForAutoJoin ? { defaultRoleForAutoJoin } : null,
   };
 }
@@ -113,6 +123,35 @@ it("creates an ACTIVE membership with the org's auto-join role in a Serializable
   // Seat cap only applies to unverified orgs.
   expect(tx.membership.count).not.toHaveBeenCalled();
   expect(recordSystemEvent).not.toHaveBeenCalled();
+  expect(recomputeConsultantIsIndependent).toHaveBeenCalledWith(
+    tx,
+    "consultant_1",
+  );
+});
+
+it.each(["REMOVED", "SUSPENDED", "PENDING"])(
+  "never reactivates a %s membership; rejoining goes through the invitation flow",
+  async (status) => {
+    db.membership.findUnique.mockResolvedValue({ id: "m_old", status });
+
+    await expect(provisionSsoMembership(input)).resolves.toEqual({
+      kind: "skipped",
+      reason: "MEMBERSHIP_NOT_ACTIVE",
+    });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  },
+);
+
+it("refuses a join role the organization's capabilities do not support", async () => {
+  db.organization.findUnique.mockResolvedValue(
+    org("ACTIVE", undefined, { canSponsor: false, canHost: true }),
+  );
+
+  await expect(provisionSsoMembership(input)).resolves.toEqual({
+    kind: "skipped",
+    reason: "ROLE_NOT_SUPPORTED",
+  });
+  expect(tx.membership.create).not.toHaveBeenCalled();
 });
 
 it("applies a pending invitation's role and marks the invitation accepted", async () => {
@@ -187,8 +226,8 @@ it("defaults to LEARNER when the org has no SSO settings row", async () => {
   });
 });
 
-it("is a no-op on re-login when any membership row exists, whatever its status", async () => {
-  db.membership.findUnique.mockResolvedValue({ id: "m_removed" });
+it("is a no-op on re-login for an ACTIVE member", async () => {
+  db.membership.findUnique.mockResolvedValue({ id: "m_1", status: "ACTIVE" });
 
   await expect(provisionSsoMembership(input)).resolves.toEqual({
     kind: "already_member",
@@ -199,7 +238,7 @@ it("is a no-op on re-login when any membership row exists, whatever its status",
     where: {
       userId_organizationId: { userId: "user_1", organizationId: "org_1" },
     },
-    select: { id: true },
+    select: { id: true, status: true },
   });
   expect(db.organization.findUnique).not.toHaveBeenCalled();
   expect(db.$transaction).not.toHaveBeenCalled();

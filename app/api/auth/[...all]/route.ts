@@ -4,6 +4,7 @@ import { withRetryAfter } from "@/lib/auth/rate-limit";
 import {
   classifyMissingSession,
   cookieFromHeader,
+  expireSessionCookies,
   verifiedSessionToken,
 } from "@/lib/auth/session-cookie";
 import { sessionLookupFailedResponse } from "@/lib/auth/session-lookup-error";
@@ -15,6 +16,7 @@ const handler = toNextJsHandler(auth);
  * session (the customSession plugin swallows the error). With a validly
  * signed cookie whose row is live, that null is a failure: answer 503 so the
  * BetterAuth client keeps its last session instead of rendering signed out.
+ * A cookie whose session is gone is expired so later requests stop carrying it.
  */
 async function withLookupFailure(
   request: Request,
@@ -31,8 +33,13 @@ async function withLookupFailure(
   const token = verifiedSessionToken((name) =>
     cookieFromHeader(cookieHeader, name),
   );
-  if (!token || (await classifyMissingSession(token)) === "none") {
-    return response;
+  if (!token) return response;
+  if ((await classifyMissingSession(token)) === "none") {
+    // An idle or capped session ends inside the plugin, whose cookie deletion
+    // customSession drops; clear the dead cookie here instead.
+    const headers = new Headers(response.headers);
+    expireSessionCookies(headers);
+    return new Response(response.body, { status: response.status, headers });
   }
   return sessionLookupFailedResponse();
 }

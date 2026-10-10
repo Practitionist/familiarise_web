@@ -12,11 +12,13 @@ export type AuthHookContext = Parameters<
 >[0];
 
 const PASSKEY_REGISTERED = "/passkey/verify-registration";
+const PASSKEY_DELETED = "/passkey/delete-passkey";
 const BACKUP_CODES_GENERATED = "/two-factor/generate-backup-codes";
 const BACKUP_CODE_VERIFY = "/two-factor/verify-backup-code";
 const TOTP_VERIFY = "/two-factor/verify-totp";
 const WATCHED = new Set([
   PASSKEY_REGISTERED,
+  PASSKEY_DELETED,
   BACKUP_CODES_GENERATED,
   BACKUP_CODE_VERIFY,
   TOTP_VERIFY,
@@ -109,6 +111,10 @@ async function resolveNotice(
         event: { kind: "passkey-added", passkeyName: passkey.name ?? null },
       };
     }
+    case PASSKEY_DELETED: {
+      const userId = sessionUserId(ctx);
+      return userId ? { userId, event: { kind: "passkey-removed" } } : null;
+    }
     case BACKUP_CODES_GENERATED: {
       const userId = sessionUserId(ctx);
       return userId
@@ -127,7 +133,7 @@ async function resolveNotice(
 }
 
 /**
- * `hooks.after`: emails the user about passkey registration, backup-code
+ * `hooks.after`: emails the user about passkey registration and removal, backup-code
  * regeneration and use, and a two-factor lockout. Never throws.
  */
 export async function notifySecurityEvents(

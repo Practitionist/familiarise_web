@@ -5,8 +5,9 @@
  *
  * One provider, keyed by its `providerId` slug (part of the redirect URI).
  * PATCH rotates the client secret and/or changes the covered domains in place:
- * same providerId, re-encrypted, audited, no re-approval. Issuer or client id
- * changes are a new provider. The client secret is write-only.
+ * same providerId, re-encrypted, audited, no re-approval, but a new secret must
+ * be proven again by an owner sign-in. Issuer or client id changes are a new
+ * provider. The client secret is write-only.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -170,7 +171,14 @@ export async function PATCH(
     const updated = await prisma.$transaction(async (tx) => {
       const current = await tx.ssoProvider.findFirst({
         where: { providerId, organizationId: orgId },
-        select: { id: true, domain: true, updatedAt: true, oidcConfig: true },
+        select: {
+          id: true,
+          domain: true,
+          updatedAt: true,
+          oidcConfig: true,
+          domainVerified: true,
+          provenAt: true,
+        },
       });
       if (!current) {
         throw refusal(404, "SSO_PROVIDER_NOT_FOUND", "SSO provider not found");
@@ -178,6 +186,30 @@ export async function PATCH(
 
       let oidcConfig: string | undefined;
       if (clientSecret !== undefined) {
+        // Rotation un-proves the provider, so enforcement needs another proven one.
+        if (current.domainVerified && current.provenAt) {
+          const settings = await tx.organizationSSOSettings.findUnique({
+            where: { organizationId: orgId },
+            select: { enforceSSO: true },
+          });
+          const otherProven = settings?.enforceSSO
+            ? await tx.ssoProvider.count({
+                where: {
+                  organizationId: orgId,
+                  domainVerified: true,
+                  provenAt: { not: null },
+                  id: { not: current.id },
+                },
+              })
+            : 1;
+          if (otherProven === 0) {
+            throw refusal(
+              409,
+              "SSO_ENFORCED_REPROVE",
+              "SSO is enforced through this provider alone. Turn enforcement off or prove another provider before rotating its secret.",
+            );
+          }
+        }
         const read = readOidcConfig(current);
         if (!read.config) {
           throw refusal(
@@ -204,7 +236,11 @@ export async function PATCH(
       const { count } = await tx.ssoProvider.updateMany({
         where: { id: current.id, updatedAt: current.updatedAt },
         data: {
-          ...(oidcConfig !== undefined && { oidcConfig }),
+          ...(oidcConfig !== undefined && {
+            oidcConfig,
+            provenAt: null,
+            provenByUserId: null,
+          }),
           ...(domain !== undefined && { domain }),
         },
       });
@@ -293,8 +329,8 @@ export async function DELETE(
       }
       deletedDomain = current.domain;
 
-      // Enforcement fails open without an approved provider, so deleting the
-      // last one would silently switch it off. Make the owner do that openly.
+      // Enforcement fails open without an approved, owner-proven provider, so
+      // deleting the last one would silently switch it off.
       if (current.domainVerified) {
         const settings = await tx.organizationSSOSettings.findUnique({
           where: { organizationId: orgId },
@@ -305,6 +341,7 @@ export async function DELETE(
               where: {
                 organizationId: orgId,
                 domainVerified: true,
+                provenAt: { not: null },
                 id: { not: current.id },
               },
             })
@@ -312,7 +349,7 @@ export async function DELETE(
         if (remaining === 0) {
           throw Object.assign(
             new Error(
-              "Cannot delete the last approved SSO provider while SSO is enforced. Disable enforcement first.",
+              "Cannot delete the last approved, proven SSO provider while SSO is enforced. Disable enforcement first.",
             ),
             { httpStatus: 409 },
           );

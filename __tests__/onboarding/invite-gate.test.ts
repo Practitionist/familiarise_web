@@ -60,7 +60,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: jest.fn(),
-    invitation: { findUnique: jest.fn() },
+    invitation: { findUnique: jest.fn(), findFirst: jest.fn() },
     membership: { findFirst: jest.fn() },
   },
 }));
@@ -108,6 +108,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockHeaders.mockImplementation(() => new Headers());
   mockMembership.mockResolvedValue(null);
+  (prisma.invitation.findFirst as unknown as jest.Mock).mockResolvedValue(null);
 });
 
 describe.each(["MANAGER", "EXPERT"])(
@@ -196,6 +197,28 @@ describe("org members never run the B2C wizard", () => {
     await expect(requireOnboarded()).rejects.toThrow(
       "REDIRECT /form/onboarding",
     );
+  });
+
+  it("a verified invitee with no membership yet goes to the gate", async () => {
+    mockMembership.mockResolvedValue(null);
+    (prisma.invitation.findFirst as unknown as jest.Mock).mockResolvedValue({
+      id: "inv_1",
+    });
+    await expect(requireOnboarded()).rejects.toThrow(
+      "REDIRECT /onboarding/gate",
+    );
+  });
+
+  it("never sends an operator to the wizard or the gate", async () => {
+    mockLookupSession.mockResolvedValue({
+      kind: "session",
+      session: {
+        session: { id: "s1" },
+        user: sessionUser({ role: "STAFF", twoFactorEnabled: true }),
+      },
+    });
+    await expect(requireOnboarded()).resolves.toBeDefined();
+    await expect(requireNotOnboarded()).rejects.toThrow("REDIRECT /dashboard");
   });
 });
 

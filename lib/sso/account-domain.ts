@@ -26,10 +26,25 @@ export async function assertSsoEmailOnDomain(
     providerId && domain
       ? await prisma.ssoProvider.findUnique({
           where: { providerId },
-          select: { domain: true, domainVerified: true, organizationId: true },
+          select: {
+            domain: true,
+            domainVerified: true,
+            organizationId: true,
+            organization: { select: { status: true } },
+          },
         })
       : null;
   const organizationId = provider?.organizationId;
+  // Enforcement already ignores a suspended or deactivated org; its IdP must
+  // not keep minting sessions either.
+  const orgStatus = provider?.organization?.status;
+  if (orgStatus === "SUSPENDED" || orgStatus === "DEACTIVATED") {
+    throw new APIError("FORBIDDEN", {
+      message:
+        "Your organization's sign-in is paused. Contact your administrator.",
+      code: "SSO_ORGANIZATION_INACTIVE",
+    });
+  }
   const covered =
     !!provider?.domainVerified &&
     !!organizationId &&

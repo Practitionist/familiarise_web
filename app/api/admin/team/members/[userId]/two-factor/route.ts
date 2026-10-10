@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import bcrypt from "bcrypt";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
@@ -12,8 +11,9 @@ import { sendSecurityEventEmail } from "@/lib/auth/security-email";
  * 2FA after a lost authenticator and spent backup codes.
  *
  * ADMIN-only (`users.moderate`), never on oneself. In one transaction it
- * deletes the TwoFactor row and passkeys, clears `twoFactorEnabled`, replaces the password
- * with random bytes and ends every session; after commit the operator is
+ * deletes the TwoFactor row, passkeys and pending verification tokens, clears
+ * `twoFactorEnabled`, replaces the password with an unusable value and ends
+ * every session; after commit the operator is
  * emailed a set-password link. Re-enrolment therefore needs the mailbox, not
  * the old password, which may be what was compromised.
  */
@@ -64,14 +64,16 @@ export const DELETE = withOpsAction(
 
       const removed = await tx.twoFactor.deleteMany({ where: { userId } });
       const passkeys = await tx.passkey.deleteMany({ where: { userId } });
+      const tokens = await tx.verification.deleteMany({
+        where: { value: userId },
+      });
       await tx.user.update({
         where: { id: userId },
         data: { twoFactorEnabled: false },
       });
-      const password = await bcrypt.hash(
-        randomBytes(32).toString("base64url"),
-        12,
-      );
+      // Not a bcrypt hash, so bcrypt.compare rejects every password without
+      // spending hashing time inside the transaction.
+      const password = `!disabled:${randomBytes(32).toString("base64url")}`;
       await tx.account.updateMany({
         where: { userId, providerId: "credential" },
         data: { password },
@@ -86,6 +88,7 @@ export const DELETE = withOpsAction(
           twoFactorEnabled: false,
           secretsRemoved: removed.count,
           passkeysRemoved: passkeys.count,
+          tokensRemoved: tokens.count,
           sessionsRevoked: revoked,
           passwordRotated: true,
         },

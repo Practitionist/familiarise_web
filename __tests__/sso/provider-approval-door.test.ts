@@ -27,7 +27,11 @@ jest.mock("../../lib/auth-helpers", () => ({
 }));
 
 const tx = {
-  ssoProvider: { findFirst: jest.fn(), update: jest.fn(), count: jest.fn() },
+  ssoProvider: {
+    findFirst: jest.fn(),
+    updateMany: jest.fn(),
+    count: jest.fn(),
+  },
   orgDomainClaim: { findMany: jest.fn() },
   organizationSSOSettings: { findUnique: jest.fn() },
   opsActionLog: { create: jest.fn(async () => ({ id: "row" })) },
@@ -65,6 +69,7 @@ beforeEach(() => {
     ...PROVIDER,
     domainVerified: false,
   });
+  tx.ssoProvider.updateMany.mockResolvedValue({ count: 1 });
 });
 
 it("approves when the org holds a verified claim for every covered domain, then emails the owners", async () => {
@@ -76,8 +81,8 @@ it("approves when the org holds a verified claim for every covered domain, then 
   const res = await call({ approve: true, reason: "checked the DNS record" });
 
   expect(res.status).toBe(200);
-  expect(tx.ssoProvider.update).toHaveBeenCalledWith({
-    where: { id: "row_1" },
+  expect(tx.ssoProvider.updateMany).toHaveBeenCalledWith({
+    where: { id: "row_1", domainVerified: false },
     data: { domainVerified: true },
   });
   expect(tx.opsActionLog.create).toHaveBeenCalledWith(
@@ -123,7 +128,7 @@ it.each([
 
   expect(res.status).toBe(409);
   expect((await res.json()).code).toBe("DOMAIN_NOT_VERIFIED");
-  expect(tx.ssoProvider.update).not.toHaveBeenCalled();
+  expect(tx.ssoProvider.updateMany).not.toHaveBeenCalled();
   expect(tx.opsActionLog.create).not.toHaveBeenCalled();
   expect(scheduled).toHaveLength(0);
 });
@@ -133,10 +138,25 @@ it("revokes without consulting the claim", async () => {
 
   expect(res.status).toBe(200);
   expect(tx.orgDomainClaim.findMany).not.toHaveBeenCalled();
-  expect(tx.ssoProvider.update).toHaveBeenCalledWith({
-    where: { id: "row_1" },
-    data: { domainVerified: false },
+  expect(tx.ssoProvider.updateMany).toHaveBeenCalledWith({
+    where: { id: "row_1", domainVerified: false },
+    data: { domainVerified: false, provenAt: null, provenByUserId: null },
   });
+});
+
+it("409s when the approval state changed under it and writes no audit row", async () => {
+  tx.orgDomainClaim.findMany.mockResolvedValue([
+    { domain: "acme.com" },
+    { domain: "acme.co.in" },
+  ]);
+  tx.ssoProvider.updateMany.mockResolvedValue({ count: 0 });
+
+  const res = await call({ approve: true, reason: "checked the DNS record" });
+
+  expect(res.status).toBe(409);
+  expect((await res.json()).code).toBe("SSO_PROVIDER_CHANGED");
+  expect(tx.opsActionLog.create).not.toHaveBeenCalled();
+  expect(scheduled).toHaveLength(0);
 });
 
 it("404s a provider that is not this org's", async () => {
@@ -160,29 +180,40 @@ describe("revoking an approved provider", () => {
     });
   });
 
-  it("refuses the last one while SSO is enforced", async () => {
+  it("refuses when no other proven provider remains while SSO is enforced", async () => {
     tx.organizationSSOSettings.findUnique.mockResolvedValue({
       enforceSSO: true,
     });
-    tx.ssoProvider.count.mockResolvedValue(1);
+    tx.ssoProvider.count.mockResolvedValue(0);
 
     const res = await call({ approve: false, reason: "customer asked us to" });
 
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("LAST_APPROVED_SSO_PROVIDER");
-    expect(tx.ssoProvider.update).not.toHaveBeenCalled();
+    expect(tx.ssoProvider.count).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org_1",
+        domainVerified: true,
+        provenAt: { not: null },
+        id: { not: "row_1" },
+      },
+    });
+    expect(tx.ssoProvider.updateMany).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["enforcement is off", { enforceSSO: false }, 1],
-    ["another approved provider remains", { enforceSSO: true }, 2],
-  ])("allows it when %s", async (_label, settings, approved) => {
+    ["enforcement is off", { enforceSSO: false }, 0],
+    ["another proven provider remains", { enforceSSO: true }, 1],
+  ])("allows it when %s", async (_label, settings, otherProven) => {
     tx.organizationSSOSettings.findUnique.mockResolvedValue(settings);
-    tx.ssoProvider.count.mockResolvedValue(approved);
+    tx.ssoProvider.count.mockResolvedValue(otherProven);
 
     const res = await call({ approve: false, reason: "customer asked us to" });
 
     expect(res.status).toBe(200);
-    expect(tx.ssoProvider.update).toHaveBeenCalled();
+    expect(tx.ssoProvider.updateMany).toHaveBeenCalledWith({
+      where: { id: "row_1", domainVerified: true },
+      data: { domainVerified: false, provenAt: null, provenByUserId: null },
+    });
   });
 });

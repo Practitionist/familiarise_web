@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import {
@@ -92,8 +93,10 @@ export async function PUT(
   try {
     const { id } = await params;
 
-    const session = await getSession();
-    if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
+    const auth = await requireApiAuth({ expectUser: true });
+    if (auth.error) return auth.error;
+    const { session } = auth;
+    if (session.user.id !== id && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -183,8 +186,10 @@ export async function PATCH(
   try {
     const { id } = await params;
 
-    const session = await getSession();
-    if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
+    const auth = await requireApiAuth({ expectUser: true });
+    if (auth.error) return auth.error;
+    const { session } = auth;
+    if (session.user.id !== id && session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -503,14 +508,11 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    const session = await getSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const isSelfDeletion = session.user.id === id;
-    const isAdmin = session.user.role === "ADMIN";
-    if (!isSelfDeletion && !isAdmin) {
+    const auth = await requireApiAuth({ expectUser: true });
+    if (auth.error) return auth.error;
+    const { session } = auth;
+    // Self-service erasure only; operators erase through the DPDP request queue.
+    if (session.user.id !== id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const stale = requireFreshSession(session);

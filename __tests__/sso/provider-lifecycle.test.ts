@@ -5,7 +5,8 @@
 /**
  * Provider lifecycle: enforce-on needs a provider an OWNER has signed in
  * through and spares the enabling OWNER's session; the first OWNER login
- * stamps the proof once; PATCH rotates the client secret in place.
+ * stamps the proof once; PATCH rotates the client secret in place and clears
+ * the proof, refusing while it is the only proven provider of an enforcing org.
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -166,6 +167,8 @@ describe("PATCH provider (secret rotation)", () => {
       domain: "acme.com",
       updatedAt,
       oidcConfig: { clientId: "cid", clientSecret: "old", pkce: true },
+      domainVerified: true,
+      provenAt: new Date("2026-01-02T00:00:00Z"),
     });
   });
 
@@ -181,6 +184,8 @@ describe("PATCH provider (secret rotation)", () => {
           clientSecret: "new-secret",
           pkce: true,
         })}`,
+        provenAt: null,
+        provenByUserId: null,
       },
     });
     expect(tx.orgAuditLog.create).toHaveBeenCalledWith({
@@ -190,6 +195,47 @@ describe("PATCH provider (secret rotation)", () => {
       }),
     });
     expect(revokeEnforcedDomainSessions).not.toHaveBeenCalled();
+  });
+
+  it("refuses rotating the only proven provider of an enforcing org", async () => {
+    tx.organizationSSOSettings.findUnique.mockResolvedValue({
+      enforceSSO: true,
+      defaultRoleForAutoJoin: "LEARNER",
+      version: 1,
+    });
+    tx.ssoProvider.count.mockResolvedValue(0);
+
+    const res = await call({ clientSecret: "new-secret" });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("SSO_ENFORCED_REPROVE");
+    expect(tx.ssoProvider.count).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org_1",
+        domainVerified: true,
+        provenAt: { not: null },
+        id: { not: "row_a" },
+      },
+    });
+    expect(tx.ssoProvider.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rotates under enforcement when another proven provider remains", async () => {
+    tx.organizationSSOSettings.findUnique.mockResolvedValue({
+      enforceSSO: true,
+      defaultRoleForAutoJoin: "LEARNER",
+      version: 1,
+    });
+    tx.ssoProvider.count.mockResolvedValue(1);
+
+    const res = await call({ clientSecret: "new-secret" });
+
+    expect(res.status).toBe(200);
+    expect(tx.ssoProvider.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ provenAt: null, provenByUserId: null }),
+      }),
+    );
   });
 
   it("answers 409 on a concurrent edit", async () => {

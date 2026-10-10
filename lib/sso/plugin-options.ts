@@ -1,7 +1,5 @@
 import type { SSOOptions } from "@better-auth/sso";
-import prisma from "@/lib/prisma";
 import { emailDomain, providerDomains } from "@/lib/sso/domains";
-import { assertIdpClaims, decodeIdTokenClaims } from "@/lib/sso/idp-claims";
 import { provisionSsoMembership } from "@/lib/sso/jit-membership";
 import { stampProviderProven } from "@/lib/sso/provider-proof";
 
@@ -18,28 +16,11 @@ export const ssoPluginOptions = {
   // Membership comes from `provisionUser`, which applies our lifecycle and
   // seat gates; the plugin's org-plugin provisioning would skip them.
   organizationProvisioning: { disabled: true },
-  // Every login, so the claim checks always run and a join refused by the seat
-  // cap goes through once a seat frees up.
+  // Every login, so a join refused by the seat cap goes through once a seat
+  // frees up. IdP claims are checked earlier, in the account hooks (lib/auth.ts).
   provisionUserOnEveryLogin: true,
-  provisionUser: async ({ user, token, provider }) => {
+  provisionUser: async ({ user, provider }) => {
     const domains = providerDomains(provider.domain);
-    try {
-      assertIdpClaims(decodeIdTokenClaims(token?.idToken), domains);
-    } catch (refusal) {
-      // No cookie is set after a throw here; drop the link this login made so
-      // a refused identity cannot block the real one (one identity per provider).
-      await prisma.account.deleteMany({
-        where: { userId: user.id, providerId: provider.providerId },
-      });
-      // The plugin created this login's session just before calling us.
-      const orphan = await prisma.session.findFirst({
-        where: { userId: user.id },
-        orderBy: { createdAt: "desc" },
-        select: { id: true },
-      });
-      if (orphan) await prisma.session.deleteMany({ where: { id: orphan.id } });
-      throw refusal;
-    }
     const domain = emailDomain(user.email);
     if (!domain || !domains.includes(domain)) return;
     const outcome = await provisionSsoMembership({

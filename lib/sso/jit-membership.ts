@@ -8,7 +8,10 @@
 
 import { Prisma, type MemberRole } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
+import {
+  applyMembershipRoleEffects,
+  recomputeConsultantIsIndependent,
+} from "@/lib/api/organizations/membership-transitions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -27,7 +30,11 @@ export type SsoJitSkipReason =
   | "PROVIDER_WITHOUT_ORGANIZATION"
   | "ORGANIZATION_NOT_FOUND"
   | "ORGANIZATION_INACTIVE"
+  | "MEMBERSHIP_NOT_ACTIVE"
+  | "ROLE_NOT_SUPPORTED"
   | "SEAT_CAP_REACHED";
+
+class JitRoleNotSupported extends Error {}
 
 export type SsoJitOutcome =
   | { kind: "joined"; organizationId: string; role: MemberRole }
@@ -53,14 +60,21 @@ export async function provisionSsoMembership(
 
   const existing = await prisma.membership.findUnique({
     where: { userId_organizationId: { userId, organizationId } },
-    select: { id: true },
+    select: { id: true, status: true },
   });
-  if (existing) return { kind: "already_member", organizationId };
+  // A removed or suspended member rejoins through the invitation flow, which
+  // owns the lifecycle rules; SSO never reactivates a membership.
+  if (existing?.status === "ACTIVE") {
+    return { kind: "already_member", organizationId };
+  }
+  if (existing) return { kind: "skipped", reason: "MEMBERSHIP_NOT_ACTIVE" };
 
   const org = await prisma.organization.findUnique({
     where: { id: organizationId },
     select: {
       status: true,
+      canSponsor: true,
+      canHost: true,
       ssoSettings: { select: { defaultRoleForAutoJoin: true } },
     },
   });
@@ -93,12 +107,14 @@ export async function provisionSsoMembership(
   try {
     const role = await withSerializableRetry(() =>
       prisma.$transaction(
-        async (tx): Promise<MemberRole | null> => {
+        async (tx): Promise<MemberRole | "SEAT_CAP_REACHED"> => {
           if (orgStatus === "PENDING_VERIFICATION") {
             const activeMembers = await tx.membership.count({
               where: { organizationId, status: "ACTIVE" },
             });
-            if (activeMembers >= UNVERIFIED_ORG_SEAT_CAP) return null;
+            if (activeMembers >= UNVERIFIED_ORG_SEAT_CAP) {
+              return "SEAT_CAP_REACHED";
+            }
           }
 
           const invitation = await tx.invitation.findFirst({
@@ -120,6 +136,13 @@ export async function provisionSsoMembership(
           const joinRole =
             invitation && claimed.count === 1 ? invitation.role : defaultRole;
           const invitationId = claimed.count === 1 ? invitation?.id : undefined;
+          // Same capability rule as invitation accept.
+          if (
+            (joinRole === "EXPERT" && org.canHost === false) ||
+            (joinRole === "LEARNER" && org.canSponsor === false)
+          ) {
+            throw new JitRoleNotSupported();
+          }
 
           // Creates the profile the role needs in this same transaction.
           const roleEffects = await applyMembershipRoleEffects(tx, {
@@ -137,6 +160,12 @@ export async function provisionSsoMembership(
               payoutRecipient: roleEffects.payoutRecipient,
             },
           });
+          if (joinRole === "EXPERT" && roleEffects.consultantProfileId) {
+            await recomputeConsultantIsIndependent(
+              tx,
+              roleEffects.consultantProfileId,
+            );
+          }
           await tx.orgAuditLog.create({
             data: {
               organizationId,
@@ -174,7 +203,7 @@ export async function provisionSsoMembership(
       ),
     );
 
-    if (!role) {
+    if (role === "SEAT_CAP_REACHED") {
       await recordSystemEvent({
         organizationId,
         category: "SSO",
@@ -186,6 +215,17 @@ export async function provisionSsoMembership(
     }
     return { kind: "joined", organizationId, role };
   } catch (err) {
+    // The transaction rolled back, so a claimed invitation stays pending.
+    if (err instanceof JitRoleNotSupported) {
+      await recordSystemEvent({
+        organizationId,
+        category: "SSO",
+        severity: "WARN",
+        message: `JIT auto-join skipped: the join role is not supported by this organization's capabilities for user ${userId}`,
+        context: { userId, providerId },
+      });
+      return { kind: "skipped", reason: "ROLE_NOT_SUPPORTED" };
+    }
     // A concurrent login won the (userId, organizationId) unique.
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&

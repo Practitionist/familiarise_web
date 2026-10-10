@@ -27,6 +27,7 @@ const mockDb = {
   adminProfile: { create: jest.fn() },
   twoFactor: { deleteMany: jest.fn() },
   passkey: { deleteMany: jest.fn() },
+  verification: { deleteMany: jest.fn() },
   account: { updateMany: jest.fn() },
   session: { deleteMany: jest.fn() },
   opsActionLog: { create: jest.fn() },
@@ -72,6 +73,7 @@ jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
 }));
 
+import bcrypt from "bcrypt";
 import { NextRequest } from "next/server";
 import { POST as createMember } from "../../app/api/admin/team/members/route";
 import { DELETE as resetTwoFactor } from "../../app/api/admin/team/members/[userId]/two-factor/route";
@@ -182,6 +184,7 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
     mockDb.account.updateMany.mockResolvedValue({ count: 1 });
     mockDb.twoFactor.deleteMany.mockResolvedValue({ count: 1 });
     mockDb.passkey.deleteMany.mockResolvedValue({ count: 2 });
+    mockDb.verification.deleteMany.mockResolvedValue({ count: 1 });
     mockDb.session.deleteMany.mockResolvedValue({ count: 3 });
 
     const res = await resetTwoFactor(
@@ -196,6 +199,9 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
     expect(mockDb.passkey.deleteMany).toHaveBeenCalledWith({
       where: { userId: "op1" },
     });
+    expect(mockDb.verification.deleteMany).toHaveBeenCalledWith({
+      where: { value: "op1" },
+    });
     expect(mockDb.user.update).toHaveBeenCalledWith({
       where: { id: "op1" },
       data: { twoFactorEnabled: false },
@@ -205,7 +211,10 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
     });
     const rotation = mockDb.account.updateMany.mock.calls[0][0];
     expect(rotation.where).toEqual({ userId: "op1", providerId: "credential" });
-    expect(rotation.data.password).toMatch(/^\$2[aby]\$12\$/);
+    expect(rotation.data.password).toMatch(/^!disabled:/);
+    await expect(
+      bcrypt.compare("any password", rotation.data.password),
+    ).resolves.toBe(false);
     await expect(res.json()).resolves.toMatchObject({ sessionsRevoked: 3 });
     await new Promise((resolve) => setImmediate(resolve));
     expect(mockRequestPasswordReset).toHaveBeenCalledWith({
