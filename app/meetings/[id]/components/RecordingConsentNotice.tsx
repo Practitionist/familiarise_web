@@ -119,11 +119,11 @@ export function useRecordingConsent(meetingId: string): ConsentGate {
           return;
         }
         setNotice((prev) => (prev ? { ...prev, decision } : prev));
-        // The in-call stop toast is neutral; only the decliner learns it was discarded.
+        // The in-call stop toast is neutral; only the decliner learns it will be discarded.
         if (body?.recordingStopped === true) {
           toast({
-            title: "Recording discarded",
-            description: "Recording stopped and discarded at your request.",
+            title: "Recording stopped",
+            description: "It will be discarded at your request.",
           });
         }
       } catch {
