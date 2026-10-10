@@ -86,6 +86,8 @@ export interface ExistingRazorpayOrder {
   currency: string;
   /** #1861 L1 — the pay window's end (ISO); the sheet times out before it. */
   holdExpiresAt?: string | null;
+  /** Gateway order state; EXPIRED refuses to open like a lapsed hold. */
+  status?: string;
 }
 
 type RazorpayCheckoutSource =
@@ -118,6 +120,8 @@ interface GatewayOrder {
   currency: string;
   customerId?: string;
   holdExpiresAt?: string | null;
+  /** Mirrors the gateway order state; EXPIRED refuses to open. */
+  status?: string;
 }
 
 export default function RazorpayCheckout({
@@ -154,6 +158,7 @@ export default function RazorpayCheckout({
             amount: existingOrder.amount,
             currency: existingOrder.currency,
             holdExpiresAt: existingOrder.holdExpiresAt,
+            status: existingOrder.status,
           }
         : await createOrder();
       if (!order) return;
@@ -233,6 +238,7 @@ export default function RazorpayCheckout({
       // #1771 row 1 — the server echoes a Customer only while saved cards are on.
       customerId: data.paymentIntent.customerId,
       holdExpiresAt: data.holdExpiresAt,
+      status: data.paymentIntent.status,
     };
   };
 
@@ -250,7 +256,11 @@ export default function RazorpayCheckout({
 
     // #1861 L1 — a hold with under two minutes left cannot be paid in time;
     // opening Checkout would only take a payment the hold no longer covers.
-    if (holdTimeoutSeconds(order.holdExpiresAt) === 0) {
+    // A stale EXPIRED order refuses the same way.
+    if (
+      holdTimeoutSeconds(order.holdExpiresAt) === 0 ||
+      order.status === "EXPIRED"
+    ) {
       toast({
         title: "Your reserved time has run out",
         description:
