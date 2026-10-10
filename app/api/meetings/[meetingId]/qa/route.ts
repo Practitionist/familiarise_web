@@ -404,7 +404,7 @@ async function handleSendChatAction(
     message,
   });
 
-  runAfterOrInline(async () => {
+  void runAfterOrInline(async () => {
     const streamMessageId = await mirrorChatMessageToStreamChannel({
       appointment,
       senderUserId: userId,
