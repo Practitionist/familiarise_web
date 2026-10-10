@@ -328,13 +328,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   }
 }
 
+type ThreadLifecycleStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
+
 function buildLinkedTicketStatusData(
   linked: {
     resolvedAt: Date | null;
     awaitingUserSince: Date | null;
     pausedSeconds: number;
   } | null,
-  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED",
+  status: ThreadLifecycleStatus,
   isReopening: boolean,
   now: Date,
 ) {
@@ -368,7 +370,7 @@ function buildLinkedTicketStatusData(
 async function persistThreadStatusTx(
   tx: Tx,
   thread: { id: string; supportTicketId: string | null },
-  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED",
+  status: ThreadLifecycleStatus,
   isReopening: boolean,
   now: Date,
 ): Promise<number> {
@@ -423,7 +425,7 @@ async function notifyThreadStatusCustomer(params: {
   organizationId: string | null;
   referenceNumber: string | null | undefined;
   title: string | null | undefined;
-  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
+  status: ThreadLifecycleStatus;
   now: Date;
 }): Promise<void> {
   const dashboardUrl = supportRequestHref(
