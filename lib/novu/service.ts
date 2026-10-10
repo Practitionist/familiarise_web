@@ -275,18 +275,20 @@ async function sendUnstaged(
     const novu = getNovuClient();
     const wire = toWire(args.workflowId, args.payload);
     if (args.kind === "BROADCAST") {
-      await novu.triggerBroadcast({
-        name: wire.workflowId,
-        payload: wire.payload,
+      await novu.triggerBroadcast(
+        { name: wire.workflowId, payload: wire.payload, transactionId },
         transactionId,
-      });
+      );
     } else {
-      await novu.trigger({
-        workflowId: wire.workflowId,
-        to: args.kind === "SINGLE" ? args.recipients[0] : args.recipients,
-        payload: wire.payload,
+      await novu.trigger(
+        {
+          workflowId: wire.workflowId,
+          to: args.kind === "SINGLE" ? args.recipients[0] : args.recipients,
+          payload: wire.payload,
+          transactionId,
+        },
         transactionId,
-      });
+      );
     }
     return { success: true };
   } catch (error) {
@@ -882,10 +884,7 @@ export const notifyRecordingAvailable = defineMultiNotifier<
   appointmentTypeCode: p.appointmentType,
 }));
 export const notifyRecordingFailed =
-  defineSingleNotifier<RecordingFailedPayload>(
-    W.RECORDING_FAILED,
-    ({ errorMessage: _vendorDetail, ...rest }) => rest,
-  );
+  defineSingleNotifier<RecordingFailedPayload>(W.RECORDING_FAILED);
 
 // Document Review
 export const notifyDocumentUploaded =

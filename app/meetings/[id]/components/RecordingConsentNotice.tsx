@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Loader2, Video } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/use-toast";
 import { cn } from "@/utils/tailwind";
 
 type Decision = "GRANTED" | "DECLINED";
@@ -118,6 +119,13 @@ export function useRecordingConsent(meetingId: string): ConsentGate {
           return;
         }
         setNotice((prev) => (prev ? { ...prev, decision } : prev));
+        // The in-call stop toast is neutral; only the decliner learns it was discarded.
+        if (body?.recordingStopped === true) {
+          toast({
+            title: "Recording discarded",
+            description: "Recording stopped and discarded at your request.",
+          });
+        }
       } catch {
         setError("Could not save your choice. Please try again.");
       } finally {

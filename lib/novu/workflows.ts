@@ -441,7 +441,6 @@ export type RecordingPayload = NotificationScope & {
 
 export type RecordingFailedPayload = {
   streamCallId: string;
-  errorMessage?: string;
   dashboardUrl: string;
 };
 

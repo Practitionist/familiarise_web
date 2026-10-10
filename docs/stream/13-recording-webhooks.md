@@ -338,6 +338,8 @@ sequenceDiagram
 | `call.session_participant_joined` | A participant joined the call        | `handleSessionParticipantJoined()` |
 | `call.session_participant_left`   | A participant left the call          | `handleSessionParticipantLeft()`   |
 
+`call.session_started` is subscribed but listed in `IGNORED_EVENT_TYPES` (`lib/stream/webhook-events.ts`): the route acknowledges it with `ignored: true` and writes no receipt.
+
 ### End Events and the `endedAt` Column
 
 Three rules govern how the two end events write `Meeting.endedAt` and `endedReason`, all from #1607. First, the last end wins: Stream reuses a call id across sessions, so a `call.session_ended` fired by the inactivity timeout after a host's pre-start device check must not be the end of record for the real call an hour later. Both handlers therefore accept an event only when its timestamp is later than the recorded `endedAt`, which also means a replayed or out-of-order older event can never move the column backwards. Second, a `call.ended` that arrives before the booked start is stamped `ended_early` rather than `call_ended`, and the slot is left `SCHEDULED`; `ended_early` is not a deliberate end, so every join gate re-lights and the same room is re-entered for the real session. Third, a `call.session_participant_joined` on a session whose recorded end is not deliberate (`session_timeout`, `ended_early`, or one of the reconciler's guesses) clears `endedAt` and `endedReason`, because a participant joining means Stream has opened a new session on that call id. That clear is compare-and-set on the end the handler read, so a real end committed concurrently is never overwritten. A deliberate end — the host closing the room after the start, or the maintenance drain — is never cleared. `heldOccurrence`'s attendance arm and the maintenance drain both read `endedAt` as "the room is closed", and these rules are what keep that reading true while a call is live.
@@ -398,13 +400,13 @@ interface StreamRecordingReadyEvent {
 interface StreamRecordingFailedEvent {
   call_cid: string;
   type: "call.recording_failed";
-  error?: {
-    message?: string;
-    code?: string;
-  };
+  egress_id: string; // e.g. "call_recorder:unique"
+  recording_type: string; // e.g. "composite"
   created_at: string;
 }
 ```
+
+Stream sends no error detail, so the log names the recording type and egress id and the host's notification carries no reason.
 
 ### Webhook Security
 

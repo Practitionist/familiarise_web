@@ -25,7 +25,10 @@ import {
   discardDeclinedRecording,
   wasDeclinedDuringRecording,
 } from "@/lib/stream/recording-decline";
-import type { streamRecordingReadySchema } from "@/lib/stream/webhook-dispatch";
+import type {
+  streamRecordingFailedSchema,
+  streamRecordingReadySchema,
+} from "@/lib/stream/webhook-dispatch";
 
 // Types for Stream webhook payloads
 export interface StreamRecordingStartedEvent {
@@ -46,15 +49,7 @@ export interface StreamRecordingStoppedEvent {
 
 type StreamRecordingReadyEvent = z.infer<typeof streamRecordingReadySchema>;
 
-export interface StreamRecordingFailedEvent {
-  call_cid: string;
-  type: "call.recording_failed";
-  error?: {
-    message?: string;
-    code?: string;
-  };
-  created_at: string;
-}
+type StreamRecordingFailedEvent = z.infer<typeof streamRecordingFailedSchema>;
 
 /**
  * Handle call.recording_started event
@@ -567,18 +562,16 @@ export async function handleRecordingReady(
 export async function handleRecordingFailed(
   event: StreamRecordingFailedEvent,
 ): Promise<void> {
-  const { call_cid, error: eventError } = event;
+  const { call_cid, egress_id, recording_type } = event;
 
   const streamCallId = toCallId(call_cid);
 
   streamLogger.error(
     "Recording failed",
-    new Error(eventError?.message || "Unknown error"),
-    {
-      streamCallId,
-      errorCode: eventError?.code,
-      errorMessage: eventError?.message,
-    },
+    new Error(
+      `Stream ${recording_type} recording failed (egress ${egress_id})`,
+    ),
+    { streamCallId, egressId: egress_id, recordingType: recording_type },
   );
 
   try {
@@ -653,9 +646,7 @@ export async function handleRecordingFailed(
       userIds.map((userId) =>
         notifyRecordingFailed(userId, {
           streamCallId,
-          errorMessage: eventError?.message,
-          // #1527 — every live seat holder (consultant or consultee) is a
-          // recipient here, same as the recording-ready bell above.
+          // Every live seat holder is a recipient, same as the recording-ready bell.
           dashboardUrl: notificationHref(
             appointment?.organizationId,
             "recordings",
