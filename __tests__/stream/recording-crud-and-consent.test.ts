@@ -447,6 +447,7 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.decision).toBe("DECLINED");
+      expect(data.recordingStopped).toBe(true);
       expect(mockStopRecording).toHaveBeenCalledWith(
         "consultation-slot-1",
         "consultee-user-1",

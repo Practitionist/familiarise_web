@@ -68,10 +68,8 @@ const RecordingControls = ({
       setIsLoading(false);
       setRecordingDuration(0);
       if (announces)
-        toast({
-          title: "Recording Stopped",
-          description: "It will appear in Recordings shortly.",
-        });
+        // Neutral: a consent decline also stops the recording, and discards it.
+        toast({ title: "Recording stopped." });
     });
 
     const unsubscribeFailed = call.on("call.recording_failed", () => {

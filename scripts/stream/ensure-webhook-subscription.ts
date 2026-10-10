@@ -9,14 +9,18 @@ import "dotenv/config";
 
 import type { EventHook } from "stream-chat";
 
-import { getStreamChatClient, isStreamConfigured } from "../../lib/stream-client";
+import {
+  getStreamChatClient,
+  isStreamConfigured,
+} from "../../lib/stream-client";
 import { compareStringsByCodeUnit } from "../../lib/stream/config-fingerprint";
-import { HANDLED_EVENT_TYPES } from "../../lib/stream/webhook-events";
-
-const ADDITIONAL_EVENT_TYPES = ["call.session_started"] as const;
+import {
+  HANDLED_EVENT_TYPES,
+  IGNORED_EVENT_TYPES,
+} from "../../lib/stream/webhook-events";
 
 const DESIRED_EVENT_TYPES = Array.from(
-  new Set<string>([...HANDLED_EVENT_TYPES, ...ADDITIONAL_EVENT_TYPES]),
+  new Set<string>([...HANDLED_EVENT_TYPES, ...IGNORED_EVENT_TYPES]),
 ).sort(compareStringsByCodeUnit);
 
 type IdentifiedHook = EventHook & { id: string };
@@ -85,9 +89,13 @@ export async function ensureWebhookSubscription(
     const missing = eligible.filter((t) => !receivesAll && !current.has(t));
     const product = (hook as { product?: string }).product ?? "unscoped";
 
-    console.log(`\nhook ${hook.id}  enabled=${hook.enabled}  product=${product}`);
+    console.log(
+      `\nhook ${hook.id}  enabled=${hook.enabled}  product=${product}`,
+    );
     console.log(`  url: ${hook.webhook_url}`);
-    console.log(`  subscribed: ${current.size}${receivesAll ? " (wildcard)" : ""}`);
+    console.log(
+      `  subscribed: ${current.size}${receivesAll ? " (wildcard)" : ""}`,
+    );
 
     if (missing.length === 0) {
       console.log(`  ✅ already covers every handled ${product} event`);
@@ -124,7 +132,9 @@ export async function ensureWebhookSubscription(
       `\n⚠️  ${unplaceable.size} handled event(s) have NO hook that may carry them.`,
     );
     for (const [product, types] of byProduct) {
-      console.error(`\n  product '${product}' — no hook on this app is scoped to it:`);
+      console.error(
+        `\n  product '${product}' — no hook on this app is scoped to it:`,
+      );
       for (const t of [...types].sort(compareStringsByCodeUnit)) {
         console.error(`    · ${t}`);
         if (mode === "check") {
