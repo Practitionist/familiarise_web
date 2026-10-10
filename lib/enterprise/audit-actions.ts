@@ -41,6 +41,7 @@ export const AUDIT_ACTIONS = {
     APPOINTMENT_CANCELLED_FOR_ORG: "APPOINTMENT_CANCELLED_FOR_ORG",
     APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG:
       "APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG",
+    APPOINTMENT_ALLOCATED_FOR_ORG: "APPOINTMENT_ALLOCATED_FOR_ORG",
   },
   CONTRACT: {
     CONTRACT_CREATED: "CONTRACT_CREATED",
@@ -75,6 +76,7 @@ export const AUDIT_ACTIONS = {
     // #1846 SM-C14 — one row per seat a terminated or expired contract closed.
     ASSIGNMENT_CLOSED_BY_CONTRACT: "ASSIGNMENT_CLOSED_BY_CONTRACT",
     RATE_CARD_BUMPED: "RATE_CARD_BUMPED",
+    PROGRAM_SUPERSEDED: "PROGRAM_SUPERSEDED",
   },
   WALLET: {
     WALLET_TOPUP: "WALLET_TOPUP",
@@ -220,8 +222,7 @@ export const AUDIT_ACTIONS = {
     // in `details`. Pinned under SYSTEM because the operator is the
     // platform, not a human member.
     AUDIT_PRUNED: "AUDIT_PRUNED",
-    // Emitted by the Stream recording retention cron when it tombstones
-    // a recording older than the org's `streamRecordingRetentionDays`.
+    // Emitted by the expire-recordings job for each run that expires org recordings.
     STREAM_RECORDING_DELETED: "STREAM_RECORDING_DELETED",
     // #1270 — emitted whenever a platform operator (ADMIN or STAFF) reads a
     // recording they have no participation in. The operator path used to be

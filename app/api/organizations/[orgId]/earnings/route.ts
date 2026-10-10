@@ -22,7 +22,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { sumPaise } from "@/lib/payments/utils/money";
-import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 
 const EarningStatusSchema = z.enum([
   "PENDING",
@@ -55,7 +55,7 @@ export async function GET(
   // Honesty gate: an org's canHost column can be true from when the flag was
   // on, but with ENABLE_HOST_ORGS off resolveOrgSplit returns null so NO new
   // OrganizationEarnings accrue — surfacing a split dashboard would lie.
-  if (!ENABLE_HOST_ORGS || !access.org.canHost) {
+  if (!isHostOrgsEnabled() || !access.org.canHost) {
     return NextResponse.json(
       { error: "Organization does not host — no earnings to list" },
       { status: 404 },

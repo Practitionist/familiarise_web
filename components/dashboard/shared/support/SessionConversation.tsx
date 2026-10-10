@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Send } from "lucide-react";
 
 import { SupportBubble } from "@/components/support/SupportBubble";
@@ -8,13 +9,19 @@ import {
   describeAction,
   type useSupportThread,
 } from "@/components/support/useSupportThread";
+import { isBareHumanRequest } from "@/lib/support/escalation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 type ThreadState = ReturnType<typeof useSupportThread>;
-type Option = { id: string; label: string; escalates?: boolean };
+type Option = {
+  id: string;
+  label: string;
+  escalates?: boolean;
+  isCategory?: boolean;
+};
 
 /** Enough for staff to act on without a round trip back to the user. */
 const MIN_DESCRIPTION = 20;
@@ -58,8 +65,8 @@ function OptionButtons({
 }
 
 /**
- * #1527 — an escalating chip opens a ticket for staff, so it never fires on
- * the click: the user describes the problem first, and only "Send" hands off.
+ * Escalating options and bare human asks collect the problem description before
+ * opening a staff ticket.
  */
 function EscalateStep({
   option,
@@ -69,17 +76,18 @@ function EscalateStep({
 }: Readonly<{
   option: Option;
   disabled: boolean;
-  onSend: (description: string) => void;
+  onSend: (description: string, urgent: boolean) => void;
   onBack: () => void;
 }>) {
   const [text, setText] = useState("");
+  const [urgent, setUrgent] = useState(false);
   const short = text.trim().length < MIN_DESCRIPTION;
   return (
     <form
       className="space-y-2"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!short) onSend(text.trim());
+        if (!short) onSend(text.trim(), urgent);
       }}
     >
       <p className="text-sm">
@@ -103,6 +111,15 @@ function EscalateStep({
         At least {MIN_DESCRIPTION} characters. Our support team will read this
         and reply here and by email.
       </p>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={urgent}
+          onChange={(e) => setUrgent(e.target.checked)}
+          disabled={disabled}
+        />
+        <span>This is urgent</span>
+      </label>
       <div className="flex items-center justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={onBack}>
           Back
@@ -115,17 +132,16 @@ function EscalateStep({
   );
 }
 
-/**
- * #1527 — the session conversation on the request page: the guided flow's
- * steps inline (options at the server's cursor), free text, and the hand-off
- * to our team, with the behaviour the old "Get help" drawer had.
- */
-export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
+export function SessionConversation({
+  t,
+  requestsHref = "/dashboard/support",
+}: Readonly<{ t: ThreadState; requestsHref?: string }>) {
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<Option | null>(null);
-  // A poll that moves the cursor retires the chip, and the step with it.
   const escalating =
-    picked && t.options.some((o) => o.id === picked.id) ? picked : null;
+    picked && (picked.isCategory || t.options.some((o) => o.id === picked.id))
+      ? picked
+      : null;
   const endRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -135,37 +151,71 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
     ? "You're connected with our support team. They'll reply here and by email."
     : "Pick what you need help with, or type a message.";
 
+  const renderEscalateStep = (target: Option) => (
+    <EscalateStep
+      option={target}
+      disabled={t.turnPending}
+      onBack={() => setPicked(null)}
+      onSend={(description, urgent) => {
+        const sent = target.isCategory
+          ? t.submitTurn({
+              category: target.id,
+              chosenLabel: target.label,
+              userMessage: description,
+              urgent,
+            })
+          : t.submitTurn({
+              chosenOptionId: target.id,
+              chosenLabel: target.label,
+              userMessage: description,
+              urgent,
+            });
+        if (sent) setPicked(null);
+      }}
+    />
+  );
+
+  // The human exit stays one tap away in every bot state, not only on the first menu.
+  const humanIntent = t.availableIntents.find((i) => i.category === "OTHER");
+  const humanExit =
+    humanIntent && !t.isHuman && !t.isClosed ? humanIntent : null;
+
   const controls = () => {
+    if (escalating) {
+      return renderEscalateStep(escalating);
+    }
     if (t.started) {
-      if (escalating) {
-        return (
-          <EscalateStep
-            option={escalating}
-            disabled={t.turnPending}
-            onBack={() => setPicked(null)}
-            onSend={(description) => {
-              const sent = t.submitTurn({
-                chosenOptionId: escalating.id,
-                chosenLabel: escalating.label,
-                userMessage: description,
-              });
-              if (sent) setPicked(null);
-            }}
-          />
-        );
-      }
       return (
-        t.options.length > 0 && (
-          <OptionButtons
-            options={t.options}
-            disabled={t.turnPending}
-            onPick={(o) =>
-              o.escalates
-                ? setPicked(o)
-                : t.submitTurn({ chosenOptionId: o.id, chosenLabel: o.label })
-            }
-          />
-        )
+        <>
+          {t.options.length > 0 && (
+            <OptionButtons
+              options={t.options}
+              disabled={t.turnPending}
+              onPick={(o) =>
+                o.escalates
+                  ? setPicked(o)
+                  : t.submitTurn({ chosenOptionId: o.id, chosenLabel: o.label })
+              }
+            />
+          )}
+          {humanExit && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={t.turnPending}
+              onClick={() =>
+                setPicked({
+                  id: humanExit.category,
+                  label: humanExit.label,
+                  escalates: true,
+                  isCategory: true,
+                })
+              }
+            >
+              {humanExit.label}
+            </Button>
+          )}
+        </>
       );
     }
     if (t.query.isError) {
@@ -198,9 +248,15 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
         options={t.availableIntents.map((i) => ({
           id: i.category,
           label: i.label,
+          escalates: i.escalates,
+          isCategory: true,
         }))}
         disabled={t.turnPending}
-        onPick={(o) => t.submitTurn({ category: o.id, chosenLabel: o.label })}
+        onPick={(o) =>
+          o.escalates
+            ? setPicked(o)
+            : t.submitTurn({ category: o.id, chosenLabel: o.label })
+        }
       />
     );
   };
@@ -248,8 +304,6 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
           />
         ))}
         {t.handoffIndex === t.messages.length && <Handoff />}
-        {/* Only while the flow is answering: an asynchronous hand-off has
-            nobody typing, and dots promising a reply lose people. */}
         {t.turnPending && !t.isHuman && (
           <output
             className="flex w-fit items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
@@ -282,36 +336,60 @@ export function SessionConversation({ t }: Readonly<{ t: ThreadState }>) {
         {!escalating &&
           (t.isClosed ? (
             <p className="text-sm text-muted-foreground">
-              This conversation is closed. Start a new request from Support if
-              you still need help.
+              This conversation is closed.{" "}
+              <Link
+                href={requestsHref}
+                className="font-medium text-foreground underline underline-offset-4"
+              >
+                Start a new request
+              </Link>{" "}
+              if you still need help.
             </p>
           ) : (
-            <form
-              className="flex items-center gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const msg = text.trim();
-                if (msg && t.submitTurn({ userMessage: msg })) setText("");
-              }}
-            >
-              <Input
-                aria-label="Message"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder={
-                  t.isHuman ? "Message our team…" : "Type a message…"
-                }
-                disabled={t.turnPending}
-              />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={t.turnPending || !text.trim()}
-                aria-label="Send"
+            <>
+              {t.isHuman && t.isResolved && (
+                <p className="text-xs text-muted-foreground">
+                  This request is marked resolved. Replying reopens it.
+                </p>
+              )}
+              <form
+                className="flex items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const msg = text.trim();
+                  if (!msg) return;
+                  if (!t.isHuman && isBareHumanRequest(msg)) {
+                    setText("");
+                    setPicked({
+                      id: "OTHER",
+                      label: msg,
+                      escalates: true,
+                      isCategory: true,
+                    });
+                    return;
+                  }
+                  if (t.submitTurn({ userMessage: msg })) setText("");
+                }}
               >
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
+                <Input
+                  aria-label="Message"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder={
+                    t.isHuman ? "Message our team…" : "Type a message…"
+                  }
+                  disabled={t.turnPending}
+                />
+                <Button
+                  type="submit"
+                  size="icon"
+                  disabled={t.turnPending || !text.trim()}
+                  aria-label="Send"
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </form>
+            </>
           ))}
       </div>
     </div>

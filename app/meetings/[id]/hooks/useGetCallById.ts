@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Call, useStreamVideoClient } from "@stream-io/video-react-sdk";
 
+import { provisionAppointmentMeeting } from "@/actions/stream/meetings/meeting.action";
 import { streamLogger } from "@/lib/stream-logger";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
 
@@ -53,12 +54,44 @@ interface DeviceSnapshot {
  */
 const CLIENT_WAIT_TIMEOUT_MS = 45_000;
 
+const OCCURRENCE_PREFIX = "occurrence-";
+const UUID_LENGTH = 36;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Extracts the occurrence slot ID from a join error payload or an
+ * `occurrence-<uuid>` call identifier.
+ */
+function resolveUnprovisionedSlotId(
+  callId: string,
+  occurrenceId: unknown,
+): string | null {
+  if (typeof occurrenceId === "string" && occurrenceId.length > 0) {
+    return occurrenceId;
+  }
+  if (!callId.startsWith(OCCURRENCE_PREFIX)) {
+    return null;
+  }
+  const rest = callId.slice(OCCURRENCE_PREFIX.length);
+  const candidateUuid = rest.slice(0, UUID_LENGTH);
+  if (UUID_PATTERN.test(candidateUuid)) {
+    return candidateUuid;
+  }
+  return rest.length > 0 ? rest : null;
+}
+
+/**
+ * Resolves and joins the Stream Video call for a meeting identifier, self-healing
+ * unprovisioned rooms and managing device state across reconnects.
+ */
 export const useGetCallById = (callId: string) => {
   const [call, setCall] = useState<Call | null>(null);
   const [isCallLoading, setIsCallLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [access, setAccess] = useState<MeetingAccessResult | null>(null);
   const [consentRequired, setConsentRequired] = useState(false);
+  const [roomNotProvisioned, setRoomNotProvisioned] = useState(false);
   const [rejoinKey, setRejoinKey] = useState(0);
   const [retryKey, setRetryKey] = useState(0);
   const client = useStreamVideoClient();
@@ -151,6 +184,7 @@ export const useGetCallById = (callId: string) => {
       setIsCallLoading(true);
       setError(null);
       setConsentRequired(false);
+      setRoomNotProvisioned(false);
 
       const isRejoin = rejoinKey > 0;
 
@@ -161,19 +195,75 @@ export const useGetCallById = (callId: string) => {
           await leaveCallAndReleaseMedia(previousCall.current);
         }
 
-        const response = await fetch(
+        let response = await fetch(
           `/api/meetings/${encodeURIComponent(callId)}/join`,
           { method: "POST" },
         );
 
         if (cancelled) return;
 
+        let healRefusalMessage: string | null = null;
+        if (
+          !response.ok &&
+          (response.status === 409 || response.status === 404)
+        ) {
+          const initialBody = await response
+            .clone()
+            .json()
+            .catch(() => ({}));
+          const isUnprovisionedRoom =
+            response.status === 409 &&
+            initialBody?.code === "ROOM_NOT_PROVISIONED";
+          const isDirectOccurrenceUrl =
+            response.status === 404 &&
+            initialBody?.reason === "not_found" &&
+            /^occurrence-([0-9a-f-]{36})$/i.test(callId);
+
+          if (isUnprovisionedRoom || isDirectOccurrenceUrl) {
+            const slotId = resolveUnprovisionedSlotId(
+              callId,
+              initialBody?.occurrenceId,
+            );
+
+            if (slotId) {
+              try {
+                const provisioned = await provisionAppointmentMeeting({
+                  id: slotId,
+                });
+                if (cancelled) return;
+                if (provisioned.ok) {
+                  response = await fetch(
+                    `/api/meetings/${encodeURIComponent(provisioned.streamCallId || callId)}/join`,
+                    { method: "POST" },
+                  );
+                  if (cancelled) return;
+                } else if (isDirectOccurrenceUrl) {
+                  healRefusalMessage = provisioned.refusal;
+                }
+              } catch (healErr) {
+                streamLogger.warn(
+                  "Self-heal provisioning failed during meeting join",
+                  {
+                    callId,
+                    slotId,
+                    reason:
+                      healErr instanceof Error
+                        ? healErr.message
+                        : String(healErr),
+                  },
+                );
+              }
+            }
+          }
+        }
+
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
           const message =
-            typeof body?.error === "string"
+            healRefusalMessage ??
+            (typeof body?.error === "string"
               ? body.error
-              : "Could not join this meeting.";
+              : "Could not join this meeting.");
 
           // Only an authorization verdict is an access denial. Everything else
           // — Stream down (503), a server fault (500), a bad id (400) — used to
@@ -199,6 +289,7 @@ export const useGetCallById = (callId: string) => {
             return;
           }
 
+          setRoomNotProvisioned(body?.code === "ROOM_NOT_PROVISIONED");
           // A failure, not a verdict. Surfacing it as an error gets the retry
           // affordance instead of a dead-end "access denied" screen. The catch
           // below clears `previousCall`, so it is not repeated here.
@@ -269,6 +360,7 @@ export const useGetCallById = (callId: string) => {
     error,
     access,
     consentRequired,
+    roomNotProvisioned,
     rejoin,
     retryJoin,
   };

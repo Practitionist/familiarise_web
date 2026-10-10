@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -9,7 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowUpDown, FolderOpen } from "lucide-react";
+import { ArrowUpDown, FolderOpen, Search } from "lucide-react";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/EmptyState";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
@@ -37,6 +38,8 @@ interface ResourcesTabProps {
   artifact?: ResourceArtifact;
   title?: string;
   subtitle?: string;
+  sortDir?: "desc" | "asc";
+  onSortDirChange?: (dir: "desc" | "asc") => void;
 }
 
 const EVENT_TYPES = [
@@ -54,12 +57,44 @@ const EVENT_TYPES = [
  */
 type FilterOption = "all" | "with_recordings" | "with_materials" | "completed";
 
+function matchesResourceQuery(
+  event: EventResource,
+  query: string,
+  artifact: ResourceArtifact = "both",
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (event.planTitle.toLowerCase().includes(q)) return true;
+  if ((event.contextTitle ?? "").toLowerCase().includes(q)) return true;
+  if ((event.consultantName ?? "").toLowerCase().includes(q)) return true;
+  if (
+    artifact !== "materials" &&
+    event.recordings.some((r) => r.title.toLowerCase().includes(q))
+  ) {
+    return true;
+  }
+  if (
+    artifact !== "recordings" &&
+    event.materials.some(
+      (m) =>
+        (m.originalName || m.fileName).toLowerCase().includes(q) ||
+        (m.description ?? "").toLowerCase().includes(q),
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function filterEvents(
   events: EventResource[],
   filter: FilterOption,
+  searchQuery = "",
+  artifact: ResourceArtifact = "both",
 ): EventResource[] {
-  if (filter === "all") return events;
   return events.filter((e) => {
+    if (!matchesResourceQuery(e, searchQuery, artifact)) return false;
+    if (filter === "all") return true;
     if (filter === "with_recordings") return e.recordings.length > 0;
     if (filter === "with_materials") return e.materials.length > 0;
     return e.status === "COMPLETED";
@@ -76,14 +111,35 @@ function sortEvents(
   });
 }
 
+function isFilterOption(value: string): value is FilterOption {
+  return (
+    value === "all" ||
+    value === "with_recordings" ||
+    value === "with_materials" ||
+    value === "completed"
+  );
+}
+
+function resolveArtifactNoun(artifact: ResourceArtifact): string {
+  if (artifact === "materials") return "documents";
+  if (artifact === "recordings") return "recordings";
+  return "resources";
+}
+
 export function ResourcesTab({
   data,
   artifact = "both",
   title,
   subtitle,
+  sortDir: externalSortDir,
+  onSortDirChange,
 }: ResourcesTabProps) {
-  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
+  const [internalSortDir, setInternalSortDir] = useState<"desc" | "asc">(
+    "desc",
+  );
+  const sortDir = externalSortDir ?? internalSortDir;
   const [resourceFilter, setResourceFilter] = useState<FilterOption>("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   /**
    * Events that actually carry the artifact this page is for.
@@ -115,27 +171,54 @@ export function ResourcesTab({
 
   const filteredData = useMemo(() => {
     if (!artifactData) return null;
-    const data = artifactData;
     return {
       consultations: sortEvents(
-        filterEvents(data.consultations, resourceFilter),
+        filterEvents(
+          artifactData.consultations,
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
         sortDir,
       ),
       subscriptions: sortEvents(
-        filterEvents(data.subscriptions, resourceFilter),
+        filterEvents(
+          artifactData.subscriptions,
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
         sortDir,
       ),
       webinars: sortEvents(
-        filterEvents(data.webinars, resourceFilter),
+        filterEvents(
+          artifactData.webinars,
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
         sortDir,
       ),
-      classes: sortEvents(filterEvents(data.classes, resourceFilter), sortDir),
+      classes: sortEvents(
+        filterEvents(
+          artifactData.classes,
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
+        sortDir,
+      ),
       trials: sortEvents(
-        filterEvents(data.trials ?? [], resourceFilter),
+        filterEvents(
+          artifactData.trials ?? [],
+          resourceFilter,
+          searchQuery,
+          artifact,
+        ),
         sortDir,
       ),
     };
-  }, [artifactData, resourceFilter, sortDir]);
+  }, [artifactData, resourceFilter, searchQuery, sortDir, artifact]);
 
   if (!data || !artifactData || !filteredData) return null;
 
@@ -149,12 +232,14 @@ export function ResourcesTab({
   if (totalResources === 0) {
     return (
       <>
-        <PageHeader
-          title={title ?? "Resources"}
-          description={
-            subtitle ?? "Materials and recordings from your enrolled events"
-          }
-        />
+        {title && (
+          <PageHeader
+            title={title}
+            description={
+              subtitle ?? "Materials and recordings from your enrolled events"
+            }
+          />
+        )}
         <EmptyState
           variant="page"
           icon={FolderOpen}
@@ -165,29 +250,62 @@ export function ResourcesTab({
     );
   }
 
-  const artifactNoun =
-    artifact === "materials"
-      ? "documents"
-      : artifact === "recordings"
-        ? "recordings"
-        : "resources";
+  if (artifact === "recordings") {
+    const mergedRecordings = sortEvents(
+      [
+        ...filteredData.consultations,
+        ...filteredData.subscriptions,
+        ...filteredData.webinars,
+        ...filteredData.classes,
+        ...filteredData.trials,
+      ],
+      sortDir,
+    );
 
-  const isFiltered = resourceFilter !== "all";
+    return (
+      <div className="space-y-4">
+        {mergedRecordings.map((event) => (
+          <EventResourceCard key={event.id} event={event} artifact={artifact} />
+        ))}
+      </div>
+    );
+  }
+
+  const artifactNoun = resolveArtifactNoun(artifact);
+
+  const isFiltered = resourceFilter !== "all" || searchQuery.trim().length > 0;
 
   return (
     <div>
-      <PageHeader
-        title={title ?? "Resources"}
-        description={
-          subtitle ?? "Materials and recordings from your enrolled events"
-        }
-      />
+      {title && (
+        <PageHeader
+          title={title}
+          description={
+            subtitle ?? "Materials and recordings from your enrolled events"
+          }
+        />
+      )}
 
-      {/* Filter + Sort controls */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="relative w-full sm:w-64">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
+          <Input
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={`Search ${artifactNoun}…`}
+            aria-label={`Search ${artifactNoun}`}
+            className="pl-8"
+          />
+        </div>
         <Select
           value={resourceFilter}
-          onValueChange={(v) => setResourceFilter(v as FilterOption)}
+          onValueChange={(v) => {
+            if (isFilterOption(v)) setResourceFilter(v);
+          }}
         >
           <SelectTrigger
             className="w-full sm:w-[180px]"
@@ -197,10 +315,6 @@ export function ResourcesTab({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All {artifactNoun}</SelectItem>
-            {/* Redundant on an artifact-specific page: every event shown on
-                Documents already has materials, so "With materials" would
-                filter nothing and "With recordings" would contradict the
-                page. */}
             {artifact === "both" && (
               <>
                 <SelectItem value="with_recordings">With recordings</SelectItem>
@@ -210,18 +324,25 @@ export function ResourcesTab({
             <SelectItem value="completed">Completed only</SelectItem>
           </SelectContent>
         </Select>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setSortDir((d) => (d === "desc" ? "asc" : "desc"))}
-        >
-          <ArrowUpDown className="h-4 w-4 mr-2" />
-          {sortDir === "desc" ? "Newest first" : "Oldest first"}
-        </Button>
+        {(externalSortDir === undefined || onSortDirChange) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const nextDir = sortDir === "desc" ? "asc" : "desc";
+              if (onSortDirChange) {
+                onSortDirChange(nextDir);
+              } else {
+                setInternalSortDir(nextDir);
+              }
+            }}
+          >
+            <ArrowUpDown className="h-4 w-4 mr-2" />
+            {sortDir === "desc" ? "Newest first" : "Oldest first"}
+          </Button>
+        )}
       </div>
 
-      {/* #1527 — the booking-type tabs live in the URL (?tab=); a type with
-          nothing on it has no tab, so the first one with events opens. */}
       <UrlTabs
         tabs={EVENT_TYPES.map(({ key, label }) => {
           const total = (artifactData[key as keyof ResourcesData] ?? []).length;

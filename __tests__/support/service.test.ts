@@ -26,7 +26,7 @@ jest.mock("../../lib/prisma", () => ({
       updateMany: jest.fn(),
       findUniqueOrThrow: jest.fn(),
     },
-    supportMessage: { create: jest.fn() },
+    supportMessage: { create: jest.fn(), findMany: jest.fn() },
     supportTicket: {
       create: jest.fn(),
       findUnique: jest.fn(),
@@ -55,7 +55,7 @@ const mockPrisma = prisma as unknown as {
     updateMany: jest.Mock;
     findUniqueOrThrow: jest.Mock;
   };
-  supportMessage: { create: jest.Mock };
+  supportMessage: { create: jest.Mock; findMany: jest.Mock };
   supportTicket: {
     create: jest.Mock;
     findUnique: jest.Mock;
@@ -117,6 +117,7 @@ beforeEach(() => {
       : (arg as (tx: unknown) => unknown)(mockPrisma),
   );
   mockPrisma.supportMessage.create.mockResolvedValue({});
+  mockPrisma.supportMessage.findMany.mockResolvedValue([]);
   // #705 — the thread row is also the message-sequence allocator, so every
   // write path reads `messageSeq` back off this update.
   mockPrisma.appointmentSupportThread.update.mockResolvedValue({
@@ -445,6 +446,35 @@ describe("runSupportTurn", () => {
     expect(mockPrisma.supportTicket.updateMany).toHaveBeenCalledWith({
       where: { id: "ticket-existing", status: "RESOLVED" },
       data: { status: "OPEN", resolvedAt: null },
+    });
+  });
+
+  it("raises the reused ticket to HIGH when the re-escalation is urgent", async () => {
+    mockPrisma.appointmentSupportThread.upsert.mockResolvedValue(
+      threadRow({
+        activeChannel: "HUMAN",
+        status: "RESOLVED",
+        supportTicketId: "ticket-existing",
+      }),
+    );
+    mockPrisma.supportTicket.findUnique.mockResolvedValue({
+      awaitingUserSince: null,
+      pausedSeconds: 0,
+    });
+
+    const r = await runSupportTurn("appt1", "user1", {
+      category: "OTHER",
+      urgent: true,
+    });
+
+    expect(r?.supportTicketId).toBe("ticket-existing");
+    expect(mockPrisma.supportTicket.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "ticket-existing",
+        status: { not: "CLOSED" },
+        priority: { in: ["LOW", "MEDIUM"] },
+      },
+      data: { priority: "HIGH" },
     });
   });
 

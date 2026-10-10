@@ -61,7 +61,7 @@ const COLUMNS: Column<ReimbursementRow>[] = [
   },
   {
     header: "Member",
-    accessor: (r) => r.user.name || r.user.email,
+    accessor: (r) => r.user.name ?? r.user.email,
   },
   { header: "Description", accessor: (r) => r.description ?? "—" },
   {
@@ -200,6 +200,26 @@ export function MemberSpendPanel({ orgId }: Readonly<{ orgId: string }>) {
           <div className="rounded-lg border bg-card p-4">
             <p className="text-xs uppercase text-muted-foreground">Payments</p>
             <p className="mt-1 text-2xl font-semibold">{data.total}</p>
+          </div>
+        </div>
+      )}
+
+      {data && data.byMember.length > 0 && (
+        <div className="rounded-lg border bg-card p-4 space-y-3">
+          <p className="text-sm font-medium">Per-member spend</p>
+          <div className="divide-y">
+            {data.byMember.map((m) => (
+              <div
+                key={m.userId}
+                className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
+              >
+                <p className="font-medium">{m.name ?? m.email ?? m.userId}</p>
+                <p className="text-xs text-muted-foreground">
+                  {m.paymentCount} payment{m.paymentCount === 1 ? "" : "s"} ·
+                  Net reimbursable ₹{(m.netReimbursablePaise / 100).toFixed(2)}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
       )}

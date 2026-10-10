@@ -190,6 +190,10 @@ export async function PATCH(
           ...(parsed.data.status !== undefined && {
             status: parsed.data.status,
           }),
+          ...(parsed.data.status === "ACTIVE" && {
+            failureCount: 0,
+            ...("disabledAt" in current ? { disabledAt: null } : {}),
+          }),
           ...(parsed.data.eventSubscriptions !== undefined && {
             eventSubscriptions: parsed.data.eventSubscriptions,
           }),

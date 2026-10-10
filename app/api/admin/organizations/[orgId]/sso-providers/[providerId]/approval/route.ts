@@ -39,7 +39,12 @@ export const POST = withOpsAction(
 
       if (body.approve) {
         const claim = await tx.orgDomainClaim.findUnique({
-          where: { domain: provider.domain },
+          where: {
+            organizationId_domain: {
+              organizationId: params.orgId,
+              domain: provider.domain,
+            },
+          },
           select: { organizationId: true, verifiedAt: true },
         });
         if (claim?.organizationId !== params.orgId || !claim.verifiedAt) {

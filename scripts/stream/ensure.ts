@@ -6,6 +6,7 @@
  *   2. ensureCallTypeGrants (`default` role grant hardening)
  *   3. hardenUnusedCallTypes (`audio_room`, `livestream`, `development` reach & billable strip)
  *   4. ensureDefaultCallTypeSettings (`session.inactivity_timeout_seconds: 300` on `default`)
+ *   5. ensureCoPresenterRole (custom `co_presenter` role and its grants on `default`)
  *
  * Usage:
  *   npx tsx scripts/stream/ensure.ts
@@ -13,12 +14,33 @@
  */
 import "dotenv/config";
 import { getStreamVideoClient, isStreamConfigured } from "@/lib/stream-client";
-import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import {
+  CO_PRESENTER_CALL_ROLE,
+  STREAM_CALL_TYPE,
+} from "@/lib/stream/call-cid";
 import { ensureAppSettings } from "./ensure-app-settings";
 import { ensureCallTypeGrants } from "./ensure-call-type-grants";
 import { hardenUnusedCallTypes } from "./harden-unused-call-types";
 
 export const TARGET_INACTIVITY_TIMEOUT_SECONDS = 300;
+
+/** Publish plus mute, pin and backstage; never end-call, permission changes or billable starts. */
+export const CO_PRESENTER_GRANTS = [
+  "create-call-reaction",
+  "join-backstage",
+  "join-call",
+  "join-ended-call",
+  "list-recordings",
+  "list-transcriptions",
+  "mute-users",
+  "pin-call-track",
+  "read-call",
+  "screenshare",
+  "send-audio",
+  "send-closed-captions",
+  "send-event",
+  "send-video",
+];
 
 export interface EnsureOptions {
   apply: boolean;
@@ -97,12 +119,77 @@ export async function ensureDefaultCallTypeSettings(opts: {
   return 0;
 }
 
+function matchesCoPresenterGrants(grants: string[] | undefined): boolean {
+  const held = new Set(grants ?? []);
+  return (
+    held.size === CO_PRESENTER_GRANTS.length &&
+    CO_PRESENTER_GRANTS.every((perm) => held.has(perm))
+  );
+}
+
+export async function ensureCoPresenterRole(opts: {
+  apply: boolean;
+}): Promise<number> {
+  if (!isStreamConfigured()) {
+    console.error(
+      "Stream is not configured — set STREAM_API_KEY and STREAM_API_SECRET",
+    );
+    return 1;
+  }
+
+  const client = getStreamVideoClient();
+  const { roles } = await client.listRoles();
+  const roleExists = roles.some((r) => r.name === CO_PRESENTER_CALL_ROLE);
+  const before = await client.video.getCallType({ name: STREAM_CALL_TYPE });
+  const grantsMatch = matchesCoPresenterGrants(
+    before.grants[CO_PRESENTER_CALL_ROLE],
+  );
+
+  console.log(
+    `\nRole '${CO_PRESENTER_CALL_ROLE}': ${roleExists ? "exists" : "missing"}; grants on '${STREAM_CALL_TYPE}': ${grantsMatch ? "match" : "differ"}`,
+  );
+  if (roleExists && grantsMatch) {
+    console.log(
+      `\n✅ ${CO_PRESENTER_CALL_ROLE} is already in place — no change.`,
+    );
+    return 0;
+  }
+  if (!opts.apply) {
+    console.log("\n(dry run — re-run with --apply to write this to Stream)");
+    return 0;
+  }
+
+  if (!roleExists) await client.createRole({ name: CO_PRESENTER_CALL_ROLE });
+  if (!grantsMatch) {
+    await client.video.updateCallType({
+      name: STREAM_CALL_TYPE,
+      grants: {
+        ...before.grants,
+        [CO_PRESENTER_CALL_ROLE]: CO_PRESENTER_GRANTS,
+      },
+    });
+  }
+
+  const after = await client.video.getCallType({ name: STREAM_CALL_TYPE });
+  const stored = after.grants[CO_PRESENTER_CALL_ROLE] ?? [];
+  if (!matchesCoPresenterGrants(stored)) {
+    console.error(
+      `\n🚨 Stream did not store the ${CO_PRESENTER_CALL_ROLE} grants (read back ${stored.join(", ") || "none"}).`,
+    );
+    return 1;
+  }
+  console.log(
+    `\n✅ ${CO_PRESENTER_CALL_ROLE} grants verified on '${STREAM_CALL_TYPE}'.`,
+  );
+  return 0;
+}
+
 export async function ensureStreamConfig(opts: EnsureOptions): Promise<number> {
-  console.log("=== [1/4] App Settings ===");
+  console.log("=== [1/5] App Settings ===");
   const appCode = await ensureAppSettings({ apply: opts.apply });
   if (appCode !== 0) return appCode;
 
-  console.log("\n=== [2/4] Default Call Type Grants ===");
+  console.log("\n=== [2/5] Default Call Type Grants ===");
   const grantsCode = await ensureCallTypeGrants({
     apply: opts.apply,
     restore: false,
@@ -110,17 +197,18 @@ export async function ensureStreamConfig(opts: EnsureOptions): Promise<number> {
   });
   if (grantsCode !== 0) return grantsCode;
 
-  console.log("\n=== [3/4] Unused Call Types Hardening ===");
+  console.log("\n=== [3/5] Unused Call Types Hardening ===");
   const hardenCode = await hardenUnusedCallTypes({ apply: opts.apply });
   if (hardenCode !== 0) return hardenCode;
 
-  console.log("\n=== [4/4] Default Call Type Session Settings ===");
+  console.log("\n=== [4/5] Default Call Type Session Settings ===");
   const settingsCode = await ensureDefaultCallTypeSettings({
     apply: opts.apply,
   });
   if (settingsCode !== 0) return settingsCode;
 
-  return 0;
+  console.log("\n=== [5/5] Co-presenter Role ===");
+  return ensureCoPresenterRole({ apply: opts.apply });
 }
 
 if (require.main === module) {

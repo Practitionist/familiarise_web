@@ -122,6 +122,14 @@ export function CatalogClient({
     [setArchived],
   );
 
+  const expertNamesById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const e of experts) {
+      map[e.consultantProfileId] = e.name;
+    }
+    return map;
+  }, [experts]);
+
   // The fetch asks for everything; the split happens here so restoring a plan
   // does not need a second round trip.
   const live = (rows: CatalogRow[] | undefined) =>
@@ -229,6 +237,7 @@ export function CatalogClient({
                   error={error}
                   onToggleArchive={archiveWebinar}
                   isMutating={setArchived.isPending}
+                  expertNamesById={expertNamesById}
                 />
               ),
             },
@@ -245,6 +254,7 @@ export function CatalogClient({
                   error={error}
                   onToggleArchive={archiveClass}
                   isMutating={setArchived.isPending}
+                  expertNamesById={expertNamesById}
                 />
               ),
             },
@@ -265,6 +275,7 @@ export function CatalogClient({
                         error={error}
                         onToggleArchive={archiveWebinar}
                         isMutating={setArchived.isPending}
+                        expertNamesById={expertNamesById}
                       />
                     </Section>
                   )}
@@ -277,6 +288,7 @@ export function CatalogClient({
                         error={error}
                         onToggleArchive={archiveClass}
                         isMutating={setArchived.isPending}
+                        expertNamesById={expertNamesById}
                       />
                     </Section>
                   )}

@@ -20,7 +20,14 @@ const mockBillingAccountFindUnique = jest.fn();
 const mockContractFindMany = jest.fn();
 const mockContractFindFirst = jest.fn();
 const mockContractCreate = jest.fn();
+const mockContractUpdate = jest.fn(
+  async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => ({
+    id: where.id,
+    ...data,
+  }),
+);
 const mockContractUpdateMany = jest.fn();
+const mockRateCardFindFirst = jest.fn();
 const mockBillingSubscriptionFindUnique = jest.fn();
 const mockBillingSubscriptionCreate = jest.fn();
 const mockBillingSubscriptionUpdate = jest.fn();
@@ -34,7 +41,11 @@ const mockTx = {
   contract: {
     findFirst: mockContractFindFirst,
     create: mockContractCreate,
+    update: mockContractUpdate,
     updateMany: mockContractUpdateMany,
+  },
+  rateCard: {
+    findFirst: mockRateCardFindFirst,
   },
   billingSubscription: {
     findUnique: mockBillingSubscriptionFindUnique,

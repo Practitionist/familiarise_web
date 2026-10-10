@@ -12,6 +12,7 @@ import {
   hasMoneyInFlight,
   moneyInFlightForUser,
   scrubUser,
+  soleOwnerOrganizationsForUser,
 } from "@/lib/compliance/erasure/scrub-user";
 import { checkActiveAppointments } from "@/app/api/user/consultants/utils/consultant-appointments";
 import { deleteSubscriber } from "@/lib/novu/subscriber";
@@ -252,23 +253,40 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
   hasRetainedHistory: boolean;
 }> {
   const [
+    soleOwnedOrgs,
     inFlight,
     paymentCount,
     referralCreditCount,
     seatCount,
+    programAssignmentCount,
+    erasureRequestCount,
     profile,
     consulteeProfile,
   ] = await Promise.all([
+    soleOwnerOrganizationsForUser(prisma, id),
     moneyInFlightForUser(prisma, id),
     prisma.payment.count({ where: { userId: id } }),
     prisma.referralCredit.count({ where: { userId: id } }),
     prisma.appointmentParticipant.count({ where: { userId: id } }),
+    typeof prisma.programAssignment?.count === "function"
+      ? prisma.programAssignment.count({
+          where: { membership: { userId: id } },
+        })
+      : Promise.resolve(0),
+    typeof prisma.erasureRequest?.count === "function"
+      ? prisma.erasureRequest.count({ where: { userId: id } })
+      : Promise.resolve(0),
     prisma.consultantProfile.findFirst({
       where: { userId: id },
       select: {
         id: true,
         _count: {
-          select: { earnings: true, payouts: true, tdsRecords: true },
+          select: {
+            earnings: true,
+            organizationEarnings: true,
+            payouts: true,
+            tdsRecords: true,
+          },
         },
       },
     }),
@@ -286,6 +304,21 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
             "Cannot delete account while payouts, unsettled earnings, open payment disputes, or unpaid sole-owner organization invoices are in flight. Please wait for settlement or resolve them first.",
           code: "ERASURE_BLOCKED_MONEY_IN_FLIGHT",
           counts: inFlight,
+        },
+        { status: 409 },
+      ),
+      hasRetainedHistory: false,
+    };
+  }
+
+  if (soleOwnedOrgs.length > 0) {
+    return {
+      blockerResponse: NextResponse.json(
+        {
+          error:
+            "Cannot delete account while you are the sole active owner of an organization. Transfer ownership or deactivate the organization first.",
+          code: "ERASURE_BLOCKED_SOLE_ORG_OWNER",
+          organizations: soleOwnedOrgs,
         },
         { status: 409 },
       ),
@@ -321,13 +354,20 @@ async function evaluateUserDeletionEligibility(id: string): Promise<{
 
   const consultantMoneyCount = profile
     ? profile._count.earnings +
+      (profile._count.organizationEarnings ?? 0) +
       profile._count.payouts +
       profile._count.tdsRecords
     : 0;
   return {
     blockerResponse: null,
     hasRetainedHistory:
-      paymentCount + referralCreditCount + seatCount + consultantMoneyCount > 0,
+      paymentCount +
+        referralCreditCount +
+        seatCount +
+        programAssignmentCount +
+        erasureRequestCount +
+        consultantMoneyCount >
+      0,
   };
 }
 

@@ -211,17 +211,17 @@ export class WebinarService {
           ...(plan?.recordingEnabled !== undefined
             ? { recordingEnabled: plan.recordingEnabled }
             : {}),
-          ...(plan?.recordingStoragePolicy !== undefined
+          ...(plan?.shareRecordingsWithAllAttendees !== undefined
             ? {
-                recordingStoragePolicy: plan.recordingStoragePolicy as
-                  "STREAM_ONLY" | "PERMANENT",
+                shareRecordingsWithAllAttendees:
+                  plan.shareRecordingsWithAllAttendees,
               }
             : {}),
         }
       : {
           recordingEnabled: defaultRecording.recordingEnabled,
-          recordingStoragePolicy: defaultRecording.recordingStoragePolicy as
-            "STREAM_ONLY" | "PERMANENT",
+          shareRecordingsWithAllAttendees:
+            plan?.shareRecordingsWithAllAttendees ?? false,
         };
 
     // Build base payload with required fields

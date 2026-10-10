@@ -5,6 +5,8 @@
  * tagged "About: this org". Subject and metadata only (ADR 20).
  */
 
+import Link from "next/link";
+import { useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Inbox } from "lucide-react";
 
@@ -16,6 +18,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { useListParams } from "@/hooks/useListParams";
+import { caseKeyOf } from "@/lib/support/case-key";
 import { humanizeEnum, type Tone } from "@/lib/ui/tone";
 import { ISSUE_TYPE_LABELS } from "@/utils/supportTicketUrl";
 
@@ -55,75 +58,81 @@ const DATE = new Intl.DateTimeFormat("en-IN", {
   year: "numeric",
 });
 
-const COLUMNS: ResponsiveColumn<OrgTicketRow>[] = [
-  {
-    key: "subject",
-    header: "Subject",
-    primary: true,
-    cell: (t) => (
-      <span className="min-w-0">
-        <span className="block truncate font-medium text-foreground">
-          {t.title}
-        </span>
-        {t.referenceNumber && (
-          <span className="block font-mono text-[11px] text-muted-foreground">
-            {t.referenceNumber}
+function buildColumns(orgId: string): ResponsiveColumn<OrgTicketRow>[] {
+  return [
+    {
+      key: "subject",
+      header: "Subject",
+      primary: true,
+      cell: (t) => (
+        <Link
+          href={`/dashboard/organization/${orgId}/support/requests/${caseKeyOf({ kind: "ticket", id: t.id })}`}
+          className="group block min-w-0"
+        >
+          <span className="block truncate font-medium text-foreground group-hover:underline">
+            {t.title}
           </span>
-        )}
-      </span>
-    ),
-  },
-  {
-    key: "category",
-    header: "Category",
-    cell: (t) => {
-      const label =
-        (t.issueType &&
-          ISSUE_TYPE_LABELS[t.issueType as keyof typeof ISSUE_TYPE_LABELS]) ??
-        (t.category ? humanizeEnum(t.category) : "—");
-      return <span className="text-muted-foreground">{label}</span>;
+          {t.referenceNumber && (
+            <span className="block font-mono text-[11px] text-muted-foreground">
+              {t.referenceNumber}
+            </span>
+          )}
+        </Link>
+      ),
     },
-  },
-  {
-    key: "status",
-    header: "Status",
-    cell: (t) => (
-      <StatusBadge
-        label={humanizeEnum(t.status)}
-        tone={STATUS_TONE[t.status] ?? "neutral"}
-        size="sm"
-      />
-    ),
-  },
-  {
-    key: "requester",
-    header: "Requested by",
-    cell: (t) => (
-      <span className="text-muted-foreground">{t.requesterName ?? "—"}</span>
-    ),
-  },
-  {
-    key: "created",
-    header: "Created",
-    cell: (t) => (
-      <span className="whitespace-nowrap text-muted-foreground">
-        {DATE.format(new Date(t.createdAt))}
-      </span>
-    ),
-  },
-  {
-    key: "updated",
-    header: "Updated",
-    cell: (t) => (
-      <span className="whitespace-nowrap text-muted-foreground">
-        {DATE.format(new Date(t.updatedAt))}
-      </span>
-    ),
-  },
-];
+    {
+      key: "category",
+      header: "Category",
+      cell: (t) => {
+        const label =
+          (t.issueType &&
+            ISSUE_TYPE_LABELS[t.issueType as keyof typeof ISSUE_TYPE_LABELS]) ??
+          (t.category ? humanizeEnum(t.category) : "—");
+        return <span className="text-muted-foreground">{label}</span>;
+      },
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (t) => (
+        <StatusBadge
+          label={humanizeEnum(t.status)}
+          tone={STATUS_TONE[t.status] ?? "neutral"}
+          size="sm"
+        />
+      ),
+    },
+    {
+      key: "requester",
+      header: "Requested by",
+      cell: (t) => (
+        <span className="text-muted-foreground">{t.requesterName ?? "—"}</span>
+      ),
+    },
+    {
+      key: "created",
+      header: "Created",
+      cell: (t) => (
+        <span className="whitespace-nowrap text-muted-foreground">
+          {DATE.format(new Date(t.createdAt))}
+        </span>
+      ),
+    },
+    {
+      key: "updated",
+      header: "Updated",
+      cell: (t) => (
+        <span className="whitespace-nowrap text-muted-foreground">
+          {DATE.format(new Date(t.updatedAt))}
+        </span>
+      ),
+    },
+  ];
+}
 
 export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
   const { page, setPage } = useListParams();
+  const columns = useMemo(() => buildColumns(orgId), [orgId]);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["org-support-tickets", orgId, page],
     queryFn: async (): Promise<OrgTicketsPage> => {
@@ -139,7 +148,7 @@ export function OrgSupportRequests({ orgId }: Readonly<{ orgId: string }>) {
   return (
     <div className="space-y-3">
       <ResponsiveTable<OrgTicketRow>
-        columns={COLUMNS}
+        columns={columns}
         rows={data?.data ?? []}
         getRowId={(t) => t.id}
         isLoading={isLoading && !data}

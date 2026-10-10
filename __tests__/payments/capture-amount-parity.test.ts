@@ -274,7 +274,13 @@ describe("#1695 — a capture whose hold is already gone is claimed and refunded
     });
     refundBookingPayment.mockResolvedValue({ rail: "GATEWAY" });
 
-    await handlePaymentSuccess("order1", { appointmentType: "CONSULTATION" });
+    // Late captures ship the payment entity amount; the order total is
+    // withheld without one, so the claim below carries gateway truth.
+    await handlePaymentSuccess(
+      "order1",
+      { appointmentType: "CONSULTATION" },
+      10000,
+    );
 
     expect(paymentUpdateMany).toHaveBeenCalledTimes(1);
     expect(paymentUpdateMany.mock.calls[0][0]).toMatchObject({
@@ -293,16 +299,43 @@ describe("#1695 — a capture whose hold is already gone is claimed and refunded
     expect(recordSystemError).not.toHaveBeenCalled();
   });
 
+  it("stays PENDING when an EXPIRED capture ships no gateway amount", async () => {
+    // order.paid without a payment entity carries the order total, not what
+    // was settled: stamping it would park and refund an unverified amount.
+    paymentFindUnique.mockResolvedValue({
+      id: "pay1",
+      paymentIntent: "order1",
+      amount: 10000,
+      paymentStatus: "EXPIRED",
+      userId: "u1",
+      currency: "INR",
+      appointmentId: "appt1",
+      user: { email: "buyer@example.com", name: "Buyer", consulteeProfile: {} },
+    });
+
+    await handlePaymentSuccess("order1", { appointmentType: "CONSULTATION" });
+
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+    expect(appointmentFindUnique).not.toHaveBeenCalled();
+  });
+
   it("refunds a capture on a trial the unpaid-trial sweep already cancelled, without confirming its slot", async () => {
     appointmentFindUnique.mockResolvedValue({ id: "appt1" });
     trialUpdateMany.mockResolvedValue({ count: 0 });
     trialFindUnique.mockResolvedValue({ status: "CANCELLED" });
     refundBookingPayment.mockResolvedValue({ rail: "GATEWAY" });
 
-    await handlePaymentSuccess("order1", {
-      appointmentType: "TRIAL",
-      trialId: "trial1",
-    });
+    // Late captures ship the payment entity amount; without it the
+    // stay-PENDING guard returns before the trial branch is reached.
+    await handlePaymentSuccess(
+      "order1",
+      {
+        appointmentType: "TRIAL",
+        trialId: "trial1",
+      },
+      10000,
+    );
 
     // #1846 SM-B13 — the CAS now rides transitionTrial's from-set.
     expect(trialUpdateMany.mock.calls[0][0]).toMatchObject({

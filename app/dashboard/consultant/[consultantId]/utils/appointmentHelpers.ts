@@ -129,7 +129,10 @@ type AppointmentWithTrial = TAppointment & {
 // Get the relevant name based on appointment type
 // For consultations/subscriptions/trials: returns the consultee (requester) name
 // For webinars/classes: returns the consultant (host) name
-export const getConsumeeName = (appointment: TAppointment): string => {
+export const getConsumeeName = (
+  appointment: TAppointment,
+  viewerConsultantId?: string,
+): string => {
   if (!appointment) return "Unknown User";
   const appt = appointment as AppointmentWithTrial;
 
@@ -144,18 +147,28 @@ export const getConsumeeName = (appointment: TAppointment): string => {
       );
     case "TRIAL":
       return appt.trial?.consulteeProfile?.user?.name ?? "Unknown User";
-    case "WEBINAR":
-      // For webinars, show the consultant (host) name
-      return (
-        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-        "Unknown expert"
-      );
-    case "CLASS":
-      // For classes, show the consultant (instructor) name
-      return (
-        appointment.class?.classPlan?.consultantProfile?.user?.name ??
-        "Unknown expert"
-      );
+    case "WEBINAR": {
+      const plan = appointment.webinar?.webinarPlan;
+      if (
+        viewerConsultantId &&
+        plan?.consultantProfileId &&
+        plan.consultantProfileId !== viewerConsultantId
+      ) {
+        return plan.consultantProfile?.user?.name ?? "Unknown expert";
+      }
+      return "Registered attendees";
+    }
+    case "CLASS": {
+      const plan = appointment.class?.classPlan;
+      if (
+        viewerConsultantId &&
+        plan?.consultantProfileId &&
+        plan.consultantProfileId !== viewerConsultantId
+      ) {
+        return plan.consultantProfile?.user?.name ?? "Unknown expert";
+      }
+      return "Enrolled learners";
+    }
     default:
       return "Unknown User";
   }
@@ -281,9 +294,7 @@ export const calculateSessionProgress = (
   );
   const sessions = liveOccurrences(rows);
   const sub = groupAppointments[0]?.subscription as
-    | EntitledSubscription
-    | null
-    | undefined;
+    EntitledSubscription | null | undefined;
   const plan = sub?.subscriptionPlan;
 
   let totalSessions = sessions.length;
@@ -330,10 +341,14 @@ export const getStartTime = (appointment: TAppointment): Date | null => {
   return times.length > 0 ? times[0] : null;
 };
 
-// Check if appointment has any future slots
-export const hasUpcomingSlots = (appointment: TAppointment): boolean => {
-  const now = new Date();
-  return getSlotTimes(appointment).some((time) => new Date(time) > now);
+/** Returns true when at least one live occurrence has not ended yet (`endsAt >= referenceDate`). */
+export const hasUpcomingSlots = (
+  appointment: TAppointment,
+  referenceDate: Date = new Date(),
+): boolean => {
+  return liveOccurrences(occurrencesOfAppointment(appointment)).some(
+    (session) => !isOccurrenceOver(session, referenceDate),
+  );
 };
 
 // Get the next upcoming slot time (first future slot), falling back to the earliest slot
@@ -524,9 +539,8 @@ export const getTodayAppointments = (
 // Filter upcoming appointments
 export const getUpcomingAppointments = (
   appointments: TAppointment[],
+  referenceDate: Date = new Date(),
 ): TAppointment[] => {
-  const now = new Date();
-
   // Drop dead/tentative rows up front (B7) so neither the expansion below nor
   // the per-appointment checks can resurrect a released or unconfirmed slot.
   // An appointment whose rows ALL died (every session cancelled or
@@ -550,23 +564,20 @@ export const getUpcomingAppointments = (
         appointment.subscription) ||
       (appointment.appointmentType === "CLASS" && appointment.class)
     ) {
-      // Check if all slots are in the past
-      const upcomingSlotTimes = getSlotTimes(appointment);
-      const allSlotsCompleted =
-        upcomingSlotTimes.length > 0 &&
-        upcomingSlotTimes.every((time) => new Date(time) < now);
-      // Only include if not all slots are completed
-      return !allSlotsCompleted;
+      if (appointment.occurrences.length > 0) {
+        return hasUpcomingSlots(appointment, referenceDate);
+      }
+      return true;
     }
 
-    // For single-slotted appointments (consultation and webinar)
-    if (hasUpcomingSlots(appointment)) {
+    // For single-slotted appointments (consultation, webinar, and trial)
+    if (hasUpcomingSlots(appointment, referenceDate)) {
       // For webinar appointments
       if (appointment.appointmentType === "WEBINAR" && appointment.webinar) {
         return appointment.webinar.status !== "COMPLETED";
       }
 
-      // For consultation appointments
+      // For consultation and trial appointments
       return true;
     }
 

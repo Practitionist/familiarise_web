@@ -38,9 +38,11 @@ import {
   mintInvoiceRefundCreditNote,
   mintRefundCreditNote,
   refundMemberOverageSidePayment,
+  remainingOrgInvoiceCreditPaise,
   type ApplyRefundCascadeResult,
 } from "@/lib/payments/operations/refund";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
+import { invoiceRefundDebits } from "@/lib/payments/billing/org-invoice-journal";
 import { isPastGstCreditNoteCutoff } from "@/lib/compliance/gst-credit-note-cutoff";
 import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
@@ -807,6 +809,7 @@ export async function handleRefundCreated(
               id: true,
               organizationId: true,
               invoiceNumber: true,
+              subtotalPaise: true,
               totalPaise: true,
               status: true,
             },
@@ -839,7 +842,7 @@ export async function handleRefundCreated(
 
               // #776 / PR#785 review — mint the GST credit note (Sec 34) for the
               // refunded invoice. One per gateway refund, idempotent on refundId.
-              await mintInvoiceRefundCreditNote(tx, {
+              const { creditNoteId } = await mintInvoiceRefundCreditNote(tx, {
                 invoiceId: invoice.id,
                 refundId,
                 amountPaise: amount,
@@ -848,19 +851,13 @@ export async function handleRefundCreated(
 
               // Flip to REFUNDED only once cumulative credit notes cover the
               // invoice total; partial refunds keep it PAID.
-              const creditNoteAgg = await tx.creditNote.aggregate({
-                where: { invoiceId: invoice.id },
-                _sum: { totalPaise: true },
-              });
-              const refundedTotalPaise = sumPaise(
-                creditNoteAgg._sum.totalPaise,
+              const remainingCredit = await remainingOrgInvoiceCreditPaise(
+                tx,
+                invoice,
               );
-              if (
-                refundedTotalPaise >= invoice.totalPaise &&
-                invoice.status !== "REFUNDED"
-              ) {
-                await tx.organizationInvoice.update({
-                  where: { id: invoice.id },
+              if (remainingCredit <= 0 && invoice.status !== "REFUNDED") {
+                await tx.organizationInvoice.updateMany({
+                  where: { id: invoice.id, status: invoice.status },
                   data: { status: "REFUNDED" },
                 });
               }
@@ -897,11 +894,10 @@ export async function handleRefundCreated(
                     err,
                   ),
                 );
-              // Balanced reversal journal — mirrors `invoicepaid:<invoiceId>`
-              // (Dr CASH / Cr ORG_RECEIVABLE) with the credit side routed to
-              // wherever the value went: back to CASH when the gateway returns
-              // the money, or to the org's WALLET when the refund is granted as
-              // in-app credit (fundingSource WALLET).
+              // Balanced reversal journal. The credit side goes wherever the
+              // value went: back to CASH when the gateway returns the money, or
+              // to the org's WALLET when the refund is granted as in-app credit
+              // (fundingSource WALLET). The debit side comes from invoiceRefundDebits.
               //
               // #1128 (doctrine §1) — no swallow: a failed journal or wallet
               // credit propagates, the tx rolls back and the CN is never minted
@@ -921,14 +917,12 @@ export async function handleRefundCreated(
                 invoiceId: invoice.id,
                 description: `Refund of invoice ${invoice.invoiceNumber} (gateway refund ${refundId})`,
                 postings: [
-                  {
-                    account: {
-                      kind: "ORG_RECEIVABLE",
-                      organizationId: invoice.organizationId,
-                    },
-                    direction: "DEBIT",
+                  ...(await invoiceRefundDebits(tx, {
+                    invoiceId: invoice.id,
+                    organizationId: invoice.organizationId,
                     amountPaise: amount,
-                  },
+                    creditNoteId,
+                  })),
                   creditAsWallet
                     ? {
                         account: {
@@ -1069,13 +1063,14 @@ export async function handleRefundCreated(
               return;
             }
 
-            await tx.refund.update({
-              where: { refundId },
+            const claimed = await tx.refund.updateMany({
+              where: { id: existingRefund.id, status: "PENDING" },
               data: {
                 status: newStatus,
                 updatedAt: new Date(),
               },
             });
+            if (claimed.count === 0) return;
             console.log(`✅ Refund ${refundId} status updated to ${newStatus}`);
 
             // Run side effects when transitioning TO SUCCEEDED
@@ -1087,6 +1082,23 @@ export async function handleRefundCreated(
                 amount,
                 payment.amount,
               );
+              const notification = await notifyRefundProcessed(
+                payment.userId,
+                {
+                  ...notificationScope(payment.organizationId),
+                  amount,
+                  currency,
+                  dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+                },
+                { tx, entityRef: `payment:${payment.id}` },
+              );
+              stagedNotification = notification?.staged ?? null;
+              stagedEmails = await stageRefundProcessedEmail(tx, {
+                userId: payment.userId,
+                paymentId: payment.id,
+                amountPaise: amount,
+                currency,
+              });
             }
           }
           return;
@@ -1096,7 +1108,8 @@ export async function handleRefundCreated(
         // initiated from the Razorpay dashboard, not our app) would otherwise mint
         // an orphan FAILED Refund row attached to the B2C payment. No money moves
         // either way on a failed refund, so there's nothing to record — skip it.
-        if (mapGatewayRefundStatus(status) === "FAILED" && !existingRefund) {
+        const mappedNewStatus = mapGatewayRefundStatus(status);
+        if (mappedNewStatus === "FAILED" && !existingRefund) {
           console.log(
             `↩️ Ignoring refund.failed for unknown refund ${refundId} (no existing row, no money movement)`,
           );
@@ -1110,7 +1123,7 @@ export async function handleRefundCreated(
             // #781 §A — gateway hands back a free-form ISO code; an unsupported
             // one throws here and dead-letters the event rather than booking it.
             currency: toCurrencyEnum(currency),
-            status: mapGatewayRefundStatus(status),
+            status: mappedNewStatus,
             refundId,
             paymentGateway: PaymentGateway.RAZORPAY,
             paymentId: payment.id,
@@ -1129,33 +1142,35 @@ export async function handleRefundCreated(
           payment.amount,
         );
 
-        // --- Novu notification (staged in the tx, attempted after commit) ---
-        const notification = await notifyRefundProcessed(
-          payment.userId,
-          {
-            // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
-            // inherits the org-ness of the payment it reverses. dashboardUrl stays a
-            // personal route deliberately: this goes to the PAYER, and an org billing
-            // page is not readable by a LEARNER whose booking was org-sponsored.
-            ...notificationScope(payment.organizationId),
-            amount,
+        if (mappedNewStatus === "SUCCEEDED") {
+          // --- Novu notification (staged in the tx, attempted after commit) ---
+          const notification = await notifyRefundProcessed(
+            payment.userId,
+            {
+              // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
+              // inherits the org-ness of the payment it reverses. dashboardUrl stays a
+              // personal route deliberately: this goes to the PAYER, and an org billing
+              // page is not readable by a LEARNER whose booking was org-sponsored.
+              ...notificationScope(payment.organizationId),
+              amount,
+              currency,
+              // #1527 — was a bare `/dashboard` router bounce; the recipient is
+              // always the payer.
+              dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+            },
+            { tx, entityRef: `payment:${payment.id}` },
+          );
+          stagedNotification = notification?.staged ?? null;
+          // #1653 — the email twin of the bell. Reads through `tx` only; the credit
+          // note is minted inside the cascade and is not in scope here, so the
+          // receipt omits its number rather than adding a query for it.
+          stagedEmails = await stageRefundProcessedEmail(tx, {
+            userId: payment.userId,
+            paymentId: payment.id,
+            amountPaise: amount,
             currency,
-            // #1527 — was a bare `/dashboard` router bounce; the recipient is
-            // always the payer.
-            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-          },
-          { tx, entityRef: `payment:${payment.id}` },
-        );
-        stagedNotification = notification?.staged ?? null;
-        // #1653 — the email twin of the bell. Reads through `tx` only; the credit
-        // note is minted inside the cascade and is not in scope here, so the
-        // receipt omits its number rather than adding a query for it.
-        stagedEmails = await stageRefundProcessedEmail(tx, {
-          userId: payment.userId,
-          paymentId: payment.id,
-          amountPaise: amount,
-          currency,
-        });
+          });
+        }
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -2058,10 +2073,7 @@ export async function handleDisputeUpdated(
             where: { paymentId: dispute.paymentId, status: "HELD" },
             data: { status: "READY", preDisputeStatus: null },
           });
-          if (
-            orgReleased.count + orgRelPending.count + orgRelTrust.count >
-            0
-          ) {
+          if (orgReleased.count + orgRelPending.count + orgRelTrust.count > 0) {
             console.log(
               `🔓 ${orgReleased.count} org earnings released (+${orgRelPending.count} restored to PENDING, +${orgRelTrust.count} restored to PENDING_TRUST) — dispute ${disputeId} won`,
             );

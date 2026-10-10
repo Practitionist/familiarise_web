@@ -29,10 +29,11 @@ export interface AppointmentWithOwnership {
   // what the plan said.
   consultation?: { consultationPlan?: OwnedPlan | null } | null;
   subscription?: { subscriptionPlan?: OwnedPlan | null } | null;
+  trial?: { subscriptionPlan?: OwnedPlan | null } | null;
 }
 
 /**
- * The plan behind an appointment, whichever of the four kinds it is.
+ * The plan behind an appointment, whichever of the five kinds it is.
  * One resolver so ownership and the recording flag can never disagree about
  * which plan they are reading — the bug above was exactly that divergence.
  */
@@ -45,24 +46,34 @@ export function resolveAppointmentPlan(
     appointment.class?.classPlan ??
     appointment.consultation?.consultationPlan ??
     appointment.subscription?.subscriptionPlan ??
+    appointment.trial?.subscriptionPlan ??
     null
   );
 }
 
 /**
  * Check if a consultant may act as the appointment's host: the plan owner,
- * or an ACCEPTED co-presenter on a webinar/class plan (#1580 C-P1-4). Crew
- * roles are members of the call but never hold the recording controls.
+ * an occurrence-assigned enterprise org consultant, or an ACCEPTED co-presenter
+ * on a webinar/class plan (#1580 C-P1-4). Crew roles are members of the call
+ * but never hold the recording controls.
  *
- * @param appointment - The appointment with webinar/class plan relations
+ * @param appointment - The appointment with plan relations
  * @param consultantProfileId - The consultant's profile ID to check against
- * @returns true if the consultant owns or co-presents the appointment
+ * @param occurrenceConsultantProfileId - Optional occurrence-level assigned consultant profile ID
+ * @returns true if the consultant owns, delivers, or co-presents the appointment
  */
 export function isAppointmentOwner(
   appointment: AppointmentWithOwnership | null | undefined,
   consultantProfileId: string | null | undefined,
+  occurrenceConsultantProfileId?: string | null,
 ): boolean {
   if (!consultantProfileId) return false;
+  if (
+    occurrenceConsultantProfileId &&
+    occurrenceConsultantProfileId === consultantProfileId
+  ) {
+    return true;
+  }
   const plan = resolveAppointmentPlan(appointment);
   if (!plan) return false;
   if (plan.consultantProfileId === consultantProfileId) return true;
@@ -95,16 +106,22 @@ export function getRecordingOwnershipInfo(
   recording: {
     meeting?: {
       occurrence?: {
+        consultantProfileId?: string | null;
         appointment?: AppointmentWithOwnership | null;
       } | null;
     } | null;
   } | null,
   consultantProfileId: string | null | undefined,
 ): { isOwner: boolean; recordingEnabled: boolean } {
-  const appointment = recording?.meeting?.occurrence?.appointment;
+  const occurrence = recording?.meeting?.occurrence;
+  const appointment = occurrence?.appointment;
 
   return {
-    isOwner: isAppointmentOwner(appointment, consultantProfileId),
+    isOwner: isAppointmentOwner(
+      appointment,
+      consultantProfileId,
+      occurrence?.consultantProfileId,
+    ),
     recordingEnabled: isRecordingEnabledForAppointment(appointment),
   };
 }
@@ -124,6 +141,7 @@ interface AppointmentWithTitles {
   class?: { classPlan?: { title?: string } | null } | null;
   consultation?: { consultationPlan?: { title?: string } | null } | null;
   subscription?: { subscriptionPlan?: { title?: string } | null } | null;
+  trial?: { subscriptionPlan?: { title?: string } | null } | null;
 }
 
 /**
@@ -144,6 +162,8 @@ export function generateRecordingTitle(
     title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
   } else if (appointment?.subscription?.subscriptionPlan?.title) {
     title = `Subscription: ${appointment.subscription.subscriptionPlan.title}`;
+  } else if (appointment?.trial?.subscriptionPlan?.title) {
+    title = `Trial: ${appointment.trial.subscriptionPlan.title}`;
   }
 
   const dateStr = recordedAt.toLocaleDateString("en-US", {
@@ -188,15 +208,31 @@ export async function getEventAttendeeIds(
 export function getMeetingOwnershipInfo(
   meeting: {
     occurrence?: {
+      consultantProfileId?: string | null;
       appointment?: AppointmentWithOwnership | null;
     } | null;
   } | null,
   consultantProfileId: string | null | undefined,
 ): { isOwner: boolean; recordingEnabled: boolean } {
-  const appointment = meeting?.occurrence?.appointment;
+  const occurrence = meeting?.occurrence;
+  const appointment = occurrence?.appointment;
 
   return {
-    isOwner: isAppointmentOwner(appointment, consultantProfileId),
+    isOwner: isAppointmentOwner(
+      appointment,
+      consultantProfileId,
+      occurrence?.consultantProfileId,
+    ),
     recordingEnabled: isRecordingEnabledForAppointment(appointment),
   };
+}
+
+const STREAM_COPY_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** Stream deletes its copy 14 days after the recording ends; webhook and sync share this. */
+export function streamCopyExpiresAt(endTime: Date | string): Date {
+  const endMs = new Date(endTime).getTime();
+  return new Date(
+    (Number.isFinite(endMs) ? endMs : Date.now()) + STREAM_COPY_RETENTION_MS,
+  );
 }

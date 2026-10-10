@@ -9,10 +9,12 @@
  * depending on which offering you were editing.
  */
 
-import type {
-  Control,
-  ControllerRenderProps,
-  FieldValues,
+import {
+  get,
+  useWatch,
+  type Control,
+  type ControllerRenderProps,
+  type FieldValues,
 } from "react-hook-form";
 import {
   FormControl,
@@ -182,6 +184,12 @@ export function OfferingField<T extends FieldValues = FieldValues>({
   coverImage,
 }: Readonly<OfferingFieldProps<T>>) {
   const span = SPAN_CLASS[spec.span ?? 6];
+  const { shownWhen } = spec;
+  const shown = useWatch({
+    control,
+    compute: (values: T) => !shownWhen || Boolean(get(values, shownWhen)),
+  });
+  if (!shown) return null;
 
   // Composite fields own their own internal layout; they just need the cell.
   if (spec.kind === "languageLevel") {

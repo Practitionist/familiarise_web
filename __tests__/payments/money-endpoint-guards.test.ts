@@ -42,7 +42,7 @@ describe("PM-36 — moneyOpsLimiter wiring (source contract)", () => {
     // #1236-triage — pay/pdf must key per ACTOR (member id), not orgId:
     // one manager's PDF browsing cannot exhaust a billing admin's bucket.
     const actorKeyed =
-      /applyRateLimit\(\s*moneyOpsLimiter,\s*access\.member\?\.id \?\? orgId/;
+      /applyRateLimit\(\s*moneyOpsLimiter,\s*(?:access\.member\?\.id \?\? orgId|actorRateLimitKey)/;
     expect(src).toMatch(
       rel.includes("/pdf/") || rel.includes("/pay/") ? actorKeyed : /^/,
     );

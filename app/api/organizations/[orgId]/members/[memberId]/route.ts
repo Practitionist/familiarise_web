@@ -378,8 +378,8 @@ export async function PATCH(
             });
           }
 
-          // #1854 — the label rides the session payload, so a tombstone keeps it.
-          if (patch.departmentLabel !== undefined) assertNotTombstone(current);
+          // Removed and erased memberships are immutable tombstones; any re-entry requires a fresh invitation.
+          assertNotTombstone(current);
 
           const roleChanged =
             patch.role !== undefined && patch.role !== current.role;

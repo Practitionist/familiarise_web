@@ -27,10 +27,14 @@ import { transitionOrganization } from "@/lib/enterprise/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { purgeOrgSurfaces } from "@/lib/data/public-cache";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
+import { isValidGstin } from "@/lib/compliance/gst";
+import { isValidPan } from "@/lib/compliance/tds";
 import { numericStateCode } from "@/lib/compliance/state-codes";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { endActiveStreamVideoCalls } from "@/lib/stream/event-channel-service";
+import { MIN_ORG_RETENTION_DAYS } from "@/lib/stream/recording-retention";
 
 const ORG_DELETED_CALL_REASON = "org_deleted";
 
@@ -77,8 +81,22 @@ const PatchBodySchema = z
     canHost: z.boolean().optional(),
     requiresPO: z.boolean().optional(),
     paymentTermsDays: z.coerce.number().int().min(0).max(180).optional(),
-    gstin: z.string().length(15).nullable().optional(),
-    pan: z.string().length(10).nullable().optional(),
+    gstin: z
+      .string()
+      .length(15)
+      .nullable()
+      .optional()
+      .refine((v) => v === null || v === undefined || isValidGstin(v), {
+        message: "INVALID_GSTIN_FORMAT",
+      }),
+    pan: z
+      .string()
+      .length(10)
+      .nullable()
+      .optional()
+      .refine((v) => v === null || v === undefined || isValidPan(v), {
+        message: "INVALID_PAN_FORMAT",
+      }),
     gstRegStatus: GstRegStatusSchema.optional(),
     gstStateCode: z.string().length(2).nullable().optional(),
     // MSME (MSMED Act) declaration — #1230. The payout deadline engine reads
@@ -90,6 +108,14 @@ const PatchBodySchema = z
     defaultCancellationPolicy: z.string().max(5000).nullable().optional(),
     defaultRefundPolicy: z.string().max(5000).nullable().optional(),
     isPublic: z.boolean().optional(),
+    // Owner-only via settings.ownerFields; null follows the platform schedule.
+    streamRecordingRetentionDays: z
+      .number()
+      .int()
+      .min(MIN_ORG_RETENTION_DAYS)
+      .max(3650)
+      .nullable()
+      .optional(),
     expectedVersion: z.coerce.number().int().min(1).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -425,6 +451,9 @@ function buildOrganizationUpdateData(
       defaultRefundPolicy: body.defaultRefundPolicy,
     }),
     ...(body.isPublic !== undefined && { isPublic: body.isPublic }),
+    ...(body.streamRecordingRetentionDays !== undefined && {
+      streamRecordingRetentionDays: body.streamRecordingRetentionDays,
+    }),
   };
 }
 
@@ -464,8 +493,20 @@ export async function PATCH(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { requireActive: true });
+  const access = await requireOrgAccess(orgId, {
+    // Pre-verification orgs update branding/tax details here before resubmitting (requireActive: true omitted; SUSPENDED rejected below).
+  });
   if (access.error) return access.error;
+  if (access.org?.status === "SUSPENDED") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        message: "Organization settings cannot be modified while suspended.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);
@@ -476,6 +517,43 @@ export async function PATCH(
     );
   }
   const body = parsed.data;
+  if (
+    access.org?.status &&
+    access.org.status !== "ACTIVE" &&
+    (body.canSponsor !== undefined ||
+      body.canHost !== undefined ||
+      body.slug !== undefined ||
+      body.billingEmail !== undefined ||
+      body.requiresPO !== undefined ||
+      body.paymentTermsDays !== undefined ||
+      body.defaultCancellationPolicy !== undefined ||
+      body.defaultRefundPolicy !== undefined ||
+      body.isPublic !== undefined ||
+      body.msmeStatus !== undefined ||
+      body.msmeWrittenAgreementOnFile !== undefined ||
+      body.streamRecordingRetentionDays !== undefined)
+  ) {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        code: "ORG_NOT_ACTIVE",
+        message:
+          "Only branding and tax verification fields can be updated before the organization is verified.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
+  if (body.canHost && !isHostOrgsEnabled()) {
+    return NextResponse.json(
+      {
+        error:
+          "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
+        code: "HOST_ORGS_GATED",
+      },
+      { status: 400 },
+    );
+  }
   // #1744 row 3 — a supplied GSTIN's prefix is the buyer's GST state and wins
   // over a hand-typed code; without a GSTIN the typed code (or null) stands.
   const gstStateCode: string | null | undefined = body.gstin
@@ -583,6 +661,27 @@ export async function PATCH(
               details: { patch: body },
             },
           });
+
+          // Retention drives automatic deletion, so it gets its own filterable row.
+          if (
+            body.streamRecordingRetentionDays !== undefined &&
+            body.streamRecordingRetentionDays !==
+              current.streamRecordingRetentionDays
+          ) {
+            await tx.orgAuditLog.create({
+              data: {
+                organizationId: orgId,
+                actorMembershipId: access.member.id,
+                category: "SYSTEM",
+                action: AUDIT_ACTIONS.SYSTEM.STREAM_RETENTION_CHANGED,
+                description: "Recording retention window changed",
+                details: {
+                  previous: current.streamRecordingRetentionDays,
+                  next: body.streamRecordingRetentionDays,
+                },
+              },
+            });
+          }
 
           return next;
         },
@@ -762,6 +861,27 @@ export async function DELETE(
                   },
                 })
               : [];
+
+            // #2006 — Restrict FKs on OrgAuditLog, OrganizationPayoutAccount,
+            // and RateCard protect settled history; on a money-untouched shell
+            // org, clear any onboarding/setup rows before the hard delete.
+            if (typeof tx.orgAuditLog?.deleteMany === "function") {
+              await tx.orgAuditLog.deleteMany({
+                where: { organizationId: orgId },
+              });
+            }
+            if (
+              typeof tx.organizationPayoutAccount?.deleteMany === "function"
+            ) {
+              await tx.organizationPayoutAccount.deleteMany({
+                where: { organizationId: orgId },
+              });
+            }
+            if (typeof tx.rateCard?.deleteMany === "function") {
+              await tx.rateCard.deleteMany({
+                where: { ownerOrgId: orgId },
+              });
+            }
 
             await tx.organization.delete({ where: { id: orgId } });
             return {

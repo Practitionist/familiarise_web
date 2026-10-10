@@ -48,18 +48,20 @@ export async function lookupEnforcedOrg(
   prisma: PrismaLike, // #780 extended client
   domain: string,
 ): Promise<EnforcedOrgInfo | null> {
-  const claim = await prisma.orgDomainClaim.findUnique({
-    where: { domain },
-    select: {
-      organizationId: true,
-      verifiedAt: true,
-      organization: {
-        select: {
-          status: true,
-          ssoSettings: { select: { enforceSSO: true } },
-        },
+  const selectShape = {
+    organizationId: true,
+    verifiedAt: true,
+    organization: {
+      select: {
+        status: true,
+        ssoSettings: { select: { enforceSSO: true } },
       },
     },
+  } as const;
+
+  const claim = await prisma.orgDomainClaim.findFirst({
+    where: { domain, verifiedAt: { not: null } },
+    select: selectShape,
   });
 
   if (
@@ -119,4 +121,74 @@ export async function shouldRejectSession(
     reason: "SSO_REQUIRED",
     organizationId: enforced.organizationId,
   };
+}
+
+/**
+ * Revokes existing sessions for active organization members whose email address
+ * belongs to one of the organization's verified domains when SSO enforcement is
+ * flipped from `false` to `true`. External guests/experts on unverified domains
+ * keep their sessions because `shouldRejectSession` only enforces SSO on the
+ * organization's verified domains.
+ */
+export async function revokeEnforcedOrgMemberSessions(
+  tx: {
+    orgDomainClaim: {
+      findMany: (args: {
+        where: { organizationId: string; verifiedAt: { not: null } };
+        select: { domain: true };
+      }) => Promise<Array<{ domain: string }>>;
+    };
+    membership: {
+      findMany: (args: {
+        where: { organizationId: string; status: "ACTIVE" };
+        select: { userId: true; user: { select: { email: true } } };
+      }) => Promise<
+        Array<{ userId: string; user?: { email?: string | null } | null }>
+      >;
+    };
+    session: {
+      deleteMany: (args: {
+        where: { userId: { in: string[] } };
+      }) => Promise<unknown>;
+    };
+  },
+  organizationId: string,
+): Promise<void> {
+  const verifiedClaims = await tx.orgDomainClaim.findMany({
+    where: { organizationId, verifiedAt: { not: null } },
+    select: { domain: true },
+  });
+
+  const verifiedDomains = new Set(
+    verifiedClaims
+      .map((c) => c.domain.trim().toLowerCase())
+      .filter((d) => d.length > 0),
+  );
+
+  if (verifiedDomains.size === 0) {
+    return;
+  }
+
+  const activeMembers = await tx.membership.findMany({
+    where: { organizationId, status: "ACTIVE" },
+    select: {
+      userId: true,
+      user: { select: { email: true } },
+    },
+  });
+
+  const memberUserIds = activeMembers
+    .filter((m) => {
+      const email = m.user?.email;
+      if (!email) return false;
+      const domain = email.toLowerCase().split("@")[1];
+      return Boolean(domain && verifiedDomains.has(domain));
+    })
+    .map((m) => m.userId);
+
+  if (memberUserIds.length > 0) {
+    await tx.session.deleteMany({
+      where: { userId: { in: memberUserIds } },
+    });
+  }
 }

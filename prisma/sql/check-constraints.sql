@@ -82,21 +82,17 @@ ALTER TABLE "Class" DROP CONSTRAINT IF EXISTS "class_max_participants_min";
 ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
 
 -- SPLIT
--- #440 — DB-level double-booking backstop for 1:1 bookings. The application
--- guards (consultant allocation lock, #827 confirm-time recheck) are the
--- first line; this exclusion constraint is the last line: two CONFIRMED
--- occurrences for the same consultant may never overlap in time. Scoped to rows
--- carrying the denormalized consultantProfileId — consultation/subscription
--- occurrence creates set it; webinar/class attendee rows deliberately leave it
--- NULL (many same-window rows per event are legitimate there) and legacy
--- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back occurrences don't
--- conflict.
--- #1694 — tombstones are exempt. A cancel or a hold-release keeps the row
--- (CANCELLED + deletedAt, isTentative untouched) and every reader treats it as
--- free, so without the exemption re-booking a cancelled time 409s at commit.
--- On a LIVE database do not replay this chunk by hand: run
--- `scripts/db/swap-occurrence-overlap-constraint.ts`, which verifies and swaps
--- under a lock timeout.
+-- #440 / #2010 — DB-level single-active-session overlap backstop across all 5
+-- offering types (Consultation, Subscription, Webinar, Class, Trial). Since
+-- #1554 unified seat rosters into AppointmentParticipant, group events create
+-- one AppointmentOccurrence per session and denormalize the host's
+-- consultantProfileId onto every occurrence. Two CONFIRMED, live occurrences
+-- for the same consultant may never overlap in time; tstzrange is '[)' so
+-- back-to-back occurrences don't conflict.
+-- #1694 / #2010 — tombstones (deletedAt IS NOT NULL) and replaced/cancelled
+-- sessions (completionStatus IN ('CANCELLED', 'RESCHEDULED'), e.g. class
+-- session cancellations that omit deletedAt so they stay countable as misses)
+-- are exempt so a make-up or re-booked slot can take the vacated time.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- SPLIT
 ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_no_confirmed_overlap";
@@ -106,7 +102,24 @@ ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_no_confirmed_over
     "consultantProfileId" WITH =,
     tstzrange("startsAt", "endsAt") WITH &&
   )
-  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL);
+  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL AND "completionStatus" NOT IN ('CANCELLED', 'RESCHEDULED'));
+
+-- SPLIT
+-- #2010 — every confirmed, live occurrence must carry its host
+-- consultantProfileId so occurrence_no_confirmed_overlap cannot be bypassed
+-- by a NULL consultantProfileId across any offering type.
+ALTER TABLE "AppointmentOccurrence"
+  DROP CONSTRAINT IF EXISTS "occurrence_confirmed_requires_consultant_chk",
+  ADD CONSTRAINT "occurrence_confirmed_requires_consultant_chk"
+    CHECK (
+      "isTentative"
+      OR "deletedAt" IS NOT NULL
+      OR "consultantProfileId" IS NOT NULL
+      OR "completionStatus" IN ('CANCELLED', 'RESCHEDULED')
+    ) NOT VALID;
+-- SPLIT
+ALTER TABLE "AppointmentOccurrence"
+  VALIDATE CONSTRAINT "occurrence_confirmed_requires_consultant_chk";
 
 -- SPLIT
 -- #747 / #685 — DB-enforced "at most one pending invite per (org, email)".
@@ -275,17 +288,15 @@ ALTER TABLE "ReferralCreditUsage" ADD CONSTRAINT "referral_credit_usage_nonnegat
   CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "restoredAmount" >= 0);
 
 -- SPLIT
--- #775 states the invariant in the schema doc-comment ("marginalPaise ==
--- basePaise + surchargePaise") but nothing enforced it. The member is charged
--- marginalPaise while the org's accrual is carved on basePaise, so a mismatch
--- means one side of a single booking is billed a different number.
+-- marginalPaise is what the payer is charged: base + surcharge + the surcharge's
+-- GST, which is never negative, so it can never fall below base + surcharge.
 ALTER TABLE "OverageEvent" DROP CONSTRAINT IF EXISTS "overage_marginal_is_base_plus_surcharge";
 -- SPLIT
 ALTER TABLE "OverageEvent" ADD CONSTRAINT "overage_marginal_is_base_plus_surcharge"
   CHECK (
     "basePaise" >= 0
     AND "surchargePaise" >= 0
-    AND "marginalPaise" = "basePaise" + "surchargePaise"
+    AND "marginalPaise" >= "basePaise" + "surchargePaise"
   );
 
 -- SPLIT
@@ -934,3 +945,51 @@ CREATE UNIQUE INDEX IF NOT EXISTS "Payment_live_welcome_discount_user_key"
     AND "referralReleasedAt" IS NULL
     AND "paymentStatus" IN ('PENDING', 'SUCCEEDED')
     AND "deletedAt" IS NULL;
+
+-- SPLIT
+-- Multiple organizations may register an unverified claim for the same domain,
+-- but at most one organization can hold a verified claim on a domain at a time.
+DROP INDEX IF EXISTS "org_domain_claims_verified_domain_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "org_domain_claims_verified_domain_key"
+  ON "org_domain_claims" ("domain")
+  WHERE "verifiedAt" IS NOT NULL;
+
+-- SPLIT
+-- At most one ACTIVE contract per BillingAccount so active billing-term lookups
+-- never face ambiguous active contracts.
+DROP INDEX IF EXISTS "contract_one_active_per_billing_account_idx";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "contract_one_active_per_billing_account_idx"
+  ON "Contract" ("billingAccountId")
+  WHERE "status" = 'ACTIVE';
+
+-- SPLIT
+-- One OrganizationEarnings split row per (payment, organization, consultant,
+-- role, subscription cycle tranche). NULLS NOT DISTINCT ensures single-session
+-- and legacy rows with NULL consultantProfileId or cycleOrdinal still collide.
+DROP INDEX IF EXISTS "organization_earnings_split_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "organization_earnings_split_key"
+  ON "OrganizationEarnings" ("paymentId", "organizationId", "consultantProfileId", "role", "cycleOrdinal")
+  NULLS NOT DISTINCT;
+
+-- SPLIT
+-- CreditPoolConfig pricing and budget bounds (parity with licensed_seat_config_pricing_sane).
+ALTER TABLE "CreditPoolConfig" DROP CONSTRAINT IF EXISTS "credit_pool_config_pricing_sane";
+-- SPLIT
+ALTER TABLE "CreditPoolConfig" ADD CONSTRAINT "credit_pool_config_pricing_sane"
+  CHECK (
+    "creditBudgetPerCycle" > 0
+    AND ("overageSurchargeBps" IS NULL OR ("overageSurchargeBps" >= 0 AND "overageSurchargeBps" <= 10000))
+    AND ("maxOveragePerCyclePaise" IS NULL OR "maxOveragePerCyclePaise" > 0)
+    AND ("priceCapPerEngagementPaise" IS NULL OR "priceCapPerEngagementPaise" > 0)
+  );
+
+
+-- SPLIT
+-- Org recording-retention cap: NULL follows the platform schedule; a set cap stays inside the PATCH route's 7..3650 range.
+ALTER TABLE "organizations" DROP CONSTRAINT IF EXISTS "org_stream_recording_retention_days_range";
+-- SPLIT
+ALTER TABLE "organizations" ADD CONSTRAINT "org_stream_recording_retention_days_range"
+  CHECK ("streamRecordingRetentionDays" IS NULL OR "streamRecordingRetentionDays" BETWEEN 7 AND 3650);

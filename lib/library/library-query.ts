@@ -128,8 +128,8 @@ export interface LibraryRecording {
   recordedAt: string;
   durationInMinutes: number;
   status: RecordingStatus;
-  /** Null on the Everyone view (ADR 20) or while the media isn't playable. */
-  playbackUrl: string | null;
+  /** False on the Everyone view or while the media isn't playable; the URL is fetched on play. */
+  playable: boolean;
 }
 
 export interface LibraryGroup<F> {

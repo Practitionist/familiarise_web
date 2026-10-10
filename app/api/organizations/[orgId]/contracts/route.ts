@@ -15,6 +15,8 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-validation";
+import { computeCycleEnd } from "@/lib/enterprise/cycle-engine";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 const ContractStatusSchema = z.enum([
   "DRAFT",
@@ -240,6 +242,7 @@ export async function POST(
         billingAccountId: body.billingAccountId,
         purchaseOrderId: body.purchaseOrderId ?? null,
         status: body.status,
+        ...(body.status === "ACTIVE" && { signedAt: new Date() }),
         effectiveFrom: body.effectiveFrom,
         effectiveTo: body.effectiveTo ?? null,
         paymentTermsDays: body.paymentTermsDays,
@@ -302,26 +305,27 @@ export async function POST(
         },
       },
     });
+
+    if (
+      body.status === "ACTIVE" &&
+      typeof tx.webhookEndpoint?.findMany === "function"
+    ) {
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: orgId,
+        eventType: "contract.signed",
+        payload: {
+          contractId: created.id,
+          billingAccountId: body.billingAccountId,
+          status: created.status,
+          effectiveFrom: body.effectiveFrom.toISOString(),
+          effectiveTo: body.effectiveTo?.toISOString() ?? null,
+        },
+      });
+    }
+
     return created;
   });
 
   return NextResponse.json({ contract }, { status: 201 });
-}
-
-/**
- * Compute the end of a billing cycle given a start date and cycle type.
- * Used to seed BillingSubscription.currentCycleEnd + nextInvoiceDate at
- * contract create time. Mirrors the cycle math elsewhere in the codebase
- * (jobs/billing/generate-subscription-invoices.ts uses the same +1mo /
- * +3mo / +1yr offsets).
- */
-function computeCycleEnd(
-  start: Date,
-  cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL",
-): Date {
-  const end = new Date(start);
-  if (cycle === "MONTHLY") end.setMonth(end.getMonth() + 1);
-  else if (cycle === "QUARTERLY") end.setMonth(end.getMonth() + 3);
-  else end.setFullYear(end.getFullYear() + 1);
-  return end;
 }

@@ -45,12 +45,22 @@ export function buildCallSettingsOverride(
           },
           audio: {
             mic_default_on: false,
+            speaker_default_on: true,
             default_device: "speaker",
             access_request_enabled: true,
+            opus_dtx_enabled: true,
+            redundant_coding_enabled: true,
           },
           video: {
+            enabled: true,
             camera_default_on: false,
+            camera_facing: "front",
             access_request_enabled: true,
+            target_resolution: {
+              width: 1280,
+              height: 720,
+              bitrate: 1500000,
+            },
           },
         }
       : {}),
@@ -59,3 +69,4 @@ export function buildCallSettingsOverride(
       : {}),
   };
 }
+

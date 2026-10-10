@@ -106,7 +106,7 @@ describe("lookupEnforcedOrg", () => {
     const findMany = jest.fn().mockResolvedValue([{ providerId: "oidc-1" }]);
     const prisma = {
       orgDomainClaim: {
-        findUnique: jest.fn().mockResolvedValue({
+        findFirst: jest.fn().mockResolvedValue({
           organizationId: "org-1",
           verifiedAt: new Date(),
           organization: {

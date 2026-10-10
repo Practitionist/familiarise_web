@@ -18,7 +18,7 @@
   # on-demand ISR + enablePrerenderSourceMaps=false instead. Raised 4096 ->
   # 6144 when ADR 24 added two route trees; the 8 GB image tolerates it as long
   # as prerender RSS stays capped.
-  NODE_OPTIONS = "--max-old-space-size=6144"
+  NODE_OPTIONS = "--max-old-space-size=5376"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Function memory / #1124 stall — RESOLVED IN next.config.mjs (#1972).

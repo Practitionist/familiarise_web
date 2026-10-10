@@ -13,6 +13,7 @@ import {
   isAwaitingHostGoLive,
   isOneToManyAppointmentType,
 } from "@/lib/meetings/room-ready";
+import { filterStreamPublishPermissions } from "@/lib/stream/video-contracts";
 
 interface StageControlsProps {
   appointmentType: string | null;
@@ -147,13 +148,50 @@ export function StageControls({
     }
   };
 
+  const updateStagePermissionsViaServer = async (
+    targetUserId: string,
+    action: "grant" | "revoke",
+    rawPermissions: OwnCapability[],
+  ) => {
+    if (!call) return;
+    const validPermissions = filterStreamPublishPermissions(
+      rawPermissions.map(String),
+    );
+    const permissions =
+      validPermissions.length > 0
+        ? validPermissions
+        : (["send-audio", "send-video"] as const);
+
+    const response = await fetch(
+      `/api/meetings/${encodeURIComponent(call.id)}/stage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetUserId,
+          action,
+          permissions,
+        }),
+      },
+    );
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(
+        body.error ||
+          (action === "grant"
+            ? "Could not grant permissions"
+            : "Could not decline request"),
+      );
+    }
+  };
+
   const handleApproveRequest = async (
     userId: string,
     permissions: OwnCapability[],
   ) => {
     if (!call) return;
     try {
-      await call.grantPermissions(userId, permissions);
+      await updateStagePermissionsViaServer(userId, "grant", permissions);
       setPermissionRequests((prev) =>
         prev.filter((item) => item.user.id !== userId),
       );
@@ -173,7 +211,7 @@ export function StageControls({
   ) => {
     if (!call) return;
     try {
-      await call.revokePermissions(userId, permissions);
+      await updateStagePermissionsViaServer(userId, "revoke", permissions);
       setPermissionRequests((prev) =>
         prev.filter((item) => item.user.id !== userId),
       );

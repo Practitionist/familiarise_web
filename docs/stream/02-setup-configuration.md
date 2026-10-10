@@ -38,11 +38,11 @@ DATABASE_URL=postgresql://user:password@host:5432/database
 # Optional: Background Sync Job Protection
 STREAM_SYNC_SECRET=your_secret_for_sync_endpoint
 
-# Cloudflare R2 Permanent Recording Storage
-R2_ACCOUNT_ID=your_cloudflare_account_id
+# Cloudflare R2 recording storage (our copy of every recording)
+R2_S3_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+R2_BUCKET=familiarise-recordings
 R2_ACCESS_KEY_ID=your_r2_access_key_id
 R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
-R2_RECORDINGS_BUCKET=familiarise-recordings
 ```
 
 ### Variable Breakdown
@@ -160,15 +160,15 @@ What the orchestrator enforces:
 
 - **App-Level Settings (`ensure-app-settings.ts`)**: Configures `webhook_url` (`https://<origin>/api/stream/webhooks`), `AsyncModerationConfiguration`, `guest_user_creation_disabled: true`, and `enable_hook_payload_compression: false` after running a no-op fingerprint probe (`lib/stream/config-fingerprint.ts`) to guarantee `updateApp` merges rather than replaces unrelated app fields.
 - **Billable Permissions + Scope Suffix Stripping (`ensure-call-type-grants.ts` & `harden-unused-call-types.ts`)**: Strips all billable permissions (`BILLABLE_PERMISSIONS`: `start-recording`, `stop-recording`, `start-frame-recording`, `stop-frame-recording`, `start-raw-recording`, `stop-raw-recording`, `start-individual-recording`, `stop-individual-recording`, `start-transcription`, `stop-transcription`, `start-closed-captions`, `stop-closed-captions`, `start-broadcasting`, `stop-broadcasting`, `start-rtmp-broadcasts`, `stop-rtmp-broadcast`, `stop-all-rtmp-broadcasts`, `use-noise-cancellation`, `enable-noise-cancellation`) **including their `-owner` and `-any-team` scoped suffixes** (`matchesPermissionWithScope`) across all four built-in call types (`default`, `livestream`, `audio_room`, and `development`).
-- **Least-Privilege Call Admission on `default`**: Revokes `create-call`, `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, revokes `create-call` and `end-call` from `user`, `guest`, and `call_member`, and ensures only `call_member` (granted server-side after `resolveMeetingAccess`) and `host`/`admin` can join an active room.
+- **Least-Privilege Call Admission on `default`**: Revokes `create-call`, `join-call`, `join-ended-call`, and `update-call-permissions` from `user` and `guest`, and revokes `create-call` and `end-call` from `user`, `guest`, and `call_member`. Only `call_member` and `co_presenter` (both assigned server-side after `resolveMeetingAccess`) and `admin` can join an active room. The `call_member` role holds only the `-owner` variants of `update-call-permissions`, `mute-users` and `pin-call-track`. The custom `co_presenter` role adds `mute-users`, `pin-call-track` and `join-backstage` for accepted presenter collaborators, and the script leaves that role untouched.
 - **Unused Call-Type Reach Lockdown**: Strips `REACH_PERMISSIONS` (`create-call`, `join-call`, `join-backstage`, `join-ended-call` and `-any-team` variants) from `livestream`, `audio_room`, and `development` across all end-user roles (`user`, `guest`, `anonymous`, `speaker`, `host`, `call_member`).
 - **Empty Room Auto-Close**: Enforces `session.inactivity_timeout_seconds = 300` (5 minutes) on the `default` call type.
 
 ### 2. Cloudflare R2 Recording Storage
 
-Permanent recordings (`PERMANENT` policy on Webinars, Classes, and opt-in 1:1 sessions) are streamed server-side from Stream's signed recording URL directly to Cloudflare R2 (`$0` egress, S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-transfer-service.ts`, with automatic fallback to Supabase Storage for legacy objects).
+Every READY recording is copied server-side from Stream's signed recording URL into Cloudflare R2 by the `transfer-recordings` job (S3-compatible multipart streaming via `lib/storage/r2-client.ts` and `lib/stream/recording-transfer-service.ts`, HEAD-verified after upload). R2 is the only destination; preview clips and thumbnails stay in the public Supabase `recordings-previews` bucket.
 
-Ensure `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_RECORDINGS_BUCKET` are set in the deployment environment before enabling permanent recording transfers (`jobs/stream/transfer-expiring-recordings.ts`).
+Set `R2_S3_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY` in Netlify (playback presigning, deletes) and as GitHub Actions secrets (`cron-intra-day.yml` for `transfer-recordings`, `cron-daily.yml` for `expire-recordings`).
 
 ### 3. Live Stream Rate-Limit Ceilings & Batch Pacing Invariant
 

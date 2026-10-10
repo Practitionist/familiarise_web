@@ -5,6 +5,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { DocumentReviewStatus, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
@@ -86,6 +87,61 @@ export interface ListDocumentsResult {
   perPage: number;
 }
 
+export function buildUserAppointmentAccessOr(
+  userId: string,
+): Prisma.AppointmentWhereInput[] {
+  const activeCollabFilter = {
+    some: {
+      status: "ACCEPTED" as const,
+      consultantProfile: {
+        userId,
+        deletedAt: null,
+      },
+    },
+  };
+  return [
+    { consultation: { requestedBy: { userId } } },
+    { subscription: { requestedBy: { userId } } },
+    { trial: { consulteeProfile: { userId } } },
+    { trial: { consultantProfile: { userId } } },
+    { participants: { some: liveParticipant(userId) } },
+    {
+      consultation: {
+        consultationPlan: {
+          consultantProfile: { userId },
+        },
+      },
+    },
+    {
+      subscription: {
+        subscriptionPlan: {
+          consultantProfile: { userId },
+        },
+      },
+    },
+    {
+      webinar: {
+        webinarPlan: {
+          OR: [
+            { consultantProfile: { userId } },
+            { collaborators: activeCollabFilter },
+          ],
+        },
+      },
+    },
+    {
+      class: {
+        classPlan: {
+          OR: [
+            { consultantProfile: { userId } },
+            { collaborators: activeCollabFilter },
+          ],
+        },
+      },
+    },
+  ];
+}
+
 function buildWhere(
   params: ListDocumentsParams,
 ): Prisma.AppointmentDocumentWhereInput {
@@ -96,17 +152,13 @@ function buildWhere(
   };
   if (params.scope.kind === "personal") {
     // Personal docs: docs whose parent Appointment is NOT org-tagged
-    // AND the user is a participant on it. The OR clause mirrors
-    // listAppointmentsScoped for participation.
+    // AND the user is a participant, host, or co-host on it. The OR clause
+    // mirrors listAppointmentsScoped for participation.
     return {
       ...base,
       appointment: {
         organizationId: null,
-        OR: [
-          { consultation: { requestedBy: { userId: params.userId } } },
-          { subscription: { requestedBy: { userId: params.userId } } },
-          { trial: { consulteeProfile: { userId: params.userId } } },
-        ],
+        OR: buildUserAppointmentAccessOr(params.userId),
       },
     };
   }
@@ -145,35 +197,7 @@ function buildWhere(
       appointment: {
         organizationId: params.scope.orgId,
         organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
-        OR: [
-          { consultation: { requestedBy: { userId: params.scope.userId } } },
-          { subscription: { requestedBy: { userId: params.scope.userId } } },
-          { trial: { consulteeProfile: { userId: params.scope.userId } } },
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfile: { userId: params.scope.userId },
-              },
-            },
-          },
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfile: { userId: params.scope.userId },
-              },
-            },
-          },
-          {
-            webinar: {
-              webinarPlan: { consultantProfile: { userId: params.scope.userId } },
-            },
-          },
-          {
-            class: {
-              classPlan: { consultantProfile: { userId: params.scope.userId } },
-            },
-          },
-        ],
+        OR: buildUserAppointmentAccessOr(params.scope.userId),
       },
     };
   }

@@ -439,6 +439,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.SUPPORT_TICKET_RECEIVED,
+    name: "Support ticket received",
+    description:
+      "The requester, confirming ticket intake and expected response window.",
+    category: "support",
+    inApp: {
+      subject: "Support request received",
+      body: `We received ${TICKET}. Expected response within {{payload.slaWindow | default: '24 hours'}}.`,
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.SUPPORT_TICKET_ACTIVITY,
     name: "Support ticket activity",
     description:
@@ -480,6 +492,40 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "New feedback",
       body: '{{payload.userName}} sent feedback{% if payload.category %} ({{payload.category}}){% endif %}: "{{payload.message | truncate: 140}}"',
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.MODERATION_REPORT_OUTCOME,
+    name: "Moderation report outcome",
+    description: "The reporter, when moderation concludes a review.",
+    category: "feedback",
+    inApp: {
+      subject: "Report update",
+      body: "Your report {{payload.reference}} is now {{payload.outcome}}{% if payload.reason %}: {{payload.reason}}{% endif %}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.REVIEW_EXCLUDED_FROM_RATING,
+    name: "Review not counted",
+    description:
+      "The expert, when moderation excludes a client review from their rating.",
+    category: "feedback",
+    inApp: {
+      subject: "A review no longer counts toward your rating",
+      body: "A client review on your profile is now marked 'Not counted in rating'. It stays visible but no longer affects your score.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.PLATFORM_FEEDBACK_UPDATE,
+    name: "Feedback status updated",
+    description: "The submitter, when product feedback changes status.",
+    category: "feedback",
+    inApp: {
+      subject: "Feedback update",
+      body: "Your feedback is now {{payload.status}}{% if payload.message %}: {{payload.message}}{% endif %}.",
       redirect: "dashboardUrl",
     },
   },
@@ -527,6 +573,16 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Warning",
       body: "You have received a warning from our moderation team{% if payload.reason %}: {{payload.reason}}{% endif %}. Further reports may lead to suspension.",
+    },
+  },
+  {
+    workflowId: W.CONTENT_REMOVED_NOTICE,
+    name: "Content removed",
+    description: "The author, when moderation removes their content.",
+    category: null,
+    inApp: {
+      subject: "Your content was removed",
+      body: "Your content was removed because it did not align with our community guidelines{% if payload.reason %}: {{payload.reason}}{% endif %}.",
     },
   },
   {
@@ -610,18 +666,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Recording failed",
-      body: "A recording could not be saved{% if payload.errorMessage %}: {{payload.errorMessage}}{% endif %}. The call itself was not affected.",
-      redirect: "dashboardUrl",
-    },
-  },
-  {
-    workflowId: W.RECORDING_EXPIRING,
-    name: "Recordings expiring",
-    description: "The host, before Stream-only recordings lapse (STR-3).",
-    category: "appointments",
-    inApp: {
-      subject: "Recordings expiring",
-      body: "{{payload.recordingCount}} recording{% if payload.recordingCount != 1 %}s{% endif %} will expire on {{payload.expiresAt}}. Download anything you want to keep before then.",
+      body: "A recording could not be saved. The call itself was not affected.",
       redirect: "dashboardUrl",
     },
   },

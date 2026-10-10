@@ -109,7 +109,7 @@ const cancelRefundFlow: FlowDefinition = {
   category: "CANCEL_REFUND",
   title: "Cancel this session",
   entryNodeId: "start",
-  available: (ctx) => ctx.stage === "UPCOMING",
+  available: (ctx) => ctx.stage === "UPCOMING" && !ctx.isProvider,
   nodes: {
     start: {
       id: "start",
@@ -157,6 +157,7 @@ const paymentStatusFlow: FlowDefinition = {
   category: "PAYMENT_STATUS",
   title: "Payment or refund status",
   entryNodeId: "start",
+  available: (ctx) => !ctx.isProvider,
   nodes: {
     start: {
       id: "start",
@@ -297,7 +298,7 @@ const qualityComplaintFlow: FlowDefinition = {
     start: {
       id: "start",
       kind: "PROMPT",
-      body: "What went wrong? You can also type details below — they go straight to the reviewing team.",
+      body: "What went wrong?",
       options: [
         {
           id: "early",

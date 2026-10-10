@@ -26,6 +26,7 @@ import {
   DomainVerificationRequiredError,
   hasVerifiedDomain,
 } from "@/lib/enterprise/governance";
+import { revokeEnforcedOrgMemberSessions } from "@/lib/sso/enforce-session";
 
 const PatchBodySchema = z
   .object({
@@ -303,6 +304,9 @@ export async function PATCH(
       await assertSensitiveChangeVerified(tx, orgId, body);
 
       const next = await upsertSsoSettings(tx, orgId, body);
+      if (body.enforceSSO === true && !(existing?.enforceSSO ?? false)) {
+        await revokeEnforcedOrgMemberSessions(tx, orgId);
+      }
       await writeSsoAuditLog(tx, {
         orgId,
         actorMembershipId: access.member.id,

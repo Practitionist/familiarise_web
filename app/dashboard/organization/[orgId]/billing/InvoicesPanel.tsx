@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 
 import { Stat, StatRow, StatSkeleton } from "@/components/dashboard/Stat";
 import { Section } from "@/components/dashboard/Section";
@@ -26,6 +27,7 @@ import {
   INVOICE_STATUS,
   daysLate,
   fetchInvoices,
+  invoiceDetailUrl,
   payInvoice,
   pollInvoiceUntilPaid,
   type BillingSummary,
@@ -145,9 +147,8 @@ function CreditLimitLine({ summary }: Readonly<{ summary: BillingSummary }>) {
 }
 
 /**
- * Billing › Invoices: the summary figures, the invoice register with Pay, and
- * the invoice detail sheet (#1836). Creating an invoice is a platform act now
- * (Q8); orgs use "Request an invoice" in the page header.
+ * Billing › Invoices: summary figures, invoice register with Pay action, and
+ * invoice detail sheet. Orgs request new invoices via the page header action.
  */
 export function InvoicesPanel({
   orgId,
@@ -155,6 +156,7 @@ export function InvoicesPanel({
   canPay,
   moneyMoveBlocked,
   moneyMoveReason,
+  orgStatus,
 }: Readonly<{
   orgId: string;
   summary: {
@@ -166,6 +168,7 @@ export function InvoicesPanel({
   canPay: boolean;
   moneyMoveBlocked: boolean;
   moneyMoveReason: string;
+  orgStatus?: string;
 }>) {
   const { data: session } = useSession();
   const queryClient = useQueryClient();
@@ -270,23 +273,53 @@ export function InvoicesPanel({
     },
   });
 
+  // Settling an ISSUED or OVERDUE invoice must remain available even when
+  // dunning is suspended or the wallet is frozen; only an unverified or
+  // platform-suspended organization blocks invoice settlement.
+  const isOrgStatusBlocked =
+    orgStatus !== undefined
+      ? orgStatus === "PENDING_VERIFICATION" || orgStatus === "SUSPENDED"
+      : moneyMoveBlocked;
+
   // Pay is billing.manage (OWNER + BILLING_ADMIN) on the API.
-  const renderInvoiceActions = (inv: OrgInvoice) =>
-    (inv.status === "ISSUED" || inv.status === "OVERDUE") && canPay ? (
-      <Button
-        size="sm"
-        variant={inv.status === "OVERDUE" ? "default" : "outline"}
-        onClick={(e) => {
-          e.stopPropagation();
-          payMutation.mutate(inv.id);
-        }}
-        // #779 §B: the server rejects anyway; this kills the dead click.
-        disabled={payMutation.isPending || moneyMoveBlocked}
-        title={moneyMoveBlocked ? moneyMoveReason : undefined}
-      >
-        Pay now
-      </Button>
-    ) : null;
+  const renderInvoiceActions = (inv: OrgInvoice) => {
+    const canDownloadPdf = Boolean(inv.pdfUrl) || inv.status !== "DRAFT";
+    const pdfHref = inv.pdfUrl || `${invoiceDetailUrl(orgId, inv.id)}/pdf`;
+    const showPay =
+      (inv.status === "ISSUED" || inv.status === "OVERDUE") && canPay;
+    if (!canDownloadPdf && !showPay) return null;
+    return (
+      <div className="flex items-center gap-2">
+        {canDownloadPdf && (
+          <Button
+            asChild
+            size="sm"
+            variant="ghost"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <a href={pdfHref} target="_blank" rel="noopener noreferrer">
+              <Download className="mr-1 h-3.5 w-3.5" />
+              Download PDF
+            </a>
+          </Button>
+        )}
+        {showPay && (
+          <Button
+            size="sm"
+            variant={inv.status === "OVERDUE" ? "default" : "outline"}
+            onClick={(e) => {
+              e.stopPropagation();
+              payMutation.mutate(inv.id);
+            }}
+            disabled={payMutation.isPending || isOrgStatusBlocked}
+            title={isOrgStatusBlocked ? moneyMoveReason : undefined}
+          >
+            Pay now
+          </Button>
+        )}
+      </div>
+    );
+  };
 
   let summaryBlock: React.ReactNode;
   if (summary.isPending) {

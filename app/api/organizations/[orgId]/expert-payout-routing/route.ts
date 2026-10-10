@@ -26,12 +26,14 @@ const PatchBodySchema = z.object({
   payoutRecipient: z.enum(["SELF", "ORGANIZATION"]),
 });
 
-// A removed membership keeps its row but is never paid again, so it has no
-// routing to show or change.
+import { type MemberStatus, type Prisma } from "@prisma/client";
+
+// Removed and erased memberships keep their rows for historical attribution
+// but are never paid again, so they have no routing to show or change.
 const ROUTABLE_EXPERT = {
-  role: "EXPERT",
-  status: { not: "REMOVED" },
-} as const;
+  role: "EXPERT" as const,
+  status: { notIn: ["REMOVED", "ERASED"] as MemberStatus[] },
+} satisfies Prisma.MembershipWhereInput;
 
 export async function GET(
   _req: NextRequest,
@@ -92,10 +94,13 @@ export async function PATCH(
   try {
     const outcome = await prisma.$transaction(async (tx) => {
       const current = await tx.membership.findFirst({
-        where: { id: membershipId, organizationId: orgId, ...ROUTABLE_EXPERT },
-        select: { id: true, payoutRecipient: true },
+        where: { id: membershipId, organizationId: orgId, role: "EXPERT" },
+        select: { id: true, status: true, payoutRecipient: true },
       });
       if (!current) return "NOT_FOUND" as const;
+      if (current.status === "REMOVED" || current.status === "ERASED") {
+        return "TOMBSTONE" as const;
+      }
       if (current.payoutRecipient === payoutRecipient) return "UNCHANGED";
 
       // CAS on the value read above: a concurrent change or role move
@@ -124,6 +129,16 @@ export async function PATCH(
 
     if (outcome === "NOT_FOUND") {
       return NextResponse.json({ error: "Expert not found" }, { status: 404 });
+    }
+    if (outcome === "TOMBSTONE") {
+      return NextResponse.json(
+        {
+          error:
+            "This member was removed. Send them a new invitation to bring them back.",
+          code: "REMOVED_REQUIRES_REINVITE",
+        },
+        { status: 409 },
+      );
     }
     if (outcome === "CONFLICT") {
       return NextResponse.json(

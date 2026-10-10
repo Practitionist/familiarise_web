@@ -92,7 +92,7 @@ async function AppointmentsTabBody({
 
   if (tab === "unscheduled") {
     const requests = await readOrgPendingRequests(orgId);
-    return <PayerRequestsView requests={requests} />;
+    return <PayerRequestsView orgId={orgId} requests={requests} />;
   }
 
   const { items, total, perPage } = await getOrgMemberAppointments(

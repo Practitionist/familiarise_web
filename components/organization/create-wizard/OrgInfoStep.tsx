@@ -17,11 +17,12 @@ import {
 } from "@/components/ui/select";
 import { orgInfoSchema, type OrgInfoFormData } from "./schemas";
 import type { StepProps } from "./types";
+import { MotivationBanner } from "@/components/organization/MotivationBanner";
 
 // Why no WIP banner import: per PR #655 reviewer feedback ("WIP banners
 // are not production gates"), `canHost: true` is hard-gated server-side
 // at app/api/organizations/route.ts (returns 400 HOST_ORGS_GATED when
-// ENABLE_HOST_ORGS is unset). The wizard's submit path catches that
+// ENABLE_HOST_ORGS is explicitly disabled). The wizard's submit path catches that
 // code and surfaces the friendly copy from lib/labels/org-errors.ts.
 
 const INDUSTRIES = [
@@ -50,7 +51,7 @@ export function OrgInfoStep({
   canGoBack,
   initialData,
   isSubmitting,
-  hostOrgsEnabled = false,
+  hostOrgsEnabled = true,
 }: StepProps) {
   const {
     register,
@@ -140,17 +141,28 @@ export function OrgInfoStep({
             </label>
           )}
         </div>
+        {canHost && (
+          <MotivationBanner
+            tier={canSponsor ? "ADVANCED" : "RECOMMENDED"}
+            title={
+              canSponsor
+                ? "Hybrid Organization (Sponsor + Host Supply)"
+                : "Host Organization (Expert Supply & 3-Way Split)"
+            }
+            message="You will configure your default RateCard revenue split in the wizard. After creation, complete Payout Bank Verification and KYB/GSTIN verification to receive organization share payouts."
+            recommendation={
+              canSponsor
+                ? "Internal bookings where your learners book your own hosted experts automatically respect your RateCard split while cross-org bookings track Buyer vs Host org attribution independently."
+                : "Invite verified experts with the EXPERT role and set their payout routing to Organization or Self."
+            }
+            compact
+          />
+        )}
         {capabilityError && (
           <p className="text-sm text-red-500" role="alert">
             {capabilityError}
           </p>
         )}
-        {/* Host-capable orgs are hard-gated server-side. If the
-            ENABLE_HOST_ORGS flag is off on the target tenant, the
-            create-org POST returns 400 HOST_ORGS_GATED and the
-            wizard surfaces the friendly copy via the standard error
-            humanization path (lib/labels/org-errors.ts). No inline
-            banner — the server gate is the source of truth. */}
       </div>
 
       <div className="space-y-2">

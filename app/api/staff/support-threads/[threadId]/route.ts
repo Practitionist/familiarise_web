@@ -13,7 +13,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import prisma from "@/lib/prisma";
+import prisma, {
+  ALLOCATION_TX_MAX_WAIT_MS,
+  ALLOCATION_TX_TIMEOUT_MS,
+} from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import {
   notifySupportTicketResponse,
@@ -51,7 +54,9 @@ async function loadThread(threadId: string) {
   return prisma.appointmentSupportThread.findUnique({
     where: { id: threadId },
     include: {
-      user: { select: { id: true, name: true, email: true, image: true } },
+      user: {
+        select: { id: true, name: true, email: true, image: true, phone: true },
+      },
       messages: { orderBy: MESSAGE_ORDER },
       supportTicket: { select: { id: true, title: true, status: true } },
       appointment: {
@@ -156,58 +161,76 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    const now = new Date();
-    const result = await prisma.$transaction(async (tx) => {
-      // The user-facing message on the thread…
-      const seq = await allocateMessageSeq(tx, thread.id, 1);
-      const agentMessage = await tx.supportMessage.create({
-        data: {
-          threadId: thread.id,
-          sender: "AGENT",
-          body: message,
-          seq: seq + 1,
-          // #705 — an AGENT row used to record no author, so an escalated
-          // transcript could not say which staff member had replied.
-          authorUserId: session.user.id,
-        },
+    if (thread.status === "CLOSED") {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        message: "Cannot reply to a closed support thread",
+        context: { route: THREAD_ROUTE, action: "reply", threadId },
       });
-      await tx.appointmentSupportThread.update({
-        where: { id: thread.id },
-        data: { lastMessageAt: now },
-      });
+    }
 
-      // …mirrored as a public response on the linked ticket (if any), so the
-      // queue's history and the user's requests view stay one story.
-      if (thread.supportTicketId) {
-        await tx.supportResponse.create({
-          data: {
-            message,
-            isInternal: false,
-            supportTicketId: thread.supportTicketId,
-            userId: session.user.id,
-          },
-        });
-        await tx.supportTicket.updateMany({
-          // CAS: a concurrent staff move off OPEN must not be clobbered.
-          where: { id: thread.supportTicketId, status: "OPEN" },
-          data: {
-            status: "IN_PROGRESS",
-            assignedToId: thread.supportTicket?.assignedToId ?? session.user.id,
-            lastMessageAt: now,
-          },
-        });
-        // #705 — the ball is now in the user's court, so the resolution clock
-        // stops. Unconditional (not part of the OPEN CAS above): a reply on an
-        // already-IN_PROGRESS ticket still pauses the clock and still counts as
-        // an acknowledgement.
-        await applyStaffReply(tx, thread.supportTicketId, now);
-        await tx.supportTicket.update({
-          where: { id: thread.supportTicketId },
+    const now = new Date();
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const touched = await tx.appointmentSupportThread.updateMany({
+          where: { id: thread.id, status: { not: "CLOSED" } },
           data: { lastMessageAt: now },
         });
-      }
-      return agentMessage;
-    });
+        if (touched.count === 0) {
+          return null;
+        }
+        const seq = await allocateMessageSeq(tx, thread.id, 1);
+        const agentMessage = await tx.supportMessage.create({
+          data: {
+            threadId: thread.id,
+            sender: "AGENT",
+            body: message,
+            seq: seq + 1,
+            authorUserId: session.user.id,
+          },
+        });
+
+        if (thread.supportTicketId) {
+          await tx.supportResponse.create({
+            data: {
+              message,
+              isInternal: false,
+              supportTicketId: thread.supportTicketId,
+              userId: session.user.id,
+            },
+          });
+          await tx.supportTicket.updateMany({
+            where: { id: thread.supportTicketId, status: "OPEN" },
+            data: {
+              status: "IN_PROGRESS",
+              assignedToId:
+                thread.supportTicket?.assignedToId ?? session.user.id,
+              lastMessageAt: now,
+            },
+          });
+          await applyStaffReply(tx, thread.supportTicketId, now);
+          await tx.supportTicket.update({
+            where: { id: thread.supportTicketId },
+            data: { lastMessageAt: now },
+          });
+        }
+        return agentMessage;
+      },
+      {
+        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+        timeout: ALLOCATION_TX_TIMEOUT_MS,
+      },
+    );
+
+    if (!result) {
+      return supportError({
+        status: 409,
+        code: "CONFLICT",
+        message: "Cannot reply to a closed support thread",
+        context: { route: THREAD_ROUTE, action: "reply", threadId },
+      });
+    }
 
     if (thread.supportTicketId) {
       // #1527 — the request's own page: the org's dashboard for an org
@@ -325,7 +348,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       if (thread.supportTicketId) {
         const linked = await tx.supportTicket.findUnique({
           where: { id: thread.supportTicketId },
-          select: { status: true },
+          select: { status: true, resolvedAt: true },
         });
         if (linked?.status === "CLOSED" && status !== "CLOSED") return 0;
         await tx.supportTicket.updateMany({
@@ -336,7 +359,9 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
             // #705 — stop the SLA clock with the status. Without these the
             // breach sweep keeps counting a ticket that ops has finished.
             ...(status === "RESOLVED" ? { resolvedAt: now } : {}),
-            ...(status === "CLOSED" ? { closedAt: now } : {}),
+            ...(status === "CLOSED"
+              ? { closedAt: now, resolvedAt: linked?.resolvedAt ?? now }
+              : {}),
             ...(status === "IN_PROGRESS" ? { resolvedAt: null } : {}),
           },
         });

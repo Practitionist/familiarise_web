@@ -6,6 +6,7 @@ import { CreateFeedbackSchema } from "@/schemas/feedbacks";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
 import { getSession } from "@/lib/auth-server";
+import { supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
 export async function GET() {
   try {
@@ -32,7 +33,6 @@ export async function GET() {
     return NextResponse.json(
       {
         error: "An unexpected error occurred while fetching your feedback",
-        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     );
@@ -63,10 +63,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const result = CreateFeedbackSchema.safeParse(body);
     if (!result.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: result.error.issues },
-        { status: 400 },
-      );
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: result.error.flatten(),
+        context: { route: "user.feedbacks", action: "create" },
+      });
     }
     const validatedData = result.data;
 
@@ -80,30 +82,31 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Each recipient gets the feedback queue THEY can open: the admin
-    // tree is ADMIN-only (its layout bounces anyone else), so STAFF go
-    // to their own queue — and the bell names a person, not "User".
-    const adminUsers = await prisma.user.findMany({
-      where: { role: { in: ["STAFF", "ADMIN"] } },
-      select: { id: true, role: true },
-    });
-    // One staff tree now ([tree]): role picks the queue, no profile id.
-    // The bell names a person, not "User".
-    const feedbackPayload = {
-      feedbackId: feedback.id,
-      userName: session.user.name || "Someone",
-      category: feedback.category || undefined,
-      message: feedback.description || feedback.title || "New feedback",
-    };
-    for (const u of adminUsers) {
-      const queue =
-        u.role === UserRole.ADMIN
-          ? "/dashboard/admin/feedback"
-          : "/dashboard/staff/feedback";
-      await notifyFeedbackReceived([u.id], {
-        ...feedbackPayload,
-        dashboardUrl: queue,
+    try {
+      const adminUsers = await prisma.user.findMany({
+        where: { role: { in: ["STAFF", "ADMIN"] } },
+        select: { id: true, role: true },
       });
+      const feedbackPayload = {
+        feedbackId: feedback.id,
+        userName: session.user.name || "Someone",
+        category: feedback.category || undefined,
+        message: feedback.description || feedback.title || "New feedback",
+      };
+      await Promise.allSettled(
+        adminUsers.map((u) => {
+          const queue =
+            u.role === UserRole.ADMIN
+              ? "/dashboard/admin/feedback"
+              : "/dashboard/staff/feedback";
+          return notifyFeedbackReceived([u.id], {
+            ...feedbackPayload,
+            dashboardUrl: queue,
+          });
+        }),
+      );
+    } catch (notifyError) {
+      console.error("Failed to dispatch feedback notifications:", notifyError);
     }
 
     return NextResponse.json(feedback, { status: 201 });
@@ -112,7 +115,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error: "An unexpected error occurred while submitting your feedback",
-        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     );

@@ -33,6 +33,8 @@ const ALLOWLIST: Record<string, string> = {
   "[orgId]/checkout/consent-preview/route.ts#GET": "self: own checkout",
   "[orgId]/checkout/overage-preview/route.ts#GET": "self: own checkout",
   "[orgId]/members/route.ts#POST": "405: direct-add retired (#1846)",
+  "[orgId]/members/leave/route.ts#POST":
+    "self-only: any member may exit the org",
   "[orgId]/documents/route.ts#GET": "libraryScopeFor reads operations.read",
   "[orgId]/recordings/route.ts#GET": "libraryScopeFor reads operations.read",
   ...Object.fromEntries(

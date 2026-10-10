@@ -6,6 +6,7 @@ import {
   MAX_CALL_DURATION_MS,
   resolveMaxCallDurationSeconds,
 } from "@/lib/meetings/duration-cap";
+import { buildCallSettingsOverride } from "@/lib/meetings/room-ready";
 import {
   getStreamVideoClient,
   StreamUnavailableError,
@@ -14,6 +15,10 @@ import {
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  buildCohostCommitmentFilter,
+  buildOccupiedAppointmentFilter,
+} from "@/utils/scheduling-engine/occupancyPolicy";
 
 const EXTENSION_SECONDS = 15 * 60;
 const EXTENSION_MS = EXTENSION_SECONDS * 1000;
@@ -27,6 +32,11 @@ function resolveExtensionsUsed(
   return prevExtended >= EXTENSION_SECONDS ? 1 : 0;
 }
 
+/**
+ * Builds the Prisma `OR` clause matching any live occurrence that blocks a
+ * session extension for the host (direct `consultantProfileId`, hosted plan,
+ * or accepted co-host collaboration) or any active participant.
+ */
 function buildConflictScope(
   consultantProfileId: string | null,
   participantUserIds: string[],
@@ -38,18 +48,34 @@ function buildConflictScope(
           userId: { in: participantUserIds },
           status: {
             in: ["HELD", "CONFIRMED", "ATTENDED"] as (
-              "HELD" | "CONFIRMED" | "ATTENDED"
+              | "HELD"
+              | "CONFIRMED"
+              | "ATTENDED"
             )[],
           },
         },
       },
     },
   };
-  if (consultantProfileId && participantUserIds.length > 0) {
-    return { OR: [{ consultantProfileId }, participantClause] };
+  const consultantClauses = consultantProfileId
+    ? [
+        { consultantProfileId },
+        {
+          appointment: {
+            deletedAt: null,
+            OR: [
+              ...buildOccupiedAppointmentFilter(consultantProfileId),
+              ...buildCohostCommitmentFilter(consultantProfileId),
+            ],
+          },
+        },
+      ]
+    : [];
+  if (consultantClauses.length > 0 && participantUserIds.length > 0) {
+    return { OR: [...consultantClauses, participantClause] };
   }
-  if (consultantProfileId) {
-    return { consultantProfileId };
+  if (consultantClauses.length > 0) {
+    return { OR: consultantClauses };
   }
   return participantClause;
 }
@@ -226,11 +252,28 @@ export async function POST(
         MAX_CALL_DURATION_SECONDS,
       );
       const nextExtensionsUsed = extensionsUsed + 1;
+      const appointmentType =
+        appt?.appointmentType ??
+        (appt?.webinar
+          ? "WEBINAR"
+          : appt?.class
+            ? "CLASS"
+            : appt?.consultation
+              ? "CONSULTATION"
+              : appt?.subscription
+                ? "SUBSCRIPTION"
+                : appt?.trial
+                  ? "TRIAL"
+                  : null);
+      const settingsOverride = buildCallSettingsOverride(
+        appointmentType,
+        updatedCapSeconds,
+      ) ?? {
+        limits: { max_duration_seconds: updatedCapSeconds },
+      };
 
       await call.update({
-        settings_override: {
-          limits: { max_duration_seconds: updatedCapSeconds },
-        },
+        settings_override: settingsOverride,
         custom: {
           ...existingCustom,
           extendedSeconds: prevExtended + EXTENSION_SECONDS,

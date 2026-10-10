@@ -626,6 +626,8 @@ model AppointmentFeedback {
   // on that triple here (#1268).
   // Still the unit for "show me this booking's feedback".
   @@index([appointmentId, userId])
+  @@index([appointmentOccurrenceId])
+  @@index([userId])
   // The org aggregate filters raterRole before the date range, so
   // (organizationId, createdAt) is no longer a usable prefix for it.
   @@index([organizationId, raterRole, createdAt])
@@ -1113,19 +1115,17 @@ model Organization {
   meetings                Meeting[]                @relation("MeetingByOrg")
 
   // Payment attribution
-  payments Payment[] @relation("PaymentOrgTag")
+  payments       Payment[] @relation("PaymentOrgTag")
+  hostedPayments Payment[] @relation("PaymentHostOrg")
 
   // Rate cards owned by the org (HOST/HYBRID). The FK was previously a
   // soft reference (string only) which let mis-bound writes silently
   // settle to the platform default. Now enforced at the DB level.
   rateCards RateCard[] @relation("RateCardOwnerOrg")
 
-  /// Per-org Stream.io recording retention window (days). Powers
-  /// `jobs/stream/cleanup-old-stream-recordings.ts` — recordings older
-  /// than this value are deleted from Stream + tombstoned locally.
-  /// Default 90d matches the platform-wide minimum for compliance
-  /// (most large enterprises require ≥90d for grievance / audit).
-  streamRecordingRetentionDays Int @default(90)
+  /// Owner-set cap (days after recording) on org-scoped recordings; null follows
+  /// the platform schedule. Published or purchased replays are never auto-deleted.
+  streamRecordingRetentionDays Int?
 
   /// How long a CHAT channel survives after its conversation goes dormant.
   ///
@@ -1187,6 +1187,7 @@ model Organization {
   // serve it because its leading column (canHost) is no longer in the predicate.
   @@index([isPublic, status])
   @@index([dataResidencyRegion])
+  @@index([billingAccountId])
   @@map("organizations")
 }
 
@@ -1464,9 +1465,9 @@ enum FundingSource {
 model Contract {
   id               String         @id @default(uuid())
   organizationId   String
-  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   billingAccountId String
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id])
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Restrict)
   purchaseOrderId  String?
   purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 
@@ -1587,7 +1588,7 @@ enum WalletReason {
 model WalletTopUp {
   id               String         @id @default(uuid())
   billingAccountId String
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Restrict)
 
   // Our idempotency key (we_<uuid>) — also the public topUpId used by
   // GET /top-ups/{topUpId}. @unique guarantees a webhook redelivery or a
@@ -1635,7 +1636,7 @@ enum WalletTopUpStatus {
 model Program {
   id         String        @id @default(uuid())
   contractId String
-  contract   Contract      @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contract   Contract      @relation(fields: [contractId], references: [id], onDelete: Restrict)
   type       ProgramType
   name       String
   status     ProgramStatus @default(ACTIVE)
@@ -1694,7 +1695,7 @@ model LicensedSeatConfig {
   /// heterogeneous) rather than a flat per-unit tier; this is the only knob.
   overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
-  /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
+  /// no ceiling. Non-null = cumulative tax-exclusive overage (basePaise + surchargePaise) within
   /// the current cycle cannot exceed this; subsequent bookings fall back
   /// to BLOCK regardless of overageBehavior.
   maxOveragePerCyclePaise    BigInt?
@@ -1705,45 +1706,40 @@ model LicensedSeatConfig {
 // on this config table — keeps reconciliation and audit single-unit
 // (credits ↔ rupees, no translation layer).
 //
-// `creditsPerCycle` is the hard cap when overageBehavior=BLOCK and
-// the soft cap (with overage routing) otherwise. (#753/#784 — the dead
-// `minimumCreditsPerPeriod` commitment-minimum was dropped in the freeze;
-// nothing ever read it.)
-//
-// Bogus combo: CREDIT_POOL programs under a LICENSE-funded contract
-// don't model a real customer arrangement (a flat-fee license already
-// pays for unmetered usage; a per-cycle credit cap on top is just
-// internal accounting noise). The wizard hides this option; the API
-// rejects it with `BOGUS_LICENSE_CREDIT_POOL` (see
-// `app/api/organizations/[orgId]/programs/route.ts`). Schema permits
-// it because cross-table CHECK constraints are awkward in Postgres
-// and the API+UI layer is tight enough.
+// CREDIT_POOL meters rupee budget across WALLET, INVOICE, LICENSE, and
+// PERSONAL allowance programs, with optional `priceCapPerEngagementPaise`
+// to cap how much of a single engagement's price the pool covers before
+// routing any excess through overageBehavior.
 model CreditPoolConfig {
-  programId               String          @id
-  program                 Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
-  cycle                   BillingCycle
+  programId                  String          @id
+  program                    Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
+  cycle                      BillingCycle
   /// #753 — a MONEY budget in whole-rupee credits (1 credit = ₹1 = 100
   /// paise): recordBookingUtilization meters consumedPaise against
   /// creditBudgetPerCycle × 100. Renamed twice for honesty: creditsPerCycle
   /// hid the money semantics; the interim engagementsPerCycle wrongly
   /// implied a count meter (review catch on #843). LICENSED_SEAT counts
   /// engagements; CREDIT_POOL spends this budget.
-  creditBudgetPerCycle    Int
+  creditBudgetPerCycle       Int
+  /// Optional per-engagement price ceiling covered by the pool (parity with
+  /// LicensedSeatConfig.priceCapPerEngagementPaise). Any portion of an
+  /// engagement's price above this cap routes through overageBehavior.
+  priceCapPerEngagementPaise BigInt?
   /// #775 — over-budget routing (parity with LicensedSeatConfig); bookings
   /// past the cap BLOCK, CHARGE_MEMBER, or CHARGE_ORG per this value.
-  overageBehavior         OverageBehavior @default(BLOCK)
+  overageBehavior            OverageBehavior @default(BLOCK)
   /// #775 — bps markup on the over-budget marginal (see LicensedSeatConfig).
-  overageSurchargeBps     Int?
+  overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker (see LicensedSeatConfig).
-  maxOveragePerCyclePaise BigInt?
+  maxOveragePerCyclePaise    BigInt?
 }
 
 model ProgramAssignment {
   id           String     @id @default(uuid())
   programId    String
-  program      Program    @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program      Program    @relation(fields: [programId], references: [id], onDelete: Restrict)
   membershipId String
-  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Restrict)
 
   // #1554 — timestamptz so the ACTIVE-overlap exclusion below can index tstzrange()
   // (the timestamp→timestamptz cast is only STABLE and Postgres refuses it, 42P17).
@@ -1791,9 +1787,9 @@ model ProgramAssignment {
 model BookingUtilization {
   id                  String            @id @default(uuid())
   programAssignmentId String
-  programAssignment   ProgramAssignment @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
+  programAssignment   ProgramAssignment @relation(fields: [programAssignmentId], references: [id], onDelete: Restrict)
   paymentId           String            @unique
-  payment             Payment           @relation("PaymentBookingUtilization", fields: [paymentId], references: [id], onDelete: Cascade)
+  payment             Payment           @relation("PaymentBookingUtilization", fields: [paymentId], references: [id], onDelete: Restrict)
   /// Engagements consumed by this payment. One engagement = one
   /// Appointment row (one calendar occurrence), regardless of duration.
   /// Recorded:
@@ -1936,9 +1932,9 @@ enum CoveredPlanType {
 model RateCard {
   id              String           @id @default(uuid())
   ownerOrgId      String?
-  ownerOrg        Organization?    @relation("RateCardOwnerOrg", fields: [ownerOrgId], references: [id], onDelete: Cascade)
+  ownerOrg        Organization?    @relation("RateCardOwnerOrg", fields: [ownerOrgId], references: [id], onDelete: Restrict)
   ownerContractId String?
-  ownerContract   Contract?        @relation("RateCardOwnerContract", fields: [ownerContractId], references: [id], onDelete: Cascade)
+  ownerContract   Contract?        @relation("RateCardOwnerContract", fields: [ownerContractId], references: [id], onDelete: Restrict)
   planType        CoveredPlanType?
   planId          String?
 
@@ -1977,7 +1973,7 @@ model RateCard {
 model OrganizationPayoutAccount {
   id             String       @id @default(uuid())
   organizationId String       @unique
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   accountHolderName      String
   accountNumberEncrypted String
@@ -2014,6 +2010,11 @@ model OrganizationEarnings {
   paymentId String
   payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
+  consultantProfileId String?
+  consultantProfile   ConsultantProfile? @relation("ConsultantOrganizationEarnings", fields: [consultantProfileId], references: [id], onDelete: Restrict)
+  role                EarningRole        @default(OWNER)
+  cycleOrdinal        Int?
+
   grossAmountPaise     BigInt
   platformFeePaise     BigInt
   orgSharePaise        BigInt
@@ -2044,7 +2045,11 @@ model OrganizationEarnings {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@unique([paymentId, organizationId])
+  // One row per (payment, organization, consultant, role, cycle): the NULLS NOT
+  // DISTINCT sidecar unique organization_earnings_split_key in prisma/sql;
+  // no @@unique on that set here so Postgres doesn't carry a duplicate NULLS DISTINCT index.
+  @@index([paymentId, organizationId])
+  @@index([consultantProfileId])
   // #781 §D — createdAt-ordered finance reads (payout batching, statements)
   @@index([organizationId, status, createdAt])
   @@index([orgPayoutId])
@@ -2144,6 +2149,7 @@ model OrganizationPayout {
   // (organizationId, createdAt desc, id desc); the two-column index can't
   // serve the id tiebreaker.
   @@index([organizationId, createdAt, id])
+  @@index([approvedBy])
 }
 
 // #781 §A — closed set of payout rails (was a free-string code bag).
@@ -2526,7 +2532,7 @@ enum PlaceOfSupplySource {
 model PurchaseOrder {
   id             String       @id @default(uuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   poNumber             String
   poDate               DateTime
@@ -2591,7 +2597,7 @@ model OrganizationSSOSettings {
 
 model OrgDomainClaim {
   id             String       @id @default(uuid())
-  domain         String       @unique
+  domain         String
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   claimedAt      DateTime     @default(now())
@@ -2609,6 +2615,8 @@ model OrgDomainClaim {
   verificationToken String?
   verifiedAt        DateTime?
 
+  @@unique([organizationId, domain])
+  @@index([domain])
   @@index([organizationId])
   @@map("org_domain_claims")
 }
@@ -2616,7 +2624,7 @@ model OrgDomainClaim {
 model OrgAuditLog {
   id             String       @id @default(cuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   actorMembershipId  String?
   targetMembershipId String?
@@ -2636,6 +2644,8 @@ model OrgAuditLog {
 
   @@index([organizationId, createdAt])
   @@index([organizationId, category, createdAt])
+  @@index([actorMembershipId])
+  @@index([targetMembershipId])
 }
 
 enum OrgAuditCategory {
@@ -2778,7 +2788,7 @@ enum LedgerTransactionKind {
   BOOKING
   TOPUP
   TOPUP_REFUND
-  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
+  /// org invoice issued or voided (its GST not booked by a booking), and CHARGE_ORG overage accrual
   INVOICE_ISSUED
   INVOICE_PAID
   INVOICE_REFUND
@@ -3030,9 +3040,10 @@ model ConsultantProfile {
   userId String @unique
 
   // Payout relations
-  earnings       ConsultantEarnings[]
-  payouts        ConsultantPayout[]
-  payoutAccounts PayoutAccount[]
+  earnings             ConsultantEarnings[]
+  organizationEarnings OrganizationEarnings[] @relation("ConsultantOrganizationEarnings")
+  payouts              ConsultantPayout[]
+  payoutAccounts       PayoutAccount[]
 
   // Tax & compliance
   taxInfo        ConsultantTaxInfo?
@@ -3059,7 +3070,8 @@ model ConsultantProfile {
   acceptingRequests Boolean     @default(true)
   maxOpenRequests   Int?
 
-  // India statutory (compliance stubs read these)
+  // India statutory (compliance stubs read these; PAN lives encrypted on ConsultantTaxInfo)
+  /// @deprecated Legacy plaintext PAN retained for pre-reset read compatibility (#2006); dropped in PR-6 reset batch.
   panNumber                       String?         @db.VarChar(10)
   residencyStatus                 ResidencyStatus @default(RESIDENT)
   // #778 §D — TDS thresholds/sections differ by payee entity type; without it
@@ -3631,20 +3643,19 @@ model ConsultationPlan {
   // recordingEnabled:false. Mirrors WebinarPlan/ClassPlan exactly, and defaults
   // OFF — a 1:1 is the most sensitive session type on the platform, so
   // recording it stays an explicit per-plan opt-in by the consultant.
-  recordingEnabled       Boolean                @default(false)
-  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
-  language               String                 @default("English")
-  level                  PlanLevel              @default(BEGINNER)
-  prerequisites          String?                @default("None")
-  materialProvided       String?                @default("None")
-  learningOutcomes       String[]               @default([])
+  recordingEnabled Boolean   @default(false)
+  language         String    @default("English")
+  level            PlanLevel @default(BEGINNER)
+  prerequisites    String?   @default("None")
+  materialProvided String?   @default("None")
+  learningOutcomes String[]  @default([])
   // Buyer-facing positioning: who the offering is for, and what the price buys.
-  targetAudience         String[]               @default([])
-  whatsIncluded          String[]               @default([])
-  imageUrl               String?
+  targetAudience   String[]  @default([])
+  whatsIncluded    String[]  @default([])
+  imageUrl         String?
   // Reserved for SEO-friendly plan URLs. Nullable until routing lands (#696).
-  slug                   String?                @unique
-  topics                 Topic[]                @relation("TopicToConsultationPlan")
+  slug             String?   @unique
+  topics           Topic[]   @relation("TopicToConsultationPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -3753,26 +3764,25 @@ model SubscriptionPlan {
   // recordingEnabled:false. Mirrors WebinarPlan/ClassPlan exactly, and defaults
   // OFF — a 1:1 is the most sensitive session type on the platform, so
   // recording it stays an explicit per-plan opt-in by the consultant.
-  recordingEnabled       Boolean                @default(false)
-  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
+  recordingEnabled       Boolean          @default(false)
   // #1011 — was `callsPerWeek`. Renamed to match ClassPlan so both recurring
   // plan types name the same quantity the same way before the schema freeze.
-  sessionsPerWeek        Int                    @default(1)
-  sessionDurationInHours Float                  @default(1.0) // Duration of each session in hours
-  totalSessions          Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
-  totalHours             Float                  @default(4.0) // totalSessions × sessionDurationInHours
-  emailSupport           PlanEmailSupport       @default(GENERAL)
-  language               String                 @default("English")
-  level                  PlanLevel              @default(BEGINNER)
-  prerequisites          String?                @default("None")
-  materialProvided       String?                @default("None")
-  learningOutcomes       String[]               @default([])
+  sessionsPerWeek        Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  totalSessions          Int              @default(4) // sessionsPerWeek × durationInMonths × 4
+  totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
+  emailSupport           PlanEmailSupport @default(GENERAL)
+  language               String           @default("English")
+  level                  PlanLevel        @default(BEGINNER)
+  prerequisites          String?          @default("None")
+  materialProvided       String?          @default("None")
+  learningOutcomes       String[]         @default([])
   // See ConsultationPlan.targetAudience.
-  targetAudience         String[]               @default([])
-  whatsIncluded          String[]               @default([])
+  targetAudience         String[]         @default([])
+  whatsIncluded          String[]         @default([])
   imageUrl               String?
-  slug                   String?                @unique
-  topics                 Topic[]                @relation("TopicToSubscriptionPlan")
+  slug                   String?          @unique
+  topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
   // Trial offer. Free by default ONLY until paid-trial checkout is
   // wired (booking rejects paid trials today); the wiring PR flips the
@@ -4037,30 +4047,31 @@ enum BookingSource {
 // Many-Many Webinar
 
 model WebinarPlan {
-  id                     String                 @id @default(cuid())
-  title                  String
+  id                              String    @id @default(cuid())
+  title                           String
   // See ConsultationPlan.subtitle.
-  subtitle               String?                @db.VarChar(160)
-  topics                 Topic[]                @relation("TopicToWebinarPlan")
-  description            String?                @db.Text
-  price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency          Currency               @default(INR)
-  certificateProvided    Boolean                @default(false)
-  recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
-  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
-  durationInHours        Float                  @default(1) // Duration in hours
-  maxParticipants        Int                    @default(100)
-  refundWindowHours      Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
-  language               String                 @default("English")
-  level                  PlanLevel              @default(BEGINNER)
-  prerequisites          String?                @default("None")
-  materialProvided       String?                @default("None")
-  learningOutcomes       String[]               @default([])
+  subtitle                        String?   @db.VarChar(160)
+  topics                          Topic[]   @relation("TopicToWebinarPlan")
+  description                     String?   @db.Text
+  price                           BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  priceCurrency                   Currency  @default(INR)
+  certificateProvided             Boolean   @default(false)
+  recordingEnabled                Boolean   @default(false) // Allow consultant to record sessions
+  // Attendees see recordings of every run of this plan, not only the run they joined.
+  shareRecordingsWithAllAttendees Boolean   @default(false)
+  durationInHours                 Float     @default(1) // Duration in hours
+  maxParticipants                 Int       @default(100)
+  refundWindowHours               Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
+  language                        String    @default("English")
+  level                           PlanLevel @default(BEGINNER)
+  prerequisites                   String?   @default("None")
+  materialProvided                String?   @default("None")
+  learningOutcomes                String[]  @default([])
   // See ConsultationPlan.targetAudience.
-  targetAudience         String[]               @default([])
-  whatsIncluded          String[]               @default([])
-  imageUrl               String?
-  slug                   String?                @unique
+  targetAudience                  String[]  @default([])
+  whatsIncluded                   String[]  @default([])
+  imageUrl                        String?
+  slug                            String?   @unique
 
   // Nullable by design: org-curated catalog plans may have no single owning
   // consultant (the org is the owner), unlike ConsultationPlan/SubscriptionPlan
@@ -4151,46 +4162,45 @@ enum WebinarStatus {
 // Many-Many Class
 
 model ClassPlan {
-  id                           String                 @id @default(cuid())
+  id                           String           @id @default(cuid())
   title                        String
   // See ConsultationPlan.subtitle.
-  subtitle                     String?                @db.VarChar(160)
+  subtitle                     String?          @db.VarChar(160)
   // Nullable in the DB (relaxed for legacy rows) but REQUIRED by
   // ClassPlanSchema — authoring always supplies one; the relaxation exists so
   // pre-validation rows don't block migrations.
-  description                  String?                @db.Text
-  topics                       Topic[]                @relation("TopicToClassPlan")
+  description                  String?          @db.Text
+  topics                       Topic[]          @relation("TopicToClassPlan")
   classContents                ClassContent[]
   price                        BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency                Currency               @default(INR)
-  certificateProvided          Boolean                @default(false)
-  recordingEnabled             Boolean                @default(false) // Allow consultant to record sessions
-  recordingStoragePolicy       RecordingStoragePolicy @default(STREAM_ONLY)
-  durationInMonths             Int                    @default(1) // Duration in months
+  priceCurrency                Currency         @default(INR)
+  certificateProvided          Boolean          @default(false)
+  recordingEnabled             Boolean          @default(false) // Allow consultant to record sessions
+  durationInMonths             Int              @default(1) // Duration in months
   // #1011 — was `meetingsPerWeek`. See SubscriptionPlan.sessionsPerWeek.
-  sessionsPerWeek              Int                    @default(1)
-  sessionDurationInHours       Float                  @default(1.0) // Duration of each session in hours
-  totalSessions                Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
-  totalHours                   Float                  @default(4.0) // totalSessions × sessionDurationInHours
-  emailSupport                 PlanEmailSupport       @default(GENERAL)
+  sessionsPerWeek              Int              @default(1)
+  sessionDurationInHours       Float            @default(1.0) // Duration of each session in hours
+  totalSessions                Int              @default(4) // sessionsPerWeek × durationInMonths × 4
+  totalHours                   Float            @default(4.0) // totalSessions × sessionDurationInHours
+  emailSupport                 PlanEmailSupport @default(GENERAL)
   // Default mirrors WebinarPlan's usable floor (a 1-participant "class" is a
   // consultation); per-instance capacity lives on Class.maxParticipants.
-  maxParticipants              Int                    @default(30)
+  maxParticipants              Int              @default(30)
   refundWindowHours            Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
   // #1819 — last session ordinal a learner may still join before it starts (null → session 1 only).
   lateJoinUntilSession         Int?
   // #1819 — late joiners see recordings of sessions that ran before their seat.
-  lateJoinersGetPastRecordings Boolean                @default(false)
-  language                     String                 @default("English")
-  level                        PlanLevel              @default(BEGINNER)
-  prerequisites                String?                @default("None")
-  materialProvided             String?                @default("None")
-  learningOutcomes             String[]               @default([])
+  lateJoinersGetPastRecordings Boolean          @default(false)
+  language                     String           @default("English")
+  level                        PlanLevel        @default(BEGINNER)
+  prerequisites                String?          @default("None")
+  materialProvided             String?          @default("None")
+  learningOutcomes             String[]         @default([])
   // See ConsultationPlan.targetAudience.
-  targetAudience               String[]               @default([])
-  whatsIncluded                String[]               @default([])
+  targetAudience               String[]         @default([])
+  whatsIncluded                String[]         @default([])
   imageUrl                     String?
-  slug                         String?                @unique
+  slug                         String?          @unique
 
   // Nullable by design: org-curated catalog plans may have no single owning
   // consultant. See the mirror comment on WebinarPlan.
@@ -4250,11 +4260,7 @@ model Class {
   // Per-instance capacity. See Webinar.maxParticipants.
   maxParticipants Int?
 
-  // Legacy parallel path to the Recording model; deprecated for new writes.
-  // Kept (and rows kept readable) because historical classes still resolve
-  // their recordings through it.
-  recordingUrls   String[]
-  feedbackSummary String?  @db.Text
+  feedbackSummary String? @db.Text
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -4590,6 +4596,7 @@ model AppointmentParticipant {
   @@index([userId, status])
   // Prisma does not index FKs; without this the SetNull on Payment delete scans.
   @@index([paymentId])
+  @@index([organizationId])
 }
 
 enum ParticipantRole {
@@ -4651,6 +4658,7 @@ model BookingStatusHistory {
   // Nothing reads the column TODAY — org dashboards reach their history through
   // `appointment.organizationId` — which is exactly why the gap stayed invisible.
   @@index([organizationId, createdAt])
+  @@index([actorUserId])
 }
 
 enum BookingHistoryEntity {
@@ -5078,13 +5086,13 @@ model AppointmentOccurrence {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
-  /// #440 — denormalized consultant for the DB-level overlap guard. The
-  /// exclusion constraint (btree_gist on (consultantProfileId,
-  /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) is LIVE in the raw-SQL
-  /// sidecar (prisma/sql/check-constraints.sql: occurrence_no_confirmed_overlap); a
-  /// violation surfaces as Postgres 23P01 → 409 (SchedulingService
-  /// .classifyError). Nullable for attendee (webinar/class) rows, which the
-  /// partial-index guard excludes.
+  /// #440 / #2010 — denormalized host consultant for the DB-level single-active-
+  /// session overlap guard across all 5 offering types (Consultation,
+  /// Subscription, Webinar, Class, Trial). The exclusion constraint (btree_gist
+  /// on (consultantProfileId, tstzrange(startsAt, endsAt)) WHERE NOT isTentative
+  /// AND deletedAt IS NULL AND completionStatus NOT IN ('CANCELLED', 'RESCHEDULED'))
+  /// and CHECK constraint (occurrence_confirmed_requires_consultant_chk) live in
+  /// prisma/sql/check-constraints.sql; a violation surfaces as Postgres 23P01 → 409.
   consultantProfileId String?
 
   meeting     Meeting?
@@ -5301,23 +5309,16 @@ enum RecordingStorageType {
   PLATFORM // Our bucket, whichever vendor backs it — no expiry
 }
 
-// Recording storage policy for plans (determines where recordings are stored)
-
-enum RecordingStoragePolicy {
-  STREAM_ONLY // 2-week temporary storage (free tier)
-  PERMANENT // Kept in our own bucket indefinitely (premium tier)
-}
-
 // Recording status lifecycle
 
 enum RecordingStatus {
   RECORDING // Currently being recorded
   PROCESSING // Stream is processing the recording
-  READY // Available on Stream S3
-  TRANSFERRING // Being transferred to Supabase
-  AVAILABLE // Available on Supabase (permanent)
-  FAILED // Recording failed
-  EXPIRED // Stream S3 URL expired
+  READY // Playable from Stream's copy; the transfer job copies it to our bucket
+  TRANSFERRING // Copy to our bucket in progress
+  AVAILABLE // Copied to our bucket
+  FAILED // Stream reported the recording failed
+  EXPIRED // Deleted by retention, or Stream's copy lapsed before a copy
 }
 
 // #366 curated marketplace listing lifecycle. DRAFT → PUBLISHED on consultant
@@ -5387,10 +5388,7 @@ model Recording {
   storageType RecordingStorageType @default(STREAM_S3)
   status      RecordingStatus      @default(READY)
 
-  // #1280 — vendor-neutral: Stream can write straight into our bucket via
-  // recording_external_storage, and the bucket behind it is a deployment
-  // choice, so neither the column nor the enum names one.
-  storageUrl  String?
+  // Object key in our recordings bucket once copied.
   storagePath String?
 
   // Media metadata
@@ -5404,21 +5402,17 @@ model Recording {
   previewClipDuration Int? // Duration in seconds
 
   // Expiration tracking
-  streamUrlExpiresAt DateTime? // When Stream S3 URL expires
-  transferredAt      DateTime? // When transferred to Supabase
+  streamUrlExpiresAt DateTime? // Stream deletes its copy 14 days after the recording ends
+  transferredAt      DateTime? // When copied to our bucket
 
-  // STR-2/3 (#689) — transfer-to-Supabase health. A failed transfer reverts
-  // status to READY and re-attempts next cron; these track repeated failures so
-  // the job can alert (transferFailureAlertedAt dedupes the page) before a
-  // STREAM_ONLY recording lapses at streamUrlExpiresAt.
+  // Copy health: a failed copy stays READY and retries until the attempt cap;
+  // transferFailureAlertedAt dedupes the engineering alert.
   transferAttempts         Int       @default(0)
   lastTransferError        String?
   transferFailureAlertedAt DateTime? @db.Timestamptz
 
-  // #366 curated marketplace listing — opt-in per recording. Publishing is
-  // only valid once the recording is durably ours (Stream URLs die in ≤14d,
-  // so a STREAM_ONLY recording must never be sold) on webinar/class
-  // plans, with consultant redistribution-consent attestation (audit-logged).
+  // Curated marketplace listing, opt-in per recording. Publishing requires the
+  // copy in our bucket, a webinar/class plan and consultant consent attestation.
   listingStatus      RecordingListingStatus @default(DRAFT)
   listPricePaise     BigInt?
   listingTitle       String?
@@ -5535,9 +5529,9 @@ model Payment {
   qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
   firstPaymentOfRelationships ExpertCustomerRelationship[]
 
-  user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   userId         String
-  appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   appointmentId  String?
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   discountCodeId String?
@@ -5555,8 +5549,10 @@ model Payment {
   // Enterprise: optional org tagging.
   // Set on payments made by an org member (fundingSource: PERSONAL/WALLET/INVOICE/LICENSE).
   // HYBRID orgs with canHost=true also trigger a 3-way split via RateCard.
-  organization   Organization? @relation("PaymentOrgTag", fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
-  organizationId String?
+  organization       Organization? @relation("PaymentOrgTag", fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  organizationId     String?
+  hostOrganization   Organization? @relation("PaymentHostOrg", fields: [hostOrganizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  hostOrganizationId String?
 
   // WALLET/INVOICE funding settlement — which billing account is charged.
   billingAccountId String?
@@ -5605,6 +5601,7 @@ model Payment {
   @@index([appointmentId])
   @@index([paymentStatus, createdAt])
   @@index([organizationId])
+  @@index([hostOrganizationId])
   // Dashboard hot path: a user's payments scoped to an org, newest first.
   @@index([userId, organizationId, createdAt])
   @@index([billableToOrgInvoiceId])
@@ -6012,7 +6009,7 @@ model PayoutAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
 
   @@index([consultantProfileId])
   @@index([isDefault])
@@ -6276,6 +6273,7 @@ model TdsAdjustment {
   @@index([consultantProfileId, financialYear])
   @@index([organizationId, financialYear])
   @@index([payoutId])
+  @@index([orgPayoutId])
 }
 
 /// Request-level idempotency for money mutations that have no natural dedupe
@@ -7413,7 +7411,7 @@ model TwoFactor {
 model ErasureRequest {
   id                      String                  @id @default(cuid())
   userId                  String
-  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                    User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
   requestedAt             DateTime                @default(now())
   completedAt             DateTime?
   status                  ErasureStatus           @default(PENDING)
@@ -7586,16 +7584,16 @@ enum OrgDirectoryType {
 model OverageEvent {
   id                   String              @id @default(cuid())
   programAssignmentId  String
-  programAssignment    ProgramAssignment   @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
+  programAssignment    ProgramAssignment   @relation(fields: [programAssignmentId], references: [id], onDelete: Restrict)
   bookingUtilizationId String              @unique
-  bookingUtilization   BookingUtilization  @relation(fields: [bookingUtilizationId], references: [id], onDelete: Cascade)
+  bookingUtilization   BookingUtilization  @relation(fields: [bookingUtilizationId], references: [id], onDelete: Restrict)
   overageBehavior      OverageBehavior
   /// #778 elegance — the marginal split into its two components so the money is
   /// auditable and GST-itemizable. `basePaise` is the pass-through over-cap
   /// portion of the real booking price (after `priceCapPerEngagementPaise`);
   /// `surchargePaise` is the `overageSurchargeBps` markup on top. Invariant:
-  /// `marginalPaise == basePaise + surchargePaise`, and (covered) + basePaise ==
-  /// booking price. `marginalPaise` stays the authoritative charged total.
+  /// `marginalPaise == basePaise + surchargePaise + GST on the surcharge`, and
+  /// (covered) + basePaise == booking price. `marginalPaise` is the charged total.
   basePaise            BigInt              @default(0)
   surchargePaise       BigInt              @default(0)
   marginalPaise        BigInt

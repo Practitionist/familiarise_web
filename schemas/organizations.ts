@@ -369,3 +369,107 @@ export const CreateSsoProviderPayloadSchema = z.object({
 export type CreateSsoProviderPayload = z.infer<
   typeof CreateSsoProviderPayloadSchema
 >;
+
+// ───────────────────────────── Programs ─────────────────────────────
+
+export const CoveredPlanTypeSchema = z.enum([
+  "CONSULTATION",
+  "CLASS",
+  "WEBINAR",
+  "SUBSCRIPTION",
+]);
+
+export const BillingCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
+export const OverageBehaviorSchema = z.enum([
+  "BLOCK",
+  "CHARGE_MEMBER",
+  "CHARGE_ORG",
+]);
+export const ChargeMemberSettlementModeSchema = z.enum([
+  "CHECKOUT_COPAY",
+  "POST_HOC_LINK",
+]);
+export const ProgramStatusSchema = z.enum([
+  "ACTIVE",
+  "PAUSED",
+  "EXPIRED",
+  "CANCELLED",
+]);
+
+export const LicensedSeatConfigSchema = z.object({
+  ratePerSeatPaise: z.number().int().min(0),
+  cycle: BillingCycleSchema,
+  coveredEngagementsPerCycle: z.number().int().min(0).nullable().optional(),
+  overageBehavior: OverageBehaviorSchema.optional(),
+  chargeMemberSettlementMode: ChargeMemberSettlementModeSchema.optional(),
+  priceCapPerEngagementPaise: z.number().int().positive().nullable().optional(),
+  overageSurchargeBps: z.number().int().min(0).max(10000).nullable().optional(),
+  maxOveragePerCyclePaise: z.number().int().positive().nullable().optional(),
+});
+
+export const CreditPoolConfigSchema = z.object({
+  cycle: BillingCycleSchema,
+  creditBudgetPerCycle: z.number().int().min(1),
+  overageBehavior: OverageBehaviorSchema.optional(),
+  chargeMemberSettlementMode: ChargeMemberSettlementModeSchema.optional(),
+  priceCapPerEngagementPaise: z.number().int().positive().nullable().optional(),
+  overageSurchargeBps: z.number().int().min(0).max(10000).nullable().optional(),
+  maxOveragePerCyclePaise: z.number().int().positive().nullable().optional(),
+});
+
+export const CreateProgramSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("LICENSED_SEAT"),
+    contractId: z.string().min(1),
+    name: z.string().min(2).max(120),
+    coveredPlanTypes: z.array(CoveredPlanTypeSchema).default([]),
+    allowedCategories: z.array(z.string()).default([]),
+    licensedSeatConfig: LicensedSeatConfigSchema,
+    forceOverlap: z.boolean().default(false),
+  }),
+  z.object({
+    type: z.literal("CREDIT_POOL"),
+    contractId: z.string().min(1),
+    name: z.string().min(2).max(120),
+    coveredPlanTypes: z.array(CoveredPlanTypeSchema).default([]),
+    allowedCategories: z.array(z.string()).default([]),
+    creditPoolConfig: CreditPoolConfigSchema,
+    forceOverlap: z.boolean().default(false),
+  }),
+]);
+export const CreateProgramPayloadSchema = CreateProgramSchema;
+export type CreateProgramPayload = z.infer<typeof CreateProgramSchema>;
+
+export const UpdateProgramSchema = z
+  .object({
+    name: z.string().min(2).max(120).optional(),
+    status: ProgramStatusSchema.optional(),
+    archived: z.boolean().optional(),
+    coveredPlanTypes: z.array(CoveredPlanTypeSchema).optional(),
+    allowedCategories: z.array(z.string()).optional(),
+    ratePerSeatPaise: z.number().int().min(0).optional(),
+    coveredEngagementsPerCycle: z.number().int().min(1).nullable().optional(),
+    creditBudgetPerCycle: z.number().int().min(1).optional(),
+    overageBehavior: OverageBehaviorSchema.optional(),
+    chargeMemberSettlementMode: ChargeMemberSettlementModeSchema.optional(),
+    overageSurchargeBps: z
+      .number()
+      .int()
+      .min(0)
+      .max(10000)
+      .nullable()
+      .optional(),
+    priceCapPerEngagementPaise: z
+      .number()
+      .int()
+      .positive()
+      .nullable()
+      .optional(),
+    maxOveragePerCyclePaise: z.number().int().positive().nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: "PATCH body must contain at least one field",
+  });
+export const UpdateProgramPayloadSchema = UpdateProgramSchema;
+export type UpdateProgramPayload = z.infer<typeof UpdateProgramSchema>;
+

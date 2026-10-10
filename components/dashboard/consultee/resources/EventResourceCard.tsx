@@ -19,11 +19,18 @@ import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerMod
 export interface EventResource {
   id: string;
   planTitle: string;
+  contextTitle?: string | null;
   consultantName: string;
   consultantImage: string | null;
   status: string;
   date: string;
   eventType?: string;
+  offeringType?: string;
+  sourceType?: string;
+  classId?: string | null;
+  webinarId?: string | null;
+  classPlan?: { id?: string; title?: string } | null;
+  webinarPlan?: { id?: string; title?: string } | null;
   materials: {
     id: string;
     fileName: string;
@@ -40,7 +47,6 @@ export interface EventResource {
     title: string;
     durationInMinutes: number;
     recordedAt: string;
-    playbackUrl: string | null;
     thumbnailUrl: string | null;
     status: string;
     previewTranscript?: string | null;
@@ -230,9 +236,9 @@ export function EventResourceCard({
               <div className="space-y-2">
                 {event.recordings.map((rec) => {
                   const canWatch =
-                    Boolean(rec.playbackUrl) ||
                     rec.status === "AVAILABLE" ||
-                    rec.status === "READY";
+                    rec.status === "READY" ||
+                    rec.status === "TRANSFERRING";
                   return (
                     <div
                       key={rec.id}
@@ -303,7 +309,6 @@ export function EventResourceCard({
                 title: activeRecording.title,
                 recordedAt: activeRecording.recordedAt,
                 durationInMinutes: activeRecording.durationInMinutes,
-                playbackUrl: activeRecording.playbackUrl,
                 previewTranscript: activeRecording.previewTranscript ?? null,
                 planTitle: event.planTitle,
               }

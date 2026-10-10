@@ -99,35 +99,53 @@ export async function GET(
   // tie, and every query below sorts identically so they agree about which
   // entries are "newer".
   const ledgerOrder = [{ createdAt: "desc" as const }, { id: "desc" as const }];
-  const [total, entries, directionTotals, pendingTopUps] =
-    await prisma.$transaction([
-      prisma.ledgerEntry.count({ where: { accountId: walletAccountId } }),
-      prisma.ledgerEntry.findMany({
-        where: { accountId: walletAccountId },
-        orderBy: ledgerOrder,
-        skip,
-        take: perPage,
-        include: {
-          transaction: {
-            select: { kind: true, paymentId: true, description: true },
-          },
-        },
-      }),
-      prisma.ledgerEntry.groupBy({
-        by: ["direction"],
-        where: { accountId: walletAccountId },
-        _sum: { amountPaise: true },
-      }),
-      prisma.walletTopUp.findMany({
-        where: {
-          billingAccountId: ba.id,
-          status: "PENDING",
-          createdAt: { gte: new Date(Date.now() - PENDING_TOP_UP_WINDOW_MS) },
-        },
-        orderBy: { createdAt: "desc" },
-        select: { providerOrderId: true, amountPaise: true, createdAt: true },
-      }),
-    ]);
+  const [total, entries, directionTotals, pendingTopUps, newerEntries] =
+    await prisma.$transaction(
+      async (tx) =>
+        Promise.all([
+          tx.ledgerEntry.count({ where: { accountId: walletAccountId } }),
+          tx.ledgerEntry.findMany({
+            where: { accountId: walletAccountId },
+            orderBy: ledgerOrder,
+            skip,
+            take: perPage,
+            include: {
+              transaction: {
+                select: { kind: true, paymentId: true, description: true },
+              },
+            },
+          }),
+          tx.ledgerEntry.groupBy({
+            by: ["direction"],
+            where: { accountId: walletAccountId },
+            _sum: { amountPaise: true },
+          }),
+          tx.walletTopUp.findMany({
+            where: {
+              billingAccountId: ba.id,
+              status: "PENDING",
+              createdAt: {
+                gte: new Date(Date.now() - PENDING_TOP_UP_WINDOW_MS),
+              },
+            },
+            orderBy: { createdAt: "desc" },
+            select: {
+              providerOrderId: true,
+              amountPaise: true,
+              createdAt: true,
+            },
+          }),
+          skip === 0
+            ? Promise.resolve([])
+            : tx.ledgerEntry.findMany({
+                where: { accountId: walletAccountId },
+                orderBy: ledgerOrder,
+                take: skip,
+                select: { direction: true, amountPaise: true },
+              }),
+        ]),
+      { isolationLevel: "RepeatableRead" },
+    );
 
   // The client's ledger table renders a "Balance" column, and nothing has ever
   // produced the field: see withRunningBalance for what that cost. Anchor on
@@ -138,17 +156,7 @@ export async function GET(
       amountPaise: g._sum.amountPaise ?? 0,
     })),
   );
-  const newerDelta =
-    skip === 0
-      ? 0
-      : signedDeltaPaise(
-          await prisma.ledgerEntry.findMany({
-            where: { accountId: walletAccountId },
-            orderBy: ledgerOrder,
-            take: skip,
-            select: { direction: true, amountPaise: true },
-          }),
-        );
+  const newerDelta = signedDeltaPaise(newerEntries);
 
   const ledger = withRunningBalance(
     entries.map((e) => ({

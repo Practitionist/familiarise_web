@@ -1,18 +1,69 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "lib/prisma";
+import { supportError } from "@/lib/api/support-http";
+import prisma, {
+  ALLOCATION_TX_MAX_WAIT_MS,
+  ALLOCATION_TX_TIMEOUT_MS,
+  type Tx,
+} from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { assertBodySize } from "@/lib/validation/limits";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import { CreateSupportResponseSchema } from "@/schemas/support";
 import * as Sentry from "@sentry/nextjs";
 import { userRepliedPatch } from "@/lib/support/sla";
+import { allocateMessageSeq } from "@/lib/support/message-seq";
 import { notifyStaffOfTicketActivity } from "@/lib/support/create-ticket";
+
+function resolveUserReplyNextStatus(
+  status: string,
+  assignedToId: string | null,
+): "IN_PROGRESS" | "OPEN" {
+  if (status === "RESOLVED" || status === "ON_HOLD") {
+    return assignedToId ? "IN_PROGRESS" : "OPEN";
+  }
+  return "IN_PROGRESS";
+}
+
+async function mirrorUserReplyToThread(
+  tx: Tx,
+  thread: { id: string; status: string } | null,
+  cleanMessage: string,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  if (!thread || thread.status === "CLOSED") return;
+  const movedThread = await tx.appointmentSupportThread.updateMany({
+    where: { id: thread.id, status: { not: "CLOSED" } },
+    data: {
+      lastMessageAt: now,
+      status: "ESCALATED",
+      resolvedAt: null,
+    },
+  });
+  if (movedThread.count > 0) {
+    const seq = await allocateMessageSeq(tx, thread.id, 1);
+    await tx.supportMessage.create({
+      data: {
+        threadId: thread.id,
+        seq: seq + 1,
+        sender: "USER",
+        body: cleanMessage,
+        authorUserId: userId,
+      },
+    });
+  }
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ ticketId: string }> },
 ) {
   try {
-    const [session, resolvedParams] = await Promise.all([getSession(true), params]);
+    const [session, resolvedParams] = await Promise.all([
+      getSession(true),
+      params,
+    ]);
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -21,7 +72,6 @@ export async function POST(
       );
     }
 
-    // #831 — raw body.message was unbounded and unlimited
     const rl = await applyRateLimit(
       spamLimiter,
       `ticket-response:${session.user.id}`,
@@ -31,20 +81,33 @@ export async function POST(
     if (tooLarge) return tooLarge;
 
     const { ticketId } = resolvedParams;
-    const parsed = CreateSupportResponseSchema.safeParse(await req.json());
+    const rawBody: unknown = await req.json().catch(() => null);
+    const parsed = CreateSupportResponseSchema.safeParse(rawBody);
     if (!parsed.success) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: parsed.error.flatten(),
+        context: { route: "user.support-tickets.responses", action: "reply" },
+      });
+    }
+    const cleanMessage = stripCallbackTags(parsed.data.message).trim();
+    if (!cleanMessage) {
       return NextResponse.json(
-        { error: "Validation failed", details: parsed.error.issues },
+        { error: "Validation failed", message: "Message is required" },
         { status: 400 },
       );
     }
-    const body = parsed.data;
 
-    // Verify the ticket exists and belongs to the user
     const ticket = await prisma.supportTicket.findFirst({
       where: {
         id: ticketId,
         userId: session.user.id,
+      },
+      include: {
+        appointmentSupportThread: {
+          select: { id: true, status: true },
+        },
       },
     });
 
@@ -58,66 +121,103 @@ export async function POST(
       );
     }
 
-    // One transaction: the reply, the activity clock and the SLA resume commit
-    // together. Previously the reply was the ONLY write — `lastMessageAt` never
-    // moved, so a user chasing their own ticket never resurfaced it in the ops
-    // inbox, which sorts on exactly that column.
-    const now = new Date();
-    const response = await prisma.$transaction(async (tx) => {
-      const created = await tx.supportResponse.create({
-        data: {
-          message: body.message,
-          supportTicket: { connect: { id: ticketId } },
-          user: { connect: { id: session.user.id } },
+    if (ticket.status === "CLOSED") {
+      return NextResponse.json(
+        {
+          error:
+            "This support ticket is closed and can no longer receive replies.",
         },
-        include: {
-          user: {
-            select: {
-              name: true,
-              role: true,
+        { status: 400 },
+      );
+    }
+
+    const now = new Date();
+    const nextStatus = resolveUserReplyNextStatus(
+      ticket.status,
+      ticket.assignedToId,
+    );
+
+    const response = await prisma.$transaction(
+      async (tx) => {
+        const updated = await tx.supportTicket.updateMany({
+          where: {
+            id: ticketId,
+            status: ticket.status,
+            awaitingUserSince: ticket.awaitingUserSince,
+            pausedSeconds: ticket.pausedSeconds,
+          },
+          data: {
+            lastMessageAt: now,
+            status: nextStatus,
+            resolvedAt: null,
+            closedAt: null,
+            ...userRepliedPatch(ticket, now),
+          },
+        });
+        if (updated.count === 0) {
+          return null;
+        }
+
+        const created = await tx.supportResponse.create({
+          data: {
+            message: cleanMessage,
+            supportTicket: { connect: { id: ticketId } },
+            user: { connect: { id: session.user.id } },
+          },
+          include: {
+            user: {
+              select: {
+                name: true,
+                role: true,
+              },
             },
           },
-        },
-      });
-
-      await tx.supportTicket.update({
-        where: { id: ticketId },
-        data: {
-          lastMessageAt: now,
-          // The ball is back with us — restart the resolution clock.
-          ...userRepliedPatch(ticket, now),
-        },
-      });
-      // CAS, not a bare update: a concurrent staff move off OPEN must not be
-      // clobbered back by the user's reply landing a moment later.
-      await tx.supportTicket.updateMany({
-        where: { id: ticketId, status: "OPEN" },
-        data: { status: "IN_PROGRESS" },
-      });
-      return created;
-    });
-
-    // Committed — safe to page the queue. A user's reply used to notify nobody.
-    await notifyStaffOfTicketActivity(ticketId, null, response.id).catch(
-      (error) => {
-        console.error("support: user-reply notification failed", {
-          ticketId,
-          error,
         });
+
+        await mirrorUserReplyToThread(
+          tx,
+          ticket.appointmentSupportThread,
+          cleanMessage,
+          session.user.id,
+          now,
+        );
+
+        return created;
+      },
+      {
+        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+        timeout: ALLOCATION_TX_TIMEOUT_MS,
       },
     );
+
+    if (!response) {
+      return NextResponse.json(
+        { error: "Ticket was updated concurrently; please refresh and retry." },
+        { status: 409 },
+      );
+    }
+
+    await notifyStaffOfTicketActivity(
+      ticketId,
+      ticket.organizationId,
+      response.id,
+    ).catch((error) => {
+      console.error("support: user-reply notification failed", {
+        ticketId,
+        error,
+      });
+    });
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "auth" } },
+      { tags: { subsystem: "support" } },
     );
     console.error("Error creating support response:", error);
     return NextResponse.json(
       {
         error: "An unexpected error occurred while submitting your response",
-        details: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 },
     );

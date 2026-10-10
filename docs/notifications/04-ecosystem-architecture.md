@@ -227,7 +227,7 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 1. Business logic awaits a trigger function (e.g., `notifyAppointmentBooked(userIds, payload)`); a caller inside a transaction passes `{ tx, entityRef }` and runs `attemptTrigger()` after the commit
 2. `stageTrigger()` (`lib/novu/outbox.ts`) upserts a `NotificationOutbox` row keyed on a `transactionId` derived from the event, the sorted recipients and the payload (#1654)
 3. If `isNovuConfigured()` is false the row waits for the drain and the function returns `{success: false}`; otherwise `attemptTrigger()` calls `novu.trigger()` (single user or a batch of 100) or `novu.triggerBroadcast()` (all subscribers) under the client's five-second timeout, marks the row `SENT`, dead-letters it on a terminal 4xx, or leaves it `PENDING` on a timeout or 5xx for `jobs/notifications/drain-notification-outbox.ts`, which the Netlify ticker runs every five minutes
-4. Novu Cloud receives the event, deduplicates on the `transactionId`, and executes the workflow:
+4. Novu Cloud receives the event, deduplicates on the `Idempotency-Key` header (sent equal to the `transactionId`), and executes the workflow:
    - **Email step (not yet created)** → would render a template with `{{payload.variables}}` and send via a Resend integration
    - **In-App step** → pushes to subscriber's WebSocket → appears in bell icon
    - **Digest/Delay steps** → can batch or schedule (configured per-workflow in Dashboard)
@@ -238,8 +238,8 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 | Tier        | Workflows                                                                                                                                                                                                                                                                                    | Status                                                                 |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Tier 1 (16) | appointment-booked, appointment-cancelled, appointment-reminder, payment-success, payment-failed, new-booking-request, subscription-started, subscription-cancelled, trial-session-\* (4), support-ticket-created, support-ticket-response, new-review-received, verification-status-changed | Template specs ready in `docs/notifications/03-novu-template-specs.md` |
-| Tier 2 (12) | appointment-rescheduled, appointment-completed, appointment-partially-scheduled, refund-processed, refund-requested, payout-processed, payout-failed, maintenance-scheduled, collaborator-invited/accepted/removed, new-consultant-application                                                            | Triggers wired, Dashboard config deferred                              |
-| Tier 3 (16) | subscription-renewed, referral-_, maintenance-_, dispute-_, recording-_, general-announcement, feedback-received, etc.                                                                                                                                                                            | Functions exist, wiring deferred |
+| Tier 2 (12) | appointment-rescheduled, appointment-completed, appointment-partially-scheduled, refund-processed, refund-requested, payout-processed, payout-failed, maintenance-scheduled, collaborator-invited/accepted/removed, new-consultant-application                                               | Triggers wired, Dashboard config deferred                              |
+| Tier 3 (16) | subscription-renewed, referral-_, maintenance-_, dispute-_, recording-_, general-announcement, feedback-received, etc.                                                                                                                                                                       | Functions exist, wiring deferred                                       |
 
 **Trigger wiring (which business logic calls which notification):**
 
@@ -260,7 +260,7 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 | `app/api/verification/submit/route.ts`                      | newConsultantApplication                                       |
 | `lib/payments/payouts/payout-service.ts`                    | payoutProcessed, payoutFailed                                  |
 | `lib/collaborators/service.ts`                              | collaboratorInvited, collaboratorAccepted, collaboratorRemoved |
-| `app/api/webhooks/stream/recording/route.ts`                | recordingAvailable                                             |
+| `app/api/stream/webhooks/route.ts`                          | recordingAvailable                                             |
 | `app/api/announcements/route.ts`                            | generalAnnouncement (broadcast)                                |
 | `app/api/webhooks/utils.ts`                                 | refundProcessed, disputeCreated, disputeResolved               |
 | `app/api/user/feedbacks/route.ts`                           | feedbackReceived                                               |
@@ -362,7 +362,7 @@ flowchart LR
 
     subgraph HANDLERS["Webhook Handlers"]
         H1["app/api/stream/webhooks/route.ts\n8 event types\nHMAC signature verification"]
-        H2["app/api/webhooks/stream/recording/route.ts\ncall.recording.ready\nLooks up Meeting → Slot → Users"]
+        H2["app/api/stream/webhooks/route.ts\ncall.recording_ready\nLooks up Meeting → Slot → Users"]
     end
 
     subgraph ACTIONS["Notification Actions"]
@@ -371,13 +371,13 @@ flowchart LR
     end
 
     S3 -->|"call.recording_started\ncall.recording_stopped\ncall.session_ended\ncall.ended\nuser.flagged\nmessage.flagged"| H1
-    S3 -->|"call.recording.ready"| H2
+    S3 -->|"call.recording_ready"| H2
     H1 --> A1
     H2 --> A2
 ```
 
 **Data path for recording notification:**
-`Stream.io call.recording.ready` → `route.ts` → `prisma.meeting.findFirst({where: {streamCallId}})` → `include: appointmentOccurrence → appointment → consultation/subscription/webinar/class` → extract consultant name + participant user IDs from slot's M2M `user` relation → `notifyRecordingAvailable(userIds, {recordingUrl, ...})`
+`Stream.io call.recording_ready` → `route.ts` → `prisma.meeting.findFirst({where: {streamCallId}})` → `include: appointmentOccurrence → appointment → consultation/subscription/webinar/class` → extract consultant name + participant user IDs from slot's M2M `user` relation → `notifyRecordingAvailable(userIds, {dashboardUrl, ...})` (no media URL; the link opens the in-app recordings page)
 
 ---
 
@@ -467,7 +467,7 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 | Admin waitlist broadcast                       | `app/api/admin/waitlist/broadcast/route.ts`                                                                      |
 | Appointment reminders cron                     | `app/api/cleanup/appointment-reminders/route.ts`                                                                 |
 | Auto-complete + notify                         | `scripts/appointments/auto-complete-appointments.ts`                                                             |
-| Stream recording webhook                       | `app/api/webhooks/stream/recording/route.ts`                                                                     |
+| Stream recording webhook                       | `app/api/stream/webhooks/route.ts`                                                                               |
 | Stream main webhook                            | `app/api/stream/webhooks/route.ts`                                                                               |
 | Announcements + broadcast                      | `app/api/announcements/route.ts`                                                                                 |
 | 30+ notification trigger wiring                | Various API routes and services                                                                                  |

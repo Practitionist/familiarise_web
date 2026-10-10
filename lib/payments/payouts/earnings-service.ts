@@ -692,9 +692,9 @@ async function resolveInTxTrustPark(
 async function planCollaboratorSettlements(
   db: Tx | typeof prisma,
   splits: RevenueSplit[],
-  primaryOrgSplit: OrgEarningsSplit | null,
+  _primaryOrgSplit: OrgEarningsSplit | null,
   createdAt: Date,
-  logCollisionPaymentId?: string,
+  _logCollisionPaymentId?: string,
 ): Promise<Map<string, { sharePaise: number; orgSplit: OrgEarningsSplit }>> {
   const collabSettlements = new Map<
     string,
@@ -703,10 +703,6 @@ async function planCollaboratorSettlements(
   const collabSplits = splits.filter((s) => s.role !== "OWNER" && s.share > 0);
   if (collabSplits.length === 0) return collabSettlements;
 
-  const resolvedSplits: Array<{
-    split: (typeof collabSplits)[number];
-    collabOrgSplit: OrgEarningsSplit | null;
-  }> = [];
   for (const split of collabSplits) {
     const collabOrgSplit = await resolveOrgSplit(
       // NOSONAR
@@ -715,31 +711,7 @@ async function planCollaboratorSettlements(
       split.share,
       createdAt,
     );
-    resolvedSplits.push({ split, collabOrgSplit });
-  }
-
-  const plannedOrgRows = new Set<string>(
-    primaryOrgSplit && primaryOrgSplit.orgShare > 0
-      ? [primaryOrgSplit.organizationId]
-      : [],
-  );
-
-  for (const { split, collabOrgSplit } of resolvedSplits) {
     if (!collabOrgSplit) continue;
-    if (
-      collabOrgSplit.orgShare > 0 &&
-      plannedOrgRows.has(collabOrgSplit.organizationId)
-    ) {
-      if (logCollisionPaymentId) {
-        console.warn(
-          `[Earnings] Skipping collaborator org earnings for ${collabOrgSplit.organizationId} on payment ${logCollisionPaymentId}: row already exists for this (payment, org) pair (collab ${split.consultantProfileId}). Their personal share is unaffected.`,
-        );
-      }
-      continue;
-    }
-    if (collabOrgSplit.orgShare > 0) {
-      plannedOrgRows.add(collabOrgSplit.organizationId);
-    }
     collabSettlements.set(split.consultantProfileId, {
       sharePaise: split.share,
       orgSplit: collabOrgSplit,
@@ -752,6 +724,8 @@ async function resolvePlannedWalletAndOverage(
   db: Tx | typeof prisma,
   payment: {
     id: string;
+    originalAmount?: number;
+    taxAmount?: number | null;
     organizationId?: string | null;
     billingAccountId?: string | null;
   },
@@ -780,7 +754,11 @@ async function resolvePlannedWalletAndOverage(
   }
 
   let orgOverageSurchargePaise = 0;
-  if (overageAccrualPaise > 0) {
+  const nominalTotal = (payment.originalAmount ?? 0) + (payment.taxAmount ?? 0);
+  if (
+    typeof db.overageEvent?.findFirst === "function" &&
+    (overageAccrualPaise > 0 || wallet > nominalTotal)
+  ) {
     const orgOverage = await db.overageEvent.findFirst({
       where: {
         bookingUtilization: { paymentId: payment.id },
@@ -1087,6 +1065,7 @@ async function createSingleOwnerConsultantEarnings(
 async function createPrimaryAndCollabOrgEarnings(
   tx: Tx,
   params: {
+    consultantProfileId: string;
     orgSplit: OrgEarningsSplit | null;
     collabSettlements: Map<
       string,
@@ -1099,6 +1078,7 @@ async function createPrimaryAndCollabOrgEarnings(
   },
 ): Promise<void> {
   const {
+    consultantProfileId,
     orgSplit,
     collabSettlements,
     paymentId,
@@ -1112,6 +1092,8 @@ async function createPrimaryAndCollabOrgEarnings(
       data: {
         organizationId: orgSplit.organizationId,
         paymentId,
+        consultantProfileId,
+        role: EarningRole.OWNER,
         grossAmountPaise: grossAmount,
         platformFeePaise: orgSplit.platformFeePaise,
         orgSharePaise: orgSplit.orgShare,
@@ -1146,6 +1128,8 @@ async function createPrimaryAndCollabOrgEarnings(
       data: {
         organizationId: s.orgSplit.organizationId,
         paymentId,
+        consultantProfileId: collabProfileId,
+        role: EarningRole.COLLABORATOR,
         grossAmountPaise: s.sharePaise,
         platformFeePaise: s.orgSplit.platformFeePaise,
         orgSharePaise: s.orgSplit.orgShare,
@@ -1204,7 +1188,11 @@ async function resolveBookingJournalDebits(
   tx: Tx,
   payment: CreateEarningsParams["payment"],
   preplanned?: PreplannedEarningsContext | null,
-): Promise<{ debits: Posting[]; overageAccrualPaise: number }> {
+): Promise<{
+  debits: Posting[];
+  overageAccrualPaise: number;
+  hasWalletSurcharge: boolean;
+}> {
   const liveLegs =
     typeof tx.paymentLeg?.findMany === "function"
       ? await tx.paymentLeg.findMany({
@@ -1215,6 +1203,7 @@ async function resolveBookingJournalDebits(
   const legs = Array.isArray(liveLegs) ? liveLegs : (preplanned?.legs ?? []);
   const orgId = payment.organizationId ?? null;
   let overageAccrualPaise = 0;
+  let hasWalletSurcharge = false;
   const debits: Posting[] = [];
   const pushDebit = (account: AccountRef, amountPaise: number) => {
     if (amountPaise > 0) {
@@ -1225,6 +1214,8 @@ async function resolveBookingJournalDebits(
   if (legs.length > 0) {
     const tallied = tallyPaymentLegsBySource(legs);
     overageAccrualPaise = tallied.overageAccrualPaise;
+    hasWalletSurcharge =
+      tallied.wallet > payment.originalAmount + (payment.taxAmount ?? 0);
     pushDebit({ kind: "CASH" }, tallied.card);
 
     let walletLegOrgId = orgId;
@@ -1259,16 +1250,17 @@ async function resolveBookingJournalDebits(
       payment.originalAmount + (payment.taxAmount ?? 0) - fundingDebitTotal,
     ),
   );
-  return { debits, overageAccrualPaise };
+  return { debits, overageAccrualPaise, hasWalletSurcharge };
 }
 
 async function resolveOverageSurchargeForCredits(
   tx: Tx,
   paymentId: string,
   overageAccrualPaise: number,
+  hasWalletSurcharge: boolean,
   preplanned?: PreplannedEarningsContext | null,
 ): Promise<number> {
-  if (overageAccrualPaise <= 0) return 0;
+  if (overageAccrualPaise <= 0 && !hasWalletSurcharge) return 0;
   if (
     typeof tx.overageEvent?.findFirst === "function" &&
     (!preplanned || preplanned.orgOverageSurchargePaise === 0)
@@ -1299,6 +1291,7 @@ async function resolveBookingJournalCredits(
       { sharePaise: number; orgSplit: OrgEarningsSplit }
     >;
     overageAccrualPaise: number;
+    hasWalletSurcharge: boolean;
     preplanned?: PreplannedEarningsContext | null;
   },
 ): Promise<Posting[]> {
@@ -1311,6 +1304,7 @@ async function resolveBookingJournalCredits(
     splits,
     collabSettlements,
     overageAccrualPaise,
+    hasWalletSurcharge,
     preplanned,
   } = params;
 
@@ -1329,6 +1323,7 @@ async function resolveBookingJournalCredits(
     tx,
     payment.id,
     overageAccrualPaise,
+    hasWalletSurcharge,
     preplanned,
   );
   pushCredit({ kind: "PLATFORM_FEE" }, platformFeeCreditPaise);
@@ -1394,14 +1389,12 @@ async function postBookingLedgerJournal(
 ): Promise<void> {
   const { payment } = params;
   try {
-    const { debits, overageAccrualPaise } = await resolveBookingJournalDebits(
-      tx,
-      payment,
-      params.preplanned,
-    );
+    const { debits, overageAccrualPaise, hasWalletSurcharge } =
+      await resolveBookingJournalDebits(tx, payment, params.preplanned);
     const credits = await resolveBookingJournalCredits(tx, {
       ...params,
       overageAccrualPaise,
+      hasWalletSurcharge,
     });
     await postLedgerTxn(tx, {
       idempotencyKey: `booking:${payment.id}`,
@@ -1608,6 +1601,7 @@ export async function createEarningsFromPayment(
     }
 
     await createPrimaryAndCollabOrgEarnings(tx, {
+      consultantProfileId,
       orgSplit,
       collabSettlements,
       paymentId: payment.id,
@@ -1831,6 +1825,8 @@ export async function getConsultantEarnings(
             organizationId: true,
             organization: { select: { name: true } },
             legs: { select: { source: true } },
+            attributionSource: true,
+            platformFeeBps: true,
             appointment: {
               select: {
                 id: true,

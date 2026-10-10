@@ -13,6 +13,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
+import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -36,7 +37,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { throwSupportError } from "@/lib/support/error-copy";
+import { describeWait } from "@/components/support/useSupportThread";
+import {
+  SupportRequestError,
+  throwSupportError,
+} from "@/lib/support/error-copy";
 import { canRaiseAboutOrg } from "@/lib/support/about-org";
 import { SupportPriority } from "@prisma/client";
 import {
@@ -62,6 +67,19 @@ interface OrgMembership {
 /** "About" value for a personal request. */
 const ABOUT_ME = "me";
 
+const CreatedTicket = z.object({
+  id: z.string(),
+  referenceNumber: z.string().nullish(),
+  ackDueAt: z.string().nullish(),
+});
+
+const PRIORITY_BY_VALUE: Record<string, SupportPriority> = {
+  LOW: "LOW",
+  MEDIUM: "MEDIUM",
+  HIGH: "HIGH",
+  URGENT: "URGENT",
+};
+
 export function CreateTicketDialog({
   trigger,
   defaults,
@@ -69,9 +87,9 @@ export function CreateTicketDialog({
 }: {
   /** Custom trigger node; defaults to a "New request" button. */
   trigger?: React.ReactNode;
-  /** Pre-fill, e.g. org Billing's "Request an invoice" (#1527 Q8). */
+  /** Pre-fill, e.g. org Billing's "Request an invoice". */
   defaults?: CreateTicketDefaults;
-  /** #1527 — the new request's page; the dialog navigates there on create. */
+  /** The new request's page; the dialog navigates there on create. */
   requestHref?: (ticketId: string) => string;
 }) {
   const router = useRouter();
@@ -81,11 +99,12 @@ export function CreateTicketDialog({
   const [description, setDescription] = useState(defaults?.description ?? "");
   const [priority, setPriority] = useState<SupportPriority>("MEDIUM");
   const [about, setAbout] = useState(defaults?.organizationId ?? ABOUT_ME);
+  const [callbackRequested, setCallbackRequested] = useState(false);
+  const [callbackPhone, setCallbackPhone] = useState("");
+  const [phoneError, setPhoneError] = useState<string | null>(null);
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  // #1527 — orgs this viewer may raise a request about; the route re-checks.
-  // Same key as the Support hub's session picker (ACTIVE memberships).
   const memberships = useQuery({
     queryKey: ["user-org-memberships"],
     queryFn: async (): Promise<OrgMembership[]> => {
@@ -109,16 +128,21 @@ export function CreateTicketDialog({
           title: title.trim(),
           description: description.trim(),
           priority,
+          ...(callbackRequested && callbackPhone.trim()
+            ? { callbackPhone: callbackPhone.trim() }
+            : {}),
           ...(about !== ABOUT_ME && { organizationId: about }),
         }),
       });
       if (!res.ok) await throwSupportError(res, "request create");
-      return (await res.json()) as { id: string };
+      return CreatedTicket.parse(await res.json());
     },
     onSuccess: (ticket) => {
       toast({
-        title: "Request created",
-        description: "Our team will reply here and by email.",
+        title: ticket.referenceNumber
+          ? `Request ${ticket.referenceNumber} created`
+          : "Request created",
+        description: describeWait(ticket.ackDueAt),
       });
       void qc.invalidateQueries({ queryKey: ["user-support-tickets"] });
       void qc.invalidateQueries({ queryKey: ["org-support-tickets"] });
@@ -127,15 +151,26 @@ export function CreateTicketDialog({
       setTitle(defaults?.title ?? "");
       setDescription(defaults?.description ?? "");
       setPriority("MEDIUM");
+      setCallbackRequested(false);
+      setCallbackPhone("");
+      setPhoneError(null);
       setAbout(defaults?.organizationId ?? ABOUT_ME);
-      if (requestHref && ticket?.id) router.push(requestHref(ticket.id));
+      if (requestHref) router.push(requestHref(ticket.id));
     },
-    onError: (e: unknown) =>
+    onError: (e: unknown) => {
+      const fieldErrors =
+        e instanceof SupportRequestError ? e.fieldErrors : undefined;
+      setPhoneError(fieldErrors?.callbackPhone ?? null);
+      const fieldMessage = fieldErrors
+        ? Object.values(fieldErrors)[0]
+        : undefined;
       toast({
         title: "Couldn't create request",
-        description: e instanceof Error ? e.message : undefined,
+        description:
+          fieldMessage ?? (e instanceof Error ? e.message : undefined),
         variant: "destructive",
-      }),
+      });
+    },
   });
 
   const valid =
@@ -245,7 +280,13 @@ export function CreateTicketDialog({
             <Label htmlFor="new-ticket-priority">Priority</Label>
             <Select
               value={priority}
-              onValueChange={(v) => setPriority(v as SupportPriority)}
+              onValueChange={(v) => {
+                const nextPriority = PRIORITY_BY_VALUE[v] ?? "MEDIUM";
+                setPriority(nextPriority);
+                setCallbackRequested(
+                  nextPriority === "HIGH" || nextPriority === "URGENT",
+                );
+              }}
             >
               <SelectTrigger id="new-ticket-priority">
                 <SelectValue />
@@ -259,12 +300,56 @@ export function CreateTicketDialog({
             </Select>
           </div>
 
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <input
+                type="checkbox"
+                checked={callbackRequested}
+                onChange={(e) => setCallbackRequested(e.target.checked)}
+              />
+              <span>Request urgent phone callback</span>
+            </label>
+            {callbackRequested && (
+              <>
+                <Input
+                  id="new-ticket-callback-phone"
+                  type="tel"
+                  aria-label="Callback phone number"
+                  aria-invalid={phoneError ? true : undefined}
+                  aria-describedby={
+                    phoneError ? "new-ticket-callback-phone-error" : undefined
+                  }
+                  value={callbackPhone}
+                  onChange={(e) => {
+                    setCallbackPhone(e.target.value);
+                    setPhoneError(null);
+                  }}
+                  placeholder="+91 98765 43210"
+                  maxLength={32}
+                />
+                {phoneError && (
+                  <p
+                    id="new-ticket-callback-phone-error"
+                    role="alert"
+                    className="text-xs text-destructive"
+                  >
+                    {phoneError}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
             <Button
-              disabled={!valid || create.isPending}
+              disabled={
+                !valid ||
+                create.isPending ||
+                (callbackRequested && !callbackPhone.trim())
+              }
               onClick={() => create.mutate()}
             >
               {create.isPending ? "Creating…" : "Create request"}

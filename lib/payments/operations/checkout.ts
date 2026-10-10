@@ -105,6 +105,7 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import {
   recordOverageAtCheckout,
   notifyOverageDueAfterCommit,
@@ -868,6 +869,7 @@ export async function calculateAmountAndValidate(
       p: {
         archivedAt: Date | null;
         visibility: string;
+        organizationId?: string | null;
         status?: OfferingPlanStatus | null;
         consultantProfile: { verificationStatus: string } | null;
       },
@@ -895,7 +897,8 @@ export async function calculateAmountAndValidate(
         !MARKETPLACE_VISIBILITY.includes(
           p.visibility as (typeof MARKETPLACE_VISIBILITY)[number],
         ) &&
-        !validatedData.organizationId
+        (!validatedData.organizationId ||
+          (p.organizationId && p.organizationId !== validatedData.organizationId))
       ) {
         throw new Error(`${label} is not available`);
       }
@@ -3779,14 +3782,17 @@ export async function handleCheckout(
     // effectiveFrom..effectiveTo window. The Program's
     // `coveredPlanTypes` array filters which appointment types it
     // sponsors (empty array = covers everything).
-    if (fundingSource !== "PERSONAL") {
+    // For PERSONAL funding, an active ProgramAssignment is optional (enables
+    // curated-panel and cap/overage governance when assigned, while allowing
+    // unassigned personal bookings to proceed).
+    if (
+      fundingSource !== "PERSONAL" ||
+      Boolean(prisma.programAssignment?.findFirst)
+    ) {
       const now = new Date();
       const assignment = await prisma.programAssignment.findFirst({
         where: {
           membershipId: callerMembership.id,
-          // #1132 follow-up — only a live assignment may sponsor new spend.
-          // The period window alone matched ROLLED / CLOSED / CANCELLED rows
-          // whose periods a stale PATCH could extend.
           status: "ACTIVE",
           periodStart: { lte: now },
           periodEnd: { gte: now },
@@ -3808,13 +3814,7 @@ export async function handleCheckout(
         select: { id: true, programId: true },
       });
 
-      if (!assignment) {
-        // #1467 — a lapsed contract or a closed programme is a routine refusal
-        // the member's own admin can undo, but the bare Error matched nothing in
-        // BUSINESS_ERROR_PATTERNS and classifyError answered 500 UNKNOWN_ERROR:
-        // the buyer could not tell it from a crash and Sentry logged a false
-        // incident. 409 because the request is well-formed and the org's
-        // entitlement state is what conflicts with it.
+      if (!assignment && fundingSource !== "PERSONAL") {
         throw Object.assign(
           new Error(
             "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
@@ -3824,15 +3824,10 @@ export async function handleCheckout(
           { httpStatus: 409, code: "PROGRAM_ASSIGNMENT_INACTIVE" },
         );
       }
-      programAssignmentId = assignment.id;
-
-      // ADR 18 — the Program is resolved HERE, but the authoritative
-      // curated-panel check runs inside revalidateInsideLock, where the
-      // plan's consultant is loaded and the distributed lock closes the
-      // TOCTOU window: allowlist rows exist for the resolved Program ⇒ the
-      // booked plan's consultant must be listed. Absent rows keep the
-      // network open — sponsors fund any marketplace consultant by design.
-      fundingProgramId = assignment.programId;
+      if (assignment) {
+        programAssignmentId = assignment.id;
+        fundingProgramId = assignment.programId;
+      }
     }
   }
 
@@ -3965,6 +3960,14 @@ export async function handleCheckout(
     // rather than inside any of them — a rail that moved mid-checkout is read
     // once, here, instead of being re-asked at each use.
     if (freshOrgFunding) {
+      if (freshOrgFunding.fundingSource !== fundingSource) {
+        throw Object.assign(
+          new Error(
+            "This organization's funding source changed while this booking was in progress. Please refresh and try again.",
+          ),
+          { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
+        );
+      }
       fundingSource = freshOrgFunding.fundingSource;
       billingAccountId = freshOrgFunding.billingAccountId;
       creditEffectiveLimit = freshOrgFunding.creditEffectiveLimit;
@@ -4272,19 +4275,15 @@ export async function handleCheckout(
             //     debits land in SchedulingService.createAppointments,
             //     1 per allocation batch.
             let engagementsForCap: number | null = null;
-            // #1554 — CLASS meters its occurrence ids, not the one wrapper.
             let classEngagementIds: string[] = [];
+            let bookedPlan: {
+              consultantProfileId?: string | null;
+              organizationId?: string | null;
+            } | null = null;
 
-            // FIX #520: Zero-amount payments (credits cover full cost) skip the
-            // gateway, so slots should be confirmed immediately just like mock payments.
-            // Enterprise: org-sponsored payments also skip the gateway.
             const skipPayment =
               isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
 
-            // #1499 — whose ladder governs this sale, resolved once inside the
-            // booking transaction. Org-funded means the ORG'S MONEY moves on a
-            // refund, so the org's published version binds; a personal booking
-            // merely tagged to an org keeps the platform ladder.
             const cancellationPolicyId =
               await resolveCheckoutCancellationPolicyId(tx, {
                 organizationId: isOrgSponsoredPayment ? organizationId : null,
@@ -4300,24 +4299,11 @@ export async function handleCheckout(
             // Create appointment based on type (with isTentative flag)
             switch (validatedData.appointmentType) {
               case "CONSULTATION": {
-                // The authoritative consultee-conflict re-assertion, on the tx
-                // that is about to write the occurrence. This is the only place
-                // the predicate can close the race: read here, before the
-                // write, it leaves a predicate read that a concurrent twin's
-                // insert antidepends on, so SSI aborts one of the pair and
-                // withSerializableRetry replays the loser — whose second run
-                // sees the winner's committed row and refuses with the same
-                // message. The under-lock check in revalidateInsideLock reads a
-                // transaction that has already committed and cannot do this.
                 if (validatedData.startsAt && validatedData.endsAt) {
                   await assertConsulteeHasNoOverlappingSession(tx, {
                     userId,
                     startsAt: validatedData.startsAt!,
                     endsAt: validatedData.endsAt!,
-                    // #1463 — resolved here, on the same tx and window the
-                    // handler's own availability check will use, so the buyer's
-                    // open order for this exact window is excluded rather than
-                    // read back as a competing session.
                     selfHoldAppointmentIds: await findSelfHoldAppointmentIds(
                       tx,
                       {
@@ -4344,18 +4330,12 @@ export async function handleCheckout(
                   organizationId,
                 );
                 createdAppointment = consultationResult.appointment;
+                bookedPlan = consultationResult.plan;
                 engagementsForCap = 1;
                 break;
               }
 
               case "SUBSCRIPTION": {
-                // No consultee-conflict re-assertion here, and the asymmetry
-                // with the arm above is deliberate: this handler writes a
-                // slot-less placeholder appointment, so a window predicate read
-                // on this tx would antidepend on nothing this transaction
-                // writes and back no invariant. The session it eventually
-                // books is allocated later, where the allocator's own
-                // availability check is the gate.
                 const subscriptionResult = await handleSubscriptionCheckout(
                   tx,
                   validatedData,
@@ -4365,11 +4345,8 @@ export async function handleCheckout(
                   cancellationPolicyId,
                   subscriptionSchedulingPeriod,
                 );
-                // Use placeholder appointment for payment linkage
-                // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
                 createdAppointment = subscriptionResult.appointment;
-                // engagementsForCap stays null — debit happens at
-                // SchedulingService.createAppointments time.
+                bookedPlan = subscriptionResult.plan;
                 break;
               }
 
@@ -4403,6 +4380,7 @@ export async function handleCheckout(
                   }
                 }
                 createdAppointment = webinarResult.appointment;
+                bookedPlan = webinarResult.plan;
                 engagementsForCap = 1;
                 break;
               }
@@ -4436,8 +4414,8 @@ export async function handleCheckout(
                     });
                   }
                 }
-                // #1554 — one wrapper per class carries the payment linkage.
                 createdAppointment = classResult.appointment || null;
+                bookedPlan = classResult.plan;
                 engagementsForCap = classResult.engagementsConsumed;
                 classEngagementIds = classResult.engagementIds;
                 break;
@@ -4449,13 +4427,51 @@ export async function handleCheckout(
                 );
             }
 
+            let hostOrganizationId: string | null = null;
+            if (ENABLE_HOST_ORGS) {
+              const planOwnerOrgId = bookedPlan?.organizationId ?? null;
+              if (
+                bookedPlan?.consultantProfileId &&
+                typeof tx.membership?.findFirst === "function"
+              ) {
+                const ownerMembership = planOwnerOrgId
+                  ? await tx.membership.findFirst({
+                      where: {
+                        consultantProfileId: bookedPlan.consultantProfileId,
+                        role: "EXPERT",
+                        status: "ACTIVE",
+                        organizationId: planOwnerOrgId,
+                        organization: { canHost: true, status: "ACTIVE" },
+                      },
+                      select: { organizationId: true },
+                    })
+                  : null;
+                const hostMembership =
+                  ownerMembership ??
+                  (await tx.membership.findFirst({
+                    where: {
+                      consultantProfileId: bookedPlan.consultantProfileId,
+                      role: "EXPERT",
+                      status: "ACTIVE",
+                      organization: { canHost: true, status: "ACTIVE" },
+                    },
+                    orderBy: { createdAt: "asc" },
+                    select: { organizationId: true },
+                  }));
+                hostOrganizationId = hostMembership?.organizationId ?? null;
+              } else {
+                hostOrganizationId = planOwnerOrgId;
+              }
+            }
+
             // Create payment record linked to appointment (if created)
             // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
             const payment = await tx.payment.create({
               data: {
                 amount,
                 originalAmount,
-                taxAmount,
+                // The licence invoice books the GST; a licensed booking books none.
+                taxAmount: isOrgLicensedPayment ? 0 : taxAmount,
                 currency,
                 paymentMethod: isOrgWalletPayment
                   ? "WALLET"
@@ -4467,13 +4483,10 @@ export async function handleCheckout(
                         ? "CREDITS"
                         : "CARD",
                 paymentIntent: paymentResponse!.id,
-                // #828 — unique; a concurrent duplicate attempt dies on P2002
-                // and the route replays this payment's original response.
                 clientIdempotencyKey:
                   validatedData.clientIdempotencyKey ??
                   globalThis.crypto.randomUUID(),
                 paymentGateway: validatedData.paymentGateway,
-                // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
                 paymentStatus: skipPayment
                   ? PaymentStatus.SUCCEEDED
                   : PaymentStatus.PENDING,
@@ -4487,33 +4500,12 @@ export async function handleCheckout(
                 isInternational,
                 displayCurrencyAtCheckout,
                 exchangeRateAtCheckout,
-                // #1365 — GST place of supply for the tax invoice: what the
-                // buyer declared here, else what their profile already holds,
-                // else null (the s.12(2)(b) supplier-state default).
                 consumerStateCode:
                   validatedData.consumerStateCode ??
                   consulteeBillingStateCode ??
                   null,
-                // Enterprise (Arch 4): org tag for reporting / billing.
-                //
-                // #1854 — `organizationId` and `billingAccountId` are
-                // INDEPENDENT columns and no DB constraint ties them, which is
-                // deliberate rather than an oversight: a `PERSONAL`-rail org
-                // booking carries BOTH (the org is tagged for reporting, and
-                // the account is on file) while the money came from the
-                // member's card, so any constraint equating "has an account"
-                // with "the org paid" would reject a legitimate row. Which is
-                // exactly why they must not be read interchangeably, and they
-                // were. Every consumer of "did the org fund this" now reads the
-                // money column: `sponsoredSeatsWhere` and `org-actor.ts` filter
-                // on `Payment.organizationId` + `paymentMethod`, the refund rail
-                // routes on `Payment.billingAccountId`, and the org appointments
-                // list requires a funded Payment. `organizationId` is a TAG (who
-                // to report the session to); `billingAccountId` plus the method
-                // is the money. Treat the tag as a label and the method as the
-                // truth, or a member's own-card purchase becomes an org-funded
-                // one and the org is invoiced for a seat it did not buy.
                 organizationId,
+                hostOrganizationId,
                 billingAccountId,
                 attributionSource,
                 attributionReferralId,
@@ -4523,10 +4515,6 @@ export async function handleCheckout(
               },
             });
 
-            // #1365 — remember a newly declared billing state on the profile so
-            // a repeat buyer is never asked for it twice. Same transaction as
-            // the Payment: the declaration and the supply it applies to are one
-            // fact. updateMany, so a missing profile is a no-op, not a throw.
             if (
               validatedData.consumerStateCode &&
               validatedData.consumerStateCode !== consulteeBillingStateCode
@@ -4537,9 +4525,6 @@ export async function handleCheckout(
               });
             }
 
-            // #1319 A9 — stamp the funding Payment on the participant rows and,
-            // when no gateway leg follows (mock / zero-amount / org-sponsored),
-            // confirm them here since no capture webhook ever will.
             if (createdAppointment) {
               const participantWhere =
                 validatedData.appointmentType === "CLASS" &&
@@ -4552,8 +4537,6 @@ export async function handleCheckout(
                 validatedData.appointmentType === "CLASS" &&
                 validatedData.eventId
               ) {
-                // Cross-appointment scope (every session of the class); the
-                // helper is per-appointment.
                 await tx.appointmentParticipant.updateMany({
                   where: { ...participantWhere, paymentId: null },
                   data: { paymentId: payment.id },
@@ -4573,15 +4556,7 @@ export async function handleCheckout(
               }
             }
 
-            // Enterprise: WALLET fundingSource — debit from BillingAccount
-            // atomically via the wallet helper (raw-SQL conditional UPDATE).
-            // Triggered only when we also have a resolved program assignment,
-            // which guarantees the booking is actually sponsored.
             if (isOrgWalletPayment && billingAccountId) {
-              // #837 — refuse to spend a wallet whose cache drifted from the
-              // journal (frozen by the ledger-reconcile job): the balance can't
-              // be trusted until ops reconciles. Chargeback recovery is NOT gated
-              // (see wallet-freeze.ts).
               if (await isWalletFrozen(tx, billingAccountId)) {
                 throw new WalletFrozenError(billingAccountId);
               }
@@ -4594,23 +4569,6 @@ export async function handleCheckout(
               });
             }
 
-            // Enterprise: write the Program utilization row + a PaymentLeg
-            // that describes where the money (or commitment) actually came
-            // from. This is the runtime source of truth for sponsorship
-            // attribution — analytics / invoicing / cap enforcement all read
-            // these rows rather than back-deriving from `paymentMethod`.
-            //
-            // E2E-audit F-1 fix — the FUNDING LEG is written for every
-            // org-sponsored payment, INCLUDING SUBSCRIPTION. Subscriptions
-            // meter engagements lazily (at allocation), but their money moves
-            // HERE: the wallet debit above journals against the WALLET leg in
-            // the ledger, the invoice rollup only collects INVOICE_ACCRUAL
-            // legs, and refunds credit wallets back leg-proportionally.
-            // Skipping the leg made (SUBSCRIPTION × WALLET) journal real
-            // money as platform CASH (guaranteed WALLET_BALANCE_DRIFT →
-            // auto-frozen wallet), left (SUBSCRIPTION × INVOICE) permanently
-            // unbilled, and gave (SUBSCRIPTION × LICENSE) no fulfillment
-            // proof. Utilization metering stays gated on engagementsForCap.
             if (programAssignmentId && isOrgSponsoredPayment) {
               await tx.paymentLeg.create({
                 data: {
@@ -4620,20 +4578,13 @@ export async function handleCheckout(
                     : isOrgLicensedPayment
                       ? "LICENSE"
                       : "INVOICE_ACCRUAL",
-                  // LICENSE absorbs the cost entirely at the contract level
-                  // — the per-booking leg is zero so totals across all legs
-                  // still reconcile to the Payment amount.
                   amountPaise: isOrgLicensedPayment ? 0 : amount,
                   sourceRef: programAssignmentId,
                 },
               });
             }
 
-            if (
-              programAssignmentId &&
-              isOrgSponsoredPayment &&
-              engagementsForCap !== null
-            ) {
+            if (programAssignmentId && engagementsForCap !== null) {
               let utilizationResult: Awaited<
                 ReturnType<typeof recordBookingUtilization>
               > = {
@@ -4746,12 +4697,14 @@ export async function handleCheckout(
               //     and the gateway webhook transitions it → CHARGED.
               //   - BLOCK behavior: never reaches here (helper already threw).
               //     The circuit-breaker veto is the only BLOCK decision here.
-              if (utilizationResult.wasOverage) {
+              if (utilizationResult.wasOverage && isOrgSponsoredPayment) {
                 // #778 elegance — extracted to recordOverageAtCheckout (resolves
                 // the behaviour via computeOverage, enforces the circuit breaker,
                 // persists the OverageEvent + CHARGE_MEMBER side-Payment /
                 // CHARGE_ORG accrual leg). Throws PROGRAM_CAP_EXHAUSTED (402) on
-                // the breaker veto.
+                // the breaker veto. PERSONAL-funded bookings already charge the
+                // member's gateway directly, so only org-sponsored payments run
+                // checkout overage settlement.
                 overageBell = await recordOverageAtCheckout({
                   tx,
                   programAssignmentId,
@@ -4891,8 +4844,15 @@ export async function handleCheckout(
                 where: { paymentId: payment.id },
                 select: { source: true, amountPaise: true },
               });
+              const currentPayment =
+                typeof tx.payment?.findUnique === "function"
+                  ? await tx.payment.findUnique({
+                      where: { id: payment.id },
+                      select: { amount: true },
+                    })
+                  : null;
               const legMismatch = checkPaymentLegsSumToAmount({
-                paymentAmountPaise: payment.amount,
+                paymentAmountPaise: currentPayment?.amount ?? payment.amount,
                 legs: writtenLegs,
               });
               if (legMismatch) {
@@ -5016,6 +4976,23 @@ export async function handleCheckout(
         await mintConsumerInvoiceBestEffort({
           paymentIntent: paymentResponse!.id,
         });
+
+        const appointmentIdForChannels = result.appointmentId;
+        if (appointmentIdForChannels) {
+          scheduleAfter(async () => {
+            try {
+              const { ensureChannelsForAppointment } = await import(
+                "@/lib/payments/webhooks/ensure-channels"
+              );
+              await ensureChannelsForAppointment(appointmentIdForChannels);
+            } catch (channelErr) {
+              console.error(
+                "[checkout.ensure-channels] failed:",
+                channelErr,
+              );
+            }
+          }, "checkout.ensure-channels");
+        }
       }
 
       let message =

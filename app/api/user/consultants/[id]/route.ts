@@ -226,10 +226,10 @@ export async function GET(
     // themselves + ADMIN) see everything; the public include narrows
     // to PUBLIC + ORG_AND_PUBLIC.
     const planVisibilityFilter:
-      | { visibility: { in: OrgPlanVisibility[] } }
-      | undefined = isPrivilegedAccess
-      ? undefined
-      : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
+      { visibility: { in: OrgPlanVisibility[] } } | undefined =
+      isPrivilegedAccess
+        ? undefined
+        : { visibility: { in: ["PUBLIC", "ORG_AND_PUBLIC"] } };
     // #1527 Q4 — 1:1 and subscription plans also hide drafts (and archived
     // rows) from the public include.
     const oneOnOnePlanFilter = isPrivilegedAccess
@@ -326,6 +326,9 @@ export async function GET(
           : {
               "Cache-Control":
                 "public, s-maxage=60, stale-while-revalidate=300",
+              // The payload depends on who is signed in, so the shared copy is keyed on the session cookie.
+              "Netlify-Vary":
+                "cookie=__Secure-better-auth.session_token|better-auth.session_token",
             },
       },
     );
@@ -759,10 +762,15 @@ export async function DELETE(
       select: {
         userId: true,
         deletedAt: true,
-        // #781 §B — earnings/payouts/TDS Restrict this profile; a profile
-        // that ever moved money can only soft-delete.
+        // #781 §B / #2006 — earnings/organizationEarnings/payouts/TDS Restrict
+        // this profile; a profile that ever moved money can only soft-delete.
         _count: {
-          select: { earnings: true, payouts: true, tdsRecords: true },
+          select: {
+            earnings: true,
+            organizationEarnings: true,
+            payouts: true,
+            tdsRecords: true,
+          },
         },
       },
     });
@@ -788,6 +796,7 @@ export async function DELETE(
 
     const hasMoneyHistory =
       ownerCheck._count.earnings +
+        (ownerCheck._count.organizationEarnings ?? 0) +
         ownerCheck._count.payouts +
         ownerCheck._count.tdsRecords >
       0;
@@ -844,6 +853,11 @@ export async function DELETE(
       await tx.consultantReview.deleteMany({
         where: { consultantProfileId: id },
       });
+      if (typeof tx.payoutAccount?.deleteMany === "function") {
+        await tx.payoutAccount.deleteMany({
+          where: { consultantProfileId: id },
+        });
+      }
       await tx.consultantProfile.delete({ where: { id } });
       return removed;
     });

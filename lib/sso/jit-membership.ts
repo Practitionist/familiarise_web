@@ -30,7 +30,9 @@
 import { Prisma, type MemberRole } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
+import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { UNVERIFIED_ORG_SEAT_CAP } from "@/lib/enterprise/governance";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
@@ -123,7 +125,7 @@ export async function provisionSsoMembership(
             userId,
             role,
           });
-          await tx.membership.create({
+          const created = await tx.membership.create({
             data: {
               userId,
               organizationId,
@@ -134,6 +136,36 @@ export async function provisionSsoMembership(
               payoutRecipient: roleEffects.payoutRecipient,
             },
           });
+          if (typeof tx.orgAuditLog?.create === "function") {
+            await tx.orgAuditLog.create({
+              data: {
+                organizationId,
+                targetMembershipId: created?.id ?? null,
+                category: "MEMBER",
+                action: AUDIT_ACTIONS.MEMBER.MEMBER_ADDED,
+                description: `Member joined via SSO auto-join (${role})`,
+                details: {
+                  userId,
+                  providerId,
+                  role,
+                  source: "SSO_JIT",
+                },
+              },
+            });
+          }
+          if (typeof tx.webhookEndpoint?.findMany === "function") {
+            await dispatchWebhookEvent({
+              prisma: tx,
+              organizationId,
+              eventType: "member.added",
+              payload: {
+                membershipId: created?.id ?? null,
+                userId,
+                role,
+                source: "SSO_JIT",
+              },
+            });
+          }
           return true;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

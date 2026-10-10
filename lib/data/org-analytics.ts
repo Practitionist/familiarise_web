@@ -17,10 +17,28 @@ import prisma from "@/lib/prisma";
 import { ledgerAccountId } from "@/lib/payments/ledger/post";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { resolveActivationSignals } from "@/lib/enterprise/org-activation-signals";
-import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+export interface OrgMonthlySeriesPoint {
+  month: string;
+  spendPaise: number;
+  engagementsCount: number;
+  overagePaise: number;
+  activeLearners: number;
+}
+
+export interface OrgProgramBreakdownRow {
+  programId: string;
+  name: string;
+  subType: string;
+  utilizedPaise: number;
+  engagementsUsed: number;
+  overageCount: number;
+  overagePaise: number;
+}
 
 export interface OrgAnalyticsPayload {
   status: OrgStatus;
@@ -42,6 +60,8 @@ export interface OrgAnalyticsPayload {
     active: number;
     activeAssignments: number;
   };
+  monthlySeries: OrgMonthlySeriesPoint[];
+  programBreakdown: OrgProgramBreakdownRow[];
   wallet: {
     balancePaise: number;
     recent: Array<{ reason: string; count: number; deltaPaise: number }>;
@@ -92,7 +112,21 @@ export async function getOrgAnalytics(
   });
   if (!org) return null;
 
-  const thirtyDaysAgo = new Date(Date.now() - THIRTY_DAYS_MS);
+  const now = new Date();
+  const thirtyDaysAgo = new Date(now.getTime() - THIRTY_DAYS_MS);
+  const sixMonthsStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1),
+  );
+  const monthKeys: string[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1),
+    );
+    monthKeys.push(
+      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`,
+    );
+  }
+
   // Same row as the include above: BillingAccount.ownerOrgId is a @unique
   // 1:1 back-reference to Organization.billingAccountId, so this is the
   // identical account — no separate round-trip needed. (Was a serial
@@ -112,6 +146,8 @@ export async function getOrgAnalytics(
     licenseSubscription,
     reimbursementAgg,
     activationSignals,
+    sixMonthUtilizations,
+    programsWithUsage,
   ] = await Promise.all([
     prisma.membership.groupBy({
       by: ["status"],
@@ -131,7 +167,7 @@ export async function getOrgAnalytics(
     prisma.programAssignment.count({
       where: {
         program: { contract: { organizationId: orgId } },
-        periodEnd: { gte: new Date() },
+        periodEnd: { gte: now },
       },
     }),
     // #772 B3 — wallet activity derives from the double-entry journal: group the
@@ -214,7 +250,7 @@ export async function getOrgAnalytics(
       : Promise.resolve(0),
     // Honesty gate (#687): with ENABLE_HOST_ORGS off no new splits accrue, so
     // don't surface host earnings even if canHost is still set on the row.
-    ENABLE_HOST_ORGS && org.canHost
+    isHostOrgsEnabled() && org.canHost
       ? prisma.organizationEarnings.groupBy({
           by: ["status"],
           where: { organizationId: orgId },
@@ -250,6 +286,70 @@ export async function getOrgAnalytics(
     // pending-overage / stuck-payout / credit cap-near) the home action-center
     // needs but the tiles above don't already carry.
     resolveActivationSignals(orgId),
+    prisma.bookingUtilization.findMany({
+      where: {
+        reversedAt: null,
+        deletedAt: null,
+        createdAt: { gte: sixMonthsStart },
+        programAssignment: {
+          program: { contract: { organizationId: orgId } },
+        },
+      },
+      select: {
+        createdAt: true,
+        engagementsConsumed: true,
+        priceAtBookingPaise: true,
+        wasOverage: true,
+        overageEvent: {
+          select: {
+            marginalPaise: true,
+            chargeStatus: true,
+            reversedAt: true,
+          },
+        },
+        programAssignment: {
+          select: {
+            membershipId: true,
+            programId: true,
+          },
+        },
+      },
+    }),
+    prisma.program.findMany({
+      where: {
+        contract: { organizationId: orgId },
+        archivedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        assignments: {
+          select: {
+            utilizations: {
+              where: {
+                reversedAt: null,
+                deletedAt: null,
+                createdAt: { gte: sixMonthsStart },
+              },
+              select: {
+                priceAtBookingPaise: true,
+                engagementsConsumed: true,
+                wasOverage: true,
+                overageEvent: {
+                  select: {
+                    marginalPaise: true,
+                    chargeStatus: true,
+                    reversedAt: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
   ]);
 
   const memberTotal = memberAggregate.reduce(
@@ -264,6 +364,103 @@ export async function getOrgAnalytics(
   const programTotalCount = programTotal.reduce(
     (acc, s) => acc + s._count._all,
     0,
+  );
+
+  const buckets = new Map<
+    string,
+    {
+      spendPaise: number;
+      engagementsCount: number;
+      overagePaise: number;
+      learners: Set<string>;
+    }
+  >();
+  for (const key of monthKeys) {
+    buckets.set(key, {
+      spendPaise: 0,
+      engagementsCount: 0,
+      overagePaise: 0,
+      learners: new Set<string>(),
+    });
+  }
+
+  for (const u of sixMonthUtilizations) {
+    const dt =
+      u.createdAt instanceof Date ? u.createdAt : new Date(u.createdAt);
+    const ym = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+    const bucket = buckets.get(ym);
+    if (!bucket) continue;
+
+    const pricePaise = Number(u.priceAtBookingPaise ?? 0);
+    const engagements = Number(u.engagementsConsumed ?? 0);
+    bucket.spendPaise += pricePaise;
+    bucket.engagementsCount += engagements;
+
+    if (
+      u.overageEvent &&
+      !u.overageEvent.reversedAt &&
+      u.overageEvent.chargeStatus !== "REVERSED" &&
+      u.overageEvent.chargeStatus !== "BLOCKED"
+    ) {
+      bucket.overagePaise += Number(u.overageEvent.marginalPaise ?? 0);
+    } else if (u.wasOverage && !u.overageEvent) {
+      bucket.overagePaise += pricePaise;
+    }
+
+    if (u.programAssignment?.membershipId) {
+      bucket.learners.add(u.programAssignment.membershipId);
+    }
+  }
+
+  const monthlySeries: OrgMonthlySeriesPoint[] = monthKeys.map((month) => {
+    const b = buckets.get(month)!;
+    return {
+      month,
+      spendPaise: b.spendPaise,
+      engagementsCount: b.engagementsCount,
+      overagePaise: b.overagePaise,
+      activeLearners: b.learners.size,
+    };
+  });
+
+  const programBreakdown: OrgProgramBreakdownRow[] = programsWithUsage.map(
+    (p) => {
+      let utilizedPaise = 0;
+      let engagementsUsed = 0;
+      let overageCount = 0;
+      let overagePaise = 0;
+
+      for (const a of p.assignments ?? []) {
+        for (const u of a.utilizations ?? []) {
+          const pricePaise = Number(u.priceAtBookingPaise ?? 0);
+          utilizedPaise += pricePaise;
+          engagementsUsed += Number(u.engagementsConsumed ?? 0);
+          if (u.wasOverage) {
+            overageCount += 1;
+          }
+          if (
+            u.overageEvent &&
+            !u.overageEvent.reversedAt &&
+            u.overageEvent.chargeStatus !== "REVERSED" &&
+            u.overageEvent.chargeStatus !== "BLOCKED"
+          ) {
+            overagePaise += Number(u.overageEvent.marginalPaise ?? 0);
+          } else if (u.wasOverage && !u.overageEvent) {
+            overagePaise += pricePaise;
+          }
+        }
+      }
+
+      return {
+        programId: p.id,
+        name: p.name,
+        subType: p.type,
+        utilizedPaise,
+        engagementsUsed,
+        overageCount,
+        overagePaise,
+      };
+    },
   );
 
   return {
@@ -289,6 +486,8 @@ export async function getOrgAnalytics(
       active: programActive,
       activeAssignments,
     },
+    monthlySeries,
+    programBreakdown,
     wallet:
       org.billingAccount?.fundingSource === "WALLET"
         ? {
@@ -327,7 +526,7 @@ export async function getOrgAnalytics(
     // Honesty gate (#687): mirror the query gate above — flag off ⇒ null, not
     // an empty array, so a still-canHost row doesn't imply zeroed host earnings.
     earnings:
-      ENABLE_HOST_ORGS && org.canHost
+      isHostOrgsEnabled() && org.canHost
         ? earningsAggregate.map((e) => ({
             status: e.status,
             count: e._count._all,
@@ -355,6 +554,16 @@ export function orgAnalyticsForRole(
       // #1527 review — pendingOveragePaise is a paise figure too; keep the
       // non-money activation signals a SUPPORT viewer still needs.
       activation: { ...payload.activation, pendingOveragePaise: 0 },
+      monthlySeries: (payload.monthlySeries ?? []).map((pt) => ({
+        ...pt,
+        spendPaise: 0,
+        overagePaise: 0,
+      })),
+      programBreakdown: (payload.programBreakdown ?? []).map((row) => ({
+        ...row,
+        utilizedPaise: 0,
+        overagePaise: 0,
+      })),
       wallet: null,
       invoices: null,
       subscription: null,

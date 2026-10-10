@@ -145,6 +145,7 @@ const FAMILY_FOR_PATTERN: Record<string, string> = {
 };
 const POOL_EXHAUSTION_TEXT =
   /Unable to start a transaction in the given time|Timed out fetching a new connection from the connection pool|\bP2024\b/;
+const SCHEMA_DRIFT_TEXT = /\bP202[12]\b|does not exist in the current database/;
 
 const budgetLastSent = new Map<string, number>();
 let breakerSent: number[] = [];
@@ -170,9 +171,9 @@ function fingerprintFamily(event: Sentry.Event): string | null {
   const infra = infraThrottleKey(event);
   if (infra !== null) return FAMILY_FOR_PATTERN[infra] ?? null;
   if (event.tags?.pool_exhaustion === "true") return "prisma-pool-exhaustion";
-  return POOL_EXHAUSTION_TEXT.test(eventText(event))
-    ? "prisma-pool-exhaustion"
-    : null;
+  const text = eventText(event);
+  if (SCHEMA_DRIFT_TEXT.test(text)) return "prisma-schema-drift";
+  return POOL_EXHAUSTION_TEXT.test(text) ? "prisma-pool-exhaustion" : null;
 }
 
 function normaliseForKey(text: string): string {
@@ -246,6 +247,7 @@ export function applyErrorBudget<E extends Sentry.Event>(event: E): E | null {
   if (event.tags?.expected === "true" && event.level === "info") return null;
   const family = fingerprintFamily(event);
   if (family) event.fingerprint = [family];
+  if (family === "prisma-schema-drift") event.level = "fatal";
   return exceedsErrorBudget(budgetKey(event, family), event.level === "fatal")
     ? null
     : event;

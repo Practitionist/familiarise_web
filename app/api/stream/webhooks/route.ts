@@ -36,6 +36,7 @@ import {
   recordStreamEventReceipt,
   streamBaseEventSchema,
 } from "@/lib/stream/webhook-dispatch";
+import { isIgnoredEventType } from "@/lib/stream/webhook-events";
 import {
   getWebhookSecret,
   verifyStreamWebhookSignature,
@@ -160,6 +161,10 @@ export async function POST(req: NextRequest) {
 
     const baseEvent = streamBaseEventSchema.parse(event);
     const eventType = baseEvent.type;
+
+    if (isIgnoredEventType(eventType)) {
+      return NextResponse.json({ status: "ok", handled: false, ignored: true });
+    }
 
     if (!(HANDLED_EVENT_TYPES as readonly string[]).includes(eventType)) {
       streamLogger.debug(`Unhandled Stream event type: ${eventType}`);

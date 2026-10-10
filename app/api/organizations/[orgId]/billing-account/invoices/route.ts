@@ -16,10 +16,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { deriveGstBreakdown, orgBuyerCountry } from "@/lib/compliance/gst";
 import { lutNumberForSupply } from "@/lib/compliance/lut";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { drawPurchaseOrder } from "@/lib/payments/billing/purchase-order-draw";
+import { postInvoiceIssuedJournal } from "@/lib/payments/billing/org-invoice-journal";
 import {
   supplierStateCode,
   SupplierStateMismatchError,
@@ -44,7 +45,6 @@ const LineItemSchema = z.object({
   description: z.string().min(1).max(500),
   quantity: z.coerce.number().int().min(1),
   unitPrice: z.coerce.number().int().min(0),
-  paymentId: z.string().optional(),
 });
 
 const CreateBodySchema = z.object({
@@ -266,7 +266,7 @@ export async function POST(
     supplierStateCode: supplierState,
     buyerStateCode,
     buyerGstin: org.taxInfo?.gstin ?? null,
-    buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
+    buyerCountry: orgBuyerCountry(org),
     hsnCode: org.taxInfo?.hsnDefault,
   });
 
@@ -346,11 +346,14 @@ export async function POST(
               description: item.description,
               quantity: item.quantity,
               unitPricePaise: item.unitPrice,
-              paymentId: item.paymentId ?? null,
             })),
           },
         },
       });
+
+      if (body.issueImmediately) {
+        await postInvoiceIssuedJournal(tx, created.id);
+      }
 
       await tx.orgAuditLog.create({
         data: {

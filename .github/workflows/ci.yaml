@@ -165,13 +165,18 @@ jobs:
         run: npx --yes tsx@4.23.1 scripts/ci/check-workflow-hygiene.ts
 
   unit-tests:
-    name: Unit tests
+    name: Unit tests (${{ matrix.shard }})
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/2", "2/2"]
     services:
       redis:
-        image: redis
+        # Docker Hub's anonymous pull limit fails shared runners; ECR Public mirrors the official images.
+        image: public.ecr.aws/docker/library/redis:latest
         ports:
           - 6379:6379
         options: >-
@@ -201,7 +206,7 @@ jobs:
         run: npm run db:generate
 
       - name: Unit Tests
-        run: npm run test
+        run: npx jest --shard=${{ matrix.shard }} --coverage=false
 
   build:
     name: Build
@@ -211,7 +216,7 @@ jobs:
 
     services:
       redis:
-        image: redis
+        image: public.ecr.aws/docker/library/redis:latest
         ports:
           - 6379:6379
         options: >-
@@ -270,7 +275,7 @@ jobs:
     services:
       postgres:
         # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
-        image: postgres:17
+        image: public.ecr.aws/docker/library/postgres:17
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: ci

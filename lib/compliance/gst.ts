@@ -71,6 +71,13 @@ export interface GstBreakdown {
 
 const GST_RATE = 0.18; // 18% standard rate for SAC 999293, 998311 and 998399
 
+/** An organisation's GST buyer country: domestic only when its data residency is India. */
+export function orgBuyerCountry(org: {
+  dataResidencyRegion: string;
+}): "IN" | "US" {
+  return org.dataResidencyRegion === "IN" ? "IN" : "US";
+}
+
 /**
  * Derives GST breakdown for an invoice line subtotal.
  *

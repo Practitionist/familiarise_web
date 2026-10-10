@@ -138,14 +138,15 @@ export async function PUT(
     if (
       validatedData.sessionsPerWeek !== undefined ||
       validatedData.durationInMonths !== undefined ||
-      body.sessionDurationInHours !== undefined
+      validatedData.sessionDurationInHours !== undefined
     ) {
       const sessionsPerWeek =
         validatedData.sessionsPerWeek ?? existingPlan.sessionsPerWeek;
       const durationInMonths =
         validatedData.durationInMonths ?? existingPlan.durationInMonths;
       const sessionDurationInHours =
-        body.sessionDurationInHours ?? existingPlan.sessionDurationInHours;
+        validatedData.sessionDurationInHours ??
+        existingPlan.sessionDurationInHours;
 
       // Use accurate week counting instead of fixed * 4 approximation
       const metricStartDate = new Date();
@@ -227,7 +228,7 @@ export async function PUT(
               : undefined,
           priceCurrency: validatedData.priceCurrency,
           sessionsPerWeek: validatedData.sessionsPerWeek,
-          sessionDurationInHours: body.sessionDurationInHours,
+          sessionDurationInHours: validatedData.sessionDurationInHours,
           totalSessions,
           totalHours,
           emailSupport: validatedData.emailSupport,
@@ -241,7 +242,6 @@ export async function PUT(
           whatsIncluded: validatedData.whatsIncluded,
           faqs: faqReplaceNested(validatedData.faqs),
           recordingEnabled: validatedData.recordingEnabled,
-          recordingStoragePolicy: validatedData.recordingStoragePolicy,
           // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
           status: validatedData.status,
           trialEnabled: validatedData.trialEnabled,

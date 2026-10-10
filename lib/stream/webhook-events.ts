@@ -34,3 +34,12 @@ export const HANDLED_EVENT_TYPES = [
 ] as const;
 
 export type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
+
+/** Subscribed so the actual call start is recoverable later; acknowledged with no work today. */
+export const IGNORED_EVENT_TYPES = ["call.session_started"] as const;
+
+export type IgnoredEventType = (typeof IGNORED_EVENT_TYPES)[number];
+
+export function isIgnoredEventType(t: string): t is IgnoredEventType {
+  return (IGNORED_EVENT_TYPES as readonly string[]).includes(t);
+}

@@ -4,7 +4,6 @@
  * #1819 late-join rule has one enforcement point.
  */
 
-import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import {
   hiddenFromLateJoiner,
   type LateJoinAccess,
@@ -54,8 +53,8 @@ export function visibleSessionRecordings<R>(
   );
 }
 
-/** The visible recordings with a playable URL resolved for each. */
-export async function extractRecordings<
+/** The visible recordings as list rows; playback is fetched per play from GET /api/stream/recordings/[id]. */
+export function extractRecordings<
   R extends {
     id: string;
     title: string;
@@ -63,19 +62,25 @@ export async function extractRecordings<
     recordedAt: Date;
     thumbnailUrl: string | null;
     status: string;
-    storagePath: string | null;
-    recordingUrl: string | null;
   },
->(appointments: SessionWithRecordings<R>[], lateJoinScope?: LateJoinScope) {
-  return Promise.all(
-    visibleSessionRecordings(appointments, lateJoinScope).map(async (rec) => ({
-      id: rec.id,
-      title: rec.title,
-      durationInMinutes: rec.durationInMinutes,
-      recordedAt: rec.recordedAt,
-      playbackUrl: await getBestRecordingUrl(rec),
-      thumbnailUrl: rec.thumbnailUrl,
-      status: rec.status,
-    })),
-  );
+>(
+  appointments: SessionWithRecordings<R>[],
+  lateJoinScope?: LateJoinScope,
+): Pick<
+  R,
+  | "id"
+  | "title"
+  | "durationInMinutes"
+  | "recordedAt"
+  | "thumbnailUrl"
+  | "status"
+>[] {
+  return visibleSessionRecordings(appointments, lateJoinScope).map((rec) => ({
+    id: rec.id,
+    title: rec.title,
+    durationInMinutes: rec.durationInMinutes,
+    recordedAt: rec.recordedAt,
+    thumbnailUrl: rec.thumbnailUrl,
+    status: rec.status,
+  }));
 }

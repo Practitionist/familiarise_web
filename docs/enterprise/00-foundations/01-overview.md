@@ -3,13 +3,13 @@ title: Enterprise layer — overview
 band: 00-foundations
 audience: sde1
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-05
 ---
 
 # Enterprise layer — overview
 
 This band covers the organization primitives, programs, wallets, contracts,
-invoices, payouts, SSO, consent, HRIS, and the audit log. It is written for
+invoices, payouts, SSO, consent, data export, and the audit log. It is written for
 engineers working on anything under `app/api/organizations/**`,
 `app/api/admin/organizations/**`, or `app/dashboard/organization/**`, together
 with the related `lib/api/organizations/**`, `lib/labels/org-labels.ts`, and
@@ -35,10 +35,12 @@ how sponsored sessions are paid for. It is an enum set on the single
 `BillingAccount` row that belongs to a sponsor org, and its values are `PERSONAL`,
 `LICENSE`, `WALLET`, and `INVOICE`.
 
-The third primitive is the **Program**, which is where the commercial terms live.
+The third primitive is the **Program**, which is where the commercial terms live
+under a **Contract** (`Contract.kind`: `ContractKind` = `INITIAL | RENEWAL | AMENDMENT`).
 Every booking that an org sponsors is attributed to a Program, and each Program
-subtype (`LICENSED_SEAT` or `CREDIT_POOL`) is a row in its own config table. See
-[programs](../30-programs-and-lifecycle/02-programs.md) for the full treatment.
+type (`Program.type`: `ProgramType` = `LICENSED_SEAT | CREDIT_POOL`)
+is backed by its own 1:1 config table (`LicensedSeatConfig` or `CreditPoolConfig`).
+See [programs](../30-programs-and-lifecycle/02-programs.md) for the full treatment.
 
 ### `OrgWorkspaceProfile`
 
@@ -46,13 +48,17 @@ subtype (`LICENSED_SEAT` or `CREDIT_POOL`) is a row in its own config table. See
 that mirrors `StaffProfile` and `AdminProfile`, and it exists for any user who
 operates at least one org. `POST /api/organizations` provisions one inside the
 creation transaction, and `prisma/scripts/backfill-org-workspace-profiles.ts`
-covers existing OWNERs. The profile id surfaces on the BetterAuth session and
-backs the operator home at `/dashboard/org-workspace/:orgWorkspaceId/home`. That
-home redirects single-org operators straight into their one org, shows a chooser
-for multi-org operators, and presents a "create an organization" call to action
-for operators whose orgs have all been deactivated. See
-`docs/onboarding/01-system-reference.md` §0 for the full profile-model
-roster.
+covers existing OWNERs. It stores operator workspace preferences
+(`defaultLandingOrganizationId`, `notificationRoutingMode`, `locale`,
+`currencyDisplayCode`), while public directory and co-branding presentation live on
+`OrgBrandingProfile` (`logo`, `bannerImage`, `primaryColor`, `secondaryColor`,
+`description`, `industry`, `website`, `sizeBucket`, `directoryType`). The profile id surfaces on the BetterAuth
+session and backs the operator home at
+`/dashboard/org-workspace/:orgWorkspaceId/home`. That home redirects single-org
+operators straight into their one org, shows a chooser for multi-org operators, and
+presents a "create an organization" call to action for operators whose orgs have all
+been deactivated. See `docs/onboarding/01-system-reference.md` §0 for the full
+profile-model roster.
 
 ## Anatomy of one booking
 
@@ -185,21 +191,38 @@ models by subsystem, see [Schema by cluster](#schema-by-cluster) below.
 
 Three v2 lifecycle chains (#779 §A) are self-relations worth calling out. The
 first is `Contract.supersededByContractId`, the amend, renew, or replace chain in
-which the old row points forward and the new row is a fresh `Contract`. The second
-is `ProgramAssignment.rolledToAssignmentId`, the per-cycle rollover chain that the
-[cycle engine](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md) mints.
-The third is `Organization.parentOrganizationId`, the `OrgHierarchy` group tree, in
-which `rootOrganizationId` denormalizes the group root and there is no depth
-column.
+which the old row points forward and the new row is a fresh `Contract` tagged with
+`Contract.kind` (`ContractKind`: `INITIAL | RENEWAL | AMENDMENT`) and
+`Contract.supersessionReason` (`AMENDMENT | RENEWAL | TERMINATION_REPLACEMENT`). The
+second is `ProgramAssignment.rolledToAssignmentId`, the per-cycle rollover chain
+that the [cycle engine](../30-programs-and-lifecycle/08-cycle-engine-and-rollover.md)
+mints. The third is `Organization.parentOrganizationId`, the `OrgHierarchy` group
+tree, in which `rootOrganizationId` denormalizes the group root and there is no
+depth column.
+
+Cross-organization bookings (`Buyer Org != Host Org`) are represented directly on
+`Payment`: `Payment.organizationId` (`@relation("PaymentOrgTag")`) identifies the
+sponsor/buyer organization whose member booked the session, while
+`Payment.hostOrganizationId` (`@relation("PaymentHostOrg")`) identifies the
+supply/host organization whose expert delivered it. On the host side,
+`OrganizationEarnings` carries the composite unique constraint
+`@@unique([paymentId, organizationId, consultantProfileId, role, cycleOrdinal])` so
+multi-collaborator group sessions (`role`: `OWNER | COLLABORATOR`) where multiple
+collaborators belong to the same host org — as well as recurring subscription cycles
+(`cycleOrdinal`) — each get their own distinct `OrganizationEarnings` row.
+
+On the domain-identity side, `OrgDomainClaim` enforces `@@unique([organizationId, domain])`
+in Prisma paired with a partial unique index on `(domain) WHERE "verifiedAt" IS NOT NULL`
+in `prisma/sql/`, so multiple organizations can stage unverified domain claims
+without blocking one another while at most one organization can hold a verified
+claim on a domain.
 
 The over-cap money meter is the `OverageEvent` row (#775/#778). It is 1:1 with a
 `BookingUtilization` and splits into `basePaise` plus `surchargePaise`, which sum
-to `marginalPaise`. That marginal is routed to a `Payment` when the behaviour is
-CHARGE_MEMBER, or to an `InvoiceLineItem` when it is CHARGE_ORG. The per-cycle
-overage knobs — the `overageSurchargeBps` markup and the
-`maxOveragePerCyclePaise` circuit-breaker — live on `LicensedSeatConfig` and
-`CreditPoolConfig`, which are not drawn as their own entity blocks below; see
-[programs](../30-programs-and-lifecycle/02-programs.md).
+to `marginalPaise`. Meanwhile, the append-only entitlement consumption log is
+`UsageLedgerEntry` (`engagementsConsumed`, `minutesConsumed`, `priceAtBookingPaise`,
+`wasOverage`), whose signed `engagementsConsumed` sum across a period is reconciled
+nightly against `ProgramAssignment.engagementsUsed`.
 
 ```mermaid
 erDiagram
@@ -217,17 +240,20 @@ erDiagram
     Organization ||--o{ OrganizationEarnings: "host earnings"
     Organization ||--o{ OrganizationPayout  : "host payouts"
     Organization ||--o{ OrgAuditLog         : "audit trail"
-    Organization ||--o| HrisConfig          : "directory sync (opt)"
+    Organization ||--o{ OrgDataExportJob    : "DPDP / audit exports"
     Organization ||--o{ RateCard            : "owned cards"
     Organization ||--o| Organization        : "parent (OrgHierarchy)"
     Organization ||--o| OrganizationTaxInfo : "GST/PAN carve-out (1:1)"
     Organization ||--o| OrganizationMsmeInfo: "MSME 43B(h) carve-out (1:1)"
+    Organization ||--o| OrgBrandingProfile  : "public directory & branding (1:1)"
+    Organization ||--o{ Payment             : "organizationId (buyer) / hostOrganizationId (supply)"
 
     User ||--o{ Membership                  : "joined orgs"
     User ||--o| OrgWorkspaceProfile         : "operator identity"
     User ||--o{ ConsentArtifact             : "DPDP grants"
 
     Membership ||--o{ ProgramAssignment     : "entitled to"
+    Membership ||--o{ UsageLedgerEntry      : "consumption log"
     Membership }o--o| RateCard              : "override (optional)"
 
     BillingAccount ||--o{ Contract          : "funded by"
@@ -246,12 +272,14 @@ erDiagram
     Program ||--o{ ProgramAssignment        : "member-scoped"
 
     ProgramAssignment ||--o{ BookingUtilization : "cap accounting"
+    ProgramAssignment ||--o{ UsageLedgerEntry   : "append-only usage log"
     ProgramAssignment ||--o| ProgramAssignment  : "rolledTo (rollover chain)"
     ProgramAssignment ||--o{ OverageEvent    : "over-cap charges"
     BookingUtilization ||--|| Payment        : "1:1 lock"
     BookingUtilization ||--o| OverageEvent   : "1:1 if over-cap"
     OverageEvent }o--o| Payment              : "settling payment (opt)"
     OverageEvent }o--o| InvoiceLineItem      : "CHARGE_ORG roll-up (opt)"
+    Payment ||--o{ OrganizationEarnings      : "per (org, consultant, role, cycle)"
 
     OrganizationPayout  ||--o{ OrganizationEarnings  : "rolled up"
 
@@ -286,22 +314,28 @@ erDiagram
         MsmeStatus msmeStatus
         bool       msmeWrittenAgreementOnFile
     }
+    OrgDomainClaim {
+        string   id                PK
+        string   organizationId    FK "UK (organizationId, domain)"
+        string   domain            "partial UK where verifiedAt IS NOT NULL"
+        string   verificationToken
+        datetime verifiedAt
+    }
     BillingAccount {
         string         id          PK
         string         ownerOrgId  UK
         FundingSource  fundingSource
         Currency       currency
-        int            walletBalance "paise (WALLET only); derived cache"
-        int            creditLimit   "paise (INVOICE only)"
-        int            minBalancePaise   "auto-top-up trigger floor"
-        bool           autoTopUpEnabled
-        int            autoTopUpAmountPaise
-        string         autoTopUpMandateId "gateway recurring token"
+        bigint         walletBalance "paise (WALLET only); derived cache"
+        bigint         creditLimit   "paise (INVOICE only)"
+        bigint         minBalancePaise "low-balance alert floor"
+        datetime       autoTopUpLastFiredAt "alert cooldown stamp"
     }
     Contract {
         string         id              PK
         string         organizationId  FK
         string         billingAccountId FK
+        ContractKind   kind            "INITIAL|RENEWAL|AMENDMENT"
         ContractStatus status          "DRAFT|ACTIVE|EXPIRED|TERMINATED"
         date           effectiveFrom
         date           effectiveTo
@@ -336,6 +370,18 @@ erDiagram
         string rolledToAssignmentId UK "self-rel rollover chain"
         date   rolledAt        "cycle-engine claim gate"
     }
+    UsageLedgerEntry {
+        string   id                  PK
+        string   programAssignmentId FK "nullable"
+        string   membershipId        FK
+        string   paymentId           FK "nullable"
+        int      engagementsConsumed "signed (+consume / -reverse)"
+        int      minutesConsumed     "nullable"
+        bigint   priceAtBookingPaise
+        bool     wasOverage
+        string   notes
+        datetime createdAt
+    }
     OverageEvent {
         string id                   PK
         string programAssignmentId  FK
@@ -359,6 +405,36 @@ erDiagram
         int    orgBpsAtBooking
         int    consultantBpsAtBooking
         date   reversedAt
+    }
+    Payment {
+        string id                     PK
+        string userId                 FK "onDelete: Restrict"
+        string appointmentId          FK "onDelete: Restrict"
+        string organizationId         FK "sponsor/buyer org (PaymentOrgTag)"
+        string hostOrganizationId     FK "supply/host org (PaymentHostOrg)"
+        string billingAccountId       FK "nullable"
+        string billableToOrgInvoiceId FK "nullable"
+        string parentPaymentId        FK "CHARGE_MEMBER side-charge parent"
+        bigint amount
+    }
+    OrganizationEarnings {
+        string        id                   PK
+        string        paymentId            FK "UK (paymentId, organizationId, consultantProfileId, role, cycleOrdinal)"
+        string        organizationId       FK "onDelete: Restrict"
+        string        consultantProfileId  FK "nullable; onDelete: Restrict"
+        EarningRole   role                 "OWNER | COLLABORATOR"
+        int           cycleOrdinal         "nullable; subscription cycle index"
+        bigint        grossAmountPaise
+        bigint        platformFeePaise
+        bigint        orgSharePaise
+        bigint        consultantSharePaise
+        bigint        refundedAmountPaise
+        string        rateCardIdApplied    "snapshot"
+        int           platformBpsApplied   "snapshot"
+        int           orgBpsApplied        "snapshot"
+        int           consultantBpsApplied "snapshot"
+        EarningStatus status
+        string        orgPayoutId          FK "nullable"
     }
     OrganizationInvoice {
         string           id              PK
@@ -398,10 +474,10 @@ erDiagram
     }
     OrganizationPayoutAccount {
         string  id                       PK
-        string  organizationId           UK
-        string  accountNumberEncrypted   "empty, dropped at #1729"
+        string  organizationId           UK "onDelete: Restrict"
+        string  accountNumberEncrypted
         string  razorpayFundAccountId
-        PayoutAccountStatus status
+        OrgPayoutAccountStatus status
     }
     Membership {
         string       id                 PK
@@ -415,7 +491,26 @@ erDiagram
         PayoutRecipient payoutRecipient
     }
     OrgWorkspaceProfile {
-        string userId PK
+        string                  id                           PK
+        string                  userId                       UK
+        string                  defaultLandingOrganizationId
+        NotificationRoutingMode notificationRoutingMode
+        string                  locale
+        string                  currencyDisplayCode
+    }
+    OrgDataExportJob {
+        string              id                      PK
+        string              organizationId          FK
+        string              requestedByMembershipId
+        OrgDataExportKind   kind                    "FULL|PEOPLE|FINANCE"
+        OrgDataExportStatus status                  "PENDING|PROCESSING|COMPLETED|FAILED|EXPIRED"
+        string              fileUrl
+        bigint              fileSizeBytes
+        datetime            expiresAt
+        string              error
+        datetime            createdAt
+        datetime            startedAt
+        datetime            completedAt
     }
     ConsentArtifact {
         string id                  PK
@@ -529,55 +624,57 @@ Tax.
 flowchart TD
     subgraph ORG["Organization (anchor)"]
         Org["Organization\nstatus · canSponsor · canHost · GST · hierarchy"]
-        OrgWorkspace["OrgWorkspaceProfile"]
-        OrgPlan["OrganizationPlan"]
+        OrgWorkspace["OrgWorkspaceProfile\ndefaultLandingOrganizationId · notificationRoutingMode · locale"]
+        OrgBranding["OrgBrandingProfile\nlogo · bannerImage · directoryType"]
     end
     subgraph IAM["Identity & Access"]
         Membership["Membership\nrole · status"]
         Invitation["Invitation"]
-        SSOSettings["OrganizationSSOSettings\nenforceSSO · defaultRoleForAutoJoin"]
-        DomainClaim["OrgDomainClaim"]
+        SSOSettings["OrganizationSSOSettings\nenforceSSO · ssoEnforcedAt · defaultRoleForAutoJoin"]
+        DomainClaim["OrgDomainClaim\n@@unique([organizationId, domain])\npartial UK on verified domain"]
         SsoProvider["SsoProvider"]
     end
     subgraph BILLING["Commercial / Sponsor Side"]
-        BA["BillingAccount\nfundingSource · walletBalance (cache)\nminBalancePaise · autoTopUp*"]
-        Contract["Contract\nstatus · autoRenew · supersededBy (chain)"]
+        BA["BillingAccount\nfundingSource · walletBalance (cache)\nminBalancePaise · autoTopUpLastFiredAt"]
+        Contract["Contract\nkind (INITIAL|RENEWAL|AMENDMENT)\nstatus · autoRenew · supersededBy (chain)"]
         BillSub["BillingSubscription\nactiveSeatCount"]
         PO["PurchaseOrder"]
         TopUp["WalletTopUp\nproviderOrderId"]
         Invoice["OrganizationInvoice\nGST · IRN · lineItems[] · dunning"]
         InvCounter["OrgInvoiceCounter"]
         RateCard["RateCard\nplatformBps · orgBps · consultantBps"]
+        Pay["Payment\norganizationId (buyer) · hostOrganizationId (supply)"]
     end
     subgraph PROGRAMS["Programs & Entitlements"]
-        Program["Program\nLICENSED_SEAT / CREDIT_POOL\nconfigLockedAt · archivedAt"]
+        Program["Program\ntype: LICENSED_SEAT | CREDIT_POOL\nconfigLockedAt · archivedAt"]
         LicSeat["LicensedSeatConfig\noverageSurchargeBps · maxOveragePerCyclePaise"]
-        CreditPool["CreditPoolConfig\ncreditBudgetPerCycle (1 credit = ₹1)\noverageSurchargeBps · maxOveragePerCyclePaise"]
+        CreditPool["CreditPoolConfig\ncreditBudgetPerCycle (1 credit = ₹1)\npriceCapPerEngagementPaise · overageSurchargeBps · maxOveragePerCyclePaise"]
         Assignment["ProgramAssignment\nstatus · engagementsUsed · consumedPaise\nrolledTo (chain)"]
         BookUtil["BookingUtilization\nbps snapshot"]
         Overage["OverageEvent\nbase+surcharge=marginal · chargeStatus"]
     end
     subgraph SUPPLY["Supply / Host Side"]
         PayoutAcct["OrganizationPayoutAccount"]
-        OrgEarn["OrganizationEarnings\nbps snapshot · status"]
+        OrgEarn["OrganizationEarnings\n@@unique([paymentId, organizationId, consultantProfileId, role, cycleOrdinal])\nbps snapshot · status"]
         OrgPayout["OrganizationPayout\ntds · mustPayByDate"]
     end
     subgraph LEDGER["Ledger (double-entry, immutable)"]
-        UsageLedger["UsageLedgerEntry\n(entitlement consumption)"]
-        Account["LedgerAccount\n10 kinds · deterministic id"]
+        UsageLedger["UsageLedgerEntry\nengagementsConsumed · minutesConsumed\npriceAtBookingPaise · wasOverage"]
+        Account["LedgerAccount\n10+ kinds · deterministic id"]
         Txn["LedgerTransaction\nidempotencyKey · kind"]
         Entry["LedgerEntry\nDEBIT/CREDIT · amountPaise"]
         ReconReport["LedgerReconciliationReport"]
     end
     subgraph COMPLIANCE["Compliance / DPDP / Tax"]
         Consent["ConsentArtifact"]
+        DataExport["OrgDataExportJob\nkind · status · fileUrl · expiresAt"]
         DataBreach["DataBreach"]
         AuditLog["OrgAuditLog"]
         CreditNote["CreditNote\nSec 34 · gapless per-FY"]
         TdsAdj["TdsAdjustment (schema-only)"]
         GstTcs["GstTcsBatch\nGSTR-8 u/s 52"]
     end
-    Org --> Membership & SSOSettings & BA & PayoutAcct & AuditLog
+    Org --> Membership & SSOSettings & BA & PayoutAcct & AuditLog & DataExport
     BA --> Contract & TopUp & Invoice
     Contract --> Program
     Program --> Assignment --> BookUtil
@@ -585,6 +682,7 @@ flowchart TD
     BookUtil -.->|1:1 if over-cap| Overage
     Overage -.->|CHARGE_ORG| Invoice
     Org --> OrgEarn --> OrgPayout
+    Pay --> OrgEarn
     Txn --> Entry --> Account
     Org -.-> Account
     TopUp -.->|TOPUP| Txn

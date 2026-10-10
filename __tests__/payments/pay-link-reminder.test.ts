@@ -162,6 +162,17 @@ describe("remindApprovalPaymentsDue", () => {
     expect(mockSendPaymentLinkEmail).toHaveBeenCalledTimes(1);
   });
 
+  it("filters Consultation only on fields its model declares", async () => {
+    db.consultation.findMany.mockResolvedValue([]);
+    await remindApprovalPaymentsDue();
+    const { where } = db.consultation.findMany.mock.calls[0][0];
+    expect(where).not.toHaveProperty("deletedAt");
+    expect(where.appointment).toMatchObject({ deletedAt: null });
+    expect(db.subscription.findMany.mock.calls[0][0].where).toMatchObject({
+      deletedAt: null,
+    });
+  });
+
   it("a send with no guard row is an error, not a reminder", async () => {
     db.consultation.findMany.mockResolvedValue([reminderCandidate()]);
     mockSendPaymentLinkEmail.mockResolvedValueOnce({

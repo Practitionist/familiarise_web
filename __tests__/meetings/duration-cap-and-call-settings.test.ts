@@ -5,6 +5,7 @@
 const mockGetSession = jest.fn();
 const mockUpsertUsersToStream = jest.fn();
 const mockGetOrCreate = jest.fn();
+const mockCallIds: string[] = [];
 const mockSlotFindUnique = jest.fn();
 const mockMeetingFindUnique = jest.fn();
 const mockMeetingCreate = jest.fn();
@@ -28,9 +29,10 @@ jest.mock("../../lib/stream-client", () => ({
   withStreamCircuitBreaker: (fn: () => unknown) => fn(),
   getStreamVideoClient: jest.fn(() => ({
     video: {
-      call: () => ({
-        getOrCreate: (...a: unknown[]) => mockGetOrCreate(...a),
-      }),
+      call: (_type: string, id: string) => {
+        mockCallIds.push(id);
+        return { getOrCreate: (...a: unknown[]) => mockGetOrCreate(...a) };
+      },
     },
   })),
 }));
@@ -73,13 +75,11 @@ import {
   buildCallSettingsOverride,
   isAwaitingHostGoLive,
 } from "../../lib/meetings/room-ready";
-import {
-  createDbMeeting,
-  provisionAppointmentMeeting,
-} from "../../actions/stream/meetings/meeting.action";
+import { provisionAppointmentMeeting } from "../../actions/stream/meetings/meeting.action";
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockCallIds.length = 0;
 });
 
 describe("lib/meetings/duration-cap", () => {
@@ -112,7 +112,7 @@ describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
     }
   });
 
-  it("enables backstage and muted access-request stage settings for WEBINAR and CLASS", () => {
+  it("enables backstage and complete muted access-request stage settings for WEBINAR and CLASS (#2010)", () => {
     const expectedOneToManySettings = {
       backstage: {
         enabled: true,
@@ -120,12 +120,22 @@ describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
       },
       audio: {
         mic_default_on: false,
+        speaker_default_on: true,
         default_device: "speaker",
         access_request_enabled: true,
+        opus_dtx_enabled: true,
+        redundant_coding_enabled: true,
       },
       video: {
+        enabled: true,
         camera_default_on: false,
+        camera_facing: "front",
         access_request_enabled: true,
+        target_resolution: {
+          width: 1280,
+          height: 720,
+          bitrate: 1500000,
+        },
       },
     };
 
@@ -172,7 +182,7 @@ describe("buildCallSettingsOverride & isAwaitingHostGoLive", () => {
   });
 });
 
-describe("provisionAppointmentMeeting & createDbMeeting", () => {
+describe("provisionAppointmentMeeting", () => {
   it("retains max_duration_seconds even when a participant lacks Stream consent (droppedIds)", async () => {
     const startsAt = new Date(Date.now() + 5 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
@@ -251,7 +261,7 @@ describe("provisionAppointmentMeeting & createDbMeeting", () => {
     );
   });
 
-  it("checks caller entitlement BEFORE booking status refusal in createDbMeeting", async () => {
+  it("refuses a stranger before the booking-status refusal and writes nothing", async () => {
     const startsAt = new Date(Date.now() + 60 * 60 * 1000);
     const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
 
@@ -263,6 +273,7 @@ describe("provisionAppointmentMeeting & createDbMeeting", () => {
         banned: false,
       },
     });
+    mockMeetingFindUnique.mockResolvedValue(null);
     mockSlotFindUnique.mockResolvedValue({
       id: "slot-cancelled",
       startsAt,
@@ -295,10 +306,92 @@ describe("provisionAppointmentMeeting & createDbMeeting", () => {
     });
 
     await expect(
-      createDbMeeting(
-        { id: "slot-cancelled", startsAt, endsAt, isTentative: false },
-        "occurrence-slot-cancelled",
-      ),
-    ).rejects.toThrow("You are not a participant in this session.");
+      provisionAppointmentMeeting({
+        id: "slot-cancelled",
+        startsAt,
+        endsAt,
+        isTentative: false,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      refusal: "You are not a participant in this session.",
+    });
+    expect(mockGetOrCreate).not.toHaveBeenCalled();
+    expect(mockMeetingCreate).not.toHaveBeenCalled();
+  });
+
+  it("recreates a missing call for an existing Meeting row with full settings", async () => {
+    const startsAt = new Date(Date.now() + 5 * 60 * 1000);
+    const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
+
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "host-1",
+        role: "CONSULTANT",
+        consultantProfileId: "cp-host",
+        banned: false,
+      },
+    });
+    mockMeetingFindUnique.mockResolvedValue({
+      id: "meeting-seed",
+      streamCallId: "seed-room-uuid",
+      endedAt: null,
+      endedReason: null,
+    });
+    mockSlotFindUnique.mockResolvedValue({
+      id: "slot-2",
+      startsAt,
+      endsAt,
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+      appointmentId: "appt-2",
+      consultantProfileId: "cp-host",
+      appointment: {
+        appointmentType: "WEBINAR",
+        organizationId: null,
+        deletedAt: null,
+        participants: [],
+        consultation: null,
+        subscription: null,
+        webinar: {
+          status: "SCHEDULED",
+          webinarPlan: {
+            title: "Webinar",
+            consultantProfile: {
+              id: "cp-host",
+              userId: "host-1",
+              user: { name: "Host" },
+            },
+            collaborators: [],
+          },
+        },
+        class: null,
+        trial: null,
+      },
+    });
+    mockParticipantFindMany.mockResolvedValue([]);
+    mockUpsertUsersToStream.mockResolvedValue({});
+    mockGetOrCreate.mockResolvedValue({ created: true });
+
+    const res = await provisionAppointmentMeeting({
+      id: "slot-2",
+      startsAt,
+      endsAt,
+    });
+
+    expect(res).toEqual({ ok: true, streamCallId: "seed-room-uuid" });
+    expect(mockCallIds).toEqual(["seed-room-uuid"]);
+    expect(mockGetOrCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          created_by_id: "host-1",
+          settings_override: expect.objectContaining({
+            backstage: expect.objectContaining({ enabled: true }),
+          }),
+        }),
+      }),
+    );
+    expect(mockMeetingCreate).not.toHaveBeenCalled();
   });
 });

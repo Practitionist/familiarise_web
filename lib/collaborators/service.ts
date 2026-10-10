@@ -10,8 +10,11 @@ import {
 } from "@/lib/stream/event-channel-service";
 import {
   getStreamChatClient,
+  getStreamVideoClient,
   isExpectedStreamError,
 } from "@/lib/stream-client";
+import { CALL_MEMBER_ROLE, STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { MAX_CALL_DURATION_MS } from "@/lib/meetings/duration-cap";
 import type { RevenueSplit } from "@/types/collaborators";
 import {
   WEBINAR_COLLABORATOR_ROLES,
@@ -38,6 +41,10 @@ import {
   recordParticipants,
   transitionParticipant,
 } from "@/lib/booking/participants";
+import {
+  assertConsultantAvailableForWindows,
+  ConsultantScheduleConflictError,
+} from "@/lib/collaborators/availability";
 
 // #1593 — `removeCollaboratorStanding` is deliberately NOT re-exported here:
 // its callers import `@/lib/collaborators/standing` so they never load this
@@ -239,6 +246,57 @@ async function assertPlanOpen(
       "This plan is archived; collaborators cannot be invited or accepted",
       409,
     );
+  }
+}
+
+/**
+ * #2010 — When accepting a collaboration on a plan that already has scheduled
+ * sessions, reject if the invitee has an overlapping commitment on their
+ * calendar (closes the reverse order where scheduling ran before acceptance).
+ */
+async function assertInviteeAvailableForPlanEvents(
+  planType: PlanType,
+  planId: string,
+  consultantProfileId: string,
+  userId: string,
+  db: PrismaLike = prisma,
+): Promise<void> {
+  if (typeof db.appointmentOccurrence?.findMany !== "function") return;
+
+  const planOccurrences = await db.appointmentOccurrence.findMany({
+    where: {
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      appointment: livePlanAppointmentsWhere(planType, planId),
+    },
+    select: {
+      appointmentId: true,
+      startsAt: true,
+      endsAt: true,
+    },
+  });
+  if (planOccurrences.length === 0) return;
+
+  try {
+    await assertConsultantAvailableForWindows(db, {
+      consultantProfileId,
+      consultantUserId: userId,
+      windows: planOccurrences.map((o) => ({
+        startsAt: o.startsAt,
+        endsAt: o.endsAt,
+      })),
+      excludeAppointmentIds: [
+        ...new Set(planOccurrences.map((o) => o.appointmentId)),
+      ],
+    });
+  } catch (err) {
+    if (err instanceof ConsultantScheduleConflictError) {
+      throw new CollaboratorIneligibleError(
+        "Accepting this collaboration conflicts with another session on your calendar",
+        409,
+      );
+    }
+    throw err;
   }
 }
 
@@ -447,16 +505,40 @@ export async function respondToInvitation(
     acceptedUserId = invitee.userId;
   }
 
-  // CAS in the WHERE: an owner's removal landing between the read and this
-  // write must not be overwritten back to ACCEPTED and reach the split (#1580).
-  const moved = await prisma.collaborator.updateMany({
-    where: { id: collaborationId, status: "PENDING" },
-    data: { status: response, respondedAt: new Date() },
-  });
-  if (moved.count === 0) return null;
-  const updated = await prisma.collaborator.findUniqueOrThrow({
-    where: { id: collaborationId },
-  });
+  // #2010 — Wrap the plan-occurrence conflict check and PENDING -> ACCEPTED CAS
+  // inside a Serializable transaction so concurrent scheduling or acceptance on
+  // another plan cannot bypass the overlap check.
+  const updated = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        if (response === "ACCEPTED" && acceptedUserId) {
+          await assertInviteeAvailableForPlanEvents(
+            planType,
+            planId,
+            consultantProfileId,
+            acceptedUserId,
+            tx,
+          );
+        }
+
+        // CAS in the WHERE: an owner's removal landing between the read and this
+        // write must not be overwritten back to ACCEPTED and reach the split (#1580).
+        const moved = await tx.collaborator.updateMany({
+          where: { id: collaborationId, status: "PENDING" },
+          data: { status: response, respondedAt: new Date() },
+        });
+        if (moved.count === 0) return null;
+        return tx.collaborator.findUniqueOrThrow({
+          where: { id: collaborationId },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        timeout: 10000,
+      },
+    ),
+  );
+  if (!updated) return null;
 
   if (response === "ACCEPTED") {
     await runAcceptedInvitationSideEffects(
@@ -928,7 +1010,92 @@ export async function revokeCollaboratorAccess(
     console.error("[collaborators] Failed to revoke Stream access:", error);
   }
 
+  if (!(await revokeOpenCallPresenterRole(planType, planId, userId))) {
+    success = false;
+  }
+
   return { success };
+}
+
+/**
+ * Drops a removed collaborator's `co_presenter` membership on the plan's open calls: downgraded to
+ * `call_member` where they still hold a seat, removed otherwise. Failures are reported once.
+ */
+async function revokeOpenCallPresenterRole(
+  planType: PlanType,
+  planId: string,
+  userId: string,
+): Promise<boolean> {
+  try {
+    const occurrences = await prisma.appointmentOccurrence.findMany({
+      where: {
+        deletedAt: null,
+        // Bounded by the longest possible call, so overruns and rejoin grace stay covered.
+        endsAt: { gt: new Date(Date.now() - MAX_CALL_DURATION_MS) },
+        appointment: livePlanAppointmentsWhere(planType, planId),
+        meeting: { is: { endedAt: null } },
+      },
+      select: {
+        appointmentId: true,
+        meeting: { select: { streamCallId: true } },
+      },
+    });
+    if (occurrences.length === 0) return true;
+
+    const seats = await prisma.appointmentParticipant.findMany({
+      where: {
+        ...liveParticipant(userId),
+        role: { not: "COLLABORATOR" },
+        appointmentId: { in: occurrences.map((o) => o.appointmentId) },
+      },
+      select: { appointmentId: true },
+    });
+    const seated = new Set(seats.map((seat) => seat.appointmentId));
+
+    const video = getStreamVideoClient().video;
+    const results = await Promise.allSettled(
+      occurrences.flatMap(({ appointmentId, meeting }) =>
+        meeting
+          ? [
+              video
+                .call(STREAM_CALL_TYPE, meeting.streamCallId)
+                .updateCallMembers(
+                  seated.has(appointmentId)
+                    ? {
+                        update_members: [
+                          { user_id: userId, role: CALL_MEMBER_ROLE },
+                        ],
+                      }
+                    : { remove_members: [userId] },
+                ),
+            ]
+          : [],
+      ),
+    );
+    const failures = results.filter(
+      (r): r is PromiseRejectedResult =>
+        r.status === "rejected" && !isExpectedStreamError(r.reason),
+    );
+    if (failures.length === 0) return true;
+    reportSentryError(failures[0].reason, {
+      subsystem: "stream",
+      op: "removeCollaborator.revokeCallRole",
+      extra: {
+        planId,
+        planType,
+        failed: failures.length,
+        total: results.length,
+      },
+    });
+    return false;
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "stream",
+      op: "removeCollaborator.revokeCallRole",
+      extra: { planId, planType },
+    });
+    return false;
+  }
 }
 
 /**
@@ -1051,7 +1218,11 @@ export async function getCollaborators(
   const activeStatuses: CollaboratorStatus[] = ["PENDING", "ACCEPTED"];
 
   return db.collaborator.findMany({
-    where: { ...planWhere(planType, planId), status: { in: activeStatuses } },
+    where: {
+      ...planWhere(planType, planId),
+      status: { in: activeStatuses },
+      consultantProfile: { deletedAt: null },
+    },
     include: {
       consultantProfile: {
         include: { user: { select: { name: true, image: true } } },
@@ -1460,6 +1631,7 @@ async function assertCollaboratorCapTx(
     where: {
       ...planWhere(planType, planId),
       status: { in: ["PENDING", "ACCEPTED"] },
+      consultantProfile: { deletedAt: null },
       ...(excludeId ? { id: { not: excludeId } } : {}),
     },
     select: { role: true },
@@ -1494,6 +1666,7 @@ async function validateRevenueSharesTx(
     where: {
       ...planWhere(planType, planId),
       status: { in: ["PENDING", "ACCEPTED"] },
+      consultantProfile: { deletedAt: null },
       ...(excludeId && { NOT: { id: excludeId } }),
     },
     select: { revenueShareBps: true },

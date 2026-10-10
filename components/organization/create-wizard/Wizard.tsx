@@ -51,7 +51,7 @@ export function CreateOrganizationWizard({
   onCancel,
   afterLaunch,
   finalRedirectPath,
-  hostOrgsEnabled = false,
+  hostOrgsEnabled = true,
 }: CreateOrganizationWizardProps = {}) {
   const [step, setStep] = useState(0);
   const [wizardData, setWizardData] = useState<Partial<OrgWizardData>>({});

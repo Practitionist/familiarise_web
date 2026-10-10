@@ -8,6 +8,7 @@
 
 import prisma from "@/lib/prisma";
 import type { Prisma, RecordingStatus } from "@prisma/client";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { Scope } from "./parse";
 import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
 
@@ -58,17 +59,15 @@ const recordingMetadataSelect = {
   organization: { select: { id: true, name: true, slug: true } },
 } satisfies Prisma.RecordingSelect;
 
-/** Participant arms only. Everything here reaches, or resolves to, the media. */
+/**
+ * Participant arms only. Never select `recordingUrl`, `storagePath` or Stream ids:
+ * playback goes through `GET /api/stream/recordings/[id]`, which applies the access rules.
+ */
 const recordingParticipantSelect = {
   ...recordingMetadataSelect,
-  recordingUrl: true,
-  storageUrl: true,
-  storagePath: true,
   thumbnailUrl: true,
   previewClipUrl: true,
   previewClipDuration: true,
-  streamRecordingId: true,
-  streamCallId: true,
   streamUrlExpiresAt: true,
   storageType: true,
   fileSize: true,
@@ -99,9 +98,33 @@ export interface ListRecordingsResult {
   perPage: number;
 }
 
-function buildWhere(
-  params: ListRecordingsParams,
-): Prisma.RecordingWhereInput {
+import { buildUserAppointmentAccessOr } from "./list-documents";
+
+/** Own appointments, plus every run of a shared-recordings webinar plan the caller holds a live seat in. */
+function recordingAppointmentAccessOr(
+  userId: string,
+): Prisma.AppointmentWhereInput[] {
+  return [
+    ...buildUserAppointmentAccessOr(userId),
+    {
+      webinar: {
+        webinarPlan: {
+          shareRecordingsWithAllAttendees: true,
+          webinars: {
+            some: {
+              appointment: {
+                // Same seat predicate as playback: a released (CANCELLED/REFUNDED) seat sees nothing.
+                participants: { some: liveParticipant(userId) },
+              },
+            },
+          },
+        },
+      },
+    },
+  ];
+}
+
+function buildWhere(params: ListRecordingsParams): Prisma.RecordingWhereInput {
   const base: Prisma.RecordingWhereInput = {
     ...(params.status && { status: params.status }),
   };
@@ -112,11 +135,7 @@ function buildWhere(
       meeting: {
         occurrence: {
           appointment: {
-            OR: [
-              { consultation: { requestedBy: { userId: params.userId } } },
-              { subscription: { requestedBy: { userId: params.userId } } },
-              { trial: { consulteeProfile: { userId: params.userId } } },
-            ],
+            OR: recordingAppointmentAccessOr(params.userId),
           },
         },
       },
@@ -154,43 +173,7 @@ function buildWhere(
       meeting: {
         occurrence: {
           appointment: {
-            OR: [
-              { consultation: { requestedBy: { userId: params.scope.userId } } },
-              { subscription: { requestedBy: { userId: params.scope.userId } } },
-              {
-                trial: {
-                  consulteeProfile: { userId: params.scope.userId },
-                },
-              },
-              {
-                consultation: {
-                  consultationPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                subscription: {
-                  subscriptionPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                webinar: {
-                  webinarPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                class: {
-                  classPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-            ],
+            OR: recordingAppointmentAccessOr(params.scope.userId),
           },
         },
       },
