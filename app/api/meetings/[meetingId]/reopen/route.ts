@@ -373,7 +373,7 @@ export async function POST(
             },
             custom: {
               appointmentId: appt.id,
-              appointmentType: appt.appointmentsType,
+              appointmentType: appt.appointmentType,
               ...(planTitle ? { planTitle } : {}),
               ...(consultantName ? { consultantName } : {}),
               ...(consulteeName ? { consulteeName } : {}),
