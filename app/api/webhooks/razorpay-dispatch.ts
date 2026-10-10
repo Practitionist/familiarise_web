@@ -386,6 +386,7 @@ export async function processRazorpayWebhookEvent(
           disputeCreatedEvent.status,
           disputeCreatedEvent.respond_by ?? null,
           disputeCreatedEvent.deduct_at_onset === false,
+          { isRedrive: !claim },
         );
         if (createdResult instanceof DeferSignal) {
           deferred = true;

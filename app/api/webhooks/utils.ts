@@ -1290,6 +1290,7 @@ export async function handleDisputeCreated(
   status: string,
   dueBy: number | null,
   isChargeRefundable: boolean,
+  options?: { isRedrive?: boolean },
 ) {
   const gateway = PaymentGateway.RAZORPAY;
   const razorpayClient = getRazorpayClient();
@@ -1314,6 +1315,15 @@ export async function handleDisputeCreated(
         `Failed to fetch Razorpay payment ${chargeId} to link dispute:`,
         error,
       );
+      if (!options?.isRedrive) {
+        await recordSystemErrorSafe({
+          severity: "error",
+          subsystem: "payments",
+          job: "razorpay-webhook",
+          summary: `CRITICAL_DISPUTE_UNLINKED: failed to fetch Razorpay payment ${chargeId} for dispute ${disputeId}`,
+          meta: { disputeId, chargeId, amount },
+        });
+      }
     }
   }
 
@@ -1582,6 +1592,15 @@ export async function handleDisputeCreated(
       },
     ),
   );
+  if (result instanceof DeferSignal && !options?.isRedrive) {
+    await recordSystemErrorSafe({
+      severity: "error",
+      subsystem: "payments",
+      job: "razorpay-webhook",
+      summary: `CRITICAL_DISPUTE_UNLINKED: no Payment matched dispute ${disputeId} (${chargeId})`,
+      meta: { disputeId, chargeId, amount },
+    });
+  }
   await attemptStaged(stagedNotification);
   return result;
 }
