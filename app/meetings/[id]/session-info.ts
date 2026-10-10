@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { format, isToday, isTomorrow } from "date-fns";
 import { useCallStateHooks } from "@stream-io/video-react-sdk";
 import { useSession } from "@/lib/auth-client";
 
@@ -121,12 +120,32 @@ export function sessionSubheading(info: SessionInfo): string | null {
   return info.offeringTitle;
 }
 
-export function formatScheduledAt(startsAt: Date | null): string | null {
+import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
+
+export function formatScheduledAt(
+  startsAt: Date | null,
+  zone?: string | null,
+): string | null {
   if (!startsAt) return null;
-  const time = format(startsAt, "h:mm a");
-  if (isToday(startsAt)) return `Today at ${time}`;
-  if (isTomorrow(startsAt)) return `Tomorrow at ${time}`;
-  return `${format(startsAt, "EEE d MMM")} at ${time}`;
+  const resolvedZone =
+    zone ||
+    (typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "UTC") ||
+    "UTC";
+  const tz = zoneLabel(startsAt, resolvedZone);
+  const time = `${formatInViewerZone(startsAt, resolvedZone, "h:mm a")} ${tz}`;
+  const dayKey = formatInViewerZone(startsAt, resolvedZone, "yyyy-MM-dd");
+  const nowMs = Date.now();
+  const todayKey = formatInViewerZone(nowMs, resolvedZone, "yyyy-MM-dd");
+  const tomorrowKey = formatInViewerZone(
+    nowMs + 86_400_000,
+    resolvedZone,
+    "yyyy-MM-dd",
+  );
+  if (dayKey === todayKey) return `Today at ${time}`;
+  if (dayKey === tomorrowKey) return `Tomorrow at ${time}`;
+  return `${formatInViewerZone(startsAt, resolvedZone, "EEE d MMM")} at ${time}`;
 }
 
 export type SessionPhase =

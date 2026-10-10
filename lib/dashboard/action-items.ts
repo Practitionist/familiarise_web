@@ -1,6 +1,7 @@
 import type { ActionItem } from "@/lib/enterprise/org-activation";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
+  REJOIN_GRACE_MS,
   getOccurrenceJoinState,
   liveOccurrencesOf,
   type JoinableOccurrence,
@@ -29,33 +30,14 @@ function pluralise(n: number, one: string, many: string): string {
 }
 
 export interface ImminentSession {
-  /**
-   * The slot row and the booking it belongs to. Both optional because not
-   * every surface has rows to give: the consultee home tab already hands us
-   * run-level times, while the consultant tab hands us the raw 30-minute
-   * rows. When they are present, consecutive rows of one booking collapse
-   * into a single session (#1061) instead of each half hour announcing
-   * itself as a separate thing starting 30 minutes from now.
-   */
   id?: string;
   appointmentId?: string | null;
   startsAt: Date | string;
   endsAt?: Date | string | null;
   title: string;
+  meeting?: JoinableOccurrence["meeting"];
 }
 
-/**
- * Shared by both roles: the session that is running now, or starting within
- * the hour. Only the soonest is surfaced — a list of everything upcoming is
- * the Appointments tab's job, and repeating it here is exactly the
- * duplication this panel replaced.
- */
-/**
- * The three distinct things a session flag can mean. Kept as a function rather
- * than a nested ternary inline: the join window opens BEFORE the start and
- * stays open throughout, so "about to begin" and "under way" are different
- * answers that one flag cannot carry (#1061).
- */
 function sessionTitle(
   inProgress: boolean,
   isJoinable: boolean,
@@ -71,25 +53,21 @@ export function imminentSessionItem(
   appointmentsHref: string,
   now: Date = new Date(),
 ): ActionItem | null {
-  // The title rides along on the row so the winning run can name itself.
   const rows: Array<JoinableOccurrence & { title: string }> = sessions.map(
     (session, index) => ({
       id: session.id ?? `imminent:${index}`,
       appointmentId: session.appointmentId ?? null,
       startsAt: session.startsAt,
       endsAt: session.endsAt ?? null,
+      meeting: session.meeting ?? null,
       title: session.title,
     }),
   );
 
-  // Ordered earliest-first by the shared helper.
   for (const run of liveOccurrencesOf(rows)) {
-    // The join window is the shared constant, and the window test is the
-    // shared helper. #1061 was two surfaces holding private copies of both
-    // and drifting apart; a third copy here would be the same mistake.
     const state = getOccurrenceJoinState(run, {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
-      rejoinGraceMs: 0,
+      rejoinGraceMs: REJOIN_GRACE_MS,
       now,
     });
     if (state === "ended" || state === "disabled") continue;
@@ -97,15 +75,10 @@ export function imminentSessionItem(
     const msUntilStart = new Date(run.startsAt).getTime() - now.getTime();
     if (msUntilStart > IMMINENT_MS) break;
 
-    // The same helper with no pre-start allowance: it can only answer
-    // "joinable" once `now` is past the start, which is exactly the "already
-    // running" question, and it still answers "ended" past the end. Deriving
-    // it this way rather than comparing times again keeps one definition of
-    // when a session is under way.
     const inProgress =
       getOccurrenceJoinState(run, {
         joinWindowMs: 0,
-        rejoinGraceMs: 0,
+        rejoinGraceMs: REJOIN_GRACE_MS,
         now,
       }) === "joinable";
 
@@ -149,10 +122,9 @@ export interface ConsultantActionInput {
   }[];
   upcomingSessions: ImminentSession[];
   basePath: string;
-  /** #1675 PR-Y2 — earnings exist and no verified payout account can take them. */
   payoutSetupNeeded?: boolean;
-  /** Words the row: before launch the account is collected ahead of the flag. */
   livePayoutsEnabled?: boolean;
+  viewerTimezone?: string | null;
   now?: Date;
 }
 
@@ -165,6 +137,7 @@ export function deriveConsultantActionItems({
   basePath,
   payoutSetupNeeded = false,
   livePayoutsEnabled = true,
+  viewerTimezone,
   now,
 }: ConsultantActionInput): ActionItem[] {
   const items: ActionItem[] = [];
@@ -176,8 +149,6 @@ export function deriveConsultantActionItems({
   );
   if (imminent) items.push(imminent);
 
-  // Money already earned with nowhere to go outranks new work: the fix is one
-  // form, and every payout batch until then skips this consultant.
   if (payoutSetupNeeded) {
     items.push({
       key: "payout-setup",
@@ -216,12 +187,10 @@ export function deriveConsultantActionItems({
   }
 
   for (const owed of owedMakeUps) {
-    // #1527 review — a fixed zone keeps server and client render alike;
-    // without it the deadline could read a day earlier/later off-IST.
     const by = new Date(owed.deadline).toLocaleDateString("en-IN", {
       day: "numeric",
       month: "short",
-      timeZone: "Asia/Kolkata",
+      timeZone: viewerTimezone || "Asia/Kolkata",
     });
     items.push({
       key: `make-up:${owed.occurrenceId}`,

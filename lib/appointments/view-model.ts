@@ -64,6 +64,13 @@ export function toOccurrenceLike(row: OccurrenceLike): OccurrenceLike {
     isTentative: row.isTentative,
     completionStatus: row.completionStatus ?? null,
     deletedAt: row.deletedAt ?? null,
+    meeting: row.meeting
+      ? {
+          id: row.meeting.id,
+          endedAt: row.meeting.endedAt,
+          endedReason: row.meeting.endedReason,
+        }
+      : null,
   };
 }
 

@@ -149,11 +149,7 @@ export function useConsultantAppointmentsAdapter(
     rawOccurrences,
     title: activeVm?.title ?? "",
     type: typeLabel as
-      | "Consultation"
-      | "Subscription"
-      | "Webinar"
-      | "Class"
-      | "Trial",
+      "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial",
   });
 
   const openDialog = (vm: AppointmentVM, kind: DialogKind) => {
@@ -180,14 +176,23 @@ export function useConsultantAppointmentsAdapter(
       },
     );
 
-  const joinVm = async (vm: AppointmentVM, force = false) => {
+  const joinVm = async (
+    vm: AppointmentVM,
+    force = false,
+    targetOccurrence?: import("@/lib/appointments/view-model").OccurrenceVM,
+  ) => {
     setJoiningId(vm.id);
     let navigating = false;
     if (vm.kind === "TRIAL") {
       const trial = vm.raw.source as ConsultantTrialLike | undefined;
       const apptId = trial?.appointment?.id ?? vm.raw.appointment?.id;
       const slots = trialSlotsOf(vm);
-      const slot = force ? slots[0] : (joinableSlotOf(vm) ?? slots[0]);
+      const slot = targetOccurrence
+        ? (slots.find((s) => s.id === targetOccurrence.occurrenceId) ??
+          slots[0])
+        : force
+          ? slots[0]
+          : (joinableSlotOf(vm) ?? slots[0]);
       if (apptId && slot) {
         navigating = await joinMeeting(
           {
@@ -213,9 +218,14 @@ export function useConsultantAppointmentsAdapter(
         );
       }
     } else if (vm.raw.appointment) {
-      const slot = force
-        ? vm.raw.appointment.occurrences?.[0]
-        : (joinableSlotOf(vm) ?? undefined);
+      const slots = vm.raw.appointment.occurrences ?? [];
+      const slot = targetOccurrence
+        ? (slots.find((s) => s.id === targetOccurrence.occurrenceId) ??
+          joinableSlotOf(vm) ??
+          undefined)
+        : force
+          ? slots[0]
+          : (joinableSlotOf(vm) ?? undefined);
       navigating = await joinMeeting(vm.raw.appointment, slot);
     }
     if (!navigating) setJoiningId(null);
@@ -257,18 +267,6 @@ export function useConsultantAppointmentsAdapter(
     );
   };
 
-  /**
-   * The whole join gate: a confirmed booking whose session is inside its
-   * window.
-   *
-   * #1270 — the status half was missing. The non-trial branch gated on
-   * `bucket !== "cancelled"` alone, which is only the terminal-NEGATIVE
-   * statuses, so a consultant could open the room for a booking still at
-   * APPROVED_PENDING_PAYMENT (nobody has paid) or already COMPLETED (the
-   * session is over and its recording is sealed). The trial branch checked no
-   * status at all. `isConfirmedStatus` is what the consultee adapter has
-   * always required, and it subsumes the cancelled-bucket check.
-   */
   const canJoinNow = (vm: AppointmentVM): boolean => {
     if (!isConfirmedStatus(vm.status)) return false;
     return vm.kind === "TRIAL"
@@ -276,7 +274,6 @@ export function useConsultantAppointmentsAdapter(
       : joinableSlotOf(vm) !== null;
   };
 
-  /** Slot rows exist to key a room to, joinable or not — the dev arm's target. */
   const hasSlotRows = (vm: AppointmentVM): boolean => {
     if (vm.kind === "TRIAL") {
       return trialSlotsOf(vm).length > 0;
@@ -299,7 +296,7 @@ export function useConsultantAppointmentsAdapter(
       return {
         kind: "join",
         label: "Join",
-        onClick: () => void joinVm(vm),
+        onClick: (targetOccurrence) => void joinVm(vm, false, targetOccurrence),
         busy: joiningId === vm.id,
       };
     }

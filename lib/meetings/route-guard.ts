@@ -7,7 +7,7 @@ import type { MeetingAccess } from "@/lib/meetings/access";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 
-const meetingIdParamSchema = z.string().trim().min(1).max(128);
+export const meetingIdParamSchema = z.string().trim().min(1).max(128);
 
 /**
  * The five questions every meeting route asks before it touches Stream.
@@ -76,6 +76,15 @@ export async function guardMeetingRoute(
         error: access.message,
         reason: access.reason,
         ...("code" in access && access.code ? { code: access.code } : {}),
+        ...("startsAt" in access && access.startsAt
+          ? { startsAt: access.startsAt }
+          : {}),
+        ...("endsAt" in access && access.endsAt
+          ? { endsAt: access.endsAt }
+          : {}),
+        ...("canReopen" in access && typeof access.canReopen === "boolean"
+          ? { canReopen: access.canReopen }
+          : {}),
       },
       access.reason === "not_found" ? 404 : 403,
     );

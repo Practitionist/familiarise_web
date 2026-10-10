@@ -96,6 +96,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     appointmentOccurrence: {
       findFirst: (...a: unknown[]) => mockOccurrenceFindFirst(...a),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     user: {
       findUnique: (...a: unknown[]) => mockUserFindUnique(...a),

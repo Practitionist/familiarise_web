@@ -13,13 +13,14 @@
  * `lib/booking/transitions.ts` owns that; this only names what the rows say.
  */
 
-import { format } from "date-fns";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   REJOIN_GRACE_MS,
   isDeadOccurrence,
+  isDeliberateEnd,
 } from "@/lib/appointments/occurrences";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
@@ -122,6 +123,10 @@ export type OccurrenceInput = {
   isTentative: boolean;
   completionStatus?: string | null;
   deletedAt?: Date | string | null;
+  meeting?: {
+    endedAt: Date | string | null;
+    endedReason?: string | null;
+  } | null;
 };
 
 export type PaymentInput = PaymentDisplayLike & {
@@ -322,8 +327,14 @@ export function toneBadge(tone: Tone, label: string): StatusBadgeStyle {
 
 const money = (paise: bigint | number | string, currency: string) =>
   formatCurrencyAmount(Number(paise), currency);
-const day = (d: Date) => format(d, "EEE d MMM");
-const dayTime = (d: Date) => format(d, "EEE d MMM HH:mm");
+const defaultViewerZone = () =>
+  (typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : undefined) ?? "UTC";
+const day = (d: Date, zone?: string | null) =>
+  formatInViewerZone(d, zone ?? defaultViewerZone(), "EEE d MMM");
+const dayTime = (d: Date, zone?: string | null) =>
+  formatInViewerZone(d, zone ?? defaultViewerZone(), "EEE d MMM HH:mm");
 
 function occurrenceEnd(o: OccurrenceInput): number {
   return (
@@ -333,6 +344,7 @@ function occurrenceEnd(o: OccurrenceInput): number {
 }
 
 function isOccurrencePastGrace(o: OccurrenceInput, now: Date): boolean {
+  if (isDeliberateEnd(o.meeting)) return true;
   const status = normalizeStatus(o.completionStatus);
   if (status === "COMPLETED" || status === "VOIDED") {
     return occurrenceEnd(o) < now.getTime();
@@ -541,7 +553,11 @@ function deriveMoney(
 
   if (paid) {
     const rail = paymentRailLabel(paid);
-    const when = format(toDate(paid.createdAt), "d MMM yyyy");
+    const when = formatInViewerZone(
+      toDate(paid.createdAt),
+      defaultViewerZone(),
+      "d MMM yyyy",
+    );
     if (
       input.disputes.some((d) => OPEN_DISPUTES.has(normalizeStatus(d.status)))
     ) {

@@ -258,6 +258,31 @@ export async function handleCallEnded(
 }
 
 /**
+ * Synchronously stamps `Meeting.endedAt` and `endedReason` on host-initiated
+ * termination before navigating back to the dashboard, eliminating webhook lag.
+ */
+export async function recordMeetingEndedSynchronously(
+  streamCallId: string,
+  endedAt: Date = new Date(),
+): Promise<{ endedReason: "ended_early" | "call_ended" } | null> {
+  const meeting = await prisma.meeting.findUnique({
+    where: { streamCallId },
+    include: { occurrence: true },
+  });
+  if (!meeting) return null;
+
+  if (!supersedesRecordedEnd(meeting.endedAt, endedAt)) {
+    return null;
+  }
+
+  const slotStartsAt = meeting.occurrence.startsAt;
+  const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
+  const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
+  await stampEnd(meeting, endedAt, endedReason);
+  return { endedReason };
+}
+
+/**
  * Resolve the Meeting for a Stream call_cid (format "type:callId").
  * Returns null (not throw) when no session matches — Stream emits participant
  * events for ad-hoc calls that may never have been persisted; those are skipped.

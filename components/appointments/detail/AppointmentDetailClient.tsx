@@ -892,7 +892,7 @@ export function AppointmentDetailClient({
                     isJoining={action.kind === "join" && !!action.busy}
                     onJoinSession={
                       action.kind === "join" && action.onClick
-                        ? () => action.onClick!()
+                        ? action.onClick
                         : undefined
                     }
                     showHeld

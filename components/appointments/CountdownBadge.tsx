@@ -7,6 +7,7 @@ import { cn } from "@/utils/tailwind";
 interface CountdownBadgeProps {
   targetDate: Date | string;
   sessionEndDate?: Date | string;
+  meetingEnded?: boolean;
 }
 
 type Tier = "far" | "soon" | "imminent" | "now" | "live" | "ended";
@@ -46,14 +47,19 @@ const tierStyles: Record<Tier, string> = {
 export function CountdownBadge({
   targetDate,
   sessionEndDate,
+  meetingEnded = false,
 }: CountdownBadgeProps) {
   const [now, setNow] = useState(() => Date.now());
 
   const target = new Date(targetDate).getTime();
   const end = sessionEndDate ? new Date(sessionEndDate).getTime() : null;
   const diffMs = target - now;
-  const isOngoing = diffMs <= 0 && end !== null && now <= end + REJOIN_GRACE_MS;
-  const isEnded = end !== null && now > end + REJOIN_GRACE_MS;
+  const isOngoing =
+    !meetingEnded &&
+    diffMs <= 0 &&
+    end !== null &&
+    now <= end + REJOIN_GRACE_MS;
+  const isEnded = meetingEnded || (end !== null && now > end + REJOIN_GRACE_MS);
 
   useEffect(() => {
     if (isEnded) return;

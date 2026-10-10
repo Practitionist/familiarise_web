@@ -436,12 +436,19 @@ export async function POST(
       );
     }
 
+    const extendedEndsAt = new Date(slotEndsAt.getTime() + EXTENSION_MS);
+    await prisma.appointmentOccurrence.updateMany({
+      where: { id: occurrence.id, endsAt: slotEndsAt },
+      data: { endsAt: extendedEndsAt },
+    });
+
     streamLogger.info("Meeting duration extended by host", {
       userId,
       meetingId: resolvedCallId,
       addedSeconds: EXTENSION_SECONDS,
       maxDurationSeconds: extendResult.updatedCapSeconds,
       extensionsUsed: extendResult.extensionsUsed,
+      extendedEndsAt: extendedEndsAt.toISOString(),
     });
 
     return NextResponse.json({
@@ -449,6 +456,7 @@ export async function POST(
       addedSeconds: EXTENSION_SECONDS,
       maxDurationSeconds: extendResult.updatedCapSeconds,
       extensionsUsed: extendResult.extensionsUsed,
+      endsAt: extendedEndsAt.toISOString(),
       hasConflictingNextBooking: false,
     });
   } catch (error) {
