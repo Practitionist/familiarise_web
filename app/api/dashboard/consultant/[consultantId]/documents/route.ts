@@ -5,6 +5,7 @@ import { Prisma, DocumentReviewStatus } from "@prisma/client";
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
+import { groupDocumentsIntoThreads } from "@/lib/documents/document-review";
 // GET - Get all documents for review by consultant
 export async function GET(
   request: NextRequest,
@@ -117,7 +118,10 @@ export async function GET(
       }
     } catch (dbError) {
       console.error("Database error fetching consultant:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "dashboard" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "dashboard" } },
+      );
       return NextResponse.json(
         {
           error: "Database temporarily unavailable",
@@ -180,11 +184,11 @@ export async function GET(
           ? { organizationId: docScopedOrgId }
           : {};
 
-    // Build where clause
+    // Build where clause (non-deleted documents across consultation, subscription, and trial bookings)
     const where: Prisma.AppointmentDocumentWhereInput = {
+      deletedAt: null,
       appointment: {
         OR: [
-          // Consultation appointments
           {
             consultation: {
               consultationPlan: {
@@ -192,9 +196,15 @@ export async function GET(
               },
             },
           },
-          // Subscription appointments
           {
             subscription: {
+              subscriptionPlan: {
+                consultantProfileId: consultantId,
+              },
+            },
+          },
+          {
+            trial: {
               subscriptionPlan: {
                 consultantProfileId: consultantId,
               },
@@ -205,7 +215,7 @@ export async function GET(
       },
     };
 
-    // Add status filter with validation
+    // Validate status filter (applied at deliverable-thread effectiveStatus level below)
     if (status) {
       const validStatuses = [
         "PENDING",
@@ -214,9 +224,7 @@ export async function GET(
         "REJECTED",
         "NEEDS_REVISION",
       ];
-      if (validStatuses.includes(status)) {
-        where.reviewStatus = status as DocumentReviewStatus;
-      } else {
+      if (!validStatuses.includes(status)) {
         return NextResponse.json(
           {
             error: "Invalid status filter",
@@ -247,24 +255,23 @@ export async function GET(
       if (appointmentType === "Consultation" && appointmentFilter) {
         appointmentFilter.consultation = { isNot: null };
         appointmentFilter.subscription = null;
+        appointmentFilter.trial = null;
       } else if (appointmentType === "Subscription" && appointmentFilter) {
         appointmentFilter.subscription = { isNot: null };
         appointmentFilter.consultation = null;
+        appointmentFilter.trial = null;
       }
     }
 
-    // Fetch documents, total count, and status breakdown in parallel.
-    // - findMany: current page only (take/skip)
-    // - count: total matching rows across all pages
-    // - groupBy: per-status counts for the metadata block (filter-aware)
+    // Fetch all non-deleted documents across consultant's bookings and status breakdown in parallel,
+    // then group by deliverable thread before slicing pagination so multi-version threads never split.
     let documents;
-    let totalCount: number;
     let metadataGrouped: Array<{
       reviewStatus: DocumentReviewStatus;
       _count: { _all: number };
     }>;
     try {
-      [documents, totalCount, metadataGrouped] = await Promise.all([
+      [documents, metadataGrouped] = await Promise.all([
         prisma.appointmentDocument.findMany({
           where,
           include: {
@@ -290,29 +297,36 @@ export async function GET(
                     subscriptionPlan: true,
                   },
                 },
+                trial: {
+                  include: {
+                    consulteeProfile: {
+                      include: {
+                        user: true,
+                      },
+                    },
+                    subscriptionPlan: true,
+                  },
+                },
               },
             },
           },
           orderBy: {
             uploadedAt: "desc",
           },
-          take,
-          skip,
         }),
-        prisma.appointmentDocument.count({ where }),
         prisma.appointmentDocument.groupBy({
           by: ["reviewStatus"],
-          where: { ...where, reviewStatus: undefined },
+          where,
           _count: { _all: true },
         }),
       ]);
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "dashboard" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "dashboard" } },
+      );
 
-      // Return an empty page envelope with helpful message instead of failing.
-      // Shape must match the success branch so the UI's pagination prop is
-      // never undefined on DB errors.
       return NextResponse.json({
         data: [],
         count: 0,
@@ -341,31 +355,36 @@ export async function GET(
       });
     }
 
-    // Transform data for frontend with error resilience
+    // Transform data for frontend with complete threading fields preserved
     const transformedDocuments = documents.map((doc) => {
       try {
         const appointment = doc.appointment;
         const consultation = appointment.consultation;
         const subscription = appointment.subscription;
+        const trial = appointment.trial;
 
-        // Determine client info and appointment details with fallbacks
         let clientName = "Unknown Client";
         let clientId = "";
         let appointmentTitle = "Unknown Appointment";
-        let appointmentType = "Unknown";
+        let resolvedAppointmentType = "Unknown";
 
         if (consultation) {
           clientName = consultation.requestedBy?.user?.name || "Unknown Client";
           clientId = consultation.requestedBy?.user?.id || "";
           appointmentTitle =
             consultation.consultationPlan?.title || "Consultation";
-          appointmentType = "Consultation";
+          resolvedAppointmentType = "Consultation";
         } else if (subscription) {
           clientName = subscription.requestedBy?.user?.name || "Unknown Client";
           clientId = subscription.requestedBy?.user?.id || "";
           appointmentTitle =
             subscription.subscriptionPlan?.title || "Subscription";
-          appointmentType = "Subscription";
+          resolvedAppointmentType = "Subscription";
+        } else if (trial) {
+          clientName = trial.consulteeProfile?.user?.name || "Unknown Client";
+          clientId = trial.consulteeProfile?.user?.id || "";
+          appointmentTitle = trial.subscriptionPlan?.title || "Trial Session";
+          resolvedAppointmentType = "Subscription";
         }
 
         return {
@@ -380,21 +399,28 @@ export async function GET(
           reviewStatus: doc.reviewStatus,
           reviewNotes: doc.reviewNotes,
           reviewedAt: doc.reviewedAt,
+          uploadedByRole: doc.uploadedByRole,
+          versionNo: doc.versionNo,
+          rootDocumentId: doc.rootDocumentId,
+          responseToDocumentId: doc.responseToDocumentId,
           uploadedAt: doc.uploadedAt,
           clientName,
           clientId,
           appointmentTitle,
-          appointmentType,
-          // Legacy fields for existing UI compatibility
+          appointmentType: resolvedAppointmentType,
           title: doc.originalName,
           invoiceNo: `DOC-${doc.id.slice(-8)}`,
           tag: doc.reviewStatus,
         };
       } catch (transformError) {
         console.error("Error transforming document:", transformError, doc);
-        Sentry.captureException(transformError instanceof Error ? transformError : new Error(String(transformError)), { tags: { subsystem: "dashboard" } });
+        Sentry.captureException(
+          transformError instanceof Error
+            ? transformError
+            : new Error(String(transformError)),
+          { tags: { subsystem: "dashboard" } },
+        );
 
-        // Return a safe fallback version of the document
         return {
           id: doc.id || "unknown",
           appointmentId: doc.appointmentId || "unknown",
@@ -407,12 +433,15 @@ export async function GET(
           reviewStatus: doc.reviewStatus || "PENDING",
           reviewNotes: doc.reviewNotes || null,
           reviewedAt: doc.reviewedAt || null,
+          uploadedByRole: doc.uploadedByRole || "CONSULTEE",
+          versionNo: doc.versionNo ?? 1,
+          rootDocumentId: doc.rootDocumentId ?? null,
+          responseToDocumentId: doc.responseToDocumentId ?? null,
           uploadedAt: doc.uploadedAt || new Date(),
           clientName: "Unknown Client",
           clientId: "",
           appointmentTitle: "Unknown Appointment",
           appointmentType: "Unknown",
-          // Legacy fields
           title: doc.originalName || "Unknown Document",
           invoiceNo: `DOC-${(doc.id || "unknown").slice(-8)}`,
           tag: doc.reviewStatus || "PENDING",
@@ -420,8 +449,14 @@ export async function GET(
       }
     });
 
-    // Derive metadata counts from the groupBy result so they reflect the
-    // full filtered dataset, not just the current page (issue #346, Q1).
+    const allThreads = groupDocumentsIntoThreads(transformedDocuments);
+    const matchingThreads = status
+      ? allThreads.filter((thread) => thread.effectiveStatus === status)
+      : allThreads;
+    const totalCount = matchingThreads.length;
+    const pageThreads = matchingThreads.slice(skip, skip + take);
+    const pagedDocuments = pageThreads.flatMap((thread) => thread.versions);
+
     const countByStatus = new Map<DocumentReviewStatus, number>(
       metadataGrouped.map((row) => [row.reviewStatus, row._count._all]),
     );
@@ -434,8 +469,6 @@ export async function GET(
         (countByStatus.get("REJECTED") ?? 0),
     };
 
-    // Provide helpful context messages. `totalCount` now comes from the
-    // count() query so it reflects all rows matching `where`, not the page.
     let message = "";
     const isDevelopment = process.env.NODE_ENV === "development";
     const devModeMessage = isDevelopment
@@ -455,11 +488,11 @@ export async function GET(
 
       const filterSuffix =
         filterText.length > 0 ? ` (filtered by ${filterText.join(", ")})` : "";
-      message = `Found ${totalCount} document${totalCount === 1 ? "" : "s"} for review${filterSuffix}.${devModeMessage}`;
+      message = `Found ${totalCount} document thread${totalCount === 1 ? "" : "s"} for review${filterSuffix}.${devModeMessage}`;
     }
 
     return NextResponse.json({
-      data: transformedDocuments,
+      data: pagedDocuments,
       count: totalCount,
       message,
       consultant: isDevelopment
@@ -482,7 +515,10 @@ export async function GET(
     });
   } catch (error) {
     console.error("Error fetching consultant documents:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {
