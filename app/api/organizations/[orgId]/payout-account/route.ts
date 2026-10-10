@@ -39,7 +39,10 @@ export async function GET(
 ) {
   const { orgId } = await params;
   // #1527 decision 1 — the Payouts › Payout account tab's grant.
-  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "payouts.read",
+  });
   if (access.error) return access.error;
 
   if (!access.org.canHost) {

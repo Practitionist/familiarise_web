@@ -26,6 +26,7 @@ import {
 } from "@/lib/enterprise/transitions";
 import {
   MembershipGuardError,
+  assertActorMayManage,
   assertNotTombstone,
   assertRoleChangeAllowed,
   assertStatusChangeAllowed,
@@ -105,7 +106,7 @@ export async function GET(
   // can enumerate peers' emails/profile ids. Was a MANAGER rank floor, which
   // let BILLING_ADMIN open members the list refuses and kept SUPPORT out of
   // members it can list (#1527 P0-4).
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
 
   const membership = await prisma.membership.findFirst({
@@ -380,6 +381,8 @@ export async function PATCH(
 
           // Removed and erased memberships are immutable tombstones; any re-entry requires a fresh invitation.
           assertNotTombstone(current);
+          // Even a label-only edit on an OWNER, MAINTAINER or BILLING_ADMIN row needs an OWNER.
+          if (touchesPeople) assertActorMayManage(actor, current.role);
 
           const roleChanged =
             patch.role !== undefined && patch.role !== current.role;

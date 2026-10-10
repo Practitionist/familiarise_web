@@ -146,6 +146,14 @@ export interface ConsentArtifactDraft {
  */
 export const CONSENT_AUDIT_RETENTION_YEARS = 7;
 
+/** The platform's own fiduciary, stamped on sign-up and account-level consent. */
+export const PLATFORM_DATA_FIDUCIARY = "Familiarise";
+
+/** The fiduciary an org-route consent grant is stamped with. */
+export function orgDataFiduciary(orgId: string): string {
+  return `org:${orgId}`;
+}
+
 /**
  * Calendar-year addition, deliberately not `+ 7 * 365 * 24 * 60 * 60 * 1000`.
  * A fixed millisecond offset drifts by a day every four years across leap days,
@@ -206,7 +214,7 @@ export function buildSignupConsentArtifacts(
   return SIGNUP_PURPOSES.map((purposeCode) =>
     buildConsentArtifact({
       userId,
-      dataFiduciary: "Familiarise",
+      dataFiduciary: PLATFORM_DATA_FIDUCIARY,
       purposeCodes: [purposeCode],
       language: "en-IN",
       consentManager: null,

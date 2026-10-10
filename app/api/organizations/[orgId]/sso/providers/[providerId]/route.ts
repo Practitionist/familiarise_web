@@ -54,7 +54,10 @@ export async function GET(
   const { orgId, providerId } = await params;
   // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
   // floor that admitted BILLING_ADMIN. Both roles get the same redacted view.
-  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "identity.read",
+  });
   if (access.error) return access.error;
 
   // Decryption happens lazily when `oidcConfig` is read, so the read goes

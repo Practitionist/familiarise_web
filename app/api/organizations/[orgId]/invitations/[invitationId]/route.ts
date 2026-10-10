@@ -29,6 +29,7 @@ export async function GET(
 ) {
   const { orgId, invitationId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "invitations.manage",
   });
   if (access.error) return access.error;
@@ -63,7 +64,8 @@ export async function DELETE(
     return NextResponse.json(
       {
         error: "ORG_NOT_ACTIVE",
-        message: "Invitations cannot be modified while the organization is suspended.",
+        message:
+          "Invitations cannot be modified while the organization is suspended.",
         status: access.org.status,
       },
       { status: 409 },
@@ -75,27 +77,23 @@ export async function DELETE(
     // already-accepted or already-canceled row is left untouched so the
     // audit log doesn't double-emit REVOKE on retry.
     const result = await prisma.$transaction(async (tx) => {
-      if (typeof tx.invitation.findFirst === "function") {
-        const existing = await tx.invitation.findFirst({
-          where: {
-            id: invitationId,
-            organizationId: orgId,
-            status: "PENDING",
+      const existing = await tx.invitation.findFirst({
+        where: { id: invitationId, organizationId: orgId },
+        select: { role: true, status: true },
+      });
+      if (!existing) return "not_found" as const;
+      if (
+        existing.status === "PENDING" &&
+        !canCallerAssignRole(access.member.role, existing.role)
+      ) {
+        assertActorMayManage(
+          {
+            kind: "member",
+            membershipId: access.member.id,
+            role: access.member.role,
           },
-          select: { id: true, role: true },
-        });
-        if (existing) {
-          if (!canCallerAssignRole(access.member.role, existing.role)) {
-            assertActorMayManage(
-              {
-                kind: "member",
-                membershipId: access.member.id,
-                role: access.member.role,
-              },
-              existing.role,
-            );
-          }
-        }
+          existing.role,
+        );
       }
 
       const updated = await tx.invitation.updateMany({
@@ -106,7 +104,7 @@ export async function DELETE(
         },
         data: { status: "CANCELED" },
       });
-      if (updated.count === 0) return { revoked: false };
+      if (updated.count === 0) return "not_pending" as const;
 
       await tx.orgAuditLog.create({
         data: {
@@ -118,12 +116,20 @@ export async function DELETE(
           details: { invitationId },
         },
       });
-      return { revoked: true };
+      return "revoked" as const;
     });
 
-    if (!result.revoked) {
+    if (result === "not_found") {
       return NextResponse.json(
-        { error: "Invitation not pending (may already be accepted or canceled)" },
+        { error: "Invitation not found" },
+        { status: 404 },
+      );
+    }
+    if (result === "not_pending") {
+      return NextResponse.json(
+        {
+          error: "Invitation not pending (may already be accepted or canceled)",
+        },
         { status: 409 },
       );
     }

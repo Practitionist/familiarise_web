@@ -65,6 +65,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "contracts.read",
     canSponsor: true,
   });
@@ -72,9 +73,7 @@ export async function GET(
 
   const url = new URL(req.url);
   const statusRaw = url.searchParams.get("status");
-  const status = statusRaw
-    ? ContractStatusSchema.safeParse(statusRaw)
-    : null;
+  const status = statusRaw ? ContractStatusSchema.safeParse(statusRaw) : null;
 
   const contracts = await prisma.contract.findMany({
     where: {
@@ -165,7 +164,8 @@ export async function POST(
   // existing subscription via contract create (renewals are a separate
   // flow). Fail loud rather than silently dropping the operator's input.
   const wantsLicenseSubscription =
-    body.licenseFeePaise !== undefined || body.licenseRatePerSeatPaise !== undefined;
+    body.licenseFeePaise !== undefined ||
+    body.licenseRatePerSeatPaise !== undefined;
   if (wantsLicenseSubscription) {
     if (billingAccount.fundingSource !== "LICENSE") {
       return NextResponse.json(

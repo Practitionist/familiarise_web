@@ -80,11 +80,20 @@ Order of checks and their answers:
 | Not a member                                      | 403             | `Not a member of this organization`          |
 | Membership not `ACTIVE` (unless `allowSuspended`) | 403             | `Membership is <status>`                     |
 | Role lacks `permission`                           | 403             | `Forbidden — your role does not grant <key>` |
+| Platform `ADMIN` on a gate without `readOnly`     | 403             | `code: "ADMIN_READ_ONLY"`                    |
 
 Capability gates answer **404**, not 403: a host-only org has no sponsor API, so
 "not found" is the honest answer. A platform `ADMIN` skips the membership and
-permission checks and gets a synthesized `OWNER` membership, but the capability
-gates still apply. There is no rank comparator and no owner-only wrapper; an
+permission checks and gets a synthesized `OWNER` membership
+(`__admin_stub_<userId>`) **only on `readOnly` gates** — GET handlers and the
+org dashboard's server pages; every other gate refuses them with 403
+`ADMIN_READ_ONLY`, and admin writes go through the audited `/api/admin/*` doors
+(`withOpsAction`, e.g. `POST /api/admin/organizations/[orgId]/invoices`). The
+capability gates still apply. `__tests__/enterprise/admin-stub-read-only.test.ts`
+fails a `readOnly` gate outside a GET handler. Every org-route
+`consentArtifact` read names a `dataFiduciary` (this org's `org:<id>` or the
+platform's); another org's fiduciary rows would reveal a member's other
+memberships (`__tests__/enterprise/consent-fiduciary-scope.test.ts`). There is no rank comparator and no owner-only wrapper; an
 owner-only route names an OWNER-only key. A jest pin
 (`__tests__/enterprise/org-route-matrix-pin.test.ts`) fails any org route with
 no matrix key or a rank check.

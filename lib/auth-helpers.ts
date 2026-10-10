@@ -332,6 +332,8 @@ export type OrgCapabilityGate = {
   fundingSource?: FundingSource;
   requireActive?: true;
   allowSuspended?: true;
+  /** The caller only reads. A platform ADMIN passes (as an OWNER stub) only on these gates. */
+  readOnly?: true;
 };
 
 async function fetchOrganizationWithBilling(organizationId: string) {
@@ -464,7 +466,9 @@ function checkMemberPermissionGate(
 /**
  * Require that the session user is an active Membership of the specified
  * organization, holding `opts.permission` when set, and enforce capability
- * and funding-source gates.
+ * and funding-source gates. A platform ADMIN gets a read-only OWNER stub on
+ * `readOnly` gates and a 403 on every other gate; admin writes go through
+ * the audited `/api/admin/*` doors.
  */
 export async function requireOrgAccess(
   organizationId: string,
@@ -484,6 +488,18 @@ export async function requireOrgAccess(
 
   const userId = auth.session.user.id;
   if (auth.session.user.role === "ADMIN") {
+    if (opts.readOnly !== true) {
+      return {
+        error: NextResponse.json(
+          {
+            error:
+              "Platform admins have read-only access to organizations — act through the back office.",
+            code: "ADMIN_READ_ONLY",
+          },
+          { status: 403 },
+        ),
+      };
+    }
     setSentryOrgContext({ orgId: org.id, orgRole: "ADMIN" });
     const stub: Membership = {
       id: `__admin_stub_${userId}`,

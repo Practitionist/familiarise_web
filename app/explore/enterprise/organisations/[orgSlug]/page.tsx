@@ -183,7 +183,10 @@ const fetchOrgBySlug = cache(async (slug: string) => {
     bannerImage: row.brandingProfile?.bannerImage ?? null,
     description: row.brandingProfile?.description ?? null,
     industry: row.brandingProfile?.industry ?? null,
-    website: row.brandingProfile?.website ?? null,
+    // Rendered as a public href, so anything but http(s) is dropped.
+    website: /^https?:\/\//i.test(row.brandingProfile?.website ?? "")
+      ? (row.brandingProfile?.website ?? null)
+      : null,
     sizeBucket: row.brandingProfile?.sizeBucket ?? null,
     directoryType: row.brandingProfile?.directoryType ?? null,
   };

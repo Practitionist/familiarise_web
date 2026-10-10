@@ -54,6 +54,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "invitations.manage",
   });
   if (access.error) return access.error;

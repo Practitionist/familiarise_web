@@ -30,7 +30,7 @@ export default async function OrgCollaborationsPage({
 }) {
   const { orgId } = await params;
 
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   // Same predicate as the nav item (#1527); operators use Catalog ›
   // Collaborators.
   if (access.error || !deliversForOrg(access.member)) {

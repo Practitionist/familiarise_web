@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import * as Sentry from "@sentry/nextjs";
 import {
   HydrationBoundary,
   QueryClient,
@@ -14,8 +13,7 @@ import { toPlain } from "@/lib/data/serialize";
 /**
  * Server shell that seeds the organization details query and enforces
  * server-side session and membership authorization before rendering the org
- * tree (falling back to client-side membership fetch only if the server seed
- * throws for an already-authenticated user).
+ * tree.
  */
 export default async function OrgDashboardLayout({
   children,
@@ -27,32 +25,20 @@ export default async function OrgDashboardLayout({
   const { orgId } = await params;
   const queryClient = new QueryClient();
 
-  let seedErrored = false;
-  const details = await getOrgDetailsForSeed(orgId).catch((err: unknown) => {
-    seedErrored = true;
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "org-dashboard-seed" }, extra: { orgId } },
-    );
-    return null;
-  });
-
+  // A seed that throws renders the error boundary, never the shell.
+  const details = await getOrgDetailsForSeed(orgId);
   if (!details) {
     const session = await getSession(true);
     if (!session?.user?.id) {
       redirect("/auth/signin");
     }
-    if (!seedErrored && session.user.role !== "ADMIN") {
-      redirect("/dashboard");
-    }
+    redirect("/dashboard");
   }
 
-  if (details) {
-    await queryClient.prefetchQuery({
-      queryKey: orgDetailsQueryKey(orgId),
-      queryFn: async () => toPlain(details),
-    });
-  }
+  await queryClient.prefetchQuery({
+    queryKey: orgDetailsQueryKey(orgId),
+    queryFn: async () => toPlain(details),
+  });
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>

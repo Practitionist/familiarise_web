@@ -154,7 +154,10 @@ export async function GET(
   },
 ) {
   const { orgId, payoutId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "payouts.read",
+  });
   if (access.error) return access.error;
 
   const payout = await prisma.organizationPayout.findFirst({

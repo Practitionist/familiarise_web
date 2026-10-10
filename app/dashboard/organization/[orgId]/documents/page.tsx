@@ -16,7 +16,10 @@ export default async function OrgDocumentsPage({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { allowSuspended: true });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    allowSuspended: true,
+  });
   if (access.error) notFound();
 
   return (

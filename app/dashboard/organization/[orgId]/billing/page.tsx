@@ -15,6 +15,7 @@ export default async function OrgBillingPage({
   const { orgId } = await params;
 
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "billing.read",
     canSponsor: true,
   });

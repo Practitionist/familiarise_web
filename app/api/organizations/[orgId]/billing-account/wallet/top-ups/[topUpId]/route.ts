@@ -27,6 +27,7 @@ export async function GET(
 ) {
   const { orgId, topUpId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "billing.read",
     canSponsor: true,
   });

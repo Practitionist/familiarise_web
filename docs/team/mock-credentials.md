@@ -135,7 +135,7 @@ All passwords: `SeedPass123!`
 
 ## Org Member Role Ladder (MemberRole)
 
-`ADMIN` and `STAFF` platform users **bypass all membership checks** — they receive a synthetic OWNER-rank stub so audit logs still produce valid `actorMembershipId` values (`__admin_stub_<userId>`).
+A platform `ADMIN` gets a **read-only** synthetic OWNER stub (`__admin_stub_<userId>`) on org reads; org writes refuse them (`ADMIN_READ_ONLY`) and go through the `/api/admin/*` doors. `STAFF` gets no org access through org routes.
 
 | MemberRole | Rank | Key permissions |
 |------------|------|----------------|
@@ -279,8 +279,8 @@ Every valid combination of `UserRole × org capability kind × MemberRole`.
 | CONSULTANT | HOST | EXPERT (SELF) | aarav/aditi/alex/amit/ananya.anderson (LearnPro Academy); aditi.anderson (LearnPro Test) |
 | CONSULTANT | HYBRID | EXPERT (SELF) | arjun/benjamin/catherine.anderson (IIT Madras) |
 | CONSULTANT | HYBRID | EXPERT (ORGANIZATION) | andrew/angela.anderson (IIT Madras) — salaried |
-| ADMIN | any | Synthetic OWNER stub | olivia.brown@protonmail.com — bypasses `requireOrgAccess` entirely |
-| STAFF | any | Synthetic OWNER stub | maria.brown@gmail.com — same bypass logic as ADMIN |
+| ADMIN | any | Read-only OWNER stub | olivia.brown@protonmail.com — org reads only; writes via `/api/admin/*` |
+| STAFF | any | None | maria.brown@gmail.com — back office only |
 | any | any | MAINTAINER | **Not seeded** — create via `PATCH /members/[id]` as OWNER |
 | any | any | MANAGER | **Not seeded** — create via `PATCH /members/[id]` as OWNER |
 | any | any | SUPPORT | **Not seeded** — create via `PATCH /members/[id]` as OWNER |
