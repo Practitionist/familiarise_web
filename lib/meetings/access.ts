@@ -152,6 +152,12 @@ async function loadMeeting(callId: string) {
   });
   if (direct) return direct;
 
+  const byId = await prisma.meeting.findUnique({
+    where: { id: callId },
+    include: MEETING_SESSION_INCLUDE,
+  });
+  if (byId) return byId;
+
   const occurrenceId = parseOccurrenceIdFromCallId(callId);
   if (!occurrenceId) return null;
 

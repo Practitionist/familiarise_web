@@ -248,6 +248,10 @@ export async function POST(
         where: { streamCallId: callId },
         include: reopenInclude,
       })) ??
+      (await prisma.meeting.findUnique({
+        where: { id: callId },
+        include: reopenInclude,
+      })) ??
       (occurrenceIdFallback
         ? await prisma.meeting.findUnique({
             where: { appointmentOccurrenceId: occurrenceIdFallback },
