@@ -49,36 +49,32 @@ jest.mock("../../lib/stream-client", () => ({
 }));
 
 jest.mock("../../lib/prisma", () => {
-  const proxy =
-    (fn: jest.Mock) =>
-    (...args: unknown[]) =>
-      fn(...args);
   const txClient: Record<string, unknown> = {
     consentArtifact: {
       findFirst: jest.fn().mockResolvedValue({ id: "consent-1" }),
     },
     meeting: {
-      findUnique: proxy(mockMeetingFindUnique),
-      updateMany: proxy(mockMeetingUpdateMany),
+      findUnique: (...args: unknown[]) => mockMeetingFindUnique(...args),
+      updateMany: (...args: unknown[]) => mockMeetingUpdateMany(...args),
     },
     meetingAttendance: {
-      upsert: proxy(mockAttendanceUpsert),
-      updateMany: proxy(mockAttendanceUpdateMany),
+      upsert: (...args: unknown[]) => mockAttendanceUpsert(...args),
+      updateMany: (...args: unknown[]) => mockAttendanceUpdateMany(...args),
     },
     meetingPresence: {
-      findFirst: proxy(mockPresenceFindFirst),
-      create: proxy(mockPresenceCreate),
-      updateMany: proxy(mockPresenceUpdateMany),
+      findFirst: (...args: unknown[]) => mockPresenceFindFirst(...args),
+      create: (...args: unknown[]) => mockPresenceCreate(...args),
+      updateMany: (...args: unknown[]) => mockPresenceUpdateMany(...args),
     },
     appointmentParticipant: {
-      findFirst: proxy(mockParticipantFindFirst),
-      updateMany: proxy(mockParticipantUpdateMany),
+      findFirst: (...args: unknown[]) => mockParticipantFindFirst(...args),
+      updateMany: (...args: unknown[]) => mockParticipantUpdateMany(...args),
     },
     appointmentOccurrence: {
-      findFirst: proxy(mockOccurrenceFindFirst),
-      updateMany: proxy(mockOccurrenceUpdateMany),
+      findFirst: (...args: unknown[]) => mockOccurrenceFindFirst(...args),
+      updateMany: (...args: unknown[]) => mockOccurrenceUpdateMany(...args),
     },
-    user: { findUnique: proxy(mockUserFindUnique) },
+    user: { findUnique: (...args: unknown[]) => mockUserFindUnique(...args) },
     collaborator: { findFirst: jest.fn().mockResolvedValue(null) },
   };
   txClient.$transaction = (run: (tx: typeof txClient) => unknown) =>
