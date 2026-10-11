@@ -41,7 +41,12 @@ import {
   type OrgWalletTopupConfirmedPayload,
 } from "./workflows";
 import type { NovuPayload, StagedTrigger, TriggerResult } from "./outbox";
-import { triggerWorkflow, type TriggerOptions } from "./service";
+import {
+  triggerForMultiple,
+  triggerForMultipleZoned,
+  triggerWorkflow,
+  type TriggerOptions,
+} from "./service";
 import type { NovuWorkflowId } from "./templates/types";
 import {
   DEFAULT_NOTIFICATION_TIMEZONE,
@@ -61,28 +66,6 @@ function collectStaged(results: TriggerResult[]): StagedTrigger[] {
   return Array.from(byId.values());
 }
 
-async function resolveZoneMap(
-  subscriberIds: string[],
-  db: Pick<PrismaLike, "user"> = prisma,
-): Promise<Map<string, string>> {
-  const uniqueIds = Array.from(new Set(subscriberIds));
-  const zones = new Map<string, string>();
-  try {
-    if (uniqueIds.length > 0 && db.user?.findMany) {
-      const users = await db.user.findMany({
-        where: { id: { in: uniqueIds } },
-        select: { id: true, timezone: true },
-      });
-      for (const u of users) {
-        if (u.timezone) zones.set(u.id, u.timezone);
-      }
-    }
-  } catch {
-    // Fall back to default timezone when lightweight test mocks omit user.findMany.
-  }
-  return zones;
-}
-
 async function triggerOne(
   workflowId: NovuWorkflowId,
   subscriberId: string,
@@ -100,12 +83,13 @@ async function triggerMany(
   payload: NovuPayload,
   opts?: TriggerOptions,
 ): Promise<StagedTrigger[]> {
-  if (subscriberIds.length === 0) return [];
   return collectStaged(
-    await Promise.all(
-      subscriberIds.map((id) =>
-        triggerWorkflow(workflowId, id, payload, undefined, opts),
-      ),
+    await triggerForMultiple(
+      workflowId,
+      subscriberIds,
+      payload,
+      undefined,
+      opts,
     ),
   );
 }
@@ -116,20 +100,13 @@ async function triggerManyZoned(
   build: (timezone: string) => NovuPayload,
   opts?: TriggerOptions,
 ): Promise<StagedTrigger[]> {
-  if (subscriberIds.length === 0) return [];
-  const zones = await resolveZoneMap(subscriberIds, opts?.tx);
-  const payloadsByZone = new Map<string, NovuPayload>();
   return collectStaged(
-    await Promise.all(
-      subscriberIds.map((id) => {
-        const zone = zones.get(id) ?? DEFAULT_NOTIFICATION_TIMEZONE;
-        let payload = payloadsByZone.get(zone);
-        if (!payload) {
-          payload = build(zone);
-          payloadsByZone.set(zone, payload);
-        }
-        return triggerWorkflow(workflowId, id, payload, undefined, opts);
-      }),
+    await triggerForMultipleZoned(
+      workflowId,
+      subscriberIds,
+      build,
+      undefined,
+      opts,
     ),
   );
 }

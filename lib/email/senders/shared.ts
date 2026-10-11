@@ -160,6 +160,27 @@ export function defineFixedBudgetEmailSender<TArgs>(
   };
 }
 
+function looksLikePrismaClient(val: unknown): val is StagingTx {
+  if (!val || typeof val !== "object") return false;
+  if (
+    "failedEmail" in val ||
+    "notificationOutbox" in val ||
+    "$transaction" in val
+  ) {
+    return true;
+  }
+  return Object.values(val).some(
+    (v) =>
+      typeof v === "object" &&
+      v !== null &&
+      ("findUnique" in v ||
+        "findMany" in v ||
+        "findFirst" in v ||
+        "updateMany" in v ||
+        "create" in v),
+  );
+}
+
 export function defineLifecycleStager<TArgs extends object>(
   build: (args: TArgs) => { userIds: string[]; spec: RecipientEmailSpec },
 ) {
@@ -175,7 +196,7 @@ export function defineLifecycleStager<TArgs extends object>(
     first: StagingTx | TArgs,
     second?: TArgs | StagingTx,
   ): Promise<StagedRecipientEmail[]> {
-    const isTxFirst = "failedEmail" in first;
+    const isTxFirst = looksLikePrismaClient(first);
     const tx = isTxFirst
       ? (first as StagingTx)
       : (second as StagingTx | undefined);
