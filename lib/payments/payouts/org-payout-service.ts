@@ -1094,23 +1094,25 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
   });
   result.scanned = stale.length;
 
-  for (const p of stale) {
-    try {
-      await redriveSingleOrgPayoutRow(p, result);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (
-        classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
-        err instanceof PayoutValidationError
-      ) {
-        await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
-        result.advanced++;
-        continue;
+  await Promise.all(
+    stale.map(async (p) => {
+      try {
+        await redriveSingleOrgPayoutRow(p, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
+          err instanceof PayoutValidationError
+        ) {
+          await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
+          result.advanced++;
+          return;
+        }
+        reportSentryError(err, { subsystem: "payments" });
+        result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
       }
-      reportSentryError(err, { subsystem: "payments" });
-      result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
-    }
-  }
+    }),
+  );
 
   return result;
 }

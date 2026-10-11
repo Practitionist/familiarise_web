@@ -79,7 +79,7 @@ const validationBankAccountSchema = z
   .nullable()
   .optional();
 
-const pennyDropResultsSchema = z
+const validationResultsSchema = z
   .object({
     account_status: z
       .enum(["active", "inactive", "invalid", ""])
@@ -93,19 +93,26 @@ const pennyDropResultsSchema = z
   .nullish()
   .transform((v) => v ?? undefined);
 
-const reversePennyDropResultsSchema = z
+export const razorpayPayoutStatusDetailsSchema = z
   .object({
-    account_status: z
-      .enum(["active", "inactive", "invalid", ""])
-      .nullable()
-      .optional(),
-    registered_name: z.string().nullable().optional(),
-    name_match_score: numericScoreSchema,
-    bank_account: validationBankAccountSchema,
+    description: z.string().nullable().optional(),
+    source: z.string().nullable().optional(),
+    reason: z.string().nullable().optional(),
   })
   .passthrough()
-  .nullish()
-  .transform((v) => v ?? undefined);
+  .nullable()
+  .optional();
+
+export const razorpayPayoutErrorSchema = z
+  .object({
+    code: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    source: z.string().nullable().optional(),
+    reason: z.string().nullable().optional(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
 
 export const fundAccountValidationEntitySchema = z
   .object({
@@ -126,8 +133,8 @@ export const fundAccountValidationEntitySchema = z
       .nullish()
       .transform((v) => v ?? undefined),
     status: z.string().optional(),
-    results: pennyDropResultsSchema,
-    validation_results: reversePennyDropResultsSchema,
+    results: validationResultsSchema,
+    validation_results: validationResultsSchema,
     status_details: z
       .object({
         description: z.string().nullable().optional(),
@@ -303,25 +310,8 @@ export const razorpayWebhookEnvelopeSchema = z
                 failure_reason: z.string().nullable().optional(),
                 utr: z.string().nullable().optional(),
                 reference_id: z.string().nullable().optional(),
-                status_details: z
-                  .object({
-                    description: z.string().nullable().optional(),
-                    source: z.string().nullable().optional(),
-                    reason: z.string().nullable().optional(),
-                  })
-                  .passthrough()
-                  .nullable()
-                  .optional(),
-                error: z
-                  .object({
-                    code: z.string().nullable().optional(),
-                    description: z.string().nullable().optional(),
-                    source: z.string().nullable().optional(),
-                    reason: z.string().nullable().optional(),
-                  })
-                  .passthrough()
-                  .nullable()
-                  .optional(),
+                status_details: razorpayPayoutStatusDetailsSchema,
+                error: razorpayPayoutErrorSchema,
               })
               .passthrough()
               .optional(),

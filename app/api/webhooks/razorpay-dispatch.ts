@@ -35,6 +35,8 @@ import {
   razorpayPaymentFailedEventSchema,
   razorpayOrderPaidEventSchema,
   razorpayNotesSchema,
+  razorpayPayoutStatusDetailsSchema,
+  razorpayPayoutErrorSchema,
   fundAccountValidationEntitySchema,
   disputeUpdateEntitySchema,
   type RazorpayWebhookEnvelope,
@@ -79,25 +81,8 @@ const payoutEntitySchema = z.object({
   id: z.string(),
   status: z.string(),
   failure_reason: z.string().nullable().optional(),
-  status_details: z
-    .object({
-      description: z.string().nullable().optional(),
-      source: z.string().nullable().optional(),
-      reason: z.string().nullable().optional(),
-    })
-    .passthrough()
-    .nullable()
-    .optional(),
-  error: z
-    .object({
-      code: z.string().nullable().optional(),
-      description: z.string().nullable().optional(),
-      source: z.string().nullable().optional(),
-      reason: z.string().nullable().optional(),
-    })
-    .passthrough()
-    .nullable()
-    .optional(),
+  status_details: razorpayPayoutStatusDetailsSchema,
+  error: razorpayPayoutErrorSchema,
   utr: z.string().nullable().optional(),
   reference_id: z.string().nullable().optional(),
 });

@@ -673,9 +673,9 @@ async function releaseSupersededHolds(params: {
       select: { id: true, appointmentId: true },
     });
 
-    for (const row of claimed) {
-      await reverseCreditsForPayment(row.id, tx);
-    }
+    await Promise.all(
+      claimed.map((row) => reverseCreditsForPayment(row.id, tx)),
+    );
 
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
