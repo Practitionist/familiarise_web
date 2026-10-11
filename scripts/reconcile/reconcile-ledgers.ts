@@ -1370,7 +1370,15 @@ async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
         status: "PENDING_TRUST",
         createdAt: { lte: cutoff },
         ...(ctx.opts.organizationId
-          ? { payment: { organizationId: ctx.opts.organizationId } }
+          ? {
+              OR: [
+                { payment: { organizationId: ctx.opts.organizationId } },
+                {
+                  payment: { organizationId: null },
+                  organizationId: ctx.opts.organizationId,
+                },
+              ],
+            }
           : {}),
       },
       select: {

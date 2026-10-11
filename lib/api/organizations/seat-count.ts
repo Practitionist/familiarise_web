@@ -174,22 +174,28 @@ export async function releaseSeatsForTerminatedAssignments(
     select: { programId: true },
   });
 
-  const seen = new Set<string>();
+  const byProgram = new Map<string, number>();
   for (const assignment of terminated) {
-    if (seen.has(assignment.programId)) continue;
-    seen.add(assignment.programId);
+    byProgram.set(
+      assignment.programId,
+      (byProgram.get(assignment.programId) ?? 0) + 1,
+    );
+  }
+  let releasedTotal = 0;
+  for (const [programId, count] of byProgram) {
     try {
       await adjustActiveSeatCount(tx, {
-        programId: assignment.programId,
-        delta: -1,
+        programId,
+        delta: -count,
       });
+      releasedTotal += count;
     } catch (err) {
       // A concurrent double-release losing the underflow guard is a benign
       // outcome (the count is already correct); anything else propagates.
       if (!(err instanceof SeatCountUnderflowError)) throw err;
     }
   }
-  return seen.size;
+  return releasedTotal;
 }
 
 /**

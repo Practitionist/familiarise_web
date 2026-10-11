@@ -181,11 +181,29 @@ export async function POST(
       // Falls through to mint only when the order exists, is unpaid, and its
       // amount no longer matches (the charge was recalculated).
     } catch (fetchErr) {
-      // Unreadable order (deleted, wrong key, transient) — mint a fresh one
-      // rather than blocking the member from paying.
+      const statusCode =
+        typeof fetchErr === "object" &&
+        fetchErr !== null &&
+        "statusCode" in fetchErr &&
+        typeof fetchErr.statusCode === "number"
+          ? fetchErr.statusCode
+          : undefined;
+      if (statusCode !== 404) {
+        console.warn(
+          `[overage/order] uncertain fetch failure for order ${existingOrderId}; refusing replacement mint`,
+          fetchErr,
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Temporary gateway check failure while verifying existing charge. Please retry in a few seconds.",
+            code: "GATEWAY_CHECK_UNAVAILABLE",
+          },
+          { status: 503 },
+        );
+      }
       console.warn(
-        `[overage/order] could not reuse order ${existingOrderId}; minting a new one`,
-        fetchErr,
+        `[overage/order] stored order ${existingOrderId} not found at gateway (404); minting replacement`,
       );
     }
   }

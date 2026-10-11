@@ -60,11 +60,34 @@ export const razorpayFetchedPaymentSchema = z
   })
   .passthrough();
 
+const numericScoreSchema = z
+  .union([z.number(), z.string()])
+  .transform((v) => (v === "" ? null : Number(v)))
+  .pipe(z.number().finite().nullable())
+  .nullish()
+  .transform((v) => v ?? undefined);
+
+const validationBankAccountSchema = z
+  .object({
+    bank_routing_code: z.string().nullable().optional(),
+    ifsc: z.string().nullable().optional(),
+    account_number: z.string().nullable().optional(),
+    bank_name: z.string().nullable().optional(),
+    account_type: z.string().nullable().optional(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
 const pennyDropResultsSchema = z
   .object({
-    account_status: z.enum(["active", "invalid"]).nullable().optional(),
+    account_status: z
+      .enum(["active", "inactive", "invalid", ""])
+      .nullable()
+      .optional(),
     registered_name: z.string().nullable().optional(),
-    name_match_score: z.number().nullable().optional(),
+    name_match_score: numericScoreSchema,
+    bank_account: validationBankAccountSchema,
   })
   .passthrough()
   .nullish()
@@ -73,21 +96,12 @@ const pennyDropResultsSchema = z
 const reversePennyDropResultsSchema = z
   .object({
     account_status: z
-      .enum(["active", "inactive", "invalid"])
+      .enum(["active", "inactive", "invalid", ""])
       .nullable()
       .optional(),
     registered_name: z.string().nullable().optional(),
-    name_match_score: z.number().nullable().optional(),
-    bank_account: z
-      .object({
-        bank_routing_code: z.string().nullable().optional(),
-        account_number: z.string().nullable().optional(),
-        bank_name: z.string().nullable().optional(),
-        account_type: z.string().nullable().optional(),
-      })
-      .passthrough()
-      .nullable()
-      .optional(),
+    name_match_score: numericScoreSchema,
+    bank_account: validationBankAccountSchema,
   })
   .passthrough()
   .nullish()
@@ -160,7 +174,13 @@ const orderEventPayloadSchema = z.object({
   }),
   payment: z
     .object({
-      entity: z.object({ id: z.string(), amount: z.number().int().optional() }),
+      entity: z
+        .object({
+          id: z.string(),
+          amount: z.number().int().optional(),
+          notes: razorpayNotesSchema,
+        })
+        .passthrough(),
     })
     .optional()
     .catch(undefined),
@@ -240,8 +260,14 @@ export const razorpayWebhookEnvelopeSchema = z
                 amount: z.number().optional(),
                 currency: z.string().optional(),
                 status: z.string().optional(),
-                speed_requested: z.string().nullable().optional(),
-                speed_processed: z.string().nullable().optional(),
+                speed_requested: z
+                  .enum(["normal", "optimum"])
+                  .nullable()
+                  .optional(),
+                speed_processed: z
+                  .enum(["normal", "instant", "optimum"])
+                  .nullable()
+                  .optional(),
                 notes: razorpayNotesSchema,
               })
               .passthrough()
@@ -305,6 +331,23 @@ export const razorpayWebhookEnvelopeSchema = z
         "fund_account.validation": z
           .object({
             entity: fundAccountValidationEntitySchema.optional(),
+          })
+          .passthrough()
+          .optional()
+          .catch(undefined),
+        settlement: z
+          .object({
+            entity: z
+              .object({
+                id: z.string().optional(),
+                amount: z.number().optional(),
+                status: z.string().optional(),
+                fees: z.number().optional(),
+                tax: z.number().optional(),
+                utr: z.string().nullable().optional(),
+              })
+              .passthrough()
+              .optional(),
           })
           .passthrough()
           .optional(),

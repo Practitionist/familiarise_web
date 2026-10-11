@@ -1138,29 +1138,28 @@ export async function applyRefundCascade(
   let walletOwnerOrgId: string | null = null;
   // legAmounts holds only positive legs — LICENSE/zero-value legs are excluded
   // here so they never skew the proportional split.
-  const totalPositiveLegAmount = payment.legs
-    .filter((l) => l.amountPaise > 0)
-    .reduce((a, l) => a + l.amountPaise, 0);
+  const positiveLegs = payment.legs.filter((l) => l.amountPaise > 0);
+  const totalPositivePaise = positiveLegs.reduce(
+    (sum, l) => sum + l.amountPaise,
+    0,
+  );
+  const eligibleLegs =
+    totalPositivePaise > payment.amount
+      ? positiveLegs.filter((l) => l.source !== "REFERRAL_CREDIT")
+      : positiveLegs;
+
   const legAmounts: Array<{
     leg: (typeof payment.legs)[number];
     reverse: number;
-  }> = payment.legs
-    .filter((l) => l.amountPaise > 0)
-    .map((leg) => ({ leg, reverse: proportion(leg.amountPaise) }));
+  }> = eligibleLegs.map((leg) => ({
+    leg,
+    reverse: proportion(leg.amountPaise),
+  }));
 
-  if (totalPositiveLegAmount > payment.amount) {
-    const cashLegs = legAmounts.filter(
-      (l) => l.leg.source !== "REFERRAL_CREDIT",
-    );
-    if (cashLegs.length > 0) {
-      const cashAssigned = cashLegs.reduce((a, l) => a + l.reverse, 0);
-      const remainder = input.amountPaise - cashAssigned;
-      cashLegs[cashLegs.length - 1].reverse += remainder;
-    }
-  } else if (legAmounts.length > 0) {
+  const lastCashLeg = legAmounts.at(-1);
+  if (lastCashLeg) {
     const totalAssigned = legAmounts.reduce((a, l) => a + l.reverse, 0);
-    const remainder = input.amountPaise - totalAssigned;
-    legAmounts[legAmounts.length - 1].reverse += remainder;
+    lastCashLeg.reverse += input.amountPaise - totalAssigned;
   }
 
   const linkedOrgInvoice = payment.billableToOrgInvoiceId

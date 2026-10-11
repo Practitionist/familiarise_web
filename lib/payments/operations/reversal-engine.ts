@@ -334,8 +334,8 @@ async function reverseClassMulti(
       reason: input.reason,
       initiatedByUserId: input.initiatedByUserId ?? null,
     });
-    await tx.refund.update({
-      where: { id: childRefund.id },
+    await tx.refund.updateMany({
+      where: { id: childRefund.id, status: RefundStatus.PENDING },
       data: { status: RefundStatus.SUCCEEDED },
     });
     results.push(cascade);
@@ -591,4 +591,3 @@ export {
   applyPaidConsultantClawbacks,
   type PendingConsultantClawback,
 } from "@/lib/payments/payouts/paid-consultant-clawback";
-

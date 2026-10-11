@@ -1025,19 +1025,44 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
   });
   result.scanned = stale.length;
 
+  const { findRazorpayPayoutByReference } =
+    await import("./payout-gateway-lookup");
+
   for (const p of stale) {
     try {
-      if (!p.gatewayPayoutId) {
-        await submitOrgPayoutToGateway(p.id);
-        result.advanced++;
-        continue;
-      }
-
       const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
       const sdk = getRazorpayPayoutsService();
-      const remote = await sdk.fetchPayout(p.gatewayPayoutId);
+      let gatewayPayoutId = p.gatewayPayoutId;
+
+      if (!gatewayPayoutId) {
+        const lookup = await findRazorpayPayoutByReference(p.id);
+        if (lookup.kind === "found") {
+          gatewayPayoutId = lookup.providerPayoutId;
+          await prisma.organizationPayout.update({
+            where: { id: p.id },
+            data: { gatewayPayoutId },
+          });
+        } else if (lookup.kind === "none") {
+          await submitOrgPayoutToGateway(p.id);
+          result.advanced++;
+          continue;
+        } else {
+          result.errors.push(
+            `OrgPayout ${p.id}: reference lookup ${lookup.kind}: ${lookup.detail}`,
+          );
+          continue;
+        }
+      }
+
+      const remote = await sdk.fetchPayout(gatewayPayoutId);
       switch (remote.status) {
         case "processed":
+          if (remote.utr) {
+            await prisma.organizationPayout.updateMany({
+              where: { id: p.id, gatewayUtr: null },
+              data: { gatewayUtr: remote.utr },
+            });
+          }
           await markOrgPayoutCompleted(p.id);
           result.advanced++;
           break;
@@ -1045,7 +1070,6 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
           await markOrgPayoutFailed(
             p.id,
             remote.failure_reason ??
-              remote.failureReason ??
               remote.status_details?.description ??
               remote.status_details?.reason ??
               "Gateway reports the payout failed",

@@ -2,15 +2,15 @@
 
 Official citations:
 
-- [RazorpayX Payouts Overview & Modes](https://razorpay.com/docs/x/payouts/)
-- [Payouts Best Practices](https://razorpay.com/docs/x/payouts/best-practices/)
-- [Payout States & Life Cycle](https://razorpay.com/docs/x/payouts/states-life-cycle/)
-- [Payout Status Details & Error Reasons](https://razorpay.com/docs/errors/x/payout-status-details/)
-- [Payout Idempotency (`X-Payout-Idempotency`)](https://razorpay.com/docs/api/x/payout-idempotency/)
+- [RazorpayX Payouts Overview & Modes](https://razorpay.com/docs/build/llm-docs/x/payouts.md)
+- [Payouts API Overview (`POST /v1/payouts`)](https://razorpay.com/docs/api/x/payouts/)
+- [Payout States & Life Cycle](https://razorpay.com/docs/build/llm-docs/x/payouts/states-life-cycle.md)
+- [Payout Status Details & Error Reasons](https://razorpay.com/docs/build/llm-docs/errors/x/payout-status-details.md)
+- [Payout Idempotency (`X-Payout-Idempotency`, 7-Day TTL)](https://razorpay.com/docs/api/x/payout-idempotency/)
 - [Contacts API (`POST /v1/contacts`)](https://razorpay.com/docs/api/x/contacts/create/)
 - [Fund Accounts API (`POST /v1/fund_accounts`)](https://razorpay.com/docs/api/x/fund-accounts/)
 - [Create Payout (`POST /v1/payouts`)](https://razorpay.com/docs/api/x/payouts/create/bank-account/)
-- [Payout Webhooks (`payout.*`)](https://razorpay.com/docs/webhooks/payouts/)
+- [Payout Webhooks (`payout.*`)](https://razorpay.com/docs/build/llm-docs/webhooks/payouts.md)
 
 ## Where It Lives in This Repo
 

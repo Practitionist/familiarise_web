@@ -55,8 +55,11 @@ const refundEntitySchema = z.object({
   amount: z.number(),
   currency: z.string().optional(),
   status: z.string(),
-  speed_requested: z.string().nullable().optional(),
-  speed_processed: z.string().nullable().optional(),
+  speed_requested: z.enum(["normal", "optimum"]).nullable().optional(),
+  speed_processed: z
+    .enum(["normal", "instant", "optimum"])
+    .nullable()
+    .optional(),
   notes: razorpayNotesSchema,
 });
 
@@ -261,13 +264,18 @@ export async function processRazorpayWebhookEvent(
         const refundEvent = refundEntitySchema.parse(
           event.payload?.refund?.entity,
         );
-        let paymentIntentId = refundEvent.payment_id;
+        const embeddedOrderId =
+          event.payload?.payment?.entity?.order_id ?? undefined;
+        let paymentIntentId = embeddedOrderId ?? refundEvent.payment_id;
 
-        const knownPayment = await prisma.payment.findFirst({
-          where: { gatewayPaymentId: refundEvent.payment_id },
-          select: { paymentIntent: true },
-        });
-        const razorpayClient = knownPayment ? null : getRazorpayClient();
+        const knownPayment = embeddedOrderId
+          ? null
+          : await prisma.payment.findFirst({
+              where: { gatewayPaymentId: refundEvent.payment_id },
+              select: { paymentIntent: true },
+            });
+        const razorpayClient =
+          embeddedOrderId || knownPayment ? null : getRazorpayClient();
         if (knownPayment) {
           paymentIntentId = knownPayment.paymentIntent;
         }
@@ -383,24 +391,26 @@ export async function processRazorpayWebhookEvent(
           where: { refundId: speedEvent.id },
           select: { id: true, status: true, metadata: true },
         });
-        if (existingRefund) {
-          const prevMeta =
-            existingRefund.metadata &&
-            typeof existingRefund.metadata === "object" &&
-            !Array.isArray(existingRefund.metadata)
-              ? existingRefund.metadata
-              : {};
-          await prisma.refund.updateMany({
-            where: { id: existingRefund.id, status: existingRefund.status },
-            data: {
-              metadata: {
-                ...prevMeta,
-                speedRequested: speedEvent.speed_requested ?? null,
-                speedProcessed: speedEvent.speed_processed ?? null,
-              },
-            },
-          });
+        if (!existingRefund) {
+          deferred = true;
+          break;
         }
+        const prevMeta =
+          existingRefund.metadata &&
+          typeof existingRefund.metadata === "object" &&
+          !Array.isArray(existingRefund.metadata)
+            ? existingRefund.metadata
+            : {};
+        await prisma.refund.updateMany({
+          where: { id: existingRefund.id, status: existingRefund.status },
+          data: {
+            metadata: {
+              ...prevMeta,
+              speedRequested: speedEvent.speed_requested ?? null,
+              speedProcessed: speedEvent.speed_processed ?? null,
+            },
+          },
+        });
         break;
       }
 
@@ -545,12 +555,28 @@ export async function processRazorpayWebhookEvent(
         break;
       }
 
+      case "settlement.processed": {
+        const settlementEntity = event.payload?.settlement?.entity;
+        console.log("Razorpay settlement processed", {
+          settlementId: settlementEntity?.id,
+          amount: settlementEntity?.amount,
+          utr: settlementEntity?.utr,
+        });
+        break;
+      }
+
       case "fund_account.validation.completed":
       case "fund_account.validation.failed": {
         const validationEntity = fundAccountValidationEntitySchema.parse(
           event.payload?.["fund_account.validation"]?.entity,
         );
-        await handleFundAccountValidationWebhook(eventType, validationEntity);
+        const validationResult = await handleFundAccountValidationWebhook(
+          eventType,
+          validationEntity,
+        );
+        if (validationResult === "deferred") {
+          deferred = true;
+        }
         break;
       }
 

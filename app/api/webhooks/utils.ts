@@ -384,18 +384,22 @@ export async function handleOrgPaymentSuccess(
           data: { chargeStatus: "CHARGED" },
         });
         if (resolvedOrgId) {
-          await tx.organizationEarnings.updateMany({
-            where: {
-              payment: { organizationId: resolvedOrgId },
-              status: "PENDING_TRUST",
+          const trustReleaseWhere = {
+            payment: {
+              organizationId: resolvedOrgId,
+              OR: [
+                { billableToOrgInvoiceId: invoiceId },
+                { billableToOrgInvoiceId: null },
+              ],
             },
+            status: "PENDING_TRUST" as const,
+          };
+          await tx.organizationEarnings.updateMany({
+            where: trustReleaseWhere,
             data: { status: "PENDING" },
           });
           await tx.consultantEarnings?.updateMany({
-            where: {
-              payment: { organizationId: resolvedOrgId },
-              status: "PENDING_TRUST",
-            },
+            where: trustReleaseWhere,
             data: { status: "PENDING" },
           });
         }
@@ -672,6 +676,10 @@ export async function handleRefundCreated(
             ],
           },
         });
+
+        if (payment?.paymentStatus === "PENDING") {
+          return new DeferSignal(`refund_before_capture:${refundId}`);
+        }
 
         if (!payment) {
           // Fall through to enterprise branches. We need the original
@@ -1349,8 +1357,10 @@ export async function handleDisputeCreated(
           },
         });
 
-        if (!payment) {
-          console.warn(`Payment not found for dispute: ${disputeId}`);
+        if (!payment || payment.paymentStatus === "PENDING") {
+          console.warn(
+            `Payment not yet captured for dispute: ${disputeId} (status=${payment?.paymentStatus ?? "missing"})`,
+          );
           return new DeferSignal(`dispute_before_payment:${disputeId}`);
         }
 
@@ -2587,7 +2597,7 @@ export async function handleRazorpayPayoutWebhook(
 
   const status = statusMap[payoutData.status];
 
-  if (eventType === "payout.reversed") {
+  if (eventType === "payout.reversed" || payoutData.status === "reversed") {
     const { markConsultantPayoutReversed } =
       await import("@/lib/payments/payouts");
     const { wasNoOp } = await markConsultantPayoutReversed(

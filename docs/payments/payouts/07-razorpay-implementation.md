@@ -95,7 +95,7 @@ Used to verify bank accounts (`account_type: "bank_account"`) and VPAs:
 Used when a consultant verifies via UPI Intent (`lib/payments/payouts/reverse-penny-drop.ts`):
 
 1. `startReversePennyDrop(consultantProfileId)` calls `POST /v1/fund_accounts/validations` with `source_account_number: RAZORPAYX_ACCOUNT_NUMBER`, `validation_type: "upi_intent"`, and `reference_id: consultantProfileId`, returning `{ validationId: "fav_...", upiIntent }` (deep links + QR code).
-2. Consultant pays ₹1.00 in their UPI app (RazorpayX automatically refunds the ₹1.00 within T+2 working days and resolves the underlying bank account).
+2. Consultant pays ₹1.00 in their UPI app (RazorpayX **automatically refunds the ₹1.00 in real time / instantly** and resolves the underlying bank account).
 3. Both `settleReversePennyDrop(consultantProfileId, validationId)` (client poll Path A) and `handleFundAccountValidationWebhook` (`fund_account.validation.completed` Path B when `entity.fund_account` is omitted) acquire Redis lock `rpd:settle:<validationId>` and invoke `persistVerifiedAccount` to create the RazorpayX Contact (`cont_...`) + `bank_account` Fund Account (`fa_...`) and persist a reference-only `PayoutAccount` row (`isVerified: true`, `accountNumberLast4`, `ifscCode`, `bankName`, `accountHolderName`).
 
 ---
@@ -106,37 +106,38 @@ Used when a consultant verifies via UPI Intent (`lib/payments/payouts/reverse-pe
 
 Since **15 March 2025**, RazorpayX requires the `X-Payout-Idempotency` header on every `POST /v1/payouts` request:
 
-- **Constraints**: **4 to 36 characters**, allowed charset `[A-Za-z0-9 _-]`.
+- **Constraints**: **4 to 36 characters**, allowed charset `[A-Za-z0-9 _-]`, retained by RazorpayX for **7 calendar days**.
 - **Deterministic Folding (`boundPayoutIdempotencyKey`)**: Internal payout keys (`payout_<uuid>` = 43 chars, or `payout_<profileId>_<batchId>` = 72 chars) exceed 36 characters. `boundPayoutIdempotencyKey()` in `lib/payments/payouts/razorpay-payouts.ts` deterministically folds keys longer than 36 characters into `p_<32_hex_chars>` (34 chars) so retries always map to the exact same RazorpayX idempotency slot.
-- **HTTP `409 Conflict`**: Returned if the same idempotency key is reused with a different request body or while the original request is still in flight.
+- **HTTP Error Semantics**: Reusing the same idempotency key with modified body parameters returns **`HTTP 400 / 422 BAD_REQUEST_ERROR`**, whereas concurrent in-flight requests sharing a key return **`HTTP 409 Conflict`**.
 
 ### 5.2 Payout Modes, Limits & Field Rules
 
-| Mode   | Min Amount            | Max Amount per Txn  | Availability                                                    | Selection Rule (`determinePayoutMode`)                                                     |
-| ------ | --------------------- | ------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `UPI`  | ₹1                    | **₹1,00,000** (₹1L) | 24×7 instant                                                    | Selected when Fund Account is `vpa` (`amount <= 10_000_000` paise; throws above ₹1,00,000) |
-| `IMPS` | ₹1                    | **₹5,00,000** (₹5L) | 24×7 instant                                                    | Selected for `bank_account` when `amount <= ₹5,00,000`                                     |
-| `NEFT` | > ₹1                  | No upper limit      | Settled within 2h during bank NEFT hours (24×7 on RBL/Yes Bank) | Selected for `bank_account` when `amount > ₹5,00,000`                                      |
-| `RTGS` | **> ₹2,00,000** (₹2L) | No upper limit      | Real-time (within 30m–2h during bank RTGS hours)                | Available for high-value transfers `> ₹2,00,000`                                           |
+| Mode   | Min Amount             | Max Amount per Txn  | Availability                                                                                                                           | Selection Rule (`determinePayoutMode`)                                                     |
+| ------ | ---------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `UPI`  | ₹1 (`100` paise)       | **₹1,00,000** (₹1L) | **24×7 instant** (RazorpayX Lite, and **RBL / Yes Bank** Current Accounts only)                                                        | Selected when Fund Account is `vpa` (`amount <= 10_000_000` paise; throws above ₹1,00,000) |
+| `IMPS` | ₹1 (`100` paise)       | **₹5,00,000** (₹5L) | **24×7 instant** across RazorpayX Lite & Current Account partner banks                                                                 | Selected for `bank_account` when `amount <= ₹5,00,000`                                     |
+| `NEFT` | ₹1 (`100` paise)       | No upper limit      | Partner bank NEFT hours (`02:00–18:00` IDFC/RBL, `01:00–18:45` ICICI/Yes; 24×7 enabled via RazorpayX Support on RBL/Yes Bank)          | Selected for `bank_account` when `amount > ₹5,00,000`                                      |
+| `RTGS` | **>= ₹2,00,000** (₹2L) | No upper limit      | Real-time during partner bank RTGS hours (`02:00–18:00` IDFC, `07:00–18:30` Yes, `08:00–17:30` RBL, `09:30–17:15` ICICI; working days) | Available for high-value transfers `>= ₹2,00,000`                                          |
+| `IFT`  | ₹1 (`100` paise)       | Partner bank policy | **24×7 instant** internal transfer when source and beneficiary share the same partner bank (`ICICI`, `Axis`, `Yes`, `RBL`, `IDFC`)     | Available when source & beneficiary share a partner bank                                   |
 
-- **`purpose`**: Must match an active purpose on the RazorpayX account (`"payout"`, `"refund"`, `"cashback"`, `"salary"`, `"utility bill"`, `"vendor bill"` — note the space in `"utility bill"` and `"vendor bill"`). We pass `"payout"`.
-- **`narration`**: Max **30 characters**, **alphanumeric and spaces only** (no hyphens, underscores, or punctuation; sanitized automatically in `RazorpayPayoutsService.createPayout`). Appears on the payee's bank statement (`"Familiarise Consultant Payout"` / `"Familiarise org payout"`).
+- **`purpose`**: Must match an active purpose on the RazorpayX account (`"payout"`, `"refund"`, `"cashback"`, `"salary"`, `"utility bill"`, `"vendor bill"` — note the space in `"utility bill"` and `"vendor bill"`, immutable once created, up to 400 custom purposes). We pass `"payout"`.
+- **`narration`**: Max **30 characters**, **alphanumeric and spaces only** (no hyphens, underscores, or punctuation). Appears on the payee's bank statement (`"Familiarise Consultant Payout"` / `"Familiarise org payout"`).
 - **`reference_id`**: Max **40 characters**, set to `payout.id`.
 
 ---
 
 ## 6. Payout Status Machine & Webhooks
 
-| RazorpayX Status | Webhook Event(s)                     | Internal `PayoutStatus`          | Handler Action (`lib/payments/payouts/payout-service.ts` & `org-payout-service.ts`)                                                         |
-| ---------------- | ------------------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queued`         | `payout.queued`                      | `PENDING` (`PROCESSING` on poll) | Queued due to low balance; waits for balance top-up                                                                                         |
-| `pending`        | `payout.pending`                     | `PENDING`                        | Awaiting RazorpayX workflow approval                                                                                                        |
-| `processing`     | `payout.initiated`, `payout.updated` | `PROCESSING`                     | In flight with partner bank                                                                                                                 |
-| `processed`      | `payout.processed`, `payout.updated` | `COMPLETED`                      | Stores `utr`, marks `ConsultantEarnings` / `OrganizationEarnings` as `PAID`, finalizes ledger                                               |
-| `failed`         | `payout.failed`                      | `FAILED`                         | Extracts reason from `failure_reason ?? status_details.description ?? status_details.reason`; restores earnings to `READY` and reverses TDS |
-| `reversed`       | `payout.reversed`                    | `FAILED`                         | Bank returned funds after processing; restores earnings to `READY` and reverses TDS                                                         |
-| `rejected`       | `payout.rejected`                    | `FAILED`                         | Rejected in approval workflow; restores earnings to `READY`                                                                                 |
-| `cancelled`      | `payout.cancelled`, `payout.updated` | `CANCELLED`                      | Queued payout cancelled before processing                                                                                                   |
+| RazorpayX Status | Webhook Event(s)                     | Internal `PayoutStatus`                   | Handler Action (`lib/payments/payouts/payout-service.ts` & `org-payout-service.ts`)                                                                   |
+| ---------------- | ------------------------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queued`         | `payout.queued`                      | `PENDING` (`PROCESSING` on poll)          | Queued due to low balance (`queue_if_low_balance: true`) or partner bank window; auto-expires after **3 months**                                      |
+| `pending`        | `payout.pending`                     | `PENDING`                                 | Awaiting RazorpayX workflow approval; auto-rejected after **3 months**                                                                                |
+| `processing`     | `payout.initiated`, `payout.updated` | `PROCESSING`                              | In flight with partner bank (up to T+3 working days on NPCI Deemed Success)                                                                           |
+| `processed`      | `payout.processed`, `payout.updated` | `COMPLETED`                               | Stores `utr` (including delayed NEFT/RTGS `utr` delivered via `payout.updated`), marks `ConsultantEarnings` / `OrganizationEarnings` as `PAID`        |
+| `failed`         | `payout.failed`                      | `FAILED`                                  | Extracts reason from `failure_reason ?? status_details.description ?? status_details.reason`; restores earnings to `READY` and reverses TDS           |
+| `reversed`       | `payout.reversed`, `payout.updated`  | `REVERSED`                                | Bank returned funds pre- or post-settlement (`markConsultantPayoutReversed` / `markOrgPayoutReversed`); restores earnings to `READY` and reverses TDS |
+| `rejected`       | `payout.rejected`                    | `FAILED`                                  | Rejected in approval workflow; restores earnings to `READY`                                                                                           |
+| `cancelled`      | `payout.cancelled`, `payout.updated` | `CANCELLED` (consultant) / `FAILED` (org) | Queued payout cancelled before processing                                                                                                             |
 
 ---
 

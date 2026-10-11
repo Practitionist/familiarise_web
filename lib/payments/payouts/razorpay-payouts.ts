@@ -171,16 +171,24 @@ export interface FundAccountValidationEntity {
   reference_id?: string | null;
   utr?: string | null;
   results?: {
-    account_status?: "active" | "invalid" | null;
+    account_status?: "active" | "inactive" | "invalid" | "" | null;
     registered_name?: string | null;
-    name_match_score?: number | null;
-  } | null;
-  validation_results?: {
-    account_status?: "active" | "inactive" | "invalid" | null;
-    registered_name?: string | null;
-    name_match_score?: number | null;
+    name_match_score?: number | string | null;
     bank_account?: {
       bank_routing_code?: string | null;
+      ifsc?: string | null;
+      account_number?: string | null;
+      bank_name?: string | null;
+      account_type?: string | null;
+    } | null;
+  } | null;
+  validation_results?: {
+    account_status?: "active" | "inactive" | "invalid" | "" | null;
+    registered_name?: string | null;
+    name_match_score?: number | string | null;
+    bank_account?: {
+      bank_routing_code?: string | null;
+      ifsc?: string | null;
       account_number?: string | null;
       bank_name?: string | null;
       account_type?: string | null;
@@ -231,7 +239,8 @@ export function summariseFundAccountValidation(
   raw: FundAccountValidationEntity,
 ): FundAccountValidationSummary {
   const results = raw.validation_results ?? raw.results ?? null;
-  const account = raw.validation_results?.bank_account ?? null;
+  const account =
+    raw.validation_results?.bank_account ?? raw.results?.bank_account ?? null;
   let accountStatus: FundAccountValidationSummary["accountStatus"] = "unknown";
   if (raw.status === "completed" && results?.account_status === "active") {
     accountStatus = "valid";
@@ -242,20 +251,27 @@ export function summariseFundAccountValidation(
   ) {
     accountStatus = "invalid";
   }
+  const rawScore = results?.name_match_score;
+  const parsedScore =
+    rawScore === null || rawScore === undefined || rawScore === ""
+      ? null
+      : Number(rawScore);
+  const ifsc = account?.bank_routing_code ?? account?.ifsc ?? null;
   return {
     id: raw.id,
     status: raw.status,
     referenceId: raw.reference_id ?? null,
     accountStatus,
     registeredName: results?.registered_name ?? null,
-    nameMatchScore: results?.name_match_score ?? null,
+    nameMatchScore:
+      parsedScore !== null && Number.isFinite(parsedScore) ? parsedScore : null,
     failureReason:
       raw.status_details?.description ?? raw.status_details?.reason ?? null,
     bankAccount:
-      account?.account_number && account.bank_routing_code
+      account?.account_number && ifsc
         ? {
             accountNumber: account.account_number,
-            ifsc: account.bank_routing_code,
+            ifsc,
             bankName: account.bank_name ?? null,
             accountType: account.account_type ?? null,
           }
@@ -597,16 +613,14 @@ export class RazorpayPayoutsService {
   }
 
   /**
-   * Validate a bank account via penny testing
-   * Note: This creates a ₹1 transfer that is reversed
-   *
-   * #1675 PR-Y2 — the wire entity answers `results.account_status:
-   * "active" | "invalid"`, never a top-level `accountStatus`; the callers'
-   * `=== "valid"` check could not fire until the reply was normalised here.
+   * Validate a fund account via RazorpayX Penny Drop (`POST /v1/fund_accounts/validations`).
+   * Standard bank_account penny drop credits ₹1 (not reversed); VPA validation omits amount.
    */
   async validateBankAccount(
     fundAccountId: string,
+    options?: { accountType?: "bank_account" | "vpa" },
   ): Promise<FundAccountValidationSummary> {
+    const isVpa = options?.accountType === "vpa";
     const raw = await this.apiRequest<FundAccountValidationEntity>(
       "POST",
       "/fund_accounts/validations",
@@ -615,10 +629,14 @@ export class RazorpayPayoutsService {
           id: fundAccountId,
         },
         account_number: this.config.accountNumber,
-        amount: 100, // ₹1 in paise
-        currency: "INR",
+        ...(isVpa
+          ? {}
+          : {
+              amount: 100, // ₹1 in paise
+              currency: "INR",
+            }),
         notes: {
-          purpose: "bank_account_validation",
+          purpose: isVpa ? "vpa_account_validation" : "bank_account_validation",
         },
       },
     );

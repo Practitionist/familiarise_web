@@ -200,6 +200,7 @@ export async function POST(req: NextRequest) {
     event.payload?.dispute?.entity?.id ||
     event.payload?.payout?.entity?.id ||
     event.payload?.["fund_account.validation"]?.entity?.id ||
+    event.payload?.settlement?.entity?.id ||
     event.payload?.payment?.entity?.id ||
     event.payload?.order?.entity?.id ||
     event.account_id ||

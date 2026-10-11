@@ -1954,6 +1954,16 @@ export async function handlePayoutWebhook(
 
         if (count === 0) {
           if (payoutStatus === PayoutStatus.COMPLETED) {
+            if (gatewayUtr) {
+              await tx.consultantPayout.updateMany({
+                where: {
+                  id: matched.id,
+                  status: PayoutStatus.COMPLETED,
+                  gatewayUtr: null,
+                },
+                data: { gatewayUtr },
+              });
+            }
             const current =
               (await tx.consultantPayout.findFirst({
                 where: { id: matched.id },
