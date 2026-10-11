@@ -1,110 +1,73 @@
 # Stream
 
 Stream provides two products in this application under a single API key. Stream
-Chat backs direct messages, event channels and collaborator threads. Stream
-Video backs the meeting rooms. They share a user store, a JWT signing secret and
-a token-revocation flag, but they bill separately — Chat by monthly active user,
-Video by participant-minute — so a change that looks free on one side can be
-expensive on the other.
-
-Three files linked here for some time before this index existed. It exists now,
-and it is also the place to record what these documents are and are not.
+Chat backs direct messages, event channels, and collaborator threads. Stream
+Video backs live meeting rooms and cloud recordings. They share a user store, a
+JWT signing secret, and a token-revocation timestamp
+(`revoke_tokens_issued_before`), while billing on independent meters — Chat by
+monthly active user (MAU), Video by participant-minute.
 
 ## Read the code before you trust a document
 
-This subsystem has repeatedly looked correct in code and been broken in
-production, and the documents here have drifted from the implementation more
-than once. The 2026-08-12 audit recorded in #1134 found a webhook pipeline that
-had never once run, because the signing secret was simply not set in Netlify —
-nothing in any file here would have revealed that.
+This subsystem enforces strict server-side invariants across Stream control-plane
+settings, Cloudflare R2 object storage, and PostgreSQL (`PG_POOL_MAX=1`) state
+transitions. Verify live control-plane settings when diagnosing environment
+behavior:
 
-The two most reliable documents are `03-provider-authentication.md` and
-`troubleshooting.md`. Where a document and the code disagree, the code is
-correct and the document is a bug worth fixing in place.
-
-Verify against the live application rather than against these pages when the
-answer matters:
-
-```
-mcp__streamio__video_query_calls    {"ended_at": {"$exists": false}}
-mcp__streamio__chat_query_channels  {"type": {"$eq": "messaging"}}
+```text
+mcp__stream-io__video_query_calls    {"filter_conditions": {"ended_at": {"$exists": false}}}
+mcp__stream-io__chat_query_channels  {"filter_conditions": {"type": {"$eq": "messaging"}}}
+mcp__stream-io__video_get_call_type  {"name": "default"}
 netlify env:list --json
 ```
 
 ## The documents
 
-The numbered files are meant to be read in order by someone new to the
-subsystem. The unnumbered ones are references.
+The numbered files (`00` through `18`) follow strict contiguous numbering and are meant to be read in sequence by engineers onboarding onto the real-time subsystem. The unnumbered documents serve as targeted subsystem runbooks and visual maps.
 
-| Document                                                                   | What it covers                                                                    |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [00-pricing-overview.md](./00-pricing-overview.md)                         | What Stream costs and which meter each feature runs against.                      |
-| [01-architecture.md](./01-architecture.md)                                 | How the pieces fit together, with the meeting-join flow.                          |
-| [02-setup-configuration.md](./02-setup-configuration.md)                   | Environment variables, dashboard configuration and the call type.                 |
-| [03-provider-authentication.md](./03-provider-authentication.md)           | Client connection, the provider, and the initialization sequence.                 |
-| [04-chat-implementation.md](./04-chat-implementation.md)                   | Channel shapes, and how a direct-message id is derived.                           |
-| [05-video-implementation.md](./05-video-implementation.md)                 | Meeting rooms, call lifecycle and the lobby.                                      |
-| [06-channel-management.md](./06-channel-management.md)                     | Who may talk to whom, and how membership is reconciled.                           |
-| [07-user-management.md](./07-user-management.md)                           | Upserting users into Stream and keeping them in step.                             |
-| [08-token-management.md](./08-token-management.md)                         | Minting, scoping and revoking tokens.                                             |
-| [09-background-sync.md](./09-background-sync.md)                           | The stale-user sweep and its schedule.                                            |
-| [10-api-endpoints.md](./10-api-endpoints.md)                               | The routes this subsystem exposes.                                                |
-| [11-hooks-utilities.md](./11-hooks-utilities.md)                           | Client hooks and the shared helpers.                                              |
-| [12-error-handling.md](./12-error-handling.md)                             | The circuit breaker, failure modes and what surfaces to users.                    |
-| [13-recording-webhooks.md](./13-recording-webhooks.md)                     | Recording lifecycle, R2 transfer job, visibility, retention and webhook handlers. |
-| [14-pricing-and-cost-model.md](./14-pricing-and-cost-model.md)             | The cost model in detail, with worked figures.                                    |
-| [15-enterprise-and-maker-account.md](./15-enterprise-and-maker-account.md) | Plan tiers and what the Maker account includes.                                   |
-| [16-product-concepts-and-addons.md](./16-product-concepts-and-addons.md)   | Stream's own product vocabulary and its paid add-ons.                             |
-| [17-channel-lifecycle.md](./17-channel-lifecycle.md)                       | Chat channel provisioning, dormancy, and lifecycle transitions.                   |
-| [troubleshooting.md](./troubleshooting.md)                                 | Symptoms and their causes, kept current.                                          |
-| [stream-ecosystem.mmd](./stream-ecosystem.mmd)                             | A diagram of the whole subsystem.                                                 |
+| Document                                                                     | What it covers                                                                                             |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| [00-pricing-overview.md](./00-pricing-overview.md)                           | Stream billing meters and which product surface increments each meter.                                     |
+| [01-architecture.md](./01-architecture.md)                                   | End-to-end HLD & LLD: App Router, Stream SFU/Chat, Postgres models & CAS invariants, R2 storage, and crons |
+| [02-setup-configuration.md](./02-setup-configuration.md)                     | Environment variables, control-plane bootstrap, and the hardened `default` call type (`call_member`).      |
+| [03-provider-authentication.md](./03-provider-authentication.md)             | Client connection store, SDK-free shell provider split, and session hydration gating.                      |
+| [04-chat-implementation.md](./04-chat-implementation.md)                     | Channel shapes, human-pair DM derivation (`dm-`/`dmo-`), and contextual booking receipt cards.             |
+| [05-video-implementation.md](./05-video-implementation.md)                   | Session window math, synchronous end + reopen rotation, `+15m` extensions, exit UX, lobby gate, and Q&A.   |
+| [06-channel-management.md](./06-channel-management.md)                       | 4-part DM eligibility gates, event channel rosters, and collaborator synchronization.                      |
+| [07-user-management.md](./07-user-management.md)                             | Upserting principals into Stream, PII stripping, least-privilege role mapping, and DPDP erasure.           |
+| [08-token-management.md](./08-token-management.md)                           | Minting, caching, `iat`/`exp` revocation cutoffs, and moderation enforcement.                              |
+| [09-background-sync.md](./09-background-sync.md)                             | Scheduled user synchronization, stale principal cleanup, and orphaned session/recording sweeps.            |
+| [10-api-endpoints.md](./10-api-endpoints.md)                                 | Meeting lifecycle routes (`join`, `end`, `reopen`, `live`, `extend`, `qa`) & Stream REST reference.        |
+| [11-hooks-utilities.md](./11-hooks-utilities.md)                             | Client hooks (`useGetCallById` self-heal & lobby gate) and call-ID / timezone utility contracts.           |
+| [12-error-handling.md](./12-error-handling.md)                               | Server circuit breaker (`withStreamCircuitBreaker`), failure modes, and UI error boundaries.               |
+| [13-recording-webhooks.md](./13-recording-webhooks.md)                       | Recording lifecycle, asymmetric webhook resolution, R2 multipart transfer, and retention rules.            |
+| [14-pricing-and-cost-model.md](./14-pricing-and-cost-model.md)               | Detailed unit economics and cost projections across session types.                                         |
+| [15-enterprise-and-maker-account.md](./15-enterprise-and-maker-account.md)   | Plan tiers, enterprise org wind-down, and Maker account capabilities.                                      |
+| [16-product-concepts-and-addons.md](./16-product-concepts-and-addons.md)     | Stream product concepts, SFU capabilities, and paid add-on boundaries.                                     |
+| [17-channel-lifecycle.md](./17-channel-lifecycle.md)                         | Chat channel provisioning, post-session freeze windows, and automated deletion.                            |
+| [18-architecture-decision-records.md](./18-architecture-decision-records.md) | Authoritative ADRs (`ADR-01`..`ADR-05`): call isolation, ID rotation, CAS termination, extensions & UX.    |
+| [troubleshooting.md](./troubleshooting.md)                                   | Production diagnostic runbook for symptoms, root causes, and live MCP checks.                              |
+| [recordings-marketplace.md](./recordings-marketplace.md)                     | Replay marketplace storefront, entitlements, and 60s preview clips.                                        |
+| [stream-ecosystem.mmd](./stream-ecosystem.mmd)                               | Full Mermaid ecosystem diagram across business entities, Stream, Postgres, and Cloudflare R2.              |
 
-## Rules that have been learned the hard way
+## Core Architectural Rules
 
-Each of these cost an incident. They are repeated in the `stream` skill (`.claude/skills/stream/SKILL.md`),
-which is the version kept closest to the code.
+Each invariant below is strictly enforced across `lib/stream/`, `lib/meetings/`, `app/api/meetings/`, and `.claude/skills/stream/SKILL.md`:
 
-**Never derive an identifier with `localeCompare`.** It orders by ICU collation,
-which is locale- and build-dependent, so two environments produce different
-identifiers from the same inputs. Use code-unit ordering: `a < b ? [a, b] : [b, a]`.
-A commit that "standardized" this to `localeCompare` silently re-keyed every
-mixed-case direct-message pair and orphaned their history. All identifier
-derivation goes through `lib/stream-channel-ids.ts` and `lib/stream-utils.ts`,
-and the ceiling is 64 characters.
-
-**Always pass `iat` when minting a token.** Stream treats a token with no `iat`
-as invalid once `revoke_tokens_issued_before` is set for that user, so a token
-minted without one plus a single ban equals a permanent lockout.
-
-**Webhooks must be acknowledged first, and deduplicated on `sha256(body)`.**
-Stream retries within a fifteen-second total budget and then drops the event
-permanently. Verify the signature with `verifySignature(body, signature, secret)`
-using `STREAM_API_SECRET`, persist the receipt keyed on `sha256(body)`,
-acknowledge, and process in `after()`. Do not deduplicate on `X-Webhook-ID`
-because Stream signs the body only.
-
-**Never await a Stream call inside a database transaction**, and never leave
-channel provisioning as a floating promise. The function can freeze before it
-settles.
-
-**Chat state does not live in Postgres.** Channels exist only on Stream, which
-is why a bad channel-identifier derivation is unrecoverable data loss rather
-than a bug you can migrate your way out of.
-
-**Development, preview and production currently share one Stream application.**
-A test deletion is a real deletion. Keep `STREAM_MCP_READ_ONLY="true"` in `.mcp.json`.
+1. **One `AppointmentOccurrence` = One Active Stream Call (`ADR-01`)**: Every scheduled occurrence maps 1:1 to a `Meeting` row (`appointmentOccurrenceId @unique`) with a canonical bare call ID (`occurrence-<uuid>`, rotating to `occurrence-<uuid>-r<base36>` on pre-start device-test reset or host reopen). Stale links resolve transparently via `parseOccurrenceIdFromCallId`.
+2. **Never Derive Identifiers with `localeCompare`**: Always use UTF-16 code-unit ordering (`a < b ? [a, b] : [b, a]`) via `lib/stream-channel-ids.ts` and `lib/stream-utils.ts`, capped at 64 characters.
+3. **Tokens Require Both `iat` and `exp`**: Stream invalidates tokens lacking `iat` whenever `revoke_tokens_issued_before` is set on a user.
+4. **Never Invoke External Stream RPCs Inside `prisma.$transaction` (`PG_POOL_MAX=1`)**: Execute all Stream SDK network calls outside transactions via `withStreamCircuitBreaker`, and persist Postgres transitions atomically via conditional `updateMany` compare-and-set (CAS) predicates.
+5. **Asymmetric Webhook Lookup & Monotonic Convergence (`ADR-02` & `ADR-03`)**: `call.ended` and `call.session_ended` webhooks match strictly on `where: { streamCallId }` and advance monotonically (`supersedesRecordedEnd`), while `recording_ready`, `recording_failed`, and `participant_*` webhooks fall back to `appointmentOccurrenceId` so pre-reopen artifacts and attendance intervals are never lost.
+6. **Shared Stream Application Across Environments (`app_id: 1366319`)**: Keep `STREAM_MCP_READ_ONLY="true"` in `.mcp.json`.
 
 ## Related
 
-- Issue #1134 — the audit that produced most of the current state of this
-  subsystem, and the tracker for what remains.
-- Issue #1146 — the review findings that outlived the pull requests that raised
-  them.
-- [ADR: `resolveMeetingAccess` returns what it loaded](../decisions/2026-08-13-meeting-access-returns-what-it-loaded.md)
-- `.claude/skills/stream/SKILL.md` — the working reference, kept in step
-  with the code.
+- [18. Architecture Decision Records (`ADR-01` through `ADR-05`)](./18-architecture-decision-records.md)
+- `.claude/skills/stream/SKILL.md` — Operational engineering skill synchronized with the live codebase.
 
 ## Deprecated & Superseded Approaches
 
-- **Header-based webhook deduplication (`X-Webhook-ID`) and `STREAM_WEBHOOK_SECRET`**: Superseded by `sha256(rawBody)` deduplication and `verifySignature(rawBody, signature, STREAM_API_SECRET)` in `app/api/stream/webhooks/route.ts`. Stream signs only the payload body with the app's `STREAM_API_SECRET`.
-- **Client-side `call.getOrCreate()` and `user`/`guest` `join-call` grants**: Superseded by server-only provisioning (`provisionAppointmentMeeting` in `actions/stream/meetings/meeting.action.ts`) and `POST /api/meetings/[meetingId]/join`, which verifies access and DPDP `STREAM_DATA_PROCESSING` consent before assigning `call_member`.
+- **Header-based webhook deduplication (`X-Webhook-ID`)**: Superseded by `sha256(rawBody)` deduplication in `WebhookEvent` and constant-time multi-secret HMAC signature verification (`lib/stream/webhook-signature.ts`).
+- **Browser-side `call.getOrCreate()`, `call.endCall()`, and permissive `user`/`guest` `join-call` grants**: Superseded by server-only `provisionAppointmentMeeting`, `POST /api/meetings/[meetingId]/join`, `POST /api/meetings/[meetingId]/end`, and `POST /api/meetings/[meetingId]/reopen`.
+- **Webhook-only `Meeting.endedAt` writes on host end**: Superseded by synchronous CAS dual-write (`recordMeetingEndedSynchronously`) in `POST /api/meetings/[meetingId]/end` paired with monotonic `call.ended` convergence so dashboard states update on the first frame.

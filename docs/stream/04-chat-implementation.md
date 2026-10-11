@@ -130,7 +130,7 @@ They never worked. `createConsultationChannel` minted a DM and always had; the
 Worse, `syncUserEventChannels` built its expected set from webinars, classes and
 DMs while treating both prefixes as MANAGED — so any channel that _did_ carry
 one was classified stale and the buyer was removed from it on their very next
-dashboard load. #1134 P0-7 deleted the concept rather than repairing it: the
+dashboard load. The current architecture eliminated the separate channel type outright: the
 pair already has a thread, and removing the second one removed a contradiction
 rather than a feature.
 
@@ -164,7 +164,7 @@ live in both.
 `dm_consultant_user_id` is what decides moderation: `createChannel` grants
 `channel_moderator` to that user. A DM created without it — the peer path — gets
 no moderator at all, deliberately, so a consultee cannot mute or remove the
-consultant (#981).
+consultant.
 
 ### Who may open one
 
@@ -460,7 +460,7 @@ sequenceDiagram
     Note over SA: Collect participant IDs<br/>from the event's session slots
     Note over SA: Deduplicate IDs
 
-    SA->>Stream: channel.create({<br/>type: "team",<br/>id: "webinar-{id}",<br/>members: [...]<br/>})
+    SA->>Stream: channel.create({ · type: "team", · id: "webinar-{id}", · members: [...] · })
 
     Note over Stream: Validate members exist
 
@@ -470,7 +470,7 @@ sequenceDiagram
         SA->>Stream: Retry channel.create()
     end
 
-    Stream->>Stream: Create channel atomically<br/>with all members
+    Stream->>Stream: Create channel atomically · with all members
     Stream-->>SA: Channel created
 
     SA->>Stream: channel.query()
@@ -719,6 +719,14 @@ additionalData: {
   starts_at: webinar.startTime.toISOString(),
 }
 ```
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Separate `consultation-{id}` and `subscription-{id}` Channels**: Superseded by one canonical `messaging` DM per human pair (`dm-<a>-<b>` for personal scope, `dmo-<orgHash>-<pairHash>` for enterprise scope) with `booking-ctx-` receipt cards.
+- **Locale-Dependent `localeCompare` ID Sorting**: Superseded by UTF-16 code-unit sorting (`a < b ? [a, b] : [b, a]`) capped at 64 characters (`lib/stream-channel-ids.ts`).
+- **Unmoderated Consultant-Consultee Threads**: Superseded by explicit `channel_moderator` assignment to `dm_consultant_user_id` at channel creation.
 
 ---
 

@@ -469,3 +469,9 @@ At 25K MAU: Start = $1,049/mo → Elevate = $1,299/mo (adds $250/mo = ₹22,675 
 - `docs/finances/11-cfo-master-plan.md` — Full financial plan
 - `docs/stream/00-pricing-overview.md` — Stream pricing overview and cost cliff summary
 - Screenshots: `docs/stream-maker-account-apr2026.png`, `docs/stream-enterprise-apr2026.png`, `docs/stream-ai-moderation-pricing-apr2026.png`
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Stream Native `multi_tenant_enabled` Teams Lock-In**: Superseded by application-level org tenant tags (`custom.organization_id`), deterministic `dmo-<orgHash>-<pairHash>` channels, and automated org wind-down (`jobs/stream/wind-down-deactivated-orgs.ts`).

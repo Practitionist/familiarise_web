@@ -19,7 +19,7 @@ export interface StatProps {
 }
 
 const TILE =
-  "block rounded-xl border border-border bg-card p-4 shadow-elevation-1 sm:p-5";
+  "block overflow-hidden rounded-xl border border-border bg-card p-4 shadow-elevation-1 sm:p-5";
 
 /** One KPI tile (#1527 §15): no gradient, no motion, full-contrast text. */
 export function Stat({
@@ -46,7 +46,7 @@ export function Stat({
       </div>
       <p
         className={cn(
-          "mt-2 text-[26px] font-semibold leading-tight tracking-tight tabular-nums",
+          "mt-2 min-w-0 truncate text-[26px] font-semibold leading-tight tracking-tight tabular-nums",
           toneTextClass(tone),
         )}
       >
@@ -73,16 +73,21 @@ export function Stat({
   return <div className={cn(TILE, className)}>{body}</div>;
 }
 
-/** 2 columns on mobile, 3 at md, `columns` (default 4) at lg. */
+/** 2 columns on mobile; at md/lg stays 2 when `columns === 2`, 3 at md, 4 at lg. */
 export function StatRow({
   children,
   columns = 4,
   className,
-}: Readonly<{ children: ReactNode; columns?: 3 | 4; className?: string }>) {
+}: Readonly<{
+  children: ReactNode;
+  columns?: 2 | 3 | 4;
+  className?: string;
+}>) {
   return (
     <div
       className={cn(
-        "grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3",
+        "grid grid-cols-2 gap-3 sm:gap-4",
+        columns >= 3 && "md:grid-cols-3",
         columns === 4 && "lg:grid-cols-4",
         className,
       )}

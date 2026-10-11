@@ -96,14 +96,14 @@ const contentSection = (noun: string): SectionSpec => ({
       kind: "textarea",
       label: "Prerequisites",
       description: "What someone should already know. Leave blank if none.",
-      span: 3,
+      span: 6,
     },
     {
       name: "materialProvided",
       kind: "textarea",
       label: "Material provided",
       description: "Anything they take away.",
-      span: 3,
+      span: 6,
     },
     {
       name: "targetAudience",
@@ -111,7 +111,7 @@ const contentSection = (noun: string): SectionSpec => ({
       label: "Who this is for",
       itemNoun: "audiences",
       maxItems: 6,
-      span: 3,
+      span: 6,
     },
     {
       name: "whatsIncluded",
@@ -119,7 +119,7 @@ const contentSection = (noun: string): SectionSpec => ({
       label: "What's included",
       itemNoun: "items",
       maxItems: 10,
-      span: 3,
+      span: 6,
     },
   ],
 });

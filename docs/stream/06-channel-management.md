@@ -140,7 +140,7 @@ Event channel membership follows the event's confirmed `AppointmentParticipant` 
 graph TB
     User[Enrolled Learner]
     Collab[Accepted Collaborator]
-    Host[Plan Owner / Consultant]
+    Host["Plan Owner / Consultant"]
 
     subgraph "Webinar / Class Group Channel (team)"
         EventChannel["webinar-{id} / class-{id}"]
@@ -285,34 +285,34 @@ create-and-adopt story.
 ```mermaid
 flowchart TB
     Start([syncUserEventChannels called])
-    Start --> AuthGate{"Session gate:<br/>signed in, not banned,<br/>self or privileged?"}
-    AuthGate -->|No| Error0[Throw: Unauthorized / Forbidden]
+    Start --> AuthGate{"Session gate: · signed in, not banned, · self or privileged?"}
+    AuthGate -->|No| Error0["Throw: Unauthorized / Forbidden"]
     AuthGate -->|Yes| GetUser[Get user from database]
 
     GetUser --> CheckUser{User exists?}
-    CheckUser -->|No| ResolveMissing["Resolve: {success:false,<br/>error:'User not found'}"]
+    CheckUser -->|No| ResolveMissing["Resolve: {success:false, · error:'User not found'}"]
     CheckUser -->|Yes| GetWebinarsAppts
 
     subgraph "Webinar Membership"
-        GetWebinarsAppts[Query webinars<br/>where user holds a slot]
-        DedupeWebinars[Deduplicate webinar IDs,<br/>drop events past retention]
+        GetWebinarsAppts["Query webinars · where user holds a slot"]
+        DedupeWebinars["Deduplicate webinar IDs, · drop events past retention"]
 
         GetWebinarsAppts --> DedupeWebinars
     end
 
-    DedupeWebinars --> AddToWebinars[For each webinar:<br/>addUserToEventChannel]
+    DedupeWebinars --> AddToWebinars["For each webinar: · addUserToEventChannel"]
 
     subgraph "Class Membership"
-        GetClassesAppts[Query classes<br/>where user holds slots]
-        DedupeClasses[Deduplicate class IDs,<br/>drop events past retention]
+        GetClassesAppts["Query classes · where user holds slots"]
+        DedupeClasses["Deduplicate class IDs, · drop events past retention"]
 
         GetClassesAppts --> DedupeClasses
     end
 
     AddToWebinars --> GetClassesAppts
-    DedupeClasses --> AddToClasses[For each class:<br/>addUserToEventChannel]
+    DedupeClasses --> AddToClasses["For each class: · addUserToEventChannel"]
 
-    AddToClasses --> IsConsultant{User is<br/>consultant?}
+    AddToClasses --> IsConsultant{User is · consultant?}
 
     IsConsultant -->|No| Success
     IsConsultant -->|Yes| GetHostedWebinars

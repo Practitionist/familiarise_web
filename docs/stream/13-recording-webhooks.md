@@ -42,7 +42,7 @@ The recording system enables consultants to record webinars and classes for late
 - **Automatic webhook processing** - Recording lifecycle managed via webhooks
 - **Idempotent operations** - Safe to receive duplicate webhook events
 - **Automatic copy** - The `recording_ready` webhook only records the READY row; the `transfer-recordings` job copies every READY recording into R2 while Stream's fourteen-day copy is live.
-- **Capability-based access** - Consultants, consultees, collaborators and replay buyers each reach a recording through a distinct ownership or entitlement path, and platform operators reach it through the back-office permission matrix: staff see metadata, admin alone plays the session, and either one is audited (#1270)
+- **Capability-based access** - Consultants, consultees, collaborators and replay buyers each reach a recording through a distinct ownership or entitlement path, and platform operators reach it through the back-office permission matrix: staff see metadata, admin alone plays the session, and either one is audited.
 
 ---
 
@@ -71,8 +71,8 @@ graph TB
     end
 
     subgraph Database["Database"]
-        Meeting[(Meeting)]
-        Recording[(Recording)]
+        Meeting["('Meeting')"]
+        Recording["('Recording')"]
     end
 
     RecBtn -->|Start/Stop| API
@@ -167,10 +167,10 @@ model Recording {
   transferredAt       DateTime?       // When copied to R2
   fileSize            BigInt?         // File size in bytes
 
-  // #689 (STR-2/3) — transfer reliability tracking
-  transferAttempts         Int       @default(0) // Failed-transfer counter; reset to a clean trail on success
+  // Transfer reliability tracking
+  transferAttempts         Int       @default(0) // Failed-transfer counter; reset on success
   lastTransferError        String?   // Message from the most recent failed transfer
-  transferFailureAlertedAt DateTime? // Set when engineering has been paged for this recording (dedupe)
+  transferFailureAlertedAt DateTime? // Set when engineering has been alerted (dedupe)
 
   meetingId    String
   meeting      Meeting  @relation(...)
@@ -340,15 +340,21 @@ sequenceDiagram
 
 `DESIRED_EVENT_TYPES` (`lib/stream/webhook-events.ts`) contains only the 8 handled Video events above. `call.session_started` is excluded from webhook subscriptions (`scripts/stream/ensure-webhook-subscription.ts` prunes extra events, empty-array wildcards `[]`, `"*"` wildcards on V2 hooks, and active legacy V1 `webhook_url` wildcards as drift) and acknowledged with `ignored: true` without writing a database receipt if delivered.
 
-### End Events and the `endedAt` Column
+### End Events, Asymmetric Webhook Lookup & `endedAt` Convergence
 
-Three rules govern how the two end events write `Meeting.endedAt` and `endedReason`. First, the last end wins: Stream reuses a call id across sessions, so a `call.session_ended` fired by the inactivity timeout after a host's pre-start device check must not be the end of record for the real call an hour later. Both handlers therefore accept an event only when its timestamp is later than the recorded `endedAt`, which also means a replayed or out-of-order older event can never move the column backwards. Second, `call.ended` sets `endedReason = "call_ended"` only when a deliberate actor (`user.id`, `call.ended_by_user_id`, or `ended_by_user_id`) ended the call after the booked start (a `call.ended` before the booked start is stamped `ended_early` rather than `call_ended`, and a system/timeout end preserves its system `reason`). `classifySessionOutcome` penalizes an under-delivered session as `CUT_SHORT` only when `endedReason === "call_ended"` and `endedByUserId` is `null` or belongs to `hostUserIds`; consultee early exits or network timeouts are not `CUT_SHORT`. For webinar and class meetings (`Boolean(slotOfAppointment?.webinar || slotOfAppointment?.class)`), both `handleSessionEnded` and `handleCallEnded` run best-effort `reconcileWebinarAttendance` so missed participant attendance rows are backfilled even if `call.ended` is dropped. Third, `call.session_participant_joined` and `call.session_participant_left` execute atomically in a single transaction touching `Meeting -> MeetingPresence -> MeetingAttendance` in order. If `left` arrives before `joined`, `firstJoinedAt` is clamped via conditional Prisma `updateMany` (`firstJoinedAt: { gt: joinedAt }`) so `lastLeftAt` is never overwritten; if `joined` arrives after `endedAt` (or loses a reopen CAS to a concurrent `call.ended`), the `MeetingPresence` interval is immediately closed (`leftAt = effectiveEndedAt`) without setting `lastLeftAt: null`.
+Synchronous route execution (`POST /api/meetings/[meetingId]/end`) and asynchronous Stream webhooks (`handleCallEnded`, `handleSessionEnded`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`, `handleRecordingReady`, `handleRecordingFailed`) coordinate across rotated call segments (`occurrence-<uuid>` -> `occurrence-<uuid>-r<base36>`) under five invariants ([ADR-02](./18-architecture-decision-records.md#adr-02-call-id-rotation-occurrence-id-rbase36--asymmetric-webhook-lookup-for-reopened-rooms), [ADR-03](./18-architecture-decision-records.md#adr-03-synchronous-cas-termination-stamp-recordmeetingendedsynchronously--monotonic-webhook-convergence-supersedesrecordedend)):
 
-One more rule sits on the provisioning side rather than in a handler. A Stream call's own `ended_at` never clears, so after a `call.ended` the SDK renders the room as ended even though Stream opens a new session for a re-entrant participant. `provisionAppointmentMeeting` therefore treats an `ended_early` row as the one case in which an existing `Meeting` is not simply handed back: it runs the same entitlement and refusal gates as a first mint, creates a fresh call under `slot-<anchorSlotId>-r<suffix>`, and rebinds the row to it (compare-and-set on the reason, so two concurrent joins share one rebuilt room). Both `handleRecordingReady` and `handleRecordingFailed` resolve rebound rooms (`slot-<id>-r<suffix>` / `occurrence-<id>-r<suffix>`) via `parseSlotIdFromCallId` fallback to `Meeting.appointmentOccurrenceId` so recordings captured before a room rebind are never orphaned.
+1. **Asymmetric Lookup Between Artifacts/Presence and Termination Webhooks**:
+   - **`handleRecordingReady`, `handleRecordingFailed`, `handleSessionParticipantJoined`, `handleSessionParticipantLeft`**: First look up `where: { streamCallId }` and **fall back to `where: { appointmentOccurrenceId }`** extracted via `parseSlotIdFromCallId(call_cid)`. If a host ends and reopens a room while segment 1's composite MP4 is still transcoding or final participant-left durations are in flight, those artifacts and attendance records still bind cleanly to the occurrence's `Meeting` row.
+   - **`handleCallEnded` and `handleSessionEnded`**: Query **strictly `where: { streamCallId }`** without falling back to `appointmentOccurrenceId`. Delayed termination or 5-minute SFU inactivity webhooks emitted for closed segment 1 never match rotated segment 2 (`occurrence-<uuid>-r<base36>`), protecting live reopened rooms from premature shutdown.
+2. **Monotonic Latest Timestamp Wins (`supersedesRecordedEnd`)**: Termination writes proceed only when `incoming > existing.endedAt`. Replayed or out-of-order older webhooks never rewind `endedAt`.
+3. **Pre-Start Device Check vs Live Termination (`ended_early` vs `call_ended`)**: Ending before `startsAt` classifies the action as `"ended_early"` and rotates `streamCallId = "occurrence-<uuid>-r<base36>"` while leaving `completionStatus = "SCHEDULED"`; ending at or after `startsAt` stamps `endedReason = "call_ended"`, closes open `MeetingPresence` and `MeetingAttendance` rows via CAS, and penalizes under-delivered sessions as `CUT_SHORT` only when ended deliberately by a host (`endedByUserId` null or in `hostUserIds`).
+4. **Webinar & Class End Backfill (`reconcileWebinarAttendance`)**: Both `handleSessionEnded` and `handleCallEnded` run best-effort `reconcileWebinarAttendance` on group sessions (`webinar` or `class`) so missed participant attendance rows are backfilled from Stream sessions even if individual participant events were dropped.
+5. **Participant Rejoin & Lock Ordering (`Meeting -> MeetingPresence -> MeetingAttendance`)**: `handleSessionParticipantJoined` and `handleSessionParticipantLeft` execute in strict `Meeting -> MeetingPresence -> MeetingAttendance` lock order (`createMany({ skipDuplicates: true })`). Out-of-order `left`-before-`joined` events clamp `firstJoinedAt` monotonically (`firstJoinedAt: { gt: joinedAt }`), late joins arriving after a deliberate end immediately close (`leftAt = effectiveEndedAt`), and non-deliberate ends clear `endedAt` via CAS on rejoin.
 
 ### Per-Attendee Attendance Capture
 
-The two `call.session_participant_*` handlers maintain `MeetingPresence` intervals and an aggregated `MeetingAttendance` row keyed on `(meetingId, userId)` in strict `Meeting -> MeetingPresence -> MeetingAttendance` transaction order. On first arrival, `MeetingAttendance.firstJoinedAt` is recorded and `joinCount` starts at 1; out-of-order `left`-before-`joined` delivery clamps `firstJoinedAt` via conditional Prisma `updateMany` (`firstJoinedAt: { gt: joinedAt }`) and preserves the recorded `lastLeftAt`.
+The two `call.session_participant_*` handlers maintain device-session `MeetingPresence` intervals (`@@unique([meetingId, userSessionId])`) alongside an aggregated `MeetingAttendance` row keyed on `(meetingId, userId)` in strict `Meeting -> MeetingPresence -> MeetingAttendance` lock order. On first arrival, `MeetingAttendance.firstJoinedAt` is recorded and genuinely new device sessions (`skipDuplicates: true`) increment `joinCount`; out-of-order `left`-before-`joined` delivery clamps `firstJoinedAt` via conditional `updateMany` (`firstJoinedAt: { gt: joinedAt }`) while advancing `lastLeftAt` monotonically.
 
 ### Event Payload Structures
 
@@ -494,7 +500,7 @@ if (existingRecording) {
 
 ### Why the file is pulled instead of pushed
 
-Stream can push recordings into a customer bucket itself, but it does not document what happens when that push fails: there are no retry or fallback semantics, `call.recording_failed` carries no reason, and the GetStream/protocol discussion #371 reports problems. Twilio's analogous feature deletes recordings after exhausted retries. Pulling from Stream's own 14-day copy means our side can fail and retry without ever losing the recording. Stream external storage is to be revisited after a bad-credentials canary test; the full reasoning is in the [storage, retention and visibility ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md).
+Stream can push recordings into a customer bucket directly, but pushing provides no application-controlled retry or verification semantics if egress transfer fails transiently. Pulling from Stream's 14-day CDN copy into Cloudflare R2 via `transfer-recordings` allows deterministic retries, size verification, and zero risk of silent loss; see the [storage, retention and visibility ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md).
 
 ### Transfer Architecture
 
@@ -839,46 +845,33 @@ Receives webhook events from Stream.
 
 ### Operator access (ADMIN / STAFF)
 
-Until #1270 the operator grant was a single line — `if (isPrivileged(session.user.role)) hasAccess = true` — in both `GET /api/stream/recordings/[recordingId]` and `GET /api/stream/meetings/[streamCallId]/recording-info`. Because `isPrivileged` returns true for STAFF as well as ADMIN, any staff member could fetch a playback URL for any recording on the platform, including a 1:1 consultation they had no relationship to, and nothing was written anywhere to record that they had. The operator path was therefore strictly less accountable than the tenant path, where deleting a recording or exporting a call log already produced an `OrgAuditLog` row.
+Three rules govern operator access in `lib/stream/recording-operator-access.ts` so no route can restate them differently:
 
-Three rules now hold, and they are implemented once in `lib/stream/recording-operator-access.ts` so no route can restate them differently.
-
-First, the grant is resolved through `BACKOFFICE_PERMISSIONS`, which is the declared single source of truth for who reaches which internal surface. `recordings.read` covers metadata and admits both ADMIN and STAFF; `recordings.play` covers any URL that renders the session and admits ADMIN alone. A bare `isPrivileged` call left the grant invisible to the file that is supposed to enumerate it.
-
-Second, staff receive metadata only. Everything a support agent needs in order to answer "where is my replay" — status, storage type, duration, recorded-at, and the Stream URL expiry — is metadata, and none of it requires watching the session. The session content belongs to the two people who agreed to record it for each other, not to the platform.
-
-Third, the operator branch is evaluated last, after every ownership and entitlement path. A staff member who actually delivered or bought the session passes one of those checks and keeps full playback; the operator branch only ever catches somebody with no relationship to the session at all. ADMIN is the one exception and short-circuits first, because holding `recordings.play` means the ownership walk cannot widen anything for them.
+1. **Permission-Scoped Matrix (`BACKOFFICE_PERMISSIONS`)**: `recordings.read` covers metadata and admits both `ADMIN` and `STAFF`; `recordings.play` covers any media playback URL and admits `ADMIN` alone.
+2. **Metadata-Only Staff Tier**: `STAFF` receive status, storage type, duration, `recordedAt`, and `streamUrlExpiresAt` — never media playback, preview clip, or thumbnail URLs.
+3. **Evaluated After Ownership & Entitlement**: A staff member who personally delivered or purchased a session passes normal entitlement checks first; the operator branch applies only to unassociated support reads.
 
 ### Auditing a privileged read
 
-Every read that is granted by the operator branch writes a trail before the response is built, and before any playback URL is minted, so the trail cannot lag the access it describes. There are two sinks.
+Every read granted through the operator branch writes an audit record before any playback URL is minted:
 
-`OrgAuditLog` receives a `STREAM_RECORDING_ACCESSED` row whenever the session belongs to an organization, so the tenant can see that a platform operator reached into their sessions. `actorMembershipId` is null because the operator is acting as the platform rather than as a member; the actor's user id and role live in `details`, alongside `played`, which distinguishes a metadata read from playback. This write is deliberately not swallowed — it mirrors the sibling compliance export at `app/api/organizations/[orgId]/stream/calls/route.ts`, where a read that cannot be audited is not served.
-
-`SystemEvent` receives a `STREAM_RECORDING_ACCESS` row on every privileged read, including B2C recordings that have no tenant to write to. It is recorded at `WARN` severity rather than `INFO` so that reaching into someone else's session stands out when an on-call engineer scans the platform trail. `recordSystemEvent` is best-effort by its own contract, which is the honest ceiling today: there is no platform-wide audit table to write to instead, and introducing one is a schema change.
+- `OrgAuditLog`: Writes `STREAM_RECORDING_ACCESSED` (`actorMembershipId = null`, actor role/user ID and `played` flag in `details`) for tenant-owned recordings. Fails closed if auditing fails.
+- `SystemEvent`: Writes `STREAM_RECORDING_ACCESS` at `WARN` severity across both tenant and B2C sessions.
 
 ### Playback URLs never leave the handler raw
 
-`Recording.recordingUrl` holds Stream's pre-signed S3 link. It is valid for fourteen days and carries its own credentials, so anybody who ends up holding the string can fetch the video with no session and no membership — a forwarded email, a pasted chat message, an exported CSV, or a third-party tool consuming the API all suffice. `GET /api/organizations/[orgId]/stream/calls` used to return that column verbatim to any org MANAGER+ when called with `?withRecordings=1`.
-
-That export now uses an explicit select allowlist that names no field which reaches the media — not `recordingUrl`, not `storagePath`, and not the thumbnail, preview clip or Stream identifiers. What remains is the retention picture the compliance pull actually exists for: whether a recording exists, whether it survived the transfer to permanent storage, how long it runs, and when its Stream link lapses.
-
-The route deliberately offers no playback arm at all, not even a short-lived signed one. [ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md) is the governing rule — an organization may see that a session happened, not what happened in it — and it considered and rejected exactly that design, on the grounds that an audit row does not change what a member has to assume about who can watch their coaching session. The equivalent allowlist already existed in `lib/api/scope/list-recordings.ts` for the org recordings page; this route was the arm the July 2026 audit missed.
+`Recording.recordingUrl` holds Stream's 14-day pre-signed S3 URL. Compliance exports (`GET /api/organizations/[orgId]/stream/calls?withRecordings=1` and `lib/api/scope/list-recordings.ts`) use an explicit field allowlist that strips `recordingUrl`, `storagePath`, `thumbnailUrl`, and `previewClipUrl`, returning only retention status metadata ([ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md)).
 
 ### Access Verification Logic
 
 ```typescript
 // Consultant access check
-const isOwner = getgetMeetingOwnershipInfo(
+const isOwner = getMeetingOwnershipInfo(
   meeting,
   user.consultantProfileId,
 ).isOwner;
 
-// Consultee access check (#689, STR-1)
-// `PaymentStatus` has no REFUNDED value — a refunded payment stays SUCCEEDED
-// and the money movement lives only in `Refund` rows. A `SUCCEEDED` filter
-// alone therefore still matches a fully-refunded buyer, so the check loads
-// the payment's refunds and nets them via the shared isPaymentEntitled() helper.
+// Consultee access check: net succeeded payments against refunds via isPaymentEntitled()
 const payment = await prisma.payment.findFirst({
   where: {
     userId: user.id,
@@ -890,16 +883,12 @@ const payment = await prisma.payment.findFirst({
   include: { refunds: true },
 });
 
-// A full refund (refunded paise >= amount) revokes access; a partial refund
-// keeps it. The same isPaymentEntitled() helper guards all four entitlement
-// paths: the single-recording route, getPaidPlanIds, syncRecordingsForConsultee,
-// and the meetings recording-info endpoint.
 const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/payments/utils/refund-balance.ts
 ```
 
 ### Recording Visibility Rules
 
-Recordings are private by default. The playback route is the only place a viewer is admitted, and it evaluates these rules ([ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md)):
+Recordings are private by default. The playback route evaluates these rules ([ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md)):
 
 | Session type                          | Who may play                                                                                                                  |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -907,7 +896,7 @@ Recordings are private by default. The playback route is the only place a viewer
 | Webinar                               | Attendees (paid or seated) of that run. `WebinarPlan.shareRecordingsWithAllAttendees` extends this to attendees of every run. |
 | Class                                 | Enrolled members. `ClassPlan.lateJoinersGetPastRecordings` shares earlier sessions with late joiners.                         |
 
-The owner and accepted co-presenters always have access, a platform ADMIN has full access, STAFF and organization roles see metadata only, and buyers of a published replay may play it.
+The owner and accepted co-presenters always have access, a platform `ADMIN` has full access, `STAFF` and organization roles see metadata only, and buyers of a published replay may play it.
 
 ---
 
@@ -915,15 +904,15 @@ The owner and accepted co-presenters always have access, a platform ADMIN has fu
 
 ### Core Services
 
-| File                                       | Purpose                        |
-| ------------------------------------------ | ------------------------------ |
-| `lib/stream/recording-service.ts`          | Recording CRUD operations      |
-| `lib/stream/recording-transfer-service.ts` | Stream to R2 copy job          |
-| `lib/stream/recording-retention.ts`        | Retention rule and job         |
-| `lib/stream/recording-handlers.ts`         | Webhook event handlers         |
-| `lib/stream/recording-utils.ts`            | Helper functions               |
-| `lib/stream/recording-types.ts`            | Prisma payload types           |
-| `lib/stream/recording-operator-access.ts`  | Operator grant + audit (#1270) |
+| File                                       | Purpose                      |
+| ------------------------------------------ | ---------------------------- |
+| `lib/stream/recording-service.ts`          | Recording CRUD operations    |
+| `lib/stream/recording-transfer-service.ts` | Stream to R2 copy job        |
+| `lib/stream/recording-retention.ts`        | Retention rule and job       |
+| `lib/stream/recording-handlers.ts`         | Webhook event handlers       |
+| `lib/stream/recording-utils.ts`            | Helper functions             |
+| `lib/stream/recording-types.ts`            | Prisma payload types         |
+| `lib/stream/recording-operator-access.ts`  | Operator grant & audit trail |
 
 ### API Routes
 
@@ -978,90 +967,21 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 ### The scheduled fleet behind recordings
 
-Three scheduled jobs keep the recording pipeline honest. Each one runs as a
-bare `npx tsx jobs/...` process under GitHub Actions, takes the fleet cron lock
-so that a manual dispatch cannot race the schedule, and writes a
-`SystemJobExecution` row that the staff Jobs page reads.
+Three scheduled jobs keep the recording pipeline honest under GitHub Actions, acquiring the Postgres cron lock (`withCronLock`) and recording `SystemJobExecution` runs:
 
-| Workflow                                 | Schedule (UTC)         | What it does                                                                                                                                                                       |
-| ---------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cron-intra-day.yml#transfer-recordings` | Every six hours at :33 | Copies READY recordings into R2 before Stream's fourteen-day copy lapses, and reports rows that exhausted their attempts once per run.                                             |
-| `cron-daily.yml#expire-recordings`       | Daily at 03:00         | Expires lapsed Stream copies and recordings past retention, deletes their R2 and preview objects, and writes the org audit row. This is the erasure half of the retention promise. |
-| `reconcile-orphaned-recordings.yml`      | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook was never delivered. See the section below.                                                                               |
-
-### Recovering a recording whose webhook never arrived
-
-A recording reaches the database exactly one way in normal operation: Stream
-delivers `call.recording_ready` and the webhook route writes a `Recording` row.
-When that delivery is lost, nothing in the system notices. The `Meeting`
-still carries `recordingStartedAt`, because our own code wrote it rather than a
-webhook, so the database records that a recording was started and simply has no
-row for the recording itself.
-
-Before #1270 the only repair was `POST /api/stream/recordings/sync`, which a
-consultant has to click from the recordings page. That is not a backstop,
-because the person who would click it is the person who does not yet know
-anything is missing. Stream deletes the file fourteen days after the call, so a
-dropped webhook was a permanent loss of the customer's recording on a
-fourteen-day fuse — and #1134 established that dropped webhooks here were not
-hypothetical, since every delivery was lost for the whole period the webhook
-secret was unset in production.
-
-`jobs/stream/reconcile-orphaned-recordings.ts` closes that gap. It selects every
-meeting session whose `recordingStartedAt` falls between two hours and fourteen
-days ago and which has no `Recording` row, asks Stream directly what recordings
-exist for that call, and writes whatever it finds through
-`RecordingService.syncSessionRecordings` — the same single writer the
-user-triggered sync uses, so a reconciled row is indistinguishable from a
-webhook-written one. The two-hour floor exists because Stream needs minutes to
-finish the egress and upload for a long session, and sweeping earlier would race
-the webhook it is backstopping.
-
-The job reports three counts, and each one means something different. A non-zero
-`recovered` is good news about this job and bad news about the webhook, so it
-raises a Sentry warning: the row exists now, but it only exists because a
-delivery was lost. A non-zero `stillMissing` means Stream held nothing for a call
-that claims to have been recorded, which usually means the recording failed
-rather than that it was lost in transit. A non-zero `unrecoverable` counts
-sessions already past Stream's retention window; those recordings are gone for
-good, and the number only grows, which makes it the honest measure of what the
-missing webhook secret cost.
+| Workflow                                 | Schedule (UTC)         | What it does                                                                                                                  |
+| ---------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `cron-intra-day.yml#transfer-recordings` | Every six hours at :33 | Copies `READY` recordings into R2 before Stream's 14-day copy lapses, reporting exhausted transfer attempts once per run.     |
+| `cron-daily.yml#expire-recordings`       | Daily at 03:00         | Expires lapsed Stream copies and recordings past retention, deletes R2 and preview objects, and writes org audit rows.        |
+| `reconcile-orphaned-recordings.yml`      | Daily at 05:00         | Recovers recordings whose `call.recording_ready` webhook never arrived by polling Stream for sessions 2 hours to 14 days old. |
 
 ### Subscription drift is checked, not assumed
 
-`scripts/stream/ensure-webhook-subscription.ts` compares the event types the live
-Stream hook is subscribed to against `HANDLED_EVENT_TYPES`, the single list that
-`lib/stream/webhook-dispatch.ts` also reads. Run it with no flags to see the
-difference, with `--apply` to widen the hook, and with `--check` for the CI mode,
-which never writes, annotates each finding for the Actions log and exits `2` when
-the live app does not cover everything the dispatcher handles. An exit code of
-`1` is different and means the check could not run at all, usually because the
-runner has no Stream credentials.
-
-`.github/workflows/stream-webhook-drift.yml` runs the `--check` mode daily and on
-any pull request that touches the handled event list or the script itself.
-Applying is deliberately left to a human, because `--apply` calls
-`updateAppSettings` on a shared production Stream app that has no rehearsal
-environment.
+`scripts/stream/ensure-webhook-subscription.ts` compares the event types the live Stream webhook subscription covers against `HANDLED_EVENT_TYPES` (`lib/stream/webhook-dispatch.ts`). Run with no flags to diff, `--apply` to update app settings, or `--check` in CI (`.github/workflows/stream-webhook-drift.yml`).
 
 ### Never import `@/lib/supabase` from a cron job
 
-`lib/supabase.ts` opens with `import "server-only"`. That marker package's main
-entry does nothing but throw; Next resolves it to an empty module under the
-`react-server` export condition, and every other resolver — including the bare
-Node process a workflow runs — gets the throw. Five scheduled workflows reached
-it transitively and therefore died during module evaluation, before a line of
-their own code ran, on every run they had ever had.
-
-The Supabase clients and the storage primitives a job needs now live in
-`lib/supabase-storage-core.ts`, which carries no marker. `lib/supabase.ts`
-re-exports every one of those names, so application code is unaffected and still
-gets the client-import guard. `__tests__/maintenance/workflow-import-env.test.ts`
-re-derives each scheduled workflow's import graph on every test run and fails if
-any of them reaches a `server-only` module again, or if a job that reaches the
-Supabase client module is not given the `NEXT_PUBLIC_SUPABASE_URL` that module
-throws without. Storage calls run on the service-role client, so jobs also need
-`SUPABASE_SERVICE_ROLE_KEY`.
+`lib/supabase.ts` opens with `import "server-only"`, which throws in standalone Node processes outside Next.js server components. Scheduled cron jobs must import `lib/supabase-storage-core.ts` instead (`__tests__/maintenance/workflow-import-env.test.ts` enforces this boundary).
 
 ---
 
@@ -1079,7 +999,7 @@ throws without. Storage calls run on the service-role client, so jobs also need
 #### Recording not appearing after call
 
 1. Check webhook handler logs for errors
-2. Verify `streamCallId` matches between session and webhook
+2. Verify `streamCallId` matches between session and webhook (or whether host `reopen` rotated `streamCallId` while a previous segment's egress was still transcoding)
 3. Check for duplicate detection (recording may already exist)
 4. Verify call had recording enabled in Stream
 
@@ -1090,36 +1010,11 @@ throws without. Storage calls run on the service-role client, so jobs also need
 3. Check Stream URL hasn't expired (`streamUrlExpiresAt`)
 4. Review the `transfer-recordings` run output and its Sentry report
 
-### Debug Logging
-
-Enable detailed logging:
-
-```typescript
-import { streamLogger } from "@/lib/stream-logger";
-
-// Logs are automatically structured with context
-streamLogger.info("Recording started", { streamCallId, userId });
-streamLogger.error("Transfer failed", error, { recordingId });
-```
-
----
-
-## Next Steps
-
-- Review [Video Implementation](./05-video-implementation.md) for meeting UI
-- Check [Troubleshooting](./troubleshooting.md) for common issues
-- Return to [Architecture](./01-architecture.md) for system overview
-
 ---
 
 ## Deprecated & Superseded Approaches
 
-- **Per-plan storage tiers and the manual transfer route**: `recordingStoragePolicy` (`STREAM_ONLY` / `PERMANENT`), `POST /api/stream/recordings/[id]/transfer`, the Supabase recordings bucket fallback and the consultant "recording expires soon" email are gone. Every recording is copied to R2 by `transfer-recordings`; retention is platform-set.
-- **Ready-time transfer kicks and the three recording crons**: the webhook no longer starts a copy in `after()`; `transfer-expiring-recordings`, `mark-expired-recordings` and `cleanup-old-stream-recordings` became `transfer-recordings` and `expire-recordings`. Stream external storage was considered and not adopted: Stream's fourteen-day copy is the retry source.
-
-- **Synchronous attendance or end-state writes in join/end routes**: `POST /api/meetings/[meetingId]/join` and `POST /api/meetings/[meetingId]/end` do not write `MeetingAttendance`, `MeetingPresence`, `ATTENDED`, `Meeting.endedAt`, or `Meeting.endedReason`; Stream webhooks (`call.session_participant_joined`, `call.session_participant_left`, `call.session_ended`, and `call.ended`) own normal call lifecycle writes, while `reconcileOrphanedSessions` repairs orphaned records if a terminal webhook never arrives.
-- **`reconcileOrphanedSessions` leaving `MeetingPresence(leftAt: null)` open**: The orphaned-session reconciler (`lib/meetings/reconcile-orphaned-sessions.ts`) orders candidates oldest-first (`occurrence.endsAt: "asc"`) and closes any open `MeetingPresence` intervals when stamping `endedAt`.
-
----
-
-**Last Updated:** 2026-10-03
+- **Per-plan storage tiers and manual transfer route**: `recordingStoragePolicy` (`STREAM_ONLY` / `PERMANENT`), `POST /api/stream/recordings/[id]/transfer`, and the Supabase recordings bucket fallback were replaced by automatic Cloudflare R2 transfer (`transfer-recordings`) and platform-wide retention (`expire-recordings`).
+- **Ready-time `after()` transfer kicks**: `call.recording_ready` now only persists the `READY` row; `transfer-recordings` handles streaming multipart copies asynchronously with CAS retries.
+- **Webhook-only `Meeting.endedAt` writes on host end**: `POST /api/meetings/[meetingId]/end` now calls `recordMeetingEndedSynchronously` (`lib/stream/session-handlers.ts`) synchronously so dashboard cards reflect ended status immediately, while `handleCallEnded` / `handleSessionEnded` reconcile monotonically (`endedAt > existing.endedAt`).
+- **Unscoped `isPrivileged` operator playback access**: Replaced by `lib/stream/recording-operator-access.ts` (`recordings.read` for `STAFF` metadata-only vs `recordings.play` for `ADMIN` with mandatory `OrgAuditLog` + `SystemEvent` trails).

@@ -75,9 +75,8 @@ jest.mock("../../lib/stream-client", () => ({
   })),
 }));
 
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
+jest.mock("../../lib/prisma", () => {
+  const client: Record<string, unknown> = {
     consentArtifact: { findFirst: jest.fn() },
     meeting: {
       findUnique: (...a: unknown[]) => mockMeetingFindUnique(...a),
@@ -85,10 +84,12 @@ jest.mock("../../lib/prisma", () => ({
     },
     meetingAttendance: {
       upsert: (...a: unknown[]) => mockAttendanceUpsert(...a),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     meetingPresence: {
       findFirst: (...a: unknown[]) => mockPresenceFindFirst(...a),
       create: (...a: unknown[]) => mockPresenceCreate(...a),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     appointmentParticipant: {
       findFirst: (...a: unknown[]) => mockParticipantFindFirst(...a),
@@ -96,6 +97,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     appointmentOccurrence: {
       findFirst: (...a: unknown[]) => mockOccurrenceFindFirst(...a),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     user: {
       findUnique: (...a: unknown[]) => mockUserFindUnique(...a),
@@ -103,8 +105,13 @@ jest.mock("../../lib/prisma", () => ({
     collaborator: {
       findFirst: jest.fn().mockResolvedValue(null),
     },
-  },
-}));
+  };
+  client.$transaction = (fn: (tx: typeof client) => unknown) => fn(client);
+  return {
+    __esModule: true,
+    default: client,
+  };
+});
 
 jest.mock("../../lib/stream-logger", () => ({
   streamLogger: {
@@ -409,7 +416,8 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
     expect(mockUpdateUserPermissions).not.toHaveBeenCalled();
   });
 
-  it("ends the Stream call for the host and leaves Meeting.endedAt to the call.ended webhook", async () => {
+  it("ends the Stream call for the host and stamps Meeting.endedAt synchronously via CAS", async () => {
+    mockMeetingUpdateMany.mockResolvedValueOnce({ count: 1 });
     const res = await endPOST(req, { params });
 
     expect(res.status).toBe(200);
@@ -419,7 +427,7 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
       callId: "occurrence-slot-1",
     });
     expect(mockEnd).toHaveBeenCalledTimes(1);
-    expect(mockMeetingUpdateMany).not.toHaveBeenCalled();
+    expect(mockMeetingUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it("transitions call to live for host and refuses participant on /live", async () => {

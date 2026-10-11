@@ -61,14 +61,14 @@ export function AvailabilityGrid({
       </div>
       {slots?.map((slot, slotIndex) => (
         <div key={`${dayKey}-${slotIndex}`} className="space-y-2">
-          <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2 sm:grid-cols-7">
+          <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
             <Input
               type="time"
               value={slot.startTime}
               onChange={(e) =>
                 onUpdateSlot(dayKey, slotIndex, "startTime", e.target.value)
               }
-              className={`min-w-0 sm:col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
+              className={`min-w-0 ${!slot.isValid ? "border-red-500" : ""}`}
               step={PICKER_STEP_SECONDS}
             />
             <span className="text-center text-sm text-zinc-500">to</span>
@@ -78,13 +78,13 @@ export function AvailabilityGrid({
               onChange={(e) =>
                 onUpdateSlot(dayKey, slotIndex, "endTime", e.target.value)
               }
-              className={`min-w-0 sm:col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
+              className={`min-w-0 ${!slot.isValid ? "border-red-500" : ""}`}
               step={PICKER_STEP_SECONDS}
             />
             <button
               type="button"
               onClick={() => onDeleteSlot(dayKey, slotIndex)}
-              className="rounded p-1 hover:bg-zinc-100 justify-self-end sm:justify-self-center"
+              className="rounded p-1 hover:bg-zinc-100 justify-self-center"
               aria-label={`Delete slot ${slotIndex + 1} for ${label}`}
             >
               <TrashIcon className="h-5 w-5" />
