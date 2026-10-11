@@ -1,12 +1,7 @@
 import { humanizeEnum } from "@/lib/ui/tone";
+import { REVIEW_REPORT_REASONS } from "@/schemas/moderation";
 
-/** The reasons an expert can pick when reporting a review of themselves. */
-export const REVIEW_REPORT_REASONS = [
-  { value: "SPAM_OR_FAKE", label: "Spam or unverified claim" },
-  { value: "HARASSMENT_OR_ABUSE", label: "Harassment or abusive language" },
-  { value: "OFF_TOPIC", label: "Irrelevant or off-topic" },
-  { value: "OTHER", label: "Other policy concern" },
-] as const;
+export { REVIEW_REPORT_REASONS };
 
 const LABEL_BY_CODE: Readonly<Record<string, string>> = Object.fromEntries(
   REVIEW_REPORT_REASONS.map((r) => [r.value, r.label]),

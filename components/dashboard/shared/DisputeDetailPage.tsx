@@ -386,6 +386,52 @@ export function DisputeDetailPage({
       </div>
 
       {/* Existing Evidence */}
+      {dispute.evidencePack && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <FileText className="h-5 w-5 text-emerald-600" />
+              Evidence Pack (Read-Only Summary)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-zinc-500">Booking</p>
+                <p className="font-medium">
+                  {dispute.evidencePack.booking
+                    ? `${dispute.evidencePack.booking.appointmentType} (${dispute.evidencePack.booking.appointmentId.slice(0, 8)})`
+                    : "No linked booking"}
+                </p>
+              </div>
+              <div>
+                <p className="text-zinc-500">Occurrences</p>
+                <p className="font-medium">
+                  {dispute.evidencePack.occurrences.completedCount} of{" "}
+                  {dispute.evidencePack.occurrences.total} completed
+                </p>
+              </div>
+              <div>
+                <p className="text-zinc-500">Attendance Telemetry</p>
+                <p className="font-medium">
+                  {dispute.evidencePack.attendance.presentCount} record(s)
+                </p>
+              </div>
+              <div>
+                <p className="text-zinc-500">Support History</p>
+                <p className="font-medium">
+                  {dispute.evidencePack.supportHistory.ticketCount} thread(s) (
+                  {dispute.evidencePack.supportHistory.openCount} open)
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-zinc-500">
+              {dispute.evidencePack.attendance.summary}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">

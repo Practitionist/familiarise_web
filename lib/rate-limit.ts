@@ -51,6 +51,8 @@ export const referralApplyLimiter = makeLimiter(3, "24 h", "rl:referral-apply");
 export const remindLimiter = makeLimiter(1, "24 h", "rl:remind");
 /** 5 per hour — support-tickets, feedbacks, reviews, report */
 export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
+/** 60 per hour — non-escalating support decision-tree button choices */
+export const supportTurnLimiter = makeLimiter(60, "1 h", "rl:support-turn");
 /** 20 per hour — review composer writes */
 export const reviewWriteLimiter = makeLimiter(20, "1 h", "rl:review-write");
 /** 20 per minute — POST /api/meetings/[id]/join */

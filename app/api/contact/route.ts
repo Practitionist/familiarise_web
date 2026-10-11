@@ -16,11 +16,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { getSession } from "@/lib/auth-server";
 import { sendContactInquiryEmail } from "@/lib/email";
 import { applyRateLimit, getClientIp, spamLimiter } from "@/lib/rate-limit";
+import { allocateTicketReference } from "@/lib/support/reference";
+import { slaDeadlinesFor } from "@/lib/support/sla";
 import { INQUIRY_CATEGORIES } from "@/app/(pages)/constants";
 
-const CATEGORY_VALUES = INQUIRY_CATEGORIES.map((c) => c.value);
+const CATEGORY_SET = new Set<string>(INQUIRY_CATEGORIES.map((c) => c.value));
 
 const ContactBodySchema = z.object({
   firstName: z.string().trim().min(1, "First name is required").max(100),
@@ -31,28 +34,99 @@ const ContactBodySchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(5000),
   category: z
     .string()
-    .refine(
-      (v) => CATEGORY_VALUES.includes(v as (typeof CATEGORY_VALUES)[number]),
-      {
-        message: "Unknown inquiry category",
-      },
-    )
+    .refine((v) => v === "" || CATEGORY_SET.has(v), {
+      message: "Unknown inquiry category",
+    })
     .optional()
     .or(z.literal("")),
   // Honeypot: a real person never fills a hidden field. Bots fill everything.
   // Present in the payload but never rendered visibly.
-  //
-  // #1132 — deliberately NOT `.max(0)`. Rejecting a populated value at the
-  // schema meant a tripped honeypot returned 400 while a clean submit returned
-  // 202, which is exactly the signal the silent-success branch below exists to
-  // deny a bot. Accept it here, discard it after parsing.
   website: z.string().max(200).optional(),
 });
 
+const LEAD_CATEGORIES = new Set(["enterprise", "team-training"]);
+
+async function recordContactLeadIfApplicable(
+  data: z.infer<typeof ContactBodySchema>,
+): Promise<void> {
+  if (!LEAD_CATEGORIES.has(data.category ?? "")) return;
+  const dayBucket = new Date().toISOString().slice(0, 10);
+  const submissionKey = createHash("sha256")
+    .update(
+      JSON.stringify([
+        dayBucket,
+        data.email.toLowerCase(),
+        data.firstName,
+        data.lastName,
+        data.phone ?? "",
+        data.subject,
+        data.message,
+        data.category ?? "",
+      ]),
+    )
+    .digest("hex");
+  try {
+    await prisma.lead.create({
+      data: {
+        submissionKey,
+        sourceCategory: data.category ?? "",
+        companyName: null,
+        contactName: `${data.firstName} ${data.lastName}`.trim(),
+        contactEmail: data.email,
+        phone: data.phone || null,
+        subject: data.subject,
+        message: data.message,
+      },
+    });
+  } catch (err) {
+    if (!(
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    )) {
+      throw err;
+    }
+  }
+}
+
+async function recordPublicGrievanceTicket(
+  data: z.infer<typeof ContactBodySchema>,
+): Promise<string | null> {
+  if (data.category !== "grievance") return null;
+  const session = await getSession().catch(() => null);
+  const sessionUserId = session?.user?.id ?? null;
+
+  return prisma.$transaction(async (tx) => {
+    const fallbackOwner = sessionUserId
+      ? null
+      : await tx.user.findFirst({
+          where: { role: { in: ["ADMIN", "STAFF"] } },
+          select: { id: true },
+          orderBy: { createdAt: "asc" },
+        });
+    const userId = sessionUserId ?? fallbackOwner?.id ?? null;
+    if (!userId) return null;
+
+    const now = new Date();
+    const ref = await allocateTicketReference(tx, now);
+    const name = `${data.firstName} ${data.lastName}`.trim();
+    await tx.supportTicket.create({
+      data: {
+        referenceNumber: ref,
+        title: `[Grievance] ${data.subject || "Public Grievance"}`,
+        description: `Submitted via public form by ${name} <${data.email}>\n\n${data.message}`,
+        category: "GRIEVANCE",
+        status: "OPEN",
+        priority: "HIGH",
+        userId,
+        lastMessageAt: now,
+        ...slaDeadlinesFor("HIGH", now),
+      },
+    });
+    return ref;
+  });
+}
+
 export async function POST(req: NextRequest) {
-  // #1132 — use the shared helper: it prefers Netlify's canonical
-  // x-nf-client-connection-ip over the caller-supplied x-forwarded-for, so a
-  // spoofed header cannot vary the bucket key per request.
   const ip = getClientIp(req);
 
   const rl = await applyRateLimit(spamLimiter, `contact:${ip}`);
@@ -76,61 +150,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true }, { status: 202 });
   }
 
-  // #1230 wave-4b — enterprise funnel persistence. The #1132 blocker-6
-  // class was "email is the only record": a Resend outage discarded the
-  // deal entirely. Enterprise/team-training inquiries now land in the Lead
-  // table FIRST; the email is notification, not the system of record.
-  const LEAD_CATEGORIES = new Set(["enterprise", "team-training"]);
-  if (LEAD_CATEGORIES.has(parsed.data.category ?? "")) {
-    // CR #1243 — idempotent lead capture. The key is a digest of the
-    // submission content itself, so a user retrying after a 502 (or a
-    // double-click) lands on the unique constraint and answers 202 against
-    // the EXISTING row — no duplicate sales records, no client changes.
-    // Canonical JSON of EVERY persisted field + a UTC day bucket: unambiguous
-    // (no delimiter collisions) and time-scoped, so a genuine follow-up days
-    // later creates a fresh lead while transport retries stay idempotent.
-    const dayBucket = new Date().toISOString().slice(0, 10);
-    const submissionKey = createHash("sha256")
-      .update(
-        JSON.stringify([
-          dayBucket,
-          parsed.data.email.toLowerCase(),
-          parsed.data.firstName,
-          parsed.data.lastName,
-          parsed.data.phone ?? "",
-          parsed.data.subject,
-          parsed.data.message,
-          parsed.data.category ?? "",
-        ]),
-      )
-      .digest("hex");
-    try {
-      await prisma.lead.create({
-        data: {
-          submissionKey,
-          sourceCategory: parsed.data.category ?? "",
-          companyName: null,
-          contactName:
-            `${parsed.data.firstName} ${parsed.data.lastName}`.trim(),
-          contactEmail: parsed.data.email,
-          phone: parsed.data.phone || null,
-          subject: parsed.data.subject,
-          message: parsed.data.message,
-        },
-      });
-    } catch (err) {
-      if (
-        !(
-          err instanceof Prisma.PrismaClientKnownRequestError &&
-          err.code === "P2002"
-        )
-      ) {
-        throw err;
-      }
-      // Duplicate of an existing lead — still answer success so the retry
-      // loop terminates.
-    }
-  }
+  await recordContactLeadIfApplicable(parsed.data);
+  const referenceNumber = await recordPublicGrievanceTicket(parsed.data);
 
   const result = await sendContactInquiryEmail({
     firstName: parsed.data.firstName,
@@ -140,10 +161,9 @@ export async function POST(req: NextRequest) {
     subject: parsed.data.subject,
     message: parsed.data.message,
     category: parsed.data.category || null,
+    referenceNumber,
   });
 
-  // #1654 — a staged row is durable: the relay delivers it, so the visitor
-  // hears success. Only a lead that could not even be staged asks for a retry.
   if (!result.success && !result.staged) {
     return NextResponse.json(
       {
@@ -154,5 +174,20 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ ok: true }, { status: 202 });
+  if (parsed.data.category === "grievance" && !referenceNumber) {
+    return NextResponse.json(
+      {
+        ok: true,
+        referenceNumber: null,
+        message:
+          "Grievance received — our Grievance Officer will open a case and email your tracking reference within 24 hours.",
+      },
+      { status: 202 },
+    );
+  }
+
+  return NextResponse.json(
+    { ok: true, ...(referenceNumber ? { referenceNumber } : {}) },
+    { status: 202 },
+  );
 }

@@ -47,6 +47,7 @@ import {
   type BulkCancelSummary,
 } from "./cancel-user-engagements";
 import { formatReportReference } from "./report-reference";
+import { reportReasonLabel } from "@/lib/labels/report-reasons";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
@@ -54,6 +55,7 @@ import { goHref } from "@/lib/dashboard/go";
 export interface ModerationReportRef {
   id: string;
   type: ModerationReportType;
+  reason?: string;
   reportedById?: string;
   targetUserId: string;
   reviewId: string | null;
@@ -112,21 +114,41 @@ const captureModerationError = (error: unknown) =>
     { tags: { subsystem: "moderation" } },
   );
 
+/** Structured statement of reasons stating policy ground, human review, and appeal path. */
+export function moderationStatementOfReasons(params: {
+  actionType: ModerationActionType;
+  reportId: string;
+  reportReason?: string;
+}): string {
+  const reference = formatReportReference(params.reportId);
+  const ground = reportReasonLabel(params.reportReason ?? "OTHER");
+  const base =
+    params.actionType === "NO_ACTION"
+      ? `No policy violation requiring enforcement was identified under ground "${ground}".`
+      : `Action applied under policy ground "${ground}".`;
+  return `${base} A human moderator reviewed this report; no automated decision was used. If you disagree with this decision, open a request from Support and quote ${reference}.`;
+}
+
 /** Reporter-facing words for how a report was decided. */
-export function reportOutcomeCopy(actionType: ModerationActionType): {
+export function reportOutcomeCopy(
+  actionType: ModerationActionType,
+  reportId = "00000000",
+  reportReason?: string,
+): {
   outcome: string;
   reason: string;
 } {
-  return actionType === "NO_ACTION"
-    ? {
-        outcome: "decided: no action needed",
-        reason: "No policy violation requiring enforcement was identified.",
-      }
-    : {
-        outcome: "decided: action taken",
-        reason:
-          "Appropriate action was applied under our community guidelines.",
-      };
+  return {
+    outcome:
+      actionType === "NO_ACTION"
+        ? "decided: no action needed"
+        : "decided: action taken",
+    reason: moderationStatementOfReasons({
+      actionType,
+      reportId,
+      reportReason,
+    }),
+  };
 }
 
 /** True when the reporter already hears about this action as the reviewed expert. */
@@ -147,16 +169,21 @@ async function stageReporterDispositionBell(
 ): Promise<void> {
   if (!input.report.reportedById) return;
   const reference = formatReportReference(input.report.id);
+  const dedupeSuffix = input.actionId ?? input.actionType;
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.MODERATION_REPORT_OUTCOME,
     recipients: [input.report.reportedById],
     payload: {
       reportId: input.report.id,
       reference,
-      ...reportOutcomeCopy(input.actionType),
+      ...reportOutcomeCopy(
+        input.actionType,
+        input.report.id,
+        input.report.reason,
+      ),
       dashboardUrl: goHref("auto", "feedbacks"),
     },
-    dedupeKey: `report-disposition:${input.report.id}:${input.actionId ?? input.actionType}`,
+    dedupeKey: `report-disposition:${input.report.id}:${dedupeSuffix}`,
   });
 }
 
@@ -169,11 +196,18 @@ export async function applyTransactionalEffects(
     input.actionType === "CONTENT_REMOVED" ||
     input.actionType === "REVIEW_REMOVED"
   ) {
+    const contentRemovedSuffix = input.actionId ?? input.report.id;
     await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.CONTENT_REMOVED_NOTICE,
       recipients: [input.report.targetUserId],
-      payload: { ...(input.notes ? { reason: input.notes } : {}) },
-      dedupeKey: `content-removed:${input.actionId ?? input.report.id}`,
+      payload: {
+        reason: moderationStatementOfReasons({
+          actionType: input.actionType,
+          reportId: input.report.id,
+          reportReason: input.report.reason,
+        }),
+      },
+      dedupeKey: `content-removed:${contentRemovedSuffix}`,
     });
   }
   // The expert already gets the exclusion notice; one message is enough.
@@ -198,7 +232,7 @@ async function applyActionEffects(
       if (report.type !== "REVIEW") return {};
       return softDeleteReview(tx, report.reviewId);
     case "REVIEW_EXCLUDED_FROM_AGGREGATE":
-      return excludeReviewFromAggregate(tx, report.reviewId);
+      return excludeReviewFromAggregate(tx, report);
     case "FEEDBACK_EXCLUDED_FROM_AGGREGATE":
       return excludeFeedbackFromAggregate(tx, report.feedbackId);
     case "WARNING_ISSUED":
@@ -354,8 +388,9 @@ async function softDeleteReview(
 
 async function excludeReviewFromAggregate(
   tx: Tx,
-  reviewId: string | null,
+  report: ModerationReportRef,
 ): Promise<TransactionalEffectResult> {
+  const { reviewId } = report;
   if (!reviewId) return {};
   const review = await tx.consultantReview.findUnique({
     where: { id: reviewId },
@@ -389,7 +424,16 @@ async function excludeReviewFromAggregate(
   await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.REVIEW_EXCLUDED_FROM_RATING,
     recipients: [expertUserId],
-    payload: { reviewId, dashboardUrl: goHref("expert", "reviews") },
+    payload: {
+      reviewId,
+      reference: formatReportReference(report.id),
+      reason: moderationStatementOfReasons({
+        actionType: "REVIEW_EXCLUDED_FROM_AGGREGATE",
+        reportId: report.id,
+        reportReason: report.reason,
+      }),
+      dashboardUrl: goHref("expert", "reviews"),
+    },
     dedupeKey: `review-excluded:${reviewId}`,
   });
   return {
@@ -682,20 +726,26 @@ async function triggerModerationNotification(
   transactional: TransactionalEffectResult,
   summary: SideEffectSummary,
 ): Promise<TriggerOutcome> {
-  const { actionId, actionType, report, notes } = input;
-  const dedupeKey = actionId ? `moderation-action:${actionId}` : undefined;
+  const { actionId, actionType, report } = input;
+  const actionSuffix = actionId ?? `${report.id}:${actionType}`;
+  const dedupeKey = `moderation-action:${actionSuffix}`;
+  const statementReason = moderationStatementOfReasons({
+    actionType,
+    reportId: report.id,
+    reportReason: report.reason,
+  });
   switch (actionType) {
     case "WARNING_ISSUED":
       return notifyModerationWarning(
         report.targetUserId,
-        { reason: notes },
+        { reason: statementReason },
         dedupeKey,
       );
     case "USER_SUSPENDED": {
       const bell = await notifyAccountSuspended(
         report.targetUserId,
         {
-          reason: notes,
+          reason: statementReason,
           suspendedUntil: transactional.banExpires ?? "",
           appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         },
@@ -704,7 +754,7 @@ async function triggerModerationNotification(
       await sendAccountSuspendedEmail(
         {
           userId: report.targetUserId,
-          reason: notes,
+          reason: statementReason,
           suspendedUntil: transactional.banExpires,
           appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         },
@@ -716,7 +766,7 @@ async function triggerModerationNotification(
       const bell = await notifyAccountBanned(
         report.targetUserId,
         {
-          reason: notes,
+          reason: statementReason,
           appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         },
         dedupeKey,
@@ -724,7 +774,7 @@ async function triggerModerationNotification(
       await sendAccountBannedEmail(
         {
           userId: report.targetUserId,
-          reason: notes,
+          reason: statementReason,
           appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         },
         EMAIL_BUDGET_MS.REQUEST,
@@ -736,7 +786,7 @@ async function triggerModerationNotification(
         report.targetUserId,
         {
           status: "REJECTED",
-          reason: notes,
+          reason: statementReason,
           dashboardUrl: goHref("expert", "settings"),
         },
         dedupeKey,

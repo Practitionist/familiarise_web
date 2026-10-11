@@ -134,13 +134,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Every 6 hours",
     category: "Alerts",
   },
-  {
-    id: "alert-dispute-deadlines",
-    name: "Alert Dispute Deadlines",
-    description: "Alert when dispute dueBy is within 48h (URGENT)",
-    schedule: "Hourly",
-    category: "Alerts",
-  },
   // Cleanup
   {
     id: "auth-tokens",

@@ -68,7 +68,7 @@ update "Dispute" set status = 'NEEDS_RESPONSE', "evidenceSubmittedAt" = null, "d
 | SFR-05-21 | Organisation owner | Open the organisation disputes tab and call the API for another organisation. | Own organisation: 200 with its own disputes only; another organisation: 403 "Not a member of this organization". If no organisation-linked dispute exists, record that positive scoping is unproven. | [SUBSYSTEM] |
 | SFR-05-22 | Staff | Read the audit trail on the queue card and in the detail dialog after each action. | Every action has a `ModerationAction` row with actor, time, report, review or feedback id and notes; the card shows "Last action: … by <name>"; a direct admin delete records a reason field. | [SUBSYSTEM] [CX-C6] |
 | SFR-05-23 | Staff, two tabs | Open the same report in two tabs, act in one, then act in the stale one. | The stale write fails with 409 and a clear refresh message, because the client sends its expected status or `updatedAt`. | [PR-specific] [CX-C5] |
-| SFR-05-24 | Two experts | File two reports on the same review from two accounts, with different descriptions. | `reportCount` is 2 and the moderator can see both descriptions. The report model holds one description field, so record where the second description is kept; if it is not visible anywhere, FAIL "absent" (requirement). | [SUBSYSTEM] |
+| SFR-05-24 | Two experts | File two reports on the same review from two accounts, with different descriptions. | `reportCount` is 2 and the moderator can see both descriptions: the second reporter's text is appended onto `ModerationReport.description` as `Reporter 2 (<REASON>): <description>` so no reporter statement is lost. | [SUBSYSTEM] |
 | SFR-05-25 | Anyone, signed out | Look for the grievance officer's name and contact, and the escalation and appeal steps. | They are public on the help or legal page and linked from the report confirmation. | [SUBSYSTEM] India IT Rules, E-Commerce Rules |
 | SFR-05-26 | Consultee and expert | Read the booking flow for the dispute window and the chargeback notice. | The window is shown at booking and at session end; an expert whose payment is disputed is told at once with the deadline and the evidence assembled for them. | [SUBSYSTEM] [CX-A8] [CX-B8] |
 | SFR-05-27 | Staff and admin | Try `USER_BANNED`, `USER_SUSPENDED` and unban as staff, and as admin on a throwaway account the run created. | Staff receive 403 "requires an admin" for each; the admin path works only on a throwaway account; no seed account is touched. | [SUBSYSTEM] |
@@ -78,7 +78,7 @@ update "Dispute" set status = 'NEEDS_RESPONSE', "evidenceSubmittedAt" = null, "d
 
 ## Database assertions
 
-- Report state: `select id, status, "reportCount", "resolvedById" from "ModerationReport" where id = '<id>'`.
+- Report state: `select id, status, "reportCount", "resolvedBy" from "ModerationReport" where id = '<id>'`.
 - Actions: `select "actionType", "takenById", "reportId", notes from "ModerationAction" where "reportId" = '<id>' order by "createdAt"` shows one row per real effect and none for a refused action.
 - Exclusion flags: `excludedFromAggregateAt` is set on the exact review or feedback row and on no other.
 - Notifications: `select template, recipient from "NotificationOutbox" where payload::text like '%{RUN_TAG}%'` includes the expert and reporter messages (when the feature exists; see SFR-05-07).

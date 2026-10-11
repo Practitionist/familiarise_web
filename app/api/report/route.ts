@@ -8,36 +8,13 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ModerationReportType, type Prisma } from "@prisma/client";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
-import {
-  assertBodySize,
-  MAX_TEXT_LENGTH,
-  MAX_TITLE_LENGTH,
-} from "@/lib/validation/limits";
-import { z } from "zod";
+import { assertBodySize } from "@/lib/validation/limits";
+import { CreateReportSchema } from "@/schemas/moderation";
 
 import { getSession } from "@/lib/auth-server";
 import { getStreamChatClient } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { formatReportReference } from "@/lib/moderation/report-reference";
-
-// #831 — raw destructuring accepted unbounded strings; every user-typed
-// field now carries a .max()
-const CreateReportSchema = z.object({
-  type: z.nativeEnum(ModerationReportType),
-  reason: z.string().min(1).max(MAX_TITLE_LENGTH),
-  description: z.string().max(MAX_TEXT_LENGTH).optional(),
-  // Optional on a REVIEW report, whose target is the review's author.
-  targetUserId: z.string().min(1).max(MAX_TITLE_LENGTH).optional(),
-  contentText: z.string().max(MAX_TEXT_LENGTH).optional(),
-  contentUrl: z.string().max(MAX_TITLE_LENGTH).optional(),
-  reviewId: z.string().max(MAX_TITLE_LENGTH).optional(),
-  organizationId: z.string().min(1).max(MAX_TITLE_LENGTH).optional(),
-  // #1270 — the message identity a MESSAGE report is about. Without it
-  // CONTENT_REMOVED has nothing to delete and dedup cannot tell two messages
-  // from the same author apart.
-  streamMessageId: z.string().max(MAX_TITLE_LENGTH).optional(),
-  streamChannelCid: z.string().max(MAX_TITLE_LENGTH).optional(),
-});
 
 /**
  * #1270 — what "the same content" means for aggregation.
@@ -225,23 +202,24 @@ export async function POST(req: NextRequest) {
       const consultantUserId = reported.consultantProfile?.userId;
       const hostOrgId = reported.appointment?.organizationId ?? null;
       if (consultantUserId && consultantUserId !== session.user.id) {
-        const isHostOrgMember = hostOrgId
+        const isHostOrgAdmin = hostOrgId
           ? Boolean(
               await prisma.membership.findFirst({
                 where: {
                   organizationId: hostOrgId,
                   userId: session.user.id,
                   status: "ACTIVE",
+                  role: { in: ["OWNER", "MAINTAINER"] },
                 },
                 select: { id: true },
               }),
             )
           : false;
-        if (!isHostOrgMember) {
+        if (!isHostOrgAdmin) {
           return NextResponse.json(
             {
               error:
-                "Only the reviewed consultant or an active host organization member can report this review",
+                "Only the reviewed consultant or an active host organization admin can report this review",
             },
             { status: 403 },
           );
@@ -332,23 +310,70 @@ export async function POST(req: NextRequest) {
           ? reviewSnapshotText
           : (verifiedForBackfill?.messageText ?? contentText);
 
-      // Increment report count on existing report
-      const updatedReport = await prisma.moderationReport.update({
-        where: { id: similarReport.id },
-        data: {
-          reportCount: { increment: 1 },
-          ...(similarReport.contentText === null && backfillContentText
-            ? { contentText: backfillContentText }
-            : {}),
-        },
-      });
+      const MAX_AGGREGATED_DESCRIPTION_LENGTH = 4000;
+      let candidate = similarReport;
+      let updated = false;
 
-      return NextResponse.json({
-        message: "Report submitted successfully",
-        reportId: updatedReport.id,
-        reportReference: formatReportReference(updatedReport.id),
-        aggregated: true,
-      });
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const currentCount = candidate.reportCount;
+        const baseDescription = candidate.description ?? "";
+        const newestLine = `\nReporter ${currentCount + 1} (${reason}): ${(description ?? "").slice(0, 280)}`;
+        const keptPrefix = baseDescription.slice(
+          0,
+          Math.max(0, MAX_AGGREGATED_DESCRIPTION_LENGTH - newestLine.length),
+        );
+        const cappedDescription = keptPrefix + newestLine;
+
+        const casResult = await prisma.moderationReport.updateMany({
+          where: {
+            id: candidate.id,
+            reportCount: currentCount,
+            status: { in: ["PENDING", "UNDER_REVIEW"] },
+          },
+          data: {
+            reportCount: { increment: 1 },
+            description: cappedDescription,
+            ...(candidate.contentText === null && backfillContentText
+              ? { contentText: backfillContentText }
+              : {}),
+          },
+        });
+
+        if (casResult.count > 0) {
+          updated = true;
+          break;
+        }
+
+        const reloaded = await prisma.moderationReport.findUnique({
+          where: { id: candidate.id },
+        });
+        if (
+          !reloaded ||
+          (reloaded.status !== "PENDING" && reloaded.status !== "UNDER_REVIEW")
+        ) {
+          candidate = reloaded ?? candidate;
+          break;
+        }
+        candidate = reloaded;
+      }
+
+      if (updated) {
+        return NextResponse.json({
+          message: "Report submitted successfully",
+          reportId: candidate.id,
+          reportReference: formatReportReference(candidate.id),
+          aggregated: true,
+        });
+      }
+      if (
+        candidate.status === "PENDING" ||
+        candidate.status === "UNDER_REVIEW"
+      ) {
+        return NextResponse.json(
+          { error: "Concurrent report update conflict; please retry" },
+          { status: 409 },
+        );
+      }
     }
 
     // Verified against Stream, not trusted from the caller — see
@@ -358,12 +383,12 @@ export async function POST(req: NextRequest) {
         ? await resolveReportedMessage(streamMessageId, target)
         : { streamMessageId: null, streamChannelCid: null, messageText: null };
 
-    const effectiveContentText =
-      type === "REVIEW"
-        ? reviewSnapshotText
-        : type === "MESSAGE"
-          ? (verifiedMessage.messageText ?? contentText)
-          : contentText;
+    let effectiveContentText = contentText;
+    if (type === "REVIEW") {
+      effectiveContentText = reviewSnapshotText ?? undefined;
+    } else if (type === "MESSAGE") {
+      effectiveContentText = verifiedMessage.messageText ?? contentText;
+    }
 
     // Create new report
     const report = await prisma.moderationReport.create({

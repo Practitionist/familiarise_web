@@ -40,7 +40,9 @@ function req(url: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockedAuth.mockResolvedValue({ session: { user: { id: "staff-1", role: "STAFF" } } });
+  mockedAuth.mockResolvedValue({
+    session: { user: { id: "staff-1", role: "STAFF" } },
+  });
   mockedFindMany.mockResolvedValue([]);
   mockedCount.mockResolvedValue(0);
   mockedGroupBy.mockResolvedValue([]);
@@ -48,12 +50,14 @@ beforeEach(() => {
 
 describe("GET /api/staff/moderation/reports — search", () => {
   it("omits the OR clause when no search term is given", async () => {
-    await GET(req("http://localhost/api/staff/moderation/reports?status=PENDING"));
+    await GET(
+      req("http://localhost/api/staff/moderation/reports?status=PENDING"),
+    );
     const where = mockedFindMany.mock.calls[0][0].where;
     expect(where.OR).toBeUndefined();
   });
 
-  it("filters server-side over id/reason/reporter-name/target-name", async () => {
+  it("filters server-side over id/reason/description/contentText/reporter-name/target-name", async () => {
     await GET(
       req(
         "http://localhost/api/staff/moderation/reports?status=PENDING&search=spam",
@@ -64,6 +68,8 @@ describe("GET /api/staff/moderation/reports — search", () => {
     expect(where.OR).toEqual([
       { id: { contains: "spam", mode: "insensitive" } },
       { reason: { contains: "spam", mode: "insensitive" } },
+      { description: { contains: "spam", mode: "insensitive" } },
+      { contentText: { contains: "spam", mode: "insensitive" } },
       { reportedBy: { name: { contains: "spam", mode: "insensitive" } } },
       { targetUser: { name: { contains: "spam", mode: "insensitive" } } },
     ]);
@@ -71,7 +77,9 @@ describe("GET /api/staff/moderation/reports — search", () => {
 
   it("403s when the caller isn't privileged", async () => {
     mockedAuth.mockResolvedValue({
-      error: new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 }),
+      error: new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+      }),
     });
     const res = await GET(req("http://localhost/api/staff/moderation/reports"));
     expect(res.status).toBe(403);

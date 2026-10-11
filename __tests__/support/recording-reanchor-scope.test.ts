@@ -37,13 +37,19 @@ const completedCtx = {
 
 function recordingFlow() {
   const flow = flowForCategory(completedCtx, "RECORDING_ACCESS");
-  if (!flow) throw new Error("RECORDING_ACCESS not offered on a completed session");
+  if (!flow)
+    throw new Error("RECORDING_ACCESS not offered on a completed session");
   return flow;
 }
 
 describe("recording-access resolved terminals", () => {
   it("marks `within` resolved and tags the message with its node id", () => {
-    const r = walkFlow(recordingFlow(), "missing", { chosenOptionId: "within" }, completedCtx);
+    const r = walkFlow(
+      recordingFlow(),
+      "missing",
+      { chosenOptionId: "within" },
+      completedCtx,
+    );
     expect(r.resolved).toBe(true);
     expect(r.escalate).toBe(false);
     // The re-anchor guard keys off exactly this.
@@ -53,10 +59,16 @@ describe("recording-access resolved terminals", () => {
   });
 
   it("marks `fixed` resolved with a DIFFERENT node id, so the guard cannot catch it", () => {
-    const r = walkFlow(recordingFlow(), "play", { chosenOptionId: "fixed" }, completedCtx);
+    const r = walkFlow(
+      recordingFlow(),
+      "play",
+      { chosenOptionId: "fixed" },
+      completedCtx,
+    );
     expect(r.resolved).toBe(true);
     expect(r.escalate).toBe(false);
-    const nodeId = (r.messages[0]?.metadata as { nodeId?: string } | undefined)?.nodeId;
+    const nodeId = (r.messages[0]?.metadata as { nodeId?: string } | undefined)
+      ?.nodeId;
     expect(nodeId).toBe("fixed");
     expect(nodeId).not.toBe("within");
   });
@@ -66,13 +78,23 @@ describe("recording-access resolved terminals", () => {
     // escalating terminal in object order" — which only happened to be right
     // because `beyond` is declared before `broken`. Reordering the nodes would
     // otherwise have started filing recording_broken for a missing recording.
-    const r = walkFlow(recordingFlow(), "missing", { chosenOptionId: "beyond" }, completedCtx);
+    const r = walkFlow(
+      recordingFlow(),
+      "missing",
+      { chosenOptionId: "beyond" },
+      completedCtx,
+    );
     expect(r.escalate).toBe(true);
     expect(r.reason).toBe("recording_missing");
   });
 
   it("keeps `broken` on its own reason", () => {
-    const r = walkFlow(recordingFlow(), "play", { chosenOptionId: "broken" }, completedCtx);
+    const r = walkFlow(
+      recordingFlow(),
+      "play",
+      { chosenOptionId: "broken" },
+      completedCtx,
+    );
     expect(r.escalate).toBe(true);
     expect(r.reason).toBe("recording_broken");
   });

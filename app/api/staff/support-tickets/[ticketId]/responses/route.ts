@@ -3,7 +3,9 @@
  * Staff can respond to any support ticket
  */
 
+import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { supportError } from "@/lib/api/support-http";
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
@@ -20,8 +22,71 @@ import { applyStaffReply } from "@/lib/support/sla";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import * as Sentry from "@sentry/nextjs";
 
+const StaffCreateResponseSchema = CreateSupportResponseSchema.extend({
+  expectedLastMessageAt: z.string().datetime().optional(),
+});
+
 interface RouteParams {
   params: Promise<{ ticketId: string }>;
+}
+
+type PublicReplyGuardFailure = {
+  ok: false;
+  code: "NEW_CUSTOMER_MESSAGE" | "CLOSED";
+};
+
+async function guardTicketPublicReplyTx(params: {
+  tx: Tx;
+  ticketId: string;
+  ticketStatus: Prisma.SupportTicketGetPayload<object>["status"];
+  ticketAssignedToId: string | null;
+  fallbackLastMessageAt: Date | null;
+  sessionUserId: string;
+  expectedDate: Date | undefined;
+  now: Date;
+}): Promise<PublicReplyGuardFailure | null> {
+  const {
+    tx,
+    ticketId,
+    ticketStatus,
+    ticketAssignedToId,
+    fallbackLastMessageAt,
+    sessionUserId,
+    expectedDate,
+    now,
+  } = params;
+  const collisionClause = expectedDate
+    ? {
+        OR: [{ lastMessageAt: null }, { lastMessageAt: { lte: expectedDate } }],
+      }
+    : {};
+  const moved = await tx.supportTicket.updateMany({
+    where: {
+      id: ticketId,
+      status: { not: "CLOSED" },
+      ...collisionClause,
+    },
+    data: {
+      status: ticketStatus === "OPEN" ? "IN_PROGRESS" : ticketStatus,
+      ...(ticketAssignedToId === null ? { assignedToId: sessionUserId } : {}),
+      lastMessageAt: now,
+    },
+  });
+  if ((moved?.count ?? 0) > 0) return null;
+
+  const current = await tx.supportTicket.findUnique({
+    where: { id: ticketId },
+    select: { status: true, lastMessageAt: true },
+  });
+  const latestMessageAt = current?.lastMessageAt ?? fallbackLastMessageAt;
+  if (
+    expectedDate &&
+    latestMessageAt &&
+    latestMessageAt.getTime() > expectedDate.getTime()
+  ) {
+    return { ok: false, code: "NEW_CUSTOMER_MESSAGE" };
+  }
+  return { ok: false, code: "CLOSED" };
 }
 
 async function mirrorStaffReplyToThread(
@@ -54,6 +119,134 @@ async function mirrorStaffReplyToThread(
   }
 }
 
+function executeTicketResponseTx(params: {
+  ticketId: string;
+  ticketStatus: Prisma.SupportTicketGetPayload<object>["status"];
+  ticketAssignedToId: string | null;
+  fallbackLastMessageAt: Date | null;
+  sessionUserId: string;
+  message: string;
+  isInternal: boolean;
+  expectedDate: Date | undefined;
+  now: Date;
+}) {
+  const {
+    ticketId,
+    ticketStatus,
+    ticketAssignedToId,
+    fallbackLastMessageAt,
+    sessionUserId,
+    message,
+    isInternal,
+    expectedDate,
+    now,
+  } = params;
+  return prisma.$transaction(
+    async (tx) => {
+      if (!isInternal) {
+        const failure = await guardTicketPublicReplyTx({
+          tx,
+          ticketId,
+          ticketStatus,
+          ticketAssignedToId,
+          fallbackLastMessageAt,
+          sessionUserId,
+          expectedDate,
+          now,
+        });
+        if (failure) return failure;
+      }
+
+      const created = await tx.supportResponse.create({
+        data: {
+          message,
+          isInternal,
+          supportTicket: { connect: { id: ticketId } },
+          user: { connect: { id: sessionUserId } },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              role: true,
+              image: true,
+            },
+          },
+        },
+      });
+
+      if (!isInternal) {
+        await applyStaffReply(tx, ticketId, now);
+        await mirrorStaffReplyToThread(
+          tx,
+          ticketId,
+          message,
+          sessionUserId,
+          now,
+        );
+      }
+
+      return { ok: true as const, created };
+    },
+    {
+      maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+      timeout: ALLOCATION_TX_TIMEOUT_MS,
+    },
+  );
+}
+
+function renderTxFailureResponse(
+  code: PublicReplyGuardFailure["code"],
+): NextResponse {
+  if (code === "NEW_CUSTOMER_MESSAGE") {
+    return NextResponse.json(
+      {
+        code: "NEW_CUSTOMER_MESSAGE",
+        error:
+          "Customer replied since you opened this case. Review their message before sending.",
+      },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json(
+    { error: "Cannot send a public reply to a closed ticket" },
+    { status: 409 },
+  );
+}
+
+async function dispatchPublicTicketReplyNotice(params: {
+  ticket: {
+    id: string;
+    userId: string;
+    referenceNumber: string | null;
+    title: string;
+    organizationId: string | null;
+    appointmentSupportThread: { organizationId: string | null } | null;
+  };
+  responseId: string;
+  responderName: string | null | undefined;
+  message: string;
+}): Promise<void> {
+  const { ticket, responseId, responderName, message } = params;
+  await notifySupportTicketResponse(
+    ticket.userId,
+    {
+      ticketId: ticket.id,
+      reference: ticket.referenceNumber ?? undefined,
+      ticketTitle: ticket.title || "Support Ticket",
+      message,
+      respondedBy: responderName ?? "Support",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "ticket", id: ticket.id }),
+        ticket.appointmentSupportThread?.organizationId,
+      ),
+      ...notificationScope(ticket.organizationId),
+    },
+    `ticket-resp:${responseId}`,
+  );
+}
+
 /**
  * POST /api/staff/support-tickets/[ticketId]/responses
  * Staff/Admin can respond to any support ticket
@@ -66,7 +259,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     const { ticketId } = await params;
     const body: unknown = await req.json().catch(() => null);
-    const result = CreateSupportResponseSchema.safeParse(body);
+    const result = StaffCreateResponseSchema.safeParse(body);
     if (!result.success) {
       return supportError({
         status: 400,
@@ -83,11 +276,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         appointmentSupportThread: { select: { organizationId: true } },
       },
     });
-
     if (!ticket) {
       return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
     }
-
     if (ticket.status === "CLOSED" && !validatedData.isInternal) {
       return NextResponse.json(
         { error: "Cannot send a public reply to a closed ticket" },
@@ -96,93 +287,40 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     const now = new Date();
-    const response = await prisma.$transaction(
-      async (tx) => {
-        if (!validatedData.isInternal) {
-          const picked =
-            ticket.status === "OPEN"
-              ? await tx.supportTicket.updateMany({
-                  where: { id: ticketId, status: "OPEN" },
-                  data: {
-                    status: "IN_PROGRESS",
-                    assignedToId: ticket.assignedToId ?? session.user.id,
-                    lastMessageAt: now,
-                  },
-                })
-              : { count: 0 };
-          if (picked.count === 0) {
-            const touched = await tx.supportTicket.updateMany({
-              where: { id: ticketId, status: { not: "CLOSED" } },
-              data: { lastMessageAt: now },
-            });
-            if (touched.count === 0) {
-              return null;
-            }
-          }
-        }
-
-        const created = await tx.supportResponse.create({
-          data: {
-            message: validatedData.message,
-            isInternal: validatedData.isInternal,
-            supportTicket: { connect: { id: ticketId } },
-            user: { connect: { id: session.user.id } },
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                role: true,
-                image: true,
-              },
-            },
-          },
-        });
-
-        if (!validatedData.isInternal) {
-          await applyStaffReply(tx, ticketId, now);
-          await mirrorStaffReplyToThread(
-            tx,
-            ticketId,
-            validatedData.message,
-            session.user.id,
-            now,
-          );
-        }
-
-        return created;
-      },
-      {
-        maxWait: ALLOCATION_TX_MAX_WAIT_MS,
-        timeout: ALLOCATION_TX_TIMEOUT_MS,
-      },
-    );
-
-    if (!response) {
-      return NextResponse.json(
-        { error: "Cannot send a public reply to a closed ticket" },
-        { status: 409 },
-      );
+    const expectedDate =
+      !validatedData.isInternal && validatedData.expectedLastMessageAt
+        ? new Date(validatedData.expectedLastMessageAt)
+        : undefined;
+    if (
+      expectedDate &&
+      ticket.lastMessageAt &&
+      ticket.lastMessageAt.getTime() > expectedDate.getTime()
+    ) {
+      return renderTxFailureResponse("NEW_CUSTOMER_MESSAGE");
     }
 
-    // Notify the ticket owner about the staff response (skip for internal notes)
+    const txOutcome = await executeTicketResponseTx({
+      ticketId,
+      ticketStatus: ticket.status,
+      ticketAssignedToId: ticket.assignedToId,
+      fallbackLastMessageAt: ticket.lastMessageAt,
+      sessionUserId: session.user.id,
+      message: validatedData.message,
+      isInternal: validatedData.isInternal,
+      expectedDate,
+      now,
+    });
+    if (!txOutcome.ok) {
+      return renderTxFailureResponse(txOutcome.code);
+    }
+
+    const response = txOutcome.created;
     if (!validatedData.isInternal) {
-      await notifySupportTicketResponse(ticket.userId, {
-        ticketId: ticket.id,
-        reference: ticket.referenceNumber ?? undefined,
-        ticketTitle: ticket.title || "Support Ticket",
+      await dispatchPublicTicketReplyNotice({
+        ticket,
+        responseId: response.id,
+        responderName: response.user?.name,
         message: validatedData.message,
-        // Declared on the payload and never passed, so a template naming the
-        // responder rendered an empty attribution — same shape as the blank
-        // reschedule times.
-        respondedBy: response.user?.name ?? "Support",
-        dashboardUrl: supportRequestHref(
-          caseKeyOf({ kind: "ticket", id: ticket.id }),
-          ticket.appointmentSupportThread?.organizationId,
-        ),
-        // ADR 23 — inherit the ticket's org-ness (attribution only).
-        ...notificationScope(ticket.organizationId),
       });
     }
 

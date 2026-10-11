@@ -513,6 +513,7 @@ export async function sendContactInquiryEmail(
     subject,
     message,
     category,
+    referenceNumber,
   }: {
     firstName: string;
     lastName: string;
@@ -521,6 +522,7 @@ export async function sendContactInquiryEmail(
     subject: string;
     message: string;
     category?: string | null;
+    referenceNumber?: string | null;
   },
   opts: SendOptions = {},
 ) {
@@ -533,6 +535,9 @@ export async function sendContactInquiryEmail(
       .replace(/"/g, "&quot;");
 
   const rows: Array<[string, string]> = [
+    ...(referenceNumber
+      ? ([["Reference", referenceNumber]] as Array<[string, string]>)
+      : []),
     ["Name", name],
     ["Email", email],
     ["Phone", phone || "—"],
@@ -566,14 +571,18 @@ export async function sendContactInquiryEmail(
     {
       from: SENDERS.notifications,
       to: contactInboxAddress(),
-      subject: `[Contact] ${subject}`,
+      subject: referenceNumber
+        ? `[Grievance ${referenceNumber}] ${subject}`
+        : `[Contact] ${subject}`,
       html,
       text,
       replyTo: email,
     },
     "CONTACT_INQUIRY",
     {
-      entityRef: `contact:${email}`,
+      entityRef: referenceNumber
+        ? `grievance:${referenceNumber}`
+        : `contact:${email}`,
       budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_WAITLIST,
       ...opts,
     },

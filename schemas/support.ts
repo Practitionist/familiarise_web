@@ -37,11 +37,13 @@ export const UpdateSupportTicketSchema = z.object({
   priority: SupportPriorityEnum.optional(),
   assignedToId: z.string().nullable().optional(),
   refundId: z.string().optional(),
+  note: z.string().trim().max(1000).optional(),
 });
 
 export const CreateSupportResponseSchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(MAX_TEXT_LENGTH),
   isInternal: z.boolean().default(false),
+  expectedLastMessageAt: z.string().datetime().optional(),
 });
 
 // ---------------------------------------------------------------------------

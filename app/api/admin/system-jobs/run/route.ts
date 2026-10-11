@@ -25,7 +25,6 @@ import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-ref
 
 // Disputes
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
-import { alertDisputeDeadlines } from "@/scripts/disputes/alert-dispute-deadlines";
 
 // Earnings
 import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
@@ -237,15 +236,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       failedCount: result.failedCount,
       discrepanciesCount: result.discrepancies.length,
       errorCount: result.errors.length,
-    };
-  },
-  "alert-dispute-deadlines": async () => {
-    const result = await alertDisputeDeadlines();
-    return {
-      success: result.success,
-      urgentCount: result.urgentCount,
-      criticalCount: result.criticalCount,
-      totalAlerts: result.urgentCount,
     };
   },
   "auto-complete-appointments": async () => {

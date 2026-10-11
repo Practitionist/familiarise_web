@@ -184,6 +184,12 @@ const paymentStatusFlow: FlowDefinition = {
       body: "Usually the bank releases a pending deduction within 5–7 working days, and the booking was not created. We've flagged the charge to our payments team to confirm.",
       escalate: true,
       reason: "payment_deducted_unconfirmed",
+      promises: [
+        {
+          id: "bank-release-5-7d",
+          text: "Pending bank deductions release within 5–7 business days; charge flagged to payments.",
+        },
+      ],
     },
     twice: {
       id: "twice",
@@ -191,6 +197,12 @@ const paymentStatusFlow: FlowDefinition = {
       body: "We're on it — duplicate charges are refunded in full. Our payments team will confirm here shortly.",
       escalate: true,
       reason: "double_charge",
+      promises: [
+        {
+          id: "duplicate-full-refund",
+          text: "Duplicate charges are refunded in full.",
+        },
+      ],
     },
     refund: {
       id: "refund",
@@ -207,6 +219,12 @@ const paymentStatusFlow: FlowDefinition = {
       body: "Gateway refunds typically land in 5–7 working days depending on your bank.",
       action: { kind: "SHOW_REFUND_STATUS" },
       resolved: true,
+      promises: [
+        {
+          id: "refund-tat-5-7d",
+          text: "Refunds settle to the source instrument within 5–7 business days.",
+        },
+      ],
     },
     missing: {
       id: "missing",
@@ -214,6 +232,12 @@ const paymentStatusFlow: FlowDefinition = {
       body: "That shouldn't happen — our payments team will trace it and update you here.",
       escalate: true,
       reason: "refund_missing",
+      promises: [
+        {
+          id: "refund-trace",
+          text: "Payments team will trace the missing refund and update this request.",
+        },
+      ],
     },
     invoice: {
       id: "invoice",
@@ -447,6 +471,7 @@ const sponsorshipBillingFlow: FlowDefinition = {
           label: "I think I was charged by mistake",
           next: "escalate",
         },
+        { id: "human", label: "Talk to a person", next: "escalate" },
       ],
     },
     who: {
@@ -487,6 +512,11 @@ const orgAdminDisputeFlow: FlowDefinition = {
           label: "A concern about how the session was conducted",
           next: "conduct",
         },
+        {
+          id: "human",
+          label: "Talk to a person",
+          next: "human",
+        },
       ],
     },
     billing: {
@@ -502,6 +532,13 @@ const orgAdminDisputeFlow: FlowDefinition = {
       body: "Our team will review the session and coordinate with everyone involved. We'll update you here.",
       escalate: true,
       reason: "org_conduct_dispute",
+    },
+    human: {
+      id: "human",
+      kind: "TERMINAL",
+      body: "Our team will review this organization request and follow up here.",
+      escalate: true,
+      reason: "org_operator_human",
     },
   },
 };

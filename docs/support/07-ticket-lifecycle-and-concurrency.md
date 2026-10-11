@@ -1,104 +1,114 @@
 # Ticket lifecycle, reopening and concurrent writes
 
-A support ticket has four live statuses, two actors who can move it, and a booking thread that has to agree with it. This page describes the state machine as the routes implement it today, the reopen rules that follow from it, and the compare-and-set guards that keep two simultaneous writers from leaving a ticket in a state nobody chose.
+A support ticket or unified case has four live statuses, two actors who can move it, and (for session escalations) a linked booking thread (`AppointmentSupportThread`) that stays synchronized inside the same database transaction. This document defines the live status transitions, reopen rules, public reply collision protection (`expectedLastMessageAt`), optimistic concurrency guards (`expectedUpdatedAt`), ITIL problem-to-incident resolution cascading, and compare-and-set invariants.
 
-## The statuses
+## Live statuses
 
-The `SupportTicketStatus` enum has five values, and only four of them can be written.
+The `SupportTicketStatus` enum contains five values, only four of which are writable:
 
-| Status        | Meaning                                                      | Written by                                            |
-| ------------- | ------------------------------------------------------------ | ----------------------------------------------------- |
-| `OPEN`        | Nobody is working it, or the customer has just written back. | Intake, a customer reply to an unassigned ticket.     |
-| `IN_PROGRESS` | A staff member owns it or has replied.                       | A staff reply on an `OPEN` ticket, the staff `PATCH`. |
-| `RESOLVED`    | Staff believe it is done; the customer can still reopen it.  | The staff `PATCH`, the staff thread `PATCH`.          |
-| `CLOSED`      | Final for the customer: no replies, no attachments.          | The staff `PATCH`, the staff thread `PATCH`.          |
-| `ON_HOLD`     | Readable on existing rows, refused on every write path.      | Nothing.                                              |
+| Status        | Meaning                                                                | Written by                                                                          |
+| ------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `OPEN`        | Unassigned intake waiting in the general queue.                        | Initial intake, customer reply on an unassigned ticket/case, staff reopen `PATCH`.  |
+| `IN_PROGRESS` | Owned by a staff operator or awaiting customer follow-up.              | Public staff reply on an `OPEN` ticket/case, customer reply when assigned, `PATCH`. |
+| `RESOLVED`    | Operator marked complete; customer reply or staff action can reopen.   | Staff ticket/case `PATCH`, staff thread `PATCH`, parent `PROBLEM` cascade.          |
+| `CLOSED`      | Terminal for customers: no public replies or attachments accepted.     | Staff ticket/case `PATCH`, staff thread `PATCH`, 28-day SLA auto-close sweep.       |
+| `ON_HOLD`     | Read-only legacy enum value; rejected on every API write path (`400`). | Never written (`STATUS_NOT_SUPPORTED`).                                             |
 
-`ON_HOLD` stays in the enum so rows that already carry it still render, but the staff `PATCH` answers a request for it with a 400 and the code `STATUS_NOT_SUPPORTED`, and points the agent at "Waiting on customer", which is derived from the SLA pause rather than stored as a status. A customer reply to an `ON_HOLD` row is treated like a reply to a `RESOLVED` one, so such a row can leave the status but never enter it.
+`ON_HOLD` remains in the schema solely so pre-existing historical rows deserialize cleanly. Both `PATCH /api/staff/support-tickets/[ticketId]` and `patchSupportCaseLifecycle` (`lib/support/case-service.ts`) reject `status: "ON_HOLD"` with HTTP `400` (`code: "STATUS_NOT_SUPPORTED"`), directing operators to `Waiting on customer` (derived automatically from `awaitingUserSince`) or internal notes (`isInternal: true`).
 
 ```mermaid
 stateDiagram-v2
-    [*] --> OPEN: intake (bot escalation or ticket form)
-    OPEN --> IN_PROGRESS: staff public reply (CAS on OPEN)
+    [*] --> OPEN: intake (form, bot escalation, public grievance)
+    OPEN --> OPEN: customer reply (assignedToId === null)
+    OPEN --> IN_PROGRESS: customer reply (assignedToId !== null)
+    OPEN --> IN_PROGRESS: staff public reply (CAS on OPEN, auto-assigns if unassigned)
     OPEN --> IN_PROGRESS: staff PATCH
-    IN_PROGRESS --> RESOLVED: staff PATCH
-    OPEN --> RESOLVED: staff PATCH
-    RESOLVED --> OPEN: customer reply, unassigned
-    RESOLVED --> IN_PROGRESS: customer reply, assigned
-    RESOLVED --> CLOSED: staff PATCH
-    IN_PROGRESS --> CLOSED: staff PATCH
-    CLOSED --> OPEN: staff PATCH only
-    CLOSED --> IN_PROGRESS: staff PATCH only
-    CLOSED --> RESOLVED: staff PATCH only
+    IN_PROGRESS --> IN_PROGRESS: customer or staff reply
+    IN_PROGRESS --> RESOLVED: staff PATCH / Send + Resolve macro / PROBLEM cascade
+    OPEN --> RESOLVED: staff PATCH / Send + Resolve macro / PROBLEM cascade
+    RESOLVED --> OPEN: customer reply (assignedToId === null)
+    RESOLVED --> IN_PROGRESS: customer reply (assignedToId !== null)
+    RESOLVED --> IN_PROGRESS: staff Reopen (CaseWorkspace)
+    RESOLVED --> CLOSED: staff PATCH / 28-day auto-close
+    IN_PROGRESS --> CLOSED: staff PATCH / duplicate merge
+    CLOSED --> OPEN: staff Reopen / PATCH (ticket, case, or thread)
+    CLOSED --> IN_PROGRESS: staff PATCH (ticket, case, or thread)
+    CLOSED --> RESOLVED: staff PATCH (ticket, case, or thread)
     CLOSED --> CLOSED: customer reply refused (400)
 ```
 
-## Who may reopen a ticket
+## Customer vs staff reopening rules
 
-Two rules, both decided by the owner, define reopening.
+### Customer reply transitions (`resolveUserReplyNextStatus`)
 
-**A customer reply reopens a resolved ticket.** The route `POST /api/user/support-tickets/[ticketId]/responses` computes the next status from the status it read: a `RESOLVED` or `ON_HOLD` ticket becomes `OPEN` when nobody is assigned and `IN_PROGRESS` when someone is, and every other live ticket becomes `IN_PROGRESS`. The same write clears `resolvedAt` and `closedAt`, so a reopened ticket stops reading as finished, and it folds the wait that just ended into `pausedSeconds` through `userRepliedPatch`. A reply to a `CLOSED` ticket is refused with a 400 saying the ticket is closed and can no longer receive replies, and the client then offers a new request. While a ticket is `RESOLVED` the reply box says "This request is marked resolved. Replying reopens it.", so the reopen is never a surprise.
+In `POST /api/user/support-tickets/[ticketId]/responses` (`resolveUserReplyNextStatus(status, assignedToId)`) and `lib/support/case-service.ts` (`resolveReopenedUserTurnStatus`):
 
-**A staff reply never reopens a resolved ticket.** The staff `POST` on `/api/staff/support-tickets/[ticketId]/responses` moves a ticket only from `OPEN` to `IN_PROGRESS`, with the status read as the expected prior status in the `WHERE` clause, and assigns the replier when nobody was assigned. On any other live status it bumps `lastMessageAt` and nothing else, so a reply that races a Resolve leaves the ticket `RESOLVED` rather than `IN_PROGRESS` with a stale `resolvedAt`. The reply is still saved and sent. An internal note touches neither the status nor the activity clock, and it is the only reply write allowed on a `CLOSED` ticket; the staff `PATCH` can still change a closed ticket's status. The back-office composer follows that rule: on a closed case it disables the reply box and Send, says that the customer can no longer receive replies, and keeps private notes available.
+- **Unassigned `OPEN` stays `OPEN`:** When `status === "OPEN"` and `assignedToId === null`, a customer follow-up keeps the ticket/case in `OPEN` (`status === "OPEN" && !assignedToId ? "OPEN" : "IN_PROGRESS"`) so unassigned queue items never masquerade as actively owned work.
+- **Reopening `RESOLVED` or legacy `ON_HOLD`:** A customer reply moves the row to `IN_PROGRESS` when `assignedToId !== null` and `OPEN` when `assignedToId === null`, clears `resolvedAt` and `closedAt`, records a `REOPENED` `SupportCaseEvent` (on `SupportCase`), and banks the elapsed pause interval into `pausedSeconds` via `userRepliedPatch(ticket, now)`.
+- **Refusing `CLOSED`:** Customer replies on `CLOSED` rows are rejected before transaction entry with HTTP `400`, prompting the user to open a new request.
 
-Only staff can take a `CLOSED` ticket out of `CLOSED`, through the staff `PATCH`. That write also moves the booking thread, as described below.
+### Staff public replies, internal notes, and thread reopening
 
-## The staff PATCH and the stale-view guard
+- **Public staff replies never reopen `RESOLVED` cases:** `POST /api/staff/support-tickets/[ticketId]/responses` (`guardTicketPublicReplyTx`) transitions status from `OPEN` to `IN_PROGRESS` (assigning `session.user.id` when `assignedToId === null`), while leaving any other non-`CLOSED` status (`IN_PROGRESS`, `RESOLVED`) unchanged and updating `lastMessageAt` plus SLA acknowledgement/pause clocks via `applyStaffReply`.
+- **Internal notes (`isInternal: true`):** Allowed even when a ticket or case is `CLOSED`. Internal notes never mutate `status`, never advance public `lastMessageAt`, never start an SLA pause, and are never mirrored to customer-visible booking threads.
+- **Reopening `RESOLVED` and `CLOSED` threads & tickets:** `PATCH /api/staff/support-threads/[threadId]` (`app/api/staff/support-threads/[threadId]/route.ts`) accepts `"OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED"`. When `isReopening` (`status === "OPEN" || status === "IN_PROGRESS"`) is true, `persistThreadStatusTx` updates both `AppointmentSupportThread` and its linked `SupportTicket` across `["OPEN", "IN_PROGRESS", "ESCALATED", "ON_HOLD", "RESOLVED", "CLOSED"]`, clearing `resolvedAt` and `closedAt` and banking any active `awaitingUserSince` pause into `pausedSeconds`. In `components/dashboard/backoffice/support/CaseWorkspace.tsx`, `SETTLED = new Set(["RESOLVED", "CLOSED"])` renders the **Reopen** button on both settled states—sending `"IN_PROGRESS"` for `RESOLVED` cases and `"OPEN"` for `CLOSED` cases.
 
-`PATCH /api/staff/support-tickets/[ticketId]` requires the `expectedUpdatedAt` the caller rendered. The `updateMany` matches on `id` and that exact `updatedAt`, and a priority or assignee edit without a status change also requires `status` not to be `CLOSED`. When nothing matches, the route answers 409 with the code `CONFLICT`. A stale tab therefore cannot move a ticket from `RESOLVED` to `CLOSED`, or reprioritise a ticket someone else just closed, without noticing.
+## Public reply collision guard (`expectedLastMessageAt`)
 
-The assignee and priority of a ticket that is already `CLOSED` are frozen. The route refuses such an edit before the write, with 400 and the code `TICKET_CLOSED` ("This request is closed, so its assignee and priority can't be changed. Reopen it first."), rather than reporting a conflict that did not happen. The 409 is kept for the case where the ticket closed between the read and the write. A status change, which is how a ticket is reopened, is still accepted.
+To prevent operators from sending an answer drafted before a customer's newest follow-up landed, all three staff public reply write paths enforce `expectedLastMessageAt`:
 
-The client half is `useCaseMutations` in the back-office case workspace. A 409 is recognised by `isStaleCaseError`, which invalidates the case query so the case is refetched, and shows the toast "The case changed — review and retry" instead of a generic failure. The retry then starts from what the database holds now.
+1. **Ticket public replies (`POST /api/staff/support-tickets/[ticketId]/responses`):**
+   - **Pre-transaction fast path:** Rejects immediately with HTTP `409` `{ code: "NEW_CUSTOMER_MESSAGE" }` if `ticket.lastMessageAt > expectedDate`.
+   - **Inside-transaction CAS (`guardTicketPublicReplyTx`):** Embeds `OR: [{ lastMessageAt: null }, { lastMessageAt: { lte: expectedDate } }]` alongside `status: { not: "CLOSED" }` inside `tx.supportTicket.updateMany`. If zero rows match, re-reads `status` and `lastMessageAt` inside `tx` to return `{ code: "NEW_CUSTOMER_MESSAGE" }` (`409`) when a customer reply won the race or `409` if closed concurrently.
+2. **Thread public replies (`POST /api/staff/support-threads/[threadId]`):**
+   - Validates optional `expectedLastMessageAt` via `replySchema` and rejects with HTTP `409` `{ code: "NEW_CUSTOMER_MESSAGE" }` whenever `thread.lastMessageAt > expectedDate`, followed by CAS on `status: { not: "CLOSED" }` in `persistStaffReplyTx`.
+3. **Unified case public replies (`POST /api/support/cases/[caseId]/messages` -> `appendSupportCaseTurn`):**
+   - `advanceAgentPublicTurnState` includes `OR: [{ lastMessageAt: null }, { lastMessageAt: { lte: expectedDate } }]` and `awaitingUserSince: existingCase.awaitingUserSince` inside `tx.supportCase.updateMany`, returning HTTP `409` `{ code: "NEW_CUSTOMER_MESSAGE" }` if `lastMessageAt` advanced past `expectedDate`.
 
-Status writes stamp the clocks consistently, through `buildTicketPatchFields`. `RESOLVED` sets `resolvedAt` and clears `closedAt`. `CLOSED` sets `closedAt` and keeps an existing `resolvedAt`, so closing a resolved ticket does not erase when it was resolved. `OPEN` and `IN_PROGRESS` clear both.
-
-The moderation report `PATCH` follows the same idea with different fields: it matches on the status and assignee the caller saw, and it refuses outright once a report is `DISMISSED` or `ACTION_TAKEN`, because a resolved report changes only through the audited action route.
-
-## Thread and ticket mirroring
-
-An escalated booking conversation (`AppointmentSupportThread`) and its ticket describe one problem, so every write on one is mirrored to the other inside the same transaction.
+On the client (`components/dashboard/backoffice/support/useCaseMutations.ts`), `isStaleCaseError` intercepts HTTP `409` responses, invalidates `["support-case", caseKey]` so TanStack Query immediately loads the incoming message, preserves the operator's draft in `CaseWorkspace.tsx`, and surfaces the toast `"New message arrived before your send"`.
 
 ```mermaid
 sequenceDiagram
     participant C as Customer
-    participant T as SupportTicket
-    participant H as Booking thread
-    participant S as Staff
-    C->>T: reply on the ticket
-    T->>T: CAS on status, awaitingUserSince, pausedSeconds
-    T->>H: USER message, thread to ESCALATED (unless CLOSED)
-    S->>H: reply on the thread
-    H->>T: public SupportResponse, OPEN to IN_PROGRESS by CAS
-    T->>C: bell and email, reference leading the title
-    S->>T: PATCH status
-    T->>H: thread follows, never overwriting CLOSED
+    participant API as Staff Reply API
+    participant DB as Postgres ($transaction)
+    participant UI as CaseWorkspace / useCaseMutations
+
+    UI->>API: POST reply + expectedLastMessageAt (T0)
+    C->>DB: Customer reply commits (lastMessageAt = T1 > T0)
+    API->>DB: updateMany WHERE id AND status != CLOSED AND (lastMessageAt IS NULL OR lastMessageAt <= T0)
+    DB-->>API: count = 0 (re-check finds lastMessageAt = T1 > T0)
+    API-->>UI: 409 { code: "NEW_CUSTOMER_MESSAGE" }
+    UI->>UI: Keep draft, invalidate ["support-case", key], show review toast
 ```
 
-The rules the code enforces are these.
+## Workspace macros, reassignment notes, duplicates & problem cascading
 
-- A customer reply on the ticket becomes a `USER` message on the thread and moves a non-closed thread to `ESCALATED`. A staff public reply on the ticket becomes an `AGENT` message on a non-closed thread. Internal notes are never mirrored.
-- A staff reply on the thread becomes a public `SupportResponse` on the ticket, so the queue history and the customer's "My requests" view stay complete, and it starts the SLA pause through `applyStaffReply`.
-- The staff thread `PATCH` accepts `IN_PROGRESS`, `RESOLVED` or `CLOSED`. It moves the thread and the ticket in one transaction, and if the ticket is already `CLOSED` and the target is not `CLOSED` the whole transaction returns zero rows and the caller gets a 409, because letting the thread move alone is the disagreement the mirror exists to prevent.
-- The ticket `PATCH` calls `syncLinkedThreadStatus`. Moving a `CLOSED` ticket to any other status also reopens a `CLOSED` thread to `ESCALATED` with `resolvedAt` cleared, so later staff replies reach the customer's conversation instead of only their bell. Setting `OPEN` puts a non-closed thread back to `ESCALATED`. Any other status is copied onto a non-closed thread.
-- The back-office timeline shows a customer's follow-up once. `dedupeEscalatedResponses` drops the mirrored `SupportResponse` when a `USER` message with the same body exists within five seconds, and each message can pair with only one response.
+- **Send + Resolve macros (`thenStatus: "RESOLVED"` in `lib/support/saved-replies.ts`):** Saved replies carrying `thenStatus: "RESOLVED"` (such as `macro-resolve-closing` and `macro-refund-processed-resolve`) execute sequentially in `CaseWorkspace.tsx` (`selectReplyMacro`): first `await reply.mutateAsync({ message: macro.body, note: false })`, then `await query.refetch()` to refresh the workspace cache with the post-reply `updatedAt`, and finally `setStatus.mutate("RESOLVED")` reading `qc.getQueryData<CaseWorkspace>(["support-case", key])?.updatedAt` so `expectedUpdatedAt` never triggers a self-inflicted `409`.
+- **Reassignment internal notes (`note`):** Passing an optional `note` to `PATCH /api/staff/support-tickets/[ticketId]` or `PATCH /api/support/cases/[caseId]` atomically records both an internal transcript message (`isInternal: true`, incrementing `messageSeq` on `SupportCase` without advancing `lastMessageAt`) and the `note` attribute on the `ASSIGNED` / `UNASSIGNED` `SupportCaseEvent` within the same transaction.
+- **Duplicate closure (`markDuplicate` in `CaseWorkspace.tsx`):** Closing a duplicate open ticket first sends a public pointer reply (`"We've merged this into your active support request <reference> so everything stays in one thread."`), awaits `query.refetch()` to obtain the updated `expectedUpdatedAt`, and then transitions status to `"CLOSED"`.
+- **ITIL `PROBLEM` -> `INCIDENT` resolution cascade (`cascadeProblemResolution` in `lib/support/case-service.ts`):** Transitioning a `caseKind === "PROBLEM"` case to `RESOLVED` queries all linked `INCIDENT` cases (`problemCaseId: problemCase.id`, `status: { notIn: ["RESOLVED", "CLOSED"] }`, `deletedAt: null`) and resolves each child incident using per-row CAS (`where: { id: inc.id, status: inc.status, messageSeq: inc.messageSeq, awaitingUserSince: inc.awaitingUserSince, pausedSeconds: inc.pausedSeconds }`). Each matched incident banks its SLA pause, optionally appends `closingMessage` at `seq: inc.messageSeq + 1`, logs `STATUS_CHANGED` (`note: "Resolved via problem <ref>"`), and stages a 24-hour delayed CSAT prompt. Reopening a parent `PROBLEM` **never** auto-reopens `RESOLVED` or `CLOSED` child incidents.
+- **Status-transition-only customer notifications:** Both `PATCH /api/staff/support-tickets/[ticketId]` (`existing.status !== updatedTicket.status`) and `PATCH /api/support/cases/[caseId]` (`result.previousStatus !== updatedCase.status`) fire `notifySupportTicketUpdate` and `sendSupportTicketUpdateEmail` strictly when `status` changes (for both the primary record and any cascaded `INCIDENT` rows). Priority-only, assignee-only, or internal-note-only edits send zero customer notifications.
 
-## Compare-and-set, summarised
+## Optimistic concurrency & compare-and-set summary
 
-Every transition above puts its expected prior state in the `WHERE` clause, as the repository's money-and-state rule requires, and a zero-row result is an answer rather than an error.
+Every mutation enforces its expected prior state directly inside `updateMany` `WHERE`:
 
-| Write                    | Expected state in the `WHERE`                                                  | Zero rows becomes                                                                     |
-| ------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| Staff `PATCH`            | `updatedAt` (and `status` not `CLOSED` when no status is changing)             | 409 `CONFLICT` (an already-closed ticket is refused earlier with 400 `TICKET_CLOSED`) |
-| Customer reply           | `status`, `awaitingUserSince`, `pausedSeconds` as read                         | 409, "updated concurrently, refresh"                                                  |
-| Staff public reply       | `status: OPEN` for the pickup; `status` not `CLOSED` for the touch             | 409 when the ticket closed under the reply                                            |
-| Staff thread reply       | thread `status` not `CLOSED`                                                   | 409 `CONFLICT`                                                                        |
-| Staff thread `PATCH`     | thread `status` not `CLOSED`, and the ticket not `CLOSED`                      | 409 `CONFLICT`                                                                        |
-| `applyStaffReply` stamps | `acknowledgedAt: null`, `firstAgentReplyAt: null`, `awaitingUserSince` as read | the earlier writer keeps the timestamp                                                |
+| Write operation                  | Expected state enforced in `WHERE`                                                                           | Zero-row / mismatch outcome                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| Staff ticket / case `PATCH`      | `id`, `updatedAt: expectedUpdatedAt` (+ `status: { not: "CLOSED" }` when `status` omitted)                   | `409 CONFLICT` (pre-transaction `CLOSED` edits without `status` return `400` closed code) |
+| Customer ticket / case reply     | `id`, `status`, `awaitingUserSince`, `pausedSeconds` as read                                                 | `409` concurrent update conflict                                                          |
+| Staff public ticket / case reply | `id`, `status: { not: "CLOSED" }`, `OR: [{ lastMessageAt: null }, { lastMessageAt: { lte: expectedDate } }]` | `409 NEW_CUSTOMER_MESSAGE` if `lastMessageAt > expectedDate`, else `409` closed           |
+| Staff thread public reply        | Pre-check `thread.lastMessageAt <= expectedDate`; `updateMany` `id`, `status: { not: "CLOSED" }`             | `409 NEW_CUSTOMER_MESSAGE` or `409 CONFLICT`                                              |
+| Staff thread status `PATCH`      | Reopen: `status` in all states; non-reopen: `status: { notIn: ["CLOSED"] }` and linked ticket not `CLOSED`   | `409 CONFLICT`                                                                            |
+| `PROBLEM` -> `INCIDENT` cascade  | `id: inc.id`, `status: inc.status`, `messageSeq: inc.messageSeq`, `awaitingUserSince`, `pausedSeconds`       | Skips concurrently modified child incident safely                                         |
+| `applyStaffReply` SLA clocks     | `acknowledgedAt: null`, `firstAgentReplyAt: null`, `awaitingUserSince` as read                               | Earliest responder retains first-reply timestamps                                         |
 
 ## Deprecated & Superseded Approaches
 
-- **Deriving the reply's status from a pre-transaction read with only a `CLOSED` guard**: the staff reply used to compute `OPEN` to `IN_PROGRESS` outside the transaction and guard only against `CLOSED`, so a reply racing a Resolve left `IN_PROGRESS` with `resolvedAt` set. Superseded by the status-in-`WHERE` pickup above; do not reintroduce a read-then-update.
-- **A `PATCH` guarded only by status**: a stale tab could change a closed ticket's priority and see 200. Superseded by `expectedUpdatedAt`; there is no unguarded variant to restore.
-- **Mirroring replies only to non-closed threads after a staff reopen**: reopening a `CLOSED` ticket left its thread `CLOSED`, so replies never reached the conversation. Superseded by `syncLinkedThreadStatus`.
-- **An `ON_HOLD` status written by staff**: no longer offered. If a real on-hold feature returns it will need its own SLA semantics; do not re-enable the value on the `PATCH` without them.
+- **Moving unassigned `OPEN` tickets to `IN_PROGRESS` on customer reply:** Previously, `POST /api/user/support-tickets/[ticketId]/responses` set every non-settled reply to `IN_PROGRESS`, hiding unassigned customer follow-ups from unassigned queue filters. Superseded by `resolveUserReplyNextStatus` keeping `OPEN` when `assignedToId === null`.
+- **Blocking staff from reopening `CLOSED` threads or omitting `Reopen` on `CLOSED` cases:** `PATCH /api/staff/support-threads/[threadId]` previously rejected `"OPEN"` and `CaseWorkspace.tsx` hid **Reopen** once `CLOSED`. Superseded by `isReopening` (`OPEN` / `IN_PROGRESS`) across both thread and ticket routes.
+- **Blind staff public replies overwriting unseen customer messages:** Sending replies without `expectedLastMessageAt` let stale browser tabs answer outdated context. Superseded by pre-transaction + inside-transaction CAS returning HTTP `409` `{ code: "NEW_CUSTOMER_MESSAGE" }`.
+- **Unrefreshed `Send + Resolve` or duplicate-close mutations:** Firing `setStatus("RESOLVED")` or `setStatus("CLOSED")` immediately after `reply.mutateAsync` without awaiting `query.refetch()` sent a stale `expectedUpdatedAt` that failed with `409 CONFLICT`.
+- **Customer emails on priority or assignee edits:** Emitting `notifySupportTicketUpdate` on every `PATCH` notified customers when operators changed internal priority or ownership. Superseded by strict `previousStatus !== updatedStatus` gating.
+- **Writable `ON_HOLD` status and unguarded `PATCH` updates:** `ON_HOLD` is permanently rejected on write (`400 STATUS_NOT_SUPPORTED`) in favour of `awaitingUserSince` SLA pauses, and every `PATCH` requires `expectedUpdatedAt`.

@@ -42,7 +42,9 @@ describe("issueTypeForReason", () => {
   it("agrees with the platform intake on the money reasons", () => {
     // Same reason string, same queue meaning, whichever surface raised it —
     // otherwise "charged twice" means two different things to ops.
-    expect(issueTypeForReason("payment_deducted_unconfirmed")).toBe("PAYMENT_FAILED");
+    expect(issueTypeForReason("payment_deducted_unconfirmed")).toBe(
+      "PAYMENT_FAILED",
+    );
     expect(issueTypeForReason("double_charge")).toBe("CHARGED_TWICE");
     expect(issueTypeForReason("refund_missing")).toBe("REFUND_REQUEST");
   });
@@ -74,7 +76,11 @@ describe("issueTypeForReason", () => {
       "documents_missing",
       "recording_missing",
     ];
-    const sharedMoneyTypes = new Set(["PAYMENT_FAILED", "CHARGED_TWICE", "REFUND_REQUEST"]);
+    const sharedMoneyTypes = new Set([
+      "PAYMENT_FAILED",
+      "CHARGED_TWICE",
+      "REFUND_REQUEST",
+    ]);
     for (const reason of sessionReasons) {
       const type = issueTypeForReason(reason);
       expect(type).not.toBeNull();

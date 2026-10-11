@@ -24,6 +24,7 @@ import type {
 
 import { useOrgRole } from "../useOrgRole";
 import { CancellationPolicyCard } from "./CancellationPolicyCard";
+import { SupportContactCard } from "./SupportContactCard";
 import { orgDetailsQueryKey } from "@/lib/api/organizations/org-details";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
@@ -79,6 +80,8 @@ interface SettingsResponse {
     canSponsor: boolean;
     canHost: boolean;
     billingEmail: string | null;
+    supportContactEmail?: string | null;
+    escalationContactEmail?: string | null;
     description: string | null;
     industry: string | null;
     website: string | null;
@@ -968,6 +971,20 @@ export function GeneralPanel({ orgId }: { orgId: string }) {
             }}
           />
         )}
+
+        <SupportContactCard
+          orgId={orgId}
+          version={data.profile.version}
+          initialSupportEmail={data.profile.supportContactEmail}
+          initialEscalationEmail={data.profile.escalationContactEmail}
+          canEdit={can("settings.manage") || can("settings.ownerFields")}
+          onVersionConflict={() => setConflictOpen(true)}
+          onError={setError}
+          onSuccess={() => {
+            setSuccess(true);
+            setTimeout(() => setSuccess(false), 2500);
+          }}
+        />
 
         {/* Marketplace Visibility — only HOST/HYBRID orgs can opt in */}
         {data.profile.canHost && (

@@ -256,6 +256,12 @@ export default async (): Promise<Config> => {
   }
   return {
     ...resolved,
+    moduleNameMapper: {
+      "^@/lib/redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
+      "(?:^|/)lib/redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
+      "^\\./redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
+      ...resolved.moduleNameMapper,
+    },
     transformIgnorePatterns: patterns.map((p) =>
       p.startsWith(NODE_MODULES_LOOKAHEAD)
         ? p.replace(
