@@ -4,6 +4,7 @@ import type { RecordingListingStatus } from "@prisma/client";
 import type { RecordingData } from "@/types/recording";
 
 import Image from "next/image";
+import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
 import {
   Play,
@@ -53,12 +54,14 @@ function formatFileSize(bytes: number): string {
 }
 
 interface RecordingCardProps {
+  readonly consultantId?: string;
   readonly recording: ExtendedRecordingData;
   readonly onWatch?: (recording: ExtendedRecordingData) => void;
   readonly onManage?: (recording: ExtendedRecordingData) => void;
 }
 
 export function RecordingCard({
+  consultantId,
   recording,
   onWatch,
   onManage,
@@ -86,6 +89,11 @@ export function RecordingCard({
     recording.status === "READY" ||
     recording.status === "AVAILABLE";
 
+  const appointmentHref =
+    consultantId && recording.appointmentId
+      ? `/dashboard/consultant/${consultantId}/appointments/${recording.appointmentId}`
+      : null;
+
   return (
     <Card className="overflow-hidden">
       <CardHeader className="pb-3">
@@ -95,9 +103,20 @@ export function RecordingCard({
               {recording.title}
             </CardTitle>
             {recording.planTitle && (
-              <p className="text-sm text-muted-foreground mt-1">
-                {recording.planTitle}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">
+                <span>{recording.planTitle}</span>
+                {appointmentHref && (
+                  <>
+                    <span>&middot;</span>
+                    <Link
+                      href={appointmentHref}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Session details &rarr;
+                    </Link>
+                  </>
+                )}
+              </div>
             )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">

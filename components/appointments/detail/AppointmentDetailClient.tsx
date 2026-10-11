@@ -1120,6 +1120,18 @@ export function AppointmentDetailClient({
                           No documents for this booking.
                         </p>
                       )}
+                      {/^\/dashboard\/(consultant|consultee)\/[^/]+/.test(
+                        backHref,
+                      ) && (
+                        <div className="pt-2">
+                          <Link
+                            href={`${backHref.replace(/\/appointments$/, "")}/documents`}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                          >
+                            All documents &rarr;
+                          </Link>
+                        </div>
+                      )}
                     </ResourceSubgroup>
 
                     <div className="border-t border-border" />
@@ -1147,6 +1159,9 @@ export function AppointmentDetailClient({
                               {rec.title}
                             </p>
                             <p className="text-[11px] text-muted-foreground">
+                              {rec.totalSessions > 1
+                                ? `Session ${rec.sessionNumber} · `
+                                : ""}
                               {format(rec.recordedAt, "d MMM yyyy")} ·{" "}
                               {rec.durationInMinutes} min
                             </p>
@@ -1166,6 +1181,18 @@ export function AppointmentDetailClient({
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {/^\/dashboard\/(consultant|consultee)\/[^/]+/.test(
+                    backHref,
+                  ) && (
+                    <div className="pt-2">
+                      <Link
+                        href={`${backHref.replace(/\/appointments$/, "")}/recordings`}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                      >
+                        Recordings library &rarr;
+                      </Link>
                     </div>
                   )}
                 </ResourceSubgroup>

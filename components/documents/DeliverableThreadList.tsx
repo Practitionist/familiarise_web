@@ -28,7 +28,7 @@ import {
   groupDocumentsIntoThreads,
   type ThreadableDocument,
 } from "@/lib/documents/document-review";
-import { getAppointmentDocumentUrl } from "@/lib/documents/urls";
+import { openAppointmentDocument } from "@/lib/documents/client-download";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import { uploadAppointmentDocumentWithProgress } from "@/lib/documents/direct-upload";
 import { DocumentReviewDrawer } from "./DocumentReviewDrawer";
@@ -280,21 +280,27 @@ export function DeliverableThreadList({
                     </Button>
 
                     <Button
-                      asChild
+                      type="button"
                       variant="ghost"
                       size="sm"
                       className="h-7 px-2 text-xs"
-                    >
-                      <a
-                        href={getAppointmentDocumentUrl(
+                      onClick={() => {
+                        void openAppointmentDocument(
                           thread.appointmentId,
                           thread.latestVersion.id,
                           "attachment",
-                        )}
-                      >
-                        <Download className="mr-1 h-3 w-3" />
-                        Download
-                      </a>
+                          (err) =>
+                            toast({
+                              title: err.title,
+                              description: err.description,
+                              variant: "destructive",
+                            }),
+                          thread.latestVersion.originalName,
+                        );
+                      }}
+                    >
+                      <Download className="mr-1 h-3 w-3" />
+                      Download
                     </Button>
 
                     {canDeleteLatest && (
@@ -325,11 +331,13 @@ export function DeliverableThreadList({
 
                     {viewerRole === "consultee" &&
                       canUpload &&
-                      needsRevision &&
-                      !isExpertHandoutRoot && (
+                      !isExpertHandoutRoot &&
+                      thread.effectiveStatus !== "APPROVED" &&
+                      thread.effectiveStatus !== "REJECTED" && (
                         <Button
                           type="button"
                           size="sm"
+                          variant={needsRevision ? "default" : "outline"}
                           className="h-7 px-2.5 text-xs"
                           onClick={() => {
                             setDrawerInitialVersionId(thread.latestVersion.id);

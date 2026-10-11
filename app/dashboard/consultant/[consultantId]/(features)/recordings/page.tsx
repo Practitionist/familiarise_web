@@ -67,6 +67,13 @@ export default function RecordingsPage({
                 />
               ),
             },
+            {
+              value: "trial",
+              label: "Trials",
+              content: (
+                <RecordingsList consultantId={consultantId} type="trial" />
+              ),
+            },
           ]}
         />
       </DashboardContent>

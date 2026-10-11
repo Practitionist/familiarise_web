@@ -6,6 +6,8 @@ import { ExternalLink, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { useToast } from "@/hooks/use-toast";
+import { openAppointmentDocument } from "@/lib/documents/client-download";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 
 interface AppointmentDocument {
@@ -38,6 +40,7 @@ export function AppointmentDocumentsList({
   viewer?: "consultee" | "consultant";
 }) {
   const format = useZonedFormat();
+  const { toast } = useToast();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["appointment-documents", appointmentId] as const,
     queryFn: async (): Promise<AppointmentDocument[]> => {
@@ -97,11 +100,27 @@ export function AppointmentDocumentsList({
                 size="sm"
               />
             )}
-            <Button variant="outline" size="sm" asChild>
-              <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
-                Open
-                <ExternalLink className="h-3 w-3 ml-1" />
-              </a>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void openAppointmentDocument(
+                  appointmentId,
+                  doc.id,
+                  "inline",
+                  (err) =>
+                    toast({
+                      title: err.title,
+                      description: err.description,
+                      variant: "destructive",
+                    }),
+                  doc.originalName ?? doc.fileName,
+                );
+              }}
+            >
+              Open
+              <ExternalLink className="h-3 w-3 ml-1" />
             </Button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,10 +16,12 @@ import { cn } from "@/utils/tailwind";
 import { eventUnionStatusBadge } from "@/lib/appointments/status-guards";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerModal";
-import { getPlanMaterialUrl } from "@/lib/documents/urls";
+import { useToast } from "@/hooks/use-toast";
+import { openPlanMaterial } from "@/lib/documents/client-download";
 
 export interface EventResource {
   id: string;
+  appointmentId?: string | null;
   planTitle: string;
   contextTitle?: string | null;
   consultantName: string;
@@ -105,12 +108,15 @@ function getEmptyStateMessage(status: string): string {
 export type ResourceArtifact = "materials" | "recordings" | "both";
 
 export function EventResourceCard({
+  consulteeId,
   event,
   artifact = "both",
 }: {
+  consulteeId?: string;
   event: EventResource;
   artifact?: ResourceArtifact;
 }) {
+  const { toast } = useToast();
   const showMaterials = artifact === "materials" || artifact === "both";
   const showRecordings = artifact === "recordings" || artifact === "both";
   const totalItems =
@@ -120,6 +126,29 @@ export function EventResourceCard({
   const [activeRecording, setActiveRecording] = useState<
     EventResource["recordings"][number] | null
   >(null);
+
+  const appointmentHref =
+    consulteeId && event.appointmentId
+      ? `/dashboard/consultee/${consulteeId}/appointments/${event.appointmentId}`
+      : null;
+
+  const triggerMaterialOpen = (
+    materialId: string,
+    mode: "inline" | "attachment",
+    fallbackName: string,
+  ) => {
+    void openPlanMaterial(
+      materialId,
+      mode,
+      (err) =>
+        toast({
+          title: err.title,
+          description: err.description,
+          variant: "destructive",
+        }),
+      fallbackName,
+    );
+  };
 
   return (
     <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
@@ -149,6 +178,15 @@ export function EventResourceCard({
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
+          {appointmentHref && (
+            <Link
+              href={appointmentHref}
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              Session details &rarr;
+            </Link>
+          )}
           <StatusBadge {...eventUnionStatusBadge(event.status)} size="sm" />
           {totalItems > 0 && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -199,33 +237,41 @@ export function EventResourceCard({
                       <FileText className="w-4 h-4" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <a
-                        href={getPlanMaterialUrl(mat.id, "inline")}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-sm font-medium text-foreground truncate block hover:underline underline-offset-4"
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          triggerMaterialOpen(
+                            mat.id,
+                            "inline",
+                            mat.originalName || mat.fileName,
+                          );
+                        }}
+                        className="text-sm font-medium text-foreground truncate block text-left hover:underline underline-offset-4"
                       >
                         {mat.originalName || mat.fileName}
-                      </a>
+                      </button>
                       <p className="text-xs text-muted-foreground">
                         {formatFileSize(mat.fileSize)}
                         {mat.description && ` \u00B7 ${mat.description}`}
                       </p>
                     </div>
                     <Button
-                      asChild
+                      type="button"
                       variant="ghost"
                       size="sm"
                       className="h-8 px-2.5 text-xs"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        triggerMaterialOpen(
+                          mat.id,
+                          "attachment",
+                          mat.originalName || mat.fileName,
+                        );
+                      }}
                     >
-                      <a
-                        href={getPlanMaterialUrl(mat.id, "attachment")}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Download className="w-3.5 h-3.5 mr-1" />
-                        Download
-                      </a>
+                      <Download className="w-3.5 h-3.5 mr-1" />
+                      Download
                     </Button>
                   </div>
                 ))}
@@ -324,6 +370,7 @@ export function EventResourceCard({
                 durationInMinutes: activeRecording.durationInMinutes,
                 previewTranscript: activeRecording.previewTranscript ?? null,
                 planTitle: event.planTitle,
+                appointmentHref,
               }
             : null
         }

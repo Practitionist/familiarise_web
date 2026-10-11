@@ -47,6 +47,8 @@ interface DetailRecordingVM {
   durationInMinutes: number;
   recordedAt: Date;
   sessionStartsAt: Date;
+  sessionNumber: number;
+  totalSessions: number;
 }
 
 function person(
@@ -232,6 +234,12 @@ export function mapAppointmentDetail(
     },
   };
 
+  const sessionNumberBySlotId = new Map<string, number>();
+  rawOccurrences.forEach((occ, idx) => {
+    sessionNumberBySlotId.set(occ.id, idx + 1);
+  });
+  const totalSessions = rawOccurrences.length;
+
   // Playback is minted per request by GET /api/stream/recordings/[id]; only playable rows are listed.
   const recordings: DetailRecordingVM[] = all.flatMap((a) =>
     a.occurrences.flatMap((slot) =>
@@ -245,6 +253,8 @@ export function mapAppointmentDetail(
           durationInMinutes: rec.durationInMinutes,
           recordedAt: toDate(rec.recordedAt),
           sessionStartsAt: toDate(slot.startsAt),
+          sessionNumber: sessionNumberBySlotId.get(slot.id) ?? 1,
+          totalSessions,
         })),
     ),
   );

@@ -332,6 +332,8 @@ function formatConsultantRecording(
     planType,
     planId,
     planTitle,
+    appointmentId: appointment.id,
+    occurrenceId: slot.id,
     participantNames: allNames.slice(0, 3),
     participantCount: allNames.length,
     appointmentDate: slot.startsAt,

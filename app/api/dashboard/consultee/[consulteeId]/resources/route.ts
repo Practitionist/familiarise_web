@@ -420,6 +420,7 @@ export async function GET(
       consultations: consultations
         .map((c: ConsultationWithResources) => ({
           id: c.id,
+          appointmentId: c.appointment?.id ?? null,
           planTitle: c.consultationPlan.title,
           consultantName: c.consultationPlan.consultantProfile.user.name,
           consultantImage: c.consultationPlan.consultantProfile.user.image,
@@ -432,6 +433,7 @@ export async function GET(
       subscriptions: subscriptions
         .map((s: SubscriptionWithResources) => ({
           id: s.id,
+          appointmentId: s.appointment?.id ?? null,
           planTitle: s.subscriptionPlan.title,
           consultantName: s.subscriptionPlan.consultantProfile.user.name,
           consultantImage: s.subscriptionPlan.consultantProfile.user.image,
@@ -444,6 +446,7 @@ export async function GET(
       webinars: webinars
         .map((w: WebinarWithResources) => ({
           id: w.id,
+          appointmentId: w.appointment?.id ?? null,
           planTitle: w.webinarPlan.title,
           consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
           consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
@@ -456,6 +459,7 @@ export async function GET(
       classes: classes
         .map((cl: ClassWithResources) => ({
           id: cl.id,
+          appointmentId: cl.appointment?.id ?? null,
           planTitle: cl.classPlan.title,
           consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
           consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
@@ -475,6 +479,7 @@ export async function GET(
       trials: trials
         .map((t: TrialWithResources) => ({
           id: t.id,
+          appointmentId: t.appointment?.id ?? null,
           planTitle: `Trial: ${t.subscriptionPlan.title}`,
           consultantName:
             t.subscriptionPlan.consultantProfile?.user.name ?? null,

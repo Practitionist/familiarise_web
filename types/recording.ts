@@ -21,9 +21,12 @@ export interface RecordingData {
   fileSize: number | null;
   streamUrlExpiresAt: string | null;
   transferredAt: string | null;
-  planType: "webinar" | "class" | null;
+  planType:
+    "webinar" | "class" | "consultation" | "subscription" | "trial" | null;
   planId: string | null;
   planTitle: string | null;
+  appointmentId?: string | null;
+  occurrenceId?: string | null;
   participantNames: string[];
   participantCount: number;
   appointmentDate: string | null;

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import Link from "next/link";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,7 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { DocumentReviewDrawer } from "@/components/documents/DocumentReviewDrawer";
+import { openAppointmentDocument } from "@/lib/documents/client-download";
 import {
   groupDocumentsIntoThreads,
   type DocumentThread,
@@ -68,6 +70,7 @@ const REVIEW_STATUSES = [
 ];
 
 interface ExtendedDocumentsTabProps extends DocumentsTabProps {
+  consultantId?: string;
   onRefresh?: () => void;
   uploadedByRole?: "CONSULTEE" | "CONSULTANT";
   onUploadedByRoleChange?: (role: "CONSULTEE" | "CONSULTANT") => void;
@@ -76,6 +79,7 @@ interface ExtendedDocumentsTabProps extends DocumentsTabProps {
 function buildConsultantDocumentColumns(
   threadsByRootId: Map<string, DocumentThread<IDocument>>,
   onView: (doc: IDocument) => void,
+  consultantId?: string,
 ): ResponsiveColumn<IDocument>[] {
   return [
     {
@@ -138,9 +142,18 @@ function buildConsultantDocumentColumns(
       header: "Appointment",
       cell: (document) => (
         <div className="text-sm">
-          <div className="font-medium text-foreground">
-            {document.appointmentTitle}
-          </div>
+          {consultantId ? (
+            <Link
+              href={`/dashboard/consultant/${consultantId}/appointments/${document.appointmentId}`}
+              className="font-medium text-foreground underline-offset-4 hover:underline"
+            >
+              {document.appointmentTitle}
+            </Link>
+          ) : (
+            <div className="font-medium text-foreground">
+              {document.appointmentTitle}
+            </div>
+          )}
           <div className="text-xs text-muted-foreground">
             {document.appointmentType?.toLowerCase()}
           </div>
@@ -193,6 +206,7 @@ function buildConsultantDocumentColumns(
 }
 
 export function DocumentsTab({
+  consultantId,
   documentsPage,
   isPlaceholderData,
   onRefresh,
@@ -439,26 +453,20 @@ export function DocumentsTab({
     }
   };
 
-  const handleDownload = async (document: IDocument) => {
-    try {
-      const downloadUrl = `/api/appointments/${document.appointmentId}/documents/${document.id}/download`;
-      const link = window.document.createElement("a");
-      link.href = downloadUrl;
-      link.download = document.originalName;
-      window.document.body.appendChild(link);
-      link.click();
-      window.document.body.removeChild(link);
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
-      toast({
-        title: "Error",
-        description: "Failed to download file",
-        variant: "destructive",
-      });
-    }
+  const handleDownload = (document: IDocument) => {
+    void openAppointmentDocument(
+      document.appointmentId,
+      document.id,
+      "attachment",
+      (err) => {
+        toast({
+          title: err.title,
+          description: err.description,
+          variant: "destructive",
+        });
+      },
+      document.originalName,
+    );
   };
 
   const handleView = useCallback(
@@ -469,17 +477,27 @@ export function DocumentsTab({
         setDrawerRootId(rootId);
         return;
       }
-      window.open(
-        `/api/appointments/${document.appointmentId}/documents/${document.id}/download?disposition=inline`,
-        "_blank",
+      void openAppointmentDocument(
+        document.appointmentId,
+        document.id,
+        "inline",
+        (err) => {
+          toast({
+            title: err.title,
+            description: err.description,
+            variant: "destructive",
+          });
+        },
+        document.originalName,
       );
     },
-    [threadsByRootId],
+    [threadsByRootId, toast],
   );
 
   const columns = useMemo(
-    () => buildConsultantDocumentColumns(threadsByRootId, handleView),
-    [threadsByRootId, handleView],
+    () =>
+      buildConsultantDocumentColumns(threadsByRootId, handleView, consultantId),
+    [threadsByRootId, handleView, consultantId],
   );
 
   const renderRowActions = (document: IDocument) => (

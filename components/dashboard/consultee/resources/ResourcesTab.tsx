@@ -29,6 +29,7 @@ interface ResourcesData {
 }
 
 interface ResourcesTabProps {
+  consulteeId?: string;
   data: ResourcesData | undefined;
   /**
    * Which artifact this view is for. Documents and Recordings are separate
@@ -127,6 +128,7 @@ function resolveArtifactNoun(artifact: ResourceArtifact): string {
 }
 
 export function ResourcesTab({
+  consulteeId,
   data,
   artifact = "both",
   title,
@@ -265,7 +267,12 @@ export function ResourcesTab({
     return (
       <div className="space-y-4">
         {mergedRecordings.map((event) => (
-          <EventResourceCard key={event.id} event={event} artifact={artifact} />
+          <EventResourceCard
+            key={event.id}
+            consulteeId={consulteeId}
+            event={event}
+            artifact={artifact}
+          />
         ))}
       </div>
     );
@@ -363,6 +370,7 @@ export function ResourcesTab({
                   items.map((event) => (
                     <EventResourceCard
                       key={event.id}
+                      consulteeId={consulteeId}
                       event={event}
                       artifact={artifact}
                     />

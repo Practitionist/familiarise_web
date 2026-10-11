@@ -43,6 +43,7 @@ import {
   getStatusColor,
   getStatusIcon,
 } from "@/lib/documents/document-utils";
+import { openAppointmentDocument } from "@/lib/documents/client-download";
 
 interface DocumentUploadProps {
   appointmentId: string;
@@ -65,11 +66,7 @@ interface UploadedDocument {
   fileUrl: string;
   description: string | null;
   reviewStatus:
-    | "PENDING"
-    | "IN_REVIEW"
-    | "APPROVED"
-    | "REJECTED"
-    | "NEEDS_REVISION";
+    "PENDING" | "IN_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION";
   reviewNotes: string | null;
   reviewedAt: Date | null;
   uploadedAt: Date;
@@ -743,26 +740,45 @@ export function DocumentUpload({
                           </div>
                           <div className="flex space-x-1 ml-0 sm:ml-4 justify-end sm:justify-start">
                             <Button
+                              type="button"
                               variant="ghost"
                               size="sm"
-                              onClick={() => window.open(doc.fileUrl, "_blank")}
+                              onClick={() => {
+                                void openAppointmentDocument(
+                                  appointmentId,
+                                  doc.id,
+                                  "inline",
+                                  (err) =>
+                                    toast({
+                                      title: err.title,
+                                      description: err.description,
+                                      variant: "destructive",
+                                    }),
+                                  doc.originalName,
+                                );
+                              }}
                               title="View document"
                               className="h-7 w-7 sm:h-9 sm:w-9 p-0"
                             >
                               <Eye className="h-3 w-3 sm:h-4 sm:w-4" />
                             </Button>
                             <Button
+                              type="button"
                               variant="ghost"
                               size="sm"
                               onClick={() => {
-                                // Use our download API endpoint instead of direct Supabase URL
-                                const downloadUrl = `/api/appointments/${appointmentId}/documents/${doc.id}/download`;
-                                const link = window.document.createElement("a");
-                                link.href = downloadUrl;
-                                link.download = doc.originalName;
-                                window.document.body.appendChild(link);
-                                link.click();
-                                window.document.body.removeChild(link);
+                                void openAppointmentDocument(
+                                  appointmentId,
+                                  doc.id,
+                                  "attachment",
+                                  (err) =>
+                                    toast({
+                                      title: err.title,
+                                      description: err.description,
+                                      variant: "destructive",
+                                    }),
+                                  doc.originalName,
+                                );
                               }}
                               title="Download document"
                               className="h-7 w-7 sm:h-9 sm:w-9 p-0"
@@ -857,37 +873,44 @@ export function DocumentUpload({
                                       </div>
                                       <div className="flex space-x-1 justify-end">
                                         <Button
+                                          type="button"
                                           variant="ghost"
                                           size="sm"
-                                          onClick={() =>
-                                            window.open(
-                                              response.fileUrl,
-                                              "_blank",
-                                            )
-                                          }
+                                          onClick={() => {
+                                            void openAppointmentDocument(
+                                              appointmentId,
+                                              response.id,
+                                              "inline",
+                                              (err) =>
+                                                toast({
+                                                  title: err.title,
+                                                  description: err.description,
+                                                  variant: "destructive",
+                                                }),
+                                              response.originalName,
+                                            );
+                                          }}
                                           title="View response"
                                           className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                                         >
                                           <Eye className="h-3 w-3" />
                                         </Button>
                                         <Button
+                                          type="button"
                                           variant="ghost"
                                           size="sm"
                                           onClick={() => {
-                                            const downloadUrl = `/api/appointments/${appointmentId}/documents/${response.id}/download`;
-                                            const link =
-                                              window.document.createElement(
-                                                "a",
-                                              );
-                                            link.href = downloadUrl;
-                                            link.download =
-                                              response.originalName;
-                                            window.document.body.appendChild(
-                                              link,
-                                            );
-                                            link.click();
-                                            window.document.body.removeChild(
-                                              link,
+                                            void openAppointmentDocument(
+                                              appointmentId,
+                                              response.id,
+                                              "attachment",
+                                              (err) =>
+                                                toast({
+                                                  title: err.title,
+                                                  description: err.description,
+                                                  variant: "destructive",
+                                                }),
+                                              response.originalName,
                                             );
                                           }}
                                           title="Download response"
