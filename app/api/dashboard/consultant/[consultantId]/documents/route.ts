@@ -5,7 +5,31 @@ import { Prisma, DocumentReviewStatus } from "@prisma/client";
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
-import { groupDocumentsIntoThreads } from "@/lib/documents/document-review";
+import {
+  buildRootThreadStatusWhere,
+  groupDocumentsIntoThreads,
+} from "@/lib/documents/document-review";
+
+function parseUploadedByRole(
+  rawRole: string | null,
+): "CONSULTEE" | "CONSULTANT" | null {
+  if (rawRole === "CONSULTANT") return "CONSULTANT";
+  if (rawRole === "CONSULTEE") return "CONSULTEE";
+  return null;
+}
+
+function resolveDocOrgFilter(
+  scopeKind: string,
+  scopedOrgId: string | null,
+): Partial<Prisma.AppointmentWhereInput> {
+  if (scopeKind === "personal") {
+    return { organizationId: null };
+  }
+  if (scopedOrgId) {
+    return { organizationId: scopedOrgId };
+  }
+  return {};
+}
 
 export async function GET(
   request: NextRequest,
@@ -40,13 +64,9 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
     const appointmentType = searchParams.get("appointmentType");
-    const rawRole = searchParams.get("uploadedByRole");
-    const uploadedByRoleFilter: "CONSULTEE" | "CONSULTANT" | null =
-      rawRole === "CONSULTANT"
-        ? "CONSULTANT"
-        : rawRole === "CONSULTEE"
-          ? "CONSULTEE"
-          : null;
+    const uploadedByRoleFilter = parseUploadedByRole(
+      searchParams.get("uploadedByRole"),
+    );
 
     const DEFAULT_LIMIT = 10;
     const MAX_LIMIT = 100;
@@ -167,12 +187,10 @@ export async function GET(
       );
     }
     const docScopedOrgId = scopeOrgId(docScopeResolution.scope);
-    const docOrgFilter: Partial<Prisma.AppointmentWhereInput> =
-      docScopeResolution.scope.kind === "personal"
-        ? { organizationId: null }
-        : docScopedOrgId
-          ? { organizationId: docScopedOrgId }
-          : {};
+    const docOrgFilter = resolveDocOrgFilter(
+      docScopeResolution.scope.kind,
+      docScopedOrgId,
+    );
 
     const terminalStatuses = ["CANCELLED", "REJECTED", "EXPIRED"] as const;
 
@@ -247,34 +265,10 @@ export async function GET(
       appointment: appointmentWhere,
     };
 
-    // SQL-pushed effectiveStatus filter on root document threads:
-    // A thread's effectiveStatus is the reviewStatus of its highest-version
-    // CONSULTEE upload (either a child version if none newer exists, or the root itself).
-    const rootWhereWithStatus: Prisma.AppointmentDocumentWhereInput = status
-      ? {
-          ...baseRootWhere,
-          OR: [
-            {
-              threadVersions: {
-                some: {
-                  deletedAt: null,
-                  uploadedByRole: "CONSULTEE",
-                  reviewStatus: status as DocumentReviewStatus,
-                },
-              },
-            },
-            {
-              reviewStatus: status as DocumentReviewStatus,
-              threadVersions: {
-                none: {
-                  deletedAt: null,
-                  uploadedByRole: "CONSULTEE",
-                },
-              },
-            },
-          ],
-        }
-      : baseRootWhere;
+    const rootWhereWithStatus = buildRootThreadStatusWhere(
+      baseRootWhere,
+      status as DocumentReviewStatus | null,
+    );
 
     let rootRows;
     let totalCount = 0;

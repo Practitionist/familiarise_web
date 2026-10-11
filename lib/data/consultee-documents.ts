@@ -5,12 +5,15 @@
 
 import type { DocumentReviewStatus, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { groupDocumentsIntoThreads } from "@/lib/documents/document-review";
+import {
+  buildRootThreadStatusWhere,
+  groupDocumentsIntoThreads,
+} from "@/lib/documents/document-review";
 
 const CLOSED_STATUSES = ["CANCELLED", "REJECTED", "EXPIRED"] as const;
 const PAID_PARTICIPANT_STATUSES = ["CONFIRMED", "ATTENDED"] as const;
 
-export const CONSULTEE_DOCUMENTS_PAGE_SIZE = 20;
+const CONSULTEE_DOCUMENTS_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 const MATERIALS_CAP = 200;
 
@@ -67,7 +70,7 @@ export interface ConsulteeDocumentsPayload {
   materials: ConsulteeMaterialRow[];
 }
 
-export function normalizeDocumentsQuery(raw: {
+function normalizeDocumentsQuery(raw: {
   limit?: number;
   offset?: number;
   status?: string | null;
@@ -158,14 +161,17 @@ export async function readConsulteeDocuments(args: {
 }): Promise<ConsulteeDocumentsPayload> {
   const { consulteeId, userId } = args;
   const { limit, offset, status } = normalizeDocumentsQuery(args);
-  const where: Prisma.AppointmentDocumentWhereInput = {
+
+  const baseRootWhere: Prisma.AppointmentDocumentWhereInput = {
     deletedAt: null,
+    rootDocumentId: null,
     appointment: ownBookingWhere(consulteeId),
   };
+  const rootWhere = buildRootThreadStatusWhere(baseRootWhere, status);
 
-  const [documents, materials] = await Promise.all([
+  const [rootRows, totalCount, materials] = await Promise.all([
     prisma.appointmentDocument.findMany({
-      where,
+      where: rootWhere,
       select: {
         id: true,
         appointmentId: true,
@@ -180,6 +186,25 @@ export async function readConsulteeDocuments(args: {
         responseToDocumentId: true,
         uploadedByRole: true,
         uploadedAt: true,
+        threadVersions: {
+          where: { deletedAt: null },
+          orderBy: { versionNo: "asc" },
+          select: {
+            id: true,
+            appointmentId: true,
+            originalName: true,
+            fileSize: true,
+            mimeType: true,
+            description: true,
+            reviewStatus: true,
+            reviewNotes: true,
+            versionNo: true,
+            rootDocumentId: true,
+            responseToDocumentId: true,
+            uploadedByRole: true,
+            uploadedAt: true,
+          },
+        },
         appointment: {
           select: {
             consultation: {
@@ -192,7 +217,10 @@ export async function readConsulteeDocuments(args: {
         },
       },
       orderBy: { uploadedAt: "desc" },
+      skip: offset,
+      take: limit,
     }),
+    prisma.appointmentDocument.count({ where: rootWhere }),
     status
       ? Promise.resolve([])
       : prisma.planMaterial.findMany({
@@ -214,16 +242,19 @@ export async function readConsulteeDocuments(args: {
         }),
   ]);
 
-  const mappedDocuments: ConsulteeDocumentRow[] = documents.map((doc) => {
+  const flattenedDocs: ConsulteeDocumentRow[] = rootRows.flatMap((rootDoc) => {
     const plan =
-      doc.appointment.consultation?.consultationPlan ??
-      doc.appointment.subscription?.subscriptionPlan ??
+      rootDoc.appointment.consultation?.consultationPlan ??
+      rootDoc.appointment.subscription?.subscriptionPlan ??
       null;
     const appointmentStatus =
-      doc.appointment.consultation?.status ??
-      doc.appointment.subscription?.status ??
+      rootDoc.appointment.consultation?.status ??
+      rootDoc.appointment.subscription?.status ??
       "UNKNOWN";
-    return {
+    const appointmentTitle = plan?.title ?? "Booking";
+    const consultantName = plan?.consultantProfile.user.name ?? null;
+
+    return [rootDoc, ...rootDoc.threadVersions].map((doc) => ({
       id: doc.id,
       appointmentId: doc.appointmentId,
       originalName: doc.originalName,
@@ -237,20 +268,17 @@ export async function readConsulteeDocuments(args: {
       responseToDocumentId: doc.responseToDocumentId,
       uploadedByRole: doc.uploadedByRole,
       uploadedAt: doc.uploadedAt,
-      appointmentTitle: plan?.title ?? "Booking",
+      appointmentTitle,
       appointmentStatus,
-      consultantName: plan?.consultantProfile.user.name ?? null,
-    };
+      consultantName,
+    }));
   });
 
-  const allThreads = groupDocumentsIntoThreads(mappedDocuments);
-  const matchingThreads = status
-    ? allThreads.filter((thread) => thread.effectiveStatus === status)
-    : allThreads;
-
-  const totalCount = matchingThreads.length;
-  const pageThreads = matchingThreads.slice(offset, offset + limit);
-  const pageDocuments = pageThreads.flatMap((thread) => thread.versions);
+  const pageThreads = groupDocumentsIntoThreads(flattenedDocs);
+  const filteredThreads = status
+    ? pageThreads.filter((thread) => thread.effectiveStatus === status)
+    : pageThreads;
+  const pageDocuments = filteredThreads.flatMap((thread) => thread.versions);
 
   return {
     data: pageDocuments,

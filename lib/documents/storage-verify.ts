@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase-storage-core";
 import { MAX_DOCUMENT_BYTES } from "@/lib/documents/document-review";
+import { sanitizeContentDispositionFilename } from "@/lib/documents/urls";
 
 export type SignedUrlOutcome =
   | {
@@ -11,11 +12,10 @@ export type SignedUrlOutcome =
       code: "STORAGE_CONFIG_ERROR" | "STORAGE_MISSING";
     };
 
-function sanitizeDownloadFileName(originalName: string): string {
-  const cleaned = originalName.replace(/[^\x20-\x7E]|["\\/]/g, "_").trim();
-  return cleaned || "document";
-}
-
+/**
+ * Verifies storage existence (`.info()` / `.exists()`) and mints a short-lived (60s)
+ * presigned URL so previews stream directly from storage without buffering in Next.js.
+ */
 export async function createSignedStorageUrl(params: {
   bucket: string;
   storagePath: string;
@@ -29,7 +29,6 @@ export async function createSignedStorageUrl(params: {
 
   const bucketApi = supabaseAdmin.storage.from(params.bucket);
 
-  // Verify the storage object actually exists before minting a signed JWT.
   if (typeof bucketApi.info === "function") {
     const { data: infoData, error: infoError } = await bucketApi.info(
       params.storagePath,
@@ -53,7 +52,7 @@ export async function createSignedStorageUrl(params: {
       {
         download:
           params.disposition === "attachment"
-            ? sanitizeDownloadFileName(params.originalName)
+            ? sanitizeContentDispositionFilename(params.originalName)
             : false,
       },
     );
@@ -73,114 +72,122 @@ function startsWithBytes(buf: Uint8Array, sig: readonly number[]): boolean {
   return true;
 }
 
-export function detectMagicMimeType(
+const EXECUTABLE_SIGNATURES: readonly (readonly number[])[] = [
+  [0x4d, 0x5a], // PE MZ
+  [0x7f, 0x45, 0x4c, 0x46], // ELF
+  [0x23, 0x21], // Shebang (#!)
+];
+
+const ZIP_MIME_FAMILY = new Set([
+  "application/zip",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+]);
+
+const OLE_MIME_FAMILY = new Set([
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+]);
+
+const TEXT_MIME_FAMILY = new Set(["text/plain", "text/csv", "text/markdown"]);
+
+interface MagicRule {
+  matches: (bytes: Uint8Array) => boolean;
+  resolve: (claimedMime: string) => { valid: boolean; detectedMime: string };
+}
+
+const MAGIC_RULES: readonly MagicRule[] = [
+  {
+    matches: (b) => startsWithBytes(b, [0x25, 0x50, 0x44, 0x46, 0x2d]),
+    resolve: (claimed) => ({
+      valid: claimed === "application/pdf",
+      detectedMime: "application/pdf",
+    }),
+  },
+  {
+    matches: (b) =>
+      startsWithBytes(b, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    resolve: (claimed) => ({
+      valid: claimed === "image/png",
+      detectedMime: "image/png",
+    }),
+  },
+  {
+    matches: (b) => startsWithBytes(b, [0xff, 0xd8, 0xff]),
+    resolve: (claimed) => ({
+      valid: claimed === "image/jpeg" || claimed === "image/jpg",
+      detectedMime: "image/jpeg",
+    }),
+  },
+  {
+    matches: (b) =>
+      startsWithBytes(b, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) ||
+      startsWithBytes(b, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]),
+    resolve: (claimed) => ({
+      valid: claimed === "image/gif",
+      detectedMime: "image/gif",
+    }),
+  },
+  {
+    matches: (b) =>
+      b.length >= 12 &&
+      startsWithBytes(b, [0x52, 0x49, 0x46, 0x46]) &&
+      b[8] === 0x57 &&
+      b[9] === 0x45 &&
+      b[10] === 0x42 &&
+      b[11] === 0x50,
+    resolve: (claimed) => ({
+      valid: claimed === "image/webp",
+      detectedMime: "image/webp",
+    }),
+  },
+  {
+    matches: (b) => startsWithBytes(b, [0x50, 0x4b, 0x03, 0x04]),
+    resolve: (claimed) => ({
+      valid: ZIP_MIME_FAMILY.has(claimed),
+      detectedMime: ZIP_MIME_FAMILY.has(claimed) ? claimed : "application/zip",
+    }),
+  },
+  {
+    matches: (b) =>
+      startsWithBytes(b, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+    resolve: (claimed) => ({
+      valid: OLE_MIME_FAMILY.has(claimed),
+      detectedMime: OLE_MIME_FAMILY.has(claimed)
+        ? claimed
+        : "application/msword",
+    }),
+  },
+  {
+    matches: (b) => startsWithBytes(b, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07]),
+    resolve: (claimed) => ({
+      valid: claimed === "application/x-rar-compressed",
+      detectedMime: "application/x-rar-compressed",
+    }),
+  },
+];
+
+/** Validates file header bytes against declared MIME type and rejects binary executables. */
+function detectMagicMimeType(
   bytes: Uint8Array,
   claimedMime: string,
 ): { valid: boolean; detectedMime: string } {
-  // Reject executable binaries unconditionally (PE MZ, ELF, Mach-O, shebang)
-  if (
-    startsWithBytes(bytes, [0x4d, 0x5a]) ||
-    startsWithBytes(bytes, [0x7f, 0x45, 0x4c, 0x46]) ||
-    startsWithBytes(bytes, [0x23, 0x21])
-  ) {
-    return { valid: false, detectedMime: "application/x-executable" };
+  for (const execSig of EXECUTABLE_SIGNATURES) {
+    if (startsWithBytes(bytes, execSig)) {
+      return { valid: false, detectedMime: "application/x-executable" };
+    }
   }
 
-  if (startsWithBytes(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) {
-    return {
-      valid: claimedMime === "application/pdf",
-      detectedMime: "application/pdf",
-    };
+  for (const rule of MAGIC_RULES) {
+    if (rule.matches(bytes)) {
+      return rule.resolve(claimedMime);
+    }
   }
 
-  if (
-    startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-  ) {
-    return {
-      valid: claimedMime === "image/png",
-      detectedMime: "image/png",
-    };
-  }
-
-  if (startsWithBytes(bytes, [0xff, 0xd8, 0xff])) {
-    return {
-      valid: claimedMime === "image/jpeg" || claimedMime === "image/jpg",
-      detectedMime: "image/jpeg",
-    };
-  }
-
-  if (
-    startsWithBytes(bytes, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) ||
-    startsWithBytes(bytes, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61])
-  ) {
-    return {
-      valid: claimedMime === "image/gif",
-      detectedMime: "image/gif",
-    };
-  }
-
-  if (
-    bytes.length >= 12 &&
-    startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46]) &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x45 &&
-    bytes[10] === 0x42 &&
-    bytes[11] === 0x50
-  ) {
-    return {
-      valid: claimedMime === "image/webp",
-      detectedMime: "image/webp",
-    };
-  }
-
-  // PK\x03\x04 ZIP / OOXML (.docx, .xlsx, .pptx, .zip)
-  if (startsWithBytes(bytes, [0x50, 0x4b, 0x03, 0x04])) {
-    const zipFamily = new Set([
-      "application/zip",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ]);
-    return {
-      valid: zipFamily.has(claimedMime),
-      detectedMime: zipFamily.has(claimedMime)
-        ? claimedMime
-        : "application/zip",
-    };
-  }
-
-  // OLE2 Compound Binary (.doc, .xls, .ppt)
-  if (
-    startsWithBytes(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
-  ) {
-    const oleFamily = new Set([
-      "application/msword",
-      "application/vnd.ms-excel",
-      "application/vnd.ms-powerpoint",
-    ]);
-    return {
-      valid: oleFamily.has(claimedMime),
-      detectedMime: oleFamily.has(claimedMime)
-        ? claimedMime
-        : "application/msword",
-    };
-  }
-
-  // RAR archive
-  if (startsWithBytes(bytes, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07])) {
-    return {
-      valid: claimedMime === "application/x-rar-compressed",
-      detectedMime: "application/x-rar-compressed",
-    };
-  }
-
-  // Plain text / CSV / Markdown: ensure no NUL bytes in first 4KB
-  if (
-    claimedMime === "text/plain" ||
-    claimedMime === "text/csv" ||
-    claimedMime === "text/markdown"
-  ) {
-    const hasNul = bytes.some((b) => b === 0x00);
+  if (TEXT_MIME_FAMILY.has(claimedMime)) {
+    const hasNul = bytes.includes(0x00);
     return {
       valid: !hasNul,
       detectedMime: hasNul ? "application/octet-stream" : claimedMime,
@@ -190,6 +197,10 @@ export function detectMagicMimeType(
   return { valid: false, detectedMime: "application/octet-stream" };
 }
 
+/**
+ * Verifies a direct-uploaded storage object via metadata + 4 KB `Range: bytes=0-4095`
+ * magic-byte check without buffering the full object; purges storage immediately on violation.
+ */
 export async function verifyDirectUploadedObject(params: {
   bucket: string;
   storagePath: string;
@@ -272,7 +283,6 @@ export async function verifyDirectUploadedObject(params: {
     };
   }
 
-  // Fetch first 4096 bytes via signed Range request to inspect magic bytes without loading full object
   const { data: signedData, error: signErr } = await bucketApi.createSignedUrl(
     params.storagePath,
     60,
@@ -286,7 +296,6 @@ export async function verifyDirectUploadedObject(params: {
     };
   }
 
-  let headerBytes = new Uint8Array(0);
   const rangeRes = await fetch(signedData.signedUrl, {
     headers: { Range: "bytes=0-4095" },
   });
@@ -299,7 +308,7 @@ export async function verifyDirectUploadedObject(params: {
     };
   }
   const ab = await rangeRes.arrayBuffer();
-  headerBytes = new Uint8Array(ab.slice(0, 4096));
+  const headerBytes = new Uint8Array(ab.slice(0, 4096));
 
   const check = detectMagicMimeType(headerBytes, params.claimedMimeType);
   if (!check.valid) {
@@ -312,7 +321,7 @@ export async function verifyDirectUploadedObject(params: {
   }
 
   const segments = params.storagePath.split("/");
-  const fileName = segments[segments.length - 1] ?? params.storagePath;
+  const fileName = segments.at(-1) ?? params.storagePath;
 
   return {
     ok: true,

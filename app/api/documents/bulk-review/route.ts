@@ -10,6 +10,10 @@ import { notifyDocumentReviewed } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 import type { ReviewStatus } from "@/lib/documents/document-review";
+import {
+  extractReviewNotificationTarget,
+  REVIEW_NOTIFICATION_APPOINTMENT_SELECT,
+} from "@/lib/documents/upload-pipeline";
 
 const MAX_BULK = 100;
 const MAX_NOTES = 2000;
@@ -26,6 +30,10 @@ const NON_TERMINAL_REVIEW_STATUSES: DocumentReviewStatus[] = [
   DocumentReviewStatus.NEEDS_REVISION,
 ];
 
+/**
+ * Bulk document review endpoint using conditional `updateManyAndReturn` CAS-in-WHERE
+ * (`reviewStatus: { in: statusTransitionSources }`, `deletedAt: null`, `uploadedByRole: "CONSULTEE"`).
+ */
 export async function PATCH(request: NextRequest) {
   try {
     const session = await getSession();
@@ -112,39 +120,7 @@ export async function PATCH(request: NextRequest) {
             id: true,
             appointmentId: true,
             originalName: true,
-            appointment: {
-              select: {
-                organizationId: true,
-                consultation: {
-                  select: {
-                    requestedBy: {
-                      select: { id: true, user: { select: { id: true } } },
-                    },
-                    consultationPlan: {
-                      select: {
-                        consultantProfile: {
-                          select: { user: { select: { name: true } } },
-                        },
-                      },
-                    },
-                  },
-                },
-                subscription: {
-                  select: {
-                    requestedBy: {
-                      select: { id: true, user: { select: { id: true } } },
-                    },
-                    subscriptionPlan: {
-                      select: {
-                        consultantProfile: {
-                          select: { user: { select: { name: true } } },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
+            appointment: { select: REVIEW_NOTIFICATION_APPOINTMENT_SELECT },
           },
         });
 
@@ -181,35 +157,26 @@ export async function PATCH(request: NextRequest) {
         async () => {
           const results = await Promise.all(
             targetDocs.map((doc) => {
-              const recipientId =
-                doc.appointment.consultation?.requestedBy?.user?.id ||
-                doc.appointment.subscription?.requestedBy?.user?.id;
-              const consulteeProfileId =
-                doc.appointment.consultation?.requestedBy?.id ||
-                doc.appointment.subscription?.requestedBy?.id;
-              const reviewerName =
-                doc.appointment.consultation?.consultationPlan
-                  ?.consultantProfile?.user?.name ||
-                doc.appointment.subscription?.subscriptionPlan
-                  ?.consultantProfile?.user?.name ||
-                "The consultant";
-
-              if (!recipientId) return null;
+              const target = extractReviewNotificationTarget(doc.appointment);
+              if (!target.recipientId) return null;
               return notifyDocumentReviewed(
-                recipientId,
+                target.recipientId,
                 {
-                  ...notificationScope(doc.appointment.organizationId),
+                  ...notificationScope(target.organizationId),
                   appointmentId: doc.appointmentId,
                   documentId: doc.id,
                   reviewStatus: reviewStatus as ReviewStatus,
                   reviewNotes: reviewNotes || undefined,
                   originalName: doc.originalName,
-                  consultantName: reviewerName,
+                  consultantName: target.reviewerName,
                   dashboardUrl: scopedHref({
-                    organizationId: doc.appointment.organizationId,
+                    organizationId: target.organizationId,
                     surface: "appointments",
-                    personal: consulteeProfileId
-                      ? { kind: "consultee", profileId: consulteeProfileId }
+                    personal: target.consulteeProfileId
+                      ? {
+                          kind: "consultee",
+                          profileId: target.consulteeProfileId,
+                        }
                       : undefined,
                   }),
                 },

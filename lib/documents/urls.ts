@@ -55,10 +55,19 @@ export function isPreviewableMimeType(
   );
 }
 
+/** Sanitizes an arbitrary user filename to printable safe ASCII fallback characters. */
+export function sanitizeContentDispositionFilename(
+  originalName: string,
+): string {
+  const cleaned = originalName.replace(/[^\x20-\x7E]|["\\/]/g, "_").trim();
+  return cleaned || "document";
+}
+
+/** Builds an RFC 6266 UTF-8 safe `Content-Disposition` header with ASCII fallback. */
 export function formatContentDisposition(
   disposition: "inline" | "attachment",
   originalName: string,
 ): string {
-  const asciiFallback = originalName.replace(/[^\x20-\x7E]|["\\]/g, "_");
+  const asciiFallback = sanitizeContentDispositionFilename(originalName);
   return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
 }

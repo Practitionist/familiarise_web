@@ -12,11 +12,10 @@ import {
   supabaseAdmin,
 } from "@/lib/supabase-storage-core";
 import {
-  MAX_DOCS_PER_APPOINTMENT,
   MAX_DOCUMENT_BYTES,
-  MAX_VERSIONS_PER_THREAD,
   validateDocumentUpload,
 } from "@/lib/documents/document-review";
+import { preflightThreadLimits } from "@/lib/documents/upload-pipeline";
 
 const UploadUrlRequestSchema = z.object({
   originalName: z.string().trim().min(1).max(255),
@@ -25,6 +24,159 @@ const UploadUrlRequestSchema = z.object({
   responseToDocumentId: z.string().trim().min(1).optional(),
 });
 
+async function parseUploadUrlBody(request: NextRequest): Promise<
+  | {
+      ok: true;
+      data: z.infer<typeof UploadUrlRequestSchema>;
+    }
+  | {
+      ok: false;
+      response: NextResponse;
+    }
+> {
+  let rawBody: unknown;
+  try {
+    rawBody = await request.json();
+  } catch {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Invalid JSON body",
+          message: "Please provide valid upload metadata.",
+          code: "INVALID_INPUT",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const parsed = UploadUrlRequestSchema.safeParse(rawBody);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Invalid upload request",
+          message: `File size must be between 1 byte and ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)}MB.`,
+          code: "INVALID_INPUT",
+          details: parsed.error.flatten(),
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const validation = validateDocumentUpload({
+    size: parsed.data.fileSize,
+    type: parsed.data.mimeType,
+  });
+  if (!validation.ok) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error:
+            validation.code === "FILE_TOO_LARGE"
+              ? "File too large"
+              : "Unsupported file type",
+          message: validation.message,
+          code: validation.code,
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  return { ok: true, data: parsed.data };
+}
+
+async function loadUploadTargetAppointment(
+  appointmentId: string,
+  userId: string,
+) {
+  const isDevelopment =
+    process.env.NODE_ENV === "development" &&
+    process.env.DEV_BYPASS_AUTH === "true";
+
+  const appointmentWhere: Prisma.AppointmentWhereInput = { id: appointmentId };
+  if (!isDevelopment) {
+    appointmentWhere.OR = [
+      { consultation: { requestedBy: { user: { id: userId } } } },
+      {
+        consultation: {
+          consultationPlan: { consultantProfile: { user: { id: userId } } },
+        },
+      },
+      { subscription: { requestedBy: { user: { id: userId } } } },
+      {
+        subscription: {
+          subscriptionPlan: { consultantProfile: { user: { id: userId } } },
+        },
+      },
+      {
+        webinar: {
+          webinarPlan: { consultantProfile: { user: { id: userId } } },
+        },
+      },
+      {
+        class: {
+          classPlan: { consultantProfile: { user: { id: userId } } },
+        },
+      },
+    ];
+  }
+
+  return prisma.appointment.findFirst({
+    where: appointmentWhere,
+    include: {
+      consultation: {
+        select: {
+          status: true,
+          requestedBy: { select: { id: true, userId: true } },
+          consultationPlan: {
+            select: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
+          },
+        },
+      },
+      subscription: {
+        select: {
+          status: true,
+          requestedBy: { select: { id: true, userId: true } },
+          subscriptionPlan: {
+            select: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
+          },
+        },
+      },
+      webinar: {
+        select: {
+          status: true,
+          webinarPlan: {
+            select: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
+          },
+        },
+      },
+      class: {
+        select: {
+          status: true,
+          classPlan: {
+            select: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+/** Mints single-use presigned Supabase upload URLs (`upsert: false`) so clients bypass the 6 MB Lambda body limit. */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -60,135 +212,15 @@ export async function POST(
       );
     }
 
-    let rawBody: unknown;
-    try {
-      rawBody = await request.json();
-    } catch {
-      return NextResponse.json(
-        {
-          error: "Invalid JSON body",
-          message: "Please provide valid upload metadata.",
-          code: "INVALID_INPUT",
-        },
-        { status: 400 },
-      );
-    }
-
-    const parsed = UploadUrlRequestSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          error: "Invalid upload request",
-          message: `File size must be between 1 byte and ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)}MB.`,
-          code: "INVALID_INPUT",
-          details: parsed.error.flatten(),
-        },
-        { status: 400 },
-      );
-    }
-
-    const { mimeType, fileSize, responseToDocumentId } = parsed.data;
-    const validation = validateDocumentUpload({
-      size: fileSize,
-      type: mimeType,
-    });
-    if (!validation.ok) {
-      return NextResponse.json(
-        {
-          error:
-            validation.code === "FILE_TOO_LARGE"
-              ? "File too large"
-              : "Unsupported file type",
-          message: validation.message,
-          code: validation.code,
-        },
-        { status: 400 },
-      );
-    }
+    const parsedBody = await parseUploadUrlBody(request);
+    if (!parsedBody.ok) return parsedBody.response;
+    const { mimeType, responseToDocumentId } = parsedBody.data;
 
     const userId = session.user.id;
-    const isDevelopment =
-      process.env.NODE_ENV === "development" &&
-      process.env.DEV_BYPASS_AUTH === "true";
-
-    const appointmentWhere: Prisma.AppointmentWhereInput = {
-      id: appointmentId,
-    };
-    if (!isDevelopment) {
-      appointmentWhere.OR = [
-        { consultation: { requestedBy: { user: { id: userId } } } },
-        {
-          consultation: {
-            consultationPlan: { consultantProfile: { user: { id: userId } } },
-          },
-        },
-        { subscription: { requestedBy: { user: { id: userId } } } },
-        {
-          subscription: {
-            subscriptionPlan: { consultantProfile: { user: { id: userId } } },
-          },
-        },
-        {
-          webinar: {
-            webinarPlan: { consultantProfile: { user: { id: userId } } },
-          },
-        },
-        {
-          class: {
-            classPlan: { consultantProfile: { user: { id: userId } } },
-          },
-        },
-      ];
-    }
-
-    const appointment = await prisma.appointment.findFirst({
-      where: appointmentWhere,
-      include: {
-        consultation: {
-          select: {
-            status: true,
-            requestedBy: { select: { id: true, userId: true } },
-            consultationPlan: {
-              select: {
-                consultantProfile: { select: { id: true, userId: true } },
-              },
-            },
-          },
-        },
-        subscription: {
-          select: {
-            status: true,
-            requestedBy: { select: { id: true, userId: true } },
-            subscriptionPlan: {
-              select: {
-                consultantProfile: { select: { id: true, userId: true } },
-              },
-            },
-          },
-        },
-        webinar: {
-          select: {
-            status: true,
-            webinarPlan: {
-              select: {
-                consultantProfile: { select: { id: true, userId: true } },
-              },
-            },
-          },
-        },
-        class: {
-          select: {
-            status: true,
-            classPlan: {
-              select: {
-                consultantProfile: { select: { id: true, userId: true } },
-              },
-            },
-          },
-        },
-      },
-    });
-
+    const appointment = await loadUploadTargetAppointment(
+      appointmentId,
+      userId,
+    );
     if (!appointment) {
       return NextResponse.json(
         {
@@ -211,65 +243,12 @@ export async function POST(
       );
     }
 
-    const consultantProfile =
-      appointment.consultation?.consultationPlan?.consultantProfile ||
-      appointment.subscription?.subscriptionPlan?.consultantProfile ||
-      appointment.webinar?.webinarPlan?.consultantProfile ||
-      appointment.class?.classPlan?.consultantProfile;
-
-    const isConsultantUploader = consultantProfile?.userId === userId;
-    const consulteeProfileId =
-      appointment.consultation?.requestedBy?.id ||
-      appointment.subscription?.requestedBy?.id ||
-      userId;
-
-    if (!responseToDocumentId) {
-      const rootCount = await prisma.appointmentDocument.count({
-        where: { appointmentId, rootDocumentId: null, deletedAt: null },
-      });
-      if (rootCount >= MAX_DOCS_PER_APPOINTMENT) {
-        return NextResponse.json(
-          {
-            error: "Document limit reached",
-            message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads.`,
-            code: "DOCUMENT_LIMIT_REACHED",
-          },
-          { status: 400 },
-        );
-      }
-    } else {
-      const parent = await prisma.appointmentDocument.findFirst({
-        where: { id: responseToDocumentId, appointmentId, deletedAt: null },
-        select: { id: true, rootDocumentId: true },
-      });
-      if (!parent) {
-        return NextResponse.json(
-          {
-            error: "Original document not found",
-            message: "The document thread target does not exist.",
-            code: "INVALID_THREAD_PARENT",
-          },
-          { status: 404 },
-        );
-      }
-      const rootId = parent.rootDocumentId ?? parent.id;
-      const versionCount = await prisma.appointmentDocument.count({
-        where: {
-          deletedAt: null,
-          OR: [{ id: rootId }, { rootDocumentId: rootId }],
-        },
-      });
-      if (versionCount >= MAX_VERSIONS_PER_THREAD) {
-        return NextResponse.json(
-          {
-            error: "Version limit reached",
-            message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
-            code: "VERSION_LIMIT_REACHED",
-          },
-          { status: 400 },
-        );
-      }
-    }
+    const preflightError = await preflightThreadLimits(
+      appointmentId,
+      responseToDocumentId,
+      { missingParentStatus: 404 },
+    );
+    if (preflightError) return preflightError;
 
     if (!supabaseAdmin) {
       return NextResponse.json(
@@ -281,6 +260,18 @@ export async function POST(
         { status: 500 },
       );
     }
+
+    const consultantProfile =
+      appointment.consultation?.consultationPlan?.consultantProfile ||
+      appointment.subscription?.subscriptionPlan?.consultantProfile ||
+      appointment.webinar?.webinarPlan?.consultantProfile ||
+      appointment.class?.classPlan?.consultantProfile;
+
+    const isConsultantUploader = consultantProfile?.userId === userId;
+    const consulteeProfileId =
+      appointment.consultation?.requestedBy?.id ||
+      appointment.subscription?.requestedBy?.id ||
+      userId;
 
     const folderPrefix = isConsultantUploader
       ? `appointments/${appointmentId}/consultant-${consultantProfile?.id}`

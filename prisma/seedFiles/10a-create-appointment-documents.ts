@@ -146,6 +146,7 @@ export async function createAppointmentDocuments(): Promise<void> {
       id: true,
       consultation: {
         select: {
+          requestedById: true,
           consultationPlan: {
             select: {
               consultantProfile: {
@@ -157,6 +158,7 @@ export async function createAppointmentDocuments(): Promise<void> {
       },
       subscription: {
         select: {
+          requestedById: true,
           subscriptionPlan: {
             select: {
               consultantProfile: {
@@ -167,7 +169,7 @@ export async function createAppointmentDocuments(): Promise<void> {
         },
       },
     },
-    take: 200, // Get a good sample of appointments
+    take: 200,
   });
 
   if (appointments.length === 0) {
@@ -196,16 +198,19 @@ export async function createAppointmentDocuments(): Promise<void> {
       const originalName = `${faker.person.lastName()}_${docType.type}.${extension}`;
       const fileSize = faker.number.int(docType.sizeRange);
 
-      const fileUrl = `https://placeholder.com/documents/${fileName}`;
-      const storagePath = `appointments/${appointment.id}/${fileName}`;
+      const consulteeId =
+        appointment.consultation?.requestedById ??
+        appointment.subscription?.requestedById ??
+        "seed";
+      const storagePath = `appointments/${appointment.id}/consultee-${consulteeId}/${fileName}`;
+      const docId = faker.string.uuid();
+      const fileUrl = `/api/appointments/${appointment.id}/documents/${docId}/download?disposition=inline`;
 
-      // Get consultant user ID for reviewed documents
       let reviewedBy: string | null = null;
       let reviewedAt: Date | null = null;
       let reviewNotes: string | null = null;
 
       if (status !== "PENDING") {
-        // Get the consultant ID from the appointment
         const consultantUserId =
           appointment.consultation?.consultationPlan?.consultantProfile
             ?.userId ||
@@ -225,6 +230,7 @@ export async function createAppointmentDocuments(): Promise<void> {
 
       await prisma.appointmentDocument.create({
         data: {
+          id: docId,
           fileName,
           originalName,
           fileSize,
@@ -235,7 +241,9 @@ export async function createAppointmentDocuments(): Promise<void> {
           reviewStatus: status,
           reviewNotes,
           reviewedAt,
-          reviewedById: reviewedBy, // A8 — FK scalar (#676)
+          reviewedById: reviewedBy,
+          uploadedByRole: "CONSULTEE",
+          versionNo: 1,
           appointmentId: appointment.id,
           uploadedAt: faker.date.recent({ days: 30 }),
         },

@@ -18,7 +18,7 @@ export const DOCUMENT_DELETE_GRACE_DAYS = 7;
 /** Shared upload gates — one definition so both roles cannot drift apart. */
 export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024; // 10MB
 
-export const ALLOWED_DOCUMENT_MIME_TYPES = [
+const ALLOWED_DOCUMENT_MIME_TYPES = [
   "application/pdf",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -287,5 +287,43 @@ export async function resolveDocumentThreadSlot(
     where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
     _max: { versionNo: true },
   });
-  return { rootDocumentId, versionNo: (aggregate._max.versionNo ?? 1) + 1 };
+  const versionNo = (aggregate._max.versionNo ?? 1) + 1;
+  if (versionNo > maxVersionsPerThread) {
+    throw new Error("VERSION_LIMIT_REACHED");
+  }
+  return { rootDocumentId, versionNo };
+}
+
+/**
+ * SQL-pushed `effectiveStatus` filter on root document threads (`rootDocumentId: null`):
+ * matches threads whose highest-version live `CONSULTEE` upload has `reviewStatus = status`.
+ */
+export function buildRootThreadStatusWhere(
+  baseRootWhere: Record<string, unknown>,
+  status: DocumentReviewStatus | null | undefined,
+): Record<string, unknown> {
+  if (!status) return baseRootWhere;
+  return {
+    ...baseRootWhere,
+    OR: [
+      {
+        threadVersions: {
+          some: {
+            deletedAt: null,
+            uploadedByRole: "CONSULTEE",
+            reviewStatus: status,
+          },
+        },
+      },
+      {
+        reviewStatus: status,
+        threadVersions: {
+          none: {
+            deletedAt: null,
+            uploadedByRole: "CONSULTEE",
+          },
+        },
+      },
+    ],
+  };
 }

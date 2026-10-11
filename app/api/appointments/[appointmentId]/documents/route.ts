@@ -2,39 +2,70 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import {
   uploadAppointmentDocument,
   getManualBucketInstructions,
-  deleteAppointmentDocument,
 } from "@/lib/supabase";
 import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 import { isBookingTerminal } from "@/lib/appointments/terminal-status";
-import {
-  MAX_DOCS_PER_APPOINTMENT,
-  MAX_DOCUMENT_BYTES,
-  MAX_VERSIONS_PER_THREAD,
-  resolveDocumentThreadSlot,
-  validateDocumentUpload,
-  withVersionConflictRetry,
-} from "@/lib/documents/document-review";
 import { verifyDirectUploadedObject } from "@/lib/documents/storage-verify";
+import {
+  parseDocumentUploadInput,
+  persistAppointmentDocumentWithRetry,
+  preflightThreadLimits,
+  type ResolvedStorageObject,
+} from "@/lib/documents/upload-pipeline";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 
-const DirectCommitSchema = z.object({
-  storagePath: z.string().trim().min(1),
-  originalName: z.string().trim().min(1).max(255),
-  mimeType: z.string().trim().min(1).max(120),
-  fileSize: z.number().int().positive().max(MAX_DOCUMENT_BYTES),
-  description: z.string().trim().max(2000).nullish(),
-  responseToDocumentId: z.string().trim().min(1).nullish(),
-});
+function buildFetchErrorResponse(error: unknown): NextResponse {
+  if (error instanceof Error) {
+    if (
+      error.message.includes("connect") ||
+      error.message.includes("timeout")
+    ) {
+      return NextResponse.json(
+        {
+          error: "Connection error",
+          message:
+            "Unable to connect to the server. Please check your internet connection and try again.",
+          code: "CONNECTION_ERROR",
+        },
+        { status: 503 },
+      );
+    }
 
-// GET - List documents for an appointment
+    if (
+      error.message.includes("Prisma") ||
+      error.message.includes("database")
+    ) {
+      return NextResponse.json(
+        {
+          error: "Database temporarily unavailable",
+          message:
+            "The document system is temporarily unavailable. Please try again in a few moments.",
+          code: "DATABASE_ERROR",
+        },
+        { status: 503 },
+      );
+    }
+  }
+
+  return NextResponse.json(
+    {
+      error: "Unable to load documents",
+      message:
+        "Something went wrong while loading your documents. Please refresh the page or try again later. If the problem persists, contact support.",
+      code: "UNKNOWN_ERROR",
+    },
+    { status: 500 },
+  );
+}
+
+/** Lists active deliverable documents for an accessible non-terminal appointment. */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -78,9 +109,7 @@ export async function GET(
         {
           consultation: {
             requestedBy: {
-              user: {
-                id: session.user.id,
-              },
+              user: { id: session.user.id },
             },
           },
         },
@@ -88,9 +117,7 @@ export async function GET(
           consultation: {
             consultationPlan: {
               consultantProfile: {
-                user: {
-                  id: session.user.id,
-                },
+                user: { id: session.user.id },
               },
             },
           },
@@ -100,17 +127,13 @@ export async function GET(
             OR: [
               {
                 requestedBy: {
-                  user: {
-                    id: session.user.id,
-                  },
+                  user: { id: session.user.id },
                 },
               },
               {
                 subscriptionPlan: {
                   consultantProfile: {
-                    user: {
-                      id: session.user.id,
-                    },
+                    user: { id: session.user.id },
                   },
                 },
               },
@@ -129,9 +152,7 @@ export async function GET(
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: { name: true },
-                    },
+                    user: { select: { name: true } },
                   },
                 },
               },
@@ -144,9 +165,7 @@ export async function GET(
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: { name: true },
-                    },
+                    user: { select: { name: true } },
                   },
                 },
               },
@@ -201,9 +220,7 @@ export async function GET(
         include: {
           responseDocuments: {
             where: { deletedAt: null },
-            orderBy: {
-              uploadedAt: "desc",
-            },
+            orderBy: { uploadedAt: "desc" },
           },
           responseToDocument: {
             select: {
@@ -213,9 +230,7 @@ export async function GET(
             },
           },
         },
-        orderBy: {
-          uploadedAt: "desc",
-        },
+        orderBy: { uploadedAt: "desc" },
       });
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
@@ -256,52 +271,161 @@ export async function GET(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "appointments" } },
     );
-
-    if (error instanceof Error) {
-      if (
-        error.message.includes("connect") ||
-        error.message.includes("timeout")
-      ) {
-        return NextResponse.json(
-          {
-            error: "Connection error",
-            message:
-              "Unable to connect to the server. Please check your internet connection and try again.",
-            code: "CONNECTION_ERROR",
-          },
-          { status: 503 },
-        );
-      }
-
-      if (
-        error.message.includes("Prisma") ||
-        error.message.includes("database")
-      ) {
-        return NextResponse.json(
-          {
-            error: "Database temporarily unavailable",
-            message:
-              "The document system is temporarily unavailable. Please try again in a few moments.",
-            code: "DATABASE_ERROR",
-          },
-          { status: 503 },
-        );
-      }
-    }
-
-    return NextResponse.json(
-      {
-        error: "Unable to load documents",
-        message:
-          "Something went wrong while loading your documents. Please refresh the page or try again later. If the problem persists, contact support.",
-        code: "UNKNOWN_ERROR",
-      },
-      { status: 500 },
-    );
+    return buildFetchErrorResponse(error);
   }
 }
 
-// POST - Upload a new consultee document (supports 2-phase JSON commit and multipart FormData)
+async function resolveConsulteeStorageObject(params: {
+  appointmentId: string;
+  consulteeId: string;
+  uploadInput: Extract<
+    Awaited<ReturnType<typeof parseDocumentUploadInput>>,
+    { ok: true }
+  >;
+}): Promise<
+  | { ok: true; storage: ResolvedStorageObject }
+  | { ok: false; response: NextResponse }
+> {
+  const { appointmentId, consulteeId, uploadInput } = params;
+
+  if (uploadInput.mode === "direct") {
+    const verified = await verifyDirectUploadedObject({
+      bucket: "documents",
+      storagePath: uploadInput.directCommitData.storagePath,
+      requiredPrefix: `appointments/${appointmentId}/consultee-${consulteeId}/`,
+      claimedMimeType: uploadInput.directCommitData.mimeType,
+    });
+    if (!verified.ok) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error: "Upload validation failed",
+            message: verified.message,
+            code: verified.code,
+          },
+          { status: verified.code === "STORAGE_CONFIG_ERROR" ? 500 : 400 },
+        ),
+      };
+    }
+    return {
+      ok: true,
+      storage: {
+        fileName: verified.fileName,
+        fileSize: verified.fileSize,
+        mimeType: verified.mimeType,
+        fileUrl: verified.fileUrl,
+        storagePath: uploadInput.directCommitData.storagePath,
+      },
+    };
+  }
+
+  let uploadResult;
+  try {
+    uploadResult = await uploadAppointmentDocument({
+      appointmentId,
+      consulteeId,
+      description: uploadInput.description || undefined,
+      file: uploadInput.file,
+    });
+  } catch (uploadError) {
+    console.error("File upload error:", uploadError);
+    Sentry.captureException(
+      uploadError instanceof Error
+        ? uploadError
+        : new Error(String(uploadError)),
+      { tags: { subsystem: "appointments" } },
+    );
+
+    if (uploadError instanceof Error) {
+      if (
+        uploadError.message.includes("network") ||
+        uploadError.message.includes("fetch")
+      ) {
+        return {
+          ok: false,
+          response: NextResponse.json(
+            {
+              error: "Network error",
+              message:
+                "Upload failed due to a network issue. Please check your connection and try again.",
+              code: "NETWORK_ERROR",
+            },
+            { status: 503 },
+          ),
+        };
+      }
+
+      if (
+        uploadError.message.includes("storage") ||
+        uploadError.message.includes("bucket")
+      ) {
+        return {
+          ok: false,
+          response: NextResponse.json(
+            {
+              error: "Storage error",
+              message:
+                "There's a temporary issue with file storage. Please try again in a few moments.",
+              code: "STORAGE_ERROR",
+            },
+            { status: 503 },
+          ),
+        };
+      }
+    }
+
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Upload failed",
+          message:
+            "Failed to upload the file. Please try again or contact support if the issue persists.",
+          code: "UPLOAD_ERROR",
+        },
+        { status: 500 },
+      ),
+    };
+  }
+
+  if (!uploadResult.success) {
+    const isBucketError =
+      uploadResult.error?.includes("bucket") ||
+      uploadResult.error?.includes("storage");
+
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Upload failed",
+          message:
+            uploadResult.error ||
+            "The file upload was unsuccessful. Please try again.",
+          code: isBucketError ? "BUCKET_NOT_FOUND" : "UPLOAD_FAILED",
+          ...(isBucketError && {
+            instructions: getManualBucketInstructions("documents"),
+            technical: uploadResult.error,
+          }),
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    storage: {
+      fileName: uploadResult.fileName!,
+      fileSize: uploadResult.fileSize!,
+      mimeType: uploadResult.mimeType!,
+      fileUrl: uploadResult.fileUrl!,
+      storagePath: uploadResult.storagePath!,
+    },
+  };
+}
+
+/** Consultee document/revision upload endpoint delegating slot serialization to upload-pipeline. */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -338,117 +462,10 @@ export async function POST(
       );
     }
 
-    const contentType = request.headers.get("content-type") ?? "";
-    const isJsonCommit = contentType.includes("application/json");
-
-    let file: File | null = null;
-    let directCommitData: z.infer<typeof DirectCommitSchema> | null = null;
-    let originalName = "";
-    let description: string | null = null;
-    let revisionOf: string | null = null;
-
-    if (isJsonCommit) {
-      let rawJson: unknown;
-      try {
-        rawJson = await request.json();
-      } catch {
-        return NextResponse.json(
-          {
-            error: "Invalid JSON body",
-            message: "Invalid upload payload.",
-            code: "INVALID_INPUT",
-          },
-          { status: 400 },
-        );
-      }
-      const parsed = DirectCommitSchema.safeParse(rawJson);
-      if (!parsed.success) {
-        return NextResponse.json(
-          {
-            error: "Invalid upload metadata",
-            message: "Please check your file and try uploading again.",
-            code: "INVALID_INPUT",
-          },
-          { status: 400 },
-        );
-      }
-      directCommitData = parsed.data;
-      originalName = parsed.data.originalName;
-      description = parsed.data.description?.trim() || null;
-      revisionOf = parsed.data.responseToDocumentId?.trim() || null;
-
-      const validation = validateDocumentUpload({
-        size: parsed.data.fileSize,
-        type: parsed.data.mimeType,
-      });
-      if (!validation.ok) {
-        return NextResponse.json(
-          {
-            error:
-              validation.code === "FILE_TOO_LARGE"
-                ? "File too large"
-                : "Unsupported file type",
-            message: validation.message,
-            code: validation.code,
-          },
-          { status: 400 },
-        );
-      }
-    } else {
-      let formData: FormData;
-      try {
-        formData = await request.formData();
-      } catch {
-        return NextResponse.json(
-          {
-            error: "Invalid file upload",
-            message:
-              "The uploaded file appears to be corrupted or invalid. Please try uploading the file again.",
-            code: "INVALID_FILE",
-          },
-          { status: 400 },
-        );
-      }
-
-      const rawFile = formData.get("file");
-      file = rawFile instanceof File ? rawFile : null;
-      const rawDesc = formData.get("description");
-      description =
-        typeof rawDesc === "string" && rawDesc.trim() ? rawDesc.trim() : null;
-      const revisionOfRaw = formData.get("responseToDocumentId");
-      revisionOf =
-        typeof revisionOfRaw === "string" && revisionOfRaw.trim()
-          ? revisionOfRaw.trim()
-          : null;
-
-      if (!file || file.size === 0) {
-        return NextResponse.json(
-          {
-            error: "No file selected",
-            message:
-              "Please select a file to upload. Supported formats include PDF, Word documents, images, and text files.",
-            code: "NO_FILE",
-          },
-          { status: 400 },
-        );
-      }
-
-      const validation = validateDocumentUpload(file);
-      if (!validation.ok) {
-        return NextResponse.json(
-          {
-            error:
-              validation.code === "FILE_TOO_LARGE"
-                ? "File too large"
-                : "Unsupported file type",
-            message: validation.message,
-            code: validation.code,
-          },
-          { status: 400 },
-        );
-      }
-      originalName = file.name;
-    }
+    const parsedInput = await parseDocumentUploadInput(request, {
+      emptyFileCode: "NO_FILE",
+    });
+    if (!parsedInput.ok) return parsedInput.response;
 
     const isDevelopment =
       process.env.NODE_ENV === "development" &&
@@ -462,20 +479,12 @@ export async function POST(
       uploadWhereClause.OR = [
         {
           consultation: {
-            requestedBy: {
-              user: {
-                id: session.user.id,
-              },
-            },
+            requestedBy: { user: { id: session.user.id } },
           },
         },
         {
           subscription: {
-            requestedBy: {
-              user: {
-                id: session.user.id,
-              },
-            },
+            requestedBy: { user: { id: session.user.id } },
           },
         },
       ];
@@ -486,19 +495,11 @@ export async function POST(
       include: {
         consultation: {
           include: {
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
+            requestedBy: { include: { user: true } },
             consultationPlan: {
               include: {
                 consultantProfile: {
-                  include: {
-                    user: {
-                      select: { id: true, name: true },
-                    },
-                  },
+                  include: { user: { select: { id: true, name: true } } },
                 },
               },
             },
@@ -506,19 +507,11 @@ export async function POST(
         },
         subscription: {
           include: {
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
+            requestedBy: { include: { user: true } },
             subscriptionPlan: {
               include: {
                 consultantProfile: {
-                  include: {
-                    user: {
-                      select: { id: true, name: true },
-                    },
-                  },
+                  include: { user: { select: { id: true, name: true } } },
                 },
               },
             },
@@ -569,274 +562,43 @@ export async function POST(
       );
     }
 
-    if (
-      !revisionOf &&
-      (await prisma.appointmentDocument.count({
-        where: { appointmentId, rootDocumentId: null, deletedAt: null },
-      })) >= MAX_DOCS_PER_APPOINTMENT
-    ) {
-      return NextResponse.json(
-        {
-          error: "Document limit reached",
-          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads. Please upload a revision to an existing thread or delete an unreviewed upload.`,
-          code: "DOCUMENT_LIMIT_REACHED",
-        },
-        { status: 400 },
-      );
-    }
+    const preflightError = await preflightThreadLimits(
+      appointmentId,
+      parsedInput.responseToDocumentId,
+      {
+        missingParentStatus: 400,
+        missingParentError: "Invalid revision target",
+        missingParentMessage:
+          "The document this revision replaces was not found on this appointment.",
+      },
+    );
+    if (preflightError) return preflightError;
 
-    if (revisionOf) {
-      const parent = await prisma.appointmentDocument.findFirst({
-        where: { id: revisionOf, appointmentId, deletedAt: null },
-        select: { id: true, rootDocumentId: true },
-      });
-      if (!parent) {
-        return NextResponse.json(
-          {
-            error: "Invalid revision target",
-            message:
-              "The document this revision replaces was not found on this appointment.",
-            code: "INVALID_THREAD_PARENT",
-          },
-          { status: 400 },
-        );
-      }
-      const rootId = parent.rootDocumentId ?? parent.id;
-      const versionCount = await prisma.appointmentDocument.count({
-        where: {
-          deletedAt: null,
-          OR: [{ id: rootId }, { rootDocumentId: rootId }],
-        },
-      });
-      if (versionCount >= MAX_VERSIONS_PER_THREAD) {
-        return NextResponse.json(
-          {
-            error: "Version limit reached",
-            message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
-            code: "VERSION_LIMIT_REACHED",
-          },
-          { status: 400 },
-        );
-      }
-    }
+    const resolvedStorage = await resolveConsulteeStorageObject({
+      appointmentId,
+      consulteeId,
+      uploadInput: parsedInput,
+    });
+    if (!resolvedStorage.ok) return resolvedStorage.response;
 
-    let resolvedStorage: {
-      fileName: string;
-      fileSize: number;
-      mimeType: string;
-      fileUrl: string;
-      storagePath: string;
-    };
-
-    if (directCommitData) {
-      const verified = await verifyDirectUploadedObject({
-        bucket: "documents",
-        storagePath: directCommitData.storagePath,
-        requiredPrefix: `appointments/${appointmentId}/consultee-${consulteeId}/`,
-        claimedMimeType: directCommitData.mimeType,
-      });
-      if (!verified.ok) {
-        return NextResponse.json(
-          {
-            error: "Upload validation failed",
-            message: verified.message,
-            code: verified.code,
-          },
-          { status: verified.code === "STORAGE_CONFIG_ERROR" ? 500 : 400 },
-        );
-      }
-      resolvedStorage = {
-        fileName: verified.fileName,
-        fileSize: verified.fileSize,
-        mimeType: verified.mimeType,
-        fileUrl: verified.fileUrl,
-        storagePath: directCommitData.storagePath,
-      };
-    } else {
-      let uploadResult;
-      try {
-        uploadResult = await uploadAppointmentDocument({
-          appointmentId,
-          consulteeId,
-          description: description || undefined,
-          file: file!,
-        });
-      } catch (uploadError) {
-        console.error("File upload error:", uploadError);
-        Sentry.captureException(
-          uploadError instanceof Error
-            ? uploadError
-            : new Error(String(uploadError)),
-          { tags: { subsystem: "appointments" } },
-        );
-
-        if (uploadError instanceof Error) {
-          if (
-            uploadError.message.includes("network") ||
-            uploadError.message.includes("fetch")
-          ) {
-            return NextResponse.json(
-              {
-                error: "Network error",
-                message:
-                  "Upload failed due to a network issue. Please check your connection and try again.",
-                code: "NETWORK_ERROR",
-              },
-              { status: 503 },
-            );
-          }
-
-          if (
-            uploadError.message.includes("storage") ||
-            uploadError.message.includes("bucket")
-          ) {
-            return NextResponse.json(
-              {
-                error: "Storage error",
-                message:
-                  "There's a temporary issue with file storage. Please try again in a few moments.",
-                code: "STORAGE_ERROR",
-              },
-              { status: 503 },
-            );
-          }
-        }
-
-        return NextResponse.json(
-          {
-            error: "Upload failed",
-            message:
-              "Failed to upload the file. Please try again or contact support if the issue persists.",
-            code: "UPLOAD_ERROR",
-          },
-          { status: 500 },
-        );
-      }
-
-      if (!uploadResult.success) {
-        const isBucketError =
-          uploadResult.error?.includes("bucket") ||
-          uploadResult.error?.includes("storage");
-
-        return NextResponse.json(
-          {
-            error: "Upload failed",
-            message:
-              uploadResult.error ||
-              "The file upload was unsuccessful. Please try again.",
-            code: isBucketError ? "BUCKET_NOT_FOUND" : "UPLOAD_FAILED",
-            ...(isBucketError && {
-              instructions: getManualBucketInstructions("documents"),
-              technical: uploadResult.error,
-            }),
-          },
-          { status: 400 },
-        );
-      }
-
-      resolvedStorage = {
-        fileName: uploadResult.fileName!,
-        fileSize: uploadResult.fileSize!,
-        mimeType: uploadResult.mimeType!,
-        fileUrl: uploadResult.fileUrl!,
-        storagePath: uploadResult.storagePath!,
-      };
-    }
-
-    let document;
-    try {
-      document = await withVersionConflictRetry(() =>
-        prisma.$transaction(async (tx) => {
-          const { rootDocumentId, versionNo } = await resolveDocumentThreadSlot(
-            tx,
-            {
-              appointmentId,
-              parentDocumentId: revisionOf,
-              maxDocsPerAppointment: MAX_DOCS_PER_APPOINTMENT,
-              maxVersionsPerThread: MAX_VERSIONS_PER_THREAD,
-            },
-          );
-          return tx.appointmentDocument.create({
-            data: {
-              appointmentId,
-              fileName: resolvedStorage.fileName,
-              originalName,
-              fileSize: resolvedStorage.fileSize,
-              mimeType: resolvedStorage.mimeType,
-              fileUrl: resolvedStorage.fileUrl,
-              storagePath: resolvedStorage.storagePath,
-              description,
-              reviewStatus: "PENDING",
-              responseToDocumentId: revisionOf,
-              rootDocumentId,
-              versionNo,
-            },
-          });
-        }),
-      );
-    } catch (dbError) {
-      console.error("Database error saving document:", dbError);
-      Sentry.captureException(
-        dbError instanceof Error ? dbError : new Error(String(dbError)),
-        { tags: { subsystem: "appointments" } },
-      );
-
-      try {
-        await deleteAppointmentDocument(resolvedStorage.storagePath);
-      } catch (cleanupError) {
-        console.error("Failed to cleanup uploaded file:", cleanupError);
-        Sentry.captureException(
-          cleanupError instanceof Error
-            ? cleanupError
-            : new Error(String(cleanupError)),
-          { tags: { subsystem: "appointments" } },
-        );
-      }
-
-      if (dbError instanceof Error) {
-        if (dbError.message === "INVALID_THREAD_PARENT") {
-          return NextResponse.json(
-            {
-              error: "Invalid revision target",
-              message:
-                "The document this revision replaces was not found on this appointment.",
-              code: "INVALID_THREAD_PARENT",
-            },
-            { status: 400 },
-          );
-        }
-        if (dbError.message === "DOCUMENT_LIMIT_REACHED") {
-          return NextResponse.json(
-            {
-              error: "Document limit reached",
-              message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads. Please upload a revision to an existing thread or delete an unreviewed upload.`,
-              code: "DOCUMENT_LIMIT_REACHED",
-            },
-            { status: 400 },
-          );
-        }
-        if (dbError.message === "VERSION_LIMIT_REACHED") {
-          return NextResponse.json(
-            {
-              error: "Version limit reached",
-              message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
-              code: "VERSION_LIMIT_REACHED",
-            },
-            { status: 400 },
-          );
-        }
-      }
-
-      return NextResponse.json(
-        {
-          error: "Save failed",
-          message:
-            "The file was uploaded but couldn't be saved to your account. Please try again or contact support.",
-          code: "SAVE_FAILED",
-        },
-        { status: 500 },
-      );
-    }
+    const persisted = await persistAppointmentDocumentWithRetry({
+      appointmentId,
+      uploadedByRole: "CONSULTEE",
+      storage: resolvedStorage.storage,
+      originalName: parsedInput.originalName,
+      description: parsedInput.description,
+      parentDocumentId: parsedInput.responseToDocumentId,
+      missingParentStatus: 400,
+      missingParentError: "Invalid revision target",
+      missingParentMessage:
+        "The document this revision replaces was not found on this appointment.",
+      fallbackErrorCode: "SAVE_FAILED",
+      fallbackErrorTitle: "Save failed",
+      fallbackErrorMessage:
+        "The file was uploaded but couldn't be saved to your account. Please try again or contact support.",
+    });
+    if (!persisted.ok) return persisted.response;
+    const { document } = persisted;
 
     const consultantUserId =
       appointment.consultation?.consultationPlan?.consultantProfile?.user?.id ||
@@ -864,8 +626,8 @@ export async function POST(
             appointmentId,
             documentId: document.id,
             uploadedByRole: "CONSULTEE",
-            fileName: originalName,
-            isThreaded: Boolean(revisionOf),
+            fileName: parsedInput.originalName,
+            isThreaded: Boolean(parsedInput.responseToDocumentId),
             versionNo: document.versionNo,
             consultantName,
             consulteeName,
@@ -894,7 +656,7 @@ export async function POST(
     return NextResponse.json(
       {
         data: document,
-        message: `Successfully uploaded "${originalName}" for ${appointmentTitle}. ${consultantName} will review it and provide feedback.${devModeMessage}`,
+        message: `Successfully uploaded "${parsedInput.originalName}" for ${appointmentTitle}. ${consultantName} will review it and provide feedback.${devModeMessage}`,
       },
       { status: 201 },
     );
@@ -905,21 +667,19 @@ export async function POST(
       { tags: { subsystem: "appointments" } },
     );
 
-    if (error instanceof Error) {
-      if (
-        error.message.includes("connect") ||
-        error.message.includes("timeout")
-      ) {
-        return NextResponse.json(
-          {
-            error: "Connection error",
-            message:
-              "Upload failed due to connection issues. Please check your internet connection and try again.",
-            code: "CONNECTION_ERROR",
-          },
-          { status: 503 },
-        );
-      }
+    if (
+      error instanceof Error &&
+      (error.message.includes("connect") || error.message.includes("timeout"))
+    ) {
+      return NextResponse.json(
+        {
+          error: "Connection error",
+          message:
+            "Upload failed due to connection issues. Please check your internet connection and try again.",
+          code: "CONNECTION_ERROR",
+        },
+        { status: 503 },
+      );
     }
 
     return NextResponse.json(

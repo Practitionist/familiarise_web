@@ -15,6 +15,10 @@ import {
   isReviewTransitionAllowed,
   type ReviewStatus,
 } from "@/lib/documents/document-review";
+import {
+  extractReviewNotificationTarget,
+  REVIEW_NOTIFICATION_APPOINTMENT_SELECT,
+} from "@/lib/documents/upload-pipeline";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { notifyDocumentReviewed } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -337,68 +341,31 @@ export async function PATCH(
     if (statusChanged && validStatus) {
       const appointmentInfo = await prisma.appointment.findUnique({
         where: { id: appointmentId },
-        select: {
-          organizationId: true,
-          consultation: {
-            select: {
-              requestedBy: {
-                select: { id: true, user: { select: { id: true } } },
-              },
-              consultationPlan: {
-                select: {
-                  consultantProfile: {
-                    select: { user: { select: { name: true } } },
-                  },
-                },
-              },
-            },
-          },
-          subscription: {
-            select: {
-              requestedBy: {
-                select: { id: true, user: { select: { id: true } } },
-              },
-              subscriptionPlan: {
-                select: {
-                  consultantProfile: {
-                    select: { user: { select: { name: true } } },
-                  },
-                },
-              },
-            },
-          },
-        },
+        select: REVIEW_NOTIFICATION_APPOINTMENT_SELECT,
       });
-      const recipientId =
-        appointmentInfo?.consultation?.requestedBy?.user?.id ||
-        appointmentInfo?.subscription?.requestedBy?.user?.id;
-      const consulteeProfileId =
-        appointmentInfo?.consultation?.requestedBy?.id ||
-        appointmentInfo?.subscription?.requestedBy?.id;
-      const reviewerName =
-        appointmentInfo?.consultation?.consultationPlan?.consultantProfile?.user
-          ?.name ||
-        appointmentInfo?.subscription?.subscriptionPlan?.consultantProfile?.user
-          ?.name ||
-        "The consultant";
+      const target = extractReviewNotificationTarget(appointmentInfo);
 
-      if (recipientId) {
+      if (target.recipientId) {
+        const recipientId = target.recipientId;
         await stageNowAttemptAfter("consultee document-review notice", () =>
           notifyDocumentReviewed(
             recipientId,
             {
-              ...notificationScope(appointmentInfo?.organizationId),
+              ...notificationScope(target.organizationId),
               appointmentId,
               documentId,
               reviewStatus: validStatus as ReviewStatus,
               reviewNotes: validNotes || undefined,
               originalName: document.originalName,
-              consultantName: reviewerName,
+              consultantName: target.reviewerName,
               dashboardUrl: scopedHref({
-                organizationId: appointmentInfo?.organizationId,
+                organizationId: target.organizationId,
                 surface: "appointments",
-                personal: consulteeProfileId
-                  ? { kind: "consultee", profileId: consulteeProfileId }
+                personal: target.consulteeProfileId
+                  ? {
+                      kind: "consultee",
+                      profileId: target.consulteeProfileId,
+                    }
                   : undefined,
               }),
             },

@@ -84,6 +84,306 @@ const CONSULTANT_STATUS_OPTIONS = [
   },
 ] as const;
 
+async function fetchDocumentPreviewUrl(
+  appointmentId: string,
+  documentId: string,
+): Promise<{ url: string | null; errorCode: PreviewErrorCode }> {
+  const inlineEndpoint = getAppointmentDocumentUrl(
+    appointmentId,
+    documentId,
+    "inline",
+  );
+  try {
+    const res = await fetch(`${inlineEndpoint}&format=json`);
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      if (res.status === 404 || payload?.code === "STORAGE_MISSING") {
+        return { url: null, errorCode: "STORAGE_MISSING" };
+      }
+      if (res.status === 403 || payload?.code === "APPOINTMENT_TERMINAL") {
+        return { url: null, errorCode: "APPOINTMENT_TERMINAL" };
+      }
+      return { url: null, errorCode: "PREVIEW_FAILED" };
+    }
+    return {
+      url: payload?.signedUrl ?? inlineEndpoint,
+      errorCode: null,
+    };
+  } catch {
+    return { url: null, errorCode: "PREVIEW_FAILED" };
+  }
+}
+
+function DocumentPreviewStage({
+  activeVersion,
+  canPreviewInline,
+  previewErrorCode,
+  isLoadingPreview,
+  inlineUrl,
+  downloadUrl,
+}: Readonly<{
+  activeVersion: ThreadableDocument;
+  canPreviewInline: boolean;
+  previewErrorCode: PreviewErrorCode;
+  isLoadingPreview: boolean;
+  inlineUrl: string;
+  downloadUrl: string;
+}>) {
+  if (!canPreviewInline) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        <FileText className="mb-3 h-10 w-10 text-muted-foreground" />
+        <p className="text-sm font-medium text-foreground">
+          {activeVersion.originalName}
+        </p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          Inline preview is available for PDFs, images, and text files. Download
+          this file ({formatFileSize(activeVersion.fileSize)}) to inspect it
+          locally.
+        </p>
+        <Button asChild size="sm" variant="outline" className="mt-4">
+          <a href={downloadUrl}>
+            <Download className="mr-1.5 h-3.5 w-3.5" />
+            Download ({formatFileSize(activeVersion.fileSize)})
+          </a>
+        </Button>
+      </div>
+    );
+  }
+
+  if (previewErrorCode === "STORAGE_MISSING") {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        <AlertCircle className="mb-3 h-10 w-10 text-destructive/70" />
+        <p className="text-sm font-medium text-foreground">File unavailable</p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          This file is no longer in storage.
+        </p>
+      </div>
+    );
+  }
+
+  if (previewErrorCode === "APPOINTMENT_TERMINAL") {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        <Lock className="mb-3 h-10 w-10 text-muted-foreground" />
+        <p className="text-sm font-medium text-foreground">Booking closed</p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          Files on cancelled or expired sessions are closed.
+        </p>
+      </div>
+    );
+  }
+
+  if (isLoadingPreview) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 text-xs text-muted-foreground">
+        <Loader2 className="mb-2 h-6 w-6 animate-spin" />
+        Preparing preview...
+      </div>
+    );
+  }
+
+  if (activeVersion.mimeType.startsWith("image/")) {
+    return (
+      <img
+        src={inlineUrl}
+        alt={activeVersion.originalName}
+        className="max-h-[60vh] max-w-full object-contain p-2"
+      />
+    );
+  }
+
+  return (
+    <iframe
+      title={activeVersion.originalName}
+      src={inlineUrl}
+      className="h-[60vh] w-full border-0"
+    />
+  );
+}
+
+function DocumentThreadActionControls({
+  viewerRole,
+  thread,
+  reviewTarget,
+  statusDraft,
+  setStatusDraft,
+  notesDraft,
+  setNotesDraft,
+  canUpload,
+  nextVersionNo,
+  revisionNote,
+  setRevisionNote,
+  setAttachmentFile,
+  uploadProgress,
+}: Readonly<{
+  viewerRole: "consultee" | "consultant";
+  thread: DocumentThread<ThreadableDocument>;
+  reviewTarget: ThreadableDocument | null;
+  statusDraft: string;
+  setStatusDraft: (val: string) => void;
+  notesDraft: string;
+  setNotesDraft: (val: string) => void;
+  canUpload: boolean;
+  nextVersionNo: number;
+  revisionNote: string;
+  setRevisionNote: (val: string) => void;
+  setAttachmentFile: (file: File | null) => void;
+  uploadProgress: number | null;
+}>) {
+  if (viewerRole === "consultant") {
+    if (!reviewTarget) {
+      return (
+        <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+          Expert resource shared with learner — no learner submission awaiting
+          review in this thread.
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-3 rounded-lg border p-3">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Review & Feedback
+        </p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {CONSULTANT_STATUS_OPTIONS.map((opt) => {
+            const Icon = opt.icon;
+            const active = statusDraft === opt.value;
+            const allowed = isReviewTransitionAllowed(
+              reviewTarget.reviewStatus as ReviewStatus,
+              opt.value,
+            );
+            return (
+              <Button
+                key={opt.value}
+                type="button"
+                size="sm"
+                disabled={!allowed}
+                variant={active ? "default" : "outline"}
+                className="justify-start text-xs"
+                onClick={() => setStatusDraft(opt.value)}
+              >
+                <Icon className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{opt.label}</span>
+              </Button>
+            );
+          })}
+        </div>
+
+        <div className="space-y-1">
+          <label
+            htmlFor="drawer-review-notes"
+            className="text-xs font-medium text-foreground"
+          >
+            Feedback notes for learner
+          </label>
+          <Textarea
+            id="drawer-review-notes"
+            rows={4}
+            value={notesDraft}
+            onChange={(e) => setNotesDraft(e.target.value)}
+            placeholder="Share actionable feedback, edits needed, or approval notes..."
+            className="text-xs"
+          />
+        </div>
+
+        {canUpload && (
+          <div className="space-y-1">
+            <label
+              htmlFor="drawer-consultant-attachment"
+              className="inline-flex items-center gap-1 text-xs font-medium text-foreground"
+            >
+              <Paperclip className="h-3 w-3" />
+              Attach marked-up file (optional)
+            </label>
+            <Input
+              id="drawer-consultant-attachment"
+              type="file"
+              accept={ALLOWED_DOCUMENT_ACCEPT_ATTR}
+              onChange={(e) => setAttachmentFile(e.target.files?.[0] ?? null)}
+              className="h-8 text-xs"
+            />
+            {uploadProgress !== null && (
+              <p className="text-[11px] text-muted-foreground">
+                Uploading attachment... {uploadProgress}%
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Expert Feedback
+        </p>
+        {thread.effectiveReviewNotes ? (
+          <p className="whitespace-pre-wrap text-sm text-foreground">
+            {thread.effectiveReviewNotes}
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No written feedback notes on this thread yet.
+          </p>
+        )}
+
+        {thread.latestConsultantResponse && (
+          <div className="flex items-center justify-between rounded border bg-background px-2.5 py-1.5 text-xs">
+            <span className="truncate font-medium">
+              Attached response: {thread.latestConsultantResponse.originalName}
+            </span>
+            <a
+              href={getAppointmentDocumentUrl(
+                thread.appointmentId,
+                thread.latestConsultantResponse.id,
+                "attachment",
+              )}
+              className="ml-2 inline-flex shrink-0 items-center gap-1 font-medium text-primary hover:underline"
+            >
+              Download
+              <Download className="h-3 w-3" />
+            </a>
+          </div>
+        )}
+      </div>
+
+      {canUpload && (
+        <div className="space-y-2.5 rounded-lg border p-3">
+          <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <FileUp className="h-3.5 w-3.5" />
+            Upload Revision (v{nextVersionNo})
+          </p>
+          <Input
+            type="file"
+            aria-label="Select revised file"
+            accept={ALLOWED_DOCUMENT_ACCEPT_ATTR}
+            onChange={(e) => setAttachmentFile(e.target.files?.[0] ?? null)}
+            className="h-8 text-xs"
+          />
+          <Input
+            type="text"
+            aria-label="Summary of changes"
+            placeholder="Optional summary of changes in this version..."
+            value={revisionNote}
+            onChange={(e) => setRevisionNote(e.target.value)}
+            className="h-8 text-xs"
+          />
+          {uploadProgress !== null && (
+            <p className="text-[11px] text-muted-foreground">
+              Uploading v{nextVersionNo}... {uploadProgress}%
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DocumentReviewDrawer({
   thread,
   isOpen,
@@ -159,55 +459,21 @@ export function DocumentReviewDrawer({
     }
 
     let cancelled = false;
-    setIsLoadingPreview(true);
-    setPreviewErrorCode(null);
-    setSignedPreviewUrl(null);
+    const loadPreview = async () => {
+      setIsLoadingPreview(true);
+      setPreviewErrorCode(null);
+      setSignedPreviewUrl(null);
+      const outcome = await fetchDocumentPreviewUrl(
+        thread.appointmentId,
+        activeVersion.id,
+      );
+      if (cancelled) return;
+      setSignedPreviewUrl(outcome.url);
+      setPreviewErrorCode(outcome.errorCode);
+      setIsLoadingPreview(false);
+    };
 
-    const metadataUrl = `${getAppointmentDocumentUrl(
-      thread.appointmentId,
-      activeVersion.id,
-      "inline",
-    )}&format=json`;
-
-    fetch(metadataUrl)
-      .then(async (res) => {
-        if (cancelled) return;
-        const payload = await res.json().catch(() => null);
-        if (!res.ok) {
-          if (res.status === 404 || payload?.code === "STORAGE_MISSING") {
-            setPreviewErrorCode("STORAGE_MISSING");
-          } else if (
-            res.status === 403 ||
-            payload?.code === "APPOINTMENT_TERMINAL"
-          ) {
-            setPreviewErrorCode("APPOINTMENT_TERMINAL");
-          } else {
-            setPreviewErrorCode("PREVIEW_FAILED");
-          }
-          return;
-        }
-        if (payload?.signedUrl) {
-          setSignedPreviewUrl(payload.signedUrl);
-        } else {
-          setSignedPreviewUrl(
-            getAppointmentDocumentUrl(
-              thread.appointmentId,
-              activeVersion.id,
-              "inline",
-            ),
-          );
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setPreviewErrorCode("PREVIEW_FAILED");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingPreview(false);
-        }
-      });
+    void loadPreview();
 
     return () => {
       cancelled = true;
@@ -227,7 +493,6 @@ export function DocumentReviewDrawer({
     activeVersion.id,
     "attachment",
   );
-  const isImage = activeVersion.mimeType.startsWith("image/");
 
   const canDeleteActiveVersion =
     (viewerRole === "consultee" &&
@@ -377,74 +642,11 @@ export function DocumentReviewDrawer({
     }
   };
 
-  let previewStage: React.ReactNode;
-  if (!canPreviewInline) {
-    previewStage = (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <FileText className="mb-3 h-10 w-10 text-muted-foreground" />
-        <p className="text-sm font-medium text-foreground">
-          {activeVersion.originalName}
-        </p>
-        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-          Inline preview is available for PDFs, images, and text files. Download
-          this file ({formatFileSize(activeVersion.fileSize)}) to inspect it
-          locally.
-        </p>
-        <Button asChild size="sm" variant="outline" className="mt-4">
-          <a href={downloadUrl}>
-            <Download className="mr-1.5 h-3.5 w-3.5" />
-            Download ({formatFileSize(activeVersion.fileSize)})
-          </a>
-        </Button>
-      </div>
-    );
-  } else if (previewErrorCode === "STORAGE_MISSING") {
-    previewStage = (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <AlertCircle className="mb-3 h-10 w-10 text-destructive/70" />
-        <p className="text-sm font-medium text-foreground">File unavailable</p>
-        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-          This file is no longer in storage.
-        </p>
-      </div>
-    );
-  } else if (previewErrorCode === "APPOINTMENT_TERMINAL") {
-    previewStage = (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <Lock className="mb-3 h-10 w-10 text-muted-foreground" />
-        <p className="text-sm font-medium text-foreground">Booking closed</p>
-        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-          Files on cancelled or expired sessions are closed.
-        </p>
-      </div>
-    );
-  } else if (isLoadingPreview) {
-    previewStage = (
-      <div className="flex flex-col items-center justify-center p-8 text-xs text-muted-foreground">
-        <Loader2 className="mb-2 h-6 w-6 animate-spin" />
-        Preparing preview...
-      </div>
-    );
-  } else if (isImage) {
-    previewStage = (
-      <img
-        src={inlineUrl}
-        alt={activeVersion.originalName}
-        className="max-h-[60vh] max-w-full object-contain p-2"
-      />
-    );
-  } else {
-    previewStage = (
-      <iframe
-        title={activeVersion.originalName}
-        src={inlineUrl}
-        className="h-[60vh] w-full border-0"
-      />
-    );
-  }
-
   const isExpertHandoutRoot =
     thread.rootDocument.uploadedByRole === "CONSULTANT";
+  const showConsultantSave =
+    viewerRole === "consultant" && Boolean(reviewTarget);
+  const showConsulteeSave = viewerRole === "consultee" && canUpload;
 
   return (
     <ResponsiveModal open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -529,7 +731,14 @@ export function DocumentReviewDrawer({
             </div>
 
             <div className="flex min-h-[380px] flex-1 items-center justify-center overflow-hidden rounded-lg border bg-muted/20">
-              {previewStage}
+              <DocumentPreviewStage
+                activeVersion={activeVersion}
+                canPreviewInline={canPreviewInline}
+                previewErrorCode={previewErrorCode}
+                isLoadingPreview={isLoadingPreview}
+                inlineUrl={inlineUrl}
+                downloadUrl={downloadUrl}
+              />
             </div>
           </div>
 
@@ -575,155 +784,21 @@ export function DocumentReviewDrawer({
                 )}
               </div>
 
-              {viewerRole === "consultant" ? (
-                reviewTarget ? (
-                  <div className="space-y-3 rounded-lg border p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Review & Feedback
-                    </p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {CONSULTANT_STATUS_OPTIONS.map((opt) => {
-                        const Icon = opt.icon;
-                        const active = statusDraft === opt.value;
-                        const allowed = isReviewTransitionAllowed(
-                          reviewTarget.reviewStatus as ReviewStatus,
-                          opt.value,
-                        );
-                        return (
-                          <Button
-                            key={opt.value}
-                            type="button"
-                            size="sm"
-                            disabled={!allowed}
-                            variant={active ? "default" : "outline"}
-                            className="justify-start text-xs"
-                            onClick={() => setStatusDraft(opt.value)}
-                          >
-                            <Icon className="mr-1.5 h-3.5 w-3.5 shrink-0" />
-                            <span className="truncate">{opt.label}</span>
-                          </Button>
-                        );
-                      })}
-                    </div>
-
-                    <div className="space-y-1">
-                      <label
-                        htmlFor="drawer-review-notes"
-                        className="text-xs font-medium text-foreground"
-                      >
-                        Feedback notes for learner
-                      </label>
-                      <Textarea
-                        id="drawer-review-notes"
-                        rows={4}
-                        value={notesDraft}
-                        onChange={(e) => setNotesDraft(e.target.value)}
-                        placeholder="Share actionable feedback, edits needed, or approval notes..."
-                        className="text-xs"
-                      />
-                    </div>
-
-                    {canUpload && (
-                      <div className="space-y-1">
-                        <label
-                          htmlFor="drawer-consultant-attachment"
-                          className="inline-flex items-center gap-1 text-xs font-medium text-foreground"
-                        >
-                          <Paperclip className="h-3 w-3" />
-                          Attach marked-up file (optional)
-                        </label>
-                        <Input
-                          id="drawer-consultant-attachment"
-                          type="file"
-                          accept={ALLOWED_DOCUMENT_ACCEPT_ATTR}
-                          onChange={(e) =>
-                            setAttachmentFile(e.target.files?.[0] ?? null)
-                          }
-                          className="h-8 text-xs"
-                        />
-                        {uploadProgress !== null && (
-                          <p className="text-[11px] text-muted-foreground">
-                            Uploading attachment... {uploadProgress}%
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                    Expert resource shared with learner — no learner submission
-                    awaiting review in this thread.
-                  </div>
-                )
-              ) : (
-                <div className="space-y-3">
-                  <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Expert Feedback
-                    </p>
-                    {thread.effectiveReviewNotes ? (
-                      <p className="whitespace-pre-wrap text-sm text-foreground">
-                        {thread.effectiveReviewNotes}
-                      </p>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">
-                        No written feedback notes on this thread yet.
-                      </p>
-                    )}
-
-                    {thread.latestConsultantResponse && (
-                      <div className="flex items-center justify-between rounded border bg-background px-2.5 py-1.5 text-xs">
-                        <span className="truncate font-medium">
-                          Attached response:{" "}
-                          {thread.latestConsultantResponse.originalName}
-                        </span>
-                        <a
-                          href={getAppointmentDocumentUrl(
-                            thread.appointmentId,
-                            thread.latestConsultantResponse.id,
-                            "attachment",
-                          )}
-                          className="ml-2 inline-flex shrink-0 items-center gap-1 font-medium text-primary hover:underline"
-                        >
-                          Download
-                          <Download className="h-3 w-3" />
-                        </a>
-                      </div>
-                    )}
-                  </div>
-
-                  {canUpload && (
-                    <div className="space-y-2.5 rounded-lg border p-3">
-                      <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        <FileUp className="h-3.5 w-3.5" />
-                        Upload Revision (v{nextVersionNo})
-                      </p>
-                      <Input
-                        type="file"
-                        aria-label="Select revised file"
-                        accept={ALLOWED_DOCUMENT_ACCEPT_ATTR}
-                        onChange={(e) =>
-                          setAttachmentFile(e.target.files?.[0] ?? null)
-                        }
-                        className="h-8 text-xs"
-                      />
-                      <Input
-                        type="text"
-                        aria-label="Summary of changes"
-                        placeholder="Optional summary of changes in this version..."
-                        value={revisionNote}
-                        onChange={(e) => setRevisionNote(e.target.value)}
-                        className="h-8 text-xs"
-                      />
-                      {uploadProgress !== null && (
-                        <p className="text-[11px] text-muted-foreground">
-                          Uploading v{nextVersionNo}... {uploadProgress}%
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
+              <DocumentThreadActionControls
+                viewerRole={viewerRole}
+                thread={thread}
+                reviewTarget={reviewTarget}
+                statusDraft={statusDraft}
+                setStatusDraft={setStatusDraft}
+                notesDraft={notesDraft}
+                setNotesDraft={setNotesDraft}
+                canUpload={canUpload}
+                nextVersionNo={nextVersionNo}
+                revisionNote={revisionNote}
+                setRevisionNote={setRevisionNote}
+                setAttachmentFile={setAttachmentFile}
+                uploadProgress={uploadProgress}
+              />
             </div>
           </div>
         </div>
@@ -732,31 +807,30 @@ export function DocumentReviewDrawer({
           <Button variant="outline" size="sm" onClick={onClose}>
             Close
           </Button>
-          {viewerRole === "consultant"
-            ? reviewTarget && (
-                <Button
-                  size="sm"
-                  onClick={() => void handleSaveConsultantReview()}
-                  disabled={isSaving}
-                >
-                  {isSaving && (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  )}
-                  Save Feedback
-                </Button>
-              )
-            : canUpload && (
-                <Button
-                  size="sm"
-                  onClick={() => void handleUploadConsulteeRevision()}
-                  disabled={isSaving || !attachmentFile}
-                >
-                  {isSaving && (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  )}
-                  Upload v{nextVersionNo} Revision
-                </Button>
+          {showConsultantSave && (
+            <Button
+              size="sm"
+              onClick={() => void handleSaveConsultantReview()}
+              disabled={isSaving}
+            >
+              {isSaving && (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               )}
+              Save Feedback
+            </Button>
+          )}
+          {showConsulteeSave && (
+            <Button
+              size="sm"
+              onClick={() => void handleUploadConsulteeRevision()}
+              disabled={isSaving || !attachmentFile}
+            >
+              {isSaving && (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              )}
+              Upload v{nextVersionNo} Revision
+            </Button>
+          )}
         </ResponsiveModalFooter>
       </ResponsiveModalContent>
     </ResponsiveModal>

@@ -1,11 +1,7 @@
 /**
- * Client-side 2-phase presigned upload helper with XHR upload progress.
- *
- * Phase 1: `POST /api/appointments/[appointmentId]/documents/upload-url` mints a single-use
- *          signed upload URL for private Supabase Storage bucket `documents`.
- * Phase 2: Direct PUT to storage with XHR progress tracking, followed by lightweight metadata POST.
- *          Falls back seamlessly to multipart FormData upload when running in environments/tests
- *          where direct storage PUT URLs are not provisioned.
+ * Client-side 2-phase presigned upload helper with XHR upload progress:
+ * mints a single-use upload URL (`/upload-url`), PUTs bytes directly to Supabase Storage,
+ * and commits metadata without hitting the 6 MB serverless body ceiling.
  */
 
 export interface DirectUploadDocumentParams {
@@ -62,18 +58,93 @@ async function ensureOkResponse(res: Response): Promise<Response> {
   return res;
 }
 
+async function tryPresignedDirectUpload(
+  appointmentId: string,
+  targetEndpoint: string,
+  params: DirectUploadDocumentParams,
+): Promise<Response | null> {
+  const { file, description, responseToDocumentId, onProgress } = params;
+
+  try {
+    const presignRes = await fetch(
+      `/api/appointments/${encodeURIComponent(appointmentId)}/documents/upload-url`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          originalName: file.name,
+          mimeType: file.type,
+          fileSize: file.size,
+          responseToDocumentId: responseToDocumentId || undefined,
+        }),
+      },
+    );
+
+    if (presignRes.ok) {
+      const presignJson = (await presignRes.json()) as {
+        uploadUrl?: string;
+        storagePath?: string;
+      };
+      if (presignJson.uploadUrl && presignJson.storagePath) {
+        await putFileWithProgress(presignJson.uploadUrl, file, onProgress);
+
+        const commitRes = await fetch(targetEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            storagePath: presignJson.storagePath,
+            originalName: file.name,
+            mimeType: file.type,
+            fileSize: file.size,
+            description: description?.trim() || undefined,
+            responseToDocumentId: responseToDocumentId || undefined,
+          }),
+        });
+        return ensureOkResponse(commitRes);
+      }
+      return null;
+    }
+
+    if (
+      presignRes.status >= 400 &&
+      presignRes.status < 500 &&
+      presignRes.status !== 404
+    ) {
+      return ensureOkResponse(presignRes);
+    }
+    return null;
+  } catch (err) {
+    if (err instanceof Error && !err.message.includes("Storage upload")) {
+      throw err;
+    }
+    return null;
+  }
+}
+
+async function uploadMultipartFallback(
+  targetEndpoint: string,
+  params: DirectUploadDocumentParams,
+): Promise<Response> {
+  const formData = new FormData();
+  formData.append("file", params.file);
+  if (params.description?.trim()) {
+    formData.append("description", params.description.trim());
+  }
+  if (params.responseToDocumentId) {
+    formData.append("responseToDocumentId", params.responseToDocumentId);
+  }
+
+  const fallbackRes = await fetch(targetEndpoint, {
+    method: "POST",
+    body: formData,
+  });
+  return ensureOkResponse(fallbackRes);
+}
+
 export async function uploadAppointmentDocumentWithProgress(
   params: DirectUploadDocumentParams,
 ): Promise<Response> {
-  const {
-    appointmentId,
-    file,
-    role = "consultee",
-    endpoint,
-    description,
-    responseToDocumentId,
-    onProgress,
-  } = params;
+  const { appointmentId, role = "consultee", endpoint } = params;
 
   const targetEndpoint =
     endpoint ??
@@ -82,69 +153,13 @@ export async function uploadAppointmentDocumentWithProgress(
       : `/api/appointments/${encodeURIComponent(appointmentId)}/documents`);
 
   if (typeof XMLHttpRequest !== "undefined") {
-    try {
-      const presignRes = await fetch(
-        `/api/appointments/${encodeURIComponent(appointmentId)}/documents/upload-url`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            originalName: file.name,
-            mimeType: file.type,
-            fileSize: file.size,
-            responseToDocumentId: responseToDocumentId || undefined,
-          }),
-        },
-      );
-
-      if (presignRes.ok) {
-        const presignJson = (await presignRes.json()) as {
-          uploadUrl?: string;
-          storagePath?: string;
-        };
-        if (presignJson.uploadUrl && presignJson.storagePath) {
-          await putFileWithProgress(presignJson.uploadUrl, file, onProgress);
-
-          const postRes = await fetch(targetEndpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              storagePath: presignJson.storagePath,
-              originalName: file.name,
-              mimeType: file.type,
-              fileSize: file.size,
-              description: description?.trim() || undefined,
-              responseToDocumentId: responseToDocumentId || undefined,
-            }),
-          });
-          return ensureOkResponse(postRes);
-        }
-      } else if (
-        presignRes.status >= 400 &&
-        presignRes.status < 500 &&
-        presignRes.status !== 404
-      ) {
-        return ensureOkResponse(presignRes);
-      }
-    } catch (err) {
-      if (err instanceof Error && !err.message.includes("Storage upload")) {
-        throw err;
-      }
-    }
+    const directRes = await tryPresignedDirectUpload(
+      appointmentId,
+      targetEndpoint,
+      params,
+    );
+    if (directRes) return directRes;
   }
 
-  const formData = new FormData();
-  formData.append("file", file);
-  if (description?.trim()) {
-    formData.append("description", description.trim());
-  }
-  if (responseToDocumentId) {
-    formData.append("responseToDocumentId", responseToDocumentId);
-  }
-
-  const fallbackRes = await fetch(targetEndpoint, {
-    method: "POST",
-    body: formData,
-  });
-  return ensureOkResponse(fallbackRes);
+  return uploadMultipartFallback(targetEndpoint, params);
 }
