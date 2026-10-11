@@ -11,7 +11,7 @@ import { getSession } from "@/lib/auth-server";
  */
 export async function POST() {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -49,7 +49,10 @@ export async function POST() {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "notifications" } },
+    );
     console.error("Failed to sync Novu subscriber:", error);
     return NextResponse.json({ error: "Sync failed" }, { status: 500 });
   }

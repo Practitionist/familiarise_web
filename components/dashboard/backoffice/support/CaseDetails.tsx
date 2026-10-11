@@ -250,6 +250,36 @@ export function CaseDetails({ data }: Readonly<{ data: CaseWorkspace }>) {
         </Section>
       )}
 
+      {data.events && data.events.length > 0 && (
+        <Section title="History">
+          <details className="text-xs">
+            <summary className="cursor-pointer font-medium text-foreground">
+              Audit trail ({data.events.length})
+            </summary>
+            <ul className="mt-2 space-y-2 border-l border-border pl-2.5">
+              {data.events.map((ev) => (
+                <li key={ev.id} className="space-y-0.5">
+                  <p className="font-medium text-foreground">
+                    {ev.actorName ?? "System"} · {humanizeEnum(ev.kind)}
+                  </p>
+                  {(ev.fromValue || ev.toValue) && (
+                    <p className="text-muted-foreground">
+                      {ev.fromValue ?? "—"} → {ev.toValue ?? "—"}
+                    </p>
+                  )}
+                  {ev.note && (
+                    <p className="italic text-foreground">{ev.note}</p>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    {day(ev.createdAt)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </Section>
+      )}
+
       {can("engineering.escalate") && (
         <Section title="Engineering">
           <a

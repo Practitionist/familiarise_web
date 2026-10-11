@@ -61,9 +61,11 @@ jest.mock("../../lib/payments/ledger/post", () => ({
     .mockResolvedValue({ transactionId: "ltxn-stub", created: true }),
 }));
 
-// Capture every organizationEarnings.create payload across the suite.
+// Capture every organizationEarnings.create and consultantEarnings.create payload across the suite.
 type CapturedCreate = {
   organizationId: string;
+  consultantProfileId?: string | null;
+  role?: string;
   paymentId: string;
   grossAmountPaise: number;
   platformFeePaise: number;
@@ -75,7 +77,16 @@ type CapturedCreate = {
   consultantBpsApplied: number | null;
 };
 
+type CapturedConsultantCreate = {
+  consultantProfileId: string;
+  role: string;
+  grossAmount: number;
+  platformFeePaise: number;
+  consultantSharePaise: number;
+};
+
 let capturedOrgEarnings: CapturedCreate[] = [];
+let capturedConsultantEarnings: CapturedConsultantCreate[] = [];
 let p2002Targets: Set<string> = new Set();
 
 // Mock prisma — must respond to $transaction with a tx object whose
@@ -89,10 +100,6 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn().mockResolvedValue(null),
     },
     payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-    // #812 — createEarningsFromPayment now posts a balanced booking journal and
-    // the ledger BLOCKS on failure, so the stub must satisfy postLedgerTxn
-    // (idempotency miss → upsert account → create txn → upsert balance). No-ops;
-    // the journal is asserted by ledger-specific tests, not this earnings test.
     ledgerTransaction: {
       findUnique: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: "ltxn-1" }),
@@ -112,10 +119,15 @@ jest.mock("../../lib/prisma", () => {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest
         .fn()
-        .mockImplementation(async ({ data }: { data: { id?: string } }) => ({
-          id: "earnings-" + Math.random().toString(36).slice(2, 8),
-          ...data,
-        })),
+        .mockImplementation(
+          async ({ data }: { data: CapturedConsultantCreate }) => {
+            capturedConsultantEarnings.push(data);
+            return {
+              id: "earnings-" + capturedConsultantEarnings.length,
+              ...data,
+            };
+          },
+        ),
     },
     consultantProfile: {
       update: jest.fn().mockResolvedValue({}),
@@ -132,9 +144,6 @@ jest.mock("../../lib/prisma", () => {
         .mockImplementation(async ({ data }: { data: CapturedCreate }) => {
           const key = `${data.paymentId}::${data.organizationId}`;
           if (p2002Targets.has(key)) {
-            // Simulate Prisma P2002 unique constraint violation.
-            // We can't import Prisma's real error class without dragging
-            // the runtime in; throw an object that quacks like one.
             const err = new Error("Unique constraint failed") as Error & {
               code: string;
               clientVersion: string;
@@ -143,7 +152,6 @@ jest.mock("../../lib/prisma", () => {
             err.code = "P2002";
             err.clientVersion = "test";
             err.meta = { target: ["paymentId", "organizationId"] };
-            // Re-tag prototype so `instanceof Prisma.PrismaClientKnownRequestError` matches
             const { Prisma } = jest.requireActual("@prisma/client");
             Object.setPrototypeOf(
               err,
@@ -158,10 +166,6 @@ jest.mock("../../lib/prisma", () => {
     membership: {
       findFirst: jest.fn(),
     },
-    // #catalog-archive — resolveOrgSplit reads plan ownership in-transaction so
-    // an org-published plan settles to the org that SOLD it. These tests use a
-    // personal plan, so both resolve to no owner and the oldest-membership
-    // fallback applies, which is what the assertions below already expect.
     webinarPlan: {
       findUnique: jest.fn().mockResolvedValue({ organizationId: null }),
     },
@@ -177,8 +181,6 @@ jest.mock("../../lib/prisma", () => {
         .mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
           return await fn(mockTx);
         }),
-      // Expose tx-bound mocks via the default export so tests can
-      // configure findFirst per-case.
       __mockTx: mockTx,
     },
   };
@@ -189,8 +191,6 @@ import { calculateRevenueSplit } from "@/lib/collaborators/service";
 import { resolveEffectiveRateCard } from "@/lib/api/organizations/rate-card";
 import { createEarningsFromPayment } from "@/lib/payments/payouts/earnings-service";
 
-// `findFirst` is the time-scoped membership lookup inside resolveOrgSplit.
-// We set it per-test to map consultantProfileId -> { orgId, payoutRecipient }.
 const mockedTx = (
   prisma as unknown as {
     __mockTx: {
@@ -210,7 +210,6 @@ const mockedResolveRateCard = resolveEffectiveRateCard as jest.MockedFunction<
 >;
 
 function makePayment(overrides: Partial<{ id: string; amount: number }> = {}) {
-  // Minimum shape the service reads.
   return {
     id: overrides.id ?? PAYMENT_ID,
     amount: overrides.amount ?? 100_000,
@@ -224,11 +223,6 @@ function makePayment(overrides: Partial<{ id: string; amount: number }> = {}) {
   } as unknown as Parameters<typeof createEarningsFromPayment>[0]["payment"];
 }
 
-/**
- * Configure `membership.findFirst` to return the right org per
- * consultantProfileId. Returning `null` simulates an independent
- * consultant (no HOST-org membership).
- */
 function setMembershipMap(
   map: Record<
     string,
@@ -267,14 +261,10 @@ function setStandardRateCard() {
 beforeEach(() => {
   jest.clearAllMocks();
   capturedOrgEarnings = [];
+  capturedConsultantEarnings = [];
   p2002Targets = new Set();
-  // Reset findFirst on consultantEarnings (idempotency check) to "no existing".
   mockedTx.consultantEarnings.findFirst.mockResolvedValue(null);
   mockedTx.organization.findUnique.mockResolvedValue({ status: "ACTIVE" });
-  // Restore the default organizationEarnings.create impl — test #2
-  // overrides this with a stateful counter via mockImplementation that
-  // jest.clearAllMocks() does NOT reset. Without this restore, the
-  // stale impl leaks into later tests in the file.
   mockedTx.organizationEarnings.create.mockImplementation(
     async ({ data }: { data: CapturedCreate }) => {
       const key = `${data.paymentId}::${data.organizationId}`;
@@ -301,7 +291,7 @@ beforeEach(() => {
   setStandardRateCard();
 });
 
-describe("A3 (Q3): per-collaborator HOST-org earnings", () => {
+describe("per-collaborator HOST-org earnings", () => {
   it("creates one OrgEarnings row per HOST-org collaborator (skips independents)", async () => {
     setMembershipMap({
       [PRIMARY_PROFILE]: { orgId: ORG_LEARNPRO },
@@ -309,19 +299,18 @@ describe("A3 (Q3): per-collaborator HOST-org earnings", () => {
       [COLLAB_INDEP_PROFILE]: null, // independent, no HOST membership
     });
 
-    // 100k gross. Primary org takes 10% platform, 5% org → 85k goes
-    // to the consultant pool. Splits: 30% to the hosted collab, 20% to
-    // the independent collab → owner keeps the rest.
+    // Pre-fee gross slices sum to exact payment.originalAmount (100_000):
+    // 50_000 owner + 30_000 hosted collab + 20_000 independent collab.
     mockedCalculateSplit.mockResolvedValue([
-      { consultantProfileId: PRIMARY_PROFILE, share: 42_500, role: "OWNER" },
+      { consultantProfileId: PRIMARY_PROFILE, share: 50_000, role: "OWNER" },
       {
         consultantProfileId: COLLAB_HOST_PROFILE,
-        share: 25_500,
+        share: 30_000,
         role: "CO_HOST",
       },
       {
         consultantProfileId: COLLAB_INDEP_PROFILE,
-        share: 17_000,
+        share: 20_000,
         role: "CO_HOST",
       },
     ]);
@@ -332,7 +321,7 @@ describe("A3 (Q3): per-collaborator HOST-org earnings", () => {
     });
 
     // Expect 2 OrgEarnings rows: LearnPro (primary) + AnotherAgency (hosted collab).
-    // Independent collab gets no row.
+    // Independent collab gets no org row.
     expect(capturedOrgEarnings).toHaveLength(2);
 
     const learnpro = capturedOrgEarnings.find(
@@ -345,21 +334,48 @@ describe("A3 (Q3): per-collaborator HOST-org earnings", () => {
     expect(learnpro).toBeDefined();
     expect(anotherAgency).toBeDefined();
 
-    // Primary org: gross is the full payment.
-    expect(learnpro!.grossAmountPaise).toBe(100_000);
-    expect(learnpro!.platformFeePaise).toBe(10_000); // 10%
-    expect(learnpro!.orgSharePaise).toBe(5_000); // 5%
-    expect(learnpro!.consultantSharePaise).toBe(85_000); // 85%
+    // Primary org settles owner's pre-fee gross slice (50_000) once through its 10/5/85 rate card:
+    expect(learnpro).toMatchObject({
+      grossAmountPaise: 50_000,
+      platformFeePaise: 5_000,
+      orgSharePaise: 2_500,
+      consultantSharePaise: 42_500,
+    });
 
-    // Collab org: "gross" is the collaborator's share (25_500), then
-    // routed through that org's rate card.
-    expect(anotherAgency!.grossAmountPaise).toBe(25_500);
-    expect(anotherAgency!.platformFeePaise).toBe(2_550); // 10% of 25_500
-    expect(anotherAgency!.orgSharePaise).toBe(1_275); // 5% of 25_500
-    expect(anotherAgency!.consultantSharePaise).toBe(21_675); // 85% of 25_500
-    expect(anotherAgency!.rateCardIdApplied).toBe(`rc-${ORG_ANOTHER}`);
+    // Collab org settles collaborator's pre-fee gross slice (30_000) once through its 10/5/85 rate card:
+    expect(anotherAgency).toMatchObject({
+      grossAmountPaise: 30_000,
+      platformFeePaise: 3_000,
+      orgSharePaise: 1_500,
+      consultantSharePaise: 25_500,
+      rateCardIdApplied: `rc-${ORG_ANOTHER}`,
+    });
 
-    // No row for the independent collaborator's profile id was ever passed.
+    // Verify ConsultantEarnings rows also carry single-fee slice settlements:
+    expect(capturedConsultantEarnings).toEqual([
+      expect.objectContaining({
+        consultantProfileId: PRIMARY_PROFILE,
+        role: "OWNER",
+        grossAmount: 50_000,
+        platformFeePaise: 5_000,
+        consultantSharePaise: 42_500,
+      }),
+      expect.objectContaining({
+        consultantProfileId: COLLAB_HOST_PROFILE,
+        role: "COLLABORATOR",
+        grossAmount: 30_000,
+        platformFeePaise: 3_000,
+        consultantSharePaise: 25_500,
+      }),
+      expect.objectContaining({
+        consultantProfileId: COLLAB_INDEP_PROFILE,
+        role: "COLLABORATOR",
+        grossAmount: 20_000,
+        platformFeePaise: 4_000,
+        consultantSharePaise: 16_000,
+      }),
+    ]);
+
     const independentRows = capturedOrgEarnings.filter((r) =>
       r.organizationId.includes("indep"),
     );
@@ -373,7 +389,7 @@ describe("A3 (Q3): per-collaborator HOST-org earnings", () => {
     });
 
     mockedCalculateSplit.mockResolvedValue([
-      { consultantProfileId: PRIMARY_PROFILE, share: 60_000, role: "OWNER" },
+      { consultantProfileId: PRIMARY_PROFILE, share: 75_000, role: "OWNER" },
       {
         consultantProfileId: COLLAB_SAME_ORG_PROFILE,
         share: 25_000,
@@ -387,19 +403,26 @@ describe("A3 (Q3): per-collaborator HOST-org earnings", () => {
     });
 
     // Both the primary expert and the same-org collaborator receive distinct
-    // OrganizationEarnings rows keyed by (paymentId, organizationId, consultantProfileId, role).
+    // OrganizationEarnings rows keyed by (paymentId, organizationId, consultantProfileId, role),
+    // each settling its own pre-fee gross slice once.
     expect(capturedOrgEarnings).toHaveLength(2);
     expect(capturedOrgEarnings[0]).toMatchObject({
       organizationId: ORG_LEARNPRO,
       consultantProfileId: PRIMARY_PROFILE,
       role: "OWNER",
-      grossAmountPaise: 100_000,
+      grossAmountPaise: 75_000,
+      platformFeePaise: 7_500,
+      orgSharePaise: 3_750,
+      consultantSharePaise: 63_750,
     });
     expect(capturedOrgEarnings[1]).toMatchObject({
       organizationId: ORG_LEARNPRO,
       consultantProfileId: COLLAB_SAME_ORG_PROFILE,
       role: "COLLABORATOR",
       grossAmountPaise: 25_000,
+      platformFeePaise: 2_500,
+      orgSharePaise: 1_250,
+      consultantSharePaise: 21_250,
     });
   });
 

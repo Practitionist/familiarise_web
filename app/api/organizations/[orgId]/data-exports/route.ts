@@ -40,7 +40,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: EXPORT_GRANTS });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: EXPORT_GRANTS,
+  });
   if (access.error) return access.error;
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);

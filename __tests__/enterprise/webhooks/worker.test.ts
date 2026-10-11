@@ -67,8 +67,12 @@ function makePrismaStub(
         findMany: jest.fn().mockResolvedValue([initialRow]),
         // #812 — the IN_FLIGHT soft lock is now a guarded atomic claim.
         updateMany: jest.fn().mockImplementation((args) => {
-          claims.push(args);
-          return Promise.resolve({ count: claimCount });
+          if (args.data?.status === "IN_FLIGHT") {
+            claims.push(args);
+            return Promise.resolve({ count: claimCount });
+          }
+          updates.push(args);
+          return Promise.resolve({ count: 1 });
         }),
         update: jest.fn().mockImplementation((args) => {
           updates.push(args);
@@ -189,7 +193,7 @@ describe("runDispatchTick — permanent client error", () => {
 });
 
 describe("runDispatchTick — transient error / retry schedule", () => {
-  it("5xx → RETRY with attempt 2's backoff (5 minutes) on the first failure", async () => {
+  it("5xx → RETRY with attempt 1's backoff (1 minute) on the first failure", async () => {
     const row = makeRow();
     const stub = makePrismaStub(row);
     const fetchFn = mockFetch(async () => new Response("", { status: 503 }));
@@ -207,8 +211,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
       httpStatusCode: 503,
       attempts: 1,
     });
-    // Attempt 1 just failed → schedule attempt 2 at +5min.
-    const expectedNext = new Date(FROZEN_NOW_MS + 5 * 60_000);
+    const expectedNext = new Date(FROZEN_NOW_MS + 60_000);
     expect(
       (finalUpdate.data as { nextRetryAt: Date }).nextRetryAt.toISOString(),
     ).toBe(expectedNext.toISOString());

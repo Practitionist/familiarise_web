@@ -1,7 +1,7 @@
 /**
  * Which BetterAuth endpoints may mint a session for a platform operator
  * (STAFF or ADMIN). Operators sign in with a password and an authenticator
- * code, nothing else.
+ * code, or with a user-verified passkey.
  *
  * The twoFactor plugin only challenges the credential sign-in: a Google,
  * GitHub or SSO callback creates a full session with no second factor. So the
@@ -17,12 +17,15 @@
  *   that completes a challenge, and the re-issue when enrolment is confirmed.
  * - `/change-password`: re-issues the caller's existing session
  *   (`revokeOtherSessions`), which already passed both factors.
+ * - `/passkey/verify-authentication`: a user-verified passkey, which only an
+ *   enrolled operator can hold (lib/auth/passkey-policy.ts).
  */
 const OPERATOR_SESSION_PATHS: ReadonlySet<string> = new Set([
   "/sign-in/email",
   "/two-factor/verify-totp",
   "/two-factor/verify-backup-code",
   "/change-password",
+  "/passkey/verify-authentication",
 ]);
 
 export function isOperatorRole(role: string | null | undefined): boolean {
@@ -49,17 +52,4 @@ export function refusesOperatorAccount(
   providerId: string,
 ): boolean {
   return isOperatorRole(role) && providerId !== "credential";
-}
-
-/**
- * An operator session lives at most 12 hours from sign-in, however active it
- * is. The consumer settings (30-day expiry, daily sliding refresh) would
- * otherwise keep a stolen operator cookie alive for as long as it is used.
- */
-export const OPERATOR_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-
-/** `expiresAt`, pulled back to `createdAt` + 12h if it lands later. */
-export function capOperatorExpiry(createdAt: Date, expiresAt: Date): Date {
-  const cap = new Date(createdAt.getTime() + OPERATOR_SESSION_MAX_AGE_MS);
-  return expiresAt > cap ? cap : expiresAt;
 }

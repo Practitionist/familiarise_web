@@ -36,6 +36,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 import { deleteRecordingAssets } from "../../lib/stream/recording-storage";
+import { RecordingService } from "../../lib/stream/recording-service";
 import { reportSentryMessage } from "../../lib/observability/report";
 import {
   expireRecordings,
@@ -199,6 +200,7 @@ describe("expireRecordings", () => {
     ]);
     mockRecording.updateMany.mockResolvedValue({ count: 0 });
     mockRecording.findMany
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([orgRow("r1"), orgRow("r2")])
       .mockResolvedValueOnce([{ id: "x", storagePath: "p" }]);
     mockRecording.updateManyAndReturn.mockResolvedValue([{ id: "r1" }]);
@@ -209,7 +211,7 @@ describe("expireRecordings", () => {
 
     const result = await expireRecordings();
 
-    const scanWhere = mockRecording.findMany.mock.calls[0][0].where;
+    const scanWhere = mockRecording.findMany.mock.calls[1][0].where;
     expect(scanWhere).toMatchObject({
       listingStatus: { not: "PUBLISHED" },
       purchases: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
@@ -230,7 +232,7 @@ describe("expireRecordings", () => {
         },
       }),
     );
-    expect(mockRecording.findMany.mock.calls[0][0].orderBy).toEqual([
+    expect(mockRecording.findMany.mock.calls[1][0].orderBy).toEqual([
       { recordedAt: "asc" },
       { id: "asc" },
     ]);
@@ -254,7 +256,7 @@ describe("expireRecordings", () => {
 
     await expireRecordings();
 
-    const arms = mockRecording.findMany.mock.calls[0][0].where.OR as Array<
+    const arms = mockRecording.findMany.mock.calls[1][0].where.OR as Array<
       Record<string, unknown>
     >;
     expect(arms).toHaveLength(3);
@@ -330,5 +332,68 @@ describe("expireRecordings", () => {
       (ctx as { fingerprint: string[] }).fingerprint.includes("scan-cap"),
     );
     expect(scanCapWarnings).toHaveLength(1);
+  });
+
+  it("refreshes recordingUrl and streamUrlExpiresAt from Stream within 15 days instead of expiring a live recording, without cross-selecting mismatched filenames", async () => {
+    const futureEnd = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    jest
+      .spyOn(RecordingService, "getCallRecordingsFromStream")
+      .mockResolvedValueOnce([
+        {
+          filename: "rec-live.mp4",
+          url: "https://us-east.stream-io-cdn.com/rec-live-refreshed.mp4",
+          start_time: new Date(futureEnd.getTime() - 3600_000),
+          end_time: futureEnd,
+          session_id: "sess-live",
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          filename: "different-segment.mp4",
+          url: "https://us-east.stream-io-cdn.com/different-segment.mp4",
+          start_time: new Date(futureEnd.getTime() - 3600_000),
+          end_time: futureEnd,
+          session_id: "sess-live",
+        },
+      ]);
+
+    mockRecording.updateMany.mockResolvedValue({ count: 0 });
+    mockRecording.findMany
+      .mockResolvedValueOnce([
+        {
+          id: "rec-rescue-1",
+          streamCallId: "call-rescue-1",
+          streamRecordingId: "rec-live.mp4",
+        },
+        {
+          id: "rec-mismatched-id",
+          streamCallId: "call-rescue-2",
+          streamRecordingId: "missing-segment.mp4",
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    const result = await expireRecordings();
+
+    expect(mockRecording.findMany.mock.calls[0][0].take).toBe(200);
+    expect(result.lapsed).toBe(0);
+    expect(mockRecording.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "rec-rescue-1",
+        status: "READY",
+        storageType: "STREAM_S3",
+      },
+      data: expect.objectContaining({
+        recordingUrl:
+          "https://us-east.stream-io-cdn.com/rec-live-refreshed.mp4",
+        streamUrlExpiresAt: expect.any(Date),
+      }),
+    });
+    expect(mockRecording.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "rec-mismatched-id" }),
+      }),
+    );
   });
 });

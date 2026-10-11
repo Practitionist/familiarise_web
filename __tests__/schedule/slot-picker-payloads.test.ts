@@ -24,6 +24,7 @@ jest.mock("../../lib/data/appointment-detail", () => ({
 
 jest.mock("../../lib/booking/plan-owners", () => ({
   resolvePlanOwnerIds: jest.fn(() => ["consultant-1"]),
+  resolvePrimaryPlanOwnerIds: jest.fn(() => ["consultant-1"]),
 }));
 
 import prisma from "../../lib/prisma";

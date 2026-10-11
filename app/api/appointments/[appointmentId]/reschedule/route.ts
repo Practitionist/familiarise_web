@@ -56,6 +56,7 @@ import {
   transitionSubscriptionRequest,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { recordActForOrg, resolveOrgActor } from "@/lib/booking/org-actor";
 import {
   isSuspendedInFundingOrg,
@@ -195,26 +196,56 @@ export async function POST(
         organizationId: true,
         consultationId: true,
         subscriptionId: true,
+        consultation: {
+          select: { consultationPlan: { select: { organizationId: true } } },
+        },
+        subscription: {
+          select: { subscriptionPlan: { select: { organizationId: true } } },
+        },
+        webinar: {
+          select: { webinarPlan: { select: { organizationId: true } } },
+        },
+        class: {
+          select: { classPlan: { select: { organizationId: true } } },
+        },
       },
     });
-    // #1851 decision 1 — 1:1 and subscription bookings only.
+    const hostOrgId =
+      orgScope?.webinar?.webinarPlan?.organizationId ??
+      orgScope?.class?.classPlan?.organizationId ??
+      orgScope?.consultation?.consultationPlan?.organizationId ??
+      orgScope?.subscription?.subscriptionPlan?.organizationId ??
+      null;
+    const hostOrgMembership = hostOrgId
+      ? await prisma.membership.findUnique({
+          where: {
+            userId_organizationId: {
+              userId: session.user.id,
+              organizationId: hostOrgId,
+            },
+          },
+          select: {
+            status: true,
+            role: true,
+            organization: { select: { status: true } },
+          },
+        })
+      : null;
+    const isHostOrgOperator =
+      hostOrgMembership?.status === "ACTIVE" &&
+      hostOrgMembership.organization.status !== "DEACTIVATED" &&
+      hasOrgPermission(hostOrgMembership.role, "catalog.manage");
     const fundingOrgActor = orgScope
       ? await resolveOrgActor(session.user.id, orgScope, "reschedule")
       : null;
-    // #1527 decision 6 — read here for the same pool reason; applied to the
-    // learner side once the transaction knows who is asking.
     const actorSuspendedInFundingOrg = await isSuspendedInFundingOrg(
       session.user.id,
       orgScope?.organizationId,
     );
 
-    // Start transaction
-    // #1319 — serialize lifecycle mutations per appointment (lock order:
-    // appointment first, before any consultee/slot key a future change adds).
     const result = await withAppointmentLock(appointmentId, () =>
       prisma.$transaction(
         async (tx) => {
-          // Get appointment details with all related data
           const appointment = await tx.appointment.findUnique({
             where: { id: appointmentId },
             include: {
@@ -258,25 +289,21 @@ export async function POST(
             throw new AppointmentNotFoundError("appointment", appointmentId);
           }
 
-          // Participant authorization check
           const consultantProfileId = session.user.consultantProfileId;
           const consulteeProfileId = session.user.consulteeProfileId;
 
           let isParticipant = false;
-          // Which side is asking. Load-bearing rather than descriptive: only a
-          // CONSULTEE proposal may auto-confirm, because publishing availability
-          // is standing consent to be booked inside it while merely being free is
-          // not consent to be moved. Null for a privileged bypass, which never
-          // auto-confirms on someone else's behalf.
           let initiatorRole: RescheduleInitiatorRole | null = null;
 
-          // Check the single event-type relation (mutually exclusive via if-else)
           if (appointment.consultation) {
             const consultationConsultantId =
               appointment.consultation.consultationPlan?.consultantProfileId;
             const isConsultant =
-              consultantProfileId === consultationConsultantId;
+              (Boolean(consultantProfileId) &&
+                consultantProfileId === consultationConsultantId) ||
+              isHostOrgOperator;
             const isConsultee =
+              Boolean(consulteeProfileId) &&
               consulteeProfileId === appointment.consultation.requestedById;
             isParticipant = isConsultant || isConsultee;
             initiatorRole = roleOf(isConsultee, isConsultant);
@@ -284,30 +311,32 @@ export async function POST(
             const subscriptionConsultantId =
               appointment.subscription.subscriptionPlan?.consultantProfileId;
             const isConsultant =
-              consultantProfileId === subscriptionConsultantId;
+              (Boolean(consultantProfileId) &&
+                consultantProfileId === subscriptionConsultantId) ||
+              isHostOrgOperator;
             const isConsultee =
+              Boolean(consulteeProfileId) &&
               consulteeProfileId === appointment.subscription.requestedById;
             isParticipant = isConsultant || isConsultee;
             initiatorRole = roleOf(isConsultee, isConsultant);
           } else if (appointment.webinar) {
-            // Only the consultant (organizer) can reschedule group events,
-            // since rescheduling changes the time for all participants.
             const webinarConsultantId =
               appointment.webinar.webinarPlan?.consultantProfileId;
-            isParticipant = consultantProfileId === webinarConsultantId;
+            isParticipant =
+              (Boolean(consultantProfileId) &&
+                consultantProfileId === webinarConsultantId) ||
+              isHostOrgOperator;
           } else if (appointment.class) {
-            // Same as webinar: consultant-only reschedule
             const classConsultantId =
               appointment.class.classPlan?.consultantProfileId;
-            isParticipant = consultantProfileId === classConsultantId;
+            isParticipant =
+              (Boolean(consultantProfileId) &&
+                consultantProfileId === classConsultantId) ||
+              isHostOrgOperator;
           }
 
-          // Allow ADMIN/STAFF bypass
           const isPrivilegedUser = isPrivileged(session.user.role);
 
-          // #1166 — an admin of the FUNDING org may reschedule the booking. They
-          // act on the payer side, so their proposals carry the CONSULTEE role:
-          // same auto-confirm consent semantics as the buyer they act for.
           const isOrgAdminActor =
             !isParticipant && !isPrivilegedUser && fundingOrgActor !== null;
           if (isOrgAdminActor) {

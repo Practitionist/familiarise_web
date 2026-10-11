@@ -143,7 +143,10 @@ export default async function OrgAppointmentsPage({
   // keep the URL tree honest with a 404 rather than leaking the shell.
   // #1527 decision 6 — a SUSPENDED member keeps "Mine" (sessions already
   // booked) and nothing else: no grant-gated tab is offered below.
-  const access = await requireOrgAccess(orgId, { allowSuspended: true });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    allowSuspended: true,
+  });
   if (access.error) {
     notFound();
   }

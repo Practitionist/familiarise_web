@@ -19,8 +19,7 @@ export interface CreateOrganizationWizardProps {
   /**
    * Where the "Familiarise" brand link and the Cancel button point. When
    * omitted the brand + cancel controls are hidden — used by the onboarding
-   * caller, which has its own header and has already passed the point of
-   * no-return (the User row exists and the role is committed).
+   * caller, which has its own header.
    */
   cancelHref?: string;
   /**
@@ -31,9 +30,11 @@ export interface CreateOrganizationWizardProps {
    */
   onCancel?: () => void;
   /**
-   * Called after the wizard's final Review step finishes. The onboarding
-   * caller uses this to mark `user.onboardingCompleted = true`.
+   * First-time owner only: onboarding fields completed atomically with the
+   * org create (role, profile, consent, `onboardingCompleted`).
    */
+  onboarding?: Record<string, unknown>;
+  /** Called after the Review step's launch succeeds, before navigation. */
   afterLaunch?: (orgId: string) => Promise<void> | void;
   /** Override the post-launch redirect target. */
   finalRedirectPath?: (orgId: string) => string;
@@ -49,6 +50,7 @@ export interface CreateOrganizationWizardProps {
 export function CreateOrganizationWizard({
   cancelHref,
   onCancel,
+  onboarding,
   afterLaunch,
   finalRedirectPath,
   hostOrgsEnabled = true,
@@ -98,6 +100,7 @@ export function CreateOrganizationWizard({
     onGoToStep: handleGoToStep,
     initialData: wizardData,
     isSubmitting,
+    onboarding,
     afterLaunch,
     finalRedirectPath,
     // Expose whether Back is meaningful on this step. OrgInfoStep reads

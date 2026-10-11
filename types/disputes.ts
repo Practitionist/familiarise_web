@@ -74,4 +74,42 @@ export interface DisputeDetails {
       email?: string;
     };
   } | null;
+  evidencePack?: DisputeEvidencePack;
+}
+
+export interface DisputeEvidencePack {
+  booking: {
+    appointmentId: string;
+    appointmentType: string;
+    createdAt: string;
+  } | null;
+  occurrences: {
+    total: number;
+    completedCount: number;
+    outcomes: Array<{
+      id: string;
+      startsAt: string;
+      endsAt: string;
+      completionStatus: string;
+      outcome: string | null;
+    }>;
+  };
+  attendance: {
+    presentCount: number;
+    recordsFound: boolean;
+    summary: string;
+  };
+  supportHistory: {
+    ticketCount: number;
+    openCount: number;
+    threads: Array<{
+      id: string;
+      status: string;
+      category: string;
+      referenceNumber: string | null;
+      ticketStatus: string | null;
+      priority: string | null;
+      createdAt: string;
+    }>;
+  };
 }

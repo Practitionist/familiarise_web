@@ -361,6 +361,7 @@ describe("authorizeEventAccess", () => {
         adminSession(),
         "consultation",
         "any-id",
+        "GET",
       );
       expect(result).toBeNull();
       expect(prisma.consultation.findUnique).not.toHaveBeenCalled();
@@ -371,6 +372,7 @@ describe("authorizeEventAccess", () => {
         staffSession(),
         "webinar",
         "any-id",
+        "GET",
       );
       expect(result).toBeNull();
       expect(prisma.webinar.findUnique).not.toHaveBeenCalled();
@@ -390,6 +392,7 @@ describe("authorizeEventAccess", () => {
         consultantSession(),
         "consultation",
         "cons-1",
+        "GET",
       );
       expect(result).toBeNull();
     });
@@ -404,6 +407,7 @@ describe("authorizeEventAccess", () => {
         consulteeSession(),
         "consultation",
         "cons-1",
+        "GET",
       );
       expect(result).toBeNull();
     });
@@ -418,6 +422,7 @@ describe("authorizeEventAccess", () => {
         strangerSession(),
         "consultation",
         "cons-1",
+        "GET",
       );
       expect(result).not.toBeNull();
       const body = await result!.json();
@@ -432,6 +437,7 @@ describe("authorizeEventAccess", () => {
         consulteeSession(),
         "consultation",
         "nonexistent",
+        "GET",
       );
       expect(result).not.toBeNull();
       expect(result!.status).toBe(403);
@@ -451,6 +457,7 @@ describe("authorizeEventAccess", () => {
         consultantSession(),
         "subscription",
         "sub-1",
+        "GET",
       );
       expect(result).toBeNull();
     });
@@ -465,6 +472,7 @@ describe("authorizeEventAccess", () => {
         consulteeSession(),
         "subscription",
         "sub-1",
+        "GET",
       );
       expect(result).toBeNull();
     });
@@ -479,6 +487,7 @@ describe("authorizeEventAccess", () => {
         strangerSession(),
         "subscription",
         "sub-1",
+        "GET",
       );
       expect(result).not.toBeNull();
       expect(result!.status).toBe(403);
@@ -497,6 +506,7 @@ describe("authorizeEventAccess", () => {
         consultantSession(),
         "webinar",
         "web-1",
+        "GET",
       );
       expect(result).toBeNull();
     });
@@ -510,6 +520,7 @@ describe("authorizeEventAccess", () => {
         consulteeSession(),
         "webinar",
         "web-1",
+        "GET",
       );
       // Consultee can't access webinar since it only checks consultantProfileId
       expect(result).not.toBeNull();
@@ -525,6 +536,7 @@ describe("authorizeEventAccess", () => {
         strangerSession(),
         "webinar",
         "web-1",
+        "GET",
       );
       expect(result!.status).toBe(403);
     });
@@ -542,6 +554,7 @@ describe("authorizeEventAccess", () => {
         consultantSession(),
         "class",
         "cls-1",
+        "GET",
       );
       expect(result).toBeNull();
     });
@@ -555,6 +568,7 @@ describe("authorizeEventAccess", () => {
         consulteeSession(),
         "class",
         "cls-1",
+        "GET",
       );
       expect(result).not.toBeNull();
       expect(result!.status).toBe(403);
@@ -569,6 +583,7 @@ describe("authorizeEventAccess", () => {
         strangerSession(),
         "class",
         "cls-1",
+        "GET",
       );
       expect(result!.status).toBe(403);
     });
@@ -583,7 +598,12 @@ describe("authorizeEventAccess", () => {
         consultationPlan: { consultantProfileId: "cp-001" },
       });
 
-      await authorizeEventAccess(consultantSession(), "consultation", "cons-1");
+      await authorizeEventAccess(
+        consultantSession(),
+        "consultation",
+        "cons-1",
+        "GET",
+      );
 
       expect(prisma.consultation.findUnique).toHaveBeenCalledTimes(1);
       expect(prisma.subscription.findUnique).not.toHaveBeenCalled();
@@ -596,7 +616,12 @@ describe("authorizeEventAccess", () => {
         webinarPlan: { consultantProfileId: "cp-001" },
       });
 
-      await authorizeEventAccess(consultantSession(), "webinar", "web-1");
+      await authorizeEventAccess(
+        consultantSession(),
+        "webinar",
+        "web-1",
+        "GET",
+      );
 
       expect(prisma.webinar.findUnique).toHaveBeenCalledTimes(1);
       expect(prisma.consultation.findUnique).not.toHaveBeenCalled();

@@ -274,6 +274,17 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.DISPUTE_UPDATED,
+    name: "Dispute updated",
+    description: "Ops reminder when a chargeback response deadline approaches.",
+    category: "payments",
+    inApp: {
+      subject: "Dispute deadline reminder",
+      body: "{% if payload.title %}{{payload.title}}{% else %}A payment dispute of {{payload.amount}} needs attention{% endif %}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.DISPUTE_RESOLVED,
     name: "Dispute resolved",
     description: "The consultant and ops, when the gateway closes a dispute.",

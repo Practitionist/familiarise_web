@@ -26,7 +26,12 @@ export async function GET(
   try {
     const { classId } = await params;
 
-    const authz = await authorizeEventAccess(session, "class", classId);
+    const authz = await authorizeEventAccess(
+      session,
+      "class",
+      classId,
+      request.method,
+    );
     if (authz) return authz;
 
     const classData = await prisma.class.findUniqueOrThrow({

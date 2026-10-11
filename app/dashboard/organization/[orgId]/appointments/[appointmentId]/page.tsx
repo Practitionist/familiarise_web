@@ -83,7 +83,10 @@ export default async function OrgAppointmentDetailPage({
 
   // #1527 decision 6 — a SUSPENDED member may open their OWN session
   // (branches 1–2, read-only); the operator branch needs an ACTIVE grant.
-  const access = await requireOrgAccess(orgId, { allowSuspended: true });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    allowSuspended: true,
+  });
   if (access.error) {
     notFound();
   }
@@ -188,10 +191,16 @@ export default async function OrgAppointmentDetailPage({
       appointmentId={appointmentId}
       meta={toMetadata(appointment)}
       canCancel={
-        mayCancel && status !== null && fundedByOrg && CANCELLABLE_FROM.includes(status)
+        mayCancel &&
+        status !== null &&
+        fundedByOrg &&
+        CANCELLABLE_FROM.includes(status)
       }
       canReschedule={
-        mayReschedule && status !== null && fundedByOrg && RESCHEDULABLE_FROM.includes(status)
+        mayReschedule &&
+        status !== null &&
+        fundedByOrg &&
+        RESCHEDULABLE_FROM.includes(status)
       }
       canAllocate={
         mayAllocate && status === "PENDING" && fundedByOrg && booking !== null

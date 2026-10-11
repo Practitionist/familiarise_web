@@ -56,6 +56,7 @@ import {
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
 } from "./shared-lifecycle";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 export class PayoutLockError extends Error {
   readonly code = "PAYOUT_LOCK_CONFLICT" as const;
@@ -824,41 +825,40 @@ export async function processOrgPayout(payoutId: string): Promise<{
         },
       ),
     1,
-  )
-    .then(async (result) => {
-      if (!liveEnabled || !result.claimed || result.status !== "PROCESSING") {
-        return {
-          status: result.status,
-          submittedToGateway: result.submittedToGateway,
-          claimed: result.claimed,
-        };
-      }
+  ).then(async (result) => {
+    if (!liveEnabled || !result.claimed || result.status !== "PROCESSING") {
+      return {
+        status: result.status,
+        submittedToGateway: result.submittedToGateway,
+        claimed: result.claimed,
+      };
+    }
 
-      try {
-        await submitOrgPayoutToGateway(payoutId);
+    try {
+      await submitOrgPayoutToGateway(payoutId);
+      return {
+        status: "PROCESSING" as const,
+        submittedToGateway: true,
+        claimed: true,
+      };
+    } catch (err) {
+      const cls = classifyGatewaySubmissionError(err);
+      if (cls === "PERMANENT_4XX") {
+        reportSentryError(err, { subsystem: "payments", expected: true });
+        await markPayoutFailedFromSubmission(
+          payoutId,
+          err instanceof Error ? err.message : String(err),
+        );
         return {
-          status: "PROCESSING" as const,
+          status: "FAILED" as PayoutStatus,
           submittedToGateway: true,
           claimed: true,
         };
-      } catch (err) {
-        const cls = classifyGatewaySubmissionError(err);
-        if (cls === "PERMANENT_4XX") {
-          reportSentryError(err, { subsystem: "payments", expected: true });
-          await markPayoutFailedFromSubmission(
-            payoutId,
-            err instanceof Error ? err.message : String(err),
-          );
-          return {
-            status: "FAILED" as PayoutStatus,
-            submittedToGateway: true,
-            claimed: true,
-          };
-        }
-        reportSentryError(err, { subsystem: "payments" });
-        throw err;
       }
-    });
+      reportSentryError(err, { subsystem: "payments" });
+      throw err;
+    }
+  });
 }
 
 async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
@@ -923,7 +923,7 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
     mode,
     purpose: "payout",
     referenceId: payoutId,
-    narration: `Familiarise org payout ${payoutId}`,
+    narration: "Familiarise org payout",
     queueIfLowBalance: true,
     idempotencyKey,
   });
@@ -1014,6 +1014,75 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
 
 const ORG_PROCESSING_REDRIVE_AFTER_MS = 60 * 60 * 1000;
 
+async function redriveSingleOrgPayoutRow(
+  p: { id: string; gatewayPayoutId: string | null },
+  result: OrgProcessingResult,
+): Promise<void> {
+  const { findRazorpayPayoutByReference } =
+    await import("./payout-gateway-lookup");
+  const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
+  const sdk = getRazorpayPayoutsService();
+  let gatewayPayoutId = p.gatewayPayoutId;
+
+  if (!gatewayPayoutId) {
+    const lookup = await findRazorpayPayoutByReference(p.id);
+    if (lookup.kind === "found") {
+      gatewayPayoutId = lookup.providerPayoutId;
+      await prisma.organizationPayout.update({
+        where: { id: p.id },
+        data: { gatewayPayoutId },
+      });
+    } else if (lookup.kind === "none") {
+      await submitOrgPayoutToGateway(p.id);
+      result.advanced++;
+      return;
+    } else {
+      result.errors.push(
+        `OrgPayout ${p.id}: reference lookup ${lookup.kind}: ${lookup.detail}`,
+      );
+      return;
+    }
+  }
+
+  const remote = await sdk.fetchPayout(gatewayPayoutId);
+  switch (remote.status) {
+    case "processed":
+      if (remote.utr) {
+        await prisma.organizationPayout.updateMany({
+          where: { id: p.id, gatewayUtr: null },
+          data: { gatewayUtr: remote.utr },
+        });
+      }
+      await markOrgPayoutCompleted(p.id);
+      result.advanced++;
+      break;
+    case "failed":
+      await markOrgPayoutFailed(
+        p.id,
+        remote.failure_reason ??
+          remote.status_details?.description ??
+          remote.status_details?.reason ??
+          "Gateway reports the payout failed",
+      );
+      result.advanced++;
+      break;
+    case "cancelled":
+    case "rejected":
+      await markOrgPayoutFailed(
+        p.id,
+        `Gateway reports the payout ${remote.status}`,
+      );
+      result.advanced++;
+      break;
+    case "reversed":
+      await markOrgPayoutReversed(p.id, "Gateway reports the payout reversed");
+      result.advanced++;
+      break;
+    default:
+      break;
+  }
+}
+
 async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
   const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
@@ -1025,61 +1094,25 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
   });
   result.scanned = stale.length;
 
-  for (const p of stale) {
-    try {
-      if (!p.gatewayPayoutId) {
-        await submitOrgPayoutToGateway(p.id);
-        result.advanced++;
-        continue;
+  await Promise.all(
+    stale.map(async (p) => {
+      try {
+        await redriveSingleOrgPayoutRow(p, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
+          err instanceof PayoutValidationError
+        ) {
+          await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
+          result.advanced++;
+          return;
+        }
+        reportSentryError(err, { subsystem: "payments" });
+        result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
       }
-
-      const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
-      const sdk = getRazorpayPayoutsService();
-      const remote = await sdk.fetchPayout(p.gatewayPayoutId);
-      switch (remote.status) {
-        case "processed":
-          await markOrgPayoutCompleted(p.id);
-          result.advanced++;
-          break;
-        case "failed":
-          await markOrgPayoutFailed(
-            p.id,
-            remote.failureReason ?? "Gateway reports the payout failed",
-          );
-          result.advanced++;
-          break;
-        case "cancelled":
-        case "rejected":
-          await markOrgPayoutFailed(
-            p.id,
-            `Gateway reports the payout ${remote.status}`,
-          );
-          result.advanced++;
-          break;
-        case "reversed":
-          await markOrgPayoutReversed(
-            p.id,
-            "Gateway reports the payout reversed",
-          );
-          result.advanced++;
-          break;
-        default:
-          break;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (
-        classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
-        err instanceof PayoutValidationError
-      ) {
-        await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
-        result.advanced++;
-        continue;
-      }
-      reportSentryError(err, { subsystem: "payments" });
-      result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
-    }
-  }
+    }),
+  );
 
   return result;
 }
@@ -1264,112 +1297,135 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
   wasNoOp: boolean;
   status: PayoutStatus;
 }> {
-  const completion = prisma.$transaction(async (tx) => {
-    const claim = await tx.organizationPayout.updateMany({
-      where: { id: payoutId, status: "PROCESSING" },
-      data: { status: "COMPLETED", processedAt: new Date() },
-    });
-    if (claim.count === 0) {
-      const status = await readOrgPayoutCurrentStatus(tx, payoutId);
-      console.log(
-        `[OrgPayoutService] markOrgPayoutCompleted no-op: payout ${payoutId} status=${status}`,
-      );
-      return {
-        wasNoOp: true,
-        status,
-        notify: null,
-        missingTdsRate: null,
-        shortfall: null,
-      };
-    }
+  const completion = withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const settledAt = new Date();
+        const claim = await tx.organizationPayout.updateMany({
+          where: { id: payoutId, status: "PROCESSING" },
+          data: { status: "COMPLETED", processedAt: settledAt },
+        });
+        if (claim.count === 0) {
+          const status = await readOrgPayoutCurrentStatus(tx, payoutId);
+          console.log(
+            `[OrgPayoutService] markOrgPayoutCompleted no-op: payout ${payoutId} status=${status}`,
+          );
+          return {
+            wasNoOp: true,
+            status,
+            notify: null,
+            missingTdsRate: null,
+            shortfall: null,
+          };
+        }
 
-    const payout = await tx.organizationPayout.findUniqueOrThrow({
-      where: { id: payoutId },
-      select: {
-        id: true,
-        organizationId: true,
-        netPayoutPaise: true,
-        amountPaise: true,
-        tdsAmountPaise: true,
-        tdsRateAppliedBps: true,
-        tdsSectionApplied: true,
-        currency: true,
-        organization: { select: { name: true } },
-      },
-    });
-
-    await tx.organizationEarnings.updateMany({
-      where: { orgPayoutId: payoutId, status: "BATCHED" },
-      data: { status: "PAID" },
-    });
-
-    const completionShortfall =
-      await detectAndAccrueOrgPayoutCompletionShortfall(tx, payout);
-
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: payout.organizationId,
-        actorMembershipId: null,
-        category: "PAYOUT",
-        action: AUDIT_ACTIONS.PAYOUT.PAYOUT_COMPLETED,
-        description: `Payout ${payoutId} moved PROCESSING → COMPLETED`,
-        details: {
-          payoutId,
-          netPayoutPaise: payout.netPayoutPaise,
-          currency: payout.currency,
-        },
-      },
-    });
-
-    const orgTds = payout.tdsAmountPaise ?? 0;
-    const recoveredPaise = await clawbackRecoveredPaise(tx, payoutId);
-    assertOrgPayoutWithholdingIdentity(payout, recoveredPaise);
-    if (payout.netPayoutPaise - recoveredPaise > 0) {
-      await postLedgerTxn(tx, {
-        idempotencyKey: `orgpayout:${payoutId}`,
-        kind: "ORG_PAYOUT",
-        payoutId,
-        postings: buildPayoutCompletionPostings({
-          payableAccount: {
-            kind: "ORG_PAYABLE",
-            organizationId: payout.organizationId,
+        const payout = await tx.organizationPayout.findUniqueOrThrow({
+          where: { id: payoutId },
+          select: {
+            id: true,
+            organizationId: true,
+            netPayoutPaise: true,
+            amountPaise: true,
+            tdsAmountPaise: true,
+            tdsRateAppliedBps: true,
+            tdsSectionApplied: true,
+            currency: true,
+            gatewayUtr: true,
+            organization: { select: { name: true } },
           },
-          grossPayablePaise: payout.netPayoutPaise - recoveredPaise,
-          netCashPaise: payout.amountPaise,
-          tdsPaise: orgTds,
-        }),
-      });
-    }
+        });
 
-    const orgTdsRateBps = payout.tdsRateAppliedBps;
-    const hasOrgTdsRate = orgTdsRateBps !== null && orgTdsRateBps > 0;
-    if (orgTds > 0 && hasOrgTdsRate) {
-      await recordOrgPayoutCompletionTdsInTx(
-        tx,
-        payout,
-        orgTds,
-        orgTdsRateBps,
-      );
-    }
+        await tx.organizationEarnings.updateMany({
+          where: { orgPayoutId: payoutId, status: "BATCHED" },
+          data: { status: "PAID" },
+        });
 
-    return {
-      wasNoOp: false,
-      status: "COMPLETED" as PayoutStatus,
-      notify: {
-        organizationId: payout.organizationId,
-        orgName: payout.organization.name,
-        amountPaise: payout.amountPaise,
-        netPayoutPaise: payout.netPayoutPaise,
-        tdsAmountPaise: orgTds,
-        currency: payout.currency,
+        const completionShortfall =
+          await detectAndAccrueOrgPayoutCompletionShortfall(tx, payout);
+
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: payout.organizationId,
+            actorMembershipId: null,
+            category: "PAYOUT",
+            action: AUDIT_ACTIONS.PAYOUT.PAYOUT_COMPLETED,
+            description: `Payout ${payoutId} moved PROCESSING → COMPLETED`,
+            details: {
+              payoutId,
+              netPayoutPaise: payout.netPayoutPaise,
+              currency: payout.currency,
+            },
+          },
+        });
+
+        const orgTds = payout.tdsAmountPaise ?? 0;
+        const recoveredPaise = await clawbackRecoveredPaise(tx, payoutId);
+        assertOrgPayoutWithholdingIdentity(payout, recoveredPaise);
+        if (payout.netPayoutPaise - recoveredPaise > 0) {
+          await postLedgerTxn(tx, {
+            idempotencyKey: `orgpayout:${payoutId}`,
+            kind: "ORG_PAYOUT",
+            payoutId,
+            postings: buildPayoutCompletionPostings({
+              payableAccount: {
+                kind: "ORG_PAYABLE",
+                organizationId: payout.organizationId,
+              },
+              grossPayablePaise: payout.netPayoutPaise - recoveredPaise,
+              netCashPaise: payout.amountPaise,
+              tdsPaise: orgTds,
+            }),
+          });
+        }
+
+        const orgTdsRateBps = payout.tdsRateAppliedBps;
+        const hasOrgTdsRate = orgTdsRateBps !== null && orgTdsRateBps > 0;
+        if (orgTds > 0 && hasOrgTdsRate) {
+          await recordOrgPayoutCompletionTdsInTx(
+            tx,
+            payout,
+            orgTds,
+            orgTdsRateBps,
+          );
+        }
+
+        await dispatchWebhookEvent({
+          prisma: tx,
+          organizationId: payout.organizationId,
+          eventType: "payout.completed",
+          payload: {
+            payoutId: payout.id,
+            totalPaise: Number(payout.netPayoutPaise),
+            currency: payout.currency,
+            payoutReference: payout.gatewayUtr ?? null,
+            settledAt: settledAt.toISOString(),
+          },
+        });
+
+        return {
+          wasNoOp: false,
+          status: "COMPLETED" as PayoutStatus,
+          notify: {
+            organizationId: payout.organizationId,
+            orgName: payout.organization.name,
+            amountPaise: payout.amountPaise,
+            netPayoutPaise: payout.netPayoutPaise,
+            tdsAmountPaise: orgTds,
+            currency: payout.currency,
+          },
+          missingTdsRate:
+            orgTds > 0 && !hasOrgTdsRate
+              ? {
+                  organizationId: payout.organizationId,
+                  tdsAmountPaise: orgTds,
+                }
+              : null,
+          shortfall: completionShortfall,
+        };
       },
-      missingTdsRate:
-        orgTds > 0 && !hasOrgTdsRate
-          ? { organizationId: payout.organizationId, tdsAmountPaise: orgTds }
-          : null,
-      shortfall: completionShortfall,
-    };
-  });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
 
   const result = await completion.catch(async (err: unknown) => {
     if (err instanceof OrgPayoutWithholdingMismatchError) {
@@ -1426,102 +1482,121 @@ async function markOrgPayoutFailedInternal(
   reason: string,
   kind: "FAILED" | "REVERSED",
 ): Promise<{ wasNoOp: boolean; status: PayoutStatus }> {
-  const result = await prisma.$transaction(async (tx) => {
-    const claim = await tx.organizationPayout.updateMany({
-      where: { id: payoutId, status: "PROCESSING" },
-      data: {
-        status: "FAILED",
-        failureReason: reason.slice(0, 500),
-        failedAt: new Date(),
+  const result = await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const claim = await tx.organizationPayout.updateMany({
+          where: { id: payoutId, status: "PROCESSING" },
+          data: {
+            status: "FAILED",
+            failureReason: reason.slice(0, 500),
+            failedAt: new Date(),
+          },
+        });
+        if (claim.count === 0) {
+          const current = await tx.organizationPayout.findUnique({
+            where: { id: payoutId },
+            select: { status: true },
+          });
+          if (!current) {
+            throw new PayoutValidationError(
+              `Payout ${payoutId} not found`,
+              404,
+            );
+          }
+          console.log(
+            `[OrgPayoutService] markOrgPayoutFailedInternal no-op: payout ${payoutId} status=${current.status}`,
+          );
+          return {
+            wasNoOp: true,
+            status: current.status,
+            notifyStaged: [],
+            notify: null,
+          };
+        }
+
+        await tx.organizationEarnings.updateMany({
+          where: { orgPayoutId: payoutId, status: "BATCHED" },
+          data: { status: "READY", orgPayoutId: null },
+        });
+
+        await tx.tDSRecord.deleteMany({
+          where: { orgPayoutId: payoutId, isReversal: false },
+        });
+        await releaseClawbackRecovery(tx, payoutId);
+
+        const payout = await tx.organizationPayout.findUniqueOrThrow({
+          where: { id: payoutId },
+          select: {
+            id: true,
+            organizationId: true,
+            netPayoutPaise: true,
+            currency: true,
+            organization: { select: { name: true } },
+          },
+        });
+
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: payout.organizationId,
+            actorMembershipId: null,
+            category: "PAYOUT",
+            action:
+              kind === "REVERSED"
+                ? AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED
+                : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
+            description:
+              kind === "REVERSED"
+                ? `Payout ${payoutId} reversed by gateway: ${reason.slice(0, 200)}`
+                : `Payout ${payoutId} failed at gateway: ${reason.slice(0, 200)}`,
+            details: { payoutId, kind, reason: reason.slice(0, 500) },
+          },
+        });
+
+        await dispatchWebhookEvent({
+          prisma: tx,
+          organizationId: payout.organizationId,
+          eventType: "payout.failed",
+          payload: {
+            payoutId: payout.id,
+            reason: reason || "PAYOUT_FAILED",
+            lastError: reason || null,
+          },
+        });
+
+        const notifyStaged = await notifyOrgPayoutFailed(
+          payout.organizationId,
+          {
+            orgName: payout.organization.name,
+            payoutId,
+            amountPaise: payout.netPayoutPaise,
+            netPayoutPaise: payout.netPayoutPaise,
+            tdsAmountPaise: 0,
+            currency: payout.currency,
+            reason: reason.slice(0, 200),
+            kind,
+            dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
+          },
+          { tx, entityRef: `orgPayout:${payoutId}` },
+        );
+
+        return {
+          wasNoOp: false,
+          status: "FAILED" as PayoutStatus,
+          notifyStaged,
+          notify: {
+            organizationId: payout.organizationId,
+            orgName: payout.organization.name,
+            amountPaise: payout.netPayoutPaise,
+            netPayoutPaise: payout.netPayoutPaise,
+            tdsAmountPaise: 0,
+            currency: payout.currency,
+          },
+        };
       },
-    });
-    if (claim.count === 0) {
-      const current = await tx.organizationPayout.findUnique({
-        where: { id: payoutId },
-        select: { status: true },
-      });
-      if (!current) {
-        throw new PayoutValidationError(`Payout ${payoutId} not found`, 404);
-      }
-      console.log(
-        `[OrgPayoutService] markOrgPayoutFailedInternal no-op: payout ${payoutId} status=${current.status}`,
-      );
-      return {
-        wasNoOp: true,
-        status: current.status,
-        notifyStaged: [],
-        notify: null,
-      };
-    }
-
-    await tx.organizationEarnings.updateMany({
-      where: { orgPayoutId: payoutId, status: "BATCHED" },
-      data: { status: "READY", orgPayoutId: null },
-    });
-
-    await tx.tDSRecord.deleteMany({
-      where: { orgPayoutId: payoutId, isReversal: false },
-    });
-    await releaseClawbackRecovery(tx, payoutId);
-
-    const payout = await tx.organizationPayout.findUniqueOrThrow({
-      where: { id: payoutId },
-      select: {
-        id: true,
-        organizationId: true,
-        netPayoutPaise: true,
-        currency: true,
-        organization: { select: { name: true } },
-      },
-    });
-
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: payout.organizationId,
-        actorMembershipId: null,
-        category: "PAYOUT",
-        action:
-          kind === "REVERSED"
-            ? AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED
-            : AUDIT_ACTIONS.PAYOUT.PAYOUT_FAILED,
-        description:
-          kind === "REVERSED"
-            ? `Payout ${payoutId} reversed by gateway: ${reason.slice(0, 200)}`
-            : `Payout ${payoutId} failed at gateway: ${reason.slice(0, 200)}`,
-        details: { payoutId, kind, reason: reason.slice(0, 500) },
-      },
-    });
-
-    const notifyStaged = await notifyOrgPayoutFailed(
-      payout.organizationId,
-      {
-        orgName: payout.organization.name,
-        payoutId,
-        amountPaise: payout.netPayoutPaise,
-        netPayoutPaise: payout.netPayoutPaise,
-        tdsAmountPaise: 0,
-        currency: payout.currency,
-        reason: reason.slice(0, 200),
-        kind,
-        dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
-      },
-      { tx, entityRef: `orgPayout:${payoutId}` },
-    );
-
-    return {
-      wasNoOp: false,
-      status: "FAILED" as PayoutStatus,
-      notifyStaged,
-      notify: {
-        organizationId: payout.organizationId,
-        orgName: payout.organization.name,
-        amountPaise: payout.netPayoutPaise,
-        netPayoutPaise: payout.netPayoutPaise,
-        tdsAmountPaise: 0,
-        currency: payout.currency,
-      },
-    };
-  });
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
 
   await attemptStagedBells(result.notifyStaged, kind);
   if (result.notify) {
@@ -1554,133 +1629,247 @@ export async function markOrgPayoutReversed(
   payoutId: string,
   reason: string,
 ): Promise<{ wasNoOp: boolean; status: PayoutStatus }> {
-  // Post-settlement reversal (COMPLETED → REVERSED) posts inverse ledger entries and TDS reversal; pre-settlement falls through to FAILED.
-  const reversalCompletion = prisma.$transaction(async (tx) => {
-    const claim = await tx.organizationPayout.updateMany({
-      where: { id: payoutId, status: "COMPLETED" },
-      data: {
-        status: "REVERSED",
-        failureReason: reason.slice(0, 500),
-        failedAt: new Date(),
-      },
-    });
-    if (claim.count === 0)
-      return { claimed: false, notifyStaged: [], notify: null };
-
-    const payout = await tx.organizationPayout.findUniqueOrThrow({
-      where: { id: payoutId },
-      select: {
-        id: true,
-        organizationId: true,
-        netPayoutPaise: true,
-        amountPaise: true,
-        tdsAmountPaise: true,
-        currency: true,
-        organization: { select: { name: true } },
-      },
-    });
-
-    await tx.organizationEarnings.updateMany({
-      where: { orgPayoutId: payoutId, status: "PAID" },
-      data: { status: "READY", orgPayoutId: null },
-    });
-
-    const orgTds = payout.tdsAmountPaise ?? 0;
-    const recoveredPaise = await clawbackRecoveredPaise(tx, payoutId);
-    assertOrgPayoutWithholdingIdentity(payout, recoveredPaise);
-    if (payout.netPayoutPaise - recoveredPaise > 0) {
-      await postLedgerTxn(tx, {
-        idempotencyKey: `orgpayout-reversal:${payoutId}`,
-        kind: "ORG_PAYOUT",
-        payoutId,
-        postings: buildPayoutReversalPostings({
-          payableAccount: {
-            kind: "ORG_PAYABLE",
-            organizationId: payout.organizationId,
+  const reversalTx = withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const postClaim = await tx.organizationPayout.updateMany({
+          where: { id: payoutId, status: "COMPLETED" },
+          data: {
+            status: "REVERSED",
+            failureReason: reason.slice(0, 500),
+            failedAt: new Date(),
           },
-          grossPayablePaise: payout.netPayoutPaise - recoveredPaise,
-          netCashPaise: payout.amountPaise,
-          tdsPaise: orgTds,
-        }),
-      });
-    }
+        });
+        if (postClaim.count > 0) {
+          const payout = await tx.organizationPayout.findUniqueOrThrow({
+            where: { id: payoutId },
+            select: {
+              id: true,
+              organizationId: true,
+              netPayoutPaise: true,
+              amountPaise: true,
+              tdsAmountPaise: true,
+              currency: true,
+              organization: { select: { name: true } },
+            },
+          });
 
-    await recordOrgTdsReversal(tx, {
-      orgPayoutId: payoutId,
-      organizationId: payout.organizationId,
-      reversalBasis: { kind: "FULL" },
-    });
-    await releaseClawbackRecovery(tx, payoutId);
+          await tx.organizationEarnings.updateMany({
+            where: { orgPayoutId: payoutId, status: "PAID" },
+            data: { status: "READY", orgPayoutId: null },
+          });
 
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: payout.organizationId,
-        actorMembershipId: null,
-        category: "PAYOUT",
-        action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
-        description: `Payout ${payoutId} reversed by bank after completion: ${reason.slice(0, 200)}`,
-        details: {
-          payoutId,
-          kind: "REVERSED",
-          reversedFrom: "COMPLETED",
-          reason: reason.slice(0, 500),
-        },
+          const orgTds = payout.tdsAmountPaise ?? 0;
+          const recoveredPaise = await clawbackRecoveredPaise(tx, payoutId);
+          assertOrgPayoutWithholdingIdentity(payout, recoveredPaise);
+          if (payout.netPayoutPaise - recoveredPaise > 0) {
+            await postLedgerTxn(tx, {
+              idempotencyKey: `orgpayout-reversal:${payoutId}`,
+              kind: "ORG_PAYOUT",
+              payoutId,
+              postings: buildPayoutReversalPostings({
+                payableAccount: {
+                  kind: "ORG_PAYABLE",
+                  organizationId: payout.organizationId,
+                },
+                grossPayablePaise: payout.netPayoutPaise - recoveredPaise,
+                netCashPaise: payout.amountPaise,
+                tdsPaise: orgTds,
+              }),
+            });
+          }
+
+          await recordOrgTdsReversal(tx, {
+            orgPayoutId: payoutId,
+            organizationId: payout.organizationId,
+            reversalBasis: { kind: "FULL" },
+          });
+          await releaseClawbackRecovery(tx, payoutId);
+
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: payout.organizationId,
+              actorMembershipId: null,
+              category: "PAYOUT",
+              action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
+              description: `Payout ${payoutId} reversed by bank after completion: ${reason.slice(0, 200)}`,
+              details: {
+                payoutId,
+                kind: "REVERSED",
+                reversedFrom: "COMPLETED",
+                reason: reason.slice(0, 500),
+              },
+            },
+          });
+
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId: payout.organizationId,
+            eventType: "payout.failed",
+            payload: {
+              payoutId: payout.id,
+              reason: reason || "PAYOUT_REVERSED",
+              lastError: reason || null,
+            },
+          });
+
+          const notifyStaged = await notifyOrgPayoutFailed(
+            payout.organizationId,
+            {
+              orgName: payout.organization.name,
+              payoutId,
+              amountPaise: payout.amountPaise,
+              netPayoutPaise: payout.netPayoutPaise,
+              tdsAmountPaise: payout.tdsAmountPaise ?? 0,
+              currency: payout.currency,
+              reason: reason.slice(0, 200),
+              kind: "REVERSED",
+              dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
+            },
+            { tx, entityRef: `orgPayout:${payoutId}` },
+          );
+
+          return {
+            wasNoOp: false,
+            status: "REVERSED" as PayoutStatus,
+            notifyStaged,
+            notify: {
+              organizationId: payout.organizationId,
+              orgName: payout.organization.name,
+              amountPaise: payout.amountPaise,
+              netPayoutPaise: payout.netPayoutPaise,
+              tdsAmountPaise: payout.tdsAmountPaise ?? 0,
+              currency: payout.currency,
+            },
+          };
+        }
+
+        const preClaim = await tx.organizationPayout.updateMany({
+          where: {
+            id: payoutId,
+            status: { in: ["PENDING", "APPROVED", "PROCESSING"] },
+          },
+          data: {
+            status: "REVERSED",
+            failureReason: reason.slice(0, 500),
+            failedAt: new Date(),
+          },
+        });
+        if (preClaim.count === 0) {
+          const current = await tx.organizationPayout.findUnique({
+            where: { id: payoutId },
+            select: { status: true },
+          });
+          if (!current) {
+            throw new PayoutValidationError(
+              `Payout ${payoutId} not found`,
+              404,
+            );
+          }
+          return {
+            wasNoOp: true,
+            status: current.status,
+            notifyStaged: [],
+            notify: null,
+          };
+        }
+
+        await tx.organizationEarnings.updateMany({
+          where: { orgPayoutId: payoutId, status: "BATCHED" },
+          data: { status: "READY", orgPayoutId: null },
+        });
+        await tx.tDSRecord.deleteMany({
+          where: { orgPayoutId: payoutId, isReversal: false },
+        });
+        await releaseClawbackRecovery(tx, payoutId);
+
+        const payout = await tx.organizationPayout.findUniqueOrThrow({
+          where: { id: payoutId },
+          select: {
+            id: true,
+            organizationId: true,
+            netPayoutPaise: true,
+            currency: true,
+            organization: { select: { name: true } },
+          },
+        });
+
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: payout.organizationId,
+            actorMembershipId: null,
+            category: "PAYOUT",
+            action: AUDIT_ACTIONS.PAYOUT.PAYOUT_REVERSED,
+            description: `Payout ${payoutId} reversed prior to completion: ${reason.slice(0, 200)}`,
+            details: {
+              payoutId,
+              kind: "REVERSED",
+              reversedFrom: "PROCESSING",
+              reason: reason.slice(0, 500),
+            },
+          },
+        });
+
+        await dispatchWebhookEvent({
+          prisma: tx,
+          organizationId: payout.organizationId,
+          eventType: "payout.failed",
+          payload: {
+            payoutId: payout.id,
+            reason: reason || "PAYOUT_REVERSED",
+            lastError: reason || null,
+          },
+        });
+
+        const notifyStaged = await notifyOrgPayoutFailed(
+          payout.organizationId,
+          {
+            orgName: payout.organization.name,
+            payoutId,
+            amountPaise: payout.netPayoutPaise,
+            netPayoutPaise: payout.netPayoutPaise,
+            tdsAmountPaise: 0,
+            currency: payout.currency,
+            reason: reason.slice(0, 200),
+            kind: "REVERSED",
+            dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
+          },
+          { tx, entityRef: `orgPayout:${payoutId}` },
+        );
+
+        return {
+          wasNoOp: false,
+          status: "REVERSED" as PayoutStatus,
+          notifyStaged,
+          notify: {
+            organizationId: payout.organizationId,
+            orgName: payout.organization.name,
+            amountPaise: payout.netPayoutPaise,
+            netPayoutPaise: payout.netPayoutPaise,
+            tdsAmountPaise: 0,
+            currency: payout.currency,
+          },
+        };
       },
-    });
-
-    const notifyStaged = await notifyOrgPayoutFailed(
-      payout.organizationId,
-      {
-        orgName: payout.organization.name,
-        payoutId,
-        amountPaise: payout.amountPaise,
-        netPayoutPaise: payout.netPayoutPaise,
-        tdsAmountPaise: payout.tdsAmountPaise ?? 0,
-        currency: payout.currency,
-        reason: reason.slice(0, 200),
-        kind: "REVERSED",
-        dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
-      },
-      { tx, entityRef: `orgPayout:${payoutId}` },
-    );
-
-    return {
-      claimed: true,
-      notifyStaged,
-      notify: {
-        organizationId: payout.organizationId,
-        orgName: payout.organization.name,
-        amountPaise: payout.amountPaise,
-        netPayoutPaise: payout.netPayoutPaise,
-        tdsAmountPaise: payout.tdsAmountPaise ?? 0,
-        currency: payout.currency,
-      },
-    };
-  });
-
-  const completedResult = await reversalCompletion.catch(
-    async (err: unknown) => {
-      if (err instanceof OrgPayoutWithholdingMismatchError) {
-        await reportOrgPayoutWithholdingMismatch(err, "markOrgPayoutReversed");
-      }
-      throw err;
-    },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
   );
 
-  if (completedResult.claimed) {
-    await attemptStagedBells(completedResult.notifyStaged, "REVERSED");
-    if (completedResult.notify) {
-      await emailOrgPayoutFailed(
-        payoutId,
-        "REVERSED",
-        reason,
-        completedResult.notify,
-      );
+  const txResult = await reversalTx.catch(async (err: unknown) => {
+    if (err instanceof OrgPayoutWithholdingMismatchError) {
+      await reportOrgPayoutWithholdingMismatch(err, "markOrgPayoutReversed");
     }
-    return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
+    throw err;
+  });
+
+  if (!txResult.wasNoOp) {
+    await attemptStagedBells(txResult.notifyStaged, "REVERSED");
+    if (txResult.notify) {
+      await emailOrgPayoutFailed(payoutId, "REVERSED", reason, txResult.notify);
+    }
   }
 
-  return markOrgPayoutFailedInternal(payoutId, reason, "REVERSED");
+  return { wasNoOp: txResult.wasNoOp, status: txResult.status };
 }
 
 export interface OrgBatchResult {

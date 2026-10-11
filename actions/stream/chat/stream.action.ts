@@ -39,7 +39,7 @@ async function assertCanMintToken(
   // Bypass the cookie-session cache so a just-demoted staff/admin (or a
   // just-banned user) can't keep minting cross-user tokens until the cache
   // expires (#899).
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     // A tab whose cookie expired while it sat open: an answer the caller
     // RETURNS, because anything thrown here is captured (FAMILIARISE_WEB-13).

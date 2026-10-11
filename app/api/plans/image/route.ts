@@ -25,7 +25,7 @@ const planImageSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -81,14 +81,17 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ imageUrl: result.fileUrl }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return apiError({ tag: "[PlanImage.POST]", error });
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -131,7 +134,10 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return apiError({ tag: "[PlanImage.DELETE]", error });
   }
 }

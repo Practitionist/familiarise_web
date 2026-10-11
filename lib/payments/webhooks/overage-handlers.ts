@@ -60,291 +60,337 @@ type OverageTxOutcome =
  * Gateway capture succeeded for a CHARGE_MEMBER side-charge. Idempotent on the
  * side-Payment status + the `overage:<id>` ledger key.
  */
+async function checkFastPathSettledOverage(
+  paymentIntentId: string,
+  capturedPaise?: number,
+  gatewayPaymentId?: string,
+): Promise<boolean> {
+  if (!prisma.payment?.findUnique) return false;
+  const existingSide = await prisma.payment.findUnique({
+    where: { paymentIntent: paymentIntentId },
+    select: {
+      id: true,
+      paymentStatus: true,
+      amount: true,
+      gatewayPaymentId: true,
+    },
+  });
+  if (
+    !existingSide ||
+    existingSide.paymentStatus !== PaymentStatus.SUCCEEDED ||
+    (capturedPaise !== undefined && capturedPaise !== existingSide.amount)
+  ) {
+    return false;
+  }
+  if (gatewayPaymentId && !existingSide.gatewayPaymentId) {
+    await prisma.payment.updateMany({
+      where: { id: existingSide.id, gatewayPaymentId: null },
+      data: { gatewayPaymentId },
+    });
+  }
+  return true;
+}
+
+async function resolveInvoicedBaseAfterRecarve(
+  tx: Tx,
+  sideId: string,
+  organizationId: string | null,
+  paymentIntentId: string,
+): Promise<{
+  basePaise: number;
+  invoiceId: string;
+  overageEventId: string;
+} | null> {
+  const recarve = await recarveOverageBase(tx, { sidePaymentId: sideId });
+  if (recarve !== "invoiced") return null;
+
+  const ctx = await tx.overageEvent.findFirst({
+    where: { paymentId: sideId },
+    select: {
+      id: true,
+      basePaise: true,
+      payment: {
+        select: {
+          parentPayment: {
+            select: { billableToOrgInvoiceId: true },
+          },
+        },
+      },
+    },
+  });
+  const invoiceId = ctx?.payment?.parentPayment?.billableToOrgInvoiceId;
+  if (ctx && invoiceId && ctx.basePaise > 0) {
+    return {
+      basePaise: ctx.basePaise,
+      invoiceId,
+      overageEventId: ctx.id,
+    };
+  }
+  await recordSystemErrorSafe({
+    db: tx,
+    organizationId,
+    category: "OVERAGE",
+    summary: `Late capture of overage side-payment ${sideId} after the parent was invoiced — the base credit could not be neutralised (no basePaise / invoice link); manual billing adjustment needed`,
+    err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
+    context: { sidePaymentId: sideId, paymentIntentId },
+  });
+  return null;
+}
+
+async function releaseParentHeldEarningsIfNoDispute(
+  tx: Tx,
+  parentPaymentId: string,
+): Promise<void> {
+  const openDisputes = tx.dispute?.count
+    ? await tx.dispute.count({
+        where: {
+          paymentId: parentPaymentId,
+          status: { notIn: ["WON", "LOST"] },
+        },
+      })
+    : 0;
+  if (openDisputes > 0) return;
+
+  if (tx.consultantEarnings?.updateMany) {
+    await tx.consultantEarnings.updateMany({
+      where: {
+        paymentId: parentPaymentId,
+        status: "HELD",
+        preDisputeStatus: "PENDING",
+      },
+      data: { status: "PENDING", preDisputeStatus: null },
+    });
+  }
+  if (tx.organizationEarnings?.updateMany) {
+    await tx.organizationEarnings.updateMany({
+      where: {
+        paymentId: parentPaymentId,
+        status: "HELD",
+        preDisputeStatus: "PENDING",
+      },
+      data: { status: "PENDING", preDisputeStatus: null },
+    });
+  }
+}
+
+async function postOverageMemberLedgerEntries(
+  tx: Tx,
+  side: {
+    id: string;
+    amount: number;
+    taxAmount: number;
+    organizationId: string | null;
+  },
+): Promise<void> {
+  if (side.amount <= 0 || !side.organizationId) return;
+  const taxPaise = Math.min(side.taxAmount, side.amount);
+  const postings: Posting[] = [
+    {
+      account: { kind: "CASH" },
+      direction: "DEBIT",
+      amountPaise: side.amount,
+    },
+  ];
+  if (side.amount - taxPaise > 0) {
+    postings.push({
+      account: {
+        kind: "ORG_PAYABLE",
+        organizationId: side.organizationId,
+      },
+      direction: "CREDIT",
+      amountPaise: side.amount - taxPaise,
+    });
+  }
+  if (taxPaise > 0) {
+    postings.push({
+      account: { kind: "GST_PAYABLE" },
+      direction: "CREDIT",
+      amountPaise: taxPaise,
+    });
+  }
+  await postLedgerTxn(tx, {
+    idempotencyKey: `overage:${side.id}`,
+    kind: "OVERAGE_MEMBER",
+    paymentId: side.id,
+    postings,
+  });
+}
+
+async function settleOverageSidePaymentInTx(
+  tx: Tx,
+  paymentIntentId: string,
+  capturedPaise: number | undefined,
+  gatewayPaymentId?: string,
+): Promise<OverageTxOutcome> {
+  const side = await tx.payment.findUnique({
+    where: { paymentIntent: paymentIntentId },
+    select: {
+      id: true,
+      amount: true,
+      taxAmount: true,
+      organizationId: true,
+      paymentStatus: true,
+      parentPaymentId: true,
+    },
+  });
+  if (
+    !side ||
+    !side.parentPaymentId ||
+    side.paymentStatus === PaymentStatus.SUCCEEDED ||
+    capturedPaise === undefined
+  ) {
+    return null;
+  }
+
+  const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
+  if (capturedPaise !== side.amount) {
+    const stamped = await tx.payment.updateMany({
+      where: {
+        id: side.id,
+        paymentStatus: {
+          in: [PaymentStatus.PENDING, PaymentStatus.FAILED],
+        },
+      },
+      data: {
+        paymentStatus: PaymentStatus.SUCCEEDED,
+        ...capturedGatewayId,
+        description: autoRefundPendingDescription(
+          `capture amount ${capturedPaise}p != expected ${side.amount}p`,
+        ),
+      },
+    });
+    if (stamped.count === 0) return null;
+    await postUnappliedReceipt(tx, {
+      paymentId: side.id,
+      capturedPaise,
+    });
+    return {
+      kind: "mismatch_refund",
+      sideId: side.id,
+      capturedPaise,
+      organizationId: side.organizationId,
+    };
+  }
+
+  let claimed = await tx.payment.updateMany({
+    where: { id: side.id, paymentStatus: side.paymentStatus },
+    data: {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      ...capturedGatewayId,
+    },
+  });
+  if (claimed.count === 0) {
+    const current = await tx.payment.findUnique({
+      where: { id: side.id },
+      select: { paymentStatus: true },
+    });
+    if (current?.paymentStatus !== PaymentStatus.FAILED) return null;
+    claimed = await tx.payment.updateMany({
+      where: { id: side.id, paymentStatus: PaymentStatus.FAILED },
+      data: {
+        paymentStatus: PaymentStatus.SUCCEEDED,
+        ...capturedGatewayId,
+      },
+    });
+    if (claimed.count === 0) return null;
+  }
+
+  const updatedLeg = await tx.paymentLeg.updateMany({
+    where: { paymentId: side.id, source: "CARD" },
+    data: { sourceRef: paymentIntentId },
+  });
+  if (updatedLeg?.count === 0) {
+    await tx.paymentLeg.create({
+      data: {
+        paymentId: side.id,
+        source: "CARD",
+        amountPaise: side.amount,
+        sourceRef: paymentIntentId,
+      },
+    });
+  }
+
+  const settledAt = new Date();
+  let invoicedBase: {
+    basePaise: number;
+    invoiceId: string;
+    overageEventId: string;
+  } | null = null;
+  let moved = await transitionOverage(
+    tx,
+    { paymentId: side.id },
+    "CHARGED",
+    { settledAt },
+    { fromIn: ["PENDING", "ACCRUED"] },
+  );
+  if (moved === 0) {
+    moved = await transitionOverage(
+      tx,
+      { paymentId: side.id },
+      "CHARGED",
+      { settledAt },
+      { fromIn: ["FAILED"] },
+    );
+    if (moved > 0) {
+      invoicedBase = await resolveInvoicedBaseAfterRecarve(
+        tx,
+        side.id,
+        side.organizationId,
+        paymentIntentId,
+      );
+    }
+  }
+
+  if (moved === 0) {
+    await recordSystemErrorSafe({
+      db: tx,
+      organizationId: side.organizationId,
+      category: "OVERAGE",
+      summary: `Overage side-payment ${side.id} captured but its OverageEvent could not move to CHARGED (likely REVERSED mid-flight) — refund the side-payment`,
+      err: new Error("OVERAGE_CAPTURED_AFTER_REVERSAL"),
+      context: { sidePaymentId: side.id, paymentIntentId },
+    });
+    return null;
+  }
+
+  await releaseParentHeldEarningsIfNoDispute(tx, side.parentPaymentId);
+  await postOverageMemberLedgerEntries(tx, side);
+
+  if (invoicedBase) {
+    await neutraliseInvoicedOverageBase(tx, {
+      sidePaymentId: side.id,
+      organizationId: side.organizationId,
+      paymentIntentId,
+      ...invoicedBase,
+    });
+  }
+  return { kind: "settled", sideId: side.id };
+}
+
 export async function handleOverageMemberSuccess(
   paymentIntentId: string,
   capturedPaise?: number,
   gatewayPaymentId?: string,
 ): Promise<void> {
-  const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
+  if (
+    await checkFastPathSettledOverage(
+      paymentIntentId,
+      capturedPaise,
+      gatewayPaymentId,
+    )
+  ) {
+    return;
+  }
+
   const txOutcome: OverageTxOutcome = await withSerializableRetry(() =>
     prisma.$transaction(
-      async (tx): Promise<OverageTxOutcome> => {
-        const side = await tx.payment.findUnique({
-          where: { paymentIntent: paymentIntentId },
-          select: {
-            id: true,
-            amount: true,
-            taxAmount: true,
-            organizationId: true,
-            paymentStatus: true,
-            parentPaymentId: true,
-          },
-        });
-        if (!side || !side.parentPaymentId) {
-          // Not an overage side-charge (or already gone) — nothing to do.
-          return null;
-        }
-        if (side.paymentStatus === PaymentStatus.SUCCEEDED) {
-          return null; // already settled
-        }
-
-        // Settle only on gateway truth; without a captured amount stay PENDING.
-        if (capturedPaise === undefined) {
-          return null;
-        }
-        if (capturedPaise !== side.amount) {
-          // Gateway truth differs from the side-charge: stamp for auto-refund
-          // like a booking mismatch, never CHARGE or journal the wrong amount.
-          const stamped = await tx.payment.updateMany({
-            where: {
-              id: side.id,
-              paymentStatus: {
-                in: [PaymentStatus.PENDING, PaymentStatus.FAILED],
-              },
-            },
-            data: {
-              paymentStatus: PaymentStatus.SUCCEEDED,
-              ...capturedGatewayId,
-              description: autoRefundPendingDescription(
-                `capture amount ${capturedPaise}p != expected ${side.amount}p`,
-              ),
-            },
-          });
-          if (stamped.count === 0) return null;
-          await postUnappliedReceipt(tx, {
-            paymentId: side.id,
-            capturedPaise,
-          });
-          return {
-            kind: "mismatch_refund",
-            sideId: side.id,
-            capturedPaise,
-            organizationId: side.organizationId,
-          };
-        }
-
-        // #1846 SM-B2 — CAS on the status just read. A plain update let a
-        // concurrent delivery's write be silently overwritten; with the predicate
-        // in the WHERE, Postgres re-checks it after the other transaction commits,
-        // so exactly one delivery settles the side-charge.
-        let claimed = await tx.payment.updateMany({
-          where: { id: side.id, paymentStatus: side.paymentStatus },
-          data: {
-            paymentStatus: PaymentStatus.SUCCEEDED,
-            ...capturedGatewayId,
-          },
-        });
-        if (claimed.count === 0) {
-          // #1846 SM-B2 — a failure delivery can commit FAILED between the read
-          // and the claim. The capture is gateway truth, so claim once more from
-          // FAILED; the FAILED→CHARGED edge below then recarves the base. Any
-          // other status means a concurrent capture already settled it.
-          const current = await tx.payment.findUnique({
-            where: { id: side.id },
-            select: { paymentStatus: true },
-          });
-          if (current?.paymentStatus !== PaymentStatus.FAILED) return null;
-          claimed = await tx.payment.updateMany({
-            where: { id: side.id, paymentStatus: PaymentStatus.FAILED },
-            data: {
-              paymentStatus: PaymentStatus.SUCCEEDED,
-              ...capturedGatewayId,
-            },
-          });
-          if (claimed.count === 0) return null;
-        }
-
-        // The side charge is born with its CARD leg; upsert stamps the gateway
-        // order id on it (and creates the leg if a legacy/fallback row lacked one).
-        if (typeof tx.paymentLeg?.upsert === "function") {
-          await tx.paymentLeg.upsert({
-            where: {
-              paymentId_source: { paymentId: side.id, source: "CARD" },
-            },
-            update: { sourceRef: paymentIntentId },
-            create: {
-              paymentId: side.id,
-              source: "CARD",
-              amountPaise: side.amount,
-              sourceRef: paymentIntentId,
-            },
-          });
-        } else {
-          await tx.paymentLeg.updateMany({
-            where: { paymentId: side.id, source: "CARD" },
-            data: { sourceRef: paymentIntentId },
-          });
-        }
-
-        // Transition FIRST so the journal below mirrors the state machine: the
-        // org-relief credit posts only for an event that actually became CHARGED.
-        // Two-step CAS (#812): which edge fired matters — FAILED→CHARGED is a
-        // late capture whose basePaise was restored to the org accrual when the
-        // sweep FAILed it, so it must be carved back out; PENDING/ACCRUED→CHARGED
-        // is still carved. A read-then-check would race the sweeps.
-        const settledAt = new Date();
-        // Set when the recarve declines (parent already invoiced); acted on AFTER
-        // the org-relief journal below.
-        let invoicedBase: {
-          basePaise: number;
-          invoiceId: string;
-          overageEventId: string;
-        } | null = null;
-        let moved = await transitionOverage(
+      (tx) =>
+        settleOverageSidePaymentInTx(
           tx,
-          { paymentId: side.id },
-          "CHARGED",
-          { settledAt },
-          { fromIn: ["PENDING", "ACCRUED"] },
-        );
-        if (moved === 0) {
-          moved = await transitionOverage(
-            tx,
-            { paymentId: side.id },
-            "CHARGED",
-            { settledAt },
-            { fromIn: ["FAILED"] },
-          );
-          if (moved > 0) {
-            const recarve = await recarveOverageBase(tx, {
-              sidePaymentId: side.id,
-            });
-            if (recarve === "invoiced") {
-              // The org was already invoiced for the restored base while the
-              // charge sat FAILED. The capture is honoured; the base is neutralised
-              // after the org-relief posting, so read the base and its invoice.
-              const ctx = await tx.overageEvent.findFirst({
-                where: { paymentId: side.id },
-                select: {
-                  id: true,
-                  basePaise: true,
-                  payment: {
-                    select: {
-                      parentPayment: {
-                        select: { billableToOrgInvoiceId: true },
-                      },
-                    },
-                  },
-                },
-              });
-              const invoiceId =
-                ctx?.payment?.parentPayment?.billableToOrgInvoiceId;
-              if (ctx && invoiceId && ctx.basePaise > 0) {
-                invoicedBase = {
-                  basePaise: ctx.basePaise,
-                  invoiceId,
-                  overageEventId: ctx.id,
-                };
-              } else {
-                // The event vanished or lost its parent link between the recarve
-                // and this read. Nothing can be neutralised, so say so durably
-                // rather than posting the base credit and moving on.
-                await recordSystemErrorSafe({
-                  db: tx,
-                  organizationId: side.organizationId,
-                  category: "OVERAGE",
-                  summary: `Late capture of overage side-payment ${side.id} after the parent was invoiced — the base credit could not be neutralised (no basePaise / invoice link); manual billing adjustment needed`,
-                  err: new Error("OVERAGE_RECARVE_AFTER_INVOICE"),
-                  context: { sidePaymentId: side.id, paymentIntentId },
-                });
-              }
-            }
-          }
-        }
-
-        if (moved === 0) {
-          // Capture raced a reversal: the booking refunded (event → REVERSED)
-          // after the order was minted but before this webhook landed. Money was
-          // collected for an obligation that no longer exists — do NOT credit the
-          // org; surface it for a manual side-payment refund instead (#782).
-          void recordSystemErrorSafe({
-            organizationId: side.organizationId,
-            category: "OVERAGE",
-            summary: `Overage side-payment ${side.id} captured but its OverageEvent could not move to CHARGED (likely REVERSED mid-flight) — refund the side-payment`,
-            err: new Error("OVERAGE_CAPTURED_AFTER_REVERSAL"),
-            context: { sidePaymentId: side.id, paymentIntentId },
-          });
-          return null;
-        }
-
-        if (side.parentPaymentId) {
-          const openDisputes =
-            typeof tx.dispute?.count === "function"
-              ? await tx.dispute.count({
-                  where: {
-                    paymentId: side.parentPaymentId,
-                    status: { notIn: ["WON", "LOST"] },
-                  },
-                })
-              : 0;
-          if (openDisputes === 0) {
-            if (typeof tx.consultantEarnings?.updateMany === "function") {
-              await tx.consultantEarnings.updateMany({
-                where: {
-                  paymentId: side.parentPaymentId,
-                  status: "HELD",
-                  preDisputeStatus: "PENDING",
-                },
-                data: { status: "PENDING", preDisputeStatus: null },
-              });
-            }
-            if (typeof tx.organizationEarnings?.updateMany === "function") {
-              await tx.organizationEarnings.updateMany({
-                where: {
-                  paymentId: side.parentPaymentId,
-                  status: "HELD",
-                  preDisputeStatus: "PENDING",
-                },
-                data: { status: "PENDING", preDisputeStatus: null },
-              });
-            }
-          }
-        }
-
-        if (side.amount > 0 && side.organizationId) {
-          const taxPaise = Math.min(side.taxAmount, side.amount);
-          const postings: Posting[] = [
-            {
-              account: { kind: "CASH" },
-              direction: "DEBIT",
-              amountPaise: side.amount,
-            },
-          ];
-          if (side.amount - taxPaise > 0) {
-            postings.push({
-              account: {
-                kind: "ORG_PAYABLE",
-                organizationId: side.organizationId,
-              },
-              direction: "CREDIT",
-              amountPaise: side.amount - taxPaise,
-            });
-          }
-          if (taxPaise > 0) {
-            postings.push({
-              account: { kind: "GST_PAYABLE" },
-              direction: "CREDIT",
-              amountPaise: taxPaise,
-            });
-          }
-          await postLedgerTxn(tx, {
-            idempotencyKey: `overage:${side.id}`,
-            kind: "OVERAGE_MEMBER",
-            paymentId: side.id,
-            postings,
-          });
-        }
-
-        if (invoicedBase) {
-          await neutraliseInvoicedOverageBase(tx, {
-            sidePaymentId: side.id,
-            organizationId: side.organizationId,
-            paymentIntentId,
-            ...invoicedBase,
-          });
-        }
-        return { kind: "settled", sideId: side.id };
-      },
+          paymentIntentId,
+          capturedPaise,
+          gatewayPaymentId,
+        ),
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         maxWait: 10_000,
@@ -379,14 +425,6 @@ export async function handleOverageMemberSuccess(
   }
 }
 
-/**
- * Correct a late member capture whose base the org was ALREADY invoiced for:
- * invoiced money must never also be credited to ORG_PAYABLE. In the caller's
- * tx: (1) `Dr ORG_PAYABLE / Cr ORG_RECEIVABLE` for the base, keyed
- * `overage-recarve-invoice:<sidePaymentId>`; (2) a GST credit note for the
- * grossed-up base via `mintInvoiceRefundCreditNote`, unique per OverageEvent.
- * Both keys are fixed per capture, so a redelivery applies once.
- */
 async function neutraliseInvoicedOverageBase(
   tx: Tx,
   args: {
@@ -406,8 +444,6 @@ async function neutraliseInvoicedOverageBase(
     invoiceId,
     overageEventId,
   } = args;
-  // Same key space for the journal and the document: this side-Payment's base
-  // is reversed exactly once, on either rail or both.
   const key = `overage-recarve-invoice:${sidePaymentId}`;
 
   if (organizationId) {
@@ -442,8 +478,6 @@ async function neutraliseInvoicedOverageBase(
       sgstPaise: true,
     },
   });
-  // Gross the tax-exclusive base up by the invoice's own rate; a DRAFT invoice
-  // is refused by the canonical writer's own guard.
   const taxPaise = invoice
     ? invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise
     : 0;
@@ -470,8 +504,6 @@ async function neutraliseInvoicedOverageBase(
     });
   }
 
-  // Awaited through the tx (#1582 B-P1-02) so a rollback drops it too; `*Safe`
-  // never throws.
   const creditNoteLabel = creditNoteId
     ? `credit note ${creditNoteId}`
     : outcome === "FULLY_CREDITED"
@@ -491,7 +523,7 @@ async function neutraliseInvoicedOverageBase(
     creditNoteOutcome: outcome ?? null,
     ledgerReversalKey: key,
   };
-  if (creditNoteId && typeof recordSystemEventSafe === "function") {
+  if (creditNoteId) {
     await recordSystemEventSafe({
       db: tx,
       organizationId,
@@ -515,11 +547,6 @@ async function neutraliseInvoicedOverageBase(
   }
 }
 
-/**
- * Gateway capture failed/abandoned for a CHARGE_MEMBER side-charge. Marks the
- * side-Payment FAILED + the OverageEvent FAILED so the dashboard can surface a
- * retry. The booking itself is unaffected (it already happened).
- */
 export async function handleOverageMemberFailure(
   paymentIntentId: string,
 ): Promise<void> {
@@ -529,14 +556,8 @@ export async function handleOverageMemberFailure(
       select: { id: true, paymentStatus: true, parentPaymentId: true },
     });
     if (!side || !side.parentPaymentId) return;
-    if (side.paymentStatus === PaymentStatus.SUCCEEDED) return; // don't undo a success
+    if (side.paymentStatus === PaymentStatus.SUCCEEDED) return;
 
-    // #1846 SM-B2 — the money predicate rides the WHERE. The SUCCEEDED
-    // pre-check above reads before the capture transaction commits, so a
-    // failure delivery racing it used to overwrite SUCCEEDED with FAILED while
-    // the OverageEvent stayed CHARGED and the org credit stayed posted. Only a
-    // PENDING side-charge can fail; zero rows means capture (or an earlier
-    // failure) got there first, and nothing below may run.
     const failed = await tx.payment.updateMany({
       where: { id: side.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.FAILED },
@@ -544,15 +565,12 @@ export async function handleOverageMemberFailure(
     if (failed.count === 0) return;
     const moved = await transitionOverage(tx, { paymentId: side.id }, "FAILED");
     if (moved > 0) {
-      // #812 §P0 — the member isn't paying basePaise; return it to the org's
-      // parent accrual in the same tx. "invoiced" (parent already rolled onto
-      // an invoice) is surfaced by the sweeps when they re-FAIL; here the
-      // charge stays retryable so a recarve on recovery rebalances it.
       const restore = await restoreOverageBaseCarve(tx, {
         sidePaymentId: side.id,
       });
       if (restore === "invoiced") {
-        void recordSystemErrorSafe({
+        await recordSystemErrorSafe({
+          db: tx,
           organizationId: null,
           category: "OVERAGE",
           summary: `Failed overage side-payment ${side.id}: basePaise not restorable — parent already invoiced; manual billing adjustment needed`,

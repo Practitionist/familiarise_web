@@ -33,7 +33,10 @@ import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
@@ -52,8 +55,7 @@ const verifySignatureSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     const razorpayClient = getRazorpayClient();
-    // #1584 P1-AZ01 — force-fresh like POST /api/checkout: this door drives
-    // routeCapturedPayment, so a banned or revoked session must not reach it.
+    // Drives routeCapturedPayment, so a banned or revoked session must not reach it.
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;
@@ -138,6 +140,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Stale order: the hold lapsed, so refuse before driving the pipeline.
+    if (payment.paymentStatus === "EXPIRED") {
+      return NextResponse.json(
+        {
+          verified: false,
+          error: "ORDER_EXPIRED",
+          paymentStatus: "EXPIRED",
+          orderId: razorpay_order_id,
+        },
+        { status: 409 },
+      );
+    }
+
     // The gateway is the authority on what was actually captured and on the
     // `notes` that select the handler. The signature only proves the pair
     // (order_id, payment_id) came from Razorpay; it carries neither amount nor
@@ -148,7 +163,9 @@ export async function POST(req: NextRequest) {
       if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
       // A malformed gateway answer throws into the catch below and defers.
       const gatewayPayment = razorpayFetchedPaymentSchema.parse(
-        await razorpayClient.payments.fetch(razorpay_payment_id),
+        await withRazorpaySdkTimeout("payments.fetch", () =>
+          razorpayClient.payments.fetch(razorpay_payment_id),
+        ),
       );
       notes = gatewayPayment.notes;
       capturedAmountPaise = gatewayPayment.amount;

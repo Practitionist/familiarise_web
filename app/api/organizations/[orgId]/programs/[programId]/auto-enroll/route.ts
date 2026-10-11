@@ -43,6 +43,7 @@ import {
 } from "@/lib/api/organizations/program-helpers";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUTO_ENROLL_BATCH_DEADLINE_MS } from "@/lib/api/organizations/auto-enroll-config";
 import { applyRateLimit, orgAutoEnrollLimiter } from "@/lib/rate-limit";
@@ -231,12 +232,6 @@ export async function POST(
   );
 }
 
-/**
- * One member's enrollment as a single Serializable transaction. Mirrors
- * assignments/route.ts POST tx-for-tx: claim → seat bump on create →
- * config-lock stamp on create → audit. Any thrown error aborts only this
- * member's row; the batch continues.
- */
 async function enrollOne(params: {
   orgId: string;
   programId: string;
@@ -258,7 +253,7 @@ async function enrollOne(params: {
       async (tx) => {
         const membership = await tx.membership.findFirst({
           where: { id: membershipId, organizationId: orgId },
-          select: { id: true, status: true },
+          select: { id: true, status: true, userId: true },
         });
         if (!membership) {
           throw new EnrollRowError(
@@ -266,8 +261,6 @@ async function enrollOne(params: {
           );
         }
         if (membership.status !== "ACTIVE") {
-          // PENDING invitees haven't accepted; SUSPENDED/REMOVED/ERASED must
-          // never gain entitlements. Reactivation re-opens the door honestly.
           throw new EnrollRowError("Membership is not ACTIVE");
         }
 
@@ -280,11 +273,23 @@ async function enrollOne(params: {
 
         if (created) {
           await adjustActiveSeatCount(tx, { programId, delta: +1 });
-          // #779 — first genuine assignment freezes LOCKED_PROGRAM_FIELDS;
-          // gated on configLockedAt:null so re-stamps are no-ops.
           await tx.program.updateMany({
             where: { id: programId, configLockedAt: null },
             data: { configLockedAt: new Date() },
+          });
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId: orgId,
+            eventType: "program.assigned",
+            payload: {
+              assignmentId: assignment.id,
+              programId,
+              membershipId,
+              userId: membership.userId,
+              periodStart: periodStart.toISOString(),
+              periodEnd: periodEnd.toISOString(),
+              source: "auto_enroll",
+            },
           });
         }
 

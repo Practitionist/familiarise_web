@@ -3,8 +3,7 @@
  */
 
 /**
- * Pin the stale-invitation cleanup contract (folded into cleanup-auth-tokens
- * per #1487):
+ * Pin the stale-invitation cleanup contract (part of cleanup-auth-tokens):
  *
  *   - Only rows with `status = PENDING` AND `expiresAt < now` get
  *     flipped to 'expired'. Already-expired, accepted, or revoked rows
@@ -13,13 +12,11 @@
  *     with the original invite metadata in `details` so a MAINTAINER
  *     scanning the audit log sees what lapsed without needing to dig
  *     into worker logs.
- *   - The concurrency guard (re-read inside the transaction) refuses
- *     to flip a row that flipped to 'accepted' between the scan and
- *     the update.
- *   - Idempotent: a second invocation with no stale rows returns
- *     `{ expired: 0 }` and writes no new audit rows.
- *   - `cleanupAuthTokens()` invokes stale-invitation expiry as part of the
- *     daily auth-token housekeeping sweep (#1487).
+ *   - The flip is a conditional updateMany on PENDING + lapsed, so a row
+ *     accepted between the scan and the update is left alone.
+ *   - Idempotent: a run with no stale rows expires nothing and writes no
+ *     audit rows.
+ *   - Runs inside the daily `cleanupAuthTokens()` sweep.
  */
 
 jest.mock("../../lib/prisma", () => {
@@ -44,9 +41,7 @@ jest.mock("../../lib/prisma", () => {
       },
       invitation: {
         findMany: jest.fn().mockResolvedValue(candidates),
-        findUnique: jest.fn(),
-        update: jest.fn(),
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        updateMany: jest.fn(),
       },
       orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
       $transaction: jest.fn(),
@@ -55,16 +50,11 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import prisma from "@/lib/prisma";
-import {
-  cleanupAuthTokens,
-  cleanupStaleInvitations,
-} from "@/scripts/cleanup/cleanup-auth-tokens";
+import { cleanupAuthTokens } from "@/lib/auth/cleanup-auth-tokens";
 
 const mockedPrisma = prisma as unknown as {
   invitation: {
     findMany: jest.Mock;
-    findUnique: jest.Mock;
-    update: jest.Mock;
     updateMany: jest.Mock;
   };
   orgAuditLog: { create: jest.Mock };
@@ -81,17 +71,21 @@ function wireTxShim() {
   });
 }
 
-describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () => {
+describe("stale invitation expiry in cleanupAuthTokens", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     wireTxShim();
   });
 
-  it("returns { expired: 0 } when no candidates exist (idempotent no-op)", async () => {
+  it("expires nothing when no candidates exist (idempotent no-op)", async () => {
     mockedPrisma.invitation.findMany.mockResolvedValue([]);
-    const result = await cleanupStaleInvitations();
-    expect(result).toMatchObject({ success: true, expired: 0, errors: [] });
-    expect(mockedPrisma.invitation.update).not.toHaveBeenCalled();
+    const result = await cleanupAuthTokens();
+    expect(result).toMatchObject({
+      success: true,
+      staleInvitationsExpired: 0,
+      errors: [],
+    });
+    expect(mockedPrisma.invitation.updateMany).not.toHaveBeenCalled();
     expect(mockedPrisma.orgAuditLog.create).not.toHaveBeenCalled();
   });
 
@@ -104,13 +98,16 @@ describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () =
       expiresAt: new Date("2026-05-01T00:00:00Z"),
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([candidate]);
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "PENDING" });
-    mockedPrisma.invitation.update.mockResolvedValue({ id: candidate.id });
+    mockedPrisma.invitation.updateMany.mockResolvedValue({ count: 1 });
 
-    const result = await cleanupStaleInvitations();
-    expect(result.expired).toBe(1);
-    expect(mockedPrisma.invitation.update).toHaveBeenCalledWith({
-      where: { id: candidate.id },
+    const result = await cleanupAuthTokens();
+    expect(result.staleInvitationsExpired).toBe(1);
+    expect(mockedPrisma.invitation.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: candidate.id,
+        status: "PENDING",
+        expiresAt: { lt: expect.any(Date) },
+      },
       data: { status: "EXPIRED" },
     });
     expect(mockedPrisma.orgAuditLog.create).toHaveBeenCalledWith({
@@ -126,7 +123,7 @@ describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () =
     });
   });
 
-  it("skips invites that flipped to 'accepted' between the scan and the TX (concurrency guard)", async () => {
+  it("skips invites that flipped to 'accepted' between the scan and the update", async () => {
     const candidate = {
       id: "inv-2",
       organizationId: "org-1",
@@ -135,14 +132,11 @@ describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () =
       expiresAt: new Date("2026-05-01T00:00:00Z"),
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([candidate]);
-    // Re-read inside the TX sees the racing accept — refuse to flip.
-    mockedPrisma.invitation.findUnique.mockResolvedValue({
-      status: "ACCEPTED",
-    });
+    // The conditional update matches nothing once the row is no longer PENDING.
+    mockedPrisma.invitation.updateMany.mockResolvedValue({ count: 0 });
 
-    const result = await cleanupStaleInvitations();
-    expect(result.expired).toBe(0);
-    expect(mockedPrisma.invitation.update).not.toHaveBeenCalled();
+    const result = await cleanupAuthTokens();
+    expect(result.staleInvitationsExpired).toBe(0);
     expect(mockedPrisma.orgAuditLog.create).not.toHaveBeenCalled();
   });
 
@@ -163,20 +157,19 @@ describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () =
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([a, b]);
 
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "PENDING" });
     // First update throws, second succeeds — the sweep should still
     // report the second row as expired.
-    mockedPrisma.invitation.update
+    mockedPrisma.invitation.updateMany
       .mockRejectedValueOnce(new Error("DB blip"))
-      .mockResolvedValueOnce({ id: b.id });
+      .mockResolvedValueOnce({ count: 1 });
 
-    const result = await cleanupStaleInvitations();
-    expect(result.expired).toBe(1);
+    const result = await cleanupAuthTokens();
+    expect(result.staleInvitationsExpired).toBe(1);
     expect(result.errors.length).toBe(1);
     expect(result.success).toBe(false);
   });
 
-  it("runs stale invitation expiry as part of cleanupAuthTokens (#1487)", async () => {
+  it("runs stale invitation expiry as part of cleanupAuthTokens", async () => {
     const candidate = {
       id: "inv-folded",
       organizationId: "org-1",
@@ -185,8 +178,7 @@ describe("cleanupStaleInvitations (folded into cleanup-auth-tokens #1487)", () =
       expiresAt: new Date("2026-05-01T00:00:00Z"),
     };
     mockedPrisma.invitation.findMany.mockResolvedValue([candidate]);
-    mockedPrisma.invitation.findUnique.mockResolvedValue({ status: "PENDING" });
-    mockedPrisma.invitation.update.mockResolvedValue({ id: candidate.id });
+    mockedPrisma.invitation.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await cleanupAuthTokens();
     expect(result.success).toBe(true);

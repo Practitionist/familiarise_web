@@ -4,7 +4,10 @@
  * INVALID_EMAIL_OR_PASSWORD / "Invalid email or password", which the old
  * string match read as a malformed address.
  */
-import { humanizeAuthError } from "../../lib/labels/auth-errors";
+import {
+  humanizeAuthError,
+  isPasskeyCancellation,
+} from "../../lib/labels/auth-errors";
 
 describe("humanizeAuthError", () => {
   it("a wrong password is never reported as a bad email address", () => {
@@ -87,5 +90,36 @@ describe("humanizeAuthError", () => {
       status: 400,
     });
     expect(copy.description).not.toMatch(/Field not allowed/);
+  });
+
+  it.each([
+    ["TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE", 400, "sign-in"],
+    ["INVALID_TWO_FACTOR_COOKIE", 401, "sign-in"],
+    ["REAUTH_REQUIRED", 403, "retry"],
+    ["PASSKEY_USER_VERIFICATION_REQUIRED", 401, "retry"],
+  ] as const)(
+    "%s has its own copy, not the status fallback",
+    (code, status, action) => {
+      const copy = humanizeAuthError("signin", { code, status });
+      expect(copy.action).toBe(action);
+      expect(copy.title).not.toMatch(/blocked|Couldn't sign you in/);
+    },
+  );
+
+  it("a passkey refused for a non-operator says so politely", () => {
+    const copy = humanizeAuthError("signin", {
+      code: "PASSKEY_OPERATORS_ONLY",
+      status: 403,
+    });
+    expect(copy.title).toMatch(/staff/i);
+  });
+});
+
+describe("isPasskeyCancellation", () => {
+  it("treats a dismissed browser prompt as silent, and real failures as not", () => {
+    expect(isPasskeyCancellation("AUTH_CANCELLED")).toBe(true);
+    expect(isPasskeyCancellation("ERROR_CEREMONY_ABORTED")).toBe(true);
+    expect(isPasskeyCancellation("PASSKEY_OPERATORS_ONLY")).toBe(false);
+    expect(isPasskeyCancellation(undefined)).toBe(false);
   });
 });

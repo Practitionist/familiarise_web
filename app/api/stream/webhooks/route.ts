@@ -38,82 +38,144 @@ import {
 } from "@/lib/stream/webhook-dispatch";
 import { isIgnoredEventType } from "@/lib/stream/webhook-events";
 import {
+  MAX_WEBHOOK_COMPRESSED_BYTES,
+  MAX_WEBHOOK_DECOMPRESSED_BYTES,
   getWebhookSecret,
+  isValidStreamSignatureFormat,
+  verifyStreamApiKeyHeader,
   verifyStreamWebhookSignature,
 } from "@/lib/stream/webhook-signature";
 import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
-import {
-  markWebhookEventProcessed,
-  type WebhookClaim,
-} from "@/lib/webhooks/event-log";
+import type { WebhookClaim } from "@/lib/webhooks/event-log";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 const gunzip = promisify(gunzipCb);
 
-async function readSignedBody(req: NextRequest): Promise<string> {
-  const raw = Buffer.from(await req.arrayBuffer());
-
-  // RFC 1952 gzip magic number (0x1f 0x8b); Stream signs the uncompressed JSON body.
-  const isGzipped = raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b;
-  if (!isGzipped) return raw.toString("utf8");
-
-  const decompressed = await gunzip(raw);
-  streamLogger.debug("Decompressed a gzipped Stream webhook payload", {
-    compressedBytes: raw.length,
-    decompressedBytes: decompressed.length,
-  });
-  return decompressed.toString("utf8");
+class PayloadTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PayloadTooLargeError";
+  }
 }
 
-function verifyStreamSignature(
-  req: NextRequest,
-  body: string,
-  secret: string,
-): boolean {
+function validatePreBodyHeaders(req: NextRequest): NextResponse | null {
   const signature = req.headers.get("x-signature");
-  return verifyStreamWebhookSignature(body, signature, secret);
-}
-
-async function handleOutOfWindowDelivery(
-  eventId: string,
-  eventType: string,
-  event: unknown,
-  signature: string | undefined,
-  tooOld: string,
-): Promise<NextResponse> {
-  try {
-    const receipt = await recordStreamEventReceipt(
-      eventId,
-      eventType,
-      event,
-      signature,
+  if (!isValidStreamSignatureFormat(signature)) {
+    streamLogger.warn(
+      "Rejected Stream webhook with missing or non-hex signature",
     );
-    if (receipt.isNew) {
-      await markWebhookEventProcessed(eventId, tooOld, receipt.claim);
-    } else {
-      streamLogger.warn(
-        "Out-of-window replay of an already-recorded delivery — leaving its row untouched",
-        { eventId, eventType },
-      );
-    }
-  } catch (persistError) {
-    streamLogger.error(
-      `Failed to persist out-of-window Stream event ${eventId}`,
-      persistError,
-    );
-    return NextResponse.json(
-      { error: "Could not record event" },
-      { status: 503 },
-    );
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  streamLogger.warn(
-    `Refused an out-of-window Stream delivery: ${tooOld} (${eventType})`,
-  );
+  if (!verifyStreamApiKeyHeader(req.headers.get("x-api-key"))) {
+    streamLogger.warn("Rejected Stream webhook with mismatched x-api-key");
+    return NextResponse.json({ error: "Invalid API key" }, { status: 401 });
+  }
+
+  const contentLengthHeader = req.headers.get("content-length");
+  if (contentLengthHeader !== null) {
+    const contentLength = Number(contentLengthHeader);
+    if (
+      !Number.isFinite(contentLength) ||
+      contentLength < 0 ||
+      contentLength > MAX_WEBHOOK_COMPRESSED_BYTES
+    ) {
+      streamLogger.warn("Rejected oversized Stream webhook by Content-Length", {
+        contentLengthHeader,
+      });
+      return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+    }
+  }
+
+  return null;
+}
+
+async function readBoundedRawBody(req: NextRequest): Promise<Buffer> {
+  if (!req.body) return Buffer.alloc(0);
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        totalBytes += value.byteLength;
+        if (totalBytes > MAX_WEBHOOK_COMPRESSED_BYTES) {
+          await reader.cancel().catch(() => undefined);
+          throw new PayloadTooLargeError(
+            `Compressed webhook body exceeded ${MAX_WEBHOOK_COMPRESSED_BYTES} bytes`,
+          );
+        }
+        chunks.push(value);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return Buffer.concat(chunks, totalBytes);
+}
+
+async function readSignedBody(req: NextRequest): Promise<string> {
+  const raw = await readBoundedRawBody(req);
+  const encoding = req.headers.get("content-encoding")?.toLowerCase();
+  const isGzipped =
+    encoding === "gzip" ||
+    (raw.length > 2 && raw[0] === 0x1f && raw[1] === 0x8b);
+  if (!isGzipped) return raw.toString("utf8");
+
+  try {
+    const decompressed = await gunzip(raw, {
+      maxOutputLength: MAX_WEBHOOK_DECOMPRESSED_BYTES,
+    });
+    streamLogger.debug("Decompressed a gzipped Stream webhook payload", {
+      compressedBytes: raw.length,
+      decompressedBytes: decompressed.length,
+    });
+    return decompressed.toString("utf8");
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    if (
+      code === "ERR_BUFFER_TOO_LARGE" ||
+      (err instanceof Error && err.message.includes("maxOutputLength"))
+    ) {
+      throw new PayloadTooLargeError(
+        `Decompressed Stream webhook exceeded ${MAX_WEBHOOK_DECOMPRESSED_BYTES} bytes`,
+      );
+    }
+    throw err;
+  }
+}
+
+function resolveStreamWebhookEventId(
+  req: NextRequest,
+  eventType: string,
+  body: string,
+): string {
+  const webhookId = req.headers.get("x-webhook-id")?.trim();
+  if (webhookId) return `stream_${webhookId}`;
+  const sha256Hex = crypto.createHash("sha256").update(body).digest("hex");
+  return `stream_${eventType}_${sha256Hex}`;
+}
+
+function handleOutOfWindowDelivery(
+  eventId: string,
+  eventType: string,
+  reason: string,
+): NextResponse {
+  streamLogger.warn("Refused out-of-window Stream delivery", {
+    eventId,
+    eventType,
+    reason,
+  });
   return NextResponse.json({
     status: "ok",
+    ignored: true,
     accepted: false,
-    reason: "replay_window",
+    reason,
   });
 }
 
@@ -134,31 +196,32 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = await readSignedBody(req);
-
-  const isValid = verifyStreamSignature(req, body, secret);
-
-  if (!isValid) {
-    captureThrottled(
-      "stream:webhook-signature",
-      "Stream webhook signature verification failed — deliveries are being dropped",
-      {
-        subsystem: "stream",
-        level: "error",
-        op: "webhook.signature",
-        tags: { reason: "stream.signature_invalid" },
-        extra: {
-          hasOverride: Boolean(process.env.STREAM_WEBHOOK_SECRET),
-        },
-      },
-    );
-    streamLogger.warn("Invalid Stream webhook signature");
-    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-  }
+  const headerRejection = validatePreBodyHeaders(req);
+  if (headerRejection) return headerRejection;
 
   try {
-    const event = JSON.parse(body);
+    const body = await readSignedBody(req);
+    const signature = req.headers.get("x-signature") || undefined;
 
+    if (!verifyStreamWebhookSignature(body, signature, secret)) {
+      captureThrottled(
+        "stream:webhook-signature",
+        "Stream webhook signature verification failed — deliveries are being dropped",
+        {
+          subsystem: "stream",
+          level: "error",
+          op: "webhook.signature",
+          tags: { reason: "stream.signature_invalid" },
+          extra: {
+            hasOverride: Boolean(process.env.STREAM_WEBHOOK_SECRET),
+          },
+        },
+      );
+      streamLogger.warn("Invalid Stream webhook signature");
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+    }
+
+    const event = JSON.parse(body);
     const baseEvent = streamBaseEventSchema.parse(event);
     const eventType = baseEvent.type;
 
@@ -171,24 +234,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "ok", handled: false });
     }
 
-    // Stream call/recording payloads have no stable top-level delivery ID, so hash the raw body.
-    const bodyHash = crypto.createHash("sha256").update(body).digest("hex");
-    const eventId = `stream_${baseEvent.type}_${bodyHash}`;
-
-    const signature = req.headers.get("x-signature") || undefined;
+    const eventId = resolveStreamWebhookEventId(req, eventType, body);
 
     const createdAt = new Date(baseEvent.created_at);
     const tooOld = Number.isNaN(createdAt.getTime())
       ? "permanent: unparseable_created_at"
       : classifyStreamDeliveryAge(createdAt);
     if (tooOld) {
-      return await handleOutOfWindowDelivery(
-        eventId,
-        eventType,
-        event,
-        signature,
-        tooOld,
-      );
+      return handleOutOfWindowDelivery(eventId, eventType, tooOld);
     }
 
     // Persist the receipt before acknowledging so the sweeper can recover if after() is killed.
@@ -226,7 +279,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Acknowledge inside Stream's 6s timeout and run heavy handler work in after().
     await runAfterOrInline(async () => {
       await processStreamEvent(
         event,
@@ -248,14 +300,15 @@ export async function POST(req: NextRequest) {
 }
 
 function formatWebhookErrorResponse(error: unknown): NextResponse {
+  if (error instanceof PayloadTooLargeError) {
+    streamLogger.warn("Stream webhook exceeded payload size limit", {
+      message: error.message,
+    });
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
+
   streamLogger.error("Stream webhook error", error);
 
-  // A malformed body will never become well-formed, so 400 and stop the
-  // retries rather than burning the budget on a permanent failure.
-  //
-  // `JSON.parse` throws SyntaxError, not ZodError, so genuinely malformed JSON
-  // used to fall past this branch to the 500 below — and Stream then spent its
-  // whole retry budget redelivering a body that could never parse.
   if (error instanceof SyntaxError) {
     streamLogger.error("Stream webhook received unparseable JSON", error);
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
@@ -280,10 +333,6 @@ function formatWebhookErrorResponse(error: unknown): NextResponse {
   );
 }
 
-/**
- * HEAD handler for webhook verification.
- * Some webhook providers send a HEAD request to check the endpoint is live.
- */
 export async function HEAD() {
   return new NextResponse(null, { status: 200 });
 }

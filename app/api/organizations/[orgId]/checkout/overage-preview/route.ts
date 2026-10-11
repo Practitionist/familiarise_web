@@ -21,46 +21,49 @@ const QuerySchema = z.object({
   sessions: z.coerce.number().int().min(1).max(1000).default(1),
 });
 
+/** List price of a plan this org's members can book: live, and public or this org's own. */
 async function planListPricePaise(
+  orgId: string,
   planType: CoveredPlanType,
   planId: string,
 ): Promise<number | null> {
+  const bookable = {
+    id: planId,
+    archivedAt: null,
+    OR: [
+      { visibility: { not: "ORG_ONLY" as const } },
+      { organizationId: orgId },
+    ],
+  };
+  const select = { price: true } as const;
   switch (planType) {
     case "CONSULTATION":
       return (
         (
-          await prisma.consultationPlan.findUnique({
-            where: { id: planId },
-            select: { price: true },
+          await prisma.consultationPlan.findFirst({
+            where: { ...bookable, status: "PUBLISHED" },
+            select,
           })
         )?.price ?? null
       );
     case "SUBSCRIPTION":
       return (
         (
-          await prisma.subscriptionPlan.findUnique({
-            where: { id: planId },
-            select: { price: true },
+          await prisma.subscriptionPlan.findFirst({
+            where: { ...bookable, status: "PUBLISHED" },
+            select,
           })
         )?.price ?? null
       );
     case "WEBINAR":
       return (
-        (
-          await prisma.webinarPlan.findUnique({
-            where: { id: planId },
-            select: { price: true },
-          })
-        )?.price ?? null
+        (await prisma.webinarPlan.findFirst({ where: bookable, select }))
+          ?.price ?? null
       );
     case "CLASS":
       return (
-        (
-          await prisma.classPlan.findUnique({
-            where: { id: planId },
-            select: { price: true },
-          })
-        )?.price ?? null
+        (await prisma.classPlan.findFirst({ where: bookable, select }))
+          ?.price ?? null
       );
   }
 }
@@ -70,7 +73,7 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -87,10 +90,11 @@ export async function GET(
   }
 
   const pricePaise = await planListPricePaise(
+    orgId,
     parsed.data.planType,
     parsed.data.planId,
   );
-  if (pricePaise == null) {
+  if (pricePaise === null) {
     return NextResponse.json({ error: "Plan not found" }, { status: 404 });
   }
 

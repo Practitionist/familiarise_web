@@ -1,19 +1,13 @@
 /**
  * GET    /api/organizations/[orgId]/sso/providers/[providerId]
+ * PATCH  /api/organizations/[orgId]/sso/providers/[providerId]
  * DELETE /api/organizations/[orgId]/sso/providers/[providerId]
  *
- * Detail + delete for a single SSO provider registration. PATCH is NOT
- * offered — identity-provider config edits are risky (a silent typo in
- * `clientId` or `clientSecret` locks users out), so the UX is
- * delete-and-recreate.
- *
- * The URL path uses the `providerId` slug, not the internal row uuid, to
- * match the IdP-side setup flow (the slug is part of the redirect URI).
- *
- * The IdP client secret is write-only: no role ever gets it back. It is
- * entered once at create and a mistake is fixed by delete-and-recreate, so
- * returning it serves no flow and only widens what a hijacked OWNER session
- * or a logged response can leak.
+ * One provider, keyed by its `providerId` slug (part of the redirect URI).
+ * PATCH rotates the client secret and/or changes the covered domains in place:
+ * same providerId, re-encrypted, audited, no re-approval, but a new secret must
+ * be proven again by an owner sign-in. Issuer or client id changes are a new
+ * provider. The client secret is write-only.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -24,8 +18,16 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
 import { redactOidcConfig } from "@/lib/sso/redact-oidc-config";
 import { notifyOrgSsoProviderDeleted } from "@/lib/novu/org-workflows";
-import type { SecretPayloadFailure } from "@/lib/sso/secret-crypto";
+import {
+  encryptSecretPayload,
+  isEncryptionKeyUsable,
+  type SecretPayloadFailure,
+} from "@/lib/sso/secret-crypto";
 import { readOidcConfig } from "@/lib/prisma-sso-secret-extension";
+import { updateProviderSchema } from "@/lib/sso/provider-schemas";
+import { providerDomains, serializeProviderDomains } from "@/lib/sso/domains";
+import { assertProviderDomains } from "@/lib/sso/provider-coverage";
+import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
 
 /**
  * The message an OWNER sees when their provider's config cannot be read.
@@ -54,7 +56,10 @@ export async function GET(
   const { orgId, providerId } = await params;
   // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
   // floor that admitted BILLING_ADMIN. Both roles get the same redacted view.
-  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "identity.read",
+  });
   if (access.error) return access.error;
 
   // Decryption happens lazily when `oidcConfig` is read, so the read goes
@@ -129,6 +134,171 @@ function findProvider(providerId: string, orgId: string) {
   });
 }
 
+function refusal(httpStatus: number, code: string, message: string): Error {
+  return Object.assign(new Error(message), { httpStatus, code });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{ orgId: string; providerId: string }>;
+  },
+) {
+  const { orgId, providerId } = await params;
+  const access = await requireOrgAccess(orgId, {
+    permission: "identity.manage",
+    requireActive: true,
+  });
+  if (access.error) return access.error;
+
+  const parsed = updateProviderSchema.safeParse(
+    await req.json().catch(() => null),
+  );
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid body", detail: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+  const { clientSecret } = parsed.data;
+  const domains = parsed.data.domains
+    ? providerDomains(serializeProviderDomains(parsed.data.domains))
+    : undefined;
+
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const current = await tx.ssoProvider.findFirst({
+        where: { providerId, organizationId: orgId },
+        select: {
+          id: true,
+          domain: true,
+          updatedAt: true,
+          oidcConfig: true,
+          domainVerified: true,
+          provenAt: true,
+        },
+      });
+      if (!current) {
+        throw refusal(404, "SSO_PROVIDER_NOT_FOUND", "SSO provider not found");
+      }
+
+      let oidcConfig: string | undefined;
+      if (clientSecret !== undefined) {
+        // Rotation un-proves the provider, so enforcement needs another proven one.
+        if (current.domainVerified && current.provenAt) {
+          const settings = await tx.organizationSSOSettings.findUnique({
+            where: { organizationId: orgId },
+            select: { enforceSSO: true },
+          });
+          const otherProven = settings?.enforceSSO
+            ? await tx.ssoProvider.count({
+                where: {
+                  organizationId: orgId,
+                  domainVerified: true,
+                  provenAt: { not: null },
+                  id: { not: current.id },
+                },
+              })
+            : 1;
+          if (otherProven === 0) {
+            throw refusal(
+              409,
+              "SSO_ENFORCED_REPROVE",
+              "SSO is enforced through this provider alone. Turn enforcement off or prove another provider before rotating its secret.",
+            );
+          }
+        }
+        const read = readOidcConfig(current);
+        if (!read.config) {
+          throw refusal(
+            409,
+            "SSO_PROVIDER_MISCONFIGURED",
+            "This provider's stored configuration cannot be read, so its secret cannot be rotated. Delete and re-create it.",
+          );
+        }
+        if (!isEncryptionKeyUsable()) {
+          throw refusal(
+            500,
+            "SSO_ENCRYPTION_KEY_MISSING",
+            "AUTH_CONFIG_ENCRYPTION_KEY is missing or malformed.",
+          );
+        }
+        oidcConfig = encryptSecretPayload({ ...read.config, clientSecret });
+      }
+      if (domains) {
+        await assertProviderDomains(tx, orgId, domains, providerId);
+      }
+      const domain = domains ? serializeProviderDomains(domains) : undefined;
+
+      // CAS on updatedAt: a concurrent edit makes this one 409, not clobber it.
+      const { count } = await tx.ssoProvider.updateMany({
+        where: { id: current.id, updatedAt: current.updatedAt },
+        data: {
+          ...(oidcConfig !== undefined && {
+            oidcConfig,
+            provenAt: null,
+            provenByUserId: null,
+          }),
+          ...(domain !== undefined && { domain }),
+        },
+      });
+      if (count === 0) {
+        throw refusal(
+          409,
+          "VERSION_CONFLICT",
+          "This provider was changed in another session. Reload and retry.",
+        );
+      }
+
+      const before = providerDomains(current.domain);
+      const added = domains?.filter((d) => !before.includes(d)) ?? [];
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "SETTINGS",
+          action: AUDIT_ACTIONS.SETTINGS.SSO_PROVIDER_UPDATED,
+          description: `SSO provider '${providerId}' updated`,
+          details: {
+            providerId,
+            secretRotated: clientSecret !== undefined,
+            ...(domains && { domainsBefore: before, domainsAfter: domains }),
+          },
+        },
+      });
+      // A newly covered domain of an enforcing org starts enforcing now.
+      if (added.length > 0) {
+        await revokeEnforcedDomainSessions(tx, orgId, {
+          onlyDomains: added,
+          keepSessionId: access.session.session.id,
+        });
+      }
+      return { domain: domain ?? current.domain };
+    });
+
+    return NextResponse.json({
+      provider: { providerId, domain: updated.domain },
+    });
+  } catch (err) {
+    if (err instanceof Error && "httpStatus" in err) {
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json(
+        { error: err.message, ...(code && { code }) },
+        { status },
+      );
+    }
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise", op: "sso-provider-update" } },
+    );
+    throw err;
+  }
+}
+
 export async function DELETE(
   req: NextRequest,
   {
@@ -159,8 +329,8 @@ export async function DELETE(
       }
       deletedDomain = current.domain;
 
-      // Enforcement fails open without an approved provider, so deleting the
-      // last one would silently switch it off. Make the owner do that openly.
+      // Enforcement fails open without an approved, owner-proven provider, so
+      // deleting the last one would silently switch it off.
       if (current.domainVerified) {
         const settings = await tx.organizationSSOSettings.findUnique({
           where: { organizationId: orgId },
@@ -171,6 +341,7 @@ export async function DELETE(
               where: {
                 organizationId: orgId,
                 domainVerified: true,
+                provenAt: { not: null },
                 id: { not: current.id },
               },
             })
@@ -178,7 +349,7 @@ export async function DELETE(
         if (remaining === 0) {
           throw Object.assign(
             new Error(
-              "Cannot delete the last approved SSO provider while SSO is enforced. Disable enforcement first.",
+              "Cannot delete the last approved, proven SSO provider while SSO is enforced. Disable enforcement first.",
             ),
             { httpStatus: 409 },
           );

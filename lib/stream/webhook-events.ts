@@ -35,7 +35,11 @@ export const HANDLED_EVENT_TYPES = [
 
 export type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
 
-/** Subscribed so the actual call start is recoverable later; acknowledged with no work today. */
+export const DESIRED_EVENT_TYPES = [...HANDLED_EVENT_TYPES] as const;
+
+export type DesiredEventType = (typeof DESIRED_EVENT_TYPES)[number];
+
+/** Unsubscribed lifecycle events acknowledged immediately with no DB work if delivered. */
 export const IGNORED_EVENT_TYPES = ["call.session_started"] as const;
 
 export type IgnoredEventType = (typeof IGNORED_EVENT_TYPES)[number];

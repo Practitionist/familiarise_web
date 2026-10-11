@@ -304,7 +304,7 @@ function MonthlyTrendChart({
 
   return (
     <div className="rounded-lg border bg-card p-4 space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {series.map((pt) => {
           const primaryRatio = seesMoney
             ? Math.round((pt.spendPaise / maxSpend) * 100)

@@ -71,6 +71,7 @@ export async function handleAllocate(
       authResult.session,
       eventType,
       eventId,
+      request.method,
     );
     if (authzError) return authzError;
 

@@ -60,6 +60,7 @@ export async function POST(
       authResult.session,
       "webinar",
       webinarId,
+      request.method,
     );
     if (authzError) return authzError;
 
@@ -184,7 +185,10 @@ export async function POST(
     }
   } catch (error) {
     // Catch-all for unexpected errors (database errors, network issues, etc.)
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Webinar validation error:", error);
     return NextResponse.json(
       {

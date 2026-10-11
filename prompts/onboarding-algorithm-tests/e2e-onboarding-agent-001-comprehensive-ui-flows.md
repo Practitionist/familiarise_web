@@ -62,7 +62,7 @@ You have access to two MCP tools:
 ### Key Fields
 
 - `users.onboardingCompleted` — `Boolean`, default `false`
-- `users.role` — enum: `CONSULTANT`, `CONSULTEE`, `STAFF`, `ADMIN`
+- `users.role` — enum: `CONSULTANT`, `CONSULTEE`, `ORG_WORKSPACE`, `STAFF`, `ADMIN` (`STAFF`/`ADMIN` exist only via the ADMIN Team page, never the wizard)
 - `users.bio` — `VARCHAR(160)`, max 160 chars
 - `ConsultantProfile.scheduleType` — enum: `WEEKLY`, `CUSTOM`
 - `ConsultantProfile.headline` — `VARCHAR(120)`, max 120 chars
@@ -78,7 +78,7 @@ Password plaintext: TestPassword123!
 Bcrypt hash: $2b$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012
 ```
 
-**Important:** After creating the session in SQL, you need to set the `better-auth.session_token` cookie in the browser. Use `navigate_page` to go to `http://localhost:3000` first, then use the Chrome DevTools MCP to set the cookie before navigating to the onboarding page. If cookie-setting is not available via MCP, navigate directly to `http://localhost:3000/form/onboarding` and check if BetterAuth picks up the session from the DB. If authentication is an issue, try logging in via the app's sign-in UI at `http://localhost:3000/auth/sign-in` using the test email and password.
+**Important:** BetterAuth signs its session cookie, so a raw `token` from SQL is not a valid cookie value; signing in through the UI at `http://localhost:3000/auth/signin` is the reliable path. The test user is inserted with `emailVerified = true`, so sign-in does not ask for the 6-digit email code (an unverified user is sent to `/auth/verify-email` to type the code). If you still try the SQL session, set the `better-auth.session_token` cookie in the browser. Use `navigate_page` to go to `http://localhost:3000` first, then use the Chrome DevTools MCP to set the cookie before navigating to the onboarding page. If cookie-setting is not available via MCP, navigate directly to `http://localhost:3000/form/onboarding` and check if BetterAuth picks up the session from the DB. If authentication is an issue, try logging in via the app's sign-in UI at `http://localhost:3000/auth/signin` using the test email and password.
 
 ---
 
@@ -139,7 +139,7 @@ INSERT INTO users (
   'Phase<N> TestUser',
   'testonb-phase<N>@test.com',
   true,
-  '<ROLE>',       -- CONSULTEE, CONSULTANT, or STAFF
+  '<ROLE>',       -- CONSULTEE or CONSULTANT (never STAFF/ADMIN)
   false,
   'America/New_York',
   NOW(), NOW()
@@ -200,7 +200,7 @@ Create test user with `role = 'CONSULTEE'` using Phase 0 template (use `phase1` 
 
 ### Step 1.1: Navigate & Authenticate
 
-1. Navigate to `http://localhost:3000/auth/sign-in`
+1. Navigate to `http://localhost:3000/auth/signin`
 2. Take snapshot to find the email/password form fields
 3. Fill email `testonb-phase1@test.com`, password `TestPassword123!`
 4. Click the sign-in button
@@ -833,7 +833,7 @@ DELETE FROM users WHERE id = 'test-onb-phase9';
 
 **Goal:** Confirm STAFF and ADMIN cannot be reached through public onboarding.
 
-Operators are created by an ADMIN from the back office (`lib/auth/operators.ts:createOperator`): the account is born with `onboardingCompleted = true` and the person sets a password from an emailed setup link. There is no Staff card in the onboarding role picker, and `actions/forms/onboarding.action.ts` refuses `ADMIN`/`STAFF` from a client-driven submission.
+Operators are created by an ADMIN from the back office (`lib/auth/operators.ts:createOperator`): the account is born with `onboardingCompleted = true` and the person sets a password from an emailed setup link. The new operator then enrols TOTP on first sign-in. There is no Staff card in the onboarding role picker, `processOnboardingData` (`utils/onboarding-server.ts`) accepts only `CONSULTEE` and `CONSULTANT`, and `POST /api/user/staff` no longer exists.
 
 ### Setup
 Create test user with `role = 'CONSULTEE'`, `onboardingCompleted = false`, suffix `phase10`.
@@ -936,7 +936,7 @@ DELETE FROM "Domain" WHERE id LIKE 'test-domain-onb-%';
 | 15 | All submitted fields persist with correct values in DB | 8 |
 | 16 | No orphaned profiles created for wrong roles | 1, 8 |
 | 17 | Review step displays all filled data | 9 |
-| 18 | Staff role card is disabled in UI | 10 |
+| 18 | Role picker has no Staff or Admin card | 10 |
 | 19 | Sign-out button works | 11 |
 | 20 | Double-click submit protection | 11 |
 | 21 | Special characters preserved in DB | 11 |

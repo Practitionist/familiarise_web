@@ -6,8 +6,8 @@
  * admin can hit `DELETE .../domain-claims/wipro.com` without first having
  * to look up the row id.
  *
- * Releasing revokes the approval of the org's SSO providers for this domain
- * (D21), and is refused when that would leave SSO enforced with no approved
+ * Releasing revokes the approval of the org's SSO providers that cover this
+ * domain, and is refused when that would leave SSO enforced with no approved
  * provider.
  */
 
@@ -16,6 +16,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { providerDomains } from "@/lib/sso/domains";
 
 export async function DELETE(
   _req: NextRequest,
@@ -36,7 +37,8 @@ export async function DELETE(
     return NextResponse.json(
       {
         error: "ORG_NOT_ACTIVE",
-        message: "Domain claims cannot be modified while the organization is suspended.",
+        message:
+          "Domain claims cannot be modified while the organization is suspended.",
         status: access.org.status,
       },
       { status: 409 },
@@ -67,7 +69,7 @@ export async function DELETE(
         select: { providerId: true, domain: true },
       });
       const unapproved = approved
-        .filter((p) => p.domain === domain)
+        .filter((p) => providerDomains(p.domain).includes(domain))
         .map((p) => p.providerId);
       if (unapproved.length > 0 && unapproved.length === approved.length) {
         const settings = await tx.organizationSSOSettings.findUnique({
@@ -92,7 +94,7 @@ export async function DELETE(
       });
       if (unapproved.length > 0) {
         await tx.ssoProvider.updateMany({
-          where: { organizationId: orgId, domain },
+          where: { organizationId: orgId, providerId: { in: unapproved } },
           data: { domainVerified: false },
         });
       }

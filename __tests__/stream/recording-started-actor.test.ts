@@ -11,14 +11,14 @@
  */
 
 const mockFindUnique = jest.fn();
-const mockUpdate = jest.fn();
+const mockUpdateMany = jest.fn();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     meeting: {
       findUnique: (...args: unknown[]) => mockFindUnique(...args),
-      update: (...args: unknown[]) => mockUpdate(...args),
+      updateMany: (...args: unknown[]) => mockUpdateMany(...args),
     },
   },
 }));
@@ -46,7 +46,7 @@ describe("handleRecordingStarted — actor and claim time", () => {
       recordingStartedBy: "owner-user-id",
       recordingStartedAt: new Date("2026-09-12T22:06:00.000Z"),
     });
-    mockUpdate.mockResolvedValue({});
+    mockUpdateMany.mockResolvedValue({ count: 1 });
 
     await handleRecordingStarted({
       call_cid: "default:call-1",
@@ -54,11 +54,14 @@ describe("handleRecordingStarted — actor and claim time", () => {
       created_at: "2026-09-12T22:06:28.522Z",
     });
 
-    expect(mockUpdate).toHaveBeenCalledTimes(1);
-    const { data } = mockUpdate.mock.calls[0][0];
-    expect(data).toEqual({ isRecording: true });
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    const { where, data } = mockUpdateMany.mock.calls[0][0];
+    expect(where).toEqual({ id: "session-1", endedAt: null });
+    expect(data).toEqual({
+      isRecording: true,
+      recordingStartedAt: new Date("2026-09-12T22:06:28.522Z"),
+    });
     expect(data).not.toHaveProperty("recordingStartedBy");
-    expect(data).not.toHaveProperty("recordingStartedAt");
   });
 
   it("keeps the route's actor even when the event names a user", async () => {
@@ -70,7 +73,7 @@ describe("handleRecordingStarted — actor and claim time", () => {
       recordingStartedBy: "owner-user-id",
       recordingStartedAt: new Date("2026-09-12T22:06:00.000Z"),
     });
-    mockUpdate.mockResolvedValue({});
+    mockUpdateMany.mockResolvedValue({ count: 1 });
 
     await handleRecordingStarted({
       call_cid: "default:call-1",
@@ -79,6 +82,9 @@ describe("handleRecordingStarted — actor and claim time", () => {
       user: { id: "someone-else" },
     });
 
-    expect(mockUpdate.mock.calls[0][0].data).toEqual({ isRecording: true });
+    expect(mockUpdateMany.mock.calls[0][0].data).toEqual({
+      isRecording: true,
+      recordingStartedAt: new Date("2026-09-12T22:06:28.522Z"),
+    });
   });
 });

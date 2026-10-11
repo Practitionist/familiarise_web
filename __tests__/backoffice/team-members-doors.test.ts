@@ -8,8 +8,9 @@
  * - POST /api/admin/team/members creates the account through
  *   `auth.api.mockCreateUser` with no headers (a trusted server call), adds the
  *   profile, sends the set-password link and writes one OpsActionLog row.
- * - DELETE /api/admin/team/members/{id}/two-factor removes the second factor
- *   and every session, for operators only.
+ * - DELETE /api/admin/team/members/{id}/two-factor removes the second factor,
+ *   rotates the password, ends every session and emails a setup link, for
+ *   other operators only.
  * - POST /api/admin/team/members/{id}/setup-link re-sends the set-password
  *   email, for operators only.
  */
@@ -25,6 +26,9 @@ const mockDb = {
   staffProfile: { create: jest.fn() },
   adminProfile: { create: jest.fn() },
   twoFactor: { deleteMany: jest.fn() },
+  passkey: { deleteMany: jest.fn() },
+  verification: { deleteMany: jest.fn() },
+  account: { updateMany: jest.fn() },
   session: { deleteMany: jest.fn() },
   opsActionLog: { create: jest.fn() },
   $transaction: jest.fn(),
@@ -59,11 +63,17 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: jest.fn(async () => null),
   staffCreateLimiter: {},
 }));
+const mockSendSecurityEventEmail = jest.fn();
+jest.mock("../../lib/auth/security-email", () => ({
+  __esModule: true,
+  sendSecurityEventEmail: (...a: unknown[]) => mockSendSecurityEventEmail(...a),
+}));
 jest.mock("../../lib/observability/report", () => ({
   __esModule: true,
   reportSentryError: jest.fn(),
 }));
 
+import bcrypt from "bcrypt";
 import { NextRequest } from "next/server";
 import { POST as createMember } from "../../app/api/admin/team/members/route";
 import { DELETE as resetTwoFactor } from "../../app/api/admin/team/members/[userId]/two-factor/route";
@@ -78,7 +88,10 @@ const request = (method: string, body: unknown) =>
 beforeEach(() => {
   jest.clearAllMocks();
   mockRequireBackofficeSurface.mockResolvedValue({
-    session: { user: { id: "admin1", role: "ADMIN" } },
+    session: {
+      user: { id: "admin1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   });
   mockDb.$transaction.mockImplementation((fn: (tx: typeof mockDb) => unknown) =>
     fn(mockDb),
@@ -104,7 +117,12 @@ describe("POST /api/admin/team/members", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith("users.moderate");
+    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith(
+      "users.moderate",
+      {
+        expectUser: true,
+      },
+    );
     const call = mockCreateUser.mock.calls[0][0];
     expect(call.headers).toBeUndefined();
     expect(call.body).toMatchObject({
@@ -156,13 +174,17 @@ describe("POST /api/admin/team/members", () => {
 describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
   const params = { params: Promise.resolve({ userId: "op1" }) };
 
-  it("removes the second factor and every session", async () => {
+  it("removes the second factor, rotates the password and ends every session", async () => {
     mockDb.user.findUnique.mockResolvedValue({
       id: "op1",
+      email: "op1@familiarise.test",
       role: "STAFF",
       twoFactorEnabled: true,
     });
+    mockDb.account.updateMany.mockResolvedValue({ count: 1 });
     mockDb.twoFactor.deleteMany.mockResolvedValue({ count: 1 });
+    mockDb.passkey.deleteMany.mockResolvedValue({ count: 2 });
+    mockDb.verification.deleteMany.mockResolvedValue({ count: 1 });
     mockDb.session.deleteMany.mockResolvedValue({ count: 3 });
 
     const res = await resetTwoFactor(
@@ -174,6 +196,12 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
     expect(mockDb.twoFactor.deleteMany).toHaveBeenCalledWith({
       where: { userId: "op1" },
     });
+    expect(mockDb.passkey.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "op1" },
+    });
+    expect(mockDb.verification.deleteMany).toHaveBeenCalledWith({
+      where: { value: "op1" },
+    });
     expect(mockDb.user.update).toHaveBeenCalledWith({
       where: { id: "op1" },
       data: { twoFactorEnabled: false },
@@ -181,7 +209,52 @@ describe("DELETE /api/admin/team/members/[userId]/two-factor", () => {
     expect(mockDb.session.deleteMany).toHaveBeenCalledWith({
       where: { userId: "op1" },
     });
+    const rotation = mockDb.account.updateMany.mock.calls[0][0];
+    expect(rotation.where).toEqual({ userId: "op1", providerId: "credential" });
+    expect(rotation.data.password).toMatch(/^!disabled:/);
+    await expect(
+      bcrypt.compare("any password", rotation.data.password),
+    ).resolves.toBe(false);
     await expect(res.json()).resolves.toMatchObject({ sessionsRevoked: 3 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mockRequestPasswordReset).toHaveBeenCalledWith({
+      body: {
+        email: "op1@familiarise.test",
+        redirectTo: "/auth/reset-password",
+      },
+    });
+    expect(mockSendSecurityEventEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "op1" }),
+      { kind: "two-factor-reset-by-admin" },
+    );
+  });
+
+  it("needs a recently re-authenticated session", async () => {
+    mockRequireBackofficeSurface.mockResolvedValue({
+      session: {
+        user: { id: "admin1", role: "ADMIN" },
+        session: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
+      },
+    });
+    const res = await resetTwoFactor(
+      request("DELETE", { reason: "Lost phone, verified on a call" }),
+      params,
+    );
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "REAUTH_REQUIRED",
+    });
+    expect(mockDb.twoFactor.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses an administrator resetting their own second factor", async () => {
+    const res = await resetTwoFactor(
+      request("DELETE", { reason: "Lost phone, verified on a call" }),
+      { params: Promise.resolve({ userId: "admin1" }) },
+    );
+    expect(res.status).toBe(403);
+    expect(mockDb.twoFactor.deleteMany).not.toHaveBeenCalled();
+    expect(mockDb.account.updateMany).not.toHaveBeenCalled();
   });
 
   it("refuses to touch a customer account", async () => {
@@ -218,7 +291,12 @@ describe("POST /api/admin/team/members/[userId]/setup-link", () => {
     const res = await resendSetupLink(request("POST", body), params);
 
     expect(res.status).toBe(200);
-    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith("users.moderate");
+    expect(mockRequireBackofficeSurface).toHaveBeenCalledWith(
+      "users.moderate",
+      {
+        expectUser: true,
+      },
+    );
     expect(mockRequestPasswordReset).toHaveBeenCalledWith({
       body: { email: "op@example.com", redirectTo: "/auth/reset-password" },
     });

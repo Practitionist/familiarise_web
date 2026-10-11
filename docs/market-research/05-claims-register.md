@@ -128,41 +128,6 @@ serious error, and the most likely failure is inheriting the PIB date.
 | F28 | `@sentry/nextjs` has been **OpenTelemetry-native since v8** (OTel v2 in v10)                                                                                                                                   | **VERIFIED**                                                      | Sentry v7→v8 and v9→v10 migration guides                  |
 | F29 | Datadog MCP server is **GA as of 2026-03-09**; Grafana, New Relic, Coralogix, GlitchTip, Better Stack also ship one. **MCP is not a differentiator** — except that SigNoz's and CubeAPM's have no error tools. | **VERIFIED**                                                      | Per-vendor docs                                           |
 
-## G. Our own system — measured, not estimated
-
-| #   | Claim                                                                                                                                                                                                                | Confidence                                    |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| G1  | 520 direct `Sentry.captureException` sites across 325 files; 254 helper sites; 414 files total                                                                                                                       | **VERIFIED** by grep                          |
-| G2  | 48 distinct `subsystem:` tag values — payments 147, bookings 78, stream 54, admin 42, enterprise 41, auth 33                                                                                                         | **VERIFIED**                                  |
-| G3  | 73 of 80 workflows call `notify-ops-failure.sh`, a hand-written Sentry envelope in bash+jq, and it is the **only** working page-a-human for money-critical cron failure                                              | **VERIFIED**                                  |
-| G4  | 72 bare-Node `runJob()` entrypoints wrapped by `job-sentry.ts`                                                                                                                                                       | **VERIFIED**                                  |
-| G5  | Everything is serverless: 1 Netlify function, 1 edge function, 2 scheduled functions, 72 GH Actions crons, browser. **Zero persistent hosts.**                                                                       | **VERIFIED**                                  |
-| G6  | The 2026-09-21 incident burned ~5,000 error events in 24h — ~80% of the Developer allowance — at near-zero real load                                                                                                 | **VERIFIED**                                  |
-| G7  | The ingest canary alone is 1,440 events/month — **29% of the Developer allowance**                                                                                                                                   | **VERIFIED**                                  |
-| G8  | Pre-scale error volume ~500–2,000/month; Team's 50k is 25–100× headroom                                                                                                                                              | **VERIFIED** from seed + capacity ladder + G6 |
-| G9  | **Source maps upload nowhere.** Netlify token unset after the 2026-06-26 org-spelling outage; CI does not pass `SENTRY_AUTH_TOKEN` into the build step; `.env` org token 401s. Production stack traces are minified. | **VERIFIED**                                  |
-| G10 | `lib/observability/betterstack-telemetry.ts` exists, is wired into the MCP config, and is **inert** behind `ENABLE_BETTERSTACK_TELEMETRY`                                                                            | **VERIFIED**                                  |
-| G11 | `SLACK_OPS_WEBHOOK_URL` has **never been provisioned**                                                                                                                                                               | **VERIFIED**                                  |
-| G12 | Migration cost 28–46 engineer-days, +2–4 weeks via OTel                                                                                                                                                              | Estimate, high confidence on the itemisation  |
-| G13 | `markExpected()` has **zero call sites** — the relabel is wired but nothing sets the marker                                                                                                                          | **VERIFIED**                                  |
-| G14 | We use no session replay and no profiling                                                                                                                                                                            | **VERIFIED**                                  |
-
-## H. Our own consent system
-
-| #   | Claim                                                                                                                                                             | Confidence                    |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| H1  | `ConsentArtifact` has **no status enum** — only `grantedAt`/`withdrawnAt`/`auditRetainedUntil`. "Asked but unanswered" and "never asked" are both unrepresentable | **VERIFIED**                  |
-| H2  | `ConsentSection` renders all three of never-asked, declined, expired as **"Not given"**                                                                           | **VERIFIED**                  |
-| H3  | `ANALYTICS` and `MARKETING_COMMS` are **never granted and never gated**; the signup checkbox is a "#701 P1 follow-up" and does not exist                          | **VERIFIED**                  |
-| H4  | Consent is stamped in the `user.create.after` hook, which **fails open**                                                                                          | **VERIFIED**                  |
-| H5  | The "#701 backfill cron" referenced at `lib/auth.ts:299` **does not exist**. Exactly 4 write paths for `ConsentArtifact`.                                         | **VERIFIED** (absence)        |
-| H6  | `ConsentArtifact.version` is only ever written as `1`, and `checkConsent` **never reads it** — shipping new notice text invalidates nothing                       | **VERIFIED**                  |
-| H7  | `ConsentArtifact.user` is `onDelete: Cascade` — the hard-delete path (no money history) destroys the consent ledger; the soft path (`scrubUser`) leaves it        | **VERIFIED**                  |
-| H8  | `checkConsent` is used at 7 sites: org checkout (×3), Stream chat (×2), data export, invite-accept. **Zero coupling to the Sentry path**                          | **VERIFIED**                  |
-| H9  | The only pre-signup consent surface reachable without an org is one line of ToS text with no artifact                                                             | **VERIFIED**                  |
-| H10 | `isNovuConfigured() === false` and "deleted" are both `true` from `deleteSubscriber`; the admin erasure path never called it at all                               | **VERIFIED** — fixed in #1881 |
-| H11 | The retention clock did not restart on withdrawal, so a withdrawal could delete its own proof. Local-time `setFullYear` also made the deadline host-TZ dependent. | **VERIFIED** — fixed in #1881 |
-
 ## I. Open — with the competing positions
 
 | #   | Question                                                          | Positions                                                                                                         | Note                                                                                   |

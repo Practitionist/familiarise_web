@@ -1,98 +1,164 @@
 # Architecture: two scopes, one engine
 
-Support runs in two scopes over one flowchart engine. The per-appointment scope persists a thread per `(appointmentId, userId)`; the platform scope persists nothing until a flow escalates. Both walk the same graph with the same transitions, and both write a ticket through the same factory. This page is the map of that engine, the one error contract every surface honours, and the one authorization gate every appointment-scoped route calls.
+Support operates across two intake scopes over one pure flowchart engine, backed by a unified relational case model (`SupportCase`), speakable IST-year ticket references (`FAM-YYYY-NNNNNN`), mandatory operator two-factor authentication, and a 30-minute background SLA sweep. The per-appointment scope persists a conversation thread per `(appointmentId, userId)`; the platform scope executes statelessly until escalation. Both evaluate identical graph transitions in `lib/support/flow-walk.ts` and enforce one error envelope and one authorization model across every API surface.
 
-## The engine
+## System overview
 
-The tree below shows how the support library is laid out and which module owns which responsibility.
+```mermaid
+flowchart TD
+    ApptUI["Appointment Support Page\n(b_<appointmentId>)"] --> ApptAPI["POST /api/appointments/[id]/support\n(Unthrottled + assertBodySize)"]
+    PlatUI["Platform Support Drawer\n(Stateless Cursor)"] --> PlatAPI["POST /api/support/platform"]
+    PubForm["Public Grievance Form\n(/contactus?category=grievance)"] --> ContactAPI["POST /api/contact"]
+
+    ApptAPI --> Walk["lib/support/flow-walk.ts\n(Pure Transitions + 3-Strikes Escalation)"]
+    PlatAPI --> Walk
+
+    Walk -->|"Self-serve terminal"| Deflect["recordFlowOutcome()\n(SupportFlowOutcome + helpfulRating)"]
+    Walk -->|"Escalation terminal"| Factory["createSupportTicket() / createOrReuseSupportCase()\n(FAM-YYYY-NNNNNN + Statutory SLA Snapshot)"]
+    ContactAPI -->|"category === 'grievance'"| Factory
+
+    Factory --> Queue["Back-Office CaseWorkspace + /api/support/cases**\n(requireApiAuth -> 428 if 2FA inactive)"]
+    Factory --> Sweep["runSupportSlaSweep (*/30 at :10, limit=20)\n(SLA Warn/Breach · 28d Auto-Close · T-72h/24h Disputes)"]
+```
+
+## Module layout
 
 ```text
 lib/support/
-├── flow-walk.ts          # PURE graph walk — both scopes execute identical transitions
+├── flow-walk.ts          # Pure graph walk + 3-strikes unrecognized turn auto-escalation
 ├── flows.ts              # 10 appointment flowcharts (code-defined, PR-reviewed)
-├── platform-flows.ts     # 5 stateless platform flows + reason→issueType taxonomy
-├── priority.ts           # single reason→priority policy map
-├── create-ticket.ts      # THE ticket factory + session-scope guard + dedup helpers
-├── context.ts            # stage (UPCOMING/LIVE/COMPLETED), endsAt, isOrgOperator
-├── service.ts            # runSupportTurn: reason/priority/org attribution,
-│                         # lastMessageAt maintenance, ORG_PARTY_CATEGORIES
-└── resolvers/            # flowchart-resolver (turn resolution over a flow)
+├── platform-flows.ts     # 5 stateless platform flows + reason -> issueType taxonomy
+├── priority.ts           # Canonical escalation reason -> priority policy map
+├── create-ticket.ts      # Shared ticket factory, session-scope guard, dedup helpers & notifications
+├── case-service.ts       # Unified SupportCase lifecycle, PROBLEM->INCIDENT cascade, ADR 20 redaction & compliance
+├── case-workspace.ts     # Back-office workspace assembler, timeline merge & system-escalated promise extraction
+├── saved-replies.ts      # Typed operator saved-reply and resolve macro registry by CaseTopic
+├── escalation.ts         # Word-bounded triggers + single-line ' | '-delimited escalationBrief / extractBotPromises
+├── sla.ts                # Statutory ceilings (24h ack / 15d dispose), priority tightening & pause math
+├── sla-sweep.ts          # 30-min cron sweep (:10 offset, limit=20): warn/breach, 28d auto-close, dispute alerts
+├── reference.ts          # Atomic IST-year FAM-YYYY-NNNNNN allocator (allocateTicketReference)
+├── deflection.ts         # Terminal flow outcomes, helpfulRating & rolling health metrics
+├── context.ts            # Stage (UPCOMING / LIVE / COMPLETED), live AppointmentOccurrence bounds, isOrgOperator
+├── service.ts            # runSupportTurn: reason/priority/org attribution, lastMessageAt, ORG_PARTY_CATEGORIES
+└── resolvers/            # Flowchart turn resolver over appointment and platform definitions
 
 lib/api/
-├── support-http.ts       # the error envelope + Sentry policy + parseRouteParams
-└── appointment-access.ts # ONE authz gate for appointment-scoped routes
+├── support-http.ts       # Standardized { error, code, detail? } envelope, Sentry filter & parseRouteParams
+└── appointment-access.ts # Unified appointment authorization gate (opt-in orgParty isolation)
 
-lib/support/error-copy.ts # client-side code→friendly-copy mapper
+providers/
+└── ReactQueryProvider.tsx # Global 428 PRECONDITION_REQUIRED interceptor -> /auth/two-factor/setup
 ```
 
-### Per-appointment scope (persisted threads)
+## Intake scopes
 
-`AppointmentSupportThread` is one conversation per `(appointmentId, userId)`. Intents are **stage-gated** like an order state: cancel and reschedule are offered only while the booking is upcoming; no-show, quality and recording intents only after completion. No-show has attendee **and** provider variants. Terminals carry machine-readable `reason`s (`provider_no_show`, `double_charge`, `quality_*`, and so on) that drive priority and land in the ticket description on escalation.
+### Per-appointment scope (persisted conversations)
 
-- Route: `app/api/appointments/[appointmentId]/support/route.ts` (`GET` the thread plus the server-gated intents, `POST` one turn).
-- The page: `app/support/_components/SupportRequestCasePage.tsx`, at `…/support/requests/[caseKey]` in the consultee, consultant, organization and org-workspace trees. #1527 round 5 replaced the earlier drawer, `SupportThreadSheet.tsx`, with this full page, keyed by booking (`b_<appointmentId>`) until the first message creates the thread row (see [the support-inbox ADR](../decisions/2026-09-27-support-inbox-and-case-pages.md)).
-- Status card: `components/support/AppointmentSupportStatusCard.tsx`.
+`AppointmentSupportThread` maintains one conversation per `(appointmentId, userId)`. Intents are stage-gated against the live `AppointmentOccurrence` window derived in `lib/support/context.ts`: cancellation and rescheduling surface while upcoming; no-show (both attendee and consultant variants), session quality, and recording access unlock after completion. Escalation terminals carry machine-readable `reason` codes (`provider_no_show`, `double_charge`, `repeated_unrecognized`) mapped to SLA priorities via `lib/support/priority.ts`.
 
-### Platform scope (stateless intake)
+- **API route:** `app/api/appointments/[appointmentId]/support/route.ts` (`GET` thread + gated intents, `POST` turn).
+- **Full-page workspace:** `app/support/_components/SupportRequestCasePage.tsx` (`b_<appointmentId>`) mounted across consultee, consultant, organization, and workspace trees via `SupportRequestView.tsx` and `SessionConversation.tsx`.
+- **Appointment card:** `components/support/AppointmentSupportStatusCard.tsx`.
 
-Platform issues (account, payments, site technical, operator billing) have no appointment to hang a thread on. The flowchart runs **statelessly**: the client holds the cursor and replays it each turn, and the server validates every transition against the registry and never trusts client state. A terminal either self-serves (nothing is written) or escalates, and escalation is the only write: a `SupportTicket` via the shared factory.
+> [!IMPORTANT]
+> **Three-Strikes Auto-Escalation & Unthrottled Booking Turns (`S-ADR-05`)**:
+>
+> 1. After **3 consecutive unrecognized user inputs** without advancing `currentNodeId`, `walkFlow` (`lib/support/flow-walk.ts`) automatically escalates (`escalate: true`, `reason: "repeated_unrecognized"`).
+> 2. Booking-bot turns (`POST /api/appointments/[appointmentId]/support`) consume **zero rate-limit quota**, guarded solely by `assertBodySize(req)` and `authorizeAppointment` so multi-step guided walks never fail with HTTP `429`.
 
-- Route: `app/api/support/platform/route.ts` (`GET` the intent catalogue for the caller's role, `POST` one turn).
-- The sheet: `components/support/PlatformSupportSheet.tsx`.
-- Replay dedup: a terminal turn reuses the user's recent `OPEN` ticket for the same outcome (`findRecentOpenEscalation`, thirty-minute window) instead of filing a twin.
-- Org attribution: only on the `ORG_OPERATOR_BILLING` flow. An explicit `orgId` that is not one of the caller's `ACTIVE` memberships is a 403, never a silent downgrade to a B2C ticket.
+### Platform scope (stateless cursor replay)
 
-### The hub surfaces
+Account, billing, technical, and organization operator billing issues run statelessly in `app/api/support/platform/route.ts` (`components/support/PlatformSupportSheet.tsx`). The client holds and replays the node cursor on each turn; the server re-validates every step against `lib/support/platform-flows.ts`. Self-serve terminals write only a `SupportFlowOutcome` telemetry row; escalation terminals reuse any open ticket filed within the preceding 30 minutes (`findRecentOpenEscalation`) or mint a new ticket with an atomic `FAM-` reference. Explicit `orgId` claims are permitted only on `ORG_OPERATOR_BILLING` for active org operators (`403` otherwise, never silently downgraded to B2C).
 
-Five surfaces read or write this subsystem, and the table below names each one with the file that owns it and the scope it is allowed to see. The two rating surfaces sit here because they share the hub's authorization gate; their own behaviour is documented under [`docs/feedback/`](../feedback/README.md) and [`docs/reviews/`](../reviews/README.md).
+### Public grievance & statutory transparency surfaces
 
-| Surface                          | File                                                                                                                                | Scope                                                                                                                                                                                                                                       |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Consultee/consultant Support tab | `components/dashboard/shared/support/SupportHub.tsx`                                                                                | Sessions subtab (recent-session picker plus conversation buckets, each opening its own case page) and Platform subtab                                                                                                                       |
-| Back-office Support inbox        | `components/dashboard/backoffice/support/CaseWorkspace.tsx` (#1527 round 5, replacing the separate Tickets and Conversations pages) | `tickets.manage`: full transcripts, reply, resolve and close, over both tickets and not-yet-escalated conversations as one list of cases. List rows name the requester only; email and phone appear on the case detail, behind `users.read` |
-| Org triage — threads             | `app/dashboard/organization/[orgId]/support/OrgSupportTriage.tsx` + `GET /api/organizations/[orgId]/support-threads`                | `operations.read`: a **metadata-only** thread list with no bodies ([ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md))                                                                                   |
-| Org triage — quality             | the same page + `GET /api/organizations/[orgId]/feedback-summary`                                                                   | `quality.read`: aggregates only, per consultant, floored and secondarily suppressed. See [the org quality signal](../feedback/02-org-quality-signal.md)                                                                                     |
-| CSAT row                         | `components/reviews/SessionRatingRow.tsx`                                                                                           | The private attendee rating rendered inline on each session row in `SessionTimeline`, one rating per call. See [feedback architecture](../feedback/01-architecture.md)                                                                      |
-| Public review composer           | `components/reviews/ProfileReviewComposer.tsx`                                                                                      | Written on the expert's profile as a client island. See [reviews architecture](../reviews/01-architecture.md)                                                                                                                               |
+Unauthenticated visitors and signed-in users alike can access statutory redressal and review moderation disclosures directly:
 
-## The error envelope (the one contract)
+- **Grievance Redressal (`/grievance`, `app/(pages)/grievance/page.tsx`):** Publishes Designated Grievance Officer contact details bound to live MX mailboxes via `resolveLiveMailbox()` (`support@practitionist.com`, jurisdiction `Haryana, India`), statutory acknowledgement (`within 24 hours`) and disposal (`within 15 days`) commitments, and direct links to `/contactus?category=grievance`. Submitting `POST /api/contact` with `category === "grievance"` atomically mints a `HIGH`-priority `GRIEVANCE` `SupportTicket` with an allocated `FAM-YYYY-NNNNNN` reference (`S-ADR-12`).
+- **Reviews & Moderation Policy (`/reviews-policy`, `app/(pages)/reviews-policy/page.tsx`):** Documents verified booking eligibility, BIS IS 19000:2022 equal treatment and author withdrawal rules, separate `ONE_TO_ONE` and `GROUP` score aggregation, human moderation grounds, DSA Art. 16(5)/17(3) Statement of Reasons notices (never exposing internal moderator notes), and `RPT-XXXXXXXX` takedown appeals (`S-ADR-11`).
 
-Every support-surface error response is `{ error, code, detail? }`, produced by `supportError()` in `lib/api/support-http.ts`.
+## Hub surfaces & access matrix
 
-- `error` is user-facing copy, safe to toast verbatim.
-- `code` is the machine discriminator (`UNAUTHORIZED`, `INVALID_ID`, `VALIDATION_FAILED`, `NOT_FOUND`, `FORBIDDEN`, `RATE_LIMITED`, `CONFLICT`, `INTERNAL`). Tests assert on it and dashboards group by it.
-- `detail` is developer material (a zod flatten, ids). It is echoed to the client only for client-fault statuses below 500; 5xx detail goes to Sentry only.
+| Surface                             | Owning file(s)                                                                                                       | Authorization & visibility boundary                                                                                                                         |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Customer & consultant Support hub   | `components/dashboard/shared/support/SupportHub.tsx`, `SupportRequestView.tsx`, `SessionConversation.tsx`            | Session picker, active/resolved case buckets opening `b_<appointmentId>` case pages, and stateless platform subtab                                          |
+| Back-office Support inbox           | `components/dashboard/backoffice/support/CaseWorkspace.tsx`, `useCaseMutations.tsx`                                  | `tickets.manage` + mandatory operator 2FA (`requireApiAuth` -> `428`): unified deadline-sorted queue over escalated cases and pre-escalation threads        |
+| Admin health & compliance panel     | `components/dashboard/backoffice/support/SupportHealthAndComplianceOverview.tsx`                                     | `requireAdminAuth` + 2FA: rolling 30d deflection & 7d recontact metrics (`/api/admin/support/health`) and CSV monthly IT Rules compliance report            |
+| Org triage — member threads         | `app/dashboard/organization/[orgId]/support/OrgSupportTriage.tsx` + `GET /api/organizations/[orgId]/support-threads` | `operations.read`: metadata-only list with zero transcript bodies ([ADR 20](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md))   |
+| Org triage — consultant quality     | `OrgSupportTriage.tsx` + `GET /api/organizations/[orgId]/feedback-summary`                                           | `quality.read`: cohort-floored (`>=5` scores, `>=10` comments) per-consultant aggregates ([02-org-quality-signal.md](../feedback/02-org-quality-signal.md)) |
+| Private session rating row          | `components/reviews/SessionRatingRow.tsx`                                                                            | Participant rater writes own score/note; rated party reads score only ([feedback architecture](../feedback/01-architecture.md))                             |
+| Public consultant review composer   | `components/reviews/ProfileReviewComposer.tsx`                                                                       | Attended non-org-hosted booking required; separate `ONE_TO_ONE` and `GROUP` tracks ([reviews architecture](../reviews/01-architecture.md))                  |
+| Public Grievance & Reviews policies | `app/(pages)/grievance/page.tsx`, `app/(pages)/reviews-policy/page.tsx`, `app/api/contact/route.ts`                  | Public statutory disclosures; `POST /api/contact` (`category: "grievance"`) mints tracked `FAM-` tickets                                                    |
 
-**The Sentry policy** lives in `supportError`. An original exception is captured with its stack (level `error` at 500 and above, `warning` below); a causeless 4xx is a `captureMessage` warning, which signals contract drift; and **401 and 429 are expected client noise and stay uncaptured on every path.** Exceptions are also written to `console.error` so local development without a Sentry DSN still sees them.
+## Authorization gates & mandatory operator 2FA
 
-**The client mapping** is `lib/support/error-copy.ts`. `throwSupportError(res, context)` logs the raw payload to the console and throws code-mapped friendly copy; `describeSupportError(payload, fallback)` prefers code copy, then the server `error`, then the fallback. Every hub consumer routes failures through these.
+```mermaid
+sequenceDiagram
+    participant Client as Browser / React Query
+    participant API as /api/support/cases* or /api/admin/support/*
+    participant Auth as requireApiAuth / requireAdminAuth
+    participant Setup as /auth/two-factor/setup
 
-**Route params** are opaque, length-bounded strings (`schemas/support.ts`: `AppointmentIdParams`, `SupportThreadIdParams`, `OrgIdParams`, all `min(1).max(64)`), never `.uuid()`. Seeded demo databases mint readable slugs such as `demo0813-appt-ba`, and the database lookup is the real validator. `parseRouteParams(schema, params, ctx)` awaits the params promise and answers the `INVALID_ID` envelope.
+    Client->>API: Fetch / Mutate Case Resource
+    API->>Auth: Verify session + operator 2FA status
+    alt Operator lacks active 2FA enrollment/verification
+        Auth-->>API: HTTP 428 PRECONDITION_REQUIRED
+        API-->>Client: 428 Error Response
+        Client->>Setup: redirectOnTwoFactorPreconditionError() redirects browser
+    else Verified 2FA session
+        Auth-->>API: Authorized operator identity
+        API-->>Client: 200 JSON (CAS-guarded & ADR 20 filtered)
+    end
+```
 
-## Authorization: one gate, org-party opt-in
+1. **Appointment participation gate (`authorizeAppointment(appointmentId, orgParty?)` in `lib/api/appointment-access.ts`):**
+   - Evaluates failures in deterministic order: `401 UNAUTHORIZED` -> `404 NOT_FOUND` -> `403 FORBIDDEN`.
+   - Direct participants and verified staff receive `{ organizationId, detail }` in a single query.
+   - Passing `orgParty: true` allows an organization operator (`operations.read`) to file a separate org-owned thread restricted to `ORG_PARTY_CATEGORIES` (`ORG_ADMIN_DISPUTE`, `SPONSORSHIP_BILLING`) without exposing `detail` or the member's transcript (`ADR 20`).
+2. **Mandatory operator 2FA (`S-ADR-10`):**
+   - Every `/api/support/cases*` and `/api/admin/support/*` handler calls `requireApiAuth` or `requireAdminAuth`, returning HTTP `428 PRECONDITION_REQUIRED` whenever a `STAFF` or `ADMIN` operator has not enrolled and verified TOTP 2FA.
+   - `makeQueryClient()` in `providers/ReactQueryProvider.tsx` wires `redirectOnTwoFactorPreconditionError` onto both `QueryCache.onError` and `MutationCache.onError`, immediately navigating unverified operators to `/auth/two-factor/setup` (`components/auth/TwoFactorSettings.tsx`).
+   - Seeded operators in non-production environments pre-enroll deterministic TOTP secrets and 10 backup codes encrypted with `BETTER_AUTH_SECRET` (`prisma/seedFiles/seed-two-factor.ts`).
 
-`authorizeAppointment(appointmentId, orgParty?)` in `lib/api/appointment-access.ts` is the single participation gate for the detail, feedback and support routes.
+## Error contract, concurrency & handoff integrity
 
-- Coded failures are ordered `UNAUTHORIZED`, then `NOT_FOUND`, then `FORBIDDEN`.
-- Participants and platform staff pass; success carries `organizationId` and the already-loaded `detail`, so there is no second read.
-- The **org-party grant is opt-in** (`orgParty: true`) and its success type carries no `detail`. An org operator may open their own conversation on their org's appointment, for org-party intents only (`ORG_PARTY_CATEGORIES`, defined once in `lib/support/service.ts` and clamped again defensively in `runSupportTurn`), and the full appointment graph is never reachable through the grant (ADR 20).
-- Routes without an org-party surface (detail, feedback) call it bare; the type system then makes `isOrgParty: false` a fact rather than a check to remember.
+- **Standardized error envelope (`lib/api/support-http.ts`):** All support endpoints return `{ error, code, detail? }`. Client errors below `500` include structured `detail`; `5xx` details report strictly to Sentry. Expected noise (`401` and `429`) is never captured to Sentry; cron and sweep jobs accumulate per-row errors and report at most once per run (`sentry.shared.config.ts`). Route parameters use length-bounded strings (`min(1).max(64)` in `schemas/support.ts`), never `.uuid()`, so human-readable demo slugs validate uniformly.
+- **Optimistic concurrency & reply collision guards (`S-ADR-07`):** Staff metadata mutations (`PATCH /api/support/cases/[caseId]`) enforce CAS on `expectedUpdatedAt` (`409 CONFLICT`), and public agent replies (`POST /api/support/cases/[caseId]/messages`) require `expectedLastMessageAt` (`409 NEW_CUSTOMER_MESSAGE` if a customer message arrived mid-draft).
+- **Sanitized single-line bot promises (`S-ADR-06`):** `escalationBrief` (`lib/support/escalation.ts`) collapses newlines in every field and joins promises on one line (`Bot told the customer: <p1> | <p2>`). `readTicketWorkspace` invokes `extractBotPromises` strictly when `isSystemEscalatedTicket` holds so customer-typed text cannot inject fake operator promises.
+- **Notifications (`ADR 23`):** Every support alert carries explicit `NotificationScope` and leads its title with the `FAM-` reference when allocated. Customer replies page the assigned operator (falling back to the staff roster when unassigned) via `notifyStaffOfTicketActivity`.
 
-## Notifications (ADR 23)
+## Background sweep (`runSupportSlaSweep`)
 
-Every support notification carries `NotificationScope` for attribution and filing. Deep links follow the `lib/novu/resolve-href.ts` doctrine: org-hosted threads link to `/dashboard/organization/<id>/appointments`, and B2C stays a bare `/dashboard` so the capability router picks the viewer's tree.
-
-Both directions of a ticket conversation page someone. A user replying into an escalated thread, or onto a ticket, previously told nobody, so staff only learned of it by reopening the inbox; `notifyStaffOfTicketActivity` in `lib/support/create-ticket.ts` closes that half. It prefers the assignee and falls back to the whole staff roster only when the ticket is unassigned, because fanning every reply at every staff member is how a queue's notifications get muted. In the other direction, the staff thread `PATCH` that resolves or closes a thread tells the user, who is the only party that cannot see the ops queue. Where a reference has been minted it leads the notification title, since that is the string the user will quote back.
+Breach state is computed purely on read via `slaStateOf(clock, now)`. Proactive warnings, breach alerts, 28-day stale auto-closure, and actionable payment dispute reminders (`T-72h` / `T-24h`) execute every **30 minutes at offset `:10`** via `runSupportSlaSweep` (`lib/support/sla-sweep.ts`, `limit=20`, locked by `withCronLock("support-sla-sweep")`). See [03-ticket-references-and-sla.md](03-ticket-references-and-sla.md) and [09-support-case-and-sla-sweep.md](09-support-case-and-sla-sweep.md) for full clock math and sidecar constraints.
 
 ## Deliberately out of scope
 
-An AI resolver, a database-stored flow editor, email intake, org admins as notification _recipients_ for member complaints, a per-org Novu inbox, and mirroring support chat into Stream (support is Postgres only; the PR #1195 description carries the reasoning).
-
-SLA timers are implemented and stored: see [03-ticket-references-and-sla.md](03-ticket-references-and-sla.md), which also describes the badges, the tile and the deadline-first default order that render breach state. What remains out of scope is the _sweep_. There is no cron that finds breached tickets and escalates or pages on them, because breach state is derived on read rather than stored.
+Generative AI resolution bots, database-stored flow editors, inbound email ticket parsing, organization admins receiving notifications on member personal complaints, per-organization Novu inboxes, and mirroring support conversations into Stream Chat (support transcripts live strictly in PostgreSQL).
 
 ## Related
 
-- [02-the-grid.md](02-the-grid.md) — where support sits beside feedback and reviews.
-- [06-invariants-and-testing.md](06-invariants-and-testing.md) — the rules the code above must keep.
-- [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) — statuses, reopening, mirroring and the compare-and-set guards.
-- [08-intake-callbacks-attachments-and-limits.md](08-intake-callbacks-attachments-and-limits.md) — intake, callbacks, receipts, attachments and rate limits.
+- [02-the-grid.md](02-the-grid.md) — ownership, actor permissions, booking shapes, and session vs booking anchoring.
+- [03-ticket-references-and-sla.md](03-ticket-references-and-sla.md) — IST-year `FAM-` references, tighten-only deadlines, pause accounting, and sweep arms.
+- [06-invariants-and-testing.md](06-invariants-and-testing.md) — sixteen non-negotiable runtime invariants and QA suite guide.
+- [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) — statuses, reopen transitions, and CAS guards.
+- [08-intake-callbacks-attachments-and-limits.md](08-intake-callbacks-attachments-and-limits.md) — callback validation, attachments, engineering escalations, and rate limiters.
+- [09-support-case-and-sla-sweep.md](09-support-case-and-sla-sweep.md) — unified `SupportCase` schema, `PROBLEM`/`INCIDENT` cascade, CSAT, and statutory monthly reports.
+
+## Deprecated & Superseded Approaches
+
+- **Per-appointment slide-over drawer (`SupportThreadSheet.tsx`):**
+  Replaced by full-page `SupportRequestCasePage.tsx` (`b_<appointmentId>`) across consultee, consultant, and organization workspaces so transcripts, file attachments, and SLA badges never clip inside a narrow drawer.
+- **Separate back-office Tickets and Conversations queues:**
+  Replaced by unified `CaseWorkspace.tsx` (`tickets.manage`) sorting unacknowledged and near-breach cases ahead of routine conversational activity.
+- **Passive read-only SLA monitoring without background escalation:**
+  `slaStateOf` remains pure and derived on read, while `runSupportSlaSweep` (`*/30` at `:10`, `limit=20`) drives proactive warn/breach paging, 28d auto-close, and dispute alerts.
+- **Unbounded reprompting & rate-limited appointment bot turns:**
+  Superseded by three-strikes `repeated_unrecognized` auto-escalation in `walkFlow` and zero-quota turns guarded by `assertBodySize(req)` and `authorizeAppointment`.
+- **Multi-line unsanitized bot promise extraction:**
+  Superseded by newline-stripped single-line `|`-delimited fields in `escalationBrief` parsed strictly on `isSystemEscalatedTicket` rows.
+- **Unverified operator API access & placeholder grievance domains:**
+  Superseded by mandatory `requireApiAuth` (`428` -> `/auth/two-factor/setup`), automatic public `FAM-` `GRIEVANCE` ticket creation on `POST /api/contact`, and `resolveLiveMailbox()` (`support@practitionist.com`, jurisdiction `Haryana, India`).
+- **3-layer standalone cron scripts & legacy `SupportTicket` / `ON_HOLD` status:**
+  Standalone wrapper scripts under `scripts/**` and `jobs/**` are retired in favor of single-function cron sweeps registered in `lib/cron/cleanup-registry.ts`, `ON_HOLD` is rejected in favor of `awaitingUserSince` / internal notes, and all new schema features land exclusively on `SupportCase*`.
+- **Unredacted cross-party member case reads:**
+  Superseded by `readSupportCaseForViewer` serving summary metadata (`filedByOrganizationNotice: true`, `messages: []`) to members on org-submitted cases.

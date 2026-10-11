@@ -33,14 +33,16 @@ A replay purchase settles as a real `Payment` row (`appointmentId = null`) with 
 
 Refunds of a fulfilled purchase are support-led: support marks the row `REFUNDED`, which removes the buyer's entitlement. A buyer who was refunded and buys again gets a new `RecordingPurchase` row.
 
-## Storage layout
+## Storage layout & playback continuity
 
-| Asset                      | Location                                                    | Visibility                                              |
-| -------------------------- | ----------------------------------------------------------- | ------------------------------------------------------- |
-| Full recording             | Cloudflare R2 (`R2_BUCKET`), key in `Recording.storagePath` | Private; one-hour presigned URL from the playback route |
-| Preview clip and thumbnail | Supabase bucket `recordings-previews`                       | **Public**, immutable cache                             |
+| Asset                      | Location                                                                                | Visibility & TTL                                                                                            |
+| -------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Full recording             | Cloudflare R2 (`R2_BUCKET`), attempt-scoped key `recordings/{id}/attempt-{attempt}.mp4` | Private; duration-scaled presigned URL (`max(4h, min(24h, 1h + 2 × duration))`) via `playbackUrlTtlSeconds` |
+| Preview clip and thumbnail | Supabase bucket `recordings-previews`                                                   | **Public**, immutable cache                                                                                 |
 
-Preview assets are marketing material for ISR-cached anonymous explore cards; signed URLs would expire under cache. Deterministic paths (`<recordingId>/...`) keep re-uploads orphan-free. The `expire-recordings` job deletes the preview and thumbnail together with the R2 object when a recording expires.
+- **Attempt-isolated storage keys (`attempt-{attempt}.mp4`):** Each transfer retry writes to `recordings/{recordingId}/attempt-{attempt}.mp4` (`MAX_TRANSFER_ATTEMPTS = 12`, exponential backoff `[15m, 1h, 6h, 24h]`), guaranteeing a stalled worker's late failure cleanup (`deleteR2Object`) can never delete another winning attempt's MP4. Superseded prior attempts (`attempt-1..{attempt-1}.mp4`) are removed asynchronously after `status = AVAILABLE` commits.
+- **Database CHECK enforcement (`Recording_storage_and_publish_check`):** Enforced in `prisma/sql/check-constraints.sql` (`NOT VALID` + `VALIDATE CONSTRAINT`) so `PLATFORM` rows cannot persist without `storagePath`, `AVAILABLE` rows require `PLATFORM`, and `PUBLISHED` rows require `PLATFORM`, `storagePath`, `listPricePaise > 0`, and explicit consultant consent attestation.
+- **Seamless playback recovery (`RecordingPlayerModal`):** If a long session outlives its presigned URL or receives a refreshed `recording.playbackUrl` prop, `RecordingPlayerModal` preserves `savedTimeRef.current` across URL swaps (`[open, recordingId]` reset boundary), fetches a fresh presigned URL in the background without unmounting `<video>`, and restores `video.currentTime` automatically on `loadedmetadata`.
 
 ## Caching
 
@@ -48,31 +50,16 @@ Preview assets are marketing material for ISR-cached anonymous explore cards; si
 
 ## Open items
 
-- Preview-clip accessibility: a WebVTT caption track or transcript alongside `previewClipUrl` for clips that contain speech. This needs a transcript asset pipeline; the detail page currently renders the clip without a track.
-- A registration-time redistribution-consent checkbox on the attendee join, feeding the publish attestation instead of relying on it alone.
-- Automated refunds for fulfilled `RecordingPurchase` rows through the refund family.
+- Preview-clip accessibility: WebVTT timed caption tracks alongside `previewClipUrl` for speech clips (plain-text `previewTranscript` is currently required and rendered).
+- Automated partial refunds for fulfilled `RecordingPurchase` rows through the refund pipeline.
 
 ## Deploy notes
 
-### Schema before build, not after merge
-
-The usual rule is "merge the PR, then `npm run db:push` from `dev`". That rule is wrong for any PR that adds columns **and** prerenders a page that reads them. `/explore/recordings` is ISR-prerendered during `next build`, so the build reads the shared database; push after merging and the build fails before the merge can happen with `The column Recording.<column> does not exist in the current database`.
-
-The order for such a PR:
-
-1. Bring the branch fully up to date with `dev` (`git merge origin/dev`), so its schema is a strict superset. A push from a branch reconciles the database to _that branch's_ schema, and anything missing from it is dropped.
-2. Verify the delta is additive with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script` and confirm there is no `DROP TABLE`, `DROP COLUMN` or `SET NOT NULL`.
-3. `npx prisma db push` from the branch, then `npm run db:sidecars`.
-4. Re-run CI and the deploy preview, then merge.
-
-On step 3, `db push` warns that adding a unique constraint "will fail if there are existing duplicate values". For a new nullable column that warning is a false positive: every existing row gets NULL and Postgres unique indexes permit unlimited NULLs. Confirm the column does not yet exist before accepting data loss.
-
-A `db push` from any checkout whose `schema.prisma` lacks these columns (plain `dev` before the branch lands) silently drops them, and the listing then fails prerender with Prisma `P2022`. If a preview fails with that error, re-apply the additive SQL rather than debugging the app.
+1. Ensure the branch is up to date with `dev` and verify additive delta read-only via `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`.
+2. Apply sidecar constraints safely with `NOT VALID` followed by `VALIDATE CONSTRAINT` (`npm run db:sidecars`) so `Recording` never holds a prolonged `ACCESS EXCLUSIVE` scan lock.
 
 ## Deprecated & Superseded Approaches
 
-- **`storageType = SUPABASE` listings**: the enum value is now `PLATFORM`, a vendor-neutral "our bucket", and full recordings live in R2. Supabase holds only preview assets.
-- **Manual transfer as a premium feature**: the transfer route returned `403 UPGRADE_REQUIRED` for `STREAM_ONLY` plans. There is no storage policy and no transfer route; every recording is copied by the `transfer-recordings` job.
-- **Replay purchase as "not a Payment row"**: replay purchases were once settled off `gatewayOrderId` alone. They now settle as a `Payment` with earnings and a journal.
-- **Publish UI missing**: the consultant publish flow lives in `RecordingManageSheet`.
-- **Plan-wide webinar access to the recording**: replaced by per-run access with an opt-in share setting.
+- **Fixed 1-hour presigned playback TTL & shared `composite.mp4` R2 keys**: Fixed 1-hour presigned URLs expired mid-watch on multi-hour webinars, and static `composite.mp4` keys allowed stale transfer retries to delete a concurrent winner's published MP4. Superseded by `playbackUrlTtlSeconds` (`>= 4h`), `savedTimeRef` playback position preservation, and attempt-scoped `recordings/{id}/attempt-{attempt}.mp4` keys.
+- **`storageType = SUPABASE` listings & manual transfer route**: Replaced by `RecordingStorageType.PLATFORM` (Cloudflare R2) and automated background transfers via `transfer-recordings` (`lib/stream/recording-transfer-service.ts`).
+- **Settling replay purchases outside `Payment`**: Replay purchases now settle atomically as `Payment` rows with earnings and `BOOKING` ledger journals (`lib/payments/webhooks/recording-purchase.ts`).

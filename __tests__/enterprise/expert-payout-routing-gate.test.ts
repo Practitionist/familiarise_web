@@ -37,6 +37,7 @@ const db = prisma as unknown as {
 function patchAs(role: string) {
   (requireOrgAccess as jest.Mock).mockResolvedValue({
     member: { id: "m-actor", role },
+    session: { session: { createdAt: new Date() } },
   });
   const req = new Request(
     "http://localhost/api/organizations/org-1/expert-payout-routing",

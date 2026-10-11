@@ -39,7 +39,7 @@ export default async function OrgSettingsSectionPage({
 }: Readonly<{ params: Promise<{ orgId: string; section: string }> }>) {
   const { orgId, section } = await params;
   if (!isOrgSettingsKey(section)) notFound();
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) notFound();
   const allowed = orgSettingsSectionsFor(access.member.role).some(
     (s) => s.key === section,

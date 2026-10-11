@@ -90,7 +90,13 @@ jest.mock("../../lib/compliance/gst", () => ({
   // array. Echo the subtotal back as the total so the CAS predicate
   // assertions read with the same number the caller supplied.
   deriveGstBreakdown: jest.fn(
-    ({ subtotalPaise, hsnCode }: { subtotalPaise: number; hsnCode: string }) => ({
+    ({
+      subtotalPaise,
+      hsnCode,
+    }: {
+      subtotalPaise: number;
+      hsnCode: string;
+    }) => ({
       subtotalPaise,
       cgstPaise: 0,
       sgstPaise: 0,
@@ -169,6 +175,9 @@ function wireTxShim() {
   // (PATCH) all land on jest.fn()s the tests can assert against.
   mockedPrisma.$transaction.mockImplementation(async (fn: unknown) => {
     const tx = {
+      // The invoice POST now runs its org, PO and contract reads in the tx.
+      organization: mockedPrisma.organization,
+      contract: mockedPrisma.contract,
       purchaseOrder: mockedPrisma.purchaseOrder,
       organizationInvoice: mockedPrisma.organizationInvoice,
       settlementLedgerEntry: mockedPrisma.settlementLedgerEntry,
@@ -208,9 +217,9 @@ function setupOrg() {
 }
 
 /**
- * The POST route runs a pre-flight `purchaseOrder.findUnique` BEFORE
- * starting the $transaction (to surface "PO belongs to another org" or
- * "PO is not ACTIVE" as a friendly 400/409 before any locks). Default
+ * The POST route reads the PO (`purchaseOrder.findUnique`) before its CAS
+ * draw-down, to surface "PO belongs to another org" or "PO is not ACTIVE"
+ * as a friendly 400/409. Default
  * to a PO that passes both gates so each test only has to override the
  * CAS-step outcome via `updateMany.mockResolvedValue`.
  */
@@ -333,9 +342,8 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
   let patchHandler: typeof import("@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route").PATCH;
 
   beforeAll(async () => {
-    const mod = await import(
-      "@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route"
-    );
+    const mod =
+      await import("@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route");
     patchHandler = mod.PATCH;
   });
 

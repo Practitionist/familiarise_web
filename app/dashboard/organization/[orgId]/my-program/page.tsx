@@ -67,7 +67,7 @@ export default async function MyProgramPage({
     typeof resolvedSearch?.leaveError === "string"
       ? (LEAVE_ERROR_COPY[resolvedSearch.leaveError] ?? null)
       : null;
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   // Same grant as the nav item (#1527): the sponsored member's own page.
   if (access.error || !hasOrgPermission(access.member.role, "myProgram.read")) {
     redirect(`/dashboard/organization/${orgId}/home`);

@@ -9,7 +9,8 @@
  * without replacing it, e.g. when the program it served was cancelled).
  *
  * To "change" the split, POST a new RateCard — `bumpRateCard` atomically
- * closes the previous card and creates the new one.
+ * closes the previous card and creates the new one. PATCH only touches the
+ * org's own cards; contract-owned cards are read-only here.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -42,6 +43,7 @@ export async function GET(
   const { orgId, cardId } = await params;
   // #1527 decision 1 — the Payouts › Rate cards tab's grant.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "payouts.read",
     canHost: true,
   });
@@ -111,6 +113,14 @@ export async function PATCH(
         throw Object.assign(new Error("RateCard not found"), {
           httpStatus: 404,
         });
+      }
+      if (current.ownerOrgId !== orgId) {
+        throw Object.assign(
+          new Error(
+            "This rate card belongs to a contract — change it through the contract",
+          ),
+          { httpStatus: 409 },
+        );
       }
 
       // Guard against rewriting the past: if effectiveTo is specified,

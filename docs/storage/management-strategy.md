@@ -166,22 +166,28 @@ graph TD
 ### Folder Structure
 
 ```
-documents/                                    # Main bucket
-├── appointments/                            # Root folder for all appointments
-│   ├── {appointmentId}/                    # Individual appointment folder
-│   │   ├── consultee-{consulteeId}/        # Consultee-specific folder
-│   │   │   ├── {timestamp}_{filename}     # Actual documents
-│   │   │   └── ...
-│   │   └── consultant-{consultantId}/      # (Future: consultant materials)
-│   └── ...
-└── temp/                                   # (Future: temporary uploads)
+documents/                                              # Private bucket (signed URL access only)
+├── appointments/
+│   └── {appointmentId}/
+│       ├── consultee-{consulteeId}/
+│       │   └── {timestamp}_{sanitized_filename}        # Learner deliverables & revisions (v1..v10)
+│       └── consultant-{consultantProfileId}/
+│           └── {timestamp}_{sanitized_filename}        # Consultant feedback files & standalone handouts
+├── plans/
+│   └── {consultation|subscription|webinar|class}-plans/
+│       └── {planId}/
+│           └── {timestamp}_{sanitized_filename}        # Plan materials (max 25 per plan)
+└── verification/
+    └── {consultantProfileId}/
+        └── {timestamp}_{sanitized_filename}            # Consultant profile verification documents
 ```
 
 ### Naming Conventions
 
-- **Appointment Folders**: Use UUID format (e.g., `8b8f818e-a787-45e7-b20b-aee65cb750f9`)
-- **Consultee Folders**: Prefixed with `consultee-` followed by consultee profile ID
-- **Files**: `{timestamp}_{sanitized_filename}` format for uniqueness and traceability
+- **Appointment Folders**: UUID of the owning `Appointment` row (`appointments/{appointmentId}`).
+- **Role Subfolders**: `consultee-{consulteeProfileId}` for learner deliverables and revisions; `consultant-{consultantProfileId}` for expert replies and handouts.
+- **Plan Material Folders**: `plans/{planType}-plans/{planId}` enforced on direct presigned upload verification.
+- **Files**: `{timestamp}_{sanitized_filename}` verified via 4 KB magic-byte header inspection (`lib/documents/storage-verify.ts`).
 
 ## On-the-Fly Creation Strategy
 
@@ -697,5 +703,21 @@ This comprehensive strategy ensures reliable, efficient, and secure document sto
 
 ## Deprecated & Superseded Approaches
 
-- **Deleting through the public client and ignoring the result**: storage deletes could silently remove nothing while the caller reported success. Superseded by the server client and the verified `removeObjects` above; never read a `true` from a delete helper as anything weaker than "the object is gone".
-- **Public buckets with stored public URLs for user-uploaded private files**: superseded by private buckets and signed redirects; keep public buckets only for assets that are meant to be world-readable.
+> [!WARNING]
+> **Do NOT re-introduce these superseded storage patterns.**
+
+1. **Public Storage Buckets & Stored Public URLs for User-Uploaded Files**:
+   - Earlier versions stored world-readable Supabase storage URLs directly in `AppointmentDocument.fileUrl` and `PlanMaterial.fileUrl`.
+   - All user documents, plan materials, verification submissions, and support attachments are now stored in private buckets (`public: false`) and served exclusively via authenticated 60-second signed URLs (`Cache-Control: private, no-store`). Only marketing/profile avatars (`plan-images`, `profile-images`, `organization-images`, `recordings-previews`) use public buckets.
+2. **Unverified Client-Side or Public-Key Deletes**:
+   - Calling `.remove()` through an anon client or ignoring partial batch deletion arrays silently left unreferenced blobs in storage while reporting `200 OK` to callers.
+   - All storage mutations run exclusively through `adminStorage()` (`lib/supabase-storage-core.ts`), and `removeObjects()` re-verifies any path missing from batch responses via `exists()` before reporting success.
+3. **Serverless Memory Buffering (`arrayBuffer()`) on Document Downloads**:
+   - Buffering full PDF/DOCX byte arrays through Next.js API routes exhausted serverless function memory and added double-hop latency.
+   - Download endpoints now validate permissions and session state, generate a 60-second signed Supabase URL (`createSignedStorageUrl`), and either return JSON metadata (`?format=json`) for inline preview frames or issue an HTTP `302` redirect.
+4. **Trusting Client `Content-Type` Headers Without Magic-Byte Verification**:
+   - Direct browser-to-storage presigned uploads allow callers to declare arbitrary `Content-Type` headers.
+   - Every commit handler now inspects the first 4,096 bytes of the uploaded object (`verifyDirectUploadedObject` in `lib/documents/storage-verify.ts`), immediately rejecting PE (`MZ`), ELF (`\x7FELF`), Mach-O executables, null-byte binary files disguised as `text/plain`, and header/MIME mismatches.
+5. **Unprobed Orphan Sweeps During Storage Outages**:
+   - Running `reconcile-document-storage` without first probing bucket connectivity risked interpreting empty list responses during transient storage outages as zero storage objects or failing partway through.
+   - `reconcileDocumentStorage` probes bucket readability up front, aborts on any directory listing error (`throw error`), and honors a 30-day soft-delete retention window alongside the 7-day orphan grace period.

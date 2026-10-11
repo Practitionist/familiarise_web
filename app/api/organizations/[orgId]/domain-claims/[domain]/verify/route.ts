@@ -28,6 +28,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
 
 export async function POST(
   _req: NextRequest,
@@ -48,7 +49,8 @@ export async function POST(
     return NextResponse.json(
       {
         error: "ORG_NOT_ACTIVE",
-        message: "Domain verification is paused while the organization is suspended.",
+        message:
+          "Domain verification is paused while the organization is suspended.",
         status: access.org.status,
       },
       { status: 409 },
@@ -193,6 +195,12 @@ export async function POST(
           description: `Domain '${domain}' verified via DNS TXT`,
           details: { domain, claimId: claim.id },
         },
+      });
+      // Only bites when the org enforces SSO and an approved provider covers
+      // the domain.
+      await revokeEnforcedDomainSessions(tx, orgId, {
+        onlyDomains: [domain],
+        keepSessionId: access.session.session.id,
       });
     });
   } catch (err) {

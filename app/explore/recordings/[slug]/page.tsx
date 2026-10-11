@@ -162,7 +162,7 @@ export default async function RecordingDetailPage({
   const listing = await getPublicRecordingBySlug(slug);
   if (!listing) notFound();
 
-  const session = await getSession(true);
+  const session = await getSession();
   const rawRecording = session?.user?.id
     ? await prisma.recording.findUnique({
         where: { id: listing.id },

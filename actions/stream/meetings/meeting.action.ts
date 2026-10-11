@@ -156,7 +156,7 @@ const appointmentAccessSelect = (userId: string) =>
 
 /** Loads an occurrence and its appointment only when the caller is entitled to the session. */
 async function readSlotForCaller(slotId: string) {
-  const session = await getSession(true);
+  const session = await getSession();
   const userId = session?.user?.id;
   if (!userId || session.user.banned === true) return null;
 

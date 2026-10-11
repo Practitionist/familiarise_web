@@ -16,7 +16,7 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -77,7 +77,10 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Profile image upload error:", error);
     return NextResponse.json(
       {
@@ -98,7 +101,7 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE() {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -138,7 +141,10 @@ export async function DELETE() {
       message: "Profile image deleted successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Profile image delete error:", error);
     return NextResponse.json(
       {

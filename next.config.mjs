@@ -138,11 +138,11 @@ const CSP_REPORT_GROUP = "csp-endpoint";
 const CSP_DIRECTIVES = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
-  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
+  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.r2.cloudflarestorage.com https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
-  "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com",
+  "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com https://*.supabase.co https://*.r2.cloudflarestorage.com",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com",
+  "frame-src 'self' blob: https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com",
   "font-src 'self' data:",
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
@@ -479,10 +479,29 @@ const nextConfig = {
   },
 
   async headers() {
+    const inlinePreviewHeaders = [
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      {
+        key: CSP_HEADER_KEY,
+        value: CSP_DIRECTIVES.replace(
+          "frame-ancestors 'none'",
+          "frame-ancestors 'self'",
+        ).replace("object-src 'none'", "object-src 'self'"),
+      },
+    ];
     return [
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        source:
+          "/api/appointments/:appointmentId/documents/:documentId/download",
+        headers: inlinePreviewHeaders,
+      },
+      {
+        source: "/api/plans/materials/:materialId/download",
+        headers: inlinePreviewHeaders,
       },
       {
         source: "/avif/(.*)",

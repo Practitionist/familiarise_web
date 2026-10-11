@@ -37,6 +37,7 @@ import {
 import {
   getChannelTypeFromId,
   CLASS_PREFIX,
+  collabChannelId,
   WEBINAR_PREFIX,
 } from "../../lib/stream-channel-ids";
 import { bookingOrgId, getDmChannelId } from "../../lib/stream-utils";
@@ -52,11 +53,6 @@ import {
 import { withCronLock } from "../../lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runJob } from "../../lib/observability/job-sentry";
-// Lifecycle thresholds moved out of this job module (review F-HIGH-2): the
-// dashboard sync now applies the SAME age math when building its expected-set,
-// and importing constants from here would drag dotenv/job wiring into the
-// request path. Names are re-exported so existing consumers/tests are
-// unchanged.
 import {
   DAY_MS,
   DEFAULT_RETENTION_DAYS,
@@ -65,125 +61,37 @@ import {
 
 export { DEFAULT_RETENTION_DAYS, FREEZE_AFTER_DAYS };
 
-/**
- * How far back to look for events still needing a stage applied.
- *
- * Without a lower bound this scanned EVERY ended webinar and class in history on
- * every daily run, and re-issued `deleteChannels` for channels deleted months
- * ago. Both stages are idempotent so nothing broke, but the work grew
- * monotonically with the product and every run paid for it in Stream API calls.
- *
- * An event is fully handled once `endsAt + retentionDays` has passed, so
- * anything older than the longest retention we honour has nothing left to do.
- * The margin is what makes that safe: the job can be down for a month, or an org
- * can carry a longer dial than the default, and the window still covers it.
- * `MAX_RETENTION_DAYS` is deliberately generous rather than derived — being
- * wrong in this direction costs one wasted query, being wrong the other way
- * leaves a channel undeleted forever.
- */
 const MAX_RETENTION_DAYS = 365;
 const LOOKBACK_MARGIN_DAYS = 60;
-
-/** Backstop so one pathological run cannot hold the cron open indefinitely. */
 const MAX_EVENTS_PER_RUN = 5_000;
 
-/**
- * Freeze pacing. The UpdateChannelPartial endpoint is capped at 300 req/min
- * APP-WIDE (shared with maintenance drain freeze/unfreeze), so the freeze loop
- * must never run flat-out: width `STREAM_CONCURRENCY_LIMIT` concurrent plus
- * this sleep between chunks averages under STREAM_TARGET_REQUESTS_PER_MINUTE
- * even if Stream answers instantly, leaving half the budget for live traffic.
- *
- * STREAM_FREEZE_PACING_MS can only SLOW this down. Values below the safe
- * minimum clamp up to STREAM_BATCH_PAUSE_MS — accepting a literal 0 would let
- * one env typo recreate the very burst this job exists to prevent.
- */
 const PARSED_PACING_MS = Number(process.env.STREAM_FREEZE_PACING_MS);
 const FREEZE_PACING_MS =
   Number.isFinite(PARSED_PACING_MS) && PARSED_PACING_MS >= 0
     ? Math.max(PARSED_PACING_MS, STREAM_BATCH_PAUSE_MS)
     : STREAM_BATCH_PAUSE_MS;
 
-/**
- * Hard cap on freezes per run. At default pacing, 600 freezes ≈ 4 min, which
- * fits the workflow's 10-minute timeout alongside the delete stage; anything
- * left over resumes next run (the ledger makes resume cheap — only unstamped
- * channels are retried).
- */
 const MAX_FREEZE_PER_RUN = 600;
-
-/**
- * Stream's DeleteChannels endpoint is rate-limited to 6 requests/minute app-wide,
- * requiring at least 10 seconds between consecutive batch calls.
- */
 export const DELETE_CHANNELS_PACING_MS = 10_000;
-
-/**
- * How long a PAIR must be dormant before their direct-message channel freezes.
- *
- * Deliberately not `FREEZE_AFTER_DAYS`. An event ends on a schedule and its chat
- * has a natural tail — seven days covers the follow-up Q&A and then the thing is
- * over. A consulting relationship does not end on a schedule: a fortnight
- * between sessions is ordinary, and freezing a consultee out of the channel they
- * use to reach their consultant would be a product regression dressed up as
- * hygiene.
- *
- * Ninety days of no booked session at all is a different claim: at that point
- * the relationship has plausibly ended, and the channel is membership and MAU
- * we are carrying for nothing.
- *
- * Dormancy is measured on the PAIR, never on an appointment. DM ids are keyed
- * on the pair (`dm-<a>-<b>`), and `DM_ELIGIBLE_STATUSES` includes `COMPLETED`
- * precisely so a finished booking keeps the conversation open — so a
- * per-appointment trigger would freeze a live relationship the moment one of
- * its bookings completed.
- */
 const DM_FREEZE_AFTER_DORMANT_DAYS = 90;
-
-/** Bound on the DM scan, mirroring MAX_EVENTS_PER_RUN for the event stage. */
 const MAX_DM_PAIRS_PER_RUN = 5_000;
-
-/**
- * Chat retention for a personal (non-org) DM.
- *
- * Matches the `Organization.chatRetentionDays` default. Personal bookings have
- * no org to carry a dial, and 365 is the same answer for the same reason: chat
- * is the cheaper of the two retained assets to keep and the more expensive to
- * have thrown away.
- */
 const DEFAULT_CHAT_RETENTION_DAYS = 365;
 
 export interface ExpireEventChannelsResult {
   frozen: number;
   deleted: number;
   skippedAlreadyFrozen: number;
-  /** DM channels frozen because the pair went dormant. */
   dmFrozen: number;
-  /** DM channels UNfrozen because the pair booked again. */
   dmUnfrozen: number;
-  /**
-   * DM channels SENT for hard deletion. Not a count of channels that existed:
-   * `deleteChannels` is idempotent and reports a task id, so a pair past
-   * retention is re-sent each run until it ages out of the scan window.
-   */
   dmDeleteRequests: number;
   errors: string[];
   success: boolean;
 }
 
-/**
- * One direct-message channel, and the state of the relationship behind it.
- *
- * `bookingIds` is every booking the pair shares, because the ledger is a
- * property of the PAIR and stamping one row would let a second booking look
- * unfrozen while the channel was not.
- */
 interface DmPairRow {
   channelId: string;
-  /** Latest slot end across every DM-eligible booking the pair shares. */
   lastActivityAt: Date;
   retentionDays: number;
-  /** MAX(chatFrozenAt) across the pair. Null = never frozen. */
   chatFrozenAt: Date | null;
   consultationIds: string[];
   subscriptionIds: string[];
@@ -193,21 +101,25 @@ interface EventRow {
   channelId: string;
   endsAt: Date;
   retentionDays: number;
-  /** Null = the ledger says this channel has never been frozen. */
   chatFrozenAt: Date | null;
-  entity: { kind: "webinar"; id: string } | { kind: "class"; id: string };
+  entity:
+    | { kind: "webinar"; id: string }
+    | { kind: "class"; id: string }
+    | { kind: "collab"; id: string };
 }
 
-/**
- * Every webinar/class whose last slot has ended, with the retention window that
- * applies to it. One query rather than per-appointment lookups: this runs daily
- * over the whole history, so N+1 here would be thousands of round-trips.
- */
 async function loadEndedEvents(): Promise<EventRow[]> {
   const now = new Date();
   const lookbackFrom = new Date(
     now.getTime() - (MAX_RETENTION_DAYS + LOOKBACK_MARGIN_DAYS) * DAY_MS,
   );
+  const planCollaboratorsSelect = {
+    where: {
+      status: "ACCEPTED" as const,
+      consultantProfile: { deletedAt: null },
+    },
+    select: { id: true },
+  };
   const appointments = await prisma.appointment.findMany({
     where: {
       deletedAt: null,
@@ -225,6 +137,8 @@ async function loadEndedEvents(): Promise<EventRow[]> {
           chatFrozenAt: true,
           webinarPlan: {
             select: {
+              id: true,
+              collaborators: planCollaboratorsSelect,
               organization: {
                 select: {
                   chatRetentionDays: true,
@@ -241,6 +155,8 @@ async function loadEndedEvents(): Promise<EventRow[]> {
           chatFrozenAt: true,
           classPlan: {
             select: {
+              id: true,
+              collaborators: planCollaboratorsSelect,
               organization: {
                 select: {
                   chatRetentionDays: true,
@@ -266,10 +182,20 @@ async function loadEndedEvents(): Promise<EventRow[]> {
     },
   });
 
-  // A webinar spans many appointments (one per attendee cohort) but ONE channel,
-  // so collapse to the latest end across all of them. Freezing on the earliest
-  // would cut off a channel whose later sessions are still running.
   const byChannel = new Map<string, EventRow>();
+  const collabByPlanKey = new Map<
+    string,
+    {
+      planType: "webinar" | "class";
+      planId: string;
+      channelId: string;
+      endsAt: Date;
+      retentionDays: number;
+      allEventsFrozen: boolean;
+      latestFrozenAt: Date | null;
+    }
+  >();
+
   for (const appointment of appointments) {
     const endsAt = appointment.occurrences[0]?.endsAt;
     if (!endsAt) continue;
@@ -314,12 +240,67 @@ async function loadEndedEvents(): Promise<EventRow[]> {
         entity,
       });
     } else if (existing.chatFrozenAt === null && chatFrozenAt !== null) {
-      // Same channel seen via a second cohort's appointment: keep the newest
-      // end but don't lose the ledger stamp the earlier row carried.
       existing.chatFrozenAt = chatFrozenAt;
       existing.entity = entity;
     }
+
+    const planType = appointment.webinar ? "webinar" : "class";
+    const plan =
+      appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
+    if (plan?.id && (plan.collaborators?.length ?? 0) > 0) {
+      const planKey = `${planType}:${plan.id}`;
+      const prev = collabByPlanKey.get(planKey);
+      const isFrozen = chatFrozenAt !== null;
+      if (!prev) {
+        collabByPlanKey.set(planKey, {
+          planType,
+          planId: plan.id,
+          channelId: collabChannelId(planType, plan.id),
+          endsAt,
+          retentionDays,
+          allEventsFrozen: isFrozen,
+          latestFrozenAt: chatFrozenAt,
+        });
+      } else {
+        if (prev.endsAt < endsAt) prev.endsAt = endsAt;
+        prev.allEventsFrozen = prev.allEventsFrozen && isFrozen;
+        if (
+          chatFrozenAt &&
+          (!prev.latestFrozenAt || prev.latestFrozenAt < chatFrozenAt)
+        ) {
+          prev.latestFrozenAt = chatFrozenAt;
+        }
+      }
+    }
   }
+
+  for (const cand of collabByPlanKey.values()) {
+    if (cand.endsAt >= now) continue;
+    const hasFutureOccurrence =
+      prisma.appointmentOccurrence?.findFirst &&
+      (await prisma.appointmentOccurrence.findFirst({
+        where: {
+          deletedAt: null,
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+          endsAt: { gt: now },
+          appointment:
+            cand.planType === "webinar"
+              ? { deletedAt: null, webinar: { webinarPlanId: cand.planId } }
+              : { deletedAt: null, class: { classPlanId: cand.planId } },
+        },
+        select: { id: true },
+      }));
+    if (hasFutureOccurrence) continue;
+
+    byChannel.set(cand.channelId, {
+      channelId: cand.channelId,
+      endsAt: cand.endsAt,
+      retentionDays: cand.retentionDays,
+      chatFrozenAt: cand.allEventsFrozen ? cand.latestFrozenAt : null,
+      entity: { kind: "collab", id: cand.planId },
+    });
+  }
+
   return Array.from(byChannel.values()).filter((row) => row.endsAt < now);
 }
 
@@ -903,9 +884,11 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       const event = batch[i];
       if (outcome.status === "fulfilled") {
         result.frozen++;
-        stamped[
-          event.entity.kind === "webinar" ? "webinarIds" : "classIds"
-        ].push(event.entity.id);
+        if (event.entity.kind === "webinar") {
+          stamped.webinarIds.push(event.entity.id);
+        } else if (event.entity.kind === "class") {
+          stamped.classIds.push(event.entity.id);
+        }
       } else {
         // A channel that was never created is the common case (chat is lazy),
         // not a failure worth failing the run over. A 429 is quota, not an

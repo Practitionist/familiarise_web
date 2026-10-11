@@ -532,6 +532,5 @@ All cron jobs are triggered by GitHub Actions workflows in `.github/workflows/`.
 | Event capacity (class/webinar-only)      | `docs/booking/02-event-types-and-validation.md`     |
 | Payout architecture                      | `docs/payments/payouts/01-architecture.md`          |
 | Earnings lifecycle                       | `docs/payments/payouts/02-earnings-lifecycle.md`    |
-| Revenue distribution models              | `docs/finances/02-revenue-distribution.md`          |
 | Collaborator revenue sharing             | `docs/collaborators/03-revenue-sharing.md`          |
 | Cron jobs overview                       | `docs/booking/13-cron-jobs-and-background-tasks.md` |

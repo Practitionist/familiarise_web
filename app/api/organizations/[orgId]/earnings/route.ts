@@ -49,7 +49,10 @@ export async function GET(
   const { orgId } = await params;
   // #1527 decision 1 — payouts.read (MANAGER no longer reads Payouts; the
   // MANAGER rank floor also admitted BILLING_ADMIN by accident of rank).
-  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "payouts.read",
+  });
   if (access.error) return access.error;
 
   // Honesty gate: an org's canHost column can be true from when the flag was

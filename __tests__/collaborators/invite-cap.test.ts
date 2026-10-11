@@ -21,11 +21,39 @@ jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorAccepted: jest.fn(),
   notifyCollaboratorRemoved: jest.fn(),
 }));
+jest.mock("../../lib/email/senders/collaborators", () => ({
+  sendCollaboratorInvitedEmail: jest.fn(async () => undefined),
+  sendCollaboratorAcceptedEmail: jest.fn(),
+  sendCollaboratorDeclinedEmail: jest.fn(),
+  sendCollaboratorRemovedEmail: jest.fn(),
+  sendCollaboratorWithdrawnEmail: jest.fn(),
+}));
+jest.mock(
+  "../../utils/organization-roles",
+  () => ({ hasOrgPermission: jest.fn(() => false) }),
+  { virtual: true },
+);
 
 type Row = { role: string; revenueShareBps: number };
 let active: Row[] = [];
 
 const tx = {
+  consultantProfile: {
+    findUnique: jest.fn(async () => ({
+      id: "cp-new",
+      userId: "u-new",
+      deletedAt: null,
+      verificationStatus: "VERIFIED",
+      user: { id: "u-new", banned: false, banExpires: null, erasedAt: null },
+    })),
+  },
+  webinarPlan: {
+    findUnique: jest.fn(async () => ({ title: "T", archivedAt: null })),
+  },
+  classPlan: {
+    findUnique: jest.fn(async () => ({ title: "T", archivedAt: null })),
+  },
+  appointmentParticipant: { findFirst: jest.fn(async () => null) },
   collaborator: {
     // The bps guard and the cap guard both list the plan's active rows.
     findMany: jest.fn(async () => active),
@@ -41,7 +69,6 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     consultantProfile: {
-      // An eligible invitee (#1580 C-P1-9 gates run before the transaction).
       findUnique: jest.fn(async () => ({
         id: "cp-new",
         userId: "u-new",

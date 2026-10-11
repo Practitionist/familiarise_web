@@ -255,16 +255,28 @@ async function sendRemindersForWindow(
    * before staging leaves none — and the short-TTL Redis key below has already
    * expired, so the slot is offered again.
    */
+  const legacyReminderEntityRef = (
+    appointmentId: string,
+    windowLabel: ReminderWindowLabel,
+  ) => `appointment:${appointmentId}:${windowLabel}`;
+
   const alreadyStaged = new Set(
     (
       await prisma.failedEmail.findMany({
         where: {
           emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
           entityRef: {
-            in: upcomingOccurrences
-              .map((slot) => slot.appointment?.id)
-              .filter((id): id is string => typeof id === "string")
-              .map((id) => reminderEntityRef(id, window.label)),
+            in: upcomingOccurrences.flatMap((slot) => {
+              const refs = [
+                appointmentReminderEntityRef(slot.id, window.label),
+              ];
+              if (slot.appointment?.id) {
+                refs.push(
+                  legacyReminderEntityRef(slot.appointment.id, window.label),
+                );
+              }
+              return refs;
+            }),
           },
         },
         select: { entityRef: true },
@@ -292,7 +304,14 @@ async function sendRemindersForWindow(
   for (const slot of upcomingOccurrences) {
     const apt = slot.appointment;
     if (!apt) continue;
-    if (alreadyStaged.has(reminderEntityRef(apt.id, window.label))) continue;
+    const isMultiSession = Boolean(apt.class || apt.subscription);
+    if (
+      alreadyStaged.has(reminderEntityRef(slot.id, window.label)) ||
+      (!isMultiSession &&
+        alreadyStaged.has(legacyReminderEntityRef(apt.id, window.label)))
+    ) {
+      continue;
+    }
 
     try {
       // Determine event type and plan info
@@ -304,6 +323,7 @@ async function sendRemindersForWindow(
       let consulteeName = "Consultee";
       // #1653 — lets the email name the consultee as the consultant's other party.
       let consultantUserId: string | undefined;
+      let collabIds: string[] = [];
       const userIds: string[] = [];
 
       if (apt.consultation) {
@@ -346,9 +366,11 @@ async function sendRemindersForWindow(
         const hostId = apt.webinar.webinarPlan?.consultantProfile?.userId;
         consultantUserId = hostId;
         if (hostId) userIds.push(hostId);
-        userIds.push(
-          ...(await planCollaborators("webinar", apt.webinar.webinarPlanId)),
+        collabIds = await planCollaborators(
+          "webinar",
+          apt.webinar.webinarPlanId,
         );
+        userIds.push(...collabIds);
       } else if (apt.class) {
         appointmentType = "class";
         planTitle = apt.class.classPlan?.title ?? "Class";
@@ -361,9 +383,8 @@ async function sendRemindersForWindow(
         const hostId = apt.class.classPlan?.consultantProfile?.userId;
         consultantUserId = hostId;
         if (hostId) userIds.push(hostId);
-        userIds.push(
-          ...(await planCollaborators("class", apt.class.classPlanId)),
-        );
+        collabIds = await planCollaborators("class", apt.class.classPlanId);
+        userIds.push(...collabIds);
       } else if (apt.trial) {
         // An AWAITING_PAYMENT trial still holds its occurrence; only a
         // SCHEDULED (paid or free) trial gets the reminder pair.
@@ -443,7 +464,9 @@ async function sendRemindersForWindow(
         await sendAppointmentReminderEmail(
           {
             appointmentId: apt.id,
+            occurrenceId: slot.id,
             userIds: uniqueUserIds,
+            collaboratorUserIds: collabIds,
             windowLabel: window.label,
             consultantUserId,
             consultantName,

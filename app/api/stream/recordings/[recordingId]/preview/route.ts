@@ -19,12 +19,9 @@ import {
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
-export async function POST(
-  request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -32,7 +29,6 @@ export async function POST(
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
     if (!guard.ok) return guard.response;
-
 
     let formData: FormData;
     try {
@@ -46,10 +42,14 @@ export async function POST(
 
     const clip = formData.get("clip");
     const thumb = formData.get("thumb");
-    if (!(clip instanceof File && clip.size > 0) && !(thumb instanceof File && thumb.size > 0)) {
+    if (
+      !(clip instanceof File && clip.size > 0) &&
+      !(thumb instanceof File && thumb.size > 0)
+    ) {
       return NextResponse.json(
         {
-          error: "Provide a `clip` (MP4/WebM ≤50MB) and/or `thumb` (image ≤5MB)",
+          error:
+            "Provide a `clip` (MP4/WebM ≤50MB) and/or `thumb` (image ≤5MB)",
           code: "INVALID_INPUT",
         },
         { status: 400 },
@@ -68,20 +68,31 @@ export async function POST(
     let partialError: string | null = null;
 
     if (clip instanceof File && clip.size > 0) {
-      const result = await uploadRecordingPreviewAsset(recordingId, "clip", clip);
+      const result = await uploadRecordingPreviewAsset(
+        recordingId,
+        "clip",
+        clip,
+      );
       if (result.success && result.url && result.storagePath) {
         updates.previewClipUrl = result.url;
         updates.previewClipStoragePath = result.storagePath;
       } else {
         return NextResponse.json(
-          { error: result.error ?? "Preview upload failed", code: "UPLOAD_ERROR" },
+          {
+            error: result.error ?? "Preview upload failed",
+            code: "UPLOAD_ERROR",
+          },
           { status: 400 },
         );
       }
     }
 
     if (thumb instanceof File && thumb.size > 0) {
-      const result = await uploadRecordingPreviewAsset(recordingId, "thumb", thumb);
+      const result = await uploadRecordingPreviewAsset(
+        recordingId,
+        "thumb",
+        thumb,
+      );
       if (result.success && result.url && result.storagePath) {
         updates.thumbnailUrl = result.url;
       } else {
@@ -124,12 +135,9 @@ export async function POST(
   }
 }
 
-export async function DELETE(
-  _request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -137,7 +145,6 @@ export async function DELETE(
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
     if (!guard.ok) return guard.response;
-
 
     if (!(await deleteRecordingPreviewAssets(recordingId))) {
       return NextResponse.json(

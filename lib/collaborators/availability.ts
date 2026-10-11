@@ -71,6 +71,7 @@ function commitmentClauses(
         some: {
           consultantProfileId,
           deletedAt: null,
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
         },
       },
     },
@@ -153,17 +154,6 @@ export async function assertCollaboratorsAvailableForWindows(
   // per-co-host resolution classify holds against the same clock.
   const now = new Date();
 
-  // A live, non-soft-deleted slot overlapping the window. deletedAt:null on both
-  // the slot and its appointment keeps cancelled/soft-deleted bookings from
-  // surfacing as phantom clashes.
-  //
-  // #1319 — this filtered on `isTentative: false`, which hid a co-host's live
-  // PENDING direct-checkout hold from the guard while checkout, the allocator
-  // and the availability grid all counted that same hold as occupying. An
-  // allocation could therefore commit a co-host onto a minute checkout would
-  // refuse. Occupancy is now the subsystem-wide predicate: an appointment in an
-  // occupying state, minus the dead holds (approved-unpaid or direct-checkout
-  // PENDING whose every payment is EXPIRED/FAILED or clock-expired).
   const overlapWhere = (
     appointment: Prisma.AppointmentWhereInput,
   ): Prisma.AppointmentOccurrenceWhereInput => ({
@@ -173,6 +163,7 @@ export async function assertCollaboratorsAvailableForWindows(
       endsAt: { gt: w.startsAt },
     })),
     deletedAt: null,
+    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
     ...(excluded.length > 0 ? { appointmentId: { notIn: excluded } } : {}),
     appointment: {
       deletedAt: null,
@@ -272,7 +263,7 @@ export async function assertConsultantAvailableForWindows(
         endsAt: { gt: w.startsAt },
       })),
       deletedAt: null,
-      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
       ...(excluded.length > 0 ? { appointmentId: { notIn: excluded } } : {}),
       appointment: buildConsultantOccupancyWhere(
         params.consultantProfileId,
@@ -307,4 +298,3 @@ export async function assertConsultantAvailable(
       : [],
   });
 }
-

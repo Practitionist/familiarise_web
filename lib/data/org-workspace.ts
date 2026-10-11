@@ -309,8 +309,14 @@ export async function getWorkspaceActivity(
   limit: number = WORKSPACE_ACTIVITY_DEFAULT_LIMIT,
   filters?: WorkspaceActivityFilters,
 ): Promise<WorkspaceActivityPage> {
+  // A DEACTIVATED org's own routes refuse its OWNER, so its feed does too.
   const ownedOrgs = await prisma.membership.findMany({
-    where: { userId, role: "OWNER", status: "ACTIVE" },
+    where: {
+      userId,
+      role: "OWNER",
+      status: "ACTIVE",
+      organization: { status: { not: "DEACTIVATED" } },
+    },
     select: {
       organizationId: true,
       organization: { select: { id: true, name: true, slug: true } },

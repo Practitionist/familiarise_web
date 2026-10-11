@@ -26,6 +26,7 @@ import {
   PURPOSE_CODE_META,
   SIGNUP_PURPOSES,
 } from "@/lib/compliance/purpose-codes";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 
 interface AcceptResponse {
   organization: { id: string; name: string };
@@ -280,6 +281,18 @@ export default function InviteAcceptPage({
         string,
         unknown
       >;
+      // A new account completes the onboarding gate first, then returns here.
+      if (res.status === 403 && body.code === "ONBOARDING_REQUIRED") {
+        const gateHref =
+          typeof body.gateHref === "string"
+            ? safeSameOriginPath(body.gateHref)
+            : null;
+        router.replace(
+          gateHref ??
+            `/onboarding/gate?callbackUrl=${encodeURIComponent(`/organizations/invite/${token}`)}`,
+        );
+        return;
+      }
       // #1854 — no data-processing consent yet (an SSO-created account):
       // ask for it here, then accept with it in one request.
       if (res.status === 403 && body.code === "CONSENT_REQUIRED") {
@@ -300,7 +313,7 @@ export default function InviteAcceptPage({
       setResult(body as unknown as AcceptResponse);
       setStatus("success");
     },
-    [token],
+    [token, router],
   );
 
   useEffect(() => {
@@ -410,7 +423,7 @@ export default function InviteAcceptPage({
                   </p>
                   {errorCode === "NOT_A_CONSULTANT" ? (
                     // The wizard's add mode creates the expert profile on this
-                    // account and returns here to finish accepting (PR-6).
+                    // (already onboarded) account and returns here to accept.
                     <Link
                       href={`/form/onboarding?add=CONSULTANT&callbackUrl=${encodeURIComponent(`/organizations/invite/${token}`)}`}
                     >

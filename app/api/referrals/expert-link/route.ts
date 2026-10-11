@@ -6,7 +6,7 @@ import { expertShareHref } from "@/lib/referrals/attribution-token";
 
 /** The signed own-link share URL path for the signed-in expert's public page. */
 export async function GET() {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

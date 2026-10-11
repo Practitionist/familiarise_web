@@ -29,7 +29,10 @@ export async function GET(
   },
 ) {
   const { orgId, creditNoteId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "billing.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "billing.read",
+  });
   if (access.error) return access.error;
 
   // Fail-closed supplier identity — no fabricated GSTIN fallback (#1132).
@@ -59,14 +62,18 @@ export async function GET(
     },
   });
   if (!creditNote) {
-    return NextResponse.json({ error: "Credit note not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Credit note not found" },
+      { status: 404 },
+    );
   }
 
   // DRAFT credit notes aren't legally issued — same posture as invoices.
   if (creditNote.status === "DRAFT") {
     return NextResponse.json(
       {
-        error: "Credit note is still in DRAFT. Issue it before generating a PDF.",
+        error:
+          "Credit note is still in DRAFT. Issue it before generating a PDF.",
         code: "CREDIT_NOTE_NOT_ISSUED",
       },
       { status: 409 },
@@ -105,9 +112,12 @@ export async function GET(
       },
     });
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
-      tags: { subsystem: "enterprise", component: "credit-note-pdf" },
-    });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      {
+        tags: { subsystem: "enterprise", component: "credit-note-pdf" },
+      },
+    );
     return NextResponse.json(
       { error: "Failed to render credit note PDF" },
       { status: 500 },

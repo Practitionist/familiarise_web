@@ -211,7 +211,7 @@ export async function GET(
   // Any ACTIVE member may call this, but only `programs.read` sees every
   // program with spend; everyone else sees the programs they hold a seat in,
   // without utilisation (#1527 P0-2).
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
     // Hosting-only orgs genuinely do not have programs; surface 404 so

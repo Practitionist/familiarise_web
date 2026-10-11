@@ -131,14 +131,54 @@ async function syncUserOrSkipOnConsent(
   }
 }
 
+const MODERATOR_COLLABORATOR_ROLES = new Set([
+  "CO_HOST",
+  "CO_INSTRUCTOR",
+  "MODERATOR",
+]);
+
+async function resolveEventCollaboratorChannelRole(
+  eventType: EventType,
+  eventId: string,
+  userId: string,
+): Promise<"channel_moderator" | undefined> {
+  if (
+    (eventType !== "webinar" && eventType !== "class") ||
+    !prisma.collaborator?.findFirst
+  ) {
+    return undefined;
+  }
+
+  const collab = await prisma.collaborator.findFirst({
+    where: {
+      status: "ACCEPTED",
+      consultantProfile: { userId, deletedAt: null },
+      ...(eventType === "webinar"
+        ? { webinarPlan: { webinars: { some: { id: eventId } } } }
+        : { classPlan: { classes: { some: { id: eventId } } } }),
+    },
+    select: { role: true },
+  });
+
+  if (collab && MODERATOR_COLLABORATOR_ROLES.has(collab.role)) {
+    return "channel_moderator";
+  }
+
+  return undefined;
+}
+
 async function tryAddToExistingChannel(
   channel: ReturnType<StreamChat["channel"]>,
   channelId: string,
   userId: string,
+  channelRole?: "channel_moderator",
 ): Promise<boolean> {
+  const memberSpec = channelRole
+    ? [{ user_id: userId, channel_role: channelRole }]
+    : [userId];
   try {
     await withStreamCircuitBreaker(
-      () => channel.addMembers([userId]),
+      () => channel.addMembers(memberSpec),
       () => {
         throw new StreamUnavailableError();
       },
@@ -183,10 +223,26 @@ export async function addUserToEventChannel(
     return { success: false, channelId };
   }
 
+  const collaboratorChannelRole = await resolveEventCollaboratorChannelRole(
+    eventType,
+    eventId,
+    userId,
+  );
+  const memberSpec = collaboratorChannelRole
+    ? [{ user_id: userId, channel_role: collaboratorChannelRole }]
+    : [userId];
+
   try {
     const channel = client.channel(channelType, channelId);
 
-    if (await tryAddToExistingChannel(channel, channelId, userId)) {
+    if (
+      await tryAddToExistingChannel(
+        channel,
+        channelId,
+        userId,
+        collaboratorChannelRole,
+      )
+    ) {
       return { success: true, channelId };
     }
 
@@ -196,6 +252,8 @@ export async function addUserToEventChannel(
     }
 
     const { consultantId, members, name, organizationId } = eventData;
+    const moderatorIds =
+      "moderatorIds" in eventData ? eventData.moderatorIds : [];
     const allMembers = Array.from(new Set([consultantId, userId, ...members]));
 
     const upsertResult = await upsertUsersToStream(allMembers, {
@@ -238,7 +296,7 @@ export async function addUserToEventChannel(
       });
 
       try {
-        await channel.addMembers([userId]);
+        await channel.addMembers(memberSpec);
       } catch (adoptError) {
         adoptRetryFailed = true;
         streamLogger.warn("Post-adoption addMembers retry failed (non-fatal)", {
@@ -251,10 +309,21 @@ export async function addUserToEventChannel(
 
     await addRemainingMembers(channelWithData, syncedMembers);
 
+    const roleAssignments = Array.from(
+      new Set([
+        consultantId,
+        ...moderatorIds.filter((id) => syncedMembers.includes(id)),
+        ...(collaboratorChannelRole && syncedMembers.includes(userId)
+          ? [userId]
+          : []),
+      ]),
+    ).map((id) => ({
+      user_id: id,
+      channel_role: "channel_moderator" as const,
+    }));
+
     try {
-      await channelWithData.assignRoles([
-        { user_id: consultantId, channel_role: "channel_moderator" },
-      ]);
+      await channelWithData.assignRoles(roleAssignments);
     } catch (grantError) {
       streamLogger.warn("Failed to grant channel_moderator to event host", {
         channelId,
@@ -340,7 +409,10 @@ const groupEventPlanInclude = {
       status: "ACCEPTED" as const,
       consultantProfile: { deletedAt: null },
     },
-    select: { consultantProfile: { select: { userId: true } } },
+    select: {
+      role: true,
+      consultantProfile: { select: { userId: true } },
+    },
   },
 };
 
@@ -356,7 +428,10 @@ function buildGroupEventData(
     title: string;
     organizationId: string | null;
     consultantProfile?: { user?: { id: string } | null } | null;
-    collaborators?: { consultantProfile: { userId: string } }[];
+    collaborators?: {
+      role?: string;
+      consultantProfile: { userId: string };
+    }[];
   },
   appointment: {
     organizationId: string | null;
@@ -366,10 +441,14 @@ function buildGroupEventData(
   const consultantId = plan.consultantProfile?.user?.id;
   if (!consultantId) return null;
 
+  const collaborators = plan.collaborators ?? [];
   const members = [
-    ...(plan.collaborators ?? []).map((c) => c.consultantProfile.userId),
+    ...collaborators.map((c) => c.consultantProfile.userId),
     ...(appointment?.participants.map((p) => p.userId) || []),
   ];
+  const moderatorIds = collaborators
+    .filter((c) => c.role && MODERATOR_COLLABORATOR_ROLES.has(c.role))
+    .map((c) => c.consultantProfile.userId);
 
   const organizationId = bookingOrgId({
     webinarPlan: plan,
@@ -379,6 +458,7 @@ function buildGroupEventData(
   return {
     consultantId,
     members,
+    moderatorIds,
     name: plan.title,
     organizationId,
   };

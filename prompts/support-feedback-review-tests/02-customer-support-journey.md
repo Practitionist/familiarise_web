@@ -31,7 +31,7 @@ select * from support_ticket_counters;
 
 ```sql
 -- a CLOSED ticket owned by Customer A for the closed-reply cases
-insert into "SupportTicket" (id, "userId", subject, description, status, priority, "createdAt", "updatedAt", "closedAt")
+insert into "SupportTicket" (id, "userId", title, description, status, priority, "createdAt", "updatedAt", "closedAt")
 values (gen_random_uuid()::text, '<customer A id>', '{RUN_TAG} closed', '{RUN_TAG} closed', 'CLOSED', 'LOW', now(), now(), now());
 ```
 

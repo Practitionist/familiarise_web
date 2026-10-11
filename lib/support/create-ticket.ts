@@ -86,6 +86,7 @@ export interface CreateSupportTicketInput {
 async function opsRecipients(
   ticketId: string,
   assigneeId?: string | null,
+  caseKind: "ticket" | "case" = "ticket",
 ): Promise<Array<{ id: string; dashboardUrl: string }>> {
   const users = await prisma.user.findMany({
     where: assigneeId
@@ -94,7 +95,7 @@ async function opsRecipients(
     select: { id: true, role: true },
   });
   // #1527 — the case in the Support inbox, in the recipient's own tree.
-  const caseKey = caseKeyOf({ kind: "ticket", id: ticketId });
+  const caseKey = caseKeyOf({ kind: caseKind, id: ticketId });
   return users.map((u) => ({
     id: u.id,
     dashboardUrl: `/dashboard/${u.role === "ADMIN" ? "admin" : "staff"}/support/${caseKey}`,
@@ -115,6 +116,7 @@ export async function notifySupportStaff(
     SupportTicket,
     "id" | "title" | "organizationId" | "referenceNumber" | "userId"
   >,
+  caseKind: "ticket" | "case" = "ticket",
 ): Promise<void> {
   // ADR 23 — the notification inherits the ticket's org-ness (attribution +
   // deep-link filing only; recipient lists are unchanged).
@@ -127,7 +129,7 @@ export async function notifySupportStaff(
     orgName = org?.name ?? null;
   }
   const [recipients, customer] = await Promise.all([
-    opsRecipients(ticket.id),
+    opsRecipients(ticket.id, undefined, caseKind),
     prisma.user.findUnique({
       where: { id: ticket.userId },
       select: { name: true },
@@ -223,12 +225,13 @@ export async function notifyRequesterOfTicket(
     | "createdAt"
     | "organizationId"
   >,
+  caseKind: "ticket" | "case" = "ticket",
 ): Promise<void> {
   const reference = ticket.referenceNumber ?? ticket.id;
   const title = ticket.title || "Support Ticket";
   const slaWindow = slaWindowOf(ticket.createdAt, ticket.ackDueAt);
   const ticketUrl = supportRequestHref(
-    caseKeyOf({ kind: "ticket", id: ticket.id }),
+    caseKeyOf({ kind: caseKind, id: ticket.id }),
     ticket.organizationId,
   );
 
@@ -510,18 +513,22 @@ export async function createOutboundStaffSupportTicket(
     },
   );
 
-  await notifySupportTicketResponse(ticket.userId, {
-    ticketId: ticket.id,
-    reference: ticket.referenceNumber ?? undefined,
-    ticketTitle: ticket.title || "Support Ticket",
-    message: description,
-    respondedBy: input.staffUserName ?? "Support",
-    dashboardUrl: supportRequestHref(
-      caseKeyOf({ kind: "ticket", id: ticket.id }),
-      resolvedOrganizationId,
-    ),
-    ...notificationScope(resolvedOrganizationId),
-  }).catch((err) => {
+  await notifySupportTicketResponse(
+    ticket.userId,
+    {
+      ticketId: ticket.id,
+      reference: ticket.referenceNumber ?? undefined,
+      ticketTitle: ticket.title || "Support Ticket",
+      message: description,
+      respondedBy: input.staffUserName ?? "Support",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "ticket", id: ticket.id }),
+        resolvedOrganizationId,
+      ),
+      ...notificationScope(resolvedOrganizationId),
+    },
+    `ticket-outbound:${ticket.id}`,
+  ).catch((err) => {
     reportSentryError(err, {
       subsystem: "support",
       op: "outbound.notifyUser",

@@ -10,7 +10,10 @@
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: jest.fn(async () => ({
-    session: { user: { id: "admin_1", role: "ADMIN" } },
+    session: {
+      user: { id: "admin_1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   })),
 }));
 const approvePayout = jest.fn(async () => {});
@@ -95,4 +98,3 @@ it("maps PayoutMakerCheckerError to 403 PAYOUT_MAKER_CHECKER_VIOLATION and logs 
     },
   });
 });
-

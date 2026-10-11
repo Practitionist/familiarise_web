@@ -12,12 +12,17 @@
  * service goal, never a relaxation of the statutory number.
  */
 
-import type { SupportPriority, SupportTicketStatus } from "@prisma/client";
+import type {
+  SupportCaseStatus,
+  SupportPriority,
+  SupportTicketStatus,
+} from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 
 /** The statutory ceilings. Nothing here may exceed these. */
 export const STATUTORY_ACK_HOURS = 24;
 export const STATUTORY_RESOLUTION_DAYS = 15;
+export const ACK_PROMISE_COPY = "within 24 hours";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -35,6 +40,13 @@ const TARGETS: Record<SupportPriority, SlaTarget> = {
     ackMs: STATUTORY_ACK_HOURS * HOUR_MS,
     resolutionMs: STATUTORY_RESOLUTION_DAYS * DAY_MS,
   },
+};
+
+const PRIORITY_URGENCY: Record<SupportPriority, number> = {
+  URGENT: 4,
+  HIGH: 3,
+  MEDIUM: 2,
+  LOW: 1,
 };
 
 export interface SlaDeadlines {
@@ -58,9 +70,46 @@ export function slaDeadlinesFor(
   };
 }
 
-/** The subset of a ticket the clock reads. */
+/** Tighten unacknowledged/unresolved SLA deadlines on priority raise; never extend on lower. */
+export function tightenDeadlinesForPriorityRaise(
+  existing: {
+    priority: SupportPriority;
+    ackDueAt: Date | null;
+    acknowledgedAt: Date | null;
+    resolutionDueAt: Date | null;
+    resolvedAt: Date | null;
+  },
+  nextPriority: SupportPriority,
+  now: Date = new Date(),
+): { ackDueAt?: Date; resolutionDueAt?: Date } {
+  if (PRIORITY_URGENCY[nextPriority] <= PRIORITY_URGENCY[existing.priority]) {
+    return {};
+  }
+  const target = slaDeadlinesFor(nextPriority, now);
+  const out: { ackDueAt?: Date; resolutionDueAt?: Date } = {};
+  if (!existing.acknowledgedAt) {
+    out.ackDueAt = existing.ackDueAt
+      ? new Date(
+          Math.min(existing.ackDueAt.getTime(), target.ackDueAt.getTime()),
+        )
+      : target.ackDueAt;
+  }
+  if (!existing.resolvedAt) {
+    out.resolutionDueAt = existing.resolutionDueAt
+      ? new Date(
+          Math.min(
+            existing.resolutionDueAt.getTime(),
+            target.resolutionDueAt.getTime(),
+          ),
+        )
+      : target.resolutionDueAt;
+  }
+  return out;
+}
+
+/** The subset of a ticket or unified support case the clock reads. */
 export interface SlaClock {
-  status: SupportTicketStatus;
+  status: SupportTicketStatus | SupportCaseStatus;
   ackDueAt: Date | null;
   acknowledgedAt: Date | null;
   resolutionDueAt: Date | null;

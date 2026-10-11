@@ -3,9 +3,9 @@
  * POST /api/organizations/[orgId]/consent
  *
  * DPDP (India) consent-artifact surface, scoped to an org. Consent records
- * live on the global `ConsentArtifact` table — the org scope here filters
- * to artifacts granted by members of this organization, which gives admins
- * a compliance-dashboard view without exposing other orgs' records.
+ * live on the global `ConsentArtifact` table — the GET returns only rows
+ * stamped with this org's (or the platform's) fiduciary for current members,
+ * so it never reveals a member's consent to, or membership of, another org.
  *
  * POST writes a tamper-evident consent row via `buildConsentArtifact`
  * (lib/compliance/dpdp.ts). The SHA-256 hash is real; the surrounding
@@ -32,7 +32,12 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { buildConsentArtifact, withdrawConsent } from "@/lib/compliance/dpdp";
+import {
+  buildConsentArtifact,
+  orgDataFiduciary,
+  PLATFORM_DATA_FIDUCIARY,
+  withdrawConsent,
+} from "@/lib/compliance/dpdp";
 import {
   normalizePurposeCode,
   type PurposeCode,
@@ -68,6 +73,7 @@ async function openWithdrawalRequests(
   const artifacts = await prisma.consentArtifact.findMany({
     where: {
       userId,
+      dataFiduciary: { in: [orgDataFiduciary(orgId), PLATFORM_DATA_FIDUCIARY] },
       withdrawnAt: null,
       auditRetainedUntil: { gt: new Date() },
     },
@@ -140,7 +146,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   // Any active member reads their own artifacts; consent.read reads everyone's.
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
   const selfId = access.session.user.id;
   const readsOthers = hasOrgPermission(access.member.role, "consent.read");
@@ -167,18 +173,34 @@ export async function GET(
   }
   const userId = readsOthers ? q.userId : selfId;
 
-  // Scope to this org via the user → memberships relation so Postgres
-  // does the filter with a JOIN rather than pulling every member userId
-  // into application memory and blasting them back as an `IN (...)` list.
-  // When `q.userId` is set we still constrain via the same relational
-  // filter so non-members return an empty list instead of leaking cross-
-  // org records.
+  // This org's and the platform's artifacts only, for current members: another
+  // org's fiduciary rows would reveal the user's membership there.
   const consents = await prisma.consentArtifact.findMany({
     where: {
       ...(userId && { userId }),
-      user: { memberships: { some: { organizationId: orgId } } },
+      dataFiduciary: { in: [orgDataFiduciary(orgId), PLATFORM_DATA_FIDUCIARY] },
+      user: {
+        memberships: {
+          some: {
+            organizationId: orgId,
+            status: { in: ["ACTIVE", "SUSPENDED"] },
+          },
+        },
+      },
       ...(q.active === "true" && { withdrawnAt: null }),
       ...(q.active === "false" && { withdrawnAt: { not: null } }),
+    },
+    select: {
+      id: true,
+      userId: true,
+      dataFiduciary: true,
+      purposeCodes: true,
+      grantedAt: true,
+      withdrawnAt: true,
+      language: true,
+      consentManager: true,
+      version: true,
+      hash: true,
     },
     orderBy: { grantedAt: "desc" },
     take: q.limit,
@@ -267,7 +289,7 @@ export async function POST(
 
   const draft = buildConsentArtifact({
     userId: body.userId,
-    dataFiduciary: `org:${orgId}`,
+    dataFiduciary: orgDataFiduciary(orgId),
     purposeCodes,
     language: body.language,
     consentManager: body.consentManager ?? null,

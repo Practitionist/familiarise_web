@@ -24,7 +24,9 @@ function jsonResponse(payload: unknown, status = 400): Response {
 
 describe("readSupportError", () => {
   it("parses the envelope from a failed response", async () => {
-    const payload = await readSupportError(jsonResponse({ error: "x", code: "NOT_FOUND" }));
+    const payload = await readSupportError(
+      jsonResponse({ error: "x", code: "NOT_FOUND" }),
+    );
     expect(payload.code).toBe("NOT_FOUND");
   });
 
@@ -37,19 +39,26 @@ describe("readSupportError", () => {
 describe("describeSupportError", () => {
   it("prefers the code-specific copy", () => {
     expect(
-      describeSupportError({ code: "INVALID_ID", error: "Invalid appointment id" }),
+      describeSupportError({
+        code: "INVALID_ID",
+        error: "Invalid appointment id",
+      }),
     ).toContain("link looks broken");
   });
 
   it("falls back to the server's user-safe message for unknown codes", () => {
-    expect(describeSupportError({ error: "That support topic isn't available" })).toBe(
-      "That support topic isn't available",
-    );
+    expect(
+      describeSupportError({ error: "That support topic isn't available" }),
+    ).toBe("That support topic isn't available");
   });
 
   it("uses the caller's fallback when there is nothing at all", () => {
-    expect(describeSupportError(null, "Please try again.")).toBe("Please try again.");
-    expect(describeSupportError({}, "Please try again.")).toBe("Please try again.");
+    expect(describeSupportError(null, "Please try again.")).toBe(
+      "Please try again.",
+    );
+    expect(describeSupportError({}, "Please try again.")).toBe(
+      "Please try again.",
+    );
   });
 
   it("never surfaces developer detail to users", () => {
@@ -66,12 +75,18 @@ describe("throwSupportError", () => {
   it("logs the raw payload for devs and throws code-mapped copy for users", async () => {
     const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     const res = jsonResponse(
-      { error: "Invalid appointment id", code: "INVALID_ID", detail: { id: ["too long"] } },
+      {
+        error: "Invalid appointment id",
+        code: "INVALID_ID",
+        detail: { id: ["too long"] },
+      },
       400,
     );
     errSpy.mockClear();
 
-    const thrown = await throwSupportError(res, "support turn").catch((e: Error) => e);
+    const thrown = await throwSupportError(res, "support turn").catch(
+      (e: Error) => e,
+    );
     expect(thrown).toBeInstanceOf(Error);
     // User-facing message is the friendly copy…
     expect(thrown.message).toContain("link looks broken");
@@ -85,8 +100,13 @@ describe("throwSupportError", () => {
 
   it("maps RATE_LIMITED copy so throttled users know what to do", async () => {
     jest.spyOn(console, "error").mockImplementation(() => {});
-    const res = jsonResponse({ error: "Too many requests", code: "RATE_LIMITED" }, 429);
-    const thrown = await throwSupportError(res, "tickets").catch((e: Error) => e);
+    const res = jsonResponse(
+      { error: "Too many requests", code: "RATE_LIMITED" },
+      429,
+    );
+    const thrown = await throwSupportError(res, "tickets").catch(
+      (e: Error) => e,
+    );
     expect(thrown.message).toContain("too quickly");
   });
 });

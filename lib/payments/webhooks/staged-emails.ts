@@ -101,6 +101,18 @@ export async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
               consultantProfile: {
                 include: { user: { select: { id: true, name: true } } },
               },
+              collaborators: {
+                where: {
+                  status: "ACCEPTED",
+                  tier: "PRESENTER",
+                  consultantProfile: { deletedAt: null },
+                },
+                select: {
+                  consultantProfile: {
+                    select: { user: { select: { id: true } } },
+                  },
+                },
+              },
             },
           },
         },
@@ -111,6 +123,18 @@ export async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
             include: {
               consultantProfile: {
                 include: { user: { select: { id: true, name: true } } },
+              },
+              collaborators: {
+                where: {
+                  status: "ACCEPTED",
+                  tier: "PRESENTER",
+                  consultantProfile: { deletedAt: null },
+                },
+                select: {
+                  consultantProfile: {
+                    select: { user: { select: { id: true } } },
+                  },
+                },
               },
             },
           },
@@ -250,10 +274,18 @@ export async function stageBookedEmails(
     appointmentType === AppointmentsType.TRIAL
       ? "Trial session"
       : planTitleOrSessionLabel(plan?.title ?? null, appointmentType);
+  const collaborators =
+    appointment.webinar?.webinarPlan?.collaborators ??
+    appointment.class?.classPlan?.collaborators ??
+    [];
+  const collaboratorUserIds = collaborators
+    .map((c) => c.consultantProfile.user.id)
+    .filter((id): id is string => Boolean(id));
   return stageAppointmentBookedEmail(tx, {
     appointmentId: appointment.id,
     consulteeUserId: payment.userId,
     consultantUserId: plan?.consultantProfile?.user?.id ?? null,
+    collaboratorUserIds,
     consulteeName: payment.user.name || "User",
     consultantName: plan?.consultantProfile?.user?.name || "Consultant",
     planTitle,

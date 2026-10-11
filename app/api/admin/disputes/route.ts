@@ -1,9 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { OPEN_DISPUTE_WHERE } from "@/lib/backoffice/queue-predicates";
 import { Prisma, DisputeStatus, PaymentGateway } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import {
+  OPEN_DISPUTE_STATUSES,
+  OPEN_DISPUTE_WHERE,
+} from "@/lib/backoffice/queue-predicates";
 import { z } from "zod";
 
 const adminDisputesQuerySchema = z.object({
@@ -36,10 +39,9 @@ const adminDisputesQuerySchema = z.object({
     .default(20),
 });
 
-const ACTIONABLE_OPEN_STATUSES: DisputeStatus[] = [
-  "NEEDS_RESPONSE",
-  "WARNING_NEEDS_RESPONSE",
-];
+const ACTIONABLE_OPEN_STATUSES: DisputeStatus[] = OPEN_DISPUTE_STATUSES.filter(
+  (s) => s !== "UNDER_REVIEW",
+);
 
 /** List rows never carry evidence, billing details or internal notes; those live on the detail view behind `disputes.manage`. */
 const DISPUTE_LIST_SELECT = {
@@ -180,11 +182,11 @@ export async function GET(req: NextRequest) {
         prisma.dispute.count({ where }),
         prisma.dispute.count({
           where: {
+            ...OPEN_DISPUTE_WHERE,
+            status: { in: ACTIONABLE_OPEN_STATUSES },
             dueBy: {
               lte: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000),
-              gte: new Date(),
             },
-            ...OPEN_DISPUTE_WHERE,
           },
         }),
         prisma.dispute.count({ where: { status: "UNDER_REVIEW" } }),

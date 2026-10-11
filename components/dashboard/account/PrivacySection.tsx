@@ -17,6 +17,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 interface CookiePrefs {
   analytics: boolean;
@@ -284,7 +285,9 @@ export function DeleteAccountSection() {
               card tokens and Novu notification profiles are removed.
             </li>
             <li>
-              <strong>Statutory tax &amp; audit retention (DPDP §12(3)):</strong>{" "}
+              <strong>
+                Statutory tax &amp; audit retention (DPDP §12(3)):
+              </strong>{" "}
               If you have past financial transactions, anonymised ledger,
               invoice, and TDS records are retained for 7–8 years solely as
               required under the Income Tax Act, 1961 (§44AA) and CGST Act, 2017
@@ -306,7 +309,7 @@ export function DeleteAccountSection() {
             confirmLabel="Delete my account"
             tone="destructive"
             onConfirm={async () => {
-              const res = await fetch(`/api/user/${user.id}`, {
+              const res = await fetchWithReauth(`/api/user/${user.id}`, {
                 method: "DELETE",
               });
               if (!res.ok) {

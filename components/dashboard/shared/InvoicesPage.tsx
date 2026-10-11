@@ -1,5 +1,6 @@
 "use client";
 
+import { httpsHref } from "@/schemas/url";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import {
@@ -495,7 +496,7 @@ function OrganizationInvoicesTab({
       onPageChange={setPage}
       renderRow={(inv) => {
         const taxPaise = inv.igstPaise + inv.cgstPaise + inv.sgstPaise;
-        let pdfDownloadHref: string | null = inv.pdfUrl;
+        let pdfDownloadHref = httpsHref(inv.pdfUrl);
         if (!pdfDownloadHref && inv.status !== "DRAFT") {
           pdfDownloadHref = `/api/organizations/${inv.organization.id}/billing-account/invoices/${inv.id}/pdf`;
         }

@@ -7,7 +7,12 @@ import {
 import type { EmailSuppressionReason, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { EMAIL_BUDGET_MS, supportEmail } from "./config";
-import { resendErrorText, terminalSendReason } from "./classify";
+import {
+  REDACTED_CREDENTIAL_BODY,
+  carriesCredential,
+  resendErrorText,
+  terminalSendReason,
+} from "./classify";
 import { idempotencyKeyFor } from "./idempotency";
 import { EmailSuppressedError, findSuppression } from "./suppression";
 import {
@@ -99,6 +104,17 @@ function withReplyTo(message: RenderedEmail): RenderedEmail {
   return { ...message, replyTo: message.replyTo ?? supportEmail() };
 }
 
+/** The bodies the outbox row keeps; a live code or link never reaches the table. */
+function storedBodies(
+  message: RenderedEmail,
+  emailType: string,
+): { htmlBody: string; textBody: string | null } {
+  if (carriesCredential(emailType)) {
+    return { htmlBody: REDACTED_CREDENTIAL_BODY, textBody: null };
+  }
+  return { htmlBody: message.html, textBody: message.text ?? null };
+}
+
 // #1298 — a terminal cause (dead key, unverified domain) or no key at all is
 // an "error" with a stable fingerprint so it pages once, not per warning.
 function reportSendFailure(
@@ -139,8 +155,7 @@ export async function recordFailedEmail(
         fromAddress: message.from,
         replyTo: message.replyTo ?? null,
         subject: message.subject,
-        htmlBody: message.html,
-        textBody: message.text ?? null,
+        ...storedBodies(message, emailType),
         emailType,
         status: "PENDING",
         // Retry-now: the worker's first pass picks it up; backoff only kicks
@@ -195,8 +210,7 @@ export async function stage(
         fromAddress: payload.from,
         replyTo: payload.replyTo ?? null,
         subject: payload.subject,
-        htmlBody: payload.html,
-        textBody: payload.text ?? null,
+        ...storedBodies(payload, emailType),
         emailType,
         status: refusal ? "DEAD_LETTER" : "PENDING",
         // Give the inline/post-commit attempt() a 60s lease window before the

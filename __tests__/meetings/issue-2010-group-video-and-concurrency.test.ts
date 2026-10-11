@@ -23,7 +23,10 @@ import {
   CollaboratorIneligibleError,
   respondToInvitation,
 } from "@/lib/collaborators/service";
-import { scheduleClassMakeUp, type HostedClass } from "@/lib/booking/class-sessions";
+import {
+  scheduleClassMakeUp,
+  type HostedClass,
+} from "@/lib/booking/class-sessions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import prisma from "@/lib/prisma";
 
@@ -175,8 +178,7 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
     });
 
     expect(findFirst).toHaveBeenCalledTimes(1);
-    const commitmentOr =
-      findFirst.mock.calls[0][0].where.appointment.AND[0].OR;
+    const commitmentOr = findFirst.mock.calls[0][0].where.appointment.AND[0].OR;
     expect(commitmentOr).toEqual(
       expect.arrayContaining([
         { trial: { is: { consultantProfileId: "cp-collab-1" } } },
@@ -185,6 +187,9 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
             some: {
               consultantProfileId: "cp-collab-1",
               deletedAt: null,
+              completionStatus: {
+                notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"],
+              },
             },
           },
         },
@@ -290,11 +295,13 @@ describe("Issue #2010 Part 2 — Single-Active-Session Consultant Concurrency", 
     const missedEnd = new Date(missedStart.getTime() + 3_600_000);
     const makeUpStart = new Date(now.getTime() + 86_400_000);
 
-    const createSpy = jest.fn().mockRejectedValue(
-      new Error(
-        'ERROR: conflicting key value violates exclusion constraint "occurrence_no_confirmed_overlap" (23P01)',
-      ),
-    );
+    const createSpy = jest
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          'ERROR: conflicting key value violates exclusion constraint "occurrence_no_confirmed_overlap" (23P01)',
+        ),
+      );
 
     const mockTx = {
       appointmentOccurrence: {

@@ -75,6 +75,7 @@ export const NOVU_WORKFLOWS = {
 
   // Disputes
   DISPUTE_CREATED: "dispute-created",
+  DISPUTE_UPDATED: "dispute-updated",
   DISPUTE_RESOLVED: "dispute-resolved",
 
   // Recordings

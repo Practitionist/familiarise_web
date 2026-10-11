@@ -86,7 +86,12 @@ export async function getOperatorInvoices(
   const search = filters.search ?? null;
   const orgId = filters.orgId ?? null;
   const limit = sanitizePagination(filters.limit, 20, 1, 200);
-  const offset = sanitizePagination(filters.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+  const offset = sanitizePagination(
+    filters.offset,
+    0,
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
 
   // Build where clause
   const where: Prisma.PaymentWhereInput = {};
@@ -118,6 +123,15 @@ export async function getOperatorInvoices(
         paymentStatus: status || PaymentStatus.SUCCEEDED,
       },
       include: {
+        consumerInvoice: {
+          select: { invoiceNumber: true },
+        },
+        billableToOrgInvoice: {
+          select: { invoiceNumber: true },
+        },
+        organizationInvoiceSettled: {
+          select: { invoiceNumber: true },
+        },
         user: {
           select: { name: true, email: true },
         },
@@ -200,7 +214,11 @@ export async function getOperatorInvoices(
 
   const invoices: OperatorInvoice[] = payments.map((p) => ({
     id: p.id,
-    invoiceNumber: `INV-${p.id.slice(-8).toUpperCase()}`,
+    invoiceNumber:
+      p.consumerInvoice?.invoiceNumber ??
+      p.billableToOrgInvoice?.invoiceNumber ??
+      p.organizationInvoiceSettled?.invoiceNumber ??
+      `INV-${p.id.slice(-8).toUpperCase()}`,
     paymentIntent: p.paymentIntent,
     amount: p.amount,
     currency: p.currency,

@@ -86,6 +86,7 @@ export async function getRazorpayPayoutStatus(
         headers: {
           Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
         },
+        signal: AbortSignal.timeout(15_000),
       },
     );
 

@@ -36,6 +36,9 @@ function refusalResponse(
         ...(refusal.context ? { contexts: { refusal: refusal.context } } : {}),
       }) || undefined;
   }
+  const headers: Record<string, string> = {};
+  if (errorId) headers["X-Sentry-Event-Id"] = errorId;
+  if (refusal.httpStatus === 503) headers["Retry-After"] = "2";
   return NextResponse.json(
     {
       error: refusal.userMessage,
@@ -43,10 +46,7 @@ function refusalResponse(
       code: refusal.code,
       ...(errorId ? { errorId } : {}),
     },
-    {
-      status: refusal.httpStatus,
-      ...(errorId ? { headers: { "X-Sentry-Event-Id": errorId } } : {}),
-    },
+    { status: refusal.httpStatus, headers },
   );
 }
 

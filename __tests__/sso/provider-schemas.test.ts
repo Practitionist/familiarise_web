@@ -11,10 +11,10 @@ import {
   isReservedProviderId,
   oidcConfigSchema,
   RESERVED_PROVIDER_IDS,
+  updateProviderSchema,
 } from "@/lib/sso/provider-schemas";
 
 const OIDC_CONFIG = {
-  issuer: "https://tenant.auth0.com/",
   clientId: "abc123",
   clientSecret: "shh",
   discoveryEndpoint:
@@ -22,66 +22,77 @@ const OIDC_CONFIG = {
 };
 
 describe("oidcConfigSchema", () => {
-  const valid = {
-    issuer: "https://tenant.auth0.com/",
-    clientId: "abc123",
-    clientSecret: "shh",
-    discoveryEndpoint:
-      "https://tenant.auth0.com/.well-known/openid-configuration",
-    pkce: true,
-  };
-
   test("accepts a full OIDC config", () => {
-    expect(oidcConfigSchema.safeParse(valid).success).toBe(true);
+    expect(oidcConfigSchema.safeParse(OIDC_CONFIG).success).toBe(true);
   });
 
-  test("pkce defaults to true when omitted — required to prevent the raw-fetch regression", () => {
-    const { pkce, ...rest } = valid;
-    void pkce;
-    expect(oidcConfigSchema.parse(rest).pkce).toBe(true);
+  test("strips client-chosen pkce, scopes and issuer: the server fixes them", () => {
+    const parsed = oidcConfigSchema.parse({
+      ...OIDC_CONFIG,
+      pkce: false,
+      scopes: ["profile"],
+      issuer: "https://elsewhere",
+    });
+    expect(parsed).toEqual(OIDC_CONFIG);
   });
 });
 
 describe("createProviderSchema", () => {
-  test("accepts a minimal OIDC registration", () => {
-    const result = createProviderSchema.safeParse({
-      domain: "acme.com",
-      issuer: "https://tenant.auth0.com/",
-      providerType: "oidc",
-      oidcConfig: OIDC_CONFIG,
-    });
-    expect(result.success).toBe(true);
+  const base = {
+    domains: ["Acme.com", "acme.co.in"],
+    issuer: "https://tenant.auth0.com/",
+    providerType: "oidc",
+    oidcConfig: OIDC_CONFIG,
+  };
+
+  test("accepts a multi-domain OIDC registration, lowercasing domains", () => {
+    const result = createProviderSchema.safeParse(base);
+    expect(result.success && result.data.domains).toEqual([
+      "acme.com",
+      "acme.co.in",
+    ]);
   });
+
+  test.each([[[]], [["https://acme.com"]], [["acme"]]])(
+    "refuses domains %j",
+    (domains) => {
+      expect(createProviderSchema.safeParse({ ...base, domains }).success).toBe(
+        false,
+      );
+    },
+  );
 
   test("drops a client-supplied providerId — the server generates it", () => {
     const result = createProviderSchema.safeParse({
+      ...base,
       providerId: "google",
-      domain: "acme.com",
-      issuer: "https://tenant.auth0.com/",
-      providerType: "oidc",
-      oidcConfig: OIDC_CONFIG,
     });
     expect(result.success).toBe(true);
     expect(result.success && "providerId" in result.data).toBe(false);
   });
 
   test("providerType must be oidc", () => {
-    const result = createProviderSchema.safeParse({
-      domain: "acme.com",
-      issuer: "https://idp.acme.com",
-      providerType: "saml",
-      oidcConfig: OIDC_CONFIG,
-    });
-    expect(result.success).toBe(false);
+    expect(
+      createProviderSchema.safeParse({ ...base, providerType: "saml" }).success,
+    ).toBe(false);
   });
 
   test("oidcConfig is required", () => {
-    const result = createProviderSchema.safeParse({
-      domain: "acme.com",
-      issuer: "https://tenant.auth0.com/",
-      providerType: "oidc",
-    });
-    expect(result.success).toBe(false);
+    const { oidcConfig: _omit, ...rest } = base;
+    void _omit;
+    expect(createProviderSchema.safeParse(rest).success).toBe(false);
+  });
+});
+
+describe("updateProviderSchema", () => {
+  test("needs a secret, domains or both", () => {
+    expect(updateProviderSchema.safeParse({}).success).toBe(false);
+    expect(updateProviderSchema.safeParse({ clientSecret: "x" }).success).toBe(
+      true,
+    );
+    expect(
+      updateProviderSchema.safeParse({ domains: ["acme.com"] }).success,
+    ).toBe(true);
   });
 });
 

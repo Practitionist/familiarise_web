@@ -7,7 +7,15 @@ import {
   readAuthedFlag,
   writeAuthedFlag,
 } from "@/lib/auth-remembered";
-import { signOutEverywhere } from "@/lib/auth/sign-out";
+import { setExpectedUser } from "@/lib/auth/identity-header";
+import {
+  followSignOutElsewhere,
+  leaveEndedSession,
+  reloadAsSignedInUser,
+  signInHref,
+  subscribeToSignOut,
+} from "@/lib/auth/sign-out";
+import { isProtectedPath } from "@/lib/navigation/protected-routes";
 import {
   clearSentryIdentity,
   setSentryIdentity,
@@ -16,37 +24,52 @@ import {
 /**
  * Keeps this tab's auth state honest. Mounted once at the root; renders
  * nothing. It:
- *   1. Detects revocation (another tab or device signed out, expiry, a ban):
- *      when the tab becomes visible, and whenever the session unexpectedly
- *      resolves to null, it asks the server once (`probeSession`). Only a
- *      confirmed revocation signs out, with `?reason=session-revoked` so the
- *      sign-in page can say why; a failed lookup refetches instead (#1716).
- *      BetterAuth's client also refetches the session on window focus.
- *   2. Mirrors the resolved session onto the Sentry user and the remembered
- *      navbar shape (`lib/auth-remembered.ts`).
+ *   1. Detects revocation and user switches: on focus, visibility and
+ *      bfcache restore it refetches the session and asks the server once
+ *      (`probeSession`). A confirmed revocation leaves for sign-in with the
+ *      reason and the current page as `callbackUrl`; a failed lookup only
+ *      refetches. A different user id hard-reloads the tab, so no stale page
+ *      or cache acts as the new account.
+ *   2. Follows a sign-out in another tab (BroadcastChannel `auth`) without a
+ *      second sign-out call.
+ *   3. Mirrors the resolved session onto the Sentry user, the remembered
+ *      navbar shape and the `X-Expected-User` header for money/IAM writes.
  */
 
-/** Minimum gap between two focus-triggered revocation checks. */
+/** Minimum gap between two focus-triggered checks. */
 const CHECK_THROTTLE_MS = 30_000;
 
-type ProbeState = "active" | "revoked" | "unknown";
+type Probe =
+  | { state: "active"; userId: string | null }
+  | { state: "revoked" }
+  | { state: "unknown" };
 
 /**
- * One authoritative, three-state answer from `/api/user/sessions/current`.
- * Only 401 (no session) and 403 (suspended) mean "revoked"; a 503, any other
- * status or a network error is "unknown" and must never sign anyone out.
+ * One authoritative answer from `/api/user/sessions/current`. Only 401 (no
+ * session) and 403 (suspended) mean "revoked"; a 503, any other status or a
+ * network error is "unknown" and must never sign anyone out.
  */
-async function probeSession(): Promise<ProbeState> {
+async function probeSession(): Promise<Probe> {
   try {
     const res = await fetch("/api/user/sessions/current", {
       credentials: "same-origin",
       cache: "no-store",
     });
-    if (res.ok) return "active";
-    if (res.status === 401 || res.status === 403) return "revoked";
-    return "unknown";
+    if (res.ok) {
+      const body: unknown = await res.json().catch(() => null);
+      const userId =
+        typeof body === "object" &&
+        body !== null &&
+        "userId" in body &&
+        typeof body.userId === "string"
+          ? body.userId
+          : null;
+      return { state: "active", userId };
+    }
+    if (res.status === 401 || res.status === 403) return { state: "revoked" };
+    return { state: "unknown" };
   } catch {
-    return "unknown";
+    return { state: "unknown" };
   }
 }
 
@@ -54,70 +77,56 @@ export default function AuthSyncProvider() {
   const { data: session, isPending, refetch } = useSession();
   // This tab's previous authed state; resets per page load.
   const previousAuthedRef = useRef<boolean | undefined>(undefined);
-  const previousUserIdRef = useRef<string | undefined>(undefined);
+  // The account this page load belongs to: the first user it resolved.
+  const pageUserIdRef = useRef<string | null>(null);
   const lastCheckRef = useRef<number>(0);
-  // Last user stamped onto Sentry, as `id|role`, so a re-render that resolves
-  // the same session does not re-issue a `setUser` on every re-render — but a
-  // ROLE change does re-issue one. The role is part of the identity label, and
-  // a promotion or a back-office demotion arrives on the same `user.id`.
+  // Set once this tab is navigating away, so no later check acts twice.
+  const leavingRef = useRef(false);
+  // Last user stamped onto Sentry, as `id|role`; a role change re-stamps.
   const stampedIdentityRef = useRef<string | null>(null);
 
+  const leave = useCallback((go: () => Promise<void>) => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    void go();
+  }, []);
+
+  const reloadAsCurrentUser = useCallback(() => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    reloadAsSignedInUser();
+  }, []);
+
   /**
-   * One authoritative re-check that answers "was I revoked?".
-   *
-   * - error (network/503) → could-not-ask, NOT a revocation: refetch
-   *   through the normal path and stay put.
-   * - 200 → still signed in. After an unexpected null that null was
-   *   transient, so refetch to recover; on a plain focus check, do nothing.
-   * - 401/403 while we believed we were authed → clean sign-out:
-   *   drop the remembered identity, tear down Stream sockets, and land
-   *   on sign-in with the reason so the page can say why.
-   *
-   * Asks `/api/user/sessions/current`, NOT `getSession`: BetterAuth's
-   * customSession answers `200 null` for a failed lookup as well as a
-   * missing session, so reading that null as "revoked" signed every open
-   * tab out during a database blip.
+   * Asks the server whether this tab's session is still alive and whose it
+   * is. `afterUnexpectedNull` marks a check triggered by the session store
+   * going null, where a 200 means the null was transient.
    */
-  const classifyUnexpectedSignOut = useCallback(
+  const checkSession = useCallback(
     async (afterUnexpectedNull: boolean) => {
-      if (!previousAuthedRef.current) return;
-      // Capture the account this check is FOR: a same-profile sign-in as a
-      // different account mid-check must not let a stale answer for the OLD
-      // account sign out the NEW one. Compared again before signing out.
-      const checkedUserId = previousUserIdRef.current;
-      const state = await probeSession();
-      if (state === "active") {
-        if (afterUnexpectedNull) refetch?.();
-        return;
-      }
-      if (state === "unknown") {
+      if (!previousAuthedRef.current || leavingRef.current) return;
+      const checkedUserId = pageUserIdRef.current;
+      const probe = await probeSession();
+      if (probe.state === "unknown") {
         refetch?.();
         return;
       }
-      if (previousUserIdRef.current !== checkedUserId) return;
-      forgetAuthState();
-      await signOutEverywhere("/auth/signin?reason=session-revoked");
+      if (probe.state === "active") {
+        if (probe.userId && checkedUserId && probe.userId !== checkedUserId) {
+          reloadAsCurrentUser();
+          return;
+        }
+        if (afterUnexpectedNull) refetch?.();
+        return;
+      }
+      leave(() => leaveEndedSession(signInHref("session-revoked")));
     },
-    [refetch],
+    [leave, refetch, reloadAsCurrentUser],
   );
 
-  // Stamp the acting user onto Sentry. The single source of truth for the
-  // CLIENT identity, and it lives here rather than in the sign-in page for two
-  // reasons: SSO and social sign-in are full-page redirects through an IdP, so
-  // the only place their return trip observes a session is this resolver —
-  // which is why the previous `Sentry.setUser` in `app/auth/signin/page.tsx`
-  // fired for email/password only and left every SSO and OAuth user
-  // unattributed; and this also covers session expiry and cross-tab sign-out,
-  // neither of which touches the sign-in page.
-  //
-  // The wrapped `signOut` in `lib/auth-client.ts` clears the identity on
-  // SUCCESS, not eagerly — a failed sign-out leaves the user authenticated, so
-  // the id already on the scope is still correct and clearing it would drop the
-  // actor for someone who never left (see that file for the full argument). It
-  // needs no backstop on the success path, because `signOutEverywhere` and the
-  // `onError` paths hard-navigate, which reloads this provider. This effect is
-  // the backstop for every path that resolves a session change WITHOUT a
-  // sign-out call: session expiry, cross-tab sign-out, SSO, and OAuth.
+  // Stamp the acting user onto Sentry. The resolver is the only place SSO and
+  // social sign-ins (full-page IdP redirects) are observed, and it also covers
+  // expiry and cross-tab sign-out, which never touch the sign-in page.
   useEffect(() => {
     if (isPending) return;
     const user = session?.user as
@@ -135,40 +144,52 @@ export default function AuthSyncProvider() {
     if (userId) {
       setSentryIdentity({ userId, role });
     } else {
-      // Without this, the next anonymous session on the same tab keeps the
-      // previous account's id — so a stranger on a shared machine files events
-      // against the last person who signed in.
+      // A stranger on a shared machine must not file events as the last user.
       clearSentryIdentity();
     }
   }, [isPending, session]);
 
-  // Unexpected authed→null transitions (revoked elsewhere, expired, or
-  // transient) all land here; the classifier tells them apart.
+  // Session-store transitions: a user switch reloads, an unexpected
+  // authed→null is classified, and a remembered-but-expired session on a
+  // public page is forgotten quietly.
   useEffect(() => {
-    // The loading phase is not a transition — wait for the session to resolve.
     if (isPending) return;
 
-    const authed = !!session?.user;
     const nextUserId = session?.user?.id ?? null;
-    // Snapshot first: compare against the LAST run's value.
+    const authed = nextUserId !== null;
     const prevAuthed = previousAuthedRef.current;
-    // Prefer THIS tab's last observed state: the wrapped `signOut` clears the
-    // localStorage flag before the network call, so the flag would already
-    // read `false`. On first resolution fall back to the flag so a cold tab
-    // whose session died while it was closed is still classified (with
-    // storage blocked the flag is null and there is nothing to compare).
-    const previous = prevAuthed ?? readAuthedFlag();
-    if (previous === true && !authed) {
-      // Seed the ref BEFORE classifying: it reads the ref synchronously, and
-      // on first resolution it is still undefined ("never authed").
-      if (prevAuthed === undefined) previousAuthedRef.current = true;
-      void classifyUnexpectedSignOut(true);
+
+    if (nextUserId && pageUserIdRef.current === null) {
+      pageUserIdRef.current = nextUserId;
+      setExpectedUser(nextUserId);
+    } else if (nextUserId && pageUserIdRef.current !== nextUserId) {
+      reloadAsCurrentUser();
+      return;
     }
+
+    if (!authed) {
+      // While the server's verdict is pending, keep the remembered state and
+      // `previousAuthedRef`: a 503 must not count as signed out, and focus
+      // revalidation needs the ref. checkSession leaves on a confirmed "gone".
+      if (prevAuthed === true) {
+        void checkSession(true);
+        return;
+      }
+      if (prevAuthed === undefined && readAuthedFlag() === true) {
+        // Cold load: the session died while the tab was closed. Only a
+        // protected page needs the server's verdict; elsewhere, just forget.
+        if (isProtectedPath(window.location.pathname)) {
+          previousAuthedRef.current = true;
+          void checkSession(true);
+          return;
+        }
+        forgetAuthState();
+      }
+    }
+
     previousAuthedRef.current = authed;
-    previousUserIdRef.current = nextUserId ?? undefined;
-    // Also the reconciliation point for the navbar's optimistic first paint:
-    // a resolved session rewrites the remembered shape in BOTH directions, and
-    // `writeAuthedFlag(false)` drops the cached identity outright.
+    // The navbar's optimistic first paint is reconciled here in both
+    // directions; `writeAuthedFlag(false)` drops the cached identity.
     writeAuthedFlag(
       authed,
       authed
@@ -178,22 +199,41 @@ export default function AuthSyncProvider() {
           }
         : null,
     );
-  }, [isPending, session, classifyUnexpectedSignOut]);
+  }, [isPending, session, checkSession, reloadAsCurrentUser]);
 
-  // Cross-device, within one tab-switch: when the tab becomes visible,
-  // ask the server whether this session still exists (throttled).
+  // Another tab signed out: follow it without a second sign-out call.
+  useEffect(
+    () => subscribeToSignOut(() => leave(followSignOutElsewhere)),
+    [leave],
+  );
+
+  // Revalidate when the user comes back: tab shown, window focused (two
+  // visible windows never fire visibilitychange) or a bfcache restore, which
+  // skips the throttle because the page may be a signed-out user's history.
   useEffect(() => {
-    const onVisibility = () => {
-      if (document.visibilityState !== "visible") return;
-      if (previousAuthedRef.current !== true) return;
+    const revalidate = (force: boolean) => {
+      if (previousAuthedRef.current !== true || leavingRef.current) return;
       const now = Date.now();
-      if (now - lastCheckRef.current < CHECK_THROTTLE_MS) return;
+      if (!force && now - lastCheckRef.current < CHECK_THROTTLE_MS) return;
       lastCheckRef.current = now;
-      void classifyUnexpectedSignOut(false);
+      refetch?.();
+      void checkSession(false);
     };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") revalidate(false);
+    };
+    const onFocus = () => revalidate(false);
+    const onPageShow = (event: PageTransitionEvent) =>
+      revalidate(event.persisted);
     document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [classifyUnexpectedSignOut]);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, [checkSession, refetch]);
 
   return null;
 }

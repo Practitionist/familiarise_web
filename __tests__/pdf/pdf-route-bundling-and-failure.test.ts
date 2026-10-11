@@ -28,7 +28,7 @@ jest.mock("../../lib/prisma", () => ({
 }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn().mockResolvedValue({ member: { id: "m1" } }),
-  requirePrivilegedAuth: jest.fn(),
+  requireBackofficeSurface: jest.fn(),
 }));
 jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: jest.fn().mockResolvedValue(null),

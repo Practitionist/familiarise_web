@@ -21,7 +21,10 @@ export default async function OrgHomePage({
   const { orgId } = await params;
   const queryClient = new QueryClient();
 
-  const baseAccess = await requireOrgAccess(orgId, { allowSuspended: true });
+  const baseAccess = await requireOrgAccess(orgId, {
+    readOnly: true,
+    allowSuspended: true,
+  });
   if (baseAccess.error) {
     redirect("/dashboard");
   }
@@ -29,6 +32,7 @@ export default async function OrgHomePage({
   // Only the operator home reads the analytics aggregate and activity feed,
   // so only operators get them seeded.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "operations.read",
   });
   if (!access.error && OPERATOR_ROLES.has(access.member.role)) {

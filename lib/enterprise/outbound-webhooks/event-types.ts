@@ -27,8 +27,7 @@
  */
 
 export const OUTBOUND_WEBHOOK_EVENTS = [
-  /// Membership lifecycle. Emitted from `membership-transitions.ts`
-  /// (in-app invite accept + manual role change).
+  /// Membership lifecycle: invite acceptance, OIDC JIT auto-join, admin suspension/reactivation, removal, and DPDP erasure.
   "member.added",
   "member.removed",
 

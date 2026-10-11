@@ -3,7 +3,7 @@ title: Identity and organisation permutations
 band: onboarding
 audience: sde1
 status: live
-last-reviewed: 2026-09-18
+last-reviewed: 2026-10-10
 ---
 
 # Identity and organisation permutations
@@ -14,11 +14,11 @@ Three independent choices decide what a signed-in person can do on the platform,
 
 The table below defines the axes and where each is stored.
 
-| Axis                    | Values                                                                            | Stored on                                         | Set by                                                                                                                                                |
-| ----------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Platform identity       | `CONSULTANT`, `CONSULTEE`, `ORG_WORKSPACE` (`STAFF` and `ADMIN` are invite-only)  | `User.role`, one value per account                | The wizard's step 0 (`setOnboardingRoleAction` for the org path, `processOnboardingData` otherwise); the add mode can flip `CONSULTEE` → `CONSULTANT` |
-| Organisation capability | sponsor only (`canSponsor`), host only (`canHost`), both, neither                 | `Organization.canSponsor`, `Organization.canHost` | `POST /api/organizations`; `canHost` is refused while `ENABLE_HOST_ORGS` is off (`HOST_ORGS_GATED`)                                                   |
-| Membership role         | `OWNER`, `MAINTAINER`, `BILLING_ADMIN`, `MANAGER`, `SUPPORT`, `EXPERT`, `LEARNER` | `Membership.role`, one per (user, organisation)   | Invitation accept, admin direct add, SSO JIT                                                                                                          |
+| Axis                    | Values                                                                                                                                                          | Stored on                                         | Set by                                                                                                                                             |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Platform identity       | `CONSULTANT`, `CONSULTEE`, `ORG_WORKSPACE` (`STAFF` and `ADMIN` come only from `createOperator()`, behind the ADMIN Team page's `POST /api/admin/team/members`) | `User.role`, one value per account                | The wizard submit (`processOnboardingData`), or `POST /api/organizations` for a first-time owner; the add mode can flip `CONSULTEE` → `CONSULTANT` |
+| Organisation capability | sponsor only (`canSponsor`), host only (`canHost`), both, neither                                                                                               | `Organization.canSponsor`, `Organization.canHost` | `POST /api/organizations`; `canHost` is refused while `ENABLE_HOST_ORGS` is off (`HOST_ORGS_GATED`)                                                |
+| Membership role         | `OWNER`, `MAINTAINER`, `BILLING_ADMIN`, `MANAGER`, `SUPPORT`, `EXPERT`, `LEARNER`                                                                               | `Membership.role`, one per (user, organisation)   | Invitation accept, admin direct add, SSO JIT                                                                                                       |
 
 `User.role` is exclusive, but a person can hold several profiles: `consultantProfileId`, `consulteeProfileId` and `orgWorkspaceProfileId` are independent links on `User`, and the dashboard router (`app/dashboard/page.tsx`) sends a user to the home of their `role` first, then to whatever `resolvePersonalDashboardHref` finds, then to their highest-ranked organisation (`selectFallbackOrgMembership`, rank then slug).
 
@@ -53,16 +53,25 @@ An organisation is created `PENDING_VERIFICATION` and an admin moves it through 
 
 The table below lists every path that writes `User.role` or a profile link, so a new path can be checked against it.
 
-| Path                                    | Writes                                                                                                           | Guard                                                                                                                         |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `processOnboardingData` (wizard submit) | `role`, the role's profile link; nulls the other three B2C links                                                 | CAS on `onboardingCompleted != true`; email must equal the session's; STAFF/ADMIN refused                                     |
-| `setOnboardingRoleAction`               | `role = ORG_WORKSPACE`, creates + links `OrgWorkspaceProfile`                                                    | Self only; allowlist of one role                                                                                              |
-| `resetOnboardingRoleAction`             | `role = CONSULTEE`, unlinks the workspace profile                                                                | Only while un-onboarded and with no membership                                                                                |
-| `completeOrgWorkspaceOnboardingAction`  | `onboardingCompleted = true`                                                                                     | Requires a live `OWNER` membership                                                                                            |
-| `addConsultantIdentity` (add mode)      | Links a new `ConsultantProfile`; `CONSULTEE` → `CONSULTANT`, `ORG_WORKSPACE` unchanged; never nulls another link | Self only; `canAddConsultantIdentity` (onboarded, eligible role, no consultant profile); CAS on `consultantProfileId IS NULL` |
-| Invitation accept                       | `Membership` row; lazily a `ConsulteeProfile` for `LEARNER`; never `User.role`                                   | Email match, org not blocked, `NOT_A_CONSULTANT` for `EXPERT` without a profile                                               |
-| SSO JIT                                 | `Membership` row and profiles per the provider mapping                                                           | Verified domain claim                                                                                                         |
+| Path                                     | Writes                                                                                                           | Guard                                                                                                                                     |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `processOnboardingData` (wizard submit)  | `role`, DOB, consent, then the role's profile link                                                               | Self only; CAS claim first on `onboardingCompleted != true`; email must equal the session's; consent literals required                    |
+| `POST /api/organizations` + `onboarding` | `role = ORG_WORKSPACE`, DOB, consent, organization, OWNER membership, `OrgWorkspaceProfile` link — one tx        | Not yet onboarded CONSULTEE / ORG_WORKSPACE only; CAS claim first; lost claim → 409 `ALREADY_ONBOARDED`                                   |
+| Onboarding gate (`/onboarding/gate`)     | DOB, consent, `onboardingCompleted`; never `role` or a profile                                                   | Active membership or pending invitation to the verified email; DOB 18+; CAS claim                                                         |
+| `addConsultantIdentity` (add mode)       | Links a new `ConsultantProfile`; `CONSULTEE` → `CONSULTANT`, `ORG_WORKSPACE` unchanged; never nulls another link | Self only; `canAddConsultantIdentity` (onboarded, eligible role, no consultant profile); CAS on `consultantProfileId IS NULL`             |
+| Invitation accept                        | `Membership` row; lazily a `ConsulteeProfile` for `LEARNER`; never `User.role` or onboarding state               | Onboarded caller only (`403 ONBOARDING_REQUIRED` → gate), email match, org not blocked, `NOT_A_CONSULTANT` for `EXPERT` without a profile |
+| SSO JIT                                  | `Membership` row (role from a pending invitation, else `LEARNER`); onboarding finishes at the gate               | Approved provider, verified domain claim, IdP claim checks (`lib/sso/idp-claims.ts`)                                                      |
 
 ## Known gaps
 
 The capability re-check at accept time is missing (see above). A user with both a consultant profile and a workspace profile is routed by `User.role` on `/dashboard` but by `resolvePersonalDashboardHref` (workspace first) elsewhere; the two resolvers should be one function. Neither is a launch blocker; both are recorded in the train's tracker issue.
+
+## Deprecated & Superseded Approaches
+
+- **`STAFF` / `ADMIN` wizard branches and `POST /api/user/staff`.** Operators
+  could be created from the onboarding wizard or a self-service route. Both
+  were removed; `createOperator()` is the only writer.
+- **Provisional `ORG_WORKSPACE` handoff** (`setOnboardingRoleAction`,
+  `resetOnboardingRoleAction`, `completeOrgWorkspaceOnboardingAction`). The
+  role was set before the organisation existed. Replaced by the single
+  `POST /api/organizations` transaction above.

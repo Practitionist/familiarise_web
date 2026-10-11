@@ -328,7 +328,7 @@ export function getTotalAppointments(): number {
  *
  * They were also *necessary* to have: STAFF and ADMIN are hard-rejected from
  * self-service onboarding (`utils/onboarding-server.ts:824`), and
- * `POST /api/user/staff` requires an admin to already exist. So deleting the
+ * `POST /api/admin/team/members` requires an admin to already exist. So deleting the
  * rows without adding a front door would have locked every operator out of
  * their own console — which is exactly the trap `scripts/bootstrap-admin.ts`
  * now fills, and why the two changes ship together.

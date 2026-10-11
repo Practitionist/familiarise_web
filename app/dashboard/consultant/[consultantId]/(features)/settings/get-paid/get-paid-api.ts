@@ -7,6 +7,7 @@
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import type { ConsultantPayoutSetup } from "@/lib/data/consultant-payout-setup";
 import type { ReversePennyDropOutcome } from "@/lib/payments/payouts/reverse-penny-drop";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 export type PayoutSetup = ConsultantPayoutSetup;
 export type PayoutAccountView = PayoutSetup["accounts"][number];
@@ -38,7 +39,7 @@ export type CreatePayoutAccountInput =
 export async function createPayoutAccount(
   input: CreatePayoutAccountInput,
 ): Promise<{ account: PayoutAccountView }> {
-  const res = await fetch("/api/consultant/payout-accounts", {
+  const res = await fetchWithReauth("/api/consultant/payout-accounts", {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify(input),
@@ -59,7 +60,7 @@ export interface ReverifyResult {
 export async function reverifyPayoutAccount(
   accountId: string,
 ): Promise<ReverifyResult> {
-  const res = await fetch(
+  const res = await fetchWithReauth(
     `/api/consultant/payout-accounts/${encodeURIComponent(accountId)}`,
     {
       method: "PATCH",
@@ -76,7 +77,7 @@ export async function reverifyPayoutAccount(
 export async function makeDefaultPayoutAccount(
   accountId: string,
 ): Promise<void> {
-  const res = await fetch(
+  const res = await fetchWithReauth(
     `/api/consultant/payout-accounts/${encodeURIComponent(accountId)}`,
     {
       method: "PATCH",
@@ -100,7 +101,7 @@ export interface ReversePennyDropStartView {
 }
 
 export async function startReversePennyDrop(): Promise<ReversePennyDropStartView> {
-  const res = await fetch(
+  const res = await fetchWithReauth(
     "/api/consultant/payout-accounts/reverse-penny-drop",
     {
       method: "POST",

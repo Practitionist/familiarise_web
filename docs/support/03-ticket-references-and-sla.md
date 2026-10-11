@@ -1,65 +1,99 @@
 # Ticket references and the SLA model
 
-Issue #705 gave every escalated ticket two things the queue could not run without: a handle a person can say aloud, and a pair of statutory clocks that say whether the team is late. Both are stored on `SupportTicket` and both are described here.
+Every escalated support request carries two operational primitives: a speakable reference number a caller can quote over the phone (`FAM-YYYY-NNNNNN`), and a pair of statutory SLA clocks sized to Indian consumer and intermediary law. Unified `SupportCase` records and legacy `SupportTicket` records share identical sequence allocation, deadline tightening, customer-wait pause arithmetic, and background cron escalation.
 
-## Ticket references: `FAM-<YYYY>-<SEQ6>`
+## Ticket references: `FAM-YYYY-NNNNNN`
 
-Every ticket minted from either scope carries a speakable handle in `SupportTicket.referenceNumber`, formatted by `lib/support/reference.ts` as the literal prefix `FAM`, the calendar year, and a six-digit zero-padded sequence, for example `FAM-2026-000123`. A uuid cannot be read back over a phone line or quoted in an email subject, and before this the two staff surfaces had each invented their own truncation of the id (the tickets table took the first eight characters, the staff home took the last), so the two screens named the same ticket differently and the user was shown no identifier at all.
+Every support case or escalated ticket carries a unique handle in `referenceNumber`, formatted by `lib/support/reference.ts` as `FAM-YYYY-NNNNNN` (`FAM` prefix, four-digit **IST calendar year**, and six-digit zero-padded sequence, e.g. `FAM-2026-000123`).
 
-The series is scoped to the year rather than being a single lifetime counter, and that is a privacy decision rather than a cosmetic one. A lifetime counter publishes the platform's all-time ticket volume to anyone who files two tickets and subtracts one reference from the other. This is the German tank problem, which is exactly how the Allies estimated German production from sequential part serial numbers. Resetting each January caps the leak at the current year's volume.
+### Rollover & transactional allocation (`allocateTicketReference`)
 
-Allocation runs through `allocateTicketReference(tx, now)` inside the same transaction that creates the ticket, so a rolled-back ticket never leaves a live reference behind. The upsert on `SupportTicketCounter` compiles to `INSERT … ON CONFLICT DO UPDATE … RETURNING`: the create path is arbitrated by the primary key and the update path is an in-place increment holding a row lock, so concurrent allocators queue and each returns a distinct value with no read-modify-write in application space. The column is also `@unique`, which turns any residual duplicate into a `P2002` to retry rather than two tickets quietly sharing a handle. Because the upsert runs on the caller's transaction, a rollback reverts the increment as well, and a concurrent allocator that was queued on the row lock then receives the same number, so a rolled-back ticket leaves no gap. Nothing depends on the series being unbroken in any case; that is the difference from the GST invoice series, where CGST Rule 46 would not allow a gap.
+1. **Annual reset privacy boundary (German tank protection):** A single monotonic lifetime sequence reveals cumulative platform ticket volume to anyone filing two requests and subtracting handles; resetting the sequence each calendar year bounds any inference to the active year.
+2. **IST year boundary (`UTC+05:30`):** `allocateTicketReference(tx, now)` shifts the timestamp by `+330` minutes (`new Date(now.getTime() + 330 * 60_000).getUTCFullYear()`) so tickets filed between `00:00 IST` (`18:30 UTC` on 31 Dec) and `00:00 UTC` on 1 January receive the new IST calendar year's series immediately.
+3. **Lock-safe single-query increment:** Inside the caller's transaction `tx`, `SupportTicketCounter.upsert` (`where: { year: istYear }`, `create: { year: istYear, nextSeq: 2 }`, `update: { nextSeq: { increment: 1 } }`) executes `INSERT … ON CONFLICT DO UPDATE … RETURNING` under row-level locking without read-modify-write races and returns `formatTicketReference(istYear, counter.nextSeq - 1)`. Rolling back the enclosing transaction rolls back the sequence counter cleanly.
+4. **Schema uniqueness:** `SupportCase.referenceNumber` is non-null `@unique`; legacy `SupportTicket.referenceNumber` is nullable `@unique` so pre-counter rows retain UUID fallbacks (`t.referenceNumber ?? t.id`).
 
-The column is nullable and minted forward-only. A unique index permits unlimited nulls, so tickets that predate the counter keep their uuid and every surface falls back to the old truncation for them; no backfill is owed.
+## Statutory SLA model & priority tightening
 
-## The SLA model
+Two Indian statutory regimes govern customer redressal, and `lib/support/sla.ts` enforces the stricter ceiling across both:
 
-India makes a support escalation ladder a legal artifact rather than a nicety, and two regimes can apply. The table below states both, and the row the implementation is sized to.
-
-| Regime                                      | Acknowledge within | Dispose within |
+| Statutory regime                            | Acknowledge within | Dispose within |
 | ------------------------------------------- | ------------------ | -------------- |
 | Consumer Protection (E-Commerce) Rules 2020 | 48 hours           | 1 month        |
-| IT Rules 2021                               | **24 hours**       | **15 days**    |
+| Information Technology Rules 2021           | **24 hours**       | **15 days**    |
 
-`lib/support/sla.ts` is sized to the IT Rules 2021 numbers, exported as `STATUTORY_ACK_HOURS` and `STATUTORY_RESOLUTION_DAYS`. They are the tighter of the two, so meeting them satisfies both regimes and the platform does not have to first settle whether it is an intermediary.
+`lib/support/sla.ts` exports `STATUTORY_ACK_HOURS = 24` and `STATUTORY_RESOLUTION_DAYS = 15`. All priority-specific SLA targets sit strictly within these statutory caps:
 
-Inside those ceilings sit per-priority internal targets. They are a service goal and never a relaxation of the statutory number, which is what the first test in `__tests__/support/sla-and-reference.test.ts` pins. The table below lists the targets.
+| Priority | Acknowledge within | Resolve within |
+| -------- | ------------------ | -------------- |
+| `URGENT` | 2 hours            | 1 day          |
+| `HIGH`   | 8 hours            | 3 days         |
+| `MEDIUM` | 24 hours           | 7 days         |
+| `LOW`    | 24 hours           | 15 days        |
 
-| Priority | Acknowledge | Resolve |
-| -------- | ----------- | ------- |
-| `URGENT` | 2 hours     | 1 day   |
-| `HIGH`   | 8 hours     | 3 days  |
-| `MEDIUM` | 24 hours    | 7 days  |
-| `LOW`    | 24 hours    | 15 days |
+### Intake snapshots & tighten-only priority raises
 
-`slaDeadlinesFor(priority, from)` is called once at intake and its two deadlines are stored on the ticket, never re-derived on read. That is the same rationale as `Appointment.cancellationPolicySnapshot`: a later change to the table above must not retroactively re-date the breach of a ticket that is already open.
+- **Intake deadline snapshot (`slaDeadlinesFor(priority, from)`):** Computed at intake and persisted directly to `ackDueAt` and `resolutionDueAt`. Editing internal target constants never retroactively shifts existing cases.
+- **Tighten-only priority escalation (`tightenDeadlinesForPriorityRaise(existing, nextPriority, now)`):** When an operator raises priority (`URGENT > HIGH > MEDIUM > LOW`), `tightenDeadlinesForPriorityRaise` computes `slaDeadlinesFor(nextPriority, now)` relative to `now` and tightens unacknowledged `ackDueAt` (`Math.min(existing.ackDueAt, target.ackDueAt)`) and unresolved `resolutionDueAt` (`Math.min(existing.resolutionDueAt, target.resolutionDueAt)`). Re-submitting the same priority or lowering priority returns `{}` — **deadlines tighten on priority raise and never extend on priority drop**.
 
-**The resolution clock pauses while the ball is in the user's court.** Without that, a customer who takes a week to answer reads as the team breaching and the number stops meaning anything. A staff reply calls `applyStaffReply`, which sets `awaitingUserSince` and, on the first occasion only, `acknowledgedAt` and `firstAgentReplyAt`. A user reply calls `userRepliedPatch`, which folds the wait that just ended into `pausedSeconds` and clears `awaitingUserSince`; it is a no-op when nothing was being awaited, so a user sending three messages in a row cannot bank three pauses. The effective deadline is therefore `resolutionDueAt + pausedSeconds`, computed by `effectiveResolutionDueAt`. Seconds are used rather than milliseconds because an `Int` of milliseconds overflows at 24.8 days, which a ticket parked on the user for a couple of months would reach. The **acknowledgement** clock never pauses, because nobody has replied yet and there is therefore nothing to be waiting for.
+## Pause arithmetic & read-time state derivation
 
-An internal note is not a reply. `applyStaffReply` runs only when `isInternal` is false, since the user has not heard anything and nothing is yet owed back to them.
+```mermaid
+stateDiagram-v2
+    [*] --> Running: Intake (awaitingUserSince = null)
+    Running --> Paused: Public Agent Reply (acknowledgedAt set, awaitingUserSince = now)
+    Running --> Running: Internal Note (isInternal = true, clock continues)
+    Paused --> Running: Customer Reply (pausedSeconds += wait, awaitingUserSince = null)
+    Paused --> Paused: Additional Public Agent Reply (banks elapsed wait, resets awaitingUserSince = now)
+    Running --> Resolved: Status -> RESOLVED (resolvedAt = now)
+    Paused --> Resolved: Status -> RESOLVED (resolvedAt = now)
+    Resolved --> Closed: 28d Auto-Close Sweep (closedAt = now + Thread CLOSED)
+```
 
-Breach state is derived by `slaStateOf(clock, now)` and never stored. A stored breach flag needs a cron to stay honest and is wrong between runs, whereas the five stored timestamps plus the current time are complete. Two indexes on `SupportTicket` make the sweeps cheap: `[acknowledgedAt, ackDueAt]` answers "unacknowledged and past due" and `[resolvedAt, resolutionDueAt]` answers "unresolved and past due".
+- **Public operator reply (`applyStaffReply` / `advanceAgentPublicTurnState`):** Sets `acknowledgedAt` and `firstAgentReplyAt` on the first public operator reply (first-write-wins via CAS), banks any open customer wait interval into `pausedSeconds`, and pauses the resolution clock (`awaitingUserSince = now`). Internal notes (`isInternal: true`) neither satisfy acknowledgement nor start a customer wait.
+- **Customer reply (`userRepliedPatch`):** Accumulates `openWaitSeconds(clock, now)` into `pausedSeconds` (`Int` seconds rather than milliseconds, avoiding 32-bit signed integer overflow at 24.8 days) and clears `awaitingUserSince = null`. Additional consecutive customer turns while `awaitingUserSince === null` are no-ops.
+- **Acknowledgement never pauses:** Until the first public operator reply, nothing is awaited from the customer.
+- **Pure read-time state (`slaStateOf(clock, now)`):** Shifts `resolutionDueAt` by `pausedSecondsAt(clock, now) * 1000` (`effectiveResolutionDueAt`) and derives `{ ackBreached, resolutionBreached, paused, msToAckDue, msToResolutionDue }` deterministically on read. Composite indexes on `[acknowledgedAt, ackDueAt]` and `[resolvedAt, resolutionDueAt]` keep range scans fast without mutable breach columns.
 
-`firstAgentReplyAt` is deliberately distinct from `acknowledgedAt`. An automated acknowledgement satisfies the latter; only the former is the number that predicts CSAT, and it is set once and never moved so that an auto-acknowledgement cannot claim it.
+## Background SLA, auto-close, and dispute sweep (`runSupportSlaSweep`)
 
-## How breaches surface to staff
+`runSupportSlaSweep` (`lib/support/sla-sweep.ts`) runs every **30 minutes at offset `:10`** on `netlify/functions/cron-tick.mts` (`limit=20`), serialized via `withCronLock("support-sla-sweep", { failMode: "open" }, ...)`:
 
-Breach is computed on read, so every surface calls `slaStateOf` with the same stored stamps and the current time, and none of them can disagree.
+1. **Outbox pre-load & separate unpaused warn/breach candidate scans (`fetchSlaSweepCandidates`):**
+   - Loads recent `NotificationOutbox` entries (`createdAt >= now - 35d`, `workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY`, `entityRef: { startsWith: "sla:" }`) via `parseStagedSlaOutboxRows` into per-bucket ID exclusion sets (`ackBreachIds`, `resBreachIds`, `ackWarnIds`, `resWarnIds`, `stagedKeys`).
+   - Runs **four parallel unpaused scans** (`awaitingUserSince: null`, `status: { notIn: ["RESOLVED", "CLOSED"] }`, `take: limit` per query) splitting **breach** candidates from **warning** candidates across both `SupportTicket` and `SupportCase` so near-due warning items never starve already-breached cases (or vice versa):
+     - **Breach filter (`30-day` window bound):** Unacknowledged `ackDueAt` or unresolved `resolutionDueAt` within `[now - 30d, now]` (`breachCutoff = now - 30d`), bounding historical backlog scans.
+     - **Warning filter:** Unacknowledged `ackDueAt` within `(now, now + 2h]` (`ACK_WARN_MS = 2h`) or unresolved `resolutionDueAt` within `(now, now + 24h]` (`RES_WARN_MS = 24h`).
+2. **Idempotent transactional outbox check & HTML-escaped delivery (`processSingleSlaNotice` / `deliverSlaNoticeEmails`):**
+   - Evaluates unpaused transitions via `slaStateOf(row, now)` (`sla:{id}:{ack|res}:{warn|breach}`).
+   - Inside `prisma.$transaction`, checks `tx.notificationOutbox.findUnique({ where: { transactionId } })` **before** staging `NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY` via `stageBell`. If the outbox entry was already staged (`!newlyStaged`), outbound email calls via `deliver()` are skipped completely.
+   - `deliverSlaNoticeEmails` escapes `subject`, `row.referenceNumber`, and `row.title` with `escapeHtml(...)` (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&#39;`) before rendering HTML email bodies to prevent XSS/HTML injection from user-supplied case titles.
+   - Organization `escalationContactEmail` receives email notifications **strictly when `level === "breach"`**, never on `"warn"`.
+3. **28-day resolved auto-close (`autoCloseResolvedRows`):**
+   - Finds `RESOLVED` `SupportTicket` and non-deleted `SupportCase` rows where `resolvedAt <= now - 28d`, transitions them conditionally (`status: "RESOLVED"`) to `CLOSED` (`closedAt: now`), appends an `AUTO_CLOSED` `SupportCaseEvent`, and for tickets atomically closes linked `AppointmentSupportThread` rows (`status: "CLOSED"`, `activeChannel: "SELF_SERVE"`).
+4. **Actionable payment dispute reminders (`processDisputeDeadlineAlerts`):**
+   - Queries `Dispute` records in `NEEDS_RESPONSE` or `WARNING_NEEDS_RESPONSE` with `dueBy <= now + 72h`, classifies threshold window `"24"` (`<= 24h`) or `"72"`, pre-checks `tx.notificationOutbox` on `dedupeKey: dispute-due:{id}:{72|24}`, stages `NOVU_WORKFLOWS.DISPUTE_UPDATED` notifications to `ADMIN` users, and emails HTML-escaped dispute alerts (`escapeHtml(d.disputeId)`).
+5. **Single per-run error budget:** Row-level exceptions across all arms collect into `errors[]` and emit at most one `reportSentryError` event per cron execution (`op: "support-sla-sweep"`).
 
-- **Badges.** `slaStatusBadge` renders `Breached` (either clock past due), `Waiting on customer` (the pause is running), `Due soon` (acknowledgement within six hours, or resolution within twelve) or `On track`. `slaHint` renders the tighter running clock as a short countdown. The paused state is labelled explicitly, so a quiet ticket that is waiting on the customer is never mistaken for one that is being ignored.
-- **The default order is by deadline.** `parseInboxFilters` defaults the sort to `sla` for the `Needs reply` and `SLA at risk` views, which are the views a staff member lands on, and to `activity` for the others; `sort=sla` and `sort=activity` can still be chosen explicitly. The SLA comparator ranks unacknowledged tickets by `ackDueAt` first, then everything by `resolutionDueAt`, with oldest first as the tie-break and the case key as the final tiebreak, so a breach rises to the top without anyone choosing a sort.
-- **The queue views exclude paused tickets from "needs reply".** `Needs reply` is `OPEN` or `IN_PROGRESS` with `awaitingUserSince` null, and `SLA at risk` additionally requires an unpaused ticket whose acknowledgement deadline is within six hours or resolution deadline within twelve.
-- **Paging is exact.** The inbox merges two tables (tickets, and conversations that have not escalated) and must reproduce a single `ORDER BY`. For the SLA sort, `readTicketKeysBySla` issues two ordered reads whose database orders each match the comparator, awaiting-acknowledgement tickets first and the rest by resolution deadline, each reading `skip + take` rows, and `mergeCasePage` sorts the union and slices the page. No row can be skipped or repeated across pages. Depth is capped at `INBOX_MAX_DEPTH` (1000 rows), beyond which the response sets `truncated` instead of paging further.
+## Queue surfaces & operator badges
 
-Conversations carry no statutory clock, so the SLA views and the priority filter exclude them.
+- **Badges (`slaStatusBadge`):** Renders `Breached` (acknowledgement or resolution breached), `Waiting on customer` (`awaitingUserSince !== null`), `Due soon` (acknowledgement within `6h` or resolution within `12h`), or `On track`, accompanied by the tighter active countdown (`slaHint`).
+- **Deadline-first default sort:** `parseInboxFilters` defaults `Needs reply` and `SLA at risk` views to `sort=sla` (unacknowledged ordered by `ackDueAt` asc, acknowledged ordered by `resolutionDueAt` asc, oldest tiebreak). `readTicketKeysBySla` merges both ordered slices cleanly up to `INBOX_MAX_DEPTH` (`1000`), excluding paused cases (`awaitingUserSince !== null`).
 
 ## Related
 
-- [05-schema-reference.md](05-schema-reference.md) lists the columns these two features added.
-- [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) describes how replies start and stop the pause.
+- [05-schema-reference.md](05-schema-reference.md) — relational schema and check constraint index.
+- [07-ticket-lifecycle-and-concurrency.md](07-ticket-lifecycle-and-concurrency.md) — status transitions, reopen behavior, and CAS guards.
+- [09-support-case-and-sla-sweep.md](09-support-case-and-sla-sweep.md) — unified `SupportCase` APIs, operator 2FA, CSAT, and monthly IT Rules compliance reports.
+- Public policy disclosures (`app/(pages)/constants.ts`, `app/(pages)/contactus/**`, `app/(pages)/grievance/page.tsx`) bind `ACK_PROMISE_COPY` (`within 24 hours`) and disposal promises (`within 15 days`) directly to `STATUTORY_ACK_HOURS` and `STATUTORY_RESOLUTION_DAYS`.
 
 ## Deprecated & Superseded Approaches
 
-- **A single `ackDueAt` ordering for the SLA sort**: it ranked acknowledged tickets by a deadline the comparator ignores, so pages disagreed with the merge. Superseded by the two-read ordering above.
-- **A default activity sort with breaches reachable only through `sort=sla`**: breaches were easy to miss. Superseded by the SLA sort as the default for the work-queue views.
-- **A stored breach flag or a breach-sweep cron**: not built, and not wanted. A stored flag is wrong between runs, so breach stays derived on read.
+- **Combined warn + breach single-query candidate fetch:** Fetching warning and breach candidates in one `take: limit` query allowed imminent warnings to crowd out already-breached cases; superseded by separate parallel warn and breach scans in `fetchSlaSweepCandidates`.
+- **Unbounded historical breach scanning:** Scanning all open rows regardless of age re-scanned ancient backlog indefinitely; superseded by `breachCutoff = now - 30d`.
+- **Dispatching sweep alert emails without an outbox existence guard:** Risked duplicate emails on retried sweeps; superseded by transactional `notificationOutbox` pre-checks gating `deliver()`.
+- **Unescaped user ticket titles in HTML alert emails:** Superseded by `escapeHtml(...)` across `subject`, `referenceNumber`, `title`, and `disputeId`.
+- **Emailing `escalationContactEmail` on SLA warnings:** Organization escalation contacts are alerted strictly on actual SLA breaches (`level === "breach"`), never on warning thresholds.
+- **Single `ackDueAt` sort & activity-first queue defaults:** Ranked acknowledged cases by already-satisfied acknowledgement timestamps; superseded by two-query ordered merge (`readTicketKeysBySla`) and deadline-first defaults (`sort=sla`).
+- **Extending deadlines on priority drop or storing boolean `isBreached` flags:** `tightenDeadlinesForPriorityRaise` never pushes deadlines outward when priority decreases, and `slaStateOf` computes state purely on read.
+- **UTC year rollover & standalone dispute reminder script:** Superseded by IST (`UTC+05:30`) year rollover in `allocateTicketReference` and folding `T-72h`/`T-24h` dispute reminders into Arm 3 of `runSupportSlaSweep`.

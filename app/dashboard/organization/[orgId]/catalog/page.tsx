@@ -27,6 +27,7 @@ export default async function OrgCatalogPage({
   const { orgId } = await params;
 
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "catalog.manage",
     canHost: true,
   });

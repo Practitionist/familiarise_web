@@ -10,7 +10,7 @@ import { supportError } from "@/lib/api/support-http";
 import { assertBodySize } from "@/lib/validation/limits";
 export async function GET() {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to access your feedback" },
@@ -41,7 +41,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to submit feedback" },

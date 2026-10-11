@@ -9,7 +9,11 @@ import {
   isStreamConfigured,
   withStreamCircuitBreaker,
 } from "../../lib/stream-client";
-import { CLASS_PREFIX, WEBINAR_PREFIX } from "../../lib/stream-channel-ids";
+import {
+  CLASS_PREFIX,
+  collabChannelId,
+  WEBINAR_PREFIX,
+} from "../../lib/stream-channel-ids";
 import {
   chunk,
   pause,
@@ -337,6 +341,35 @@ async function collectAllOrgDmChannelIds(
   result: WindDownDeactivatedOrgsResult,
 ): Promise<string[]> {
   const dmChannelIds = new Set<string>(initialDmChannelIds);
+
+  const [orgWebinarPlans, orgClassPlans] = await Promise.all([
+    prisma.webinarPlan?.findMany
+      ? prisma.webinarPlan.findMany({
+          where: {
+            organizationId: orgId,
+            collaborators: { some: { status: "ACCEPTED" } },
+          },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
+    prisma.classPlan?.findMany
+      ? prisma.classPlan.findMany({
+          where: {
+            organizationId: orgId,
+            collaborators: { some: { status: "ACCEPTED" } },
+          },
+          select: { id: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  for (const plan of orgWebinarPlans) {
+    dmChannelIds.add(collabChannelId("webinar", plan.id));
+  }
+  for (const plan of orgClassPlans) {
+    dmChannelIds.add(collabChannelId("class", plan.id));
+  }
+
   try {
     const { channels: taggedChannels } = await queryOrgTaggedChannels(
       chat,

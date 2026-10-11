@@ -15,7 +15,6 @@ import type { Tx } from "@/lib/prisma";
  * notes from invoices (`<PREFIX>-<FY>-<SEQ>`) at a glance and in exports.
  */
 
-import type { Prisma } from "@prisma/client";
 import { indianFiscalYear, fitPrefixToRule46 } from "./invoice-numbering";
 
 /**
@@ -64,7 +63,9 @@ export async function generateOrgCreditNoteNumber(
     nonPrefixLength,
   );
   return {
-    creditNoteNumber: `${prefix}-CN-${fiscalYear}-${padded}`,
+    creditNoteNumber: prefix
+      ? `${prefix}-CN-${fiscalYear}-${padded}`
+      : `CN-${fiscalYear}-${padded}`,
     fiscalYear,
     seq,
   };
@@ -115,7 +116,9 @@ export async function generateConsumerCreditNoteNumber(
     nonPrefixLength,
   );
   return {
-    creditNoteNumber: `${prefix}-CN-${fiscalYear}-${padded}`,
+    creditNoteNumber: prefix
+      ? `${prefix}-CN-${fiscalYear}-${padded}`
+      : `CN-${fiscalYear}-${padded}`,
     fiscalYear,
     seq,
   };

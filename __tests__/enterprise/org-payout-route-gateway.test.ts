@@ -16,6 +16,7 @@ jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(async () => ({
     org: { canHost: true },
     member: { id: "mem_1" },
+    session: { session: { createdAt: new Date() } },
   })),
 }));
 const createOrgPayoutBatch = jest.fn();

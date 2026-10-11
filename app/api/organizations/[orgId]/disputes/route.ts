@@ -37,7 +37,10 @@ export async function GET(
   const { orgId } = await params;
   // Finance READ surface — MANAGER+ (incl. BILLING_ADMIN), matching the
   // payouts/billing read gate and the sidebar's isFinance visibility.
-  const access = await requireOrgAccess(orgId, { permission: "disputes.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "disputes.read",
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);

@@ -34,10 +34,8 @@ this page is the enterprise coverage matrix.
 2. **Edge middleware** (`middleware.ts`, `RATE_LIMIT_RULES`) — runs before
    any function is invoked, so it stops cost amplification. It does **not**
    limit BetterAuth paths. Auth-adjacent rules are the pre-login SSO domain
-   probe, invitation accept and the session-management routes. Rules that
-   spend a named policy take their limiter from `limiterFor(scope)` in
-   `lib/rate-limit/policies.ts`, so the 429 body reports the same `scope`
-   the budget is declared under.
+   probe, invitation accept and the session-management routes. A rule may
+   carry a `scope` string, which the 429 body reports.
 3. **Route handler** (`applyRateLimit(limiter, key, scope)` inside the
    handler) — for authenticated writes whose key (`orgId`, the acting user,
    an invitation id in the body) the edge cannot read cheaply.
@@ -91,58 +89,54 @@ bucket cannot express that spread, and because the keys differ (IP vs
 Keyed per client IP and path. Unlisted paths get the 100/min default.
 `withRetryAfter` mirrors BetterAuth's `X-Retry-After` to `Retry-After`.
 
-| Path (under `/api/auth`)           | Budget        |
-| ---------------------------------- | ------------- |
-| `/sign-in/email`                   | 30 per 15 min |
-| `/change-password`                 | 5 per 15 min  |
-| `/verify-password`                 | 5 per 15 min  |
-| `/two-factor/verify-*`             | 5 per min     |
-| `/two-factor/*`                    | 10 per min    |
-| `/sign-up/email`                   | 10 per hour   |
-| `/request-password-reset`          | 5 per hour    |
-| `/send-verification-email`         | 10 per hour   |
-| `/reset-password`                  | 20 per hour   |
-| `/reset-password/*`                | 10 per hour   |
-| `/verify-email`                    | 30 per hour   |
-| `/sign-in/social`, `/callback/*`   | 30 per 15 min |
-| `/sign-in/sso`                     | 20 per 15 min |
-| `/sso/callback`, `/sso/callback/*` | 30 per 15 min |
-| `/get-session`, `/sign-out`        | not limited   |
+| Path (under `/api/auth`)           | Budget                                          |
+| ---------------------------------- | ----------------------------------------------- |
+| `/sign-in/email`                   | 30 per 15 min                                   |
+| `/change-password`                 | 5 per 15 min                                    |
+| `/verify-password`                 | 5 per 15 min                                    |
+| `/two-factor/verify-*`             | 5 per min                                       |
+| `/two-factor/*`                    | 10 per min                                      |
+| `/sign-up/email`                   | 5 per hour                                      |
+| `/request-password-reset`          | 3 per hour                                      |
+| `/email-otp/send-verification-otp` | 5 per hour                                      |
+| `/reset-password`                  | 20 per hour                                     |
+| `/reset-password/*`                | 10 per hour                                     |
+| `/email-otp/verify-email`          | 10 per 15 min (code also locks after 5 misses)  |
+| `/sign-in/social`, `/callback/*`   | 30 per 15 min                                   |
+| `/sign-in/sso`                     | 300 per 15 min (NAT-sized)                      |
+| `/sso/callback/*`                  | 1000 per 15 min (state and PKCE are single-use) |
+| `/get-session`, `/sign-out`        | not limited                                     |
 
 ### Edge-enforced (`middleware.ts` → `RATE_LIMIT_RULES`)
 
-| Surface                                                          | Scope / limiter               | Window         | Key            | Skip localhost |
-| ---------------------------------------------------------------- | ----------------------------- | -------------- | -------------- | -------------- |
-| `GET /api/auth/sso/domain-check`                                 | `enterprise.sso-domain-check` | 120 per hour   | IP             | yes            |
-| `POST /api/organizations/invitations/accept`                     | `enterprise.invite-accept`    | 60 per hour    | IP             | yes            |
-| `/api/user/sessions*` except `/api/user/sessions/current`        | `sessionMgmtLimiter`          | 120 per 15 min | IP             | yes            |
-| `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | `orgWalletTopUpLimiter`       | 20 per hour    | `org:${orgId}` | yes            |
+| Surface                                                          | Scope / limiter                | Window         | Key            | Skip localhost |
+| ---------------------------------------------------------------- | ------------------------------ | -------------- | -------------- | -------------- |
+| `GET /api/auth/sso/domain-check`                                 | `enterprise.sso-domain-check`  | 1000 per hour  | IP             | yes            |
+| `POST /api/organizations/invitations/accept`                     | `enterprise.org-invite-accept` | 60 per hour    | IP             | yes            |
+| `/api/user/sessions*` except `/api/user/sessions/current`        | `sessionMgmtLimiter`           | 120 per 15 min | IP             | yes            |
+| `POST /api/organizations/[orgId]/billing-account/wallet/top-ups` | `orgWalletTopUpLimiter`        | 20 per hour    | `org:${orgId}` | yes            |
 
-> **`sso-domain-check` and `invite-accept` were both raised for shared NATs**
-> — 60 → 120/hr and 30 → 60/hr respectively. Both sit on the critical path of
-> a corporate sign-in or a member's first sign-up, and one office floor is a
-> single IP. The `redisPrefix` override in the policy table keeps them on
-> their original Redis keys.
->
-> The `enterprise.invite-accept` policy also declares a 20/hour
-> per-invitation (`token`) budget, but no handler spends it yet: the
-> invitation id is in the POST body, which the edge cannot read.
+Both enterprise budgets are sized for shared NATs: they sit on the critical
+path of a corporate sign-in or a member's first sign-up, and one office floor
+is a single IP. Invitation accept has no per-invitation budget: the
+invitation id is in the POST body, which the edge cannot read.
 
 ### Handler-enforced (`applyRateLimit(...)` inside the route)
 
 Handler limiters can key on the org or the acting user rather than the raw
 IP. Copy the exact key when adding a sibling route to an existing limiter.
 
-| Surface                                                                      | Limiter                                        | Window       | Key                         | Gate                |
-| ---------------------------------------------------------------------------- | ---------------------------------------------- | ------------ | --------------------------- | ------------------- |
-| `POST /api/admin/team/members`, `POST .../[userId]/setup-link`               | `staffCreateLimiter` (`platform.staff-create`) | 20 / hour    | acting ADMIN (`accountKey`) | ADMIN               |
-| `GET /api/user/sessions`, `DELETE .../[sessionId]`, `POST .../revoke-others` | `sessionMgmtUserLimiter`                       | 60 / 15 min  | user id                     | signed in           |
-| `GET /api/admin/users/[userId]/sessions`, `POST .../sessions/revoke`         | `adminSessionAccessLimiter`                    | 120 / 15 min | acting operator             | `users.read`        |
-| `POST /api/organizations/[orgId]/invitations`                                | `orgInviteLimiter`                             | 20 / hour    | `${orgId}`                  | MAINTAINER+         |
-| `POST /api/organizations/[orgId]/webhooks`                                   | `orgWebhookLimiter`                            | 5 / min      | `org:${orgId}`              | billing-admin∨owner |
-| `PATCH /api/organizations/[orgId]/webhooks/[endpointId]`                     | `orgWebhookLimiter`                            | 5 / min      | `org:${orgId}`              | billing-admin∨owner |
-| `POST .../webhooks/[endpointId]/rotate-secret`                               | `orgWebhookLimiter`                            | 5 / min      | `org:${orgId}`              | OWNER               |
-| `POST /api/organizations/[orgId]/data-exports`                               | `orgDataExportLimiter`                         | 1 / 24 h     | `org:${orgId}`              | billing-admin∨owner |
+| Surface                                                                      | Limiter                     | Window       | Key                  | Gate                |
+| ---------------------------------------------------------------------------- | --------------------------- | ------------ | -------------------- | ------------------- |
+| `POST /api/admin/team/members`, `POST .../[userId]/setup-link`               | `staffCreateLimiter`        | 20 / hour    | acting ADMIN user id | ADMIN               |
+| `POST /api/user/reauthenticate` (step-up password or TOTP)                   | `reauthLimiter`             | 5 / 15 min   | user id              | signed in           |
+| `GET /api/user/sessions`, `DELETE .../[sessionId]`, `POST .../revoke-others` | `sessionMgmtUserLimiter`    | 60 / 15 min  | user id              | signed in           |
+| `GET /api/admin/users/[userId]/sessions`, `POST .../sessions/revoke`         | `adminSessionAccessLimiter` | 120 / 15 min | acting operator      | `users.read`        |
+| `POST /api/organizations/[orgId]/invitations`                                | `orgInviteLimiter`          | 20 / hour    | `${orgId}`           | MAINTAINER+         |
+| `POST /api/organizations/[orgId]/webhooks`                                   | `orgWebhookLimiter`         | 5 / min      | `org:${orgId}`       | billing-admin∨owner |
+| `PATCH /api/organizations/[orgId]/webhooks/[endpointId]`                     | `orgWebhookLimiter`         | 5 / min      | `org:${orgId}`       | billing-admin∨owner |
+| `POST .../webhooks/[endpointId]/rotate-secret`                               | `orgWebhookLimiter`         | 5 / min      | `org:${orgId}`       | OWNER               |
+| `POST /api/organizations/[orgId]/data-exports`                               | `orgDataExportLimiter`      | 1 / 24 h     | `org:${orgId}`       | billing-admin∨owner |
 
 > **`orgInviteLimiter` keys on the bare `orgId`** (not `org:${orgId}`);
 > the webhook + data-export limiters use the `org:` prefix. The keys are
@@ -221,11 +215,6 @@ See `CLAUDE.md` memory note on agent-006 booking tests for context.
    - **A BetterAuth path** (`/api/auth/*`): add a rule to
      `AUTH_RATE_LIMIT_RULES` in `lib/auth/rate-limit.ts`. Do not add an
      edge rule for it; the request would be counted twice.
-   - **Auth-adjacent or enterprise surface with a named policy**: declare
-     a row in `RATE_POLICIES` (`lib/rate-limit/policies.ts`: scope, window,
-     dimensions, `description`) and spend it with `limiterFor(scope,
-dimension)` from the edge rule or the handler, so the number lives in
-     one place.
    - **Edge, anything else** (public reads, cheap key): append a
      `RateRule` to `RATE_LIMIT_RULES` in `middleware.ts` — `{ label,
 match, limiter, key?, scope?, skipLocalhost }`. Omit `key` to
@@ -255,8 +244,8 @@ match, limiter, key?, scope?, skipLocalhost }`. Omit `key` to
   forgot-password flow ran unthrottled. BetterAuth paths are now limited
   inside BetterAuth, which matches its own routes.
 - **Don't put a plaintext address in a Redis key.** Upstash keys are
-  plaintext at rest and visible in `MONITOR`. Use `accountKey(email)` or
-  `tokenKey(token)` from the policy table.
+  plaintext at rest and visible in `MONITOR`. Hash it first, as the
+  existing-account notice does (`lib/auth/account-lifecycle.ts`).
 - **Don't throttle a provider's webhook endpoint.** A 429 on a Stream
   delivery is not a deferral — Stream retries inside a fifteen-second
   budget and then drops the event permanently.
@@ -273,3 +262,17 @@ match, limiter, key?, scope?, skipLocalhost }`. Omit `key` to
 - [authentication/rate-limiting-and-abuse.md](../../authentication/rate-limiting-and-abuse.md)
   — the auth limiter, breached-password check and abuse posture.
 - [ADR 7 — Upstash rate limiting](../70-design-decisions/07-upstash-rate-limiting.md).
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Link-based email verification (`/send-verification-email`,
+  `/verify-email`).** Replaced by the 6-digit email OTP; its budgets are the
+  two `/email-otp/*` rows above.
+- **Policy table (`lib/rate-limit/policies.ts`, `RATE_POLICIES`,
+  `limiterFor`).** Removed; every limiter is a `makeLimiter` call in
+  `lib/rate-limit.ts`.
+- **Edge rules for BetterAuth paths.** They were keyed on paths BetterAuth
+  does not serve and double-counted the ones it does. BetterAuth's own limiter
+  on the Upstash store replaced them.

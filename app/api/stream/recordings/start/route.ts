@@ -51,7 +51,7 @@ function normalizeTrialMeeting<
 export async function POST(req: NextRequest) {
   try {
     // Check authentication
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -66,6 +66,7 @@ import {
 } from "@/components/ui/responsive-modal";
 import { AddPeopleDialog } from "./AddPeopleDialog";
 import { RemoveMemberDialog } from "./RemoveMemberDialog";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 // `MemberRow` (and the response shape) live in `@/schemas/organizations`
 // so the dashboard and any other consumer (e.g. operator tools) share the
@@ -178,11 +179,14 @@ async function updateMember(
   // Schema enforces "at least one of role or status" so an empty PATCH
   // never leaves the client (would 400 on the server anyway).
   const validated = validateOutboundPayload(UpdateMemberPayloadSchema, payload);
-  const res = await fetch(`/api/organizations/${orgId}/members/${memberId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(validated),
-  });
+  const res = await fetchWithIdentity(
+    `/api/organizations/${orgId}/members/${memberId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validated),
+    },
+  );
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     // Zod field-level surfacing. The server returns `error: "Invalid body"`
@@ -193,8 +197,7 @@ async function updateMember(
     // when MAINTAINER→BILLING_ADMIN promotion failed because the PATCH
     // route's local Zod role enum was stale relative to the Prisma enum.
     const fieldErrors = body?.detail?.fieldErrors as
-      | Record<string, string[] | undefined>
-      | undefined;
+      Record<string, string[] | undefined> | undefined;
     if (fieldErrors) {
       const offending = Object.keys(fieldErrors).filter(
         (k) => fieldErrors[k]?.length,

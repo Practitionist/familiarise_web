@@ -24,6 +24,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 /**
  * #1586 / parity with #1740 M9 — the payer's receipt for the whole-event
@@ -197,6 +198,8 @@ export async function POST(req: NextRequest) {
     // privileged: staff read every money surface for ticket context.
     const auth = await requireBackofficeSurface("refunds.manage");
     if (auth.error) return auth.error;
+    const stale = requireFreshSession(auth.session);
+    if (stale) return stale;
 
     // #677/PM-36 — throttle the most dangerous button in the app. Keyed per
     // admin user; 10/min is far above legitimate ops cadence.

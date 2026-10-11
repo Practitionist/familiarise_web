@@ -40,6 +40,7 @@ jest.mock("../../lib/prisma", () => {
     // staff fan-out both live on the same client.
     supportTicket: {
       findFirst: jest.fn(async () => null),
+      findUnique: jest.fn(async () => null),
       updateMany: jest.fn(async () => ({ count: 1 })),
       create: jest.fn(async () => ({
         id: "t1",

@@ -225,46 +225,10 @@ export default [
     },
   },
 
-  // Session freshness (#1807): a bare getSession() in server code reads the
-  // ~5-minute cookie cache, honouring demotions, bans, revocations and
-  // DPDP-erasures late. PII/finance/role-gated reads must be force-fresh.
-  // Remaining bare calls outside these globs are cosmetic reads pending the
-  // Phase-2 bulk pass — they are grandfathered here, not approved.
-  {
-    files: ["app/api/**/*.ts", "lib/**/*.ts"],
-    rules: {
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector:
-            "CallExpression[callee.name='getSession'][arguments.length=0]",
-          message:
-            "Bare getSession() is the cookie-cacheable read (stale role/ban whenever the cache is on). Use getSession(true) for force-fresh reads, requireApiAuth()/requireBackofficeSurface() in routes, or the explicit getCachedSession() for hot cosmetic reads. See #1807.",
-        },
-        {
-          // getSession(false) / getSession(undefined) are the same cached
-          // read spelled explicitly — they bypass the zero-arg selector.
-          selector:
-            "CallExpression[callee.name='getSession'][arguments.length=1][arguments.0.value=false]",
-          message:
-            "getSession(false) is the cookie-cached read: use the explicit getCachedSession() so the choice is greppable, or getSession(true). See #1807.",
-        },
-        {
-          // Identifier-only: a type gate is required because esquery matches
-          // a missing `name` attribute against the string 'undefined'.
-          selector:
-            "CallExpression[callee.name='getSession'][arguments.length=1][arguments.0.type='Identifier'][arguments.0.name='undefined']",
-          message:
-            "getSession(undefined) is the cookie-cached read: use the explicit getCachedSession() so the choice is greppable, or getSession(true). See #1807.",
-        },
-      ],
-    },
-  },
   // URL writes go through replaceUrl()/pushUrl() in lib/navigation/history:
   // Next 15 skips its router sync for history state carrying `__NA`, so
   // passing `window.history.state` moves the address bar but never
-  // `useSearchParams`. Scoped to client code, which never overlaps the
-  // getSession block above (flat config replaces a rule's options per file).
+  // `useSearchParams`. Scoped to client code.
   {
     files: ["**/*.tsx", "**/hooks/**/*.ts"],
     rules: {

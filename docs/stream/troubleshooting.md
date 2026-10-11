@@ -32,13 +32,13 @@ Comprehensive troubleshooting guide for Stream Chat and Video integration issues
 
 This section documents known critical bugs and their workarounds. Review before deploying to production.
 
-### Stream Role Mapping (Resolved in #899)
+### Stream Role Mapping
 
 **Severity:** RESOLVED | **Security Impact:** N/A
 
 #### Problem Description
 
-Earlier builds mapped every user to the "admin" role in Stream Chat regardless of their actual role, which left no permission differentiation between user types. As of #899 the mapping follows least privilege, so this is no longer an issue.
+Earlier builds mapped every user to the "admin" role in Stream Chat regardless of their actual role, which left no permission differentiation between user types. The mapping follows strict least privilege, so this is no longer an issue.
 
 #### Location
 
@@ -326,7 +326,7 @@ logger.error("stream.chat.connection_failed", {
 
 | Issue           | Workaround                   | Effectiveness | Notes                                     |
 | --------------- | ---------------------------- | ------------- | ----------------------------------------- |
-| Admin role bug  | Resolved in #899             | Fixed         | Least-privilege role mapping now in place |
+| Admin role bug  | Resolved                     | Fixed         | Least-privilege role mapping now in place |
 | Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops                    |
 | Race conditions | Atomic creation              | Moderate      | Race window still exists                  |
 | User cleanup    | Exclusion list               | Good          | Manual maintenance required               |
@@ -395,7 +395,7 @@ curl -X GET "https://chat.stream-io-api.com/health"
 - The dashboard visibly remounts a second or two after load
 - Clicking Join appears to do nothing, so the user clicks it several more times
 - Component state (open dialogs, scroll position, half-filled forms) resets on its own
-- Possibly a React error #310 — "rendered more hooks than during the previous render" — pointing into Stream SDK internals
+- Possibly a React invariant violation (hooks mismatch) — "rendered more hooks than during the previous render" — pointing into Stream SDK internals
 
 #### Cause
 
@@ -1750,3 +1750,10 @@ If you're still experiencing issues:
 ---
 
 **Last Updated:** 2025-01-22
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Diagnosing Live Calls or Channels from Local Seed State Alone**: Superseded by read-only Stream MCP verification (`mcp__stream-io__video_query_calls`, `mcp__stream-io__video_get_call_type`, `mcp__stream-io__chat_query_channels`).
+- **Manual Stream Dashboard Permission Clicking**: Superseded by idempotent declarative enforcement (`npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed`).

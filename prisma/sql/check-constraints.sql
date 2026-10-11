@@ -229,7 +229,10 @@ ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_tds_fy_format"
 ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_plan_xor";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_plan_xor"
-  CHECK (("webinarPlanId" IS NULL) <> ("classPlanId" IS NULL));
+  CHECK (
+    ("collaboratorType" = 'WEBINAR' AND "webinarPlanId" IS NOT NULL AND "classPlanId" IS NULL)
+    OR ("collaboratorType" = 'CLASS' AND "classPlanId" IS NOT NULL AND "webinarPlanId" IS NULL)
+  );
 
 -- SPLIT
 -- ============================================================================
@@ -319,7 +322,44 @@ ALTER TABLE "RateCard" ADD CONSTRAINT "rate_card_bps_sum_is_whole"
 ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_share_bps_in_range";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_share_bps_in_range"
-  CHECK ("revenueShareBps" >= 0 AND "revenueShareBps" <= 10000);
+  CHECK (1 <= "revenueShareBps" AND "revenueShareBps" <= 9000);
+-- SPLIT
+DO $$
+BEGIN
+  UPDATE "Collaborator"
+  SET "role" = (CASE WHEN "role" = 'CO_INSTRUCTOR' THEN 'CO_HOST' ELSE 'GUEST_SPEAKER' END)::"CollaboratorRole"
+  WHERE "collaboratorType" = 'WEBINAR'
+    AND "role" NOT IN ('CO_HOST', 'MODERATOR', 'GUEST_SPEAKER', 'TECHNICAL_SUPPORT');
+
+  UPDATE "Collaborator"
+  SET "role" = (CASE WHEN "role" = 'CO_HOST' THEN 'CO_INSTRUCTOR' ELSE 'GUEST_LECTURER' END)::"CollaboratorRole"
+  WHERE "collaboratorType" = 'CLASS'
+    AND "role" NOT IN ('CO_INSTRUCTOR', 'TEACHING_ASSISTANT', 'GUEST_LECTURER', 'CONTENT_CREATOR');
+
+  UPDATE "Collaborator"
+  SET "tier" = (CASE WHEN "role" IN ('CO_HOST', 'CO_INSTRUCTOR') THEN 'PRESENTER' ELSE 'CREW' END)::"CollaboratorTier"
+  WHERE ("role" IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" <> 'PRESENTER')
+     OR ("role" NOT IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" <> 'CREW');
+
+  ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_role_matches_plan_type"
+    CHECK (
+      ("collaboratorType" = 'WEBINAR' AND "role" IN ('CO_HOST', 'MODERATOR', 'GUEST_SPEAKER', 'TECHNICAL_SUPPORT'))
+      OR ("collaboratorType" = 'CLASS' AND "role" IN ('CO_INSTRUCTOR', 'TEACHING_ASSISTANT', 'GUEST_LECTURER', 'CONTENT_CREATOR'))
+    );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+-- SPLIT
+DO $$
+BEGIN
+  ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_tier_matches_role"
+    CHECK (
+      ("role" IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" = 'PRESENTER')
+      OR ("role" NOT IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" = 'CREW')
+    );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- SPLIT
 -- The journal's direction column carries the sign, so an entry amount is
@@ -993,3 +1033,158 @@ ALTER TABLE "organizations" DROP CONSTRAINT IF EXISTS "org_stream_recording_rete
 -- SPLIT
 ALTER TABLE "organizations" ADD CONSTRAINT "org_stream_recording_retention_days_range"
   CHECK ("streamRecordingRetentionDays" IS NULL OR "streamRecordingRetentionDays" BETWEEN 7 AND 3650);
+
+-- SPLIT
+-- Enforce mutual exclusivity between `processed` and `error` and require `processedAt` iff `processed`.
+DO $$
+BEGIN
+  UPDATE "WebhookEvent"
+  SET "processed" = false, "processedAt" = NULL
+  WHERE "processed" AND "error" IS NOT NULL;
+
+  UPDATE "WebhookEvent"
+  SET "processedAt" = CASE WHEN "processed" THEN COALESCE("processedAt", "receivedAt") ELSE NULL END
+  WHERE ("processed" IS TRUE) IS DISTINCT FROM ("processedAt" IS NOT NULL);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_event_processed_error_exclusive'
+  ) THEN
+    ALTER TABLE "WebhookEvent" ADD CONSTRAINT "webhook_event_processed_error_exclusive"
+      CHECK (NOT ("processed" AND "error" IS NOT NULL));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_event_processed_timestamp_consistent'
+  ) THEN
+    ALTER TABLE "WebhookEvent" ADD CONSTRAINT "webhook_event_processed_timestamp_consistent"
+      CHECK (("processed" IS TRUE) IS NOT DISTINCT FROM ("processedAt" IS NOT NULL));
+  END IF;
+
+  WITH ranked_recordings AS (
+    SELECT
+      "id",
+      ROW_NUMBER() OVER (
+        PARTITION BY "streamRecordingId"
+        ORDER BY
+          ("status" = 'READY') DESC,
+          "updatedAt" DESC NULLS LAST,
+          "createdAt" DESC NULLS LAST,
+          "id" DESC
+      ) AS rn
+    FROM "Recording"
+    WHERE "streamRecordingId" IS NOT NULL
+  )
+  UPDATE "Recording"
+  SET "streamRecordingId" = NULL
+  WHERE "id" IN (SELECT "id" FROM ranked_recordings WHERE rn > 1);
+END $$;
+
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "WebhookEvent_unprocessed_provider_receivedAt_idx"
+  ON "WebhookEvent" ("provider", "receivedAt")
+  WHERE NOT "processed";
+
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "Recording_streamRecordingId_unique_idx"
+  ON "Recording" ("streamRecordingId")
+  WHERE "streamRecordingId" IS NOT NULL;
+
+-- SPLIT
+-- At most one open non-deleted SupportCase per (appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category)
+-- using NULLS NOT DISTINCT so booking-wide (appointmentOccurrenceId IS NULL) and platform-wide cases collide cleanly without merging cross-submitter threads.
+DROP INDEX IF EXISTS "support_case_open_scope_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_open_scope_key"
+  ON "SupportCase" ("appointmentId", "appointmentOccurrenceId", "requesterUserId", "submitterUserId", "category")
+  NULLS NOT DISTINCT
+  WHERE "closedAt" IS NULL AND "deletedAt" IS NULL;
+
+-- SPLIT
+-- At most one primary subject row per SupportCase.
+DROP INDEX IF EXISTS "support_case_subject_primary_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_subject_primary_key"
+  ON "SupportCaseSubject" ("caseId")
+  WHERE "isPrimary" = true;
+
+-- SPLIT
+-- A SupportCase must carry at least a category or a flowKey, an occurrence requires an appointment,
+-- problem links remain strictly one level deep, and CSAT scores stay between 1 and 5.
+ALTER TABLE "SupportCase" DROP CONSTRAINT IF EXISTS "support_case_scope_and_shape_chk";
+-- SPLIT
+ALTER TABLE "SupportCase" ADD CONSTRAINT "support_case_scope_and_shape_chk"
+  CHECK (
+    ("category" IS NOT NULL OR "flowKey" IS NOT NULL)
+    AND ("appointmentOccurrenceId" IS NULL OR "appointmentId" IS NOT NULL)
+    AND ("problemCaseId" IS NULL OR "caseKind" = 'INCIDENT')
+    AND ("csatRating" IS NULL OR ("csatRating" BETWEEN 1 AND 5))
+  );
+
+-- SPLIT
+-- Each SupportCaseEvent belongs to either a unified SupportCase or a pre-cutover SupportTicket.
+ALTER TABLE "SupportCaseEvent" DROP CONSTRAINT IF EXISTS "support_case_event_target_xor";
+-- SPLIT
+ALTER TABLE "SupportCaseEvent" ADD CONSTRAINT "support_case_event_target_xor"
+  CHECK (("caseId" IS NULL) <> ("legacyTicketId" IS NULL));
+
+-- SPLIT
+-- At most one CSAT rating event per pre-cutover SupportTicket.
+DROP INDEX IF EXISTS "support_case_event_legacy_csat_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_event_legacy_csat_key"
+  ON "SupportCaseEvent" ("legacyTicketId")
+  WHERE "kind" = 'CSAT_RATED';
+
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "AppointmentDocument_active_storagePath_key"
+  ON "AppointmentDocument" ("storagePath")
+  WHERE "deletedAt" IS NULL;
+
+-- SPLIT
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'AppointmentDocument_fileSize_positive_check') THEN
+    ALTER TABLE "AppointmentDocument"
+      ADD CONSTRAINT "AppointmentDocument_fileSize_positive_check"
+      CHECK ("fileSize" > 0 AND "versionNo" >= 1);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PlanMaterial_single_plan_fk_check') THEN
+    ALTER TABLE "PlanMaterial"
+      ADD CONSTRAINT "PlanMaterial_single_plan_fk_check"
+      CHECK (num_nonnulls("consultationPlanId", "subscriptionPlanId", "webinarPlanId", "classPlanId") = 1 AND "fileSize" > 0);
+  END IF;
+END $$;
+
+-- SPLIT
+-- Recording storage and marketplace listing invariants:
+-- Active PLATFORM rows require a storagePath; AVAILABLE rows require PLATFORM
+-- storage + storagePath; PUBLISHED listings require PLATFORM storage, storagePath,
+-- positive listPricePaise, and explicit consent attestation.
+ALTER TABLE "Recording" DROP CONSTRAINT IF EXISTS "Recording_storage_and_publish_check";
+-- SPLIT
+ALTER TABLE "Recording" ADD CONSTRAINT "Recording_storage_and_publish_check"
+  CHECK (
+    (
+      "storageType" = 'PLATFORM'
+      AND ("status" = 'EXPIRED' OR "storagePath" IS NOT NULL)
+      AND (
+        "listingStatus" <> 'PUBLISHED'
+        OR (
+          "storagePath" IS NOT NULL
+          AND "listPricePaise" IS NOT NULL
+          AND "listPricePaise" > 0
+          AND "consentAttestedAt" IS NOT NULL
+          AND "consentAttestedById" IS NOT NULL
+        )
+      )
+    )
+    OR (
+      "storageType" <> 'PLATFORM'
+      AND "status" <> 'AVAILABLE'
+      AND "listingStatus" <> 'PUBLISHED'
+    )
+  ) NOT VALID;
+-- SPLIT
+ALTER TABLE "Recording" VALIDATE CONSTRAINT "Recording_storage_and_publish_check";
+
+

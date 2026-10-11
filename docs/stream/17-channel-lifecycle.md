@@ -201,7 +201,7 @@ must appear in neither the cron's freeze queue nor the sync's expected-set.**
 - **`actions/stream/chat/event-channel.action.ts` is a thin `"use server"` boundary.**
   Its exports (`syncUserEventChannels`, `addUserToEventChannel`,
   `removeUserFromEventChannel`, `checkEventChannelExists`) verify a fresh
-  database session (`getSession(true)`), reject banned users, and enforce
+  database session (`getSession()`), reject banned users, and enforce
   self/host/privileged authorization before delegating to
   `lib/stream/event-channel-service.ts`.
 - **`actions/stream/chat/user.action.ts` enforces actor checks and PII stripping.**

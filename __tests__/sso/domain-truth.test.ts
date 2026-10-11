@@ -80,14 +80,22 @@ describe("DELETE provider", () => {
     });
   });
 
-  it("refuses to delete the last approved provider while SSO is enforced", async () => {
+  it("refuses to delete the last approved, proven provider while SSO is enforced", async () => {
     tx.ssoProvider.count.mockResolvedValue(0);
     const res = await call();
     expect(res.status).toBe(409);
+    expect(tx.ssoProvider.count).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org_1",
+        domainVerified: true,
+        provenAt: { not: null },
+        id: { not: "row_a" },
+      },
+    });
     expect(tx.ssoProvider.delete).not.toHaveBeenCalled();
   });
 
-  it("deletes when another approved provider remains", async () => {
+  it("deletes when another proven provider remains", async () => {
     tx.ssoProvider.count.mockResolvedValue(1);
     const res = await call();
     expect(res.status).toBe(204);
@@ -137,7 +145,7 @@ describe("DELETE domain claim (D21)", () => {
       enforceSSO: false,
     });
     tx.ssoProvider.findMany.mockResolvedValue([
-      { providerId: "oidc-a", domain: "acme.com" },
+      { providerId: "oidc-a", domain: "acme.co.in,acme.com" },
     ]);
 
     const res = await call();
@@ -149,7 +157,7 @@ describe("DELETE domain claim (D21)", () => {
       },
     });
     expect(tx.ssoProvider.updateMany).toHaveBeenCalledWith({
-      where: { organizationId: "org_1", domain: "acme.com" },
+      where: { organizationId: "org_1", providerId: { in: ["oidc-a"] } },
       data: { domainVerified: false },
     });
     expect(tx.orgAuditLog.create).toHaveBeenCalledWith({

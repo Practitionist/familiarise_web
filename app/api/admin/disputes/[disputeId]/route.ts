@@ -59,6 +59,60 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                 ...(canManageDisputes ? { email: true } : {}),
               },
             },
+            appointment: {
+              select: {
+                id: true,
+                appointmentType: true,
+                createdAt: true,
+                occurrences: {
+                  where: { deletedAt: null },
+                  orderBy: { startsAt: "asc" },
+                  select: {
+                    id: true,
+                    startsAt: true,
+                    endsAt: true,
+                    completionStatus: true,
+                    outcome: true,
+                    attendances: {
+                      select: {
+                        userId: true,
+                        firstJoinedAt: true,
+                        lastLeftAt: true,
+                      },
+                    },
+                  },
+                },
+                supportThreads: {
+                  orderBy: { createdAt: "desc" },
+                  select: {
+                    id: true,
+                    status: true,
+                    category: true,
+                    createdAt: true,
+                    supportTicket: {
+                      select: {
+                        id: true,
+                        referenceNumber: true,
+                        status: true,
+                        priority: true,
+                        createdAt: true,
+                      },
+                    },
+                  },
+                },
+                supportCases: {
+                  orderBy: { createdAt: "desc" },
+                  select: {
+                    id: true,
+                    status: true,
+                    category: true,
+                    referenceNumber: true,
+                    priority: true,
+                    createdAt: true,
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -68,7 +122,99 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Dispute not found" }, { status: 404 });
     }
 
-    return NextResponse.json(dispute);
+    const appt = dispute.payment?.appointment ?? null;
+    const occurrences = appt?.occurrences ?? [];
+    const allAttendances = occurrences.flatMap((o) => o.attendances);
+    const supportThreads = appt?.supportThreads ?? [];
+    const supportCases = appt?.supportCases ?? [];
+
+    const mergedSupportThreads = [
+      ...supportThreads.map((t) => ({
+        id: t.id,
+        status: String(t.status),
+        category: t.category,
+        referenceNumber: t.supportTicket?.referenceNumber ?? null,
+        ticketStatus: t.supportTicket?.status ?? null,
+        priority: t.supportTicket?.priority ?? null,
+        createdAt: t.createdAt,
+      })),
+      ...supportCases.map((c) => ({
+        id: c.id,
+        status: String(c.status),
+        category: c.category,
+        referenceNumber: c.referenceNumber,
+        ticketStatus: c.status,
+        priority: c.priority,
+        createdAt: c.createdAt,
+      })),
+    ].sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    const evidencePack = {
+      booking: appt
+        ? {
+            appointmentId: appt.id,
+            appointmentType: appt.appointmentType,
+            createdAt: appt.createdAt,
+          }
+        : null,
+      occurrences: {
+        total: occurrences.length,
+        completedCount: occurrences.filter(
+          (o) => o.completionStatus === "COMPLETED",
+        ).length,
+        outcomes: occurrences.map((o) => ({
+          id: o.id,
+          startsAt: o.startsAt,
+          endsAt: o.endsAt,
+          completionStatus: o.completionStatus,
+          outcome: o.outcome,
+        })),
+      },
+      attendance: {
+        presentCount: allAttendances.length,
+        recordsFound: allAttendances.length > 0,
+        summary:
+          allAttendances.length > 0
+            ? `${allAttendances.length} participant attendance telemetry record(s) logged across session occurrences.`
+            : "No meeting attendance telemetry records were recorded for this booking.",
+      },
+      supportHistory: {
+        ticketCount: mergedSupportThreads.length,
+        openCount: mergedSupportThreads.filter(
+          (item) => item.status !== "RESOLVED" && item.status !== "CLOSED",
+        ).length,
+        threads: mergedSupportThreads,
+      },
+    };
+
+    const sanitizedAppointment = appt
+      ? {
+          id: appt.id,
+          appointmentType: appt.appointmentType,
+          createdAt: appt.createdAt,
+          occurrences: occurrences.map((o) => ({
+            id: o.id,
+            startsAt: o.startsAt,
+            endsAt: o.endsAt,
+            completionStatus: o.completionStatus,
+            outcome: o.outcome,
+          })),
+        }
+      : null;
+
+    return NextResponse.json({
+      ...dispute,
+      payment: dispute.payment
+        ? {
+            ...dispute.payment,
+            appointment: sanitizedAppointment,
+          }
+        : null,
+      evidencePack: canManageDisputes ? evidencePack : null,
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

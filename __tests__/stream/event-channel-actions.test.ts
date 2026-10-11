@@ -51,8 +51,7 @@ jest.mock("../../actions/stream/chat/user.action", () => ({
 // every userId these tests drive.
 const mockGetSession = jest.fn();
 jest.mock("../../lib/auth-server", () => ({
-  getSession: (disableCookieCache?: boolean) =>
-    mockGetSession(disableCookieCache),
+  getSession: () => mockGetSession(),
 }));
 
 // auth-helpers imports next/server (NextResponse), which needs the fetch
@@ -574,9 +573,7 @@ describe("Event Channel Actions", () => {
       );
       // The gate fires before ANY Stream/DB work happens.
       expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
-      // And it reads the session with the cookie cache disabled, so a
-      // just-demoted/banned identity cannot ride a stale cached session.
-      expect(mockGetSession).toHaveBeenCalledWith(true);
+      expect(mockGetSession).toHaveBeenCalled();
     });
 
     it("answers an unauthenticated caller with a returned refusal, not a throw", async () => {

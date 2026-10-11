@@ -30,7 +30,7 @@ import { resolveSentryUserId } from "@/lib/observability/identity";
 import { PURPOSE_CODE_META } from "@/lib/compliance/purpose-codes";
 
 export async function GET() {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

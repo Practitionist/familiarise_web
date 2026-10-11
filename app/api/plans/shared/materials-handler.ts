@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -16,10 +17,7 @@ export interface PlanMaterialsConfig {
   planType: PlanType;
   planIdField: string;
   planModel:
-    | "consultationPlan"
-    | "subscriptionPlan"
-    | "webinarPlan"
-    | "classPlan";
+    "consultationPlan" | "subscriptionPlan" | "webinarPlan" | "classPlan";
 }
 
 // Development mode check
@@ -28,9 +26,8 @@ const isDevelopment = () =>
   process.env.DEV_BYPASS_AUTH === "true";
 
 /**
- * The org operator acting on an ORG-owned plan's materials, with what the
- * audit row needs (#1851 decision 8). Null when the caller is the plan's own
- * consultant (or the dev bypass), whose changes are their own business.
+ * Audit metadata when an organization operator manages a plan's materials.
+ * Null when the plan's own consultant manages materials directly.
  */
 interface OrgMaterialActor {
   organizationId: string;
@@ -55,11 +52,8 @@ interface MaterialPlan {
 }
 
 /**
- * Who may manage a plan's materials. Two paths:
- *   1. the owning consultant (personal and org plans alike), or
- *   2. an org member holding `materials.manage.orgPlan` over the plan's
- *      organization — ORG-owned plans only (#1851 decision 8). A personal plan
- *      has no organizationId, so no org key can ever reach it.
+ * Grants access to either the owning consultant or an organization operator
+ * holding `materials.manage.orgPlan` over an org-owned plan.
  */
 async function resolvePlanAccess(
   userId: string,
@@ -218,9 +212,8 @@ const MATERIAL_AUDIT_ACTIONS = [
 ];
 
 /**
- * #1851 decision 8 — an org change to an expert's material is audited, and
- * the row targets the delivering expert's membership so it is theirs to see
- * (the plan owner's materials GET returns it as `orgChanges`).
+ * Records an organization operator's material change against the owning
+ * consultant's membership so the consultant's dashboard surfaces `orgChanges`.
  */
 async function auditOrgMaterialChange(
   tx: Pick<Tx, "orgAuditLog" | "membership">,
@@ -278,10 +271,7 @@ function detailString(details: unknown, key: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
-/**
- * The org's recent changes to this plan's materials, for its consultant
- * (#1851 decision 8): which file, which org, which operator, and when.
- */
+/** Recent organization-operated changes to this plan's materials. */
 async function orgChangesForPlan(
   organizationId: string,
   planId: string,
@@ -339,7 +329,7 @@ export async function handleGetMaterials(
   config: PlanMaterialsConfig,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -351,7 +341,6 @@ export async function handleGetMaterials(
       );
     }
 
-    // Verify manage access (owner consultant or materials.manage.orgPlan)
     const access = await verifyMaterialManageAccess(
       session.user.id,
       planId,
@@ -369,7 +358,6 @@ export async function handleGetMaterials(
       );
     }
 
-    // Fetch materials
     const whereClause: Prisma.PlanMaterialWhereInput = {
       [config.planIdField]: planId,
     };
@@ -379,7 +367,6 @@ export async function handleGetMaterials(
       orderBy: { order: "asc" },
     });
 
-    // #1851 decision 8 — the plan's own consultant sees what the org changed.
     const orgChanges =
       access.orgActor === null && access.organizationId
         ? await orgChangesForPlan(access.organizationId, planId)
@@ -399,6 +386,217 @@ export async function handleGetMaterials(
   }
 }
 
+const MAX_MATERIALS_PER_PLAN = 25;
+
+interface ResolvedMaterialUpload {
+  fileName: string;
+  originalName: string;
+  fileSize: number;
+  mimeType: string;
+  fileUrl: string;
+  storagePath: string;
+  description: string | null;
+}
+
+const MaterialDirectCommitSchema = z.object({
+  storagePath: z.string().trim().min(1),
+  originalName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(120),
+  fileSize: z.number().int().positive().optional(),
+  description: z.string().max(2000).nullish(),
+});
+
+async function resolveMaterialUploadPayload(
+  request: NextRequest,
+  planId: string,
+  config: PlanMaterialsConfig,
+): Promise<
+  | { ok: true; data: ResolvedMaterialUpload }
+  | { ok: false; response: NextResponse }
+> {
+  const contentType = request.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    const parsedBody = MaterialDirectCommitSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsedBody.success) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error: "Invalid upload metadata",
+            message: "Please select a valid file to upload",
+            code: "INVALID_INPUT",
+          },
+          { status: 400 },
+        ),
+      };
+    }
+    const jsonBody = parsedBody.data;
+
+    const { verifyDirectUploadedObject } =
+      await import("@/lib/documents/storage-verify");
+    const verified = await verifyDirectUploadedObject({
+      bucket: "documents",
+      storagePath: jsonBody.storagePath,
+      requiredPrefix: `plans/${config.planType}-plans/${planId}/`,
+      claimedMimeType: jsonBody.mimeType,
+    });
+    if (!verified.ok) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error: "Upload validation failed",
+            message: verified.message,
+            code: verified.code,
+          },
+          { status: verified.code === "STORAGE_CONFIG_ERROR" ? 500 : 400 },
+        ),
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        fileName: verified.fileName,
+        originalName: jsonBody.originalName,
+        fileSize: verified.fileSize,
+        mimeType: verified.mimeType,
+        fileUrl: verified.fileUrl,
+        storagePath: jsonBody.storagePath,
+        description: jsonBody.description?.trim() || null,
+      },
+    };
+  }
+
+  const formData = await request.formData();
+  const rawFile = formData.get("file");
+  const file = rawFile instanceof File ? rawFile : null;
+  const rawDesc = formData.get("description");
+  const description =
+    typeof rawDesc === "string" && rawDesc.trim() ? rawDesc.trim() : null;
+
+  if (!file) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "No file provided",
+          message: "Please select a file to upload",
+          code: "INVALID_INPUT",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const uploadResult = await uploadPlanMaterial({
+    planType: config.planType,
+    planId,
+    file,
+    description: description || undefined,
+  });
+
+  if (!uploadResult.success) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Upload failed",
+          message: uploadResult.error || "Failed to upload file",
+          code: "UPLOAD_ERROR",
+        },
+        { status: 500 },
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    data: {
+      fileName: uploadResult.fileName!,
+      originalName: file.name,
+      fileSize: uploadResult.fileSize!,
+      mimeType: uploadResult.mimeType!,
+      fileUrl: uploadResult.fileUrl!,
+      storagePath: uploadResult.storagePath!,
+      description,
+    },
+  };
+}
+
+async function lockPlanRowForUpdate(
+  tx: Tx,
+  planModel: PlanMaterialsConfig["planModel"],
+  planId: string,
+): Promise<void> {
+  if (planModel === "consultationPlan") {
+    await tx.$executeRaw`SELECT 1 FROM "ConsultationPlan" WHERE id = ${planId} FOR UPDATE`;
+  } else if (planModel === "subscriptionPlan") {
+    await tx.$executeRaw`SELECT 1 FROM "SubscriptionPlan" WHERE id = ${planId} FOR UPDATE`;
+  } else if (planModel === "webinarPlan") {
+    await tx.$executeRaw`SELECT 1 FROM "WebinarPlan" WHERE id = ${planId} FOR UPDATE`;
+  } else {
+    await tx.$executeRaw`SELECT 1 FROM "ClassPlan" WHERE id = ${planId} FOR UPDATE`;
+  }
+}
+
+function persistPlanMaterialRecord(args: {
+  planId: string;
+  config: PlanMaterialsConfig;
+  resolvedUpload: ResolvedMaterialUpload;
+  organizationId: string | null;
+  orgActor: OrgMaterialActor | null;
+}) {
+  const { planId, config, resolvedUpload, organizationId, orgActor } = args;
+  const whereClause: Prisma.PlanMaterialWhereInput = {
+    [config.planIdField]: planId,
+  };
+
+  return prisma.$transaction(async (tx) => {
+    await lockPlanRowForUpdate(tx, config.planModel, planId);
+
+    const existingCount = await tx.planMaterial.count({
+      where: whereClause,
+    });
+    if (existingCount >= MAX_MATERIALS_PER_PLAN) {
+      throw new Error("MATERIAL_LIMIT_REACHED");
+    }
+
+    const maxOrderResult = await tx.planMaterial.aggregate({
+      where: whereClause,
+      _max: { order: true },
+    });
+    const nextOrder = (maxOrderResult._max.order ?? -1) + 1;
+
+    const created = await tx.planMaterial.create({
+      data: {
+        fileName: resolvedUpload.fileName,
+        originalName: resolvedUpload.originalName,
+        fileSize: resolvedUpload.fileSize,
+        mimeType: resolvedUpload.mimeType,
+        fileUrl: resolvedUpload.fileUrl,
+        storagePath: resolvedUpload.storagePath,
+        description: resolvedUpload.description,
+        order: nextOrder,
+        organizationId,
+        [config.planIdField]: planId,
+      } as Prisma.PlanMaterialUncheckedCreateInput,
+    });
+
+    if (orgActor) {
+      await auditOrgMaterialChange(tx, orgActor, {
+        action: AUDIT_ACTIONS.CATALOG.PLAN_MATERIAL_ADDED,
+        materialId: created.id,
+        fileName: created.originalName,
+      });
+    }
+    return created;
+  });
+}
+
 /**
  * POST - Upload a new material
  */
@@ -408,7 +606,7 @@ export async function handleUploadMaterial(
   config: PlanMaterialsConfig,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -420,7 +618,6 @@ export async function handleUploadMaterial(
       );
     }
 
-    // Verify manage access (owner consultant or materials.manage.orgPlan)
     const access = await verifyMaterialManageAccess(
       session.user.id,
       planId,
@@ -438,82 +635,44 @@ export async function handleUploadMaterial(
         { status: 403 },
       );
     }
-    const { organizationId, orgActor } = access;
 
-    // Parse form data
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    const description = formData.get("description") as string | null;
-
-    if (!file) {
-      return NextResponse.json(
-        {
-          error: "No file provided",
-          message: "Please select a file to upload",
-          code: "INVALID_INPUT",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Upload to Supabase
-    const uploadResult = await uploadPlanMaterial({
-      planType: config.planType,
+    const uploadPayload = await resolveMaterialUploadPayload(
+      request,
       planId,
-      file,
-      description: description || undefined,
-    });
-
-    if (!uploadResult.success) {
-      return NextResponse.json(
-        {
-          error: "Upload failed",
-          message: uploadResult.error || "Failed to upload file",
-          code: "UPLOAD_ERROR",
-        },
-        { status: 500 },
-      );
+      config,
+    );
+    if (!uploadPayload.ok) {
+      return uploadPayload.response;
     }
 
-    // Get the current max order for this plan
-    const whereClause: Prisma.PlanMaterialWhereInput = {
-      [config.planIdField]: planId,
-    };
-
-    const maxOrderResult = await prisma.planMaterial.aggregate({
-      where: whereClause,
-      _max: { order: true },
-    });
-    const nextOrder = (maxOrderResult._max.order ?? -1) + 1;
-
-    // Create database record — mirror the plan's org tag so org dashboards
-    // can scope materials without polymorphic joins.
-    const createData = {
-      fileName: uploadResult.fileName!,
-      originalName: file.name,
-      fileSize: uploadResult.fileSize!,
-      mimeType: uploadResult.mimeType!,
-      fileUrl: uploadResult.fileUrl!,
-      storagePath: uploadResult.storagePath!,
-      description: description || null,
-      order: nextOrder,
-      organizationId,
-      [config.planIdField]: planId,
-    };
-
-    const material = await prisma.$transaction(async (tx) => {
-      const created = await tx.planMaterial.create({
-        data: createData as Prisma.PlanMaterialUncheckedCreateInput,
+    let material;
+    try {
+      material = await persistPlanMaterialRecord({
+        planId,
+        config,
+        resolvedUpload: uploadPayload.data,
+        organizationId: access.organizationId,
+        orgActor: access.orgActor,
       });
-      if (orgActor) {
-        await auditOrgMaterialChange(tx, orgActor, {
-          action: AUDIT_ACTIONS.CATALOG.PLAN_MATERIAL_ADDED,
-          materialId: created.id,
-          fileName: created.originalName,
-        });
+    } catch (txError) {
+      await deletePlanMaterial(uploadPayload.data.storagePath).catch(
+        () => false,
+      );
+      if (
+        txError instanceof Error &&
+        txError.message === "MATERIAL_LIMIT_REACHED"
+      ) {
+        return NextResponse.json(
+          {
+            error: "Material limit reached",
+            message: `A plan can have at most ${MAX_MATERIALS_PER_PLAN} materials.`,
+            code: "MATERIAL_LIMIT_REACHED",
+          },
+          { status: 400 },
+        );
       }
-      return created;
-    });
+      throw txError;
+    }
 
     return NextResponse.json({ data: material }, { status: 201 });
   } catch (error) {
@@ -537,7 +696,7 @@ export async function handleDeleteMaterial(
   materialId: string,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -621,7 +780,7 @@ export async function handleUpdateMaterial(
   materialId: string,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {

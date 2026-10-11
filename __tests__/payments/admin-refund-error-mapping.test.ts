@@ -105,10 +105,10 @@ jest.mock("../../lib/payments/operations/event-refunds", () => ({
 
 jest.mock("../../lib/auth-helpers", () => ({
   requirePrivilegedAuth: jest.fn(async () => ({
-    session: { user: { id: "admin_1" } },
+    session: { user: { id: "admin_1" }, session: { createdAt: new Date() } },
   })),
   requireBackofficeSurface: jest.fn(async () => ({
-    session: { user: { id: "admin_1" } },
+    session: { user: { id: "admin_1" }, session: { createdAt: new Date() } },
   })),
 }));
 

@@ -72,9 +72,16 @@ On 2026-09-15, four twelve-request bursts against deploy preview 1656 (commit `a
 
 With `experimental: { preloadEntriesOnStart: false, appDocumentPreloading: false }` and `"@novu/api"` in `serverExternalPackages` (PR #1972, deploy `6ac1179a30acd900087d7e4a`), a 12-request concurrent cold burst against `/api/perf/probe-bare` on `deploy-preview-1972` in `ap-southeast-1` (`sin`) spawned 8 brand-new cold Lambda instances and completed **12/12 `200 OK` in `0.97–1.90 s`** (`maxGapMs: 0–25 ms`). This resolved Ledger Group 3 (`#1124`) on Netlify without requiring a platform migration (ADR 32).
 
-## A reading of the evidence, updated 2026-10-03
+## A reading of the evidence, updated 2026-10-11 (ADR 36 & Issues #2095–#2097)
 
-The monolith, Next.js, and the no-broker posture are all supported by the numbers: the background work is small, the outbox drain is the correct pattern for it, and a broker would import the always-on requirement rather than remove it. With `preloadEntriesOnStart: false` and `appDocumentPreloading: false` (#1972) eliminating the cold-start burst stall (`#1124`) and set-based SQL eliminating the ledger reconciliation timeout (`#1454`), staying on Netlify Pro in `sin` is viable for launch. Vercel Fluid Compute (`bom1`) or an always-on host (Fly, Railway, Fargate) remains an optional future upgrade if sharing one connection pool across concurrent requests (`PG_POOL_MAX > 1`) or co-locating compute in Mumbai (`~5 ms` vs `~65 ms` DB RTT) is desired at scale.
+The monolith, Next.js, and the no-broker posture remain supported by every measurement. Post-PR `#1972` (`preloadEntriesOnStart: false` & `appDocumentPreloading: false`), Netlify Pro (`sin`, `$20/mo` unlimited seats) serves 12-way cold bursts in **`0.97–1.90 s`** (`33 MB` V8 heap), making it stable today and ideal as our permanent **Hot-Standby / `< 90s` Emergency Failback Host** (`docs/deployment/emergency-failback-runbook.md`).
+
+When migrating primary compute into **Mumbai (`< 4 ms` RTT to Supabase `ap-south-1` vs `55–70 ms` from Singapore)** and moving off `PG_POOL_MAX=1` single-request Lambdas, our full 10-platform audit (`docs/deployment/multi-platform-evaluation.md`, Issue #2096) establishes this exact order:
+
+1. **Google Cloud Run (`asia-south1` Mumbai — `93/100`)**: Best overall fit (`--min-instances=1 --no-cpu-throttling` on `prod` at `~$48/mo`, `80–250` concurrent requests over `pg.Pool(10)`, `32 MiB` / unlimited HTTP/2 payloads, `60 min` HTTP timeout + `168 h` Jobs for `20 GB` R2 streams, native Debian `chromium` + `sharp`, `$0/seat`).
+2. **Vercel Pro (`bom1` Fluid Compute — `89/100`)**: Highest zero-DevOps small-team velocity **only after** resolving the P0 blockers in Issue #2095 (migrating all 8 `> 4.5 MB` upload routes + 2 buffered download routes to Supabase presigned URLs, scoping `x-nf-client-connection-ip` to `NETLIFY=true`, adding standard `Vary: Cookie` alongside `Netlify-Vary`, overriding `$0.105/min` Turbo builds to Enhanced, and budgeting `$20/seat/mo`).
+3. **Fly.io (`bom` Mumbai — `88/100`)** & **DigitalOcean App Platform (`blr1` Bangalore — `87/100`)**: Best zero-seat-tax container PaaS alternatives inside India with native `50 MB` upload support.
+4. **Cloudflare Workers (`@opennextjs/cloudflare` — `60/100`, Disqualified)**: Hard `128 MB` isolate memory ceiling across concurrent SSR + Prisma WASM executions (`Error 1102`) and no Linux `fork`/`dlopen` for `@sparticuz/chromium`, `sharp`, or native `bcrypt`.
 
 ## Sources
 

@@ -14,6 +14,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { HttpsUrlSchema } from "@/schemas/url";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -40,18 +41,8 @@ const REDACTED_SECRET = "[redacted]";
  * proves the host resolves to a publicly routable address, and runs again at
  * delivery time because DNS can be repointed after registration (#1132).
  */
-const HttpsUrl = z
-  .string()
-  .url()
-  .refine((u) => u.startsWith("https://"), {
-    message: "Webhook URL must use https://",
-  })
-  .refine((u) => u.length <= 2048, {
-    message: "Webhook URL must be ≤2048 characters",
-  });
-
 const CreateBodySchema = z.object({
-  url: HttpsUrl,
+  url: HttpsUrlSchema,
   /**
    * Subset of `OUTBOUND_WEBHOOK_EVENTS`. We narrow each entry via the
    * exported type guard so unknown event types fail the Zod parse
@@ -74,6 +65,7 @@ export async function GET(
   // #1527 P0-4 — the same grant as the Webhooks tab and the writes (OWNER +
   // BILLING_ADMIN); was a MANAGER rank floor.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "integrations.manage",
   });
   if (access.error) return access.error;

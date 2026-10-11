@@ -10,6 +10,7 @@ import {
   REQUEST_PAYOUT_RUN_BOUNDS,
 } from "@/lib/payments/payouts";
 import { requireAdminAuth } from "@/lib/auth-helpers";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 /**
  * POST /api/admin/payouts/process
@@ -19,6 +20,8 @@ export async function POST(_req: NextRequest) {
   try {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
+    const stale = requireFreshSession(auth.session);
+    if (stale) return stale;
 
     // #1846 N6 — a request-bound run: no new payout after the budget and a
     // short lock, so a function killed at the Lambda limit cannot hold the
@@ -36,7 +39,10 @@ export async function POST(_req: NextRequest) {
       results,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error processing payouts:", error);
     return NextResponse.json(
       { error: "Failed to process payouts" },

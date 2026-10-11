@@ -7,7 +7,7 @@ import {
   isLinkedinProfileUrl,
   LINKEDIN_PROFILE_URL_HINT,
 } from "@/schemas/user";
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,18 +20,24 @@ import {
 } from "@/components/verification/VerificationDocumentUpload";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import TermsAndPrivacyAgreement from "./TermsAndPrivacyAgreement";
-import type { OnboardingFormData } from "@/utils/onboarding";
+import {
+  MAX_VERIFICATION_DOCUMENTS,
+  type OnboardingFormData,
+} from "@/utils/onboarding";
 import { IndiaOnlyPayoutNotice } from "@/components/payouts/IndiaOnlyPayoutNotice";
 
 interface ConsultantAgreementAndVerificationStepProps {
   onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
+  /** Field-level autosave: unsubmitted edits on this step. */
+  onDraftChange?: (partial: Record<string, unknown>) => void;
   formData: Partial<OnboardingFormData>;
 }
 
 export default function ConsultantAgreementAndVerificationStep({
   onNext,
   onBack,
+  onDraftChange,
   formData,
 }: ConsultantAgreementAndVerificationStepProps) {
   // Agreement state
@@ -40,6 +46,9 @@ export default function ConsultantAgreementAndVerificationStep({
   );
   const [privacyChecked, setPrivacyChecked] = useState(
     formData.privacyAccepted || false,
+  );
+  const [marketingChecked, setMarketingChecked] = useState(
+    formData.marketingConsent || false,
   );
 
   // Verification state
@@ -57,6 +66,25 @@ export default function ConsultantAgreementAndVerificationStep({
   const [error, setError] = useState<string | null>(null);
 
   const validateLinkedIn = (url: string) => !url || isLinkedinProfileUrl(url);
+
+  useEffect(() => {
+    onDraftChange?.({
+      termsAccepted: termsChecked,
+      privacyAccepted: privacyChecked,
+      marketingConsent: marketingChecked,
+      verificationLinkedinUrl: linkedinUrl,
+      verificationNotes: notes,
+      verificationDocuments: documents.filter(isPersistedDocument),
+    });
+  }, [
+    onDraftChange,
+    termsChecked,
+    privacyChecked,
+    marketingChecked,
+    linkedinUrl,
+    notes,
+    documents,
+  ]);
 
   const handleUpload = useCallback(
     async (file: File): Promise<UploadedDocument> => {
@@ -132,6 +160,7 @@ export default function ConsultantAgreementAndVerificationStep({
       ...formData,
       termsAccepted: true,
       privacyAccepted: true,
+      marketingConsent: marketingChecked,
       verificationLinkedinUrl: linkedinUrl,
       verificationNotes: notes,
       verificationDocuments: documents.filter(isPersistedDocument),
@@ -215,7 +244,7 @@ export default function ConsultantAgreementAndVerificationStep({
             onDocumentsChange={setDocuments}
             onUpload={handleUpload}
             onRemove={handleRemove}
-            maxFiles={5}
+            maxFiles={MAX_VERIFICATION_DOCUMENTS}
             disabled={isUploading}
           />
           <p className="text-xs text-muted-foreground">
@@ -259,8 +288,10 @@ export default function ConsultantAgreementAndVerificationStep({
         <TermsAndPrivacyAgreement
           onTermsChange={setTermsChecked}
           onPrivacyChange={setPrivacyChecked}
+          onMarketingChange={setMarketingChecked}
           termsChecked={termsChecked}
           privacyChecked={privacyChecked}
+          marketingChecked={marketingChecked}
         />
         {(!termsChecked || !privacyChecked) && (
           <p className="text-sm text-muted-foreground">

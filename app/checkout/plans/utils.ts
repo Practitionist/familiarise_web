@@ -16,6 +16,7 @@ import {
 } from "@/lib/fetch-helpers";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 // #1396 — every checkout page and both gateway components caught an
 // unexpected error the same way; centralising it removed the repeated
@@ -135,7 +136,7 @@ export async function makeCheckoutRequest(
   isMockPayment: boolean = false,
   clientIdempotencyKey?: string,
 ): Promise<Response> {
-  return fetch("/api/checkout", {
+  return fetchWithIdentity("/api/checkout", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -235,11 +236,7 @@ export function busyRetryToast(waitSeconds: number): {
 export function createHandleCheckoutSuccess(
   toast: ReturnType<typeof useToast>["toast"],
   appointmentType:
-    | "CONSULTATION"
-    | "WEBINAR"
-    | "CLASS"
-    | "SUBSCRIPTION"
-    | "TRIAL",
+    "CONSULTATION" | "WEBINAR" | "CLASS" | "SUBSCRIPTION" | "TRIAL",
   navigate?: (url: string) => void,
 ) {
   return (

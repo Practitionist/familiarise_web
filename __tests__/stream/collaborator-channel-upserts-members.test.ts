@@ -11,6 +11,7 @@ const mockChannel = {
   addMembers: jest.fn().mockResolvedValue({}),
   removeMembers: jest.fn().mockResolvedValue({}),
   assignRoles: jest.fn().mockResolvedValue({}),
+  updatePartial: jest.fn().mockResolvedValue({}),
   id: "collab-webinar-plan-1",
   type: "messaging",
 };

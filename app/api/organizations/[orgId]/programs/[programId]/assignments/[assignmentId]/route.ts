@@ -45,7 +45,7 @@ export async function GET(
   // Any ACTIVE member may read their OWN assignment (usage counts, limits);
   // anyone else's needs `programs.read`. Spend stays with `programs.read`
   // (#1527 P0-2).
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
     return NextResponse.json(

@@ -178,3 +178,16 @@ describe("org support triage never carries conversation content (#support-hub)",
     expect(src).toContain("ADR 20");
   });
 });
+
+describe("unified support case reader redacts org-filed transcripts from member requesters (ADR 20)", () => {
+  const src = read("lib/support/case-service.ts");
+
+  it("returns empty messages and filedByOrganizationNotice when requester !== submitter", () => {
+    expect(src).toContain("viewer.userId === supportCase.requesterUserId");
+    expect(src).toContain(
+      "supportCase.requesterUserId !== supportCase.submitterUserId",
+    );
+    expect(src).toContain("messages: []");
+    expect(src).toContain("filedByOrganizationNotice: true");
+  });
+});

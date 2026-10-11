@@ -16,6 +16,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { PAYOUT_ZONE } from "@/lib/dashboard/earnings-state";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 /**
  * #1771 row 6 — "Get paid now": free, once a day, READY earnings only. The
@@ -69,7 +70,9 @@ export function GetPaidNowSheet({
   const payNow = useMutation({
     mutationFn: async () =>
       readJson<InstantOutcome>(
-        await fetch("/api/consultant/payouts/instant", { method: "POST" }),
+        await fetchWithReauth("/api/consultant/payouts/instant", {
+          method: "POST",
+        }),
       ),
     onSuccess: (outcome) => {
       setOpen(false);

@@ -33,20 +33,16 @@ export function isTerminalSendError(
   return terminalSendReason(message) !== null;
 }
 
-// #1298 — how long a replayed link is still clickable. Mirrors lib/auth.ts:
-// emailVerification.expiresIn = 3600 s, resetPasswordTokenExpiresIn = 1800 s.
-export const EMAIL_TTL_MS: Record<string, number> = {
-  EMAIL_VERIFICATION: 60 * 60 * 1000,
-  PASSWORD_RESET: 30 * 60 * 1000,
-};
+// Their body carries a live single-use code or link, so the outbox stores it
+// redacted and the relay never replays it; the user requests a fresh one.
+const CREDENTIAL_EMAIL_TYPES: ReadonlySet<string> = new Set([
+  "EMAIL_VERIFICATION",
+  "PASSWORD_RESET",
+]);
 
-/** True when a dead-lettered row of this type carries a link that has expired. */
-export function isExpiredForReplay(
-  emailType: string,
-  createdAt: Date,
-  now: Date,
-): boolean {
-  const ttl = EMAIL_TTL_MS[emailType];
-  if (ttl === undefined) return false;
-  return now.getTime() - createdAt.getTime() > ttl;
+export const REDACTED_CREDENTIAL_BODY =
+  "[redacted: this email carried a single-use credential]";
+
+export function carriesCredential(emailType: string): boolean {
+  return CREDENTIAL_EMAIL_TYPES.has(emailType);
 }

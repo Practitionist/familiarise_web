@@ -83,7 +83,7 @@ jobs:
           INPUT_JOB: ${{ inputs.job }}
         run: |
           case "${INPUT_JOB}" in
-            ""|all|reconcile-orphaned-sessions|alert-dispute-deadlines|databreach-deadline-alerts|reconcile-occurrence-availability|handle-stuck-payouts|reconcile-disputes|reconcile-payout-status|transfer-recordings)
+            ""|all|reconcile-orphaned-sessions|databreach-deadline-alerts|reconcile-occurrence-availability|handle-stuck-payouts|reconcile-disputes|reconcile-payout-status|transfer-recordings)
               ;;
             *)
               echo "::error::Unknown intra-day job slug '${INPUT_JOB}'"
@@ -99,15 +99,6 @@ jobs:
         timeout-minutes: 5
         continue-on-error: true
         run: node_modules/.bin/tsx jobs/meetings/reconcile-orphaned-sessions.ts
-
-      - name: Alert dispute deadlines
-        id: alert-dispute-deadlines
-        if: >-
-          (github.event_name == 'schedule' && github.event.schedule == '17 * * * *') ||
-          (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'alert-dispute-deadlines'))
-        timeout-minutes: 5
-        continue-on-error: true
-        run: node_modules/.bin/tsx jobs/disputes/alert-dispute-deadlines.ts
 
       - name: Data-breach deadline alerts
         id: databreach-deadline-alerts
@@ -174,7 +165,6 @@ jobs:
           failed=0
           for entry in \
             "reconcile-orphaned-sessions:${{ steps.reconcile-orphaned-sessions.outcome }}" \
-            "alert-dispute-deadlines:${{ steps.alert-dispute-deadlines.outcome }}" \
             "databreach-deadline-alerts:${{ steps.databreach-deadline-alerts.outcome }}" \
             "reconcile-occurrence-availability:${{ steps.reconcile-occurrence-availability.outcome }}" \
             "handle-stuck-payouts:${{ steps.handle-stuck-payouts.outcome }}" \

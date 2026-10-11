@@ -26,7 +26,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "reimbursements.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "reimbursements.read",
+  });
   if (access.error) return access.error;
 
   const billingAccount = await prisma.billingAccount.findUnique({
@@ -148,6 +151,7 @@ export async function GET(
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="reimbursements-${orgId}-${Date.now()}.csv"`,
+      "Cache-Control": "private, no-store",
     },
   });
 }

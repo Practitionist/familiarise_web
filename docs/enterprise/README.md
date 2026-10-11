@@ -200,7 +200,7 @@ This doc validates the system against worked end-to-end enterprise scenarios.
 
 ### Design decisions — `70-design-decisions/`
 
-This band collects the architecture decision records (`01` through `35`): each one states a decision the system embodies, the alternatives that were rejected, and the consequences we live with. Start at the [band index](70-design-decisions/00-README.md), which lists every ADR and the format they follow.
+This band collects the architecture decision records (`01` through `36`): each one states a decision the system embodies, the alternatives that were rejected, and the consequences we live with. Start at the [band index](70-design-decisions/00-README.md), which lists every ADR and the format they follow.
 
 ### Cross-Rail Explainers — `docs/start-here/`
 

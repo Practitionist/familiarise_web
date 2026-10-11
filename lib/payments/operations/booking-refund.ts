@@ -1104,8 +1104,8 @@ async function refundInternalFundedPayment(input: {
           initiatedByUserId: input.initiatedByUserId ?? null,
         });
 
-        await tx.refund.update({
-          where: { id: refundRow.id },
+        await tx.refund.updateMany({
+          where: { id: refundRow.id, status: RefundStatus.PENDING },
           data: { status: RefundStatus.SUCCEEDED },
         });
 

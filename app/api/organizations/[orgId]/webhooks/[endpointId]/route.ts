@@ -14,6 +14,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import type { MemberRole } from "@prisma/client";
 import { z } from "zod";
+import { HttpsUrlSchema } from "@/schemas/url";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -28,18 +29,8 @@ import { rejectIfNotPublicUrl } from "@/lib/enterprise/outbound-webhooks/ssrf-gu
 
 const REDACTED_SECRET = "[redacted]";
 
-const HttpsUrl = z
-  .string()
-  .url()
-  .refine((u) => u.startsWith("https://"), {
-    message: "Webhook URL must use https://",
-  })
-  .refine((u) => u.length <= 2048, {
-    message: "Webhook URL must be ≤2048 characters",
-  });
-
 const PatchBodySchema = z.object({
-  url: HttpsUrl.optional(),
+  url: HttpsUrlSchema.optional(),
   status: z.enum(["ACTIVE", "PAUSED", "DISABLED"]).optional(),
   eventSubscriptions: z
     .array(z.string())
@@ -62,6 +53,7 @@ export async function GET(
   // #1527 P0-4 — the same grant as the Webhooks tab and the writes (OWNER +
   // BILLING_ADMIN); was a MANAGER rank floor.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "integrations.manage",
   });
   if (access.error) return access.error;

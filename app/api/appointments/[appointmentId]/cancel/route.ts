@@ -42,6 +42,7 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
+import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { recordActForOrg, resolveOrgActor } from "@/lib/booking/org-actor";
 import {
   isSuspendedInFundingOrg,
@@ -337,9 +338,34 @@ export async function POST(
       );
     }
 
-    // Participant authorization check
     const consultantProfileId = session.user.consultantProfileId;
     const consulteeProfileId = session.user.consulteeProfileId;
+
+    const hostOrganizationId =
+      appointment.webinar?.webinarPlan?.organizationId ??
+      appointment.class?.classPlan?.organizationId ??
+      appointment.consultation?.consultationPlan?.organizationId ??
+      appointment.subscription?.subscriptionPlan?.organizationId ??
+      null;
+    const hostOrgMembership = hostOrganizationId
+      ? await prisma.membership.findUnique({
+          where: {
+            userId_organizationId: {
+              userId: session.user.id,
+              organizationId: hostOrganizationId,
+            },
+          },
+          select: {
+            status: true,
+            role: true,
+            organization: { select: { status: true } },
+          },
+        })
+      : null;
+    const isHostOrgOperator =
+      hostOrgMembership?.status === "ACTIVE" &&
+      hostOrgMembership.organization.status !== "DEACTIVATED" &&
+      hasOrgPermission(hostOrgMembership.role, "catalog.manage");
 
     let isParticipant = false;
 
@@ -347,31 +373,38 @@ export async function POST(
       const planConsultantProfileId =
         appointment.consultation.consultationPlan?.consultantProfileId;
       isParticipant =
-        consultantProfileId === planConsultantProfileId ||
-        consulteeProfileId === appointment.consultation.requestedById;
+        (Boolean(consultantProfileId) &&
+          consultantProfileId === planConsultantProfileId) ||
+        (Boolean(consulteeProfileId) &&
+          consulteeProfileId === appointment.consultation.requestedById) ||
+        isHostOrgOperator;
     } else if (appointment.subscription) {
       const planConsultantProfileId =
         appointment.subscription.subscriptionPlan?.consultantProfileId;
       isParticipant =
-        consultantProfileId === planConsultantProfileId ||
-        consulteeProfileId === appointment.subscription.requestedById;
+        (Boolean(consultantProfileId) &&
+          consultantProfileId === planConsultantProfileId) ||
+        (Boolean(consulteeProfileId) &&
+          consulteeProfileId === appointment.subscription.requestedById) ||
+        isHostOrgOperator;
     } else if (appointment.webinar) {
-      // Only the consultant (organizer) can cancel a group event
       const webinarConsultantId =
         appointment.webinar.webinarPlan?.consultantProfileId;
-      isParticipant = consultantProfileId === webinarConsultantId;
+      isParticipant =
+        (Boolean(consultantProfileId) &&
+          consultantProfileId === webinarConsultantId) ||
+        isHostOrgOperator;
     } else if (appointment.class) {
-      // Only the consultant (organizer) can cancel a group event
       const classConsultantId =
         appointment.class.classPlan?.consultantProfileId;
-      isParticipant = consultantProfileId === classConsultantId;
+      isParticipant =
+        (Boolean(consultantProfileId) &&
+          consultantProfileId === classConsultantId) ||
+        isHostOrgOperator;
     }
 
     const isPrivilegedUser = isPrivileged(session.user.role);
 
-    // #1166 — an admin of the org that FUNDS this booking may cancel it. They
-    // act on the payer side: the tier logic below must never read them as
-    // consultant-initiated. #1851 decision 1 — 1:1 and subscription only.
     const orgActor =
       !isParticipant && !isPrivilegedUser
         ? await resolveOrgActor(session.user.id, appointment, "cancel")
@@ -705,7 +738,8 @@ export async function POST(
             session.user.consultantProfileId !== undefined &&
             session.user.id !== undefined &&
             consultantUserId === session.user.id) ||
-          (isPrivilegedUser && session.user.id !== consulteeUserId);
+          (isPrivilegedUser && session.user.id !== consulteeUserId) ||
+          (isHostOrgOperator && session.user.id !== consulteeUserId);
         // #1161 — a fully-credit-funded booking: its refund IS the credit
         // restoration, all-or-nothing, because the credits rail refuses a partial
         // amount. #1500 settled what a partial TIER means for such a booking: the
@@ -968,7 +1002,8 @@ export async function POST(
         // whenever an admin did — and on a 1:1 it said the same of a platform
         // cancellation. `system` is what the payload has for that.
         cancelledBy:
-          notificationMeta.cancelledBy === notificationMeta.consultantUserId
+          notificationMeta.cancelledBy === notificationMeta.consultantUserId ||
+          (isHostOrgOperator && session.user.id !== consulteeUserId)
             ? "consultant"
             : notificationMeta.cancelledBy === consulteeUserId
               ? "consultee"
@@ -1051,7 +1086,8 @@ export async function POST(
     // #1169 PR 4 — three-way, matching the notification payload above: a
     // platform/org actor is "system", never mislabeled as the consultee.
     const cancelledBy =
-      session.user.id === notificationMeta.consultantUserId
+      session.user.id === notificationMeta.consultantUserId ||
+      (isHostOrgOperator && session.user.id !== consulteeUserId)
         ? ("consultant" as const)
         : isParticipant
           ? ("consultee" as const)

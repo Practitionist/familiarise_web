@@ -45,12 +45,12 @@ import {
   type RenderedEmail,
 } from "@/lib/email/deliver";
 import { idempotencyKeyFor } from "@/lib/email/idempotency";
-import { isExpiredForReplay, isTerminalSendError } from "@/lib/email/classify";
+import { isTerminalSendError } from "@/lib/email/classify";
 
 const message: RenderedEmail = {
   from: "Familiarise <onboarding@mail.familiarisenow.com>",
   to: "user@example.com",
-  subject: "Verify your Familiarise email address",
+  subject: "Welcome to Familiarise!",
   html: "<p>token=abc</p>",
   text: "token=abc",
 };
@@ -71,7 +71,7 @@ describe("deliver — missing key (#1298 Fix 3)", () => {
     mockCreate.mockResolvedValue({ id: "fe-1" });
     mockUpdate.mockResolvedValue({});
 
-    const result = await deliver(message, "EMAIL_VERIFICATION");
+    const result = await deliver(message, "WELCOME");
 
     expect(result.success).toBe(false);
     expect(mockSend).not.toHaveBeenCalled();
@@ -80,7 +80,7 @@ describe("deliver — missing key (#1298 Fix 3)", () => {
     const data = mockCreate.mock.calls[0][0].data;
     expect(data).toMatchObject({
       recipient: "user@example.com",
-      emailType: "EMAIL_VERIFICATION",
+      emailType: "WELCOME",
       status: "PENDING",
       htmlBody: "<p>token=abc</p>",
       textBody: "token=abc",
@@ -156,7 +156,7 @@ describe("stage + attempt (#1654)", () => {
     const result = await attempt(
       { id: "fe-2", idempotencyKey: "k" },
       message,
-      "EMAIL_VERIFICATION",
+      "WELCOME",
       { budgetMs: 10 },
     );
 
@@ -176,7 +176,7 @@ describe("stage + attempt (#1654)", () => {
     const result = await attempt(
       { id: "fe-3", idempotencyKey: "k" },
       message,
-      "EMAIL_VERIFICATION",
+      "WELCOME",
       { budgetMs: 3_000 },
     );
 
@@ -204,7 +204,7 @@ describe("suppressed recipient (#1647)", () => {
     });
     mockCreate.mockResolvedValue({ id: "fe-s" });
 
-    const result = await deliver(message, "EMAIL_VERIFICATION");
+    const result = await deliver(message, "WELCOME");
 
     expect(result).toMatchObject({ success: false, staged: true });
     expect(mockSend).not.toHaveBeenCalled();
@@ -219,15 +219,15 @@ describe("suppressed recipient (#1647)", () => {
 
 describe("idempotencyKeyFor", () => {
   it("is stable for identical content and differs when the html differs", () => {
-    const a = idempotencyKeyFor(message, "EMAIL_VERIFICATION");
-    const b = idempotencyKeyFor({ ...message }, "EMAIL_VERIFICATION");
+    const a = idempotencyKeyFor(message, "WELCOME");
+    const b = idempotencyKeyFor({ ...message }, "WELCOME");
     const c = idempotencyKeyFor(
       { ...message, html: "<p>token=xyz</p>" },
-      "EMAIL_VERIFICATION",
+      "WELCOME",
     );
     expect(a).toBe(b);
     expect(a).not.toBe(c);
-    expect(a).toMatch(/^EMAIL_VERIFICATION\/[0-9a-f]{48}$/);
+    expect(a).toMatch(/^WELCOME\/[0-9a-f]{48}$/);
     expect(a.length).toBeLessThanOrEqual(256);
   });
 
@@ -241,7 +241,7 @@ describe("idempotencyKeyFor", () => {
     mockCreate.mockResolvedValue({ id: "fe-1" });
     mockUpdate.mockResolvedValue({});
 
-    await deliver(message, "EMAIL_VERIFICATION");
+    await deliver(message, "WELCOME");
 
     const senderKey = mockSend.mock.calls[0][1].idempotencyKey;
     const row = mockCreate.mock.calls[0][0].data;
@@ -269,29 +269,22 @@ describe("isTerminalSendError", () => {
   });
 });
 
-describe("isExpiredForReplay", () => {
-  const now = new Date("2026-09-14T12:00:00Z");
-  it("expires a verification link after its hour and never expires a welcome", () => {
-    expect(
-      isExpiredForReplay(
-        "EMAIL_VERIFICATION",
-        new Date(now.getTime() - 61 * 60_000),
-        now,
-      ),
-    ).toBe(true);
-    expect(
-      isExpiredForReplay(
-        "EMAIL_VERIFICATION",
-        new Date(now.getTime() - 59 * 60_000),
-        now,
-      ),
-    ).toBe(false);
-    expect(
-      isExpiredForReplay(
-        "WELCOME",
-        new Date(now.getTime() - 3 * 24 * 60 * 60_000),
-        now,
-      ),
-    ).toBe(false);
+describe("credential emails", () => {
+  it("stage a redacted body so the outbox never holds a live code or link", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    mockCreate.mockResolvedValue({ id: "fe-cred" });
+    mockSend.mockResolvedValue({ data: { id: "re-cred" }, error: null });
+    mockUpdate.mockResolvedValue({});
+
+    await deliver(
+      { ...message, html: "<p>123456</p>", text: "123456" },
+      "EMAIL_VERIFICATION",
+    );
+
+    const data = mockCreate.mock.calls[0][0].data;
+    expect(data.htmlBody).not.toContain("123456");
+    expect(data.textBody).toBeNull();
+    // The inline send still carries the real message.
+    expect(mockSend.mock.calls[0][0].html).toContain("123456");
   });
 });

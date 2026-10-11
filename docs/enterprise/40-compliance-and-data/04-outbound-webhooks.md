@@ -89,16 +89,16 @@ The catalog is closed. Adding a new event requires the corresponding
 emit-point + a doc update; renaming an event is a breaking change to
 every receiver.
 
-| Event              | Triggered from                                                                                                                                                                   | Payload highlights                                                                                  |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `member.added`     | `POST /api/organizations/invitations/accept` (invite accept), `POST /api/organizations/[orgId]/members` (direct add), and OIDC SSO JIT auto-join (`lib/sso/jit-membership.ts`)   | `{ membershipId, userId, role, source? }`                                                           |
-| `member.removed`   | `DELETE /api/organizations/[orgId]/members/[memberId]` and DPDP erasure deprovisioning                                                                                           | `{ membershipId, userId, role, previousStatus }`                                                    |
-| `invoice.issued`   | `POST .../billing-account/invoices` (`issueImmediately=true`), `PATCH .../invoices/[invoiceId]` (`DRAFT → ISSUED`), subscription invoice cron, and monthly accrual rollup        | `{ invoiceId, invoiceNumber, totalPaise, displayCurrency, dueDate, purchaseOrderId?, contractId? }` |
-| `invoice.paid`     | Razorpay payment webhook flips invoice status to `PAID`                                                                                                                          | `{ invoiceId, invoiceNumber, paidPaise, paymentId, settledAt }`                                     |
-| `payout.completed` | RazorpayX `payout.processed` webhook → status PAID                                                                                                                               | `{ payoutId, totalPaise, currency, payoutReference, settledAt }`                                    |
-| `payout.failed`    | RazorpayX `payout.failed` OR `payout.reversed` webhook                                                                                                                           | `{ payoutId, reason, lastError }`                                                                   |
-| `contract.signed`  | Contract status transition `DRAFT → ACTIVE` (`POST .../contracts` with `activateNow`, `PATCH .../contracts/[contractId]`, or `POST .../contracts/[contractId]/supersede`)        | `{ contractId, status, signedAt, effectiveFrom, effectiveTo, supersededContractId?, reason? }`      |
-| `program.assigned` | `POST /api/organizations/[orgId]/programs/[programId]/assignments` (`ProgramAssignment.create` / bulk assign)                                                                    | `{ programId, assignmentId, membershipId, periodStart, periodEnd }`                                 |
+| Event              | Triggered from                                                                                                                                                                      | Payload highlights                                                                                             |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `member.added`     | `POST /api/organizations/invitations/accept` (invite accept), OIDC SSO JIT auto-join (`lib/sso/jit-membership.ts`), and admin `SUSPENDED → ACTIVE` reactivation                     | `{ membershipId, userId, role, previousStatus?, source? }`                                                     |
+| `member.removed`   | `DELETE /api/organizations/[orgId]/members/[memberId]`, admin `ACTIVE → SUSPENDED` suspension, and DPDP erasure deprovisioning                                                      | `{ membershipId, userId?, role, previousStatus, reason?, source? }`                                            |
+| `invoice.issued`   | `POST .../billing-account/invoices` (`issueImmediately=true`), `PATCH .../invoices/[invoiceId]` (`DRAFT → ISSUED`), subscription invoice cron, and monthly accrual rollup           | `{ invoiceId, invoiceNumber, totalPaise, displayCurrency, dueDate, purchaseOrderId?, contractId? }`            |
+| `invoice.paid`     | Razorpay payment webhook flips invoice status to `PAID`                                                                                                                             | `{ invoiceId, invoiceNumber, paidPaise, paymentId, settledAt }`                                                |
+| `payout.completed` | RazorpayX `payout.processed` webhook → status PAID                                                                                                                                  | `{ payoutId, totalPaise, currency, payoutReference, settledAt }`                                               |
+| `payout.failed`    | RazorpayX `payout.failed` OR `payout.reversed` webhook                                                                                                                              | `{ payoutId, reason, lastError }`                                                                              |
+| `contract.signed`  | Contract activation across `POST .../contracts` (`ACTIVE`), `PATCH .../contracts/[contractId]` (`DRAFT → ACTIVE`), `POST .../contracts/[contractId]/supersede`, and auto-renew cron | `{ contractId, billingAccountId, status, signedAt, effectiveFrom, effectiveTo, supersededContractId, reason }` |
+| `program.assigned` | `POST /api/organizations/[orgId]/programs/[programId]/assignments` and `POST .../auto-enroll` when a new seat is claimed                                                            | `{ programId, assignmentId, membershipId, periodStart, periodEnd, source? }`                                   |
 
 ## Receiver contract
 
@@ -106,6 +106,8 @@ Every delivery is a `POST` with `Content-Type: application/json` and:
 
 ```
 X-Familiarise-Signature: t=<unix-seconds>,v1=<sha256-hex>
+X-Familiarise-Delivery-Id: <OutboundWebhookDelivery.id>
+X-Familiarise-Event: <event-type>
 User-Agent: Familiarise-Webhooks/1.0
 ```
 
@@ -120,10 +122,10 @@ Body shape:
 }
 ```
 
-The `id` field is **the** idempotency key. Receivers MUST store the IDs
-they've already processed and skip duplicates — our retry schedule WILL
-deliver the same `id` more than once if your endpoint responds with 5xx
-or times out.
+The `id` field (mirrored in `X-Familiarise-Delivery-Id`) is **the**
+idempotency key. Receivers MUST store the IDs they've already processed
+and skip duplicates — our retry schedule WILL deliver the same `id` more
+than once if your endpoint responds with 5xx or times out.
 
 ## Signature verification
 
@@ -136,7 +138,7 @@ Reference implementation (Node):
 ```ts
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const REPLAY_WINDOW_SECONDS = 9 * 60 * 60; // match producer
+const REPLAY_WINDOW_SECONDS = 5 * 60; // matches DEFAULT_REPLAY_WINDOW_SECONDS in signing.ts
 
 function verify(secret: string, body: string, header: string): boolean {
   const parts = header.split(",");
@@ -159,13 +161,10 @@ function verify(secret: string, body: string, header: string): boolean {
 }
 ```
 
-The replay window (`DEFAULT_REPLAY_WINDOW_SECONDS` in `signing.ts`)
-must be **at least 9 hours** because our retry schedule (1m / 5m / 30m
-/ 2h / 8h) means the same signature can land at +8h after creation. A
-receiver with a tighter window will mis-reject late retries. (Stripe's
-own default tolerance is 5 minutes — web-validated 2026-06-05 — but
-Stripe redelivers on a much longer, separate schedule; our 9h window
-is sized to our in-band 8h backoff tail, and the rationale is sound.)
+The replay window (`DEFAULT_REPLAY_WINDOW_SECONDS = 5 * 60` in
+`signing.ts`) is **5 minutes** because every delivery attempt signs the
+payload afresh with the current Unix timestamp at send time. Receivers
+only need tolerance for clock skew and HTTP transit.
 
 ## Secret rotation — the 24h dual-sign grace window 🔒
 

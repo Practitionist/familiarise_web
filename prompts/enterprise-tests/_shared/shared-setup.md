@@ -129,7 +129,7 @@ gate.
 |---|---|---|
 | **TDS withholding** | `createOrgPayoutBatch` deducts TDS from gross; persists `tdsSectionApplied` / `tdsAmountPaise` / `dtaaRateApplied` on `OrganizationPayout`. Section 194-O default (1%); PAN missing/malformed → 206AA 20%. | `lib/payments/payouts/org-payout-service.ts`; `lib/compliance/tds.ts:computeTdsForPayout` |
 | **MSME 43B(h)** | `mustPayByDate` derived from `Organization.msmeStatus` + `msmeWrittenAgreementOnFile`. MICRO+agreement → 45d, MICRO/SMALL no agreement → 15d, MEDIUM/NONE → `contract.paymentTermsDays`. | `lib/compliance/msme.ts:computeMsmePaymentDeadline` |
-| **DPDP signup consent** | BetterAuth `user.create.after` stamps `ConsentArtifact` for `PRIMARY_PROCESSING` + `STREAM_DATA_PROCESSING` (SHA-256 hash, 7y retention). `upsertUserToStream` / `upsertUsersToStream` fail-close on missing/withdrawn `STREAM_DATA_PROCESSING`. | `lib/auth.ts` databaseHooks; `actions/stream/chat/user.action.ts` |
+| **DPDP signup consent** | Email verification (`afterEmailVerification` → `welcomeVerifiedUser`; `user.create.after` for a verified social sign-up) stamps `ConsentArtifact` for `PRIMARY_PROCESSING` + `STREAM_DATA_PROCESSING` (SHA-256 hash, 7y retention). `upsertUserToStream` / `upsertUsersToStream` fail-close on missing/withdrawn `STREAM_DATA_PROCESSING`. | `lib/auth.ts`, `lib/auth/account-lifecycle.ts`; `actions/stream/chat/user.action.ts` |
 | **GST place-of-supply env** | `SUPPLIER_STATE_CODE` env (default `"KA"`) drives intra-state CGST+SGST vs inter-state IGST. No hardcoded `"KA"` in invoice generation. | `jobs/billing/generate-subscription-invoices.ts`; `app/api/organizations/[orgId]/billing-account/invoices/route.ts` |
 | **Per-org invoice numbering** | Format `<PREFIX>-<FY>-<SEQ>` (CGST Rule 46). PREFIX = `Organization.invoiceNumberPrefix` or uppercased slug. `@@unique([organizationId, invoiceNumber])`. FY = Indian (April–March). Atomic counter at `OrgInvoiceCounter`. | `lib/payments/billing/invoice-numbering.ts` |
 | **Payout idempotency** | `scripts/payouts/process-payouts.ts:69` uses `payout_${payoutId}` (no `Date.now()`). `OrganizationPayout.idempotencyKey @unique`. Re-runs return `alreadyExisted: true`. | `scripts/payouts/process-payouts.ts:69`; `lib/payments/payouts/org-payout-service.ts:createOrgPayoutBatch` |
@@ -403,7 +403,7 @@ cards: `4111 1111 1111 1111`, OTP `1234`.
 - **SSO URL derivation:** `lib/sso/derive-urls.ts` (`deriveCallbackUrl`)
 - **Branding upload:** `app/api/organizations/[orgId]/branding/[asset]/route.ts`; helpers in `lib/supabase.ts`
 - **Recording handlers (Round-3 orgId):** `lib/stream/recording-handlers.ts`
-- **BetterAuth signup hook (Round-3 consent stamp):** `lib/auth.ts` databaseHooks
+- **Signup consent stamp:** `lib/auth/account-lifecycle.ts:welcomeVerifiedUser` (called on email verification and from `databaseHooks.user.create.after`)
 - **Stream upsert (Round-3 consent gate):** `actions/stream/chat/user.action.ts:upsertUserToStream`, `upsertUsersToStream`
 
 ### Auth + SSO hardening (this audit batch)
@@ -412,12 +412,14 @@ cards: `4111 1111 1111 1111`, OTP `1234`.
 - **OIDC-only body + server-generated id:** `lib/sso/provider-schemas.ts` (`createProviderSchema`, `generateProviderId`); discovery fetched at registration by `lib/sso/oidc-discovery.ts`
 - **Platform approval:** `app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval/route.ts` sets `domainVerified`
 - **SSO JIT membership:** `lib/sso/jit-membership.ts:provisionSsoMembership` (sso `provisionUser`; P2002-only catch)
-- **SSO error-toast wrapper:** `lib/sso/signin-with-toast.ts:ssoSigninWithGuard` (2s redirect watchdog + BetterAuth error inspection)
+- **SSO error display:** a refused SSO callback redirects to the sign-in page with `?error=<CODE>`; the page renders it through `lib/labels/auth-errors.ts:humanizeAuthError`
+- **IdP claim checks:** `lib/sso/idp-claims.ts:assertIdpClaims` (`email_verified`, Google `hd`, Entra `xms_edov`), run on every login from `provisionUser` in `lib/sso/plugin-options.ts`
+- **Prove-before-enforce:** `lib/sso/provider-proof.ts` (`SsoProvider.provenAt`; enforce-on answers 409 `SSO_NOT_PROVEN` until an OWNER signs in once via SSO)
 - **Domain-verification gate:** `app/api/organizations/[orgId]/sso/providers/route.ts` POST — DOMAIN_NOT_OWNED / DOMAIN_NOT_VERIFIED 422s
 - **SsoProvider composite unique:** `prisma/schema.prisma model SsoProvider @@unique([organizationId, domain])`
-- **sessionGeneration marker:** `lib/api/organizations/membership-transitions.ts:bumpUserSessionGeneration` + `prisma/schema.prisma User.sessionGeneration` + `lib/auth.ts customSession`
+- **Fresh memberships per request:** `lib/auth.ts` `customSession` with the cookie cache off; session lifetimes in `lib/auth/session-lifetime.ts`
 - **lookupEnforcedOrg helper:** `lib/sso/enforce-session.ts:lookupEnforcedOrg` (shared by `session.create.before` and `/api/auth/sso/domain-check`)
-- **Rate limits:** BetterAuth limiter for `/api/auth/*` in `lib/auth/rate-limit.ts`; edge policies (e.g. `enterprise.sso-domain-check`) in `lib/rate-limit/policies.ts`
+- **Rate limits:** BetterAuth limiter for `/api/auth/*` in `lib/auth/rate-limit.ts`; edge rules (e.g. `enterprise.sso-domain-check` → `ssoDomainCheckLimiter`) in `middleware.ts` `RATE_LIMIT_RULES`, limiters in `lib/rate-limit.ts`
 - **SSO doc:** `docs/authentication/sso.md`
 - **Error codes:** `docs/authentication/errors.md`
 - **JIT + session-refresh doc:** `docs/enterprise/20-iam-and-security/02-jit-and-session-refresh.md`

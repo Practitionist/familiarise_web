@@ -39,7 +39,7 @@ export async function addMemberToChannel(
   channelIdSchema.parse(channelId);
   memberIdSchema.parse(userId);
 
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to manage channel members");
   }
@@ -52,9 +52,7 @@ export async function addMemberToChannel(
   // eligibility gate with server credentials — so direct-message channels are
   // out of scope for this action entirely.
   if (isDMChannel(channelId)) {
-    throw new Error(
-      "Forbidden: members cannot be added to direct messages",
-    );
+    throw new Error("Forbidden: members cannot be added to direct messages");
   }
 
   const client = getStreamChatClient();

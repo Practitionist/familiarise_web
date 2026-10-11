@@ -51,7 +51,10 @@ export async function GET(
   const { orgId } = await params;
   // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
   // floor that admitted BILLING_ADMIN.
-  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "identity.read",
+  });
   if (access.error) return access.error;
 
   const claims = await prisma.orgDomainClaim.findMany({
@@ -83,7 +86,8 @@ export async function POST(
     return NextResponse.json(
       {
         error: "ORG_NOT_ACTIVE",
-        message: "Domain claims cannot be modified while the organization is suspended.",
+        message:
+          "Domain claims cannot be modified while the organization is suspended.",
         status: access.org.status,
       },
       { status: 409 },

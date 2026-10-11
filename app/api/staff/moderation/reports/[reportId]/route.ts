@@ -14,14 +14,10 @@ import {
 } from "@/lib/moderation/review-context";
 import * as Sentry from "@sentry/nextjs";
 
+import { PatchReportSchema } from "@/schemas/moderation";
+
 const patchReportSchema = z.object({
-  status: z
-    .enum([
-      "PENDING",
-      "UNDER_REVIEW",
-      "ESCALATED",
-    ] as const satisfies readonly ModerationReportStatus[])
-    .optional(),
+  status: PatchReportSchema.shape.status.optional(),
   assignedToId: z.string().nullable().optional(),
   expectedStatus: z.enum([
     "PENDING",

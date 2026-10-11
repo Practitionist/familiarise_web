@@ -397,7 +397,7 @@ Note that Pro keeps the 20-workflow cap; only Team ($250/month) raises it to 100
 
 _Kit free tier covers 10K subscribers. Creator ($39/mo) only needed for drip sequences._
 
-**Note:** These costs are separate from your existing SaaS stack (Supabase, Stream.io, Upstash, etc.). See `docs/finances/08-saas-expenditures.md` for the full breakdown.
+**Note:** These costs are separate from your existing SaaS stack (Supabase, Stream.io, Upstash, etc.).
 
 ---
 

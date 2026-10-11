@@ -122,25 +122,32 @@ export const AUTH_RATE_LIMIT_RULES: NonNullable<
   // consecutive failures for 15 minutes, whichever IP they come from.
   "/two-factor/verify-*": { window: MINUTE, max: 5 },
   "/two-factor/*": { window: MINUTE, max: 10 },
+  // Passkey sign-in is a full credential; management is a handful of clicks.
+  "/passkey/verify-authentication": { window: 15 * MINUTE, max: 30 },
+  "/passkey/*": { window: MINUTE, max: 20 },
 
   // Account creation and the mail-sending endpoints: each call costs sending
-  // reputation and can be aimed at anyone's inbox.
-  "/sign-up/email": { window: HOUR, max: 10 },
-  "/request-password-reset": { window: HOUR, max: 5 },
-  "/send-verification-email": { window: HOUR, max: 10 },
+  // reputation and can be aimed at anyone's inbox. One household or office
+  // NAT still fits a few sign-ups and resets an hour.
+  "/sign-up/email": { window: HOUR, max: 5 },
+  "/request-password-reset": { window: HOUR, max: 3 },
+  "/email-otp/send-verification-otp": { window: HOUR, max: 5 },
 
   // Single-use tokens. The GET form carries the token in the path, so its
-  // bucket is per token as well as per IP.
+  // bucket is per token as well as per IP. A verification code also locks
+  // after 5 wrong tries (emailOTP allowedAttempts), whichever IP sent them.
   "/reset-password": { window: HOUR, max: 20 },
   "/reset-password/*": { window: HOUR, max: 10 },
-  "/verify-email": { window: HOUR, max: 30 },
+  "/email-otp/verify-email": { window: 15 * MINUTE, max: 10 },
 
   // Delegated sign-in. Users on flaky connections retry the IdP round trip,
   // and a 429 here reads as "Google sign-in is broken", so these stay loose.
   "/sign-in/social": { window: 15 * MINUTE, max: 30 },
   "/callback/*": { window: 15 * MINUTE, max: 30 },
-  "/sign-in/sso": { window: 15 * MINUTE, max: 20 },
-  "/sso/callback/*": { window: 15 * MINUTE, max: 30 },
+  // Enforce-on signs a whole office out at once behind one NAT address, and
+  // the callback's state and PKCE are single-use, so these only stop floods.
+  "/sign-in/sso": { window: 15 * MINUTE, max: 300 },
+  "/sso/callback/*": { window: 15 * MINUTE, max: 1000 },
 
   // Read on every page load and tab focus, and nothing to guess. Throttling
   // sign-out would strand a user on a device they are trying to leave.

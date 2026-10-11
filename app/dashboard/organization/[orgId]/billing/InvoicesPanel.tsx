@@ -1,5 +1,6 @@
 "use client";
 
+import { httpsHref } from "@/schemas/url";
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -283,8 +284,9 @@ export function InvoicesPanel({
 
   // Pay is billing.manage (OWNER + BILLING_ADMIN) on the API.
   const renderInvoiceActions = (inv: OrgInvoice) => {
-    const canDownloadPdf = Boolean(inv.pdfUrl) || inv.status !== "DRAFT";
-    const pdfHref = inv.pdfUrl || `${invoiceDetailUrl(orgId, inv.id)}/pdf`;
+    const storedPdf = httpsHref(inv.pdfUrl);
+    const canDownloadPdf = Boolean(storedPdf) || inv.status !== "DRAFT";
+    const pdfHref = storedPdf ?? `${invoiceDetailUrl(orgId, inv.id)}/pdf`;
     const showPay =
       (inv.status === "ISSUED" || inv.status === "OVERDUE") && canPay;
     if (!canDownloadPdf && !showPay) return null;

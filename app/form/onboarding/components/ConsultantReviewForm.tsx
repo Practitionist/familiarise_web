@@ -43,10 +43,15 @@ const ConsultantReviewForm: React.FC<Props> = ({
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (isSubmitting) return;
     setIsSubmitting(true);
-    onSubmit(formData);
+    try {
+      await onSubmit(formData);
+    } finally {
+      // A refused or failed submit stays on this step and must be retryable.
+      setIsSubmitting(false);
+    }
   };
 
   const isValidWeeklySlot = (slot: {
@@ -477,7 +482,7 @@ const ConsultantReviewForm: React.FC<Props> = ({
         </Button>
         <Button
           type="button"
-          onClick={handleSubmit}
+          onClick={() => void handleSubmit()}
           className="flex-1"
           disabled={isSubmitting}
         >
