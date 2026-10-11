@@ -20,6 +20,7 @@ import {
   notifyAppointmentReminder,
   type TriggerOptions,
 } from "../../lib/novu/service";
+import { attemptTrigger } from "../../lib/novu/outbox";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "../../lib/novu/humanize";
@@ -615,11 +616,20 @@ async function sendRemindersForWindow(
         };
 
         if (bellTx) {
-          await notifyAppointmentReminder(
+          const bellResults = await notifyAppointmentReminder(
             item.uniqueUserIds,
             bellPayload,
             `${item.slotId}:${window.label}`,
             { tx: bellTx },
+          );
+          const stagedRows = new Map(
+            bellResults
+              .map((result) => result.staged)
+              .filter((row): row is NonNullable<typeof row> => Boolean(row))
+              .map((row) => [row.id, row] as const),
+          );
+          await Promise.all(
+            [...stagedRows.values()].map((row) => attemptTrigger(row)),
           );
         } else {
           await notifyAppointmentReminder(

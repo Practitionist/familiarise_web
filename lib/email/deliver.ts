@@ -393,6 +393,16 @@ export async function deliver(
     entityRef: opts.entityRef,
   });
   if (opts.deferAttempt && staged) {
+    if (staged.suppressed) {
+      return {
+        success: false,
+        error: new EmailSuppressedError(staged.suppressed),
+        staged: true,
+      };
+    }
+    if (staged.held) {
+      return { success: false, error: new EmailHeldError(), staged: true };
+    }
     return {
       success: true,
       staged: true,

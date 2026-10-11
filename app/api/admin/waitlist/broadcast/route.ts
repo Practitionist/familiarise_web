@@ -189,7 +189,6 @@ async function sendBatch(
   try {
     const result = await resend.batch.send(emails, {
       idempotencyKey,
-      batchValidation: "permissive",
     });
     if (result.error) {
       throw new Error(resendErrorText(result.error));

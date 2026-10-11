@@ -18,7 +18,7 @@ import {
 
 const PURPOSE = "email-unsubscribe";
 const NOTIFICATION_UNSUBSCRIBE_RE =
-  /\/api\/notifications\/unsubscribe\?u=([^&"'\s]+)/;
+  /(https?:\/\/[^\s"'<>]*\/api\/notifications\/unsubscribe\?u=([^&"'\s<>]+)&t=([^&"'\s<>]+))/;
 
 export function generateEmailUnsubscribeToken(userId: string): string {
   return signToken(PURPOSE, userId, 0);
@@ -66,9 +66,17 @@ export function reconstructUnsubscribeHeaders(row: {
   const notifMatch =
     NOTIFICATION_UNSUBSCRIBE_RE.exec(src) ??
     NOTIFICATION_UNSUBSCRIBE_RE.exec(row.htmlBody);
-  if (notifMatch?.[1]) {
-    const userId = decodeURIComponent(notifMatch[1]);
-    return listUnsubscribeHeaders(buildEmailUnsubscribeUrl(userId));
+  if (notifMatch?.[1] && notifMatch[2] && notifMatch[3]) {
+    try {
+      const userId = decodeURIComponent(notifMatch[2]);
+      const token = decodeURIComponent(notifMatch[3]);
+      if (verifyEmailUnsubscribeToken(userId, token)) {
+        return listUnsubscribeHeaders(notifMatch[1]);
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
   }
   if (
     src.includes("/api/waitlist/unsubscribe") ||

@@ -23,6 +23,56 @@ export interface PayoutStatusEmailProps {
   unsubscribeUrl?: string | null;
 }
 
+function payoutTitle(
+  status: PayoutStatusKind,
+  amountText: string,
+  target: string,
+): string {
+  if (status === "COMPLETED") {
+    return `Your payout of ${amountText}${target} is complete`;
+  }
+  if (status === "REVERSED") {
+    return `Your payout${target} was reversed`;
+  }
+  return `Your payout${target} could not be completed`;
+}
+
+function PayoutSummaryParagraph(props: {
+  status: PayoutStatusKind;
+  amountText: string;
+  orgName?: string | null;
+  method?: string | null;
+  payoutId: string;
+}) {
+  const orgNode = props.orgName ? (
+    <>
+      {" "}
+      to <strong>{props.orgName}</strong>
+    </>
+  ) : null;
+
+  if (props.status === "COMPLETED") {
+    return (
+      <Text style={paragraph}>
+        We sent a payout of <strong>{props.amountText}</strong>
+        {orgNode}
+        {props.method ? ` (${props.method})` : ""}. Payout reference:{" "}
+        <strong>{props.payoutId}</strong>.
+      </Text>
+    );
+  }
+  const suffix =
+    props.status === "REVERSED"
+      ? "was returned by the receiving bank."
+      : "could not be completed.";
+  return (
+    <Text style={paragraph}>
+      A payout of <strong>{props.amountText}</strong>
+      {orgNode} (reference: <strong>{props.payoutId}</strong>) {suffix}
+    </Text>
+  );
+}
+
 export const PayoutStatusEmail = ({
   status,
   recipientName,
@@ -36,53 +86,19 @@ export const PayoutStatusEmail = ({
   unsubscribeUrl,
 }: PayoutStatusEmailProps) => {
   const target = orgName ? ` to ${orgName}` : "";
-  const title =
-    status === "COMPLETED"
-      ? `Your payout of ${amountText}${target} is complete`
-      : status === "REVERSED"
-        ? `Your payout${target} was reversed`
-        : `Your payout${target} could not be completed`;
+  const title = payoutTitle(status, amountText, target);
 
   return (
     <EmailLayout preview={title} unsubscribeUrl={unsubscribeUrl} showSupport>
       <Text style={heading}>{title}</Text>
       <Text style={paragraph}>Hi {recipientName},</Text>
-      {status === "COMPLETED" ? (
-        <Text style={paragraph}>
-          We sent a payout of <strong>{amountText}</strong>
-          {orgName ? (
-            <>
-              {" "}
-              to <strong>{orgName}</strong>
-            </>
-          ) : null}
-          {method ? ` (${method})` : ""}. Payout reference:{" "}
-          <strong>{payoutId}</strong>.
-        </Text>
-      ) : status === "REVERSED" ? (
-        <Text style={paragraph}>
-          A payout of <strong>{amountText}</strong>
-          {orgName ? (
-            <>
-              {" "}
-              to <strong>{orgName}</strong>
-            </>
-          ) : null}{" "}
-          (reference: <strong>{payoutId}</strong>) was returned by the receiving
-          bank.
-        </Text>
-      ) : (
-        <Text style={paragraph}>
-          A payout of <strong>{amountText}</strong>
-          {orgName ? (
-            <>
-              {" "}
-              to <strong>{orgName}</strong>
-            </>
-          ) : null}{" "}
-          (reference: <strong>{payoutId}</strong>) could not be completed.
-        </Text>
-      )}
+      <PayoutSummaryParagraph
+        status={status}
+        amountText={amountText}
+        orgName={orgName}
+        method={method}
+        payoutId={payoutId}
+      />
       {reason ? (
         <Text style={paragraph}>
           Reason: <strong>{reason}</strong>
@@ -95,8 +111,8 @@ export const PayoutStatusEmail = ({
       ) : null}
       {status !== "COMPLETED" ? (
         <Text style={paragraph}>
-          The funds remain in your payable balance and will retry on the next
-          payout run after your payout account details are verified.
+          The funds remain in your payable balance and will be included in the
+          next scheduled payout run.
         </Text>
       ) : null}
       <Section style={buttonContainer}>

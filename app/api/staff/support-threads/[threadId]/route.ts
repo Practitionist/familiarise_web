@@ -257,9 +257,7 @@ async function notifyThreadReplyCustomer(params: {
   );
   const reference = params.referenceNumber ?? undefined;
   const ticketTitle = params.title ?? "Support";
-  const recipientIds = Array.from(
-    new Set([params.userId, ...params.providerUserIds]),
-  );
+  const recipientIds = [params.userId];
 
   const [bellResults, emailBatches] = await Promise.all([
     Promise.all(

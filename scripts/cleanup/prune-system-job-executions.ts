@@ -164,7 +164,10 @@ export async function pruneMessagingRetentionTables(
       const toScrub = await prisma.failedEmailBatch.findMany({
         where: {
           status: "SENT",
-          sentAt: { lt: scrubBefore },
+          OR: [
+            { sentAt: { lt: scrubBefore } },
+            { sentAt: null, updatedAt: { lt: scrubBefore } },
+          ],
           payload: { not: [] },
         },
         select: { id: true },

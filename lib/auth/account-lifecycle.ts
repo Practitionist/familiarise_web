@@ -47,7 +47,7 @@ function reportAuthFailure(error: unknown, op: string): void {
 /** Novu holds the address, so only proven (verified) users get a subscriber. */
 function syncVerifiedSubscriber(user: LifecycleUser): void {
   const nameParts = (user.name || "User").split(" ");
-  scheduleAfter(
+  void scheduleAfter(
     () =>
       syncSubscriber({
         userId: user.id,
@@ -80,7 +80,7 @@ export async function welcomeVerifiedUser(
       reportAuthFailure(error, "signup-consent");
     }
   }
-  scheduleAfter(
+  void scheduleAfter(
     () =>
       sendWelcomeEmail({
         email: user.email,
@@ -119,7 +119,7 @@ export async function provisionNewUser(
     } else if (path?.startsWith("/sso/")) {
       // A refused SSO login deletes the user it just created (account hooks),
       // so greet only a user still present once the callback has answered.
-      scheduleAfter(async () => {
+      void scheduleAfter(async () => {
         const kept = await prisma.user.findUnique({
           where: { id: user.id },
           select: { id: true },
@@ -217,7 +217,7 @@ export async function onPasswordChanged(
     }
   }
   if (opts.notify) {
-    scheduleAfter(
+    void scheduleAfter(
       () =>
         sendPasswordChangedEmail({
           email: user.email,
@@ -269,7 +269,7 @@ export async function notifyAccountLinked(account: {
       select: { email: true, name: true },
     });
     if (!user) return;
-    scheduleAfter(
+    void scheduleAfter(
       () =>
         sendAccountLinkedEmail({
           email: user.email,

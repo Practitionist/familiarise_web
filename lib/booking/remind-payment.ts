@@ -206,7 +206,7 @@ export async function remindApprovedPayment(args: {
         expiresAt: payment.expiresAt,
         reminder: true,
       },
-      `payment-link-remind:${payment.id}:${now.getTime()}`,
+      `payment-link-remind:${payment.id}:${Math.floor(now.getTime() / REMIND_WINDOW_MS)}`,
       { deferAttempt: true },
     ).catch(() => null),
   ]);

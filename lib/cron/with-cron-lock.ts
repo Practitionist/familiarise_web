@@ -47,6 +47,14 @@ const ERROR_LOG_MAX_CHARS = 8_000;
 const LEASE_EXPIRED_SWEEP_MESSAGE = "Lease expired (stale RUNNING row swept)";
 
 type SystemJobExecutionDelegate = {
+  findFirst?: (args: {
+    where: {
+      jobName: string;
+      status: "RUNNING";
+      startedAt: { gt: Date };
+    };
+    select: { id: true };
+  }) => Promise<{ id: string } | null>;
   create?: (args: {
     data: {
       jobId: string;
@@ -60,6 +68,7 @@ type SystemJobExecutionDelegate = {
     where: { id: string };
     data: {
       status?: "RUNNING" | "COMPLETED" | "FAILED";
+      startedAt?: Date;
       endedAt?: Date;
       durationMs?: number;
       errorLog?: string;
@@ -73,7 +82,7 @@ type SystemJobExecutionDelegate = {
       startedAt?: { lte: Date };
     };
     data: {
-      durationMs?: number;
+      startedAt?: Date;
       status?: "FAILED";
       endedAt?: Date;
       errorLog?: string;
@@ -163,46 +172,6 @@ async function recordJobFinish(
   }
 }
 
-async function acquireCronLock(
-  jobName: string,
-  delegate: SystemJobExecutionDelegate,
-  ttlMs: number,
-): Promise<string | null> {
-  const now = new Date();
-  const cutoff = new Date(now.getTime() - ttlMs);
-
-  // Sweep stale RUNNING rows whose lease has expired so `SystemJobExecution_running_jobName_key`
-  // rejects only genuinely active concurrent executions on insert.
-  if (typeof delegate.updateMany === "function") {
-    await delegate.updateMany({
-      where: {
-        jobName,
-        status: "RUNNING",
-        startedAt: { lte: cutoff },
-      },
-      data: {
-        status: "FAILED",
-        endedAt: now,
-        errorLog: LEASE_EXPIRED_SWEEP_MESSAGE,
-      },
-    });
-  }
-
-  const row = await delegate.create!({
-    data: {
-      jobId: jobName,
-      jobName,
-      status: "RUNNING",
-      triggeredBy: process.env.GITHUB_ACTIONS ? "github-actions" : "cron",
-    },
-    select: { id: true },
-  });
-  if (row === null) {
-    throw new CronLockHeldError(jobName);
-  }
-  return row?.id ?? null;
-}
-
 export async function withCronLock<T>(
   jobName: string,
   opts: CronLockOpts,
@@ -218,7 +187,54 @@ export async function withCronLock<T>(
 
   let executionId: string | null = null;
   try {
-    executionId = await acquireCronLock(jobName, delegate, ttlMs);
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - ttlMs);
+
+    // Sweep stale RUNNING rows whose lease has expired before checking or
+    // inserting, so `SystemJobExecution_running_jobName_key` is released for
+    // crashed runs while preserving an explicit audit trail.
+    if (typeof delegate.updateMany === "function") {
+      await delegate.updateMany({
+        where: {
+          jobName,
+          status: "RUNNING",
+          startedAt: { lte: cutoff },
+        },
+        data: {
+          status: "FAILED",
+          endedAt: now,
+          errorLog: LEASE_EXPIRED_SWEEP_MESSAGE,
+        },
+      });
+    }
+
+    if (typeof delegate.findFirst === "function") {
+      const active = await delegate.findFirst({
+        where: {
+          jobName,
+          status: "RUNNING",
+          startedAt: { gt: cutoff },
+        },
+        select: { id: true },
+      });
+      if (active) {
+        throw new CronLockHeldError(jobName);
+      }
+    }
+
+    const row = await delegate.create({
+      data: {
+        jobId: jobName,
+        jobName,
+        status: "RUNNING",
+        triggeredBy: process.env.GITHUB_ACTIONS ? "github-actions" : "cron",
+      },
+      select: { id: true },
+    });
+    if (row === null) {
+      throw new CronLockHeldError(jobName);
+    }
+    executionId = row?.id ?? null;
   } catch (err) {
     if (err instanceof CronLockHeldError) {
       throw err;
@@ -236,14 +252,10 @@ export async function withCronLock<T>(
     return fn();
   }
 
+  // Capture original acquisition timestamp in closure memory so lease renewals
+  // advancing `startedAt` never skew the final `durationMs` calculation.
   const acquiredAtMs = Date.now();
-  const renewal = startLeaseRenewal(
-    jobName,
-    delegate,
-    executionId,
-    acquiredAtMs,
-    ttlMs,
-  );
+  const renewal = startLeaseRenewal(jobName, delegate, executionId, ttlMs);
 
   try {
     const result = await fn();
@@ -274,7 +286,6 @@ function startLeaseRenewal(
   jobName: string,
   delegate: SystemJobExecutionDelegate,
   executionId: string | null,
-  acquiredAtMs: number,
   ttlMs: number,
 ): { stop: () => void } {
   if (!executionId || typeof delegate.updateMany !== "function") {
@@ -285,13 +296,9 @@ function startLeaseRenewal(
     async () => {
       if (lost) return;
       try {
-        const now = new Date();
         const res = await delegate.updateMany!({
           where: { id: executionId, status: "RUNNING" },
-          data: {
-            startedAt: now,
-            durationMs: Math.max(0, now.getTime() - acquiredAtMs),
-          },
+          data: { startedAt: new Date() },
         });
         if (res.count === 0) {
           lost = true;

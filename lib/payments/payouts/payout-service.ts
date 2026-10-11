@@ -83,6 +83,7 @@ import {
 } from "@/lib/email/send-to-recipients";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
+import { formatNotificationMoney } from "@/lib/novu/humanize";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   buildPayoutCompletionPostings,
@@ -545,6 +546,7 @@ type StagedConsultantPayoutNotice = {
   currency: string;
   method?: string | null;
   reason?: string | null;
+  withheldText?: string;
   bell: StagedTrigger | null;
   emails: StagedRecipientEmail[];
   stagedInTx: boolean;
@@ -561,6 +563,7 @@ async function stageConsultantPayoutNotice(
     currency: string;
     method?: string | null;
     reason?: string | null;
+    withheldText?: string;
   },
 ): Promise<StagedConsultantPayoutNotice> {
   const dashboardUrl = `${getAppUrl()}${goHref("expert", "earnings")}`;
@@ -628,6 +631,7 @@ async function stageConsultantPayoutNotice(
       currency: params.currency,
       method: params.method,
       reason: params.reason,
+      withheldText: params.withheldText,
       dashboardUrl,
     });
   }
@@ -640,6 +644,7 @@ async function stageConsultantPayoutNotice(
     currency: params.currency,
     method: params.method,
     reason: params.reason,
+    withheldText: params.withheldText,
     bell,
     emails,
     stagedInTx,
@@ -700,6 +705,7 @@ async function flushConsultantPayoutNotice(
                 currency: notice.currency,
                 method: notice.method,
                 reason: notice.reason,
+                withheldText: notice.withheldText,
                 dashboardUrl,
               }).then((rows) =>
                 attemptStagedEmails(
@@ -2170,9 +2176,17 @@ export async function handlePayoutWebhook(
             consultantProfileId: matched.consultantProfileId,
             payoutId: matched.id,
             status: "COMPLETED",
-            amountPaise: matched.netAmount ?? matched.amount,
+            amountPaise: Number(matched.amount),
             currency: matched.currency,
             method: matched.method,
+            ...(matched.tdsDeducted > 0
+              ? {
+                  withheldText: formatNotificationMoney(
+                    matched.tdsDeducted,
+                    matched.currency,
+                  ),
+                }
+              : {}),
           });
           return true;
         }

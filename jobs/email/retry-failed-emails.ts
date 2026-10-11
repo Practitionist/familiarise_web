@@ -435,7 +435,6 @@ async function drainBatches(ctx: {
         row.payload as CreateBatchOptions,
         {
           idempotencyKey: row.idempotencyKey || `failed-email-batch:${row.id}`,
-          batchValidation: "permissive",
           signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
         } as CreateBatchRequestOptions,
       );

@@ -53,6 +53,39 @@ function isBellAllowedForRecipient(
   return true;
 }
 
+function computeLatestQuietHoursNotBefore(
+  rows: BellUserRow[],
+  allowedRecipients: string[],
+): Date | undefined {
+  const allowedSet = new Set(allowedRecipients);
+  const now = new Date();
+  let latest: Date | undefined;
+  for (const row of rows) {
+    if (typeof row.id === "string" && !allowedSet.has(row.id)) continue;
+    const pref = row.notificationPreferences;
+    if (!pref?.quietHoursEnabled) continue;
+    const notBefore = computeQuietHoursNotBefore(
+      {
+        quietHoursEnabled: true,
+        quietHoursStart:
+          typeof pref.quietHoursStart === "string"
+            ? pref.quietHoursStart
+            : null,
+        quietHoursEnd:
+          typeof pref.quietHoursEnd === "string" ? pref.quietHoursEnd : null,
+        quietHoursTimezone:
+          typeof pref.quietHoursTimezone === "string"
+            ? pref.quietHoursTimezone
+            : null,
+        fallbackTimezone: row.timezone ?? null,
+      },
+      now,
+    );
+    if (notBefore && (!latest || notBefore > latest)) latest = notBefore;
+  }
+  return latest;
+}
+
 export async function resolveRecipientBellPolicy(
   workflowId: NovuWorkflowId,
   recipients: string[],
@@ -80,46 +113,25 @@ export async function resolveRecipientBellPolicy(
     })) as BellUserRow[];
 
     const category = templateFor(workflowId)?.category ?? null;
-    const byId = new Map<string, BellUserRow>();
-    for (const row of rows) {
-      if (typeof row.id === "string") byId.set(row.id, row);
-    }
-
+    const byId = new Map(
+      rows
+        .filter(
+          (r): r is BellUserRow & { id: string } => typeof r.id === "string",
+        )
+        .map((r) => [r.id, r]),
+    );
     const allowedRecipients = recipients.filter((id) =>
       isBellAllowedForRecipient(byId.get(id), category),
     );
     if (allowedRecipients.length === 0 || opts?.deferrable === false) {
       return { allowedRecipients, notBefore: undefined };
     }
-
-    const allowedSet = new Set(allowedRecipients);
-    const now = new Date();
-    let latest: Date | undefined;
-    for (const row of rows) {
-      if (typeof row.id === "string" && !allowedSet.has(row.id)) continue;
-      const pref = row.notificationPreferences;
-      if (!pref?.quietHoursEnabled) continue;
-      const notBefore = computeQuietHoursNotBefore(
-        {
-          quietHoursEnabled: true,
-          quietHoursStart:
-            typeof pref.quietHoursStart === "string"
-              ? pref.quietHoursStart
-              : null,
-          quietHoursEnd:
-            typeof pref.quietHoursEnd === "string" ? pref.quietHoursEnd : null,
-          quietHoursTimezone:
-            typeof pref.quietHoursTimezone === "string"
-              ? pref.quietHoursTimezone
-              : null,
-          fallbackTimezone: row.timezone ?? null,
-        },
-        now,
-      );
-      if (notBefore && (!latest || notBefore > latest)) latest = notBefore;
-    }
-    return { allowedRecipients, notBefore: latest };
-  } catch {
+    return {
+      allowedRecipients,
+      notBefore: computeLatestQuietHoursNotBefore(rows, allowedRecipients),
+    };
+  } catch (err) {
+    if (opts?.tx) throw err;
     return { allowedRecipients: recipients, notBefore: undefined };
   }
 }

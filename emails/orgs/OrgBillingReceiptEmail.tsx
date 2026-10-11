@@ -23,6 +23,73 @@ export interface OrgBillingReceiptEmailProps {
   unsubscribeUrl?: string | null;
 }
 
+function billingTitle(
+  kind: OrgBillingReceiptKind,
+  invLabel: string,
+  orgName: string,
+): string {
+  if (kind === "INVOICE_ISSUED") {
+    return `Invoice${invLabel} issued for ${orgName}`;
+  }
+  if (kind === "INVOICE_PAID") {
+    return `Invoice${invLabel} paid for ${orgName}`;
+  }
+  return `Wallet top-up confirmed for ${orgName}`;
+}
+
+const BILLING_CTA_LABELS: Record<OrgBillingReceiptKind, string> = {
+  INVOICE_ISSUED: "View & pay invoice",
+  INVOICE_PAID: "View receipt",
+  WALLET_TOPUP_CONFIRMED: "View wallet balance",
+};
+
+function OrgBillingBody(props: {
+  kind: OrgBillingReceiptKind;
+  invLabel: string;
+  orgName: string;
+  amountText: string;
+  dueDateText?: string | null;
+  newBalanceText?: string | null;
+}) {
+  if (props.kind === "INVOICE_ISSUED") {
+    return (
+      <Text style={paragraph}>
+        Invoice{props.invLabel ? <strong>{props.invLabel}</strong> : null} for{" "}
+        <strong>{props.orgName}</strong> in the amount of{" "}
+        <strong>{props.amountText}</strong> has been issued
+        {props.dueDateText ? (
+          <>
+            {" "}
+            and is due on <strong>{props.dueDateText}</strong>
+          </>
+        ) : null}
+        .
+      </Text>
+    );
+  }
+  if (props.kind === "INVOICE_PAID") {
+    return (
+      <Text style={paragraph}>
+        We received your payment of <strong>{props.amountText}</strong> for
+        invoice{props.invLabel ? <strong>{props.invLabel}</strong> : null} on{" "}
+        <strong>{props.orgName}</strong>.
+      </Text>
+    );
+  }
+  return (
+    <Text style={paragraph}>
+      Your wallet top-up of <strong>{props.amountText}</strong> for{" "}
+      <strong>{props.orgName}</strong> has been credited
+      {props.newBalanceText ? (
+        <>
+          . Updated balance: <strong>{props.newBalanceText}</strong>
+        </>
+      ) : null}
+      .
+    </Text>
+  );
+}
+
 export const OrgBillingReceiptEmail = ({
   kind,
   recipientName,
@@ -35,58 +102,23 @@ export const OrgBillingReceiptEmail = ({
   unsubscribeUrl,
 }: OrgBillingReceiptEmailProps) => {
   const invLabel = invoiceNumber ? ` ${invoiceNumber}` : "";
-  const title =
-    kind === "INVOICE_ISSUED"
-      ? `Invoice${invLabel} issued for ${orgName}`
-      : kind === "INVOICE_PAID"
-        ? `Invoice${invLabel} paid for ${orgName}`
-        : `Wallet top-up confirmed for ${orgName}`;
-
-  const ctaLabel =
-    kind === "INVOICE_ISSUED"
-      ? "View & pay invoice"
-      : kind === "INVOICE_PAID"
-        ? "View receipt"
-        : "View wallet balance";
+  const title = billingTitle(kind, invLabel, orgName);
 
   return (
     <EmailLayout preview={title} unsubscribeUrl={unsubscribeUrl} showSupport>
       <Text style={heading}>{title}</Text>
       <Text style={paragraph}>Hi {recipientName},</Text>
-      {kind === "INVOICE_ISSUED" ? (
-        <Text style={paragraph}>
-          Invoice{invLabel ? <strong>{invLabel}</strong> : null} for{" "}
-          <strong>{orgName}</strong> in the amount of{" "}
-          <strong>{amountText}</strong> has been issued
-          {dueDateText ? (
-            <>
-              {" "}
-              and is due on <strong>{dueDateText}</strong>
-            </>
-          ) : null}
-          .
-        </Text>
-      ) : kind === "INVOICE_PAID" ? (
-        <Text style={paragraph}>
-          We received your payment of <strong>{amountText}</strong> for invoice
-          {invLabel ? <strong>{invLabel}</strong> : null} on{" "}
-          <strong>{orgName}</strong>.
-        </Text>
-      ) : (
-        <Text style={paragraph}>
-          Your wallet top-up of <strong>{amountText}</strong> for{" "}
-          <strong>{orgName}</strong> has been credited
-          {newBalanceText ? (
-            <>
-              . Updated balance: <strong>{newBalanceText}</strong>
-            </>
-          ) : null}
-          .
-        </Text>
-      )}
+      <OrgBillingBody
+        kind={kind}
+        invLabel={invLabel}
+        orgName={orgName}
+        amountText={amountText}
+        dueDateText={dueDateText}
+        newBalanceText={newBalanceText}
+      />
       <Section style={buttonContainer}>
         <Button style={button} href={dashboardUrl}>
-          {ctaLabel}
+          {BILLING_CTA_LABELS[kind]}
         </Button>
       </Section>
     </EmailLayout>

@@ -298,7 +298,7 @@ export async function cancelClassSession(
           startsAt: session.startsAt,
           cancelledBy: hostName,
           dashboardUrl,
-        }).catch(() => []);
+        });
       }
       const ledger = await seriesLedger(tx, appointmentId, now);
       // Past the threshold every miss re-checks the flag (an ops clear may
@@ -402,7 +402,7 @@ export async function onClassSessionVoided(
       startsAt: args.startsAt,
       cancelledBy: hostName,
       dashboardUrl,
-    }).catch(() => []);
+    });
   }
   const ledger = await seriesLedger(tx, args.appointmentId, args.voidedAt);
   if (ledger.exitRight) {
@@ -593,7 +593,7 @@ export async function scheduleClassMakeUp(
           proposedBy:
             hosted.cls.classPlan.consultantProfile?.user.name ?? "Your host",
           dashboardUrl,
-        }).catch(() => []);
+        });
       }
       return { occurrenceId: makeUp.id, startsAt, endsAt, bells, emails };
     }),

@@ -15,7 +15,6 @@ import { AppointmentsType, BackupInterestStatus, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
-import type { StagedTrigger } from "@/lib/novu/outbox";
 import {
   stageWindowOpenedEmail,
   whenText,
@@ -178,7 +177,6 @@ export async function stageBackupInterestNotices(
       consultantProfile: { select: { user: { select: { name: true } } } },
     },
   });
-  const bells: StagedTrigger[] = [];
   const emails: StagedRecipientEmail[] = [];
   for (const row of rows) {
     const claimed = await tx.windowBackupInterest.updateMany({
@@ -192,7 +190,7 @@ export async function stageBackupInterestNotices(
       where: { id: row.userId },
       select: { timezone: true },
     });
-    const bell = await stageBell(tx, {
+    await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.WINDOW_OPENED,
       recipients: [row.userId],
       payload: {
@@ -206,7 +204,6 @@ export async function stageBackupInterestNotices(
       },
       dedupeKey: `window-opened:${row.id}`,
     });
-    if (bell) bells.push(bell);
     emails.push(
       ...(await stageWindowOpenedEmail(tx, {
         interestId: row.id,
@@ -214,7 +211,7 @@ export async function stageBackupInterestNotices(
         consultantName,
         windowStart: row.windowStart,
         bookUrl: href,
-      }).catch(() => [])),
+      })),
     );
   }
   return emails;

@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { unsubscribe } from "@/lib/waitlist/service";
 import { getAppUrl } from "@/lib/url";
 
-export async function GET(request: NextRequest): Promise<Response> {
+export function GET(request: NextRequest): Response {
   const { searchParams } = new URL(request.url);
   const email = searchParams.get("email");
   const token = searchParams.get("token");

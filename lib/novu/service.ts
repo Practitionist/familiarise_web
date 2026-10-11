@@ -95,6 +95,7 @@ import {
 export interface TriggerOptions {
   tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
   entityRef?: string;
+  dedupeKey?: string;
   /** Urgent workflows (payment/payout failure) bypass quiet-hours deferral. */
   deferrable?: boolean;
   /** Stage the outbox row and return without attempting inline delivery. */

@@ -1028,6 +1028,12 @@ export async function POST(
               : notificationMeta.cancelledBy === consulteeUserId
                 ? "consultee"
                 : "system",
+        }).catch((err) => {
+          console.error(
+            "Failed to send appointment cancellation notification:",
+            err,
+          );
+          return [];
         }),
         ...attendeeGroups.map((group) =>
           stageAppointmentCancelledEmail(prisma, {

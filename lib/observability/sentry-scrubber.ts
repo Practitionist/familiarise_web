@@ -31,7 +31,7 @@ const REDACTED = "[redacted]";
 const REDACTED_EMAIL = "[REDACTED_EMAIL]";
 
 const EMAIL_VALUE_RX =
-  /[a-zA-Z0-9._%+-]+(?:@|%40)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/gi;
+  /[\w.+-]+(?:@|%40)[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/gi;
 const BEARER_VALUE_RX = /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi;
 const INLINE_QUERY_SECRET_RX =
   /([?&](?:token|secret|signature|code|t|email)=)[^&\s#]+/gi;

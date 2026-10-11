@@ -191,11 +191,7 @@ export async function notifyStaffOfTicketActivity(
   });
   if (!ticket) return;
   const effectiveOrgId = organizationId ?? ticket.organizationId;
-  const [ops, providers] = await Promise.all([
-    opsRecipients(ticketId, ticket.assignedToId),
-    providerRecipientsForTicket(ticketId, ticket.userId, effectiveOrgId),
-  ]);
-  const recipients = mergeRecipients(ops, providers);
+  const recipients = await opsRecipients(ticketId, ticket.assignedToId);
   if (recipients.length === 0) return;
   const dedupeKey = eventId ?? `${ticketId}:${Date.now()}`;
   const results = await Promise.all(
