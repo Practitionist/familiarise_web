@@ -294,6 +294,24 @@ function holdCaptureSettings(holdExpiresAt: Date) {
   };
 }
 
+const MAX_RAZORPAY_NOTE_KEYS = 15;
+const MAX_RAZORPAY_NOTE_VALUE_CHARS = 256;
+
+/** Enforce Razorpay's hard limit of 15 note entries and 256 chars per value. */
+export function sanitizeRazorpayNotes(
+  metadata: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!metadata) return undefined;
+  return Object.fromEntries(
+    Object.entries(metadata)
+      .slice(0, MAX_RAZORPAY_NOTE_KEYS)
+      .map(([k, v]) => [
+        k.slice(0, MAX_RAZORPAY_NOTE_VALUE_CHARS),
+        String(v).slice(0, MAX_RAZORPAY_NOTE_VALUE_CHARS),
+      ]),
+  );
+}
+
 /**
  * Create a Razorpay Order
  */
@@ -304,13 +322,8 @@ export async function createRazorpayOrder({
   customerId,
   holdExpiresAt,
 }: PaymentIntentParams): Promise<PaymentIntent> {
-  // #1396 — first statement in the function, ahead of the client lookup, so a
-  // non-INR currency cannot reach the SDK even on a misconfigured instance.
-  // Only the booking checkout was guarded upstream; the org wallet top-up
-  // minted `{ amount: paise, currency: BillingAccount.currency }`, so a USD
-  // billing account turned a ₹1,000 top-up into a $1,000 order.
-  // #1396 — use the canonical code the guard just normalised, not the raw
-  // (possibly padded/lowercased) input, so the SDK always sees "INR".
+  // Normalise settlement currency before client initialisation so non-INR orders
+  // never reach Razorpay on any call path.
   const settlementCurrency = assertInrSettlement(
     currency,
     "create a Razorpay order",
@@ -334,34 +347,51 @@ export async function createRazorpayOrder({
     );
   }
 
-  try {
-    const order = await Sentry.startSpan(
-      { op: "http.client", name: "razorpay.createOrder" },
-      () =>
-        withRazorpaySdkTimeout("orders.create", () =>
-          razorpayClient.orders.create({
-            amount: amount, // already in smallest currency unit (paise)
-            currency: settlementCurrency,
-            notes: metadata,
-            // PM-11 — Date.now() collides for two orders in the same ms; the uuid
-            // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
-            receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
-            // #1771 row 1 — only personal checkouts with saved cards on pass one.
-            ...(customerId ? { customer_id: customerId } : {}),
-            ...(holdExpiresAt
-              ? { payment: holdCaptureSettings(holdExpiresAt) }
-              : {}),
-          }),
-        ),
+  const sanitizedNotes = sanitizeRazorpayNotes(metadata);
+  const submitOrder = (resolvedCustomerId?: string) =>
+    Sentry.startSpan({ op: "http.client", name: "razorpay.createOrder" }, () =>
+      withRazorpaySdkTimeout("orders.create", () =>
+        razorpayClient.orders.create({
+          amount,
+          currency: settlementCurrency,
+          notes: sanitizedNotes,
+          receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+          ...(resolvedCustomerId ? { customer_id: resolvedCustomerId } : {}),
+          ...(holdExpiresAt
+            ? { payment: holdCaptureSettings(holdExpiresAt) }
+            : {}),
+        }),
+      ),
     );
+
+  try {
+    let effectiveCustomerId = customerId;
+    let order;
+    try {
+      order = await submitOrder(effectiveCustomerId);
+    } catch (firstErr) {
+      // Stale customer_id across Test -> Live key cutover rejects orders.create with 400/404;
+      // clear the stale customer pointer and retry order creation without customer_id.
+      if (effectiveCustomerId && isUnknownOrderId(firstErr)) {
+        const { default: prisma } = await import("@/lib/prisma");
+        await prisma.user.updateMany({
+          where: { razorpayCustomerId: effectiveCustomerId },
+          data: { razorpayCustomerId: null },
+        });
+        effectiveCustomerId = undefined;
+        order = await submitOrder(undefined);
+      } else {
+        throw firstErr;
+      }
+    }
 
     return {
       id: order.id,
-      client_secret: order.id, // Razorpay uses order ID as client secret
-      amount: Number(order.amount), // already in smallest currency unit
+      client_secret: order.id,
+      amount: Number(order.amount),
       currency: order.currency,
       status: order.status,
-      ...(customerId ? { customerId } : {}),
+      ...(effectiveCustomerId ? { customerId: effectiveCustomerId } : {}),
     };
   } catch (error) {
     console.error("Razorpay order creation failed:", error);

@@ -1,6 +1,10 @@
 import crypto from "crypto";
 import { PaymentGateway } from "@prisma/client";
-import { createRazorpayOrder } from "@/lib/payments/core/razorpay";
+import {
+  createRazorpayOrder,
+  sanitizeRazorpayNotes,
+} from "@/lib/payments/core/razorpay";
+import { resolveRazorpayXSecrets } from "@/app/api/webhooks/razorpay/signature";
 import {
   RazorpayPayoutsService,
   summariseFundAccountValidation,
@@ -206,6 +210,38 @@ describe("Financial & Razorpay Audit Hardening Regressions", () => {
       expect(TDS_SECTION_DEFAULT_BPS["195"]).toBe(2000);
       expect(TDS_SECTION_DEFAULT_BPS["194O"]).toBe(10);
       expect(TDS_SECTION_DEFAULT_BPS["393-8(v)"]).toBe(10);
+    });
+  });
+
+  describe("Live-mode cutover safeguards — sanitizeRazorpayNotes & resolveRazorpayXSecrets", () => {
+    it("caps Razorpay order metadata to 15 keys and 256 chars per entry", () => {
+      expect(sanitizeRazorpayNotes(undefined)).toBeUndefined();
+      const oversized: Record<string, string> = {};
+      for (let i = 0; i < 20; i += 1) {
+        oversized[`key_${i}`] = "x".repeat(300);
+      }
+      const cleaned = sanitizeRazorpayNotes(oversized) ?? {};
+      expect(Object.keys(cleaned)).toHaveLength(15);
+      expect(cleaned.key_0).toHaveLength(256);
+    });
+
+    it("resolves active and rotation-grace RazorpayX webhook secrets without duplicates", () => {
+      expect(resolveRazorpayXSecrets({})).toEqual([]);
+      expect(
+        resolveRazorpayXSecrets({
+          RAZORPAYX_WEBHOOK_SECRET: "rx_curr",
+          RAZORPAYX_WEBHOOK_SECRET_PREVIOUS: "rx_prev",
+        }),
+      ).toEqual([
+        { role: "razorpayx", value: "rx_curr" },
+        { role: "previous", value: "rx_prev" },
+      ]);
+      expect(
+        resolveRazorpayXSecrets({
+          RAZORPAYX_WEBHOOK_SECRET: "rx_same",
+          RAZORPAYX_WEBHOOK_SECRET_PREVIOUS: "rx_same",
+        }),
+      ).toEqual([{ role: "razorpayx", value: "rx_same" }]);
     });
   });
 });

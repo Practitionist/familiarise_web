@@ -110,14 +110,32 @@ export function matchRazorpayWebhookSecret(
 }
 
 /**
- * True when the parsed body names a RazorpayX payout event.
+ * Resolve active and rotation-grace secrets for RazorpayX webhooks (`payout.*`
+ * and `fund_account.*`), mirroring `resolveRazorpayPaymentSecrets`.
+ */
+export function resolveRazorpayXSecrets(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): RazorpayWebhookSecretCandidate[] {
+  const current = env.RAZORPAYX_WEBHOOK_SECRET?.trim();
+  const previous = env.RAZORPAYX_WEBHOOK_SECRET_PREVIOUS?.trim();
+
+  const candidates: RazorpayWebhookSecretCandidate[] = [];
+  if (!current) {
+    return candidates;
+  }
+  candidates.push({ role: "razorpayx", value: current });
+  if (previous && previous !== current) {
+    candidates.push({ role: "previous", value: previous });
+  }
+  return candidates;
+}
+
+/**
+ * True when the parsed body names a RazorpayX event (`payout.*` or `fund_account.*`).
  *
- * The RazorpayX secret is only ever tried for these, and the ordering — main
- * secrets first, X secret only on a `payout.*` name — is the whole safety
- * property: a non-payout event can never be accepted by the X secret, so the
- * fallback cannot be used to smuggle a forged `payment.captured` through.
- * The name is read from an as-yet-UNVERIFIED body, which is safe precisely
- * because it can only ever narrow what we are willing to accept.
+ * Payment secrets are tried first; the RazorpayX secret set is consulted only
+ * for these event families so a RazorpayX webhook secret can never forge a
+ * `payment.captured` or `order.paid` event.
  */
 export function isPayoutEventName(rawBody: string): boolean {
   try {
