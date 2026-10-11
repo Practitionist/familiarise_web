@@ -1,31 +1,27 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
-import {
-  uploadConsultantDocument,
-  deleteAppointmentDocument,
-} from "@/lib/supabase";
+import { uploadConsultantDocument } from "@/lib/supabase";
 import { Prisma } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
+import { isBookingTerminal } from "@/lib/appointments/terminal-status";
+import { verifyDirectUploadedObject } from "@/lib/documents/storage-verify";
 import {
-  MAX_DOCS_PER_APPOINTMENT,
-  validateDocumentUpload,
-  withVersionConflictRetry,
-} from "@/lib/documents/document-review";
+  parseDocumentUploadInput,
+  persistAppointmentDocumentWithRetry,
+  preflightThreadLimits,
+  type ResolvedStorageObject,
+} from "@/lib/documents/upload-pipeline";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
-// Development mode check
+
 const isDevelopment = () =>
   process.env.NODE_ENV === "development" &&
   process.env.DEV_BYPASS_AUTH === "true";
 
-/**
- * Load the appointment iff the caller delivers it (any of the four plan
- * arms). Kept out of the handler so POST reads linearly — Sonar S3776.
- */
 async function loadConsultantAppointment(
   appointmentId: string,
   userId: string,
@@ -104,10 +100,86 @@ async function loadConsultantAppointment(
   });
 }
 
-/**
- * POST - Upload a consultant response document
- * Consultant can upload documents as responses to consultee submissions
- */
+async function resolveConsultantStorageObject(params: {
+  appointmentId: string;
+  consultantId: string;
+  uploadInput: Extract<
+    Awaited<ReturnType<typeof parseDocumentUploadInput>>,
+    { ok: true }
+  >;
+}): Promise<
+  | { ok: true; storage: ResolvedStorageObject }
+  | { ok: false; response: NextResponse }
+> {
+  const { appointmentId, consultantId, uploadInput } = params;
+
+  if (uploadInput.mode === "direct") {
+    const verified = await verifyDirectUploadedObject({
+      bucket: "documents",
+      storagePath: uploadInput.directCommitData.storagePath,
+      requiredPrefix: `appointments/${appointmentId}/consultant-${consultantId}/`,
+      claimedMimeType: uploadInput.directCommitData.mimeType,
+    });
+    if (!verified.ok) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error: "Upload validation failed",
+            message: verified.message,
+            code: verified.code,
+          },
+          { status: verified.code === "STORAGE_CONFIG_ERROR" ? 500 : 400 },
+        ),
+      };
+    }
+    return {
+      ok: true,
+      storage: {
+        fileName: verified.fileName,
+        fileSize: verified.fileSize,
+        mimeType: verified.mimeType,
+        fileUrl: verified.fileUrl,
+        storagePath: uploadInput.directCommitData.storagePath,
+      },
+    };
+  }
+
+  const uploadResult = await uploadConsultantDocument({
+    appointmentId,
+    consultantId,
+    file: uploadInput.file,
+    responseToDocumentId: uploadInput.responseToDocumentId || undefined,
+    description: uploadInput.description || undefined,
+  });
+
+  if (!uploadResult.success) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Upload failed",
+          message: uploadResult.error || "Failed to upload file",
+          code: "UPLOAD_ERROR",
+        },
+        { status: 500 },
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    storage: {
+      fileName: uploadResult.fileName!,
+      fileSize: uploadResult.fileSize!,
+      mimeType: uploadResult.mimeType!,
+      fileUrl: uploadResult.fileUrl!,
+      storagePath: uploadResult.storagePath!,
+    },
+  };
+}
+
+/** Consultant document/response upload endpoint delegating slot serialization to upload-pipeline. */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -125,7 +197,6 @@ export async function POST(
       );
     }
 
-    // DOC-2 (#694) — throttle uploads per user before any storage/DB work.
     const rateLimited = await applyRateLimit(
       documentUploadLimiter,
       session.user.id,
@@ -135,9 +206,7 @@ export async function POST(
     const { appointmentId } = await params;
     const userId = session.user.id;
 
-    // Verify appointment exists and caller delivers it (any arm).
     const appointment = await loadConsultantAppointment(appointmentId, userId);
-
     if (!appointment) {
       return NextResponse.json(
         {
@@ -150,7 +219,17 @@ export async function POST(
       );
     }
 
-    // Get consultant ID
+    if (isBookingTerminal(appointment)) {
+      return NextResponse.json(
+        {
+          error: "Document unavailable",
+          message: "This appointment is no longer active.",
+          code: "APPOINTMENT_TERMINAL",
+        },
+        { status: 403 },
+      );
+    }
+
     const consultantId =
       appointment.consultation?.consultationPlan?.consultantProfile?.id ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.id ||
@@ -168,180 +247,36 @@ export async function POST(
       );
     }
 
-    // Parse form data
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    const description = formData.get("description") as string | null;
-    const responseToDocumentId = formData.get("responseToDocumentId") as
-      string | null;
+    const parsedInput = await parseDocumentUploadInput(request);
+    if (!parsedInput.ok) return parsedInput.response;
 
-    if (!file) {
-      return NextResponse.json(
-        {
-          error: "No file provided",
-          message: "Please select a file to upload",
-          code: "INVALID_INPUT",
-        },
-        { status: 400 },
-      );
-    }
+    const preflightError = await preflightThreadLimits(
+      appointmentId,
+      parsedInput.responseToDocumentId,
+      { missingParentStatus: 404 },
+    );
+    if (preflightError) return preflightError;
 
-    // Size/type parity with the consultee route — one shared gate so the two
-    // roles' limits can never drift apart again.
-    const validation = validateDocumentUpload(file);
-    if (!validation.ok) {
-      return NextResponse.json(
-        {
-          error:
-            validation.code === "FILE_TOO_LARGE"
-              ? "File too large"
-              : "Unsupported file type",
-          message: validation.message,
-          code: validation.code,
-        },
-        { status: 400 },
-      );
-    }
-
-    // Quota + response-target validation BEFORE uploading (a post-upload
-    // rejection leaks the stored object).
-    if (
-      (await prisma.appointmentDocument.count({
-        where: { appointmentId, deletedAt: null },
-      })) >= MAX_DOCS_PER_APPOINTMENT
-    ) {
-      return NextResponse.json(
-        {
-          error: "Document limit reached",
-          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} documents.`,
-          code: "DOCUMENT_LIMIT_REACHED",
-        },
-        { status: 400 },
-      );
-    }
-
-    if (responseToDocumentId) {
-      const parent = await prisma.appointmentDocument.findFirst({
-        where: { id: responseToDocumentId, appointmentId, deletedAt: null },
-        select: { id: true },
-      });
-      if (!parent) {
-        return NextResponse.json(
-          {
-            error: "Original document not found",
-            message: "The document you're responding to does not exist",
-            code: "NOT_FOUND",
-          },
-          { status: 404 },
-        );
-      }
-    }
-
-    // Upload to Supabase
-    const uploadResult = await uploadConsultantDocument({
+    const resolvedStorage = await resolveConsultantStorageObject({
       appointmentId,
       consultantId,
-      file,
-      responseToDocumentId: responseToDocumentId || undefined,
-      description: description || undefined,
+      uploadInput: parsedInput,
     });
+    if (!resolvedStorage.ok) return resolvedStorage.response;
 
-    if (!uploadResult.success) {
-      return NextResponse.json(
-        {
-          error: "Upload failed",
-          message: uploadResult.error || "Failed to upload file",
-          code: "UPLOAD_ERROR",
-        },
-        { status: 500 },
-      );
-    }
+    const persisted = await persistAppointmentDocumentWithRetry({
+      appointmentId,
+      uploadedByRole: "CONSULTANT",
+      reviewerUserId: userId,
+      storage: resolvedStorage.storage,
+      originalName: parsedInput.originalName,
+      description: parsedInput.description,
+      parentDocumentId: parsedInput.responseToDocumentId,
+      missingParentStatus: 404,
+    });
+    if (!persisted.ok) return persisted.response;
+    const { document } = persisted;
 
-    // Create database record — thread anchor + versionNo resolved in the same
-    // transaction as the insert (race-safe versioning).
-    let document;
-    try {
-      document = await withVersionConflictRetry(() =>
-        prisma.$transaction(async (tx) => {
-          let rootDocumentId: string | null = null;
-          let versionNo = 1;
-          if (responseToDocumentId) {
-            const parent = await tx.appointmentDocument.findFirst({
-              where: {
-                id: responseToDocumentId,
-                appointmentId,
-                deletedAt: null,
-              },
-              select: { id: true, rootDocumentId: true },
-            });
-            if (!parent) throw new Error("INVALID_RESPONSE_TARGET");
-            rootDocumentId = parent.rootDocumentId ?? parent.id;
-            const aggregate = await tx.appointmentDocument.aggregate({
-              where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
-              _max: { versionNo: true },
-            });
-            versionNo = (aggregate._max.versionNo ?? 1) + 1;
-          }
-          return tx.appointmentDocument.create({
-            data: {
-              fileName: uploadResult.fileName!,
-              originalName: file.name,
-              fileSize: uploadResult.fileSize!,
-              mimeType: uploadResult.mimeType!,
-              fileUrl: uploadResult.fileUrl!,
-              storagePath: uploadResult.storagePath!,
-              description: description || null,
-              uploadedByRole: "CONSULTANT",
-              responseToDocumentId: responseToDocumentId || null,
-              rootDocumentId,
-              versionNo,
-              appointmentId,
-              // Consultant uploads don't need review
-              reviewStatus: "APPROVED",
-              reviewedById: userId, // A8 — FK scalar (#676)
-              reviewedAt: new Date(),
-            },
-          });
-        }),
-      );
-    } catch (dbError) {
-      console.error("Database error saving consultant document:", dbError);
-      Sentry.captureException(
-        dbError instanceof Error ? dbError : new Error(String(dbError)),
-        { tags: { subsystem: "appointments" } },
-      );
-      // Same cleanup contract as the consultee route: a failed save must not
-      // strand the stored object.
-      try {
-        await deleteAppointmentDocument(uploadResult.storagePath!);
-      } catch (cleanupError) {
-        console.error("Failed to cleanup uploaded file:", cleanupError);
-      }
-
-      if (
-        dbError instanceof Error &&
-        dbError.message === "INVALID_RESPONSE_TARGET"
-      ) {
-        return NextResponse.json(
-          {
-            error: "Original document not found",
-            message: "The document you're responding to does not exist",
-            code: "NOT_FOUND",
-          },
-          { status: 404 },
-        );
-      }
-      return NextResponse.json(
-        {
-          error: "Server error",
-          message: "Failed to upload document",
-          code: "SERVER_ERROR",
-        },
-        { status: 500 },
-      );
-    }
-
-    // Notify the consultee a response landed on their review thread.
     const apt = await prisma.appointment.findUnique({
       where: { id: appointmentId },
       select: {
@@ -379,13 +314,11 @@ export async function POST(
           appointmentId,
           documentId: document.id,
           uploadedByRole: "CONSULTANT",
-          fileName: file.name,
-          isThreaded: Boolean(responseToDocumentId),
+          fileName: parsedInput.originalName,
+          isThreaded: Boolean(parsedInput.responseToDocumentId),
           versionNo: document.versionNo,
           consultantName: session.user.name ?? "Your consultant",
           consulteeName,
-          // Consultees have no /documents surface — their review threads live
-          // on the appointment detail page (matches the review notification).
           dashboardUrl: scopedHref({
             organizationId: apt?.organizationId,
             surface: "appointments",

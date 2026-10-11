@@ -15,6 +15,7 @@ import { cn } from "@/utils/tailwind";
 import { eventUnionStatusBadge } from "@/lib/appointments/status-guards";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerModal";
+import { getPlanMaterialUrl } from "@/lib/documents/urls";
 
 export interface EventResource {
   id: string;
@@ -186,41 +187,46 @@ export function EventResourceCard({
           {showMaterials && event.materials.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                Materials ({event.materials.length})
+                Materials Provided ({event.materials.length})
               </h4>
               <div className="space-y-2">
                 {event.materials.map((mat) => (
                   <div
                     key={mat.id}
-                    className="flex items-center gap-3 p-2.5 rounded-lg bg-muted hover:bg-muted/70 transition-colors group"
+                    className="flex items-center gap-3 p-2.5 rounded-lg bg-muted/60 hover:bg-muted transition-colors group"
                   >
                     <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-card text-muted-foreground border border-border shrink-0">
                       <FileText className="w-4 h-4" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">
+                      <a
+                        href={getPlanMaterialUrl(mat.id, "inline")}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-sm font-medium text-foreground truncate block hover:underline underline-offset-4"
+                      >
                         {mat.originalName || mat.fileName}
-                      </p>
+                      </a>
                       <p className="text-xs text-muted-foreground">
                         {formatFileSize(mat.fileSize)}
                         {mat.description && ` \u00B7 ${mat.description}`}
                       </p>
                     </div>
-                    <a
-                      href={mat.fileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      download
-                      onClick={(e) => e.stopPropagation()}
+                    <Button
+                      asChild
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2.5 text-xs"
                     >
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                      <a
+                        href={getPlanMaterialUrl(mat.id, "attachment")}
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <Download className="w-4 h-4" />
-                      </Button>
-                    </a>
+                        <Download className="w-3.5 h-3.5 mr-1" />
+                        Download
+                      </a>
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -231,7 +237,7 @@ export function EventResourceCard({
           {showRecordings && event.recordings.length > 0 && (
             <div>
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                Recordings ({event.recordings.length})
+                Session Recordings ({event.recordings.length})
               </h4>
               <div className="space-y-2">
                 {event.recordings.map((rec) => {
@@ -239,10 +245,17 @@ export function EventResourceCard({
                     rec.status === "AVAILABLE" ||
                     rec.status === "READY" ||
                     rec.status === "TRANSFERRING";
+                  const retentionHint =
+                    event.offeringType === "WEBINAR" ||
+                    event.offeringType === "CLASS" ||
+                    event.webinarId ||
+                    event.classId
+                      ? "1yr replay"
+                      : "90d retention";
                   return (
                     <div
                       key={rec.id}
-                      className="flex items-center gap-3 p-2.5 rounded-lg bg-muted hover:bg-muted/70 transition-colors group"
+                      className="flex items-center gap-3 p-2.5 rounded-lg bg-muted/60 hover:bg-muted transition-colors group"
                     >
                       <div
                         className={cn(
@@ -260,20 +273,20 @@ export function EventResourceCard({
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {formatDuration(rec.durationInMinutes)} &middot;{" "}
-                          {formatDate(rec.recordedAt)}
+                          {formatDate(rec.recordedAt)} &middot; {retentionHint}
                         </p>
                       </div>
                       {canWatch ? (
                         <Button
-                          variant="ghost"
+                          variant="outline"
                           size="sm"
                           onClick={(e) => {
                             e.stopPropagation();
                             setActiveRecording(rec);
                           }}
-                          className="text-emerald-600 dark:text-emerald-300"
+                          className="h-8 px-3 text-xs font-medium text-emerald-700 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-950"
                         >
-                          <Play className="w-4 h-4 mr-1" />
+                          <Play className="w-3.5 h-3.5 mr-1" />
                           Watch
                         </Button>
                       ) : (

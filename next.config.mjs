@@ -142,7 +142,7 @@ const CSP_DIRECTIVES = [
   "img-src 'self' data: https: blob:",
   "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com https://*.supabase.co https://*.r2.cloudflarestorage.com",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com https://*.supabase.co blob:",
+  "frame-src 'self' blob: https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com",
   "font-src 'self' data:",
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
@@ -479,10 +479,29 @@ const nextConfig = {
   },
 
   async headers() {
+    const inlinePreviewHeaders = [
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      {
+        key: CSP_HEADER_KEY,
+        value: CSP_DIRECTIVES.replace(
+          "frame-ancestors 'none'",
+          "frame-ancestors 'self'",
+        ).replace("object-src 'none'", "object-src 'self'"),
+      },
+    ];
     return [
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        source:
+          "/api/appointments/:appointmentId/documents/:documentId/download",
+        headers: inlinePreviewHeaders,
+      },
+      {
+        source: "/api/plans/materials/:materialId/download",
+        headers: inlinePreviewHeaders,
       },
       {
         source: "/avif/(.*)",

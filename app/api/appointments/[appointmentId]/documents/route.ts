@@ -6,21 +6,66 @@ import { getSession } from "@/lib/auth-server";
 import {
   uploadAppointmentDocument,
   getManualBucketInstructions,
-  deleteAppointmentDocument,
 } from "@/lib/supabase";
 import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 import { isBookingTerminal } from "@/lib/appointments/terminal-status";
+import { verifyDirectUploadedObject } from "@/lib/documents/storage-verify";
 import {
-  MAX_DOCS_PER_APPOINTMENT,
-  validateDocumentUpload,
-  withVersionConflictRetry,
-} from "@/lib/documents/document-review";
+  parseDocumentUploadInput,
+  persistAppointmentDocumentWithRetry,
+  preflightThreadLimits,
+  type ResolvedStorageObject,
+} from "@/lib/documents/upload-pipeline";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 
-// GET - List documents for an appointment
+function buildFetchErrorResponse(error: unknown): NextResponse {
+  if (error instanceof Error) {
+    if (
+      error.message.includes("connect") ||
+      error.message.includes("timeout")
+    ) {
+      return NextResponse.json(
+        {
+          error: "Connection error",
+          message:
+            "Unable to connect to the server. Please check your internet connection and try again.",
+          code: "CONNECTION_ERROR",
+        },
+        { status: 503 },
+      );
+    }
+
+    if (
+      error.message.includes("Prisma") ||
+      error.message.includes("database")
+    ) {
+      return NextResponse.json(
+        {
+          error: "Database temporarily unavailable",
+          message:
+            "The document system is temporarily unavailable. Please try again in a few moments.",
+          code: "DATABASE_ERROR",
+        },
+        { status: 503 },
+      );
+    }
+  }
+
+  return NextResponse.json(
+    {
+      error: "Unable to load documents",
+      message:
+        "Something went wrong while loading your documents. Please refresh the page or try again later. If the problem persists, contact support.",
+      code: "UNKNOWN_ERROR",
+    },
+    { status: 500 },
+  );
+}
+
+/** Lists active deliverable documents for an accessible non-terminal appointment. */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -51,58 +96,44 @@ export async function GET(
       );
     }
 
-    // In development mode with explicit bypass flag, allow access to any appointment's documents for testing
-    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
     const isDevelopment =
       process.env.NODE_ENV === "development" &&
       process.env.DEV_BYPASS_AUTH === "true";
 
-    // Build access control conditions - bypass in development
     const whereClause: Prisma.AppointmentWhereInput = {
       id: appointmentId,
     };
 
     if (!isDevelopment) {
       whereClause.OR = [
-        // User is the consultee
         {
           consultation: {
             requestedBy: {
-              user: {
-                id: session.user.id,
-              },
+              user: { id: session.user.id },
             },
           },
         },
-        // User is the consultant
         {
           consultation: {
             consultationPlan: {
               consultantProfile: {
-                user: {
-                  id: session.user.id,
-                },
+                user: { id: session.user.id },
               },
             },
           },
         },
-        // User is part of subscription
         {
           subscription: {
             OR: [
               {
                 requestedBy: {
-                  user: {
-                    id: session.user.id,
-                  },
+                  user: { id: session.user.id },
                 },
               },
               {
                 subscriptionPlan: {
                   consultantProfile: {
-                    user: {
-                      id: session.user.id,
-                    },
+                    user: { id: session.user.id },
                   },
                 },
               },
@@ -112,7 +143,6 @@ export async function GET(
       ];
     }
 
-    // Verify user has access to this appointment
     const appointment = await prisma.appointment.findFirst({
       where: whereClause,
       include: {
@@ -122,9 +152,7 @@ export async function GET(
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: { name: true },
-                    },
+                    user: { select: { name: true } },
                   },
                 },
               },
@@ -137,9 +165,7 @@ export async function GET(
               include: {
                 consultantProfile: {
                   include: {
-                    user: {
-                      select: { name: true },
-                    },
+                    user: { select: { name: true } },
                   },
                 },
               },
@@ -162,22 +188,17 @@ export async function GET(
       );
     }
 
-    // DOC-1 (#694) — block listing once the parent booking is terminal
-    // (cancelled/refunded/rejected/expired); prior code only checked requester
-    // identity, leaving documents visible after a refund.
     if (isBookingTerminal(appointment)) {
       return NextResponse.json(
         {
-          error: "Documents unavailable",
-          message:
-            "This appointment has been cancelled or closed, so its documents are no longer available.",
+          error: "Document unavailable",
+          message: "This appointment is no longer active.",
           code: "APPOINTMENT_TERMINAL",
         },
         { status: 403 },
       );
     }
 
-    // Get appointment details for better error context
     const appointmentTitle =
       appointment.consultation?.consultationPlan?.title ||
       appointment.subscription?.subscriptionPlan?.title ||
@@ -189,25 +210,18 @@ export async function GET(
         ?.name ||
       "Unknown Consultant";
 
-    // Fetch documents - this should never fail, even if folder doesn't exist
     let documents;
     try {
       documents = await prisma.appointmentDocument.findMany({
         where: {
           appointmentId,
-          // Soft-deleted rows stay in the DB for audit until the nightly purge;
-          // they never render in review threads.
           deletedAt: null,
         },
         include: {
-          // Include response documents (consultant responses to this document)
           responseDocuments: {
             where: { deletedAt: null },
-            orderBy: {
-              uploadedAt: "desc",
-            },
+            orderBy: { uploadedAt: "desc" },
           },
-          // Include the document this is a response to (if any)
           responseToDocument: {
             select: {
               id: true,
@@ -216,9 +230,7 @@ export async function GET(
             },
           },
         },
-        orderBy: {
-          uploadedAt: "desc",
-        },
+        orderBy: { uploadedAt: "desc" },
       });
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
@@ -226,7 +238,6 @@ export async function GET(
         dbError instanceof Error ? dbError : new Error(String(dbError)),
         { tags: { subsystem: "appointments" } },
       );
-      // Return empty array instead of failing - documents folder might not exist yet
       return NextResponse.json({
         data: [],
         message:
@@ -260,53 +271,145 @@ export async function GET(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "appointments" } },
     );
-
-    // Provide specific error messages based on error type
-    if (error instanceof Error) {
-      if (
-        error.message.includes("connect") ||
-        error.message.includes("timeout")
-      ) {
-        return NextResponse.json(
-          {
-            error: "Connection error",
-            message:
-              "Unable to connect to the server. Please check your internet connection and try again.",
-            code: "CONNECTION_ERROR",
-          },
-          { status: 503 },
-        );
-      }
-
-      if (
-        error.message.includes("Prisma") ||
-        error.message.includes("database")
-      ) {
-        return NextResponse.json(
-          {
-            error: "Database temporarily unavailable",
-            message:
-              "The document system is temporarily unavailable. Please try again in a few moments.",
-            code: "DATABASE_ERROR",
-          },
-          { status: 503 },
-        );
-      }
-    }
-
-    return NextResponse.json(
-      {
-        error: "Unable to load documents",
-        message:
-          "Something went wrong while loading your documents. Please refresh the page or try again later. If the problem persists, contact support.",
-        code: "UNKNOWN_ERROR",
-      },
-      { status: 500 },
-    );
+    return buildFetchErrorResponse(error);
   }
 }
 
-// POST - Upload a new document
+function mapMultipartUploadError(uploadError: unknown): NextResponse {
+  console.error("File upload error:", uploadError);
+  Sentry.captureException(
+    uploadError instanceof Error ? uploadError : new Error(String(uploadError)),
+    { tags: { subsystem: "appointments" } },
+  );
+
+  const errMsg = uploadError instanceof Error ? uploadError.message : "";
+  if (errMsg.includes("network") || errMsg.includes("fetch")) {
+    return NextResponse.json(
+      {
+        error: "Network error",
+        message:
+          "Upload failed due to a network issue. Please check your connection and try again.",
+        code: "NETWORK_ERROR",
+      },
+      { status: 503 },
+    );
+  }
+  if (errMsg.includes("storage") || errMsg.includes("bucket")) {
+    return NextResponse.json(
+      {
+        error: "Storage error",
+        message:
+          "There's a temporary issue with file storage. Please try again in a few moments.",
+        code: "STORAGE_ERROR",
+      },
+      { status: 503 },
+    );
+  }
+  return NextResponse.json(
+    {
+      error: "Upload failed",
+      message:
+        "Failed to upload the file. Please try again or contact support if the issue persists.",
+      code: "UPLOAD_ERROR",
+    },
+    { status: 500 },
+  );
+}
+
+async function resolveConsulteeStorageObject(params: {
+  appointmentId: string;
+  consulteeId: string;
+  uploadInput: Extract<
+    Awaited<ReturnType<typeof parseDocumentUploadInput>>,
+    { ok: true }
+  >;
+}): Promise<
+  | { ok: true; storage: ResolvedStorageObject }
+  | { ok: false; response: NextResponse }
+> {
+  const { appointmentId, consulteeId, uploadInput } = params;
+
+  if (uploadInput.mode === "direct") {
+    const verified = await verifyDirectUploadedObject({
+      bucket: "documents",
+      storagePath: uploadInput.directCommitData.storagePath,
+      requiredPrefix: `appointments/${appointmentId}/consultee-${consulteeId}/`,
+      claimedMimeType: uploadInput.directCommitData.mimeType,
+    });
+    if (!verified.ok) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error: "Upload validation failed",
+            message: verified.message,
+            code: verified.code,
+          },
+          { status: verified.code === "STORAGE_CONFIG_ERROR" ? 500 : 400 },
+        ),
+      };
+    }
+    return {
+      ok: true,
+      storage: {
+        fileName: verified.fileName,
+        fileSize: verified.fileSize,
+        mimeType: verified.mimeType,
+        fileUrl: verified.fileUrl,
+        storagePath: uploadInput.directCommitData.storagePath,
+      },
+    };
+  }
+
+  let uploadResult;
+  try {
+    uploadResult = await uploadAppointmentDocument({
+      appointmentId,
+      consulteeId,
+      description: uploadInput.description || undefined,
+      file: uploadInput.file,
+    });
+  } catch (uploadError) {
+    return { ok: false, response: mapMultipartUploadError(uploadError) };
+  }
+
+  if (!uploadResult.success) {
+    const isBucketError =
+      uploadResult.error?.includes("bucket") ||
+      uploadResult.error?.includes("storage");
+
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Upload failed",
+          message:
+            uploadResult.error ||
+            "The file upload was unsuccessful. Please try again.",
+          code: isBucketError ? "BUCKET_NOT_FOUND" : "UPLOAD_FAILED",
+          ...(isBucketError && {
+            instructions: getManualBucketInstructions("documents"),
+            technical: uploadResult.error,
+          }),
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    storage: {
+      fileName: uploadResult.fileName!,
+      fileSize: uploadResult.fileSize!,
+      mimeType: uploadResult.mimeType!,
+      fileUrl: uploadResult.fileUrl!,
+      storagePath: uploadResult.storagePath!,
+    },
+  };
+}
+
+/** Consultee document/revision upload endpoint delegating slot serialization to upload-pipeline. */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -324,7 +427,6 @@ export async function POST(
       );
     }
 
-    // DOC-2 (#694) — throttle uploads per user before any storage/DB work.
     const rateLimited = await applyRateLimit(
       documentUploadLimiter,
       session.user.id,
@@ -344,71 +446,15 @@ export async function POST(
       );
     }
 
-    let formData;
-    try {
-      formData = await request.formData();
-    } catch (_parseError) {
-      return NextResponse.json(
-        {
-          error: "Invalid file upload",
-          message:
-            "The uploaded file appears to be corrupted or invalid. Please try uploading the file again.",
-          code: "INVALID_FILE",
-        },
-        { status: 400 },
-      );
-    }
+    const parsedInput = await parseDocumentUploadInput(request, {
+      emptyFileCode: "NO_FILE",
+    });
+    if (!parsedInput.ok) return parsedInput.response;
 
-    const file = formData.get("file") as File;
-    const description = formData.get("description") as string;
-    // A revision re-upload threads onto the document it replaces, mirroring
-    // the consultant side. Threading rather than mutating keeps the rejected
-    // version and its reviewNotes intact — the reviewer needs to see what
-    // changed, and an audit of "why was this approved" needs the history.
-    // `formData.get` returns `FormDataEntryValue | null`, so a client can send
-    // this part as a file and the old `as string` cast would have carried a
-    // `File` straight into the Prisma `where`/`create`.
-    const revisionOfRaw = formData.get("responseToDocumentId");
-    const revisionOf =
-      typeof revisionOfRaw === "string" && revisionOfRaw.trim()
-        ? revisionOfRaw.trim()
-        : null;
-
-    if (!file || file.size === 0) {
-      return NextResponse.json(
-        {
-          error: "No file selected",
-          message:
-            "Please select a file to upload. Supported formats include PDF, Word documents, images, and text files.",
-          code: "NO_FILE",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Shared size/MIME gate (same helper the consultant route uses).
-    const validation = validateDocumentUpload(file);
-    if (!validation.ok) {
-      return NextResponse.json(
-        {
-          error:
-            validation.code === "FILE_TOO_LARGE"
-              ? "File too large"
-              : "Unsupported file type",
-          message: validation.message,
-          code: validation.code,
-        },
-        { status: 400 },
-      );
-    }
-
-    // In development mode with explicit bypass flag, allow uploads to any appointment for testing
-    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
     const isDevelopment =
       process.env.NODE_ENV === "development" &&
       process.env.DEV_BYPASS_AUTH === "true";
 
-    // Build access control conditions - bypass in development
     const uploadWhereClause: Prisma.AppointmentWhereInput = {
       id: appointmentId,
     };
@@ -417,44 +463,27 @@ export async function POST(
       uploadWhereClause.OR = [
         {
           consultation: {
-            requestedBy: {
-              user: {
-                id: session.user.id,
-              },
-            },
+            requestedBy: { user: { id: session.user.id } },
           },
         },
         {
           subscription: {
-            requestedBy: {
-              user: {
-                id: session.user.id,
-              },
-            },
+            requestedBy: { user: { id: session.user.id } },
           },
         },
       ];
     }
 
-    // Verify user has access to this appointment and get consultee ID
     const appointment = await prisma.appointment.findFirst({
       where: uploadWhereClause,
       include: {
         consultation: {
           include: {
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
+            requestedBy: { include: { user: true } },
             consultationPlan: {
               include: {
                 consultantProfile: {
-                  include: {
-                    user: {
-                      select: { id: true, name: true },
-                    },
-                  },
+                  include: { user: { select: { id: true, name: true } } },
                 },
               },
             },
@@ -462,19 +491,11 @@ export async function POST(
         },
         subscription: {
           include: {
-            requestedBy: {
-              include: {
-                user: true,
-              },
-            },
+            requestedBy: { include: { user: true } },
             subscriptionPlan: {
               include: {
                 consultantProfile: {
-                  include: {
-                    user: {
-                      select: { id: true, name: true },
-                    },
-                  },
+                  include: { user: { select: { id: true, name: true } } },
                 },
               },
             },
@@ -496,7 +517,18 @@ export async function POST(
       );
     }
 
-    // Get consultee ID from appointment or use session user ID as fallback for dev mode
+    if (isBookingTerminal(appointment)) {
+      return NextResponse.json(
+        {
+          error: "Booking closed",
+          message:
+            "Documents can no longer be uploaded to a cancelled, rejected, or expired booking.",
+          code: "BOOKING_TERMINAL",
+        },
+        { status: 403 },
+      );
+    }
+
     const consulteeId =
       appointment.consultation?.requestedBy?.id ||
       appointment.subscription?.requestedBy?.id ||
@@ -514,222 +546,44 @@ export async function POST(
       );
     }
 
-    // A revision must point at a document on THIS appointment. Without the
-    // check, a caller could thread their upload onto any document id they
-    // guessed and have it render inside someone else's review history.
-    //
-    // Checked BEFORE the upload: rejecting afterwards returned 400 without
-    // deleting the object already written to storage, unlike the DB-failure
-    // branch below which does clean up. Every rejected revision leaked a file.
-    // The lookup needs only `appointmentId`, which is verified above.
-    //
-    // DOC quota — live (non-deleted) docs per appointment are capped; without
-    // it 10MB × unlimited rows is an unbounded storage bill at scale.
-    if (
-      (await prisma.appointmentDocument.count({
-        where: { appointmentId, deletedAt: null },
-      })) >= MAX_DOCS_PER_APPOINTMENT
-    ) {
-      return NextResponse.json(
-        {
-          error: "Document limit reached",
-          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} documents. Please delete an unreviewed upload or continue in a new appointment.`,
-          code: "DOCUMENT_LIMIT_REACHED",
-        },
-        { status: 400 },
-      );
-    }
+    const preflightError = await preflightThreadLimits(
+      appointmentId,
+      parsedInput.responseToDocumentId,
+      {
+        missingParentStatus: 400,
+        missingParentError: "Invalid revision target",
+        missingParentMessage:
+          "The document this revision replaces was not found on this appointment.",
+      },
+    );
+    if (preflightError) return preflightError;
 
-    // A revision must point at a document on THIS appointment — validated
-    // BEFORE the upload so a rejection can't leak the stored object.
-    if (revisionOf) {
-      const parent = await prisma.appointmentDocument.findFirst({
-        where: { id: revisionOf, appointmentId, deletedAt: null },
-        select: { id: true },
-      });
-      if (!parent) {
-        return NextResponse.json(
-          {
-            error: "Invalid revision target",
-            message:
-              "The document this revision replaces was not found on this appointment.",
-            code: "INVALID_REVISION_TARGET",
-          },
-          { status: 400 },
-        );
-      }
-    }
+    const resolvedStorage = await resolveConsulteeStorageObject({
+      appointmentId,
+      consulteeId,
+      uploadInput: parsedInput,
+    });
+    if (!resolvedStorage.ok) return resolvedStorage.response;
 
-    // Upload file to Supabase with enhanced error handling
-    let uploadResult;
-    try {
-      uploadResult = await uploadAppointmentDocument({
-        appointmentId,
-        consulteeId,
-        description,
-        file,
-      });
-    } catch (uploadError) {
-      console.error("File upload error:", uploadError);
-      Sentry.captureException(
-        uploadError instanceof Error
-          ? uploadError
-          : new Error(String(uploadError)),
-        { tags: { subsystem: "appointments" } },
-      );
+    const persisted = await persistAppointmentDocumentWithRetry({
+      appointmentId,
+      uploadedByRole: "CONSULTEE",
+      storage: resolvedStorage.storage,
+      originalName: parsedInput.originalName,
+      description: parsedInput.description,
+      parentDocumentId: parsedInput.responseToDocumentId,
+      missingParentStatus: 400,
+      missingParentError: "Invalid revision target",
+      missingParentMessage:
+        "The document this revision replaces was not found on this appointment.",
+      fallbackErrorCode: "SAVE_FAILED",
+      fallbackErrorTitle: "Save failed",
+      fallbackErrorMessage:
+        "The file was uploaded but couldn't be saved to your account. Please try again or contact support.",
+    });
+    if (!persisted.ok) return persisted.response;
+    const { document } = persisted;
 
-      if (uploadError instanceof Error) {
-        if (
-          uploadError.message.includes("network") ||
-          uploadError.message.includes("fetch")
-        ) {
-          return NextResponse.json(
-            {
-              error: "Network error",
-              message:
-                "Upload failed due to a network issue. Please check your connection and try again.",
-              code: "NETWORK_ERROR",
-            },
-            { status: 503 },
-          );
-        }
-
-        if (
-          uploadError.message.includes("storage") ||
-          uploadError.message.includes("bucket")
-        ) {
-          return NextResponse.json(
-            {
-              error: "Storage error",
-              message:
-                "There's a temporary issue with file storage. Please try again in a few moments.",
-              code: "STORAGE_ERROR",
-            },
-            { status: 503 },
-          );
-        }
-      }
-
-      return NextResponse.json(
-        {
-          error: "Upload failed",
-          message:
-            "Failed to upload the file. Please try again or contact support if the issue persists.",
-          code: "UPLOAD_ERROR",
-        },
-        { status: 500 },
-      );
-    }
-
-    if (!uploadResult.success) {
-      const isBucketError =
-        uploadResult.error?.includes("bucket") ||
-        uploadResult.error?.includes("storage");
-
-      return NextResponse.json(
-        {
-          error: "Upload failed",
-          message:
-            uploadResult.error ||
-            "The file upload was unsuccessful. Please try again.",
-          code: isBucketError ? "BUCKET_NOT_FOUND" : "UPLOAD_FAILED",
-          ...(isBucketError && {
-            instructions: getManualBucketInstructions("documents"),
-            technical: uploadResult.error,
-          }),
-        },
-        { status: 400 },
-      );
-    }
-
-    // Save document record to database. Thread context (root + versionNo) is
-    // resolved inside the same transaction as the insert so two racing
-    // revisions cannot compute the same versionNo from a stale max().
-    let document;
-    try {
-      document = await withVersionConflictRetry(() =>
-        prisma.$transaction(async (tx) => {
-          let rootDocumentId: string | null = null;
-          let versionNo = 1;
-          if (revisionOf) {
-            const parent = await tx.appointmentDocument.findFirst({
-              where: { id: revisionOf, appointmentId, deletedAt: null },
-              select: { id: true, rootDocumentId: true },
-            });
-            if (!parent) throw new Error("INVALID_REVISION_TARGET");
-            rootDocumentId = parent.rootDocumentId ?? parent.id;
-            const aggregate = await tx.appointmentDocument.aggregate({
-              where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
-              _max: { versionNo: true },
-            });
-            versionNo = (aggregate._max.versionNo ?? 1) + 1;
-          }
-          return tx.appointmentDocument.create({
-            data: {
-              appointmentId,
-              fileName: uploadResult.fileName!,
-              originalName: file.name,
-              fileSize: uploadResult.fileSize!,
-              mimeType: uploadResult.mimeType!,
-              fileUrl: uploadResult.fileUrl!,
-              storagePath: uploadResult.storagePath!,
-              description: description?.trim() || null,
-              reviewStatus: "PENDING",
-              responseToDocumentId: revisionOf,
-              rootDocumentId,
-              versionNo,
-            },
-          });
-        }),
-      );
-    } catch (dbError) {
-      console.error("Database error saving document:", dbError);
-      Sentry.captureException(
-        dbError instanceof Error ? dbError : new Error(String(dbError)),
-        { tags: { subsystem: "appointments" } },
-      );
-
-      // Try to clean up uploaded file if database save failed
-      try {
-        await deleteAppointmentDocument(uploadResult.storagePath!);
-      } catch (cleanupError) {
-        console.error("Failed to cleanup uploaded file:", cleanupError);
-        Sentry.captureException(
-          cleanupError instanceof Error
-            ? cleanupError
-            : new Error(String(cleanupError)),
-          { tags: { subsystem: "appointments" } },
-        );
-      }
-
-      if (
-        dbError instanceof Error &&
-        dbError.message === "INVALID_REVISION_TARGET"
-      ) {
-        return NextResponse.json(
-          {
-            error: "Invalid revision target",
-            message:
-              "The document this revision replaces was not found on this appointment.",
-            code: "INVALID_REVISION_TARGET",
-          },
-          { status: 400 },
-        );
-      }
-
-      return NextResponse.json(
-        {
-          error: "Save failed",
-          message:
-            "The file was uploaded but couldn't be saved to your account. Please try again or contact support.",
-          code: "SAVE_FAILED",
-        },
-        { status: 500 },
-      );
-    }
-
-    // Ping the reviewer. `after()` keeps the response fast and the send
-    // survives the handler; failures are logged, never surfaced as 500s.
     const consultantUserId =
       appointment.consultation?.consultationPlan?.consultantProfile?.user?.id ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id;
@@ -748,10 +602,6 @@ export async function POST(
       "your consultant";
 
     if (consultantUserId) {
-      // #1861 P2r — the document write already committed above, so this is
-      // not inside its transaction; stage the outbox row now (awaited,
-      // before the response) so it survives an instance freeze, and defer
-      // only the delivery attempt to after().
       await stageNowAttemptAfter("consultant document-upload notice", () =>
         notifyDocumentUploaded(
           consultantUserId,
@@ -760,8 +610,8 @@ export async function POST(
             appointmentId,
             documentId: document.id,
             uploadedByRole: "CONSULTEE",
-            fileName: file.name,
-            isThreaded: Boolean(revisionOf),
+            fileName: parsedInput.originalName,
+            isThreaded: Boolean(parsedInput.responseToDocumentId),
             versionNo: document.versionNo,
             consultantName,
             consulteeName,
@@ -790,7 +640,7 @@ export async function POST(
     return NextResponse.json(
       {
         data: document,
-        message: `Successfully uploaded "${file.name}" for ${appointmentTitle}. ${consultantName} will review it and provide feedback.${devModeMessage}`,
+        message: `Successfully uploaded "${parsedInput.originalName}" for ${appointmentTitle}. ${consultantName} will review it and provide feedback.${devModeMessage}`,
       },
       { status: 201 },
     );
@@ -801,22 +651,19 @@ export async function POST(
       { tags: { subsystem: "appointments" } },
     );
 
-    // Provide specific error messages based on error type
-    if (error instanceof Error) {
-      if (
-        error.message.includes("connect") ||
-        error.message.includes("timeout")
-      ) {
-        return NextResponse.json(
-          {
-            error: "Connection error",
-            message:
-              "Upload failed due to connection issues. Please check your internet connection and try again.",
-            code: "CONNECTION_ERROR",
-          },
-          { status: 503 },
-        );
-      }
+    if (
+      error instanceof Error &&
+      (error.message.includes("connect") || error.message.includes("timeout"))
+    ) {
+      return NextResponse.json(
+        {
+          error: "Connection error",
+          message:
+            "Upload failed due to connection issues. Please check your internet connection and try again.",
+          code: "CONNECTION_ERROR",
+        },
+        { status: 503 },
+      );
     }
 
     return NextResponse.json(

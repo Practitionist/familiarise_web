@@ -62,6 +62,39 @@ function getSupabaseAdmin(): SupabaseClient | null {
   return createClient(supabaseUrl, supabaseServiceKey);
 }
 
+interface StorageFileEntry {
+  path: string;
+  name: string;
+  createdAt?: Date;
+}
+
+async function collectEntriesFromBatch(
+  supabase: SupabaseClient,
+  bucket: string,
+  basePath: string,
+  batch: Array<{
+    name: string;
+    metadata?: unknown;
+    created_at?: string | null;
+  }>,
+): Promise<StorageFileEntry[]> {
+  const collected: StorageFileEntry[] = [];
+  for (const item of batch) {
+    const itemPath = basePath ? `${basePath}/${item.name}` : item.name;
+    if (!item.metadata) {
+      const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
+      collected.push(...subFiles);
+    } else {
+      collected.push({
+        path: itemPath,
+        name: item.name,
+        createdAt: item.created_at ? new Date(item.created_at) : undefined,
+      });
+    }
+  }
+  return collected;
+}
+
 /**
  * Recursively list all files in a bucket path. Throws on any listing error so a
  * partial listing is never treated as the bucket's full contents.
@@ -70,38 +103,39 @@ async function listAllFilesInBucket(
   supabase: SupabaseClient,
   bucket: string,
   path = "",
-): Promise<{ path: string; name: string; createdAt?: Date }[]> {
-  const allFiles: { path: string; name: string; createdAt?: Date }[] = [];
+): Promise<StorageFileEntry[]> {
+  const allFiles: StorageFileEntry[] = [];
+  const PAGE_LIMIT = 1000;
+  let offset = 0;
 
-  const { data: items, error } = await supabase.storage
-    .from(bucket)
-    .list(path, { limit: 1000 });
-  if (error) {
-    console.error(`Error listing files in ${bucket}/${path}:`, error);
-    throw error;
-  }
-
-  for (const item of items ?? []) {
-    const itemPath = path ? `${path}/${item.name}` : item.name;
-
-    // If it's a folder (no metadata), recurse into it
-    if (!item.metadata) {
-      const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
-      allFiles.push(...subFiles);
-    } else {
-      // It's a file
-      allFiles.push({
-        path: itemPath,
-        name: item.name,
-        createdAt: item.created_at ? new Date(item.created_at) : undefined,
-      });
+  while (true) {
+    const { data: items, error } = await supabase.storage
+      .from(bucket)
+      .list(path, { limit: PAGE_LIMIT, offset });
+    if (error) {
+      console.error(`Error listing files in ${bucket}/${path}:`, error);
+      throw error;
     }
+
+    const batch = items ?? [];
+    const pageEntries = await collectEntriesFromBatch(
+      supabase,
+      bucket,
+      path,
+      batch,
+    );
+    allFiles.push(...pageEntries);
+
+    if (batch.length < PAGE_LIMIT) {
+      break;
+    }
+    offset += PAGE_LIMIT;
   }
 
   return allFiles;
 }
 
-/** Objects in `bucket` that no DB row points at. */
+/** Objects in `bucket` that no active or within-grace-window DB row points at. */
 async function findOrphanedFiles(
   supabase: SupabaseClient,
   bucket: string,
@@ -123,10 +157,18 @@ async function findOrphanedFiles(
   return orphanedFiles;
 }
 
+const SOFT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 /** The documents bucket holds appointment documents, plan materials and verification documents. */
 async function documentsBucketPaths(): Promise<Set<string>> {
+  const retentionCutoff = new Date(Date.now() - SOFT_DELETE_RETENTION_MS);
   const [appointmentDocs, planMaterials, verificationDocs] = await Promise.all([
-    prisma.appointmentDocument.findMany({ select: { storagePath: true } }),
+    prisma.appointmentDocument.findMany({
+      where: {
+        OR: [{ deletedAt: null }, { deletedAt: { gte: retentionCutoff } }],
+      },
+      select: { storagePath: true },
+    }),
     prisma.planMaterial.findMany({ select: { storagePath: true } }),
     prisma.profileVerificationDocument.findMany({
       select: { storagePath: true },
@@ -149,14 +191,9 @@ async function supportAttachmentPaths(): Promise<Set<string>> {
 interface MissingFile {
   id: string;
   storagePath: string;
-  isStorageMissing: boolean; // #694 — prior flag state, to skip redundant updates
+  isStorageMissing: boolean;
 }
 
-/**
- * Find missing files (in DB but not in storage), plus rows previously flagged
- * as missing whose file is present again (recovered) so the flag can be cleared.
- * Uses the already-listed bucket file paths instead of downloading every file.
- */
 async function findMissingFiles(
   supabase: SupabaseClient,
 ): Promise<{ missingFiles: MissingFile[]; recoveredIds: string[] }> {
@@ -168,6 +205,7 @@ async function findMissingFiles(
   const [storageFiles, dbDocuments] = await Promise.all([
     listAllFilesInBucket(supabase, "documents"),
     prisma.appointmentDocument.findMany({
+      where: { deletedAt: null },
       select: { id: true, storagePath: true, isStorageMissing: true },
     }),
   ]);
@@ -178,7 +216,6 @@ async function findMissingFiles(
   for (const doc of dbDocuments) {
     const present = storagePaths.has(doc.storagePath);
     if (present) {
-      // #694 — file is back; clear a stale missing flag if one was set.
       if (doc.isStorageMissing) recoveredIds.push(doc.id);
     } else {
       missingFiles.push({
@@ -194,15 +231,12 @@ async function findMissingFiles(
 }
 
 /**
- * #694 — persist the missing-storage state: flag newly-missing rows and clear
- * the flag on recovered rows. Returns the count of rows freshly marked missing.
+ * Batch-flag newly missing storage rows and clear the flag on recovered rows.
  */
 async function persistMissingState(
   missingFiles: MissingFile[],
   recoveredIds: string[],
 ): Promise<number> {
-  // Only flag (and count) rows whose flag flips false → true. Batch the writes
-  // into two updateMany calls instead of one query per row (avoids the N+1).
   const newlyMissingIds = missingFiles
     .filter((doc) => !doc.isStorageMissing)
     .map((doc) => doc.id);
@@ -292,11 +326,7 @@ async function deleteOrphanedFiles(
   return deleted;
 }
 
-/**
- * Main function to reconcile document storage
- */
-// #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
+/** Reconcile Supabase storage buckets against active and retention-protected DB rows under a single Postgres lease. */
 export async function reconcileDocumentStorage(): Promise<DocumentReconciliationResult> {
   return withCronLock(
     "reconcile-document-storage",
@@ -332,9 +362,7 @@ async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliatio
     };
   }
 
-  // Probe storage health before proceeding — if Supabase Storage is transiently
-  // unreachable (e.g. during migration), the reconciliation would falsely mark
-  // valid files as orphaned and delete them.
+  // Probe storage health before proceeding so transient connectivity failures never delete files.
   try {
     const { error: probeError } = await supabase.storage
       .from("documents")
@@ -404,8 +432,6 @@ async function reconcileDocumentStorageUnlocked(): Promise<DocumentReconciliatio
       await findMissingFiles(supabase);
     missingFilesFound = missingDocuments.length;
 
-    // #694 — persist the missing-storage flag instead of only logging it, so
-    // the UI/ops can surface broken downloads; clears the flag on recovery.
     missingFilesMarked = await persistMissingState(
       missingDocuments,
       recoveredIds,

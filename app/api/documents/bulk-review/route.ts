@@ -5,16 +5,15 @@ import { DocumentReviewStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, documentReviewLimiter } from "@/lib/rate-limit";
-
-/**
- * PATCH /api/documents/bulk-review — #347 bulk document review.
- *
- * Reviews many documents in ONE transactional updateMany, replacing the client's
- * N-PATCH fan-out (one HTTP request + DB write per document). The consultant is
- * derived from the session and the update is scoped to documents whose
- * appointment plan belongs to them, so it is inherently IDOR-safe regardless of
- * which ids are passed.
- */
+import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
+import { notifyDocumentReviewed } from "@/lib/novu/service";
+import { notificationScope } from "@/lib/novu/workflows";
+import { scopedHref } from "@/lib/novu/resolve-href";
+import type { ReviewStatus } from "@/lib/documents/document-review";
+import {
+  extractReviewNotificationTarget,
+  REVIEW_NOTIFICATION_APPOINTMENT_SELECT,
+} from "@/lib/documents/upload-pipeline";
 
 const MAX_BULK = 100;
 const MAX_NOTES = 2000;
@@ -22,10 +21,19 @@ const MAX_NOTES = 2000;
 const BulkReviewSchema = z.object({
   documentIds: z.array(z.string().min(1)).min(1).max(MAX_BULK),
   reviewStatus: z.nativeEnum(DocumentReviewStatus),
-  // Shared note for the whole batch; trimmed, optional.
   reviewNotes: z.string().trim().max(MAX_NOTES).nullish(),
 });
 
+const NON_TERMINAL_REVIEW_STATUSES: DocumentReviewStatus[] = [
+  DocumentReviewStatus.PENDING,
+  DocumentReviewStatus.IN_REVIEW,
+  DocumentReviewStatus.NEEDS_REVISION,
+];
+
+/**
+ * Bulk document review endpoint using conditional `updateManyAndReturn` CAS-in-WHERE
+ * (`reviewStatus: { in: statusTransitionSources }`, `deletedAt: null`, `uploadedByRole: "CONSULTEE"`).
+ */
 export async function PATCH(request: NextRequest) {
   try {
     const session = await getSession();
@@ -42,8 +50,6 @@ export async function PATCH(request: NextRequest) {
     );
     if (limited) return limited;
 
-    // A malformed body throws here, before Zod — that's a bad client payload
-    // (400), not a server failure (which the outer catch would mislabel 500).
     let rawBody: unknown;
     try {
       rawBody = await request.json();
@@ -67,16 +73,14 @@ export async function PATCH(request: NextRequest) {
     }
     const { documentIds, reviewStatus, reviewNotes } = parsed.data;
 
-    // Scope the write to documents the requesting consultant owns (the
-    // consultant side of the document's consultation/subscription). Documents
-    // belonging to anyone else are silently excluded rather than updated.
-    const ownedByConsultant: Prisma.AppointmentWhereInput = {
+    const ownedNonTerminalAppointment: Prisma.AppointmentWhereInput = {
       OR: [
         {
           consultation: {
             consultationPlan: {
               consultantProfile: { user: { id: session.user.id } },
             },
+            status: { notIn: ["CANCELLED", "REJECTED", "EXPIRED"] },
           },
         },
         {
@@ -84,38 +88,109 @@ export async function PATCH(request: NextRequest) {
             subscriptionPlan: {
               consultantProfile: { user: { id: session.user.id } },
             },
+            status: { notIn: ["CANCELLED", "REJECTED", "EXPIRED"] },
           },
         },
       ],
     };
 
-    // Same transition contract as the single-document PATCH: terminal states
-    // (APPROVED/REJECTED) and soft-deleted rows are skipped, not overwritten.
-    const result = await prisma.appointmentDocument.updateMany({
-      where: {
-        id: { in: documentIds },
-        deletedAt: null,
-        reviewStatus: {
-          in: [
-            DocumentReviewStatus.PENDING,
-            DocumentReviewStatus.IN_REVIEW,
-            DocumentReviewStatus.NEEDS_REVISION,
-          ],
+    const statusTransitionSources = NON_TERMINAL_REVIEW_STATUSES.filter(
+      (s) => s !== reviewStatus,
+    );
+
+    const { targetDocs, totalUpdated } = await prisma.$transaction(
+      async (tx) => {
+        const updatedRows = await tx.appointmentDocument.updateManyAndReturn({
+          where: {
+            id: { in: documentIds },
+            deletedAt: null,
+            uploadedByRole: "CONSULTEE",
+            reviewStatus: { in: statusTransitionSources },
+            appointment: ownedNonTerminalAppointment,
+          },
+          data: {
+            reviewStatus,
+            ...(reviewNotes !== undefined && {
+              reviewNotes: reviewNotes === "" ? null : reviewNotes,
+            }),
+            reviewedAt: new Date(),
+            reviewedById: session.user.id,
+          },
+          select: {
+            id: true,
+            appointmentId: true,
+            originalName: true,
+            appointment: { select: REVIEW_NOTIFICATION_APPOINTMENT_SELECT },
+          },
+        });
+
+        let sameStatusCount = 0;
+        if (
+          reviewNotes !== undefined &&
+          NON_TERMINAL_REVIEW_STATUSES.includes(reviewStatus)
+        ) {
+          const notesOnlyRes = await tx.appointmentDocument.updateMany({
+            where: {
+              id: { in: documentIds },
+              deletedAt: null,
+              uploadedByRole: "CONSULTEE",
+              reviewStatus,
+              appointment: ownedNonTerminalAppointment,
+            },
+            data: {
+              reviewNotes: reviewNotes === "" ? null : reviewNotes,
+            },
+          });
+          sameStatusCount = notesOnlyRes.count;
+        }
+
+        return {
+          targetDocs: updatedRows,
+          totalUpdated: updatedRows.length + sameStatusCount,
+        };
+      },
+    );
+
+    if (targetDocs.length > 0) {
+      await stageNowAttemptAfter(
+        "bulk consultee document-review notices",
+        async () => {
+          const results = await Promise.all(
+            targetDocs.map((doc) => {
+              const target = extractReviewNotificationTarget(doc.appointment);
+              if (!target.recipientId) return null;
+              return notifyDocumentReviewed(
+                target.recipientId,
+                {
+                  ...notificationScope(target.organizationId),
+                  appointmentId: doc.appointmentId,
+                  documentId: doc.id,
+                  reviewStatus: reviewStatus as ReviewStatus,
+                  reviewNotes: reviewNotes || undefined,
+                  originalName: doc.originalName,
+                  consultantName: target.reviewerName,
+                  dashboardUrl: scopedHref({
+                    organizationId: target.organizationId,
+                    surface: "appointments",
+                    personal: target.consulteeProfileId
+                      ? {
+                          kind: "consultee",
+                          profileId: target.consulteeProfileId,
+                        }
+                      : undefined,
+                  }),
+                },
+                { deferAttempt: true },
+              );
+            }),
+          );
+          return results.filter((r): r is NonNullable<typeof r> => r !== null);
         },
-        appointment: ownedByConsultant,
-      },
-      data: {
-        reviewStatus,
-        // Apply the shared note only when one was provided; an empty note leaves
-        // existing per-document notes untouched (mirrors the per-document PATCH).
-        ...(reviewNotes ? { reviewNotes } : {}),
-        reviewedAt: new Date(),
-        reviewedById: session.user.id,
-      },
-    });
+      );
+    }
 
     return NextResponse.json({
-      data: { updated: result.count, requested: documentIds.length },
+      data: { updated: totalUpdated, requested: documentIds.length },
     });
   } catch (error) {
     Sentry.captureException(
