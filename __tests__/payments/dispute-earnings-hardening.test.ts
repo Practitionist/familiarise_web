@@ -78,6 +78,7 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
       fetch: (chargeId: string) => razorpayPaymentsFetch(chargeId),
     },
   }),
+  withRazorpaySdkTimeout: (_op: string, fn: () => unknown) => fn(),
 }));
 jest.mock("../../lib/novu", () => ({
   notifyRefundProcessed: jest.fn(),
