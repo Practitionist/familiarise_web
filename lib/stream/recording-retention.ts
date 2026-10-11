@@ -231,11 +231,12 @@ async function rescueLapsedStreamRecording(
   if (!streamRecordings) return;
 
   // Match strictly by filename when streamRecordingId is set; single-result fallback applies only when unset.
-  const match = row.streamRecordingId
-    ? streamRecordings.find((r) => r.filename === row.streamRecordingId)
-    : streamRecordings.length === 1
-      ? streamRecordings[0]
-      : undefined;
+  let match = undefined;
+  if (row.streamRecordingId) {
+    match = streamRecordings.find((r) => r.filename === row.streamRecordingId);
+  } else if (streamRecordings.length === 1) {
+    match = streamRecordings[0];
+  }
 
   if (!match?.url) return;
 
