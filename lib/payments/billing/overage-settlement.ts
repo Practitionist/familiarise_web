@@ -938,10 +938,10 @@ async function recordWalletCollectedOrgOverage(
  * that is already paid for must not fail because a notification did not go out.
  * #1653 — the email twin is awaited inside the same chain, after the bell.
  */
-export function notifyOverageDueAfterCommit(
+export async function notifyOverageDueAfterCommit(
   pending: PendingOverageNotification,
-): void {
-  scheduleAfter(async () => {
+): Promise<void> {
+  await scheduleAfter(async () => {
     try {
       const ctx = await prisma.programAssignment.findUnique({
         where: { id: pending.programAssignmentId },
@@ -950,7 +950,9 @@ export function notifyOverageDueAfterCommit(
             select: {
               name: true,
               contract: {
-                select: { organization: { select: { name: true } } },
+                select: {
+                  organization: { select: { id: true, name: true } },
+                },
               },
             },
           },
@@ -959,10 +961,11 @@ export function notifyOverageDueAfterCommit(
       if (!ctx) return;
       const orgName = ctx.program.contract.organization.name;
       await notifyOrgProgramOverageDue(pending.userId, {
+        organizationId: ctx.program.contract.organization.id,
         orgName,
         programName: ctx.program.name,
         amountPaise: pending.marginalPaise,
-        payUrl: `/dashboard/overage?charge=${pending.overageEventId}`,
+        payUrl: `${getAppUrl()}/dashboard/overage?charge=${pending.overageEventId}`,
       });
       await sendOrgOverageDueEmail({
         userId: pending.userId,

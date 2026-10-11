@@ -306,12 +306,19 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
         stats.rolled += 1;
       } else if (result.outcome === "closed") {
         stats.closed += 1;
-        for (const bell of result.stagedBells) await attemptTrigger(bell);
-        if (result.stagedEmails.length > 0) {
-          await attemptStaged(
-            result.stagedEmails,
-            ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
-            EMAIL_BUDGET_MS.JOB,
+        try {
+          for (const bell of result.stagedBells) await attemptTrigger(bell);
+          if (result.stagedEmails.length > 0) {
+            await attemptStaged(
+              result.stagedEmails,
+              ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+              EMAIL_BUDGET_MS.JOB,
+            );
+          }
+        } catch (notifyErr) {
+          console.error(
+            `[advance-program-cycles] notify failed for assignment ${a.id}:`,
+            notifyErr,
           );
         }
       } else {

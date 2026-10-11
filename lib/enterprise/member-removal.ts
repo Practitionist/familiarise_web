@@ -759,16 +759,16 @@ export async function revokeMemberStreamAccess(input: {
   };
 }
 
-function dispatchRevokedCollaborationNotices(
+async function dispatchRevokedCollaborationNotices(
   revokedCollaborations: Awaited<
     ReturnType<typeof removeInTx>
   >["revokedCollaborations"],
-): void {
+): Promise<void> {
   for (const c of revokedCollaborations) {
     if (!c.hostUserId) continue;
     const hostUserId = c.hostUserId;
     const dashboardUrl = `${getAppUrl()}${goHref("expert", "collaborations")}`;
-    scheduleAfter(async () => {
+    await scheduleAfter(async () => {
       await notifyCollaboratorWithdrawn(hostUserId, {
         collaboratorName: c.collaboratorName,
         planTitle: c.planTitle,
@@ -852,7 +852,7 @@ export async function removeMember(
   if (result.email || result.memberBells.length > 0) {
     const staged = result.email;
     const bells = result.memberBells;
-    scheduleAfter(async () => {
+    await scheduleAfter(async () => {
       for (const row of bells) await attemptTrigger(row);
       if (staged) await attemptOnboardingEmail(staged);
     }, "org.member-removal.onboarding-email");
@@ -862,7 +862,7 @@ export async function removeMember(
     for (const c of result.revokedCollaborations) {
       await revokeCollaboratorAccess(c.planType, c.planId, removedUserId);
     }
-    dispatchRevokedCollaborationNotices(result.revokedCollaborations);
+    await dispatchRevokedCollaborationNotices(result.revokedCollaborations);
     await revokeRemovedMemberStream(input.orgId, removedUserId);
   }
   return { removed: result.removed };

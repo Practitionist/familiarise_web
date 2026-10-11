@@ -698,34 +698,38 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
           const [consulteeBell, consultantBell, scheduledEmails] =
             await Promise.all([
-              notifyTrialScheduled(
-                existingTrial.consulteeProfile.user.id,
-                {
-                  consultantName:
-                    existingTrial.consultantProfile.user.name || "Consultant",
-                  consulteeName:
-                    existingTrial.consulteeProfile.user.name || "User",
-                  planTitle: existingTrial.subscriptionPlan.title,
-                  dateTime: startTime.toISOString(),
-                  status: TrialStatus.SCHEDULED,
-                  dashboardUrl: goHref("client", "appointments"),
-                },
-                { deferAttempt: true },
-              ),
-              notifyTrialScheduled(
-                existingTrial.consultantProfile.user.id,
-                {
-                  consultantName:
-                    existingTrial.consultantProfile.user.name || "Consultant",
-                  consulteeName:
-                    existingTrial.consulteeProfile.user.name || "User",
-                  planTitle: existingTrial.subscriptionPlan.title,
-                  dateTime: startTime.toISOString(),
-                  status: TrialStatus.SCHEDULED,
-                  dashboardUrl: goHref("expert", "appointments"),
-                },
-                { deferAttempt: true },
-              ),
+              Promise.resolve(
+                notifyTrialScheduled(
+                  existingTrial.consulteeProfile.user.id,
+                  {
+                    consultantName:
+                      existingTrial.consultantProfile.user.name || "Consultant",
+                    consulteeName:
+                      existingTrial.consulteeProfile.user.name || "User",
+                    planTitle: existingTrial.subscriptionPlan.title,
+                    dateTime: startTime.toISOString(),
+                    status: TrialStatus.SCHEDULED,
+                    dashboardUrl: goHref("client", "appointments"),
+                  },
+                  { deferAttempt: true },
+                ),
+              ).catch(() => null),
+              Promise.resolve(
+                notifyTrialScheduled(
+                  existingTrial.consultantProfile.user.id,
+                  {
+                    consultantName:
+                      existingTrial.consultantProfile.user.name || "Consultant",
+                    consulteeName:
+                      existingTrial.consulteeProfile.user.name || "User",
+                    planTitle: existingTrial.subscriptionPlan.title,
+                    dateTime: startTime.toISOString(),
+                    status: TrialStatus.SCHEDULED,
+                    dashboardUrl: goHref("expert", "appointments"),
+                  },
+                  { deferAttempt: true },
+                ),
+              ).catch(() => null),
               stageTrialScheduledEmail(prisma, {
                 trialId,
                 consulteeUserId: existingTrial.consulteeProfile.user.id,
@@ -830,17 +834,19 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             existingTrial.consulteeProfile.user.name || "User";
           const dashboardUrl = goHref("auto", "appointments");
           const [bells, completedEmails] = await Promise.all([
-            notifyTrialCompleted(
-              userIds,
-              {
-                consultantName,
-                consulteeName,
-                planTitle: existingTrial.subscriptionPlan.title,
-                status: TrialStatus.COMPLETED,
-                dashboardUrl,
-              },
-              { deferAttempt: true },
-            ),
+            Promise.resolve(
+              notifyTrialCompleted(
+                userIds,
+                {
+                  consultantName,
+                  consulteeName,
+                  planTitle: existingTrial.subscriptionPlan.title,
+                  status: TrialStatus.COMPLETED,
+                  dashboardUrl,
+                },
+                { deferAttempt: true },
+              ),
+            ).catch(() => []),
             stageTrialLifecycleEmail(prisma, {
               trialId,
               userIds,
@@ -879,17 +885,19 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             existingTrial.consulteeProfile.user.name || "User";
           const dashboardUrl = goHref("auto", "appointments");
           const [bells, cancelledEmails] = await Promise.all([
-            notifyTrialCancelled(
-              userIds,
-              {
-                consultantName,
-                consulteeName,
-                planTitle: existingTrial.subscriptionPlan.title,
-                status,
-                dashboardUrl,
-              },
-              { deferAttempt: true },
-            ),
+            Promise.resolve(
+              notifyTrialCancelled(
+                userIds,
+                {
+                  consultantName,
+                  consulteeName,
+                  planTitle: existingTrial.subscriptionPlan.title,
+                  status,
+                  dashboardUrl,
+                },
+                { deferAttempt: true },
+              ),
+            ).catch(() => []),
             stageTrialLifecycleEmail(prisma, {
               trialId,
               userIds,
@@ -1338,17 +1346,19 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     const consulteeName = existingTrial.consulteeProfile.user.name || "User";
     const dashboardUrl = goHref("auto", "appointments");
     const [cancelledBells, cancelledEmails] = await Promise.all([
-      notifyTrialCancelled(
-        userIds,
-        {
-          consultantName,
-          consulteeName,
-          planTitle: existingTrial.subscriptionPlan.title,
-          status: TrialStatus.CANCELLED,
-          dashboardUrl,
-        },
-        { deferAttempt: true },
-      ),
+      Promise.resolve(
+        notifyTrialCancelled(
+          userIds,
+          {
+            consultantName,
+            consulteeName,
+            planTitle: existingTrial.subscriptionPlan.title,
+            status: TrialStatus.CANCELLED,
+            dashboardUrl,
+          },
+          { deferAttempt: true },
+        ),
+      ).catch(() => []),
       stageTrialLifecycleEmail(prisma, {
         trialId,
         userIds,

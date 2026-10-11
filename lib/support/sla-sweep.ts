@@ -810,7 +810,7 @@ export async function runSupportSlaSweep(opts?: {
       stagedBells,
     );
 
-    flushNotificationsAfter({ bells: stagedBells }, "support.sla-sweep");
+    await flushNotificationsAfter({ bells: stagedBells }, "support.sla-sweep");
 
     if (errors.length > 0) {
       reportSentryError(

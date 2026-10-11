@@ -809,6 +809,9 @@ export type AccountSecurityNoticeKind =
   | "ACCOUNT_LINKED"
   | "TWO_FACTOR_ENABLED"
   | "TWO_FACTOR_DISABLED"
+  | "PASSKEY_ADDED"
+  | "PASSKEY_REMOVED"
+  | "SECURITY_UPDATE"
   | "ACCOUNT_REINSTATED";
 
 export type AccountSecurityNoticePayload = {

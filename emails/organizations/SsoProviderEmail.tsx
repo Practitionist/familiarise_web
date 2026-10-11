@@ -33,6 +33,7 @@ export function ssoProviderSubject(
     case "APPROVED":
       return `Your SSO provider is approved for ${orgName}`;
     case "REJECTED":
+      return `Your SSO provider was not approved for ${orgName}`;
     case "REVOKED":
       return `Your SSO provider was revoked for ${orgName}`;
     case "DELETED":
@@ -49,8 +50,9 @@ function bodyText(props: SsoProviderEmailProps): string {
     case "APPROVED":
       return `People at ${domains} can now sign in through ${issuer}. Sign in once through it as an owner before you turn on SSO enforcement.`;
     case "REJECTED":
+      return `Your OIDC provider ${props.providerId} (${issuer}) for ${domains} was not approved. Members continue signing in with their existing methods.`;
     case "REVOKED":
-      return `Sign-in through ${issuer} for ${domains} has stopped. Members can use their other sign-in methods unless SSO is enforced.`;
+      return `Sign-in through ${issuer} for ${domains} was revoked and has stopped. Members can use their other sign-in methods unless SSO is enforced.`;
     case "DELETED":
       return `${props.deletedByName ? `${props.deletedByName} removed ` : "The "}SSO provider ${props.providerId} from ${props.orgName}. Workspace members now sign in with email.`;
   }

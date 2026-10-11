@@ -171,20 +171,22 @@ export async function PATCH(request: NextRequest) {
                   : undefined,
               });
               const [bell, docEmails] = await Promise.all([
-                notifyDocumentReviewed(
-                  target.recipientId,
-                  {
-                    ...notificationScope(target.organizationId),
-                    appointmentId: doc.appointmentId,
-                    documentId: doc.id,
-                    reviewStatus: reviewStatus as ReviewStatus,
-                    reviewNotes: reviewNotes || undefined,
-                    originalName: doc.originalName,
-                    consultantName: target.reviewerName,
-                    dashboardUrl,
-                  },
-                  { deferAttempt: true },
-                ),
+                Promise.resolve(
+                  notifyDocumentReviewed(
+                    target.recipientId,
+                    {
+                      ...notificationScope(target.organizationId),
+                      appointmentId: doc.appointmentId,
+                      documentId: doc.id,
+                      reviewStatus: reviewStatus as ReviewStatus,
+                      reviewNotes: reviewNotes || undefined,
+                      originalName: doc.originalName,
+                      consultantName: target.reviewerName,
+                      dashboardUrl,
+                    },
+                    { deferAttempt: true },
+                  ),
+                ).catch(() => null),
                 stageDocumentAndRecordingEmail(prisma, {
                   entityId: doc.id,
                   userIds: [target.recipientId],

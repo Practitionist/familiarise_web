@@ -717,13 +717,20 @@ export async function freezeAppointments(
 
   // Send all notifications AFTER the transaction commits.
   // Fire-and-forget: notification failures don't affect the freeze result.
+  const notificationFailures: Array<{ appointmentId?: string; err: unknown }> =
+    [];
   for (const { userIds, data } of pendingNotifications) {
     try {
       const [bellResults, emailRows] = await Promise.all([
-        notifyAppointmentCancelled(userIds, data, { deferAttempt: true }),
+        Promise.resolve(
+          notifyAppointmentCancelled(userIds, data, {
+            deferAttempt: true,
+          }),
+        ).catch(() => []),
         stageAppointmentCancelledEmail(prisma, {
           appointmentId: data.appointmentId ?? "",
           userIds,
+          startsAt: data.dateTime ? new Date(data.dateTime) : undefined,
           cancelledBy: "Familiarise",
           reason: data.reason,
           dashboardUrl:
@@ -739,10 +746,7 @@ export async function freezeAppointments(
       );
       notified += userIds.length;
     } catch (err) {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "maintenance" }, level: "warning" },
-      );
+      notificationFailures.push({ appointmentId: data.appointmentId, err });
       console.error(
         JSON.stringify({
           event: "maintenance_freeze_notification_failed",
@@ -752,6 +756,20 @@ export async function freezeAppointments(
         }),
       );
     }
+  }
+  if (notificationFailures.length > 0) {
+    const first = notificationFailures[0].err;
+    Sentry.captureException(
+      first instanceof Error ? first : new Error(String(first)),
+      {
+        tags: { subsystem: "maintenance" },
+        level: "warning",
+        extra: {
+          failureCount: notificationFailures.length,
+          appointmentIds: notificationFailures.map((f) => f.appointmentId),
+        },
+      },
+    );
   }
 
   console.log(

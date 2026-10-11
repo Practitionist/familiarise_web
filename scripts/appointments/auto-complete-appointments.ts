@@ -922,16 +922,15 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
     const staged = await prisma.$transaction((tx) =>
       settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
     );
-    for (const row of staged ?? []) {
-      // Best-effort after commit: the relay retries a failed attempt.
-      try {
-        await attemptTrigger(row);
-      } catch (error) {
-        console.error(
-          `   ⚠️ Cycle bell attempt failed for ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
+    await flushNotificationsAfter(
+      {
+        bells: staged ?? [],
+        emails: staged?.emailRows?.length
+          ? [{ rows: staged.emailRows, emailType: "SUBSCRIPTION_RENEWED" }]
+          : [],
+      },
+      "subscription-cycle.renewed",
+    );
   }
 }
 

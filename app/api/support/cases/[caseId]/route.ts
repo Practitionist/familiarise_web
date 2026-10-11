@@ -169,7 +169,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           };
         }),
       );
-      flushNotificationsAfter(
+      await flushNotificationsAfter(
         {
           bells: stagedResults.flatMap((r) =>
             r.stagedBell ? [r.stagedBell] : [],

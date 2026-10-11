@@ -8,17 +8,25 @@ export type { SecurityEvent };
 
 function securityBellKind(
   event: SecurityEvent,
-): "TWO_FACTOR_ENABLED" | "TWO_FACTOR_DISABLED" {
+):
+  | "TWO_FACTOR_ENABLED"
+  | "TWO_FACTOR_DISABLED"
+  | "PASSKEY_ADDED"
+  | "PASSKEY_REMOVED"
+  | null {
   switch (event.kind) {
-    case "authenticator-added":
     case "passkey-added":
-    case "backup-codes-regenerated":
-    case "backup-code-used":
-      return "TWO_FACTOR_ENABLED";
+      return "PASSKEY_ADDED";
     case "passkey-removed":
+      return "PASSKEY_REMOVED";
+    case "authenticator-added":
+    case "backup-codes-regenerated":
+      return "TWO_FACTOR_ENABLED";
     case "two-factor-reset-by-admin":
-    case "two-factor-locked":
       return "TWO_FACTOR_DISABLED";
+    case "backup-code-used":
+    case "two-factor-locked":
+      return null;
   }
 }
 
@@ -32,26 +40,31 @@ export async function sendSecurityEventEmail(
 ): Promise<void> {
   try {
     const occurredAt = new Date();
+    const bellKind = securityBellKind(event);
     const [, bellResults] = await Promise.all([
       sendSecurityNoticeEmail({
         userId: user.id,
         event,
         occurredAt,
-      }),
-      notifyAccountSecurityNotice(
-        user.id,
-        {
-          kind: securityBellKind(event),
-          dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
-        },
-        `security-event:${event.kind}:${user.id}:${occurredAt.getTime()}`,
-        { deferAttempt: true },
-      ).catch(() => []),
+      }).catch(() => undefined),
+      bellKind
+        ? notifyAccountSecurityNotice(
+            user.id,
+            {
+              kind: bellKind,
+              dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+            },
+            `security-event:${event.kind}:${user.id}:${occurredAt.getTime()}`,
+            { deferAttempt: true },
+          ).catch(() => [])
+        : Promise.resolve([]),
     ]);
-    flushNotificationsAfter(
-      { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
-      `auth:security-event:${event.kind}`,
-    );
+    if (bellResults.length > 0) {
+      await flushNotificationsAfter(
+        { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
+        `auth:security-event:${event.kind}`,
+      ).catch(() => undefined);
+    }
   } catch (error) {
     reportSentryError(error, {
       subsystem: "auth",

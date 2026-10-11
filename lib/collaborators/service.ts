@@ -27,13 +27,13 @@ import {
   notifyCollaboratorRemoved,
   notifyCollaboratorWithdrawn,
 } from "@/lib/novu/service";
-import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import {
-  stageCollaboratorInvitedEmail,
-  stageCollaboratorAcceptedEmail,
-  stageCollaboratorDeclinedEmail,
-  stageCollaboratorRemovedEmail,
-  stageCollaboratorWithdrawnEmail,
+  sendCollaboratorInvitedEmail,
+  sendCollaboratorAcceptedEmail,
+  sendCollaboratorDeclinedEmail,
+  sendCollaboratorRemovedEmail,
+  sendCollaboratorWithdrawnEmail,
 } from "@/lib/email/senders/collaborators";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -408,43 +408,31 @@ export async function inviteCollaborator(
       if (invitedProfile) {
         const ownerName = inviterProfile?.user?.name ?? "Plan Owner";
         const resolvedTitle = planTitle ?? planKindLabel(planType);
-        const [bell, invitedEmails] = await Promise.all([
-          notifyCollaboratorInvited(
-            invitedProfile.userId,
-            {
+        await scheduleAfter(async () => {
+          await Promise.all([
+            notifyCollaboratorInvited(invitedProfile.userId, {
               planTitle: resolvedTitle,
               planType,
               role: collaboratorRoleLabel(role),
               revenueSharePercentage,
               ownerName,
               dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-            },
-            { deferAttempt: true },
-          ).catch(() => null),
-          stageCollaboratorInvitedEmail(prisma, {
-            recipientUserId: invitedProfile.userId,
-            actorName: ownerName,
-            collaboratorName: invitedProfile.user?.name ?? "Collaborator",
-            planTitle: resolvedTitle,
-            planType,
-            role: txResult.role,
-            revenueShareBps: txResult.revenueShareBps,
-            collaboratorId: txResult.id,
-          }).catch(() => []),
-        ]);
-        await flushNotificationsAfter(
-          {
-            bells: [bell?.staged],
-            emails: [
+            }).catch(() => undefined),
+            sendCollaboratorInvitedEmail(
               {
-                list: invitedEmails,
-                emailType: "collaborator_invited",
-                budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                recipientUserId: invitedProfile.userId,
+                actorName: ownerName,
+                collaboratorName: invitedProfile.user?.name ?? "Collaborator",
+                planTitle: resolvedTitle,
+                planType,
+                role: txResult.role,
+                revenueShareBps: txResult.revenueShareBps,
+                collaboratorId: txResult.id,
               },
-            ],
-          },
-          "collaborator.invited",
-        );
+              EMAIL_BUDGET_MS.REQUEST,
+            ).catch(() => undefined),
+          ]);
+        }, "collaborator.invited");
       }
     } catch (error) {
       Sentry.captureException(
@@ -872,47 +860,29 @@ async function notifyHostOfResponse(
       revenueShareBps: updated.revenueShareBps,
       collaboratorId: updated.id,
     };
-    if (updated.status === "ACCEPTED") {
-      const [bell, emails] = await Promise.all([
-        notifyCollaboratorAccepted(hostUserId, payload, {
-          deferAttempt: true,
-        }).catch(() => null),
-        stageCollaboratorAcceptedEmail(prisma, emailPayload).catch(() => []),
-      ]);
-      await flushNotificationsAfter(
-        {
-          bells: [bell?.staged],
-          emails: [
-            {
-              list: emails,
-              emailType: "collaborator_accepted",
-              budgetMs: EMAIL_BUDGET_MS.REQUEST,
-            },
-          ],
-        },
-        "collaborators.accepted",
-      );
-    } else {
-      const [bell, emails] = await Promise.all([
-        notifyCollaboratorDeclined(hostUserId, payload, {
-          deferAttempt: true,
-        }).catch(() => null),
-        stageCollaboratorDeclinedEmail(prisma, emailPayload).catch(() => []),
-      ]);
-      await flushNotificationsAfter(
-        {
-          bells: [bell?.staged],
-          emails: [
-            {
-              list: emails,
-              emailType: "collaborator_declined",
-              budgetMs: EMAIL_BUDGET_MS.REQUEST,
-            },
-          ],
-        },
-        "collaborators.declined",
-      );
-    }
+    await scheduleAfter(async () => {
+      if (updated.status === "ACCEPTED") {
+        await Promise.all([
+          notifyCollaboratorAccepted(hostUserId, payload).catch(
+            () => undefined,
+          ),
+          sendCollaboratorAcceptedEmail(
+            emailPayload,
+            EMAIL_BUDGET_MS.REQUEST,
+          ).catch(() => undefined),
+        ]);
+      } else {
+        await Promise.all([
+          notifyCollaboratorDeclined(hostUserId, payload).catch(
+            () => undefined,
+          ),
+          sendCollaboratorDeclinedEmail(
+            emailPayload,
+            EMAIL_BUDGET_MS.REQUEST,
+          ).catch(() => undefined),
+        ]);
+      }
+    }, `collaborators.${updated.status.toLowerCase()}`);
   } catch (error) {
     reportSentryError(error, {
       subsystem: "collaborators",
@@ -1006,40 +976,28 @@ export async function removeCollaborator(
               },
             });
       const planTitle = plan?.title ?? planKindLabel(planType);
-      const [bell, emails] = await Promise.all([
-        notifyCollaboratorRemoved(
-          profile.userId,
-          {
+      await scheduleAfter(async () => {
+        await Promise.all([
+          notifyCollaboratorRemoved(profile.userId, {
             planTitle,
             planType,
             dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-          },
-          { deferAttempt: true },
-        ).catch(() => null),
-        stageCollaboratorRemovedEmail(prisma, {
-          recipientUserId: profile.userId,
-          actorName: plan?.consultantProfile?.user?.name ?? "Plan Owner",
-          collaboratorName: profile.user?.name ?? "Collaborator",
-          planTitle,
-          planType,
-          role: result.role,
-          revenueShareBps: result.revenueShareBps,
-          collaboratorId: result.id,
-        }).catch(() => []),
-      ]);
-      await flushNotificationsAfter(
-        {
-          bells: [bell?.staged],
-          emails: [
+          }).catch(() => undefined),
+          sendCollaboratorRemovedEmail(
             {
-              list: emails,
-              emailType: "collaborator_removed",
-              budgetMs: EMAIL_BUDGET_MS.REQUEST,
+              recipientUserId: profile.userId,
+              actorName: plan?.consultantProfile?.user?.name ?? "Plan Owner",
+              collaboratorName: profile.user?.name ?? "Collaborator",
+              planTitle,
+              planType,
+              role: result.role,
+              revenueShareBps: result.revenueShareBps,
+              collaboratorId: result.id,
             },
-          ],
-        },
-        "collaborators.removed",
-      );
+            EMAIL_BUDGET_MS.REQUEST,
+          ).catch(() => undefined),
+        ]);
+      }, "collaborators.removed");
     } catch (error) {
       reportSentryError(error, {
         subsystem: "collaborators",
@@ -1095,41 +1053,29 @@ async function notifyHostOfWithdrawal(
       plan?.consultantProfile?.userId ?? inviterProfile?.userId ?? null;
     if (!hostUserId) return;
     const planTitle = plan?.title ?? planKindLabel(planType);
-    const [bell, emails] = await Promise.all([
-      notifyCollaboratorWithdrawn(
-        hostUserId,
-        {
+    await scheduleAfter(async () => {
+      await Promise.all([
+        notifyCollaboratorWithdrawn(hostUserId, {
           planTitle,
           planType,
           collaboratorName,
           dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-        },
-        { deferAttempt: true },
-      ).catch(() => null),
-      stageCollaboratorWithdrawnEmail(prisma, {
-        recipientUserId: hostUserId,
-        actorName: collaboratorName,
-        collaboratorName,
-        planTitle,
-        planType,
-        role: collaborator.role,
-        revenueShareBps: collaborator.revenueShareBps,
-        collaboratorId: collaborator.id,
-      }).catch(() => []),
-    ]);
-    await flushNotificationsAfter(
-      {
-        bells: [bell?.staged],
-        emails: [
+        }).catch(() => undefined),
+        sendCollaboratorWithdrawnEmail(
           {
-            list: emails,
-            emailType: "collaborator_withdrawn",
-            budgetMs: EMAIL_BUDGET_MS.REQUEST,
+            recipientUserId: hostUserId,
+            actorName: collaboratorName,
+            collaboratorName,
+            planTitle,
+            planType,
+            role: collaborator.role,
+            revenueShareBps: collaborator.revenueShareBps,
+            collaboratorId: collaborator.id,
           },
-        ],
-      },
-      "collaborators.withdrawn",
-    );
+          EMAIL_BUDGET_MS.REQUEST,
+        ).catch(() => undefined),
+      ]);
+    }, "collaborators.withdrawn");
   } catch (error) {
     reportSentryError(error, {
       subsystem: "collaborators",
@@ -1159,21 +1105,13 @@ export async function revokeCollaboratorAccess(
               where: { id: planId },
               select: { title: true },
             });
-      const bell = await notifyCollaboratorRemoved(
-        userId,
-        {
+      await scheduleAfter(async () => {
+        await notifyCollaboratorRemoved(userId, {
           planTitle: plan?.title ?? planKindLabel(planType),
           planType,
           dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-        },
-        { deferAttempt: true },
-      ).catch(() => null);
-      if (bell?.staged) {
-        await flushNotificationsAfter(
-          { bells: [bell.staged] },
-          "collaborators.access_revoked",
-        );
-      }
+        }).catch(() => undefined);
+      }, "collaborators.access_revoked");
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),

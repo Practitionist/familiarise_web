@@ -416,7 +416,7 @@ export async function DELETE(
       });
     });
 
-    flushNotificationsAfter(
+    await flushNotificationsAfter(
       {
         bells: stagedBells,
         emails:

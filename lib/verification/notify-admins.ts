@@ -81,6 +81,8 @@ export async function stageNewApplicationBells(
 }
 
 /** The `after()` half; never throws. */
-export function attemptBellsAfterResponse(staged: StagedTrigger[]): void {
-  flushNotificationsAfter({ bells: staged }, "verification.admin-bells");
+export async function attemptBellsAfterResponse(
+  staged: StagedTrigger[],
+): Promise<void> {
+  await flushNotificationsAfter({ bells: staged }, "verification.admin-bells");
 }

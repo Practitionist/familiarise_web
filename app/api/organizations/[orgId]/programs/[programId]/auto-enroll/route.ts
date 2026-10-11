@@ -210,7 +210,7 @@ export async function POST(
         periodStart: body.periodStart,
         periodEnd: body.periodEnd,
       });
-      flushNotificationsAfter(
+      await flushNotificationsAfter(
         {
           bells: outcome.stagedBells,
           emails:

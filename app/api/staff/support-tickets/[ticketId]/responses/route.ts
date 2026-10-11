@@ -231,9 +231,11 @@ async function dispatchPublicTicketReplyNotice(params: {
   message: string;
 }): Promise<void> {
   const { ticket, responseId, responderName, message } = params;
+  const orgId =
+    ticket.organizationId ?? ticket.appointmentSupportThread?.organizationId;
   const ticketUrl = supportRequestHref(
     caseKeyOf({ kind: "ticket", id: ticket.id }),
-    ticket.appointmentSupportThread?.organizationId,
+    orgId,
   );
   const respondedBy = responderName ?? "Support";
   const ticketTitle = ticket.title || "Support Ticket";
@@ -247,11 +249,11 @@ async function dispatchPublicTicketReplyNotice(params: {
         message,
         respondedBy,
         dashboardUrl: ticketUrl,
-        ...notificationScope(ticket.organizationId),
+        ...notificationScope(orgId),
       },
       `ticket-resp:${responseId}`,
       { deferAttempt: true },
-    ),
+    ).catch(() => null),
     stageSupportTicketResponseEmail(prisma, {
       ticketId: ticket.id,
       ownerUserId: ticket.userId,
@@ -260,11 +262,11 @@ async function dispatchPublicTicketReplyNotice(params: {
       respondedBy,
       replyText: message,
       ticketUrl,
-    }),
+    }).catch(() => []),
   ]);
-  flushNotificationsAfter(
+  await flushNotificationsAfter(
     {
-      bells: bellResult.staged ? [bellResult.staged] : [],
+      bells: bellResult?.staged ? [bellResult.staged] : [],
       emails: [{ rows: emailRows, emailType: "SUPPORT_TICKET_RESPONSE" }],
     },
     "staff.support-tickets.responses",

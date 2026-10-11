@@ -14,11 +14,12 @@ import {
   appointmentAuthzError,
 } from "@/lib/api/appointment-access";
 import { stageNewBookingRequestEmail } from "@/lib/email/senders/booking";
+import { deriveTransactionId } from "@/lib/novu/outbox";
+import { scopedHref } from "@/lib/novu/resolve-href";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { getAppUrl } from "@/lib/url";
 
 const DETAIL_ROUTE = "appointments.detail";
 
@@ -117,7 +118,12 @@ export async function PATCH(
         consultation.consultationPlan.consultantProfile.userId;
       const consultantProfileId =
         consultation.consultationPlan.consultantProfile.id;
-      const reviewUrl = `${getAppUrl()}/dashboard/consultant/${consultantProfileId}/requests`;
+      const dashboardUrl = scopedHref({
+        organizationId: appointment.organizationId,
+        surface: "requests",
+        personal: { kind: "consultant", profileId: consultantProfileId },
+      });
+      const bucket = Math.floor(Date.now() / 300_000);
       const updated = await prisma.$transaction(async (tx) => {
         const res = await tx.consultation.updateMany({
           where: {
@@ -130,21 +136,49 @@ export async function PATCH(
           data: { requestNotes: parsed.data.requestNotes },
         });
         if (res.count > 0 && consultantUserId) {
-          const [bell, emailRows] = await Promise.all([
-            stageBell(tx, {
-              workflowId: NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
-              recipients: [consultantUserId],
-              payload: {
-                consulteeName:
-                  consultation.requestedBy.user.name ?? "A consultee",
-                planTitle: consultation.consultationPlan.title,
-                appointmentType: "Consultation",
-                dashboardUrl: `/dashboard/consultant/${consultantProfileId}/requests`,
-              },
-              dedupeKey: `request-notes-updated:${appointmentId}:${Math.floor(Date.now() / 300_000)}`,
-            }),
-            stageNewBookingRequestEmail(tx, {
-              requestId: `${consultation.id}:notes:${Math.floor(Date.now() / 300_000)}`,
+          const dedupeKey = `request-notes-updated:${appointmentId}:${bucket}`;
+          const payload = {
+            consulteeName: consultation.requestedBy.user.name ?? "A consultee",
+            planTitle: consultation.consultationPlan.title,
+            appointmentType: "Consultation",
+            dashboardUrl,
+          };
+          const transactionId = deriveTransactionId(
+            NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            [consultantUserId],
+            payload,
+            dedupeKey,
+          );
+          const beforeBell = tx.notificationOutbox?.findUnique
+            ? await tx.notificationOutbox.findUnique({
+                where: { transactionId },
+                select: { id: true },
+              })
+            : null;
+          const bell = await stageBell(tx, {
+            workflowId: NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            recipients: [consultantUserId],
+            payload,
+            dedupeKey,
+          });
+          return {
+            count: res.count,
+            bell: beforeBell ? null : bell,
+            deduplicated: Boolean(beforeBell),
+          };
+        }
+        return { count: res.count, bell: null, deduplicated: true };
+      });
+      if (updated.count === 0) {
+        return NextResponse.json(
+          { error: "Request can only be edited while pending approval." },
+          { status: 409 },
+        );
+      }
+      const emailRows =
+        consultantUserId && !updated.deduplicated
+          ? await stageNewBookingRequestEmail(prisma, {
+              requestId: `${consultation.id}:notes:${bucket}`,
               consultantUserId,
               consultantName:
                 consultation.consultationPlan.consultantProfile.user?.name ??
@@ -153,25 +187,15 @@ export async function PATCH(
                 consultation.requestedBy.user.name ?? "A consultee",
               planTitle: consultation.consultationPlan.title,
               appointmentType: "Consultation",
-              reviewUrl,
-            }).catch(() => []),
-          ]);
-          return { count: res.count, bell, emailRows };
-        }
-        return { count: res.count, bell: null, emailRows: [] };
-      });
-      if (updated.count === 0) {
-        return NextResponse.json(
-          { error: "Request can only be edited while pending approval." },
-          { status: 409 },
-        );
-      }
+              reviewUrl: dashboardUrl,
+            }).catch(() => [])
+          : [];
       await flushNotificationsAfter(
         {
           bells: [updated.bell],
           emails: [
             {
-              rows: updated.emailRows,
+              rows: emailRows,
               emailType: "NEW_BOOKING_REQUEST",
             },
           ],
@@ -195,7 +219,12 @@ export async function PATCH(
         subscription.subscriptionPlan.consultantProfile.userId;
       const consultantProfileId =
         subscription.subscriptionPlan.consultantProfile.id;
-      const reviewUrl = `${getAppUrl()}/dashboard/consultant/${consultantProfileId}/requests`;
+      const dashboardUrl = scopedHref({
+        organizationId: appointment.organizationId,
+        surface: "requests",
+        personal: { kind: "consultant", profileId: consultantProfileId },
+      });
+      const bucket = Math.floor(Date.now() / 300_000);
       const updated = await prisma.$transaction(async (tx) => {
         const res = await tx.subscription.updateMany({
           where: {
@@ -208,21 +237,49 @@ export async function PATCH(
           data: { requestNotes: parsed.data.requestNotes },
         });
         if (res.count > 0 && consultantUserId) {
-          const [bell, emailRows] = await Promise.all([
-            stageBell(tx, {
-              workflowId: NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
-              recipients: [consultantUserId],
-              payload: {
-                consulteeName:
-                  subscription.requestedBy.user.name ?? "A consultee",
-                planTitle: subscription.subscriptionPlan.title,
-                appointmentType: "Subscription",
-                dashboardUrl: `/dashboard/consultant/${consultantProfileId}/requests`,
-              },
-              dedupeKey: `request-notes-updated:${appointmentId}:${Math.floor(Date.now() / 300_000)}`,
-            }),
-            stageNewBookingRequestEmail(tx, {
-              requestId: `${subscription.id}:notes:${Math.floor(Date.now() / 300_000)}`,
+          const dedupeKey = `request-notes-updated:${appointmentId}:${bucket}`;
+          const payload = {
+            consulteeName: subscription.requestedBy.user.name ?? "A consultee",
+            planTitle: subscription.subscriptionPlan.title,
+            appointmentType: "Subscription",
+            dashboardUrl,
+          };
+          const transactionId = deriveTransactionId(
+            NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            [consultantUserId],
+            payload,
+            dedupeKey,
+          );
+          const beforeBell = tx.notificationOutbox?.findUnique
+            ? await tx.notificationOutbox.findUnique({
+                where: { transactionId },
+                select: { id: true },
+              })
+            : null;
+          const bell = await stageBell(tx, {
+            workflowId: NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            recipients: [consultantUserId],
+            payload,
+            dedupeKey,
+          });
+          return {
+            count: res.count,
+            bell: beforeBell ? null : bell,
+            deduplicated: Boolean(beforeBell),
+          };
+        }
+        return { count: res.count, bell: null, deduplicated: true };
+      });
+      if (updated.count === 0) {
+        return NextResponse.json(
+          { error: "Request can only be edited while pending approval." },
+          { status: 409 },
+        );
+      }
+      const emailRows =
+        consultantUserId && !updated.deduplicated
+          ? await stageNewBookingRequestEmail(prisma, {
+              requestId: `${subscription.id}:notes:${bucket}`,
               consultantUserId,
               consultantName:
                 subscription.subscriptionPlan.consultantProfile.user?.name ??
@@ -231,25 +288,15 @@ export async function PATCH(
                 subscription.requestedBy.user.name ?? "A consultee",
               planTitle: subscription.subscriptionPlan.title,
               appointmentType: "Subscription",
-              reviewUrl,
-            }).catch(() => []),
-          ]);
-          return { count: res.count, bell, emailRows };
-        }
-        return { count: res.count, bell: null, emailRows: [] };
-      });
-      if (updated.count === 0) {
-        return NextResponse.json(
-          { error: "Request can only be edited while pending approval." },
-          { status: 409 },
-        );
-      }
+              reviewUrl: dashboardUrl,
+            }).catch(() => [])
+          : [];
       await flushNotificationsAfter(
         {
           bells: [updated.bell],
           emails: [
             {
-              rows: updated.emailRows,
+              rows: emailRows,
               emailType: "NEW_BOOKING_REQUEST",
             },
           ],

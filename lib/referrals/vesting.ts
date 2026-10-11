@@ -604,40 +604,47 @@ export async function settleQualifyingReferral(
         rewardPaise: number;
       } = vestedBonus;
       if (bonus.rewardPaise > 0) {
-        const dashboardUrl = `${getAppUrl()}${goHref("client", "payments")}`;
-        const [bell, bonusEmails] = await Promise.all([
-          notifyReferralBonusEarned(
-            bonus.referrerUserId,
-            {
-              refereeName: bonus.refereeName,
-              bonusAmount: bonus.rewardPaise,
+        try {
+          const dashboardUrl = `${getAppUrl()}${goHref("client", "payments")}`;
+          const [bell, bonusEmails] = await Promise.all([
+            notifyReferralBonusEarned(
+              bonus.referrerUserId,
+              {
+                refereeName: bonus.refereeName,
+                bonusAmount: bonus.rewardPaise,
+                currency: "INR",
+                dashboardUrl,
+              },
+              { deferAttempt: true },
+            ).catch(() => null),
+            stageReferralBonusEmail(prisma, {
+              userId: bonus.referrerUserId,
+              referralId,
+              kind: "BONUS_EARNED",
+              counterpartyName: bonus.refereeName,
+              amountPaise: bonus.rewardPaise,
               currency: "INR",
               dashboardUrl,
+            }).catch(() => []),
+          ]);
+          await flushNotificationsAfter(
+            {
+              bells: [bell?.staged],
+              emails: [
+                {
+                  list: bonusEmails,
+                  emailType: "REFERRAL_BONUS_EARNED",
+                },
+              ],
             },
-            { deferAttempt: true },
-          ).catch(() => null),
-          stageReferralBonusEmail(prisma, {
-            userId: bonus.referrerUserId,
-            referralId,
-            kind: "BONUS_EARNED",
-            counterpartyName: bonus.refereeName,
-            amountPaise: bonus.rewardPaise,
-            currency: "INR",
-            dashboardUrl,
-          }).catch(() => []),
-        ]);
-        await flushNotificationsAfter(
-          {
-            bells: [bell?.staged],
-            emails: [
-              {
-                list: bonusEmails,
-                emailType: "REFERRAL_BONUS_EARNED",
-              },
-            ],
-          },
-          "referral.bonus_earned",
-        );
+            "referral.bonus_earned",
+          );
+        } catch (notifyErr) {
+          console.error(
+            "[vestReferral] post-commit notification failed:",
+            notifyErr,
+          );
+        }
       }
     }
 

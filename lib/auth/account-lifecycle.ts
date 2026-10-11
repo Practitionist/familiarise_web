@@ -57,6 +57,8 @@ function syncVerifiedSubscriber(user: LifecycleUser): void {
         email: user.email,
         firstName: nameParts[0],
         lastName: nameParts.slice(1).join(" ") || undefined,
+      }).catch((error) => {
+        reportAuthFailure(error, "novu-subscriber-sync");
       }),
     "auth:novu-subscriber-sync",
   );
@@ -84,26 +86,32 @@ export async function welcomeVerifiedUser(
     }
   }
   void scheduleAfter(async () => {
-    const [, bellResults] = await Promise.all([
-      sendWelcomeEmail({
-        email: user.email,
-        name: user.name || "there",
-        userId: user.id,
-      }),
-      notifyAccountSecurityNotice(
-        user.id,
-        {
-          kind: "WELCOME",
-          dashboardUrl: `${getAppUrl()}/dashboard`,
-        },
-        `welcome:${user.id}`,
-        { deferAttempt: true },
-      ).catch(() => []),
-    ]);
-    flushNotificationsAfter(
-      { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
-      "auth:welcome-bell",
-    );
+    try {
+      const [, bellResults] = await Promise.all([
+        sendWelcomeEmail({
+          email: user.email,
+          name: user.name || "there",
+          userId: user.id,
+        }).catch((error) => {
+          reportAuthFailure(error, "welcome-email");
+        }),
+        notifyAccountSecurityNotice(
+          user.id,
+          {
+            kind: "WELCOME",
+            dashboardUrl: `${getAppUrl()}/dashboard`,
+          },
+          `welcome:${user.id}`,
+          { deferAttempt: true },
+        ).catch(() => []),
+      ]);
+      await flushNotificationsAfter(
+        { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
+        "auth:welcome-bell",
+      ).catch(() => undefined);
+    } catch (error) {
+      reportAuthFailure(error, "welcome-notifications");
+    }
   }, "auth:welcome-email");
 }
 
@@ -164,6 +172,8 @@ export async function sendVerificationCode(
     email,
     otp,
     expiresInMinutes: VERIFICATION_CODE_TTL_SECONDS / 60,
+  }).catch((error) => {
+    reportAuthFailure(error, "verification-email");
   });
 }
 
@@ -188,7 +198,11 @@ export async function notifyExistingAccountSignUp(
       level: "warning",
     });
   }
-  await sendExistingAccountEmail({ email: user.email, userId: user.id });
+  await sendExistingAccountEmail({ email: user.email, userId: user.id }).catch(
+    (error) => {
+      reportAuthFailure(error, "existing-account-email");
+    },
+  );
 }
 
 /**
@@ -234,26 +248,32 @@ export async function onPasswordChanged(
   }
   if (opts.notify) {
     void scheduleAfter(async () => {
-      const [, bellResults] = await Promise.all([
-        sendPasswordChangedEmail({
-          email: user.email,
-          name: user.name || "there",
-          userId: user.id,
-        }),
-        notifyAccountSecurityNotice(
-          user.id,
-          {
-            kind: "PASSWORD_CHANGED",
-            dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
-          },
-          `password-changed:${user.id}:${Date.now()}`,
-          { deferAttempt: true },
-        ).catch(() => []),
-      ]);
-      flushNotificationsAfter(
-        { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
-        "auth:password-changed-bell",
-      );
+      try {
+        const [, bellResults] = await Promise.all([
+          sendPasswordChangedEmail({
+            email: user.email,
+            name: user.name || "there",
+            userId: user.id,
+          }).catch((error) => {
+            reportAuthFailure(error, "password-changed-email");
+          }),
+          notifyAccountSecurityNotice(
+            user.id,
+            {
+              kind: "PASSWORD_CHANGED",
+              dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+            },
+            `password-changed:${user.id}:${Date.now()}`,
+            { deferAttempt: true },
+          ).catch(() => []),
+        ]);
+        await flushNotificationsAfter(
+          { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
+          "auth:password-changed-bell",
+        ).catch(() => undefined);
+      } catch (error) {
+        reportAuthFailure(error, "password-changed-notifications");
+      }
     }, "auth:password-changed-email");
   }
 }
@@ -300,28 +320,34 @@ export async function notifyAccountLinked(account: {
     if (!user) return;
     const provider = providerLabel(account.providerId);
     void scheduleAfter(async () => {
-      const [, bellResults] = await Promise.all([
-        sendAccountLinkedEmail({
-          email: user.email,
-          name: user.name || "there",
-          provider,
-          userId: account.userId,
-        }),
-        notifyAccountSecurityNotice(
-          account.userId,
-          {
-            kind: "ACCOUNT_LINKED",
+      try {
+        const [, bellResults] = await Promise.all([
+          sendAccountLinkedEmail({
+            email: user.email,
+            name: user.name || "there",
             provider,
-            dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
-          },
-          `account-linked:${account.id}`,
-          { deferAttempt: true },
-        ).catch(() => []),
-      ]);
-      flushNotificationsAfter(
-        { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
-        "auth:account-linked-bell",
-      );
+            userId: account.userId,
+          }).catch((error) => {
+            reportAuthFailure(error, "account-linked-email");
+          }),
+          notifyAccountSecurityNotice(
+            account.userId,
+            {
+              kind: "ACCOUNT_LINKED",
+              provider,
+              dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+            },
+            `account-linked:${account.id}`,
+            { deferAttempt: true },
+          ).catch(() => []),
+        ]);
+        await flushNotificationsAfter(
+          { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
+          "auth:account-linked-bell",
+        ).catch(() => undefined);
+      } catch (error) {
+        reportAuthFailure(error, "account-linked-notifications");
+      }
     }, "auth:account-linked-email");
   } catch (error) {
     reportAuthFailure(error, "account-create-after");
@@ -348,6 +374,8 @@ export const accountLifecycle = {
             viaReset: false,
             notify: true,
             welcomeIfVerified: false,
+          }).catch((error) => {
+            reportAuthFailure(error, "change-password-after");
           });
         }),
       },

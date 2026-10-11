@@ -92,7 +92,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           report.targetUserId,
           {
             kind: "ACCOUNT_REINSTATED",
-            reason: notes,
             dashboardUrl,
           },
           `moderation-unban:${createdAction.id}`,
@@ -101,7 +100,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         const emailRows = await stageAccountModerationEmail(tx, {
           userId: report.targetUserId,
           kind: "REINSTATED",
-          reason: notes,
           dashboardUrl,
         }).catch(() => []);
         return {

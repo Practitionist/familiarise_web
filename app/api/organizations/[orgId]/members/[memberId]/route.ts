@@ -570,7 +570,7 @@ export async function PATCH(
     if (stagedRoleEmail || stagedRoleBells.length > 0) {
       const staged = stagedRoleEmail;
       const bells = stagedRoleBells;
-      scheduleAfter(async () => {
+      await scheduleAfter(async () => {
         for (const row of bells) await attemptTrigger(row);
         if (staged) await attemptOnboardingEmail(staged);
       }, "member.onboarding-email");

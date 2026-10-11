@@ -218,12 +218,13 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.ORG_SSO_PROVIDER_DECIDED,
     name: "SSO provider reviewed",
-    description: "Org owners when staff approve or revoke their SSO provider.",
+    description:
+      "Org owners when staff approve, reject or revoke their SSO provider.",
     category: "orgMembership",
     inApp: {
       subject:
-        "{% if payload.decision == 'APPROVED' %}SSO provider approved{% else %}SSO provider revoked{% endif %}",
-      body: "{% if payload.decision == 'APPROVED' %}SSO provider {{payload.providerId}} for {{payload.orgName}} is approved and ready to use.{% else %}SSO provider {{payload.providerId}} for {{payload.orgName}} was revoked{% if payload.reason %}: {{payload.reason}}{% endif %}.{% endif %}",
+        "{% if payload.decision == 'APPROVED' %}SSO provider approved{% elsif payload.decision == 'REJECTED' %}SSO provider not approved{% else %}SSO provider revoked{% endif %}",
+      body: "{% if payload.decision == 'APPROVED' %}SSO provider {{payload.providerId}} for {{payload.orgName}} is approved and ready to use.{% elsif payload.decision == 'REJECTED' %}SSO provider {{payload.providerId}} for {{payload.orgName}} was not approved{% if payload.reason %}: {{payload.reason}}{% endif %}.{% else %}SSO provider {{payload.providerId}} for {{payload.orgName}} was revoked{% if payload.reason %}: {{payload.reason}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },

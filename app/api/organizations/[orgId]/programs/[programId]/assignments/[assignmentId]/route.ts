@@ -419,7 +419,7 @@ export async function PATCH(
       }),
     );
 
-    flushNotificationsAfter(
+    await flushNotificationsAfter(
       {
         bells: outcome.bells,
         emails:
@@ -510,7 +510,7 @@ export async function DELETE(
       return staged;
     });
 
-    flushNotificationsAfter(
+    await flushNotificationsAfter(
       {
         bells: notices.bells,
         emails:

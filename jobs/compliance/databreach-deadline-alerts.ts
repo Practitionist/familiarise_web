@@ -37,6 +37,8 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
+import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
+import { OPS_EMAIL } from "@/lib/email/config";
 import { sendComplianceAlertEmail } from "@/lib/email/senders/onboarding";
 import { notifyComplianceAlert } from "@/lib/novu/service";
 import { postOpsChat } from "@/lib/observability/ops-chat";
@@ -129,7 +131,7 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
     where: {
       OR: [{ role: "ADMIN" }, ...(to ? [{ email: to }] : [])],
     },
-    select: { id: true },
+    select: { id: true, email: true },
   });
   const recipientUserIds = adminUsers.map((u) => u.id);
 
@@ -141,6 +143,14 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
       dueDate: earliestDeadline.toISOString(),
       dashboardUrl,
     });
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
+    });
+    console.error("[DataBreach] Novu compliance alert failed:", err);
+  }
+
+  try {
     const sendRes = await sendComplianceAlertEmail({
       recipientUserIds,
       alertId: candidates[0].id,
@@ -150,6 +160,41 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
       dashboardUrl,
     });
     emailSent = sendRes.sent > 0;
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
+    });
+    console.error("[DataBreach] user compliance alert email failed:", err);
+  }
+
+  if (
+    to &&
+    !adminUsers.some((u) => u.email?.toLowerCase() === to.toLowerCase())
+  ) {
+    try {
+      const outcome = await deliver(
+        {
+          from: SENDERS.ops,
+          to,
+          replyTo: OPS_EMAIL,
+          subject: title,
+          html: `<p>${summaryReason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
+        },
+        "DATABREACH_DEADLINE_ALERT",
+        { budgetMs: EMAIL_BUDGET_MS.JOB },
+      );
+      if (outcome.success) {
+        emailSent = true;
+      }
+    } catch (err) {
+      Sentry.captureException(err, {
+        tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
+      });
+      console.error("[DataBreach] direct alert email failed:", err);
+    }
+  }
+
+  try {
     const overdueClause = overdue > 0 ? `, ${overdue} of them OVERDUE` : "";
     await postOpsChat(
       `[DPDP] ${atRisk} unreported data breach(es) are approaching or past the 72-hour DPB reporting deadline` +
@@ -161,7 +206,7 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
     Sentry.captureException(err, {
       tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
     });
-    console.error("[DataBreach] alert dispatch failed:", err);
+    console.error("[DataBreach] Ops Chat alert failed:", err);
   }
 
   Sentry.logger.info("job:databreach-deadline-alerts finished", {

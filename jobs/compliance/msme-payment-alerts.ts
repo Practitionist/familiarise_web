@@ -26,6 +26,8 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
+import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
+import { OPS_EMAIL } from "@/lib/email/config";
 import { sendComplianceAlertEmail } from "@/lib/email/senders/onboarding";
 import { notifyComplianceAlert } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
@@ -141,7 +143,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
     where: {
       OR: [{ role: "ADMIN" }, ...(to ? [{ email: to }] : [])],
     },
-    select: { id: true },
+    select: { id: true, email: true },
   });
   const recipientUserIds = adminUsers.map((u) => u.id);
 
@@ -153,6 +155,14 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
       dueDate: earliestDeadline.toISOString(),
       dashboardUrl,
     });
+  } catch (err) {
+    console.error("[MSME] Novu compliance alert failed:", err);
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "msme-payment-alerts" },
+    });
+  }
+
+  try {
     const sendRes = await sendComplianceAlertEmail({
       recipientUserIds,
       alertId: atRiskRows[0].id,
@@ -163,10 +173,37 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
     });
     emailSent = sendRes.sent > 0;
   } catch (err) {
-    console.error("[MSME] alert dispatch failed:", err);
+    console.error("[MSME] user compliance alert email failed:", err);
     Sentry.captureException(err, {
       tags: { subsystem: "jobs", job: "msme-payment-alerts" },
     });
+  }
+
+  if (
+    to &&
+    !adminUsers.some((u) => u.email?.toLowerCase() === to.toLowerCase())
+  ) {
+    try {
+      const outcome = await deliver(
+        {
+          from: SENDERS.ops,
+          to,
+          replyTo: OPS_EMAIL,
+          subject: title,
+          html: `<p>${summaryReason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
+        },
+        "MSME_PAYMENT_ALERT",
+        { budgetMs: EMAIL_BUDGET_MS.JOB },
+      );
+      if (outcome.success) {
+        emailSent = true;
+      }
+    } catch (err) {
+      console.error("[MSME] direct alert email failed:", err);
+      Sentry.captureException(err, {
+        tags: { subsystem: "jobs", job: "msme-payment-alerts" },
+      });
+    }
   }
 
   const result = { alerted: emailSent ? atRisk : 0, atRisk, emailSent };

@@ -554,7 +554,7 @@ export async function handlePaymentSuccess(
                 error: errorMessage,
                 action_required:
                   "IMMEDIATE: Manual appointment creation or full refund required",
-                dashboard_url: `${getAppUrl()}/admin/payments/${payment.id}`,
+                dashboard_url: `${getAppUrl()}/dashboard/admin/payments/${payment.id}`,
                 timestamp: new Date().toISOString(),
               }),
             );

@@ -29,7 +29,7 @@ export function referralBonusSubject(
     case "BONUS_EARNED":
       return `You earned ${args.amountText} in referral credits`;
     case "WELCOME_BONUS":
-      return `${args.amountText} welcome credit added to your account`;
+      return `${args.amountText} welcome discount unlocked for your first booking`;
     case "CREDITS_APPLIED":
       return `${args.amountText} referral credit applied to your booking`;
   }
@@ -63,9 +63,10 @@ export function ReferralBonusEmail({
 
       {kind === "WELCOME_BONUS" ? (
         <Text style={paragraph}>
-          Welcome to Familiarise! <strong>{amountText}</strong> in credits from{" "}
-          <strong>{counterpartyName ?? "your referrer"}</strong> has been added
-          to your account for your first booking.
+          Welcome to Familiarise! You have unlocked a{" "}
+          <strong>{amountText}</strong> discount from{" "}
+          <strong>{counterpartyName ?? "your referrer"}</strong> on your first
+          booking.
         </Text>
       ) : null}
 

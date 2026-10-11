@@ -395,26 +395,34 @@ export async function stageAndSendRecordingReadyNotifications(
     "recordings",
   );
 
-  const [staged, readyEmails] = await Promise.all([
-    notifyRecordingAvailable(
-      userIds,
-      {
-        ...notificationScope(appointment?.organizationId),
-        appointmentType,
-        consultantName,
-        dashboardUrl,
-      },
-      `recording.ready:${recordingId}`,
-      { deferAttempt: true, entityRef: `recording:${recordingId}` },
+  const [bellOutcome, emailOutcome] = await Promise.allSettled([
+    Promise.resolve(
+      notifyRecordingAvailable(
+        userIds,
+        {
+          ...notificationScope(appointment?.organizationId),
+          appointmentType,
+          consultantName,
+          dashboardUrl,
+        },
+        `recording.ready:${recordingId}`,
+        { deferAttempt: true, entityRef: `recording:${recordingId}` },
+      ),
     ),
-    stageDocumentAndRecordingEmail(prisma, {
-      entityId: recordingId,
-      userIds,
-      kind: "RECORDING_READY",
-      appointmentType,
-      dashboardUrl,
-    }).catch(() => []),
+    Promise.resolve(
+      stageDocumentAndRecordingEmail(prisma, {
+        entityId: recordingId,
+        userIds,
+        kind: "RECORDING_READY",
+        appointmentType,
+        dashboardUrl,
+      }),
+    ).catch(() => []),
   ]);
+
+  const staged = bellOutcome.status === "fulfilled" ? bellOutcome.value : [];
+  const readyEmails =
+    emailOutcome.status === "fulfilled" ? emailOutcome.value : [];
 
   await flushNotificationsAfter(
     {
@@ -429,6 +437,10 @@ export async function stageAndSendRecordingReadyNotifications(
     },
     "recording.ready",
   );
+
+  if (bellOutcome.status === "rejected") {
+    throw bellOutcome.reason;
+  }
 }
 
 export type ReadyRecordingParams = {

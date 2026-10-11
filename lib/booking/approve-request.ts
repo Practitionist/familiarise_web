@@ -340,27 +340,24 @@ export async function mintApprovalPaymentAfterCommit(args: {
       { deferAttempt: true },
     ).catch(() => null),
     email
-      .sendPaymentLinkEmail(
-        {
-          email: row.requestedBy.user.email || "",
-          name: row.requestedBy.user.name || "User",
-          consultantName,
-          appointmentType: args.kind,
-          amount: paymentResult.amount,
-          currency: paymentResult.currency,
-          paymentUrl,
-          expiresAt,
-          paymentId: paymentResult.paymentId,
-        },
-        { deferAttempt: true },
-      )
+      .sendPaymentLinkEmail({
+        email: row.requestedBy.user.email || "",
+        name: row.requestedBy.user.name || "User",
+        consultantName,
+        appointmentType: args.kind,
+        amount: paymentResult.amount,
+        currency: paymentResult.currency,
+        paymentUrl,
+        expiresAt,
+        paymentId: paymentResult.paymentId,
+      })
       .then(() => {
-        console.log(`📧 Payment link email staged for ${args.kind} ${row.id}`);
+        console.log(`📧 Payment link email sent for ${args.kind} ${row.id}`);
       })
       .catch((emailError) => {
         // The link is live on the dashboard via pendingPaymentUrl; mail is best-effort.
         console.error(
-          `⚠️ Failed to stage payment link email for ${args.kind} ${row.id}:`,
+          `⚠️ Failed to send payment link email for ${args.kind} ${row.id}:`,
           emailError instanceof Error ? emailError.message : "Unknown error",
         );
         report(emailError);

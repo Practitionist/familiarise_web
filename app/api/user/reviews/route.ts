@@ -329,15 +329,12 @@ export async function POST(req: NextRequest) {
 
           // Only a new or revived review is news; an edit must not re-notify.
           const isNew = !existing || withdrawnByAuthor;
-          let stagedBell = null;
-          let stagedEmailRows: Awaited<ReturnType<typeof stageNewReviewEmail>> =
-            [];
+          const reviewerName = created.isAnonymous
+            ? "A verified client"
+            : created.consulteeProfile?.user?.name || "User";
+          const reviewsInboxHref = goHref("expert", "reviews");
+          let stagedReviewBell = null;
           if (isNew) {
-            // An anonymous reviewer's name is never sent to the consultant.
-            const reviewerName = created.isAnonymous
-              ? "A verified client"
-              : created.consulteeProfile?.user?.name || "User";
-            const reviewsInboxHref = goHref("expert", "reviews");
             const triggerResult = await notifyNewReview(
               created.consultantProfile.userId,
               {
@@ -350,18 +347,16 @@ export async function POST(req: NextRequest) {
               `review-published:${created.id}:${created.updatedAt.getTime()}`,
               { tx },
             );
-            stagedBell = triggerResult.staged ?? null;
-            stagedEmailRows = await stageNewReviewEmail(tx, {
-              reviewId: created.id,
-              consultantUserId: created.consultantProfile.userId,
-              reviewerName,
-              rating: created.rating,
-              comment: created.reviewDescription,
-              reviewUrl: reviewsInboxHref,
-            }).catch(() => []);
+            stagedReviewBell = triggerResult.staged ?? null;
           }
 
-          return { review: created, isNew, stagedBell, stagedEmailRows };
+          return {
+            review: created,
+            isNew,
+            reviewerName,
+            reviewsInboxHref,
+            stagedReviewBell,
+          };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
@@ -370,15 +365,26 @@ export async function POST(req: NextRequest) {
     const {
       review: newReview,
       isNew,
-      stagedBell,
-      stagedEmailRows,
+      reviewerName,
+      reviewsInboxHref,
+      stagedReviewBell,
     } = writeResult;
 
     if (isNew) {
+      const stagedReviewEmails = await stageNewReviewEmail(prisma, {
+        reviewId: newReview.id,
+        consultantUserId: newReview.consultantProfile.userId,
+        reviewerName,
+        rating: newReview.rating,
+        comment: newReview.reviewDescription,
+        reviewUrl: reviewsInboxHref,
+      }).catch(() => []);
       await flushNotificationsAfter(
         {
-          bells: [stagedBell],
-          emails: [{ rows: stagedEmailRows, emailType: "NEW_REVIEW_RECEIVED" }],
+          bells: [stagedReviewBell],
+          emails: [
+            { rows: stagedReviewEmails, emailType: "NEW_REVIEW_RECEIVED" },
+          ],
         },
         "reviews.create",
       );

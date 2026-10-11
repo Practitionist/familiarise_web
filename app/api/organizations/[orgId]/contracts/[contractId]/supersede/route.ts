@@ -381,7 +381,9 @@ export async function POST(
       });
 
       const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/billing`;
-      const effectiveDateVal = effectiveTo ?? effectiveFrom;
+      const kind =
+        body.reason === "RENEWAL" ? "CONTRACT_RENEWED" : "CONTRACT_ACTIVATED";
+      const effectiveDateVal = successor.effectiveFrom;
       const operatorRows = tx.membership?.findMany
         ? await tx.membership.findMany({
             where: {
@@ -406,8 +408,7 @@ export async function POST(
       stagedEmails = await stageOrgContractAndSeatEmail(tx, {
         recipientUserIds: operatorRows.map((r) => r.userId),
         entityId: successor.id,
-        kind:
-          body.reason === "RENEWAL" ? "CONTRACT_RENEWED" : "CONTRACT_ACTIVATED",
+        kind,
         orgName: access.org.name,
         effectiveDate: effectiveDateVal,
         dashboardUrl,
@@ -416,22 +417,26 @@ export async function POST(
       return successor;
     });
 
-    flushNotificationsAfter(
-      {
-        bells: stagedBells,
-        emails:
-          stagedEmails.length > 0
-            ? [
-                {
-                  rows: stagedEmails,
-                  emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
-                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
-                },
-              ]
-            : [],
-      },
-      "org.contract.superseded",
-    );
+    try {
+      await flushNotificationsAfter(
+        {
+          bells: stagedBells,
+          emails:
+            stagedEmails.length > 0
+              ? [
+                  {
+                    rows: stagedEmails,
+                    emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                    budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                  },
+                ]
+              : [],
+        },
+        "org.contract.superseded",
+      );
+    } catch (notifyErr) {
+      console.error("[org.contract.superseded] notify failed:", notifyErr);
+    }
 
     if (
       body.reason === "AMENDMENT" &&

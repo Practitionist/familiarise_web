@@ -40,6 +40,7 @@ import type {
   StagedRecipientEmail,
 } from "../send-to-recipients";
 import {
+  absolute,
   dateText,
   defineBudgetedEmailSender,
   defineFixedBudgetEmailSender,
@@ -102,8 +103,8 @@ function refundProcessedSpec(
         amountText,
         planTitle: args.planTitle,
         creditNoteNumber: args.creditNoteNumber,
-        refundPolicyUrl: `${appUrl}/refund`,
-        dashboardUrl: `${appUrl}${goHref("client", "payments")}`,
+        refundPolicyUrl: absolute(`${appUrl}/refund`),
+        dashboardUrl: absolute(goHref("client", "payments")),
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };
@@ -198,7 +199,7 @@ export const sendOrgPayoutFailedEmail =
               orgName: args.orgName,
               amountText,
               reason: args.reason,
-              dashboardUrl: args.dashboardUrl,
+              dashboardUrl: absolute(args.dashboardUrl),
               unsubscribeUrl: r.unsubscribeUrl,
               withheldText: args.withheldText,
             }),
@@ -246,7 +247,7 @@ export const sendOrgInvoiceOverdueEmail =
               dueDateText: dateText(args.dueDate, r.zone),
               daysLate: args.daysLate,
               reminderStage: args.reminderStage,
-              payUrl: args.payUrl,
+              payUrl: absolute(args.payUrl),
               unsubscribeUrl: r.unsubscribeUrl,
             }),
         },
@@ -286,7 +287,7 @@ export const sendOrgWalletLowEmail =
               orgName: args.orgName,
               balanceText,
               floorText,
-              topUpUrl: args.topUpUrl,
+              topUpUrl: absolute(args.topUpUrl),
               unsubscribeUrl: r.unsubscribeUrl,
             }),
         },
@@ -328,7 +329,7 @@ export const sendOrgOverageDueEmail =
               programTitle: args.programTitle,
               amountText,
               dueByText: args.dueBy ? dateText(args.dueBy, r.zone) : undefined,
-              payUrl: args.payUrl,
+              payUrl: absolute(args.payUrl),
               unsubscribeUrl: r.unsubscribeUrl,
             }),
         },
@@ -353,6 +354,21 @@ export interface PayoutStatusEmailArgs {
   dashboardUrl?: string;
 }
 
+function payoutStatusSubject(
+  status: PayoutStatusKind,
+  amountText: string,
+  target: string,
+): string {
+  switch (status) {
+    case "COMPLETED":
+      return `Your payout of ${amountText}${target} is complete`;
+    case "REVERSED":
+      return `Your payout${target} was reversed`;
+    case "FAILED":
+      return `Your payout${target} could not be completed`;
+  }
+}
+
 function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
   userIds: string[];
   spec: RecipientEmailSpec;
@@ -360,14 +376,10 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
   const userIds = args.recipientUserIds ?? (args.userId ? [args.userId] : []);
   const amountText = money(args.amountPaise, args.currency);
   const target = args.orgName ? ` to ${args.orgName}` : "";
-  const subject =
-    args.status === "COMPLETED"
-      ? `Your payout of ${amountText}${target} is complete`
-      : args.status === "REVERSED"
-        ? `Your payout${target} was reversed`
-        : `Your payout${target} could not be completed`;
-  const resolvedDashboardUrl =
-    args.dashboardUrl ?? `${getAppUrl()}${goHref("expert", "earnings")}`;
+  const subject = payoutStatusSubject(args.status, amountText, target);
+  const resolvedDashboardUrl = absolute(
+    args.dashboardUrl ?? goHref("expert", "earnings"),
+  );
 
   return {
     userIds,
@@ -439,8 +451,9 @@ function buildDisputeNoticeEmail(args: DisputeNoticeEmailArgs): {
     args.kind === "OPENED"
       ? `Payment dispute opened (${amountText})`
       : `Payment dispute resolved (${amountText})`;
-  const resolvedDashboardUrl =
-    args.dashboardUrl ?? `${getAppUrl()}${goHref("expert", "earnings")}`;
+  const resolvedDashboardUrl = absolute(
+    args.dashboardUrl ?? goHref("expert", "earnings"),
+  );
 
   return {
     userIds,
@@ -494,18 +507,28 @@ export interface OrgBillingEmailArgs {
   dashboardUrl: string;
 }
 
+function orgBillingSubject(
+  kind: OrgBillingReceiptKind,
+  invLabel: string,
+  orgName: string,
+): string {
+  switch (kind) {
+    case "INVOICE_ISSUED":
+      return `Invoice${invLabel} issued for ${orgName}`;
+    case "INVOICE_PAID":
+      return `Invoice${invLabel} paid for ${orgName}`;
+    case "WALLET_TOPUP_CONFIRMED":
+      return `Wallet top-up confirmed for ${orgName}`;
+  }
+}
+
 function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
   userIds: string[];
   spec: RecipientEmailSpec;
 } {
   const amountText = money(args.amountPaise, args.currency);
   const invLabel = args.invoiceNumber ? ` ${args.invoiceNumber}` : "";
-  const subject =
-    args.kind === "INVOICE_ISSUED"
-      ? `Invoice${invLabel} issued for ${args.orgName}`
-      : args.kind === "INVOICE_PAID"
-        ? `Invoice${invLabel} paid for ${args.orgName}`
-        : `Wallet top-up confirmed for ${args.orgName}`;
+  const subject = orgBillingSubject(args.kind, invLabel, args.orgName);
   const entityRef = args.invoiceId
     ? `orgInvoice:${args.invoiceId}`
     : `org:${args.organizationId}`;
@@ -531,7 +554,7 @@ function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
           invoiceNumber: args.invoiceNumber,
           dueDateText: args.dueDate ? dateText(args.dueDate, r.zone) : null,
           newBalanceText,
-          dashboardUrl: args.dashboardUrl,
+          dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
@@ -620,7 +643,7 @@ function buildOrgOperationalEmail(args: OrgOperationalEmailArgs): {
           engagementsUsed: args.engagementsUsed,
           cap: args.cap,
           usedPct: args.usedPct,
-          actionUrl: args.actionUrl,
+          actionUrl: absolute(args.actionUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
@@ -661,8 +684,9 @@ function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
     args.remainingPaise !== undefined && args.remainingPaise !== null
       ? money(args.remainingPaise, currency)
       : undefined;
-  const dashboardUrl =
-    args.dashboardUrl ?? `${getAppUrl()}${goHref("client", "payments")}`;
+  const dashboardUrl = absolute(
+    args.dashboardUrl ?? goHref("client", "payments"),
+  );
 
   return {
     userIds: [args.userId],

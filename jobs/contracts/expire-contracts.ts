@@ -175,13 +175,29 @@ export async function runExpireContracts(): Promise<ExpireStats> {
 
     if (claimed.expired) {
       stats.expired += 1;
-      for (const bell of claimed.stagedBells) await attemptTrigger(bell);
+      for (const bell of claimed.stagedBells) {
+        try {
+          await attemptTrigger(bell);
+        } catch (err) {
+          console.error(
+            `[expire-contracts] Bell dispatch failed for contract ${c.id}:`,
+            err,
+          );
+        }
+      }
       if (claimed.stagedEmails.length > 0) {
-        await attemptStaged(
-          claimed.stagedEmails,
-          ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
-          EMAIL_BUDGET_MS.JOB,
-        );
+        try {
+          await attemptStaged(
+            claimed.stagedEmails,
+            ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+            EMAIL_BUDGET_MS.JOB,
+          );
+        } catch (err) {
+          console.error(
+            `[expire-contracts] Email dispatch failed for contract ${c.id}:`,
+            err,
+          );
+        }
       }
     }
     stats.assignmentsClosed += claimed.assignmentsClosed;

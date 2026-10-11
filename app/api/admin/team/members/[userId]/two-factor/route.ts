@@ -5,9 +5,6 @@ import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import { sendOperatorSetupLink } from "@/lib/auth/operators";
 import { sendSecurityEventEmail } from "@/lib/auth/security-email";
-import { notifyAccountSecurityNotice } from "@/lib/novu/service";
-import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
-import { getAppUrl } from "@/lib/url";
 
 /**
  * DELETE /api/admin/team/members/{userId}/two-factor — reset an operator's
@@ -82,15 +79,6 @@ export const DELETE = withOpsAction(
         data: { password },
       });
       const { revoked } = await revokeAllUserSessions(tx, userId);
-      const bellResults = await notifyAccountSecurityNotice(
-        userId,
-        {
-          kind: "TWO_FACTOR_DISABLED",
-          dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
-        },
-        `admin-2fa-reset:${userId}:${Date.now()}`,
-        { tx },
-      );
 
       return {
         target: { kind: "User", id: userId },
@@ -107,10 +95,6 @@ export const DELETE = withOpsAction(
         response: { userId, sessionsRevoked: revoked },
         // Independent sends: a failed setup link must not suppress the security notice.
         afterCommit: async () => {
-          flushNotificationsAfter(
-            { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
-            "admin.team.reset-2fa",
-          );
           const results = await Promise.allSettled([
             sendOperatorSetupLink(target.email),
             sendSecurityEventEmail(target, {

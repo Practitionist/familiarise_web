@@ -46,8 +46,10 @@ import {
   defineLifecycleStager,
   greet,
   money,
+  prepareSpecEmails,
   stageSpecGuarded,
   whenText,
+  type PreparedRecipientEmails,
   type RecipientEmailSpec,
 } from "./shared";
 
@@ -699,6 +701,16 @@ function buildClassExitAvailableEmail(args: ClassExitAvailableEmailArgs) {
   });
 }
 
+export function prepareClassExitAvailableEmails(
+  args: ClassExitAvailableEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildClassExitAvailableEmail({
+    ...args,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+  return prepareSpecEmails(spec, userIds);
+}
+
 export const sendClassExitAvailableEmails =
   defineBudgetedEmailSender<ClassExitAvailableEmailArgs>(
     buildClassExitAvailableEmail,
@@ -727,10 +739,22 @@ function buildSessionOutcomeEmail(args: SessionOutcomeEmailArgs) {
     kind: args.outcome,
     planTitle: args.planTitle,
     startsAt: args.startsAt,
-    recordingUrl: args.recordingUrl,
-    supportUrl: args.supportUrl,
-    dashboardUrl: args.dashboardUrl,
+    recordingUrl: args.recordingUrl ? absolute(args.recordingUrl) : undefined,
+    supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
+    dashboardUrl: absolute(args.dashboardUrl),
   });
+}
+
+export function prepareSessionOutcomeEmails(
+  args: SessionOutcomeEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildSessionOutcomeEmail({
+    ...args,
+    recordingUrl: args.recordingUrl ? absolute(args.recordingUrl) : undefined,
+    supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+  return prepareSpecEmails(spec, userIds);
 }
 
 export const sendSessionOutcomeEmails =
@@ -754,7 +778,7 @@ function buildAppointmentCompletedEmail(args: AppointmentCompletedEmailArgs) {
     kind: "COMPLETED",
     planTitle: args.planTitle,
     appointmentType: args.appointmentType,
-    dashboardUrl: args.dashboardUrl,
+    dashboardUrl: absolute(args.dashboardUrl),
   });
 }
 
@@ -818,6 +842,16 @@ function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
   };
 }
 
+export function prepareTrialLifecycleEmail(
+  args: TrialLifecycleEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildTrialLifecycleEmail({
+    ...args,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+  return prepareSpecEmails(spec, userIds);
+}
+
 export const sendTrialLifecycleEmail =
   defineBudgetedEmailSender<TrialLifecycleEmailArgs>(buildTrialLifecycleEmail);
 
@@ -873,6 +907,16 @@ function buildSubscriptionLifecycleEmail(
   };
 }
 
+export function prepareSubscriptionLifecycleEmail(
+  args: SubscriptionLifecycleEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildSubscriptionLifecycleEmail({
+    ...args,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+  return prepareSpecEmails(spec, userIds);
+}
+
 export const sendSubscriptionLifecycleEmail =
   defineBudgetedEmailSender<SubscriptionLifecycleEmailArgs>(
     buildSubscriptionLifecycleEmail,
@@ -895,6 +939,7 @@ export interface DocumentAndRecordingEmailArgs {
   reviewStatus?: string;
   reviewNotes?: string | null;
   appointmentType?: string;
+  actionUrl?: string;
   dashboardUrl: string;
 }
 
@@ -902,6 +947,7 @@ function buildDocumentAndRecordingEmail(args: DocumentAndRecordingEmailArgs): {
   userIds: string[];
   spec: RecipientEmailSpec;
 } {
+  const resolvedActionUrl = absolute(args.actionUrl ?? args.dashboardUrl);
   return {
     userIds: args.userIds,
     spec: {
@@ -924,11 +970,22 @@ function buildDocumentAndRecordingEmail(args: DocumentAndRecordingEmailArgs): {
           reviewStatus: args.reviewStatus,
           reviewNotes: args.reviewNotes,
           appointmentType: args.appointmentType,
-          dashboardUrl: absolute(args.dashboardUrl),
+          dashboardUrl: resolvedActionUrl,
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
   };
+}
+
+export function prepareDocumentAndRecordingEmail(
+  args: DocumentAndRecordingEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildDocumentAndRecordingEmail({
+    ...args,
+    actionUrl: args.actionUrl ? absolute(args.actionUrl) : undefined,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+  return prepareSpecEmails(spec, userIds);
 }
 
 export const sendDocumentAndRecordingEmail =

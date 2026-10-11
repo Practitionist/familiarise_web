@@ -182,7 +182,7 @@ export async function POST(
       return created;
     });
 
-    scheduleAfter(async () => {
+    await scheduleAfter(async () => {
       await Promise.all([
         sendSsoProviderSubmittedEmail({
           organizationId: orgId,

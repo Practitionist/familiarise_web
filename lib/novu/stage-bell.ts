@@ -21,6 +21,7 @@ export async function stageBell(
     deferrable?: boolean;
   },
 ): Promise<StagedTrigger | null> {
+  if (!tx.notificationOutbox) return null;
   if (args.recipients.length === 0) return null;
   const policy = await resolveRecipientBellPolicy(
     args.workflowId,

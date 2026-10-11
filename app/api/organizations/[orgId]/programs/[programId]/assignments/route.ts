@@ -498,7 +498,7 @@ export async function POST(
       );
     }
 
-    flushNotificationsAfter(
+    await flushNotificationsAfter(
       {
         bells: outcome.stagedBells,
         emails:

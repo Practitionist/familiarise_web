@@ -586,6 +586,24 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
         expect(html).toContain(subject);
       }
 
+      const platformComplianceHtml = renderToStaticMarkup(
+        React.createElement(OrgContractAndSeatEmail, {
+          kind: "COMPLIANCE_ALERT",
+          title: "Statutory TDS Return",
+          dueDateText: "31 Oct 2026",
+          dashboardUrl: "https://familiarisenow.com/dashboard/staff/compliance",
+        }),
+      );
+      expect(platformComplianceHtml).not.toContain("for your organisation");
+      expect(platformComplianceHtml).toContain(
+        "<strong>Statutory TDS Return</strong> is due",
+      );
+
+      const rejectedSsoSubject = ssoProviderSubject("REJECTED", "Acme Corp");
+      const revokedSsoSubject = ssoProviderSubject("REVOKED", "Acme Corp");
+      expect(rejectedSsoSubject).toContain("was not approved");
+      expect(revokedSsoSubject).toContain("was revoked");
+
       const ssoKinds: SsoProviderEmailKind[] = [
         "SUBMITTED",
         "APPROVED",
@@ -738,7 +756,7 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
       );
       expect(mockNotifyAccountSecurityNotice).toHaveBeenCalledWith(
         "user-sec-1",
-        expect.objectContaining({ kind: "TWO_FACTOR_DISABLED" }),
+        expect.objectContaining({ kind: "PASSKEY_REMOVED" }),
         expect.stringContaining("security-event:passkey-removed:user-sec-1:"),
         { deferAttempt: true },
       );

@@ -86,6 +86,7 @@ const EXPIRY_SELECT = {
   },
   appointment: {
     select: {
+      organizationId: true,
       occurrences: {
         where: { deletedAt: null },
         orderBy: { startsAt: "asc" as const },
@@ -109,7 +110,10 @@ type LapsedTrial = {
     title: string;
     consultantProfile: { user: { name: string | null } };
   };
-  appointment: { occurrences: { startsAt: Date }[] } | null;
+  appointment: {
+    organizationId?: string | null;
+    occurrences: { startsAt: Date }[];
+  } | null;
 };
 
 /**
@@ -159,16 +163,19 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
       trial.subscriptionPlan.consultantProfile.user.name || "Consultant";
     const consulteeName = trial.consulteeProfile.user.name || "User";
     const startsAt = trial.appointment?.occurrences[0]?.startsAt;
+    const organizationId = trial.appointment?.organizationId ?? undefined;
+    const cancelBellInput = {
+      organizationId,
+      consultantName,
+      consulteeName,
+      planTitle: trial.subscriptionPlan.title,
+      status: TrialStatus.CANCELLED,
+      dateTime: startsAt?.toISOString(),
+      dashboardUrl,
+    };
     const [, emailRows] = await Promise.all([
       Promise.resolve(
-        notifyTrialCancelled([trial.consulteeProfile.user.id], {
-          consultantName,
-          consulteeName,
-          planTitle: trial.subscriptionPlan.title,
-          status: TrialStatus.CANCELLED,
-          dateTime: startsAt?.toISOString(),
-          dashboardUrl,
-        }),
+        notifyTrialCancelled([trial.consulteeProfile.user.id], cancelBellInput),
       ).catch(() => []),
       stageTrialLifecycleEmail(prisma, {
         trialId: trial.id,
@@ -283,6 +290,7 @@ const unansweredRefundKey = (paymentId: string) =>
 async function refundUnansweredTrial(trial: {
   id: string;
   paymentId: string | null;
+  appointment?: { organizationId?: string | null } | null;
   consulteeProfile: { user: { id: string } };
   subscriptionPlan: {
     title: string;
@@ -299,13 +307,18 @@ async function refundUnansweredTrial(trial: {
     });
     const consultantName =
       trial.subscriptionPlan.consultantProfile.user.name ?? "The consultant";
+    const organizationId = trial.appointment?.organizationId ?? undefined;
+    const refundBellInput = {
+      id: trial.id,
+      consulteeUserId: trial.consulteeProfile.user.id,
+      planTitle: trial.subscriptionPlan.title,
+      consultantName,
+      organizationId,
+    };
     const [refundBell, emailRows] = await Promise.all([
-      stageTrialRefundedBell(prisma, {
-        id: trial.id,
-        consulteeUserId: trial.consulteeProfile.user.id,
-        planTitle: trial.subscriptionPlan.title,
-        consultantName,
-      }),
+      Promise.resolve(stageTrialRefundedBell(prisma, refundBellInput)).catch(
+        () => null,
+      ),
       stageTrialLifecycleEmail(prisma, {
         trialId: trial.id,
         userIds: [trial.consulteeProfile.user.id],

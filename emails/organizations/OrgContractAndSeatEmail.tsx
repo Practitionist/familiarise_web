@@ -51,52 +51,34 @@ export function orgContractAndSeatSubject(
   }
 }
 
-export function OrgContractAndSeatEmail({
-  kind,
-  recipientName = "there",
-  orgName = "your organisation",
-  programName = "your programme",
-  title,
-  dueDateText,
-  effectiveDateText,
-  reason,
-  dashboardUrl,
-  unsubscribeUrl,
-}: Readonly<OrgContractAndSeatEmailProps>) {
-  const subject = orgContractAndSeatSubject({
-    kind,
-    orgName,
-    programName,
-    title,
-  });
-
-  const requiredNotice = kind === "COMPLIANCE_ALERT";
-
-  return (
-    <EmailLayout
-      preview={subject}
-      requiredNotice={requiredNotice}
-      unsubscribeUrl={requiredNotice ? undefined : unsubscribeUrl}
-    >
-      <Text style={heading}>{subject}</Text>
-      <Text style={paragraph}>Hi {recipientName},</Text>
-
-      {kind === "SEAT_ASSIGNED" ? (
+function renderContractAndSeatBody(args: {
+  kind: OrgContractAndSeatEmailKind;
+  orgName: string | undefined;
+  programName: string;
+  title?: string;
+  dueDateText?: string;
+  effectiveDateText?: string;
+}): React.ReactNode {
+  const { kind, orgName, programName, title, dueDateText, effectiveDateText } =
+    args;
+  switch (kind) {
+    case "SEAT_ASSIGNED":
+      return (
         <Text style={paragraph}>
           You have been assigned a seat in <strong>{programName}</strong> at{" "}
           <strong>{orgName}</strong>. Open your workspace dashboard to view
           eligible experts and book sessions.
         </Text>
-      ) : null}
-
-      {kind === "SEAT_REVOKED" ? (
+      );
+    case "SEAT_REVOKED":
+      return (
         <Text style={paragraph}>
           Your seat in <strong>{programName}</strong> at{" "}
           <strong>{orgName}</strong> has ended.
         </Text>
-      ) : null}
-
-      {kind === "CONTRACT_ACTIVATED" ? (
+      );
+    case "CONTRACT_ACTIVATED":
+      return (
         <Text style={paragraph}>
           The enterprise agreement for <strong>{orgName}</strong> is now active
           {effectiveDateText ? (
@@ -107,9 +89,9 @@ export function OrgContractAndSeatEmail({
           ) : null}
           .
         </Text>
-      ) : null}
-
-      {kind === "CONTRACT_RENEWED" ? (
+      );
+    case "CONTRACT_RENEWED":
+      return (
         <Text style={paragraph}>
           The enterprise agreement for <strong>{orgName}</strong> has been
           renewed
@@ -121,9 +103,9 @@ export function OrgContractAndSeatEmail({
           ) : null}
           .
         </Text>
-      ) : null}
-
-      {kind === "CONTRACT_ENDED" ? (
+      );
+    case "CONTRACT_ENDED":
+      return (
         <Text style={paragraph}>
           The enterprise agreement for <strong>{orgName}</strong> has concluded
           {effectiveDateText ? (
@@ -134,9 +116,9 @@ export function OrgContractAndSeatEmail({
           ) : null}
           .
         </Text>
-      ) : null}
-
-      {kind === "COMPLIANCE_ALERT" ? (
+      );
+    case "COMPLIANCE_ALERT":
+      return (
         <Text style={paragraph}>
           <strong>{title ?? "A statutory compliance obligation"}</strong>
           {orgName ? (
@@ -157,7 +139,51 @@ export function OrgContractAndSeatEmail({
           . Review the compliance dashboard to complete filing before the
           statutory deadline.
         </Text>
-      ) : null}
+      );
+  }
+}
+
+export function OrgContractAndSeatEmail({
+  kind,
+  recipientName = "there",
+  orgName: orgNameProp,
+  programName = "your programme",
+  title,
+  dueDateText,
+  effectiveDateText,
+  reason,
+  dashboardUrl,
+  unsubscribeUrl,
+}: Readonly<OrgContractAndSeatEmailProps>) {
+  const orgName =
+    orgNameProp ??
+    (kind === "COMPLIANCE_ALERT" ? undefined : "your organisation");
+  const subject = orgContractAndSeatSubject({
+    kind,
+    orgName,
+    programName,
+    title,
+  });
+
+  const requiredNotice = kind === "COMPLIANCE_ALERT";
+
+  return (
+    <EmailLayout
+      preview={subject}
+      requiredNotice={requiredNotice}
+      unsubscribeUrl={requiredNotice ? undefined : unsubscribeUrl}
+    >
+      <Text style={heading}>{subject}</Text>
+      <Text style={paragraph}>Hi {recipientName},</Text>
+
+      {renderContractAndSeatBody({
+        kind,
+        orgName,
+        programName,
+        title,
+        dueDateText,
+        effectiveDateText,
+      })}
 
       {reason ? (
         <Text style={paragraph}>

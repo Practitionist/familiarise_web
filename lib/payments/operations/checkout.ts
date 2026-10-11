@@ -3512,7 +3512,7 @@ export async function handleClassCheckout(
  * out. `Program.organizationId` lives on its parent Contract, not on Program
  * itself, so the select chain hops Program → Contract → Organization.
  */
-function dispatchProgramBell(
+async function dispatchProgramBell(
   programAssignmentId: string,
   bell:
     | { kind: "EXHAUSTED" }
@@ -3522,12 +3522,12 @@ function dispatchProgramBell(
         cap: number;
         usedPct: number;
       },
-): void {
+): Promise<void> {
   const label =
     bell.kind === "EXHAUSTED"
       ? "notifyOrgProgramExhausted"
       : "notifyOrgProgramCapNear";
-  scheduleAfter(async () => {
+  await scheduleAfter(async () => {
     try {
       const ctx = await prisma.programAssignment.findUnique({
         where: { id: programAssignmentId },
@@ -4965,11 +4965,11 @@ export async function handleCheckout(
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
           },
         );
-      }).catch((err) => {
+      }).catch(async (err) => {
         // #1435 — post-rollback delivery for the one bell whose news IS the
         // refusal. Nothing else below is reached when the transaction fails.
         if (exhaustedBell.programAssignmentId) {
-          dispatchProgramBell(exhaustedBell.programAssignmentId, {
+          await dispatchProgramBell(exhaustedBell.programAssignmentId, {
             kind: "EXHAUSTED",
           });
         }
@@ -4980,7 +4980,7 @@ export async function handleCheckout(
       // actually happened. See dispatchProgramBell for why neither lookup can
       // run inside the transaction.
       if (result.capNearBell) {
-        dispatchProgramBell(result.capNearBell.programAssignmentId, {
+        await dispatchProgramBell(result.capNearBell.programAssignmentId, {
           kind: "CAP_NEAR",
           engagementsUsed: result.capNearBell.engagementsUsed,
           cap: result.capNearBell.cap,
@@ -4988,7 +4988,7 @@ export async function handleCheckout(
         });
       }
       if (result.overageBell) {
-        notifyOverageDueAfterCommit(result.overageBell);
+        await notifyOverageDueAfterCommit(result.overageBell);
       }
 
       const logMessage = isZeroAmountPayment
@@ -5013,7 +5013,7 @@ export async function handleCheckout(
       if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
         // applyCreditsToPayment committed above, so this post-commit bell reads settled state.
         if (result.creditsApplied > 0) {
-          scheduleAfter(
+          await scheduleAfter(
             () =>
               notifyCreditsAppliedBestEffort({
                 userId,
@@ -5036,7 +5036,7 @@ export async function handleCheckout(
 
         const appointmentIdForChannels = result.appointmentId;
         if (appointmentIdForChannels) {
-          scheduleAfter(async () => {
+          await scheduleAfter(async () => {
             try {
               const { ensureChannelsForAppointment } =
                 await import("@/lib/payments/webhooks/ensure-channels");

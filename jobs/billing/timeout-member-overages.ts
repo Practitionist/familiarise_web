@@ -122,6 +122,7 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
     // Fire-and-forget — committed state, no DB writes in the notify path.
     await Promise.all([
       notifyMemberOverageTimedOut(ev.programAssignment.membership.userId, {
+        organizationId: ev.programAssignment.program.contract.organization.id,
         orgName: ev.programAssignment.program.contract.organization.name,
         programName: ev.programAssignment.program.name,
         amountPaise: ev.marginalPaise,

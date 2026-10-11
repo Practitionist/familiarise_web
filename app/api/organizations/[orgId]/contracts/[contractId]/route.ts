@@ -438,7 +438,7 @@ export async function PATCH(
       return tx.contract.findUniqueOrThrow({ where: { id: contractId } });
     });
 
-    flushNotificationsAfter(
+    await flushNotificationsAfter(
       {
         bells: stagedBells,
         emails:

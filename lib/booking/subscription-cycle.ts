@@ -12,7 +12,6 @@
 import { stageSubscriptionLifecycleEmail, type StagingTx } from "@/lib/email";
 import { notifySubscriptionRenewed } from "@/lib/novu/service";
 import type { StagedTrigger, TriggerOptions } from "@/lib/novu";
-import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import {
   computeHoldUntil,
@@ -27,6 +26,10 @@ import {
   subscriptionEntitlement,
   subscriptionTranches,
 } from "./entitlement";
+
+export type StagedCycleTriggers = StagedTrigger[] & {
+  emailRows?: Awaited<ReturnType<typeof stageSubscriptionLifecycleEmail>>;
+};
 
 type SettleTx = Pick<Tx, "appointment" | "consultantEarnings"> &
   NonNullable<TriggerOptions["tx"]> &
@@ -79,7 +82,7 @@ export async function settleSubscriptionCycle(
     organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
   },
   args: { appointmentId: string; now: Date },
-): Promise<StagedTrigger[]> {
+): Promise<StagedCycleTriggers> {
   // One read, sequential by construction (PG_POOL_MAX=1): the wrapper, its
   // subscription with plan and both parties, and every occurrence row.
   const wrapper = await tx.appointment.findUnique({
@@ -193,38 +196,36 @@ export async function settleSubscriptionCycle(
   const dashboardUrl = notificationHref(wrapper.organizationId, "appointments");
   const consultantName =
     sub.subscriptionPlan.consultantProfile?.user?.name ?? "Your consultant";
-  const [result, emailRows] = await Promise.all([
-    notifySubscriptionRenewed(
-      consulteeUserId,
-      {
+  const result = await notifySubscriptionRenewed(
+    consulteeUserId,
+    {
+      subscriptionId: sub.id,
+      planTitle: sub.subscriptionPlan.title,
+      consultantName,
+      cycleOrdinal,
+      remainingSessions: entitlement.remaining,
+      nextBatch: entitlement.cycle.nextBatch,
+      dashboardUrl,
+    },
+    `sub:${sub.id}:cycle:${cycleOrdinal}`,
+    { tx },
+  );
+  const emailRows = tx.failedEmail
+    ? await stageSubscriptionLifecycleEmail(tx as StagingTx, {
         subscriptionId: sub.id,
+        userIds: [consulteeUserId],
+        kind: "SUBSCRIPTION_RENEWED",
         planTitle: sub.subscriptionPlan.title,
         consultantName,
         cycleOrdinal,
-        remainingSessions: entitlement.remaining,
         nextBatch: entitlement.cycle.nextBatch,
+        remainingSessions: entitlement.remaining,
         dashboardUrl,
-      },
-      `sub:${sub.id}:cycle:${cycleOrdinal}`,
-      { tx },
-    ),
-    tx.failedEmail
-      ? stageSubscriptionLifecycleEmail(tx as StagingTx, {
-          subscriptionId: sub.id,
-          userIds: [consulteeUserId],
-          kind: "SUBSCRIPTION_RENEWED",
-          planTitle: sub.subscriptionPlan.title,
-          consultantName,
-          cycleOrdinal,
-          nextBatch: entitlement.cycle.nextBatch,
-          remainingSessions: entitlement.remaining,
-          dashboardUrl,
-        }).catch(() => [])
-      : Promise.resolve([]),
-  ]);
-  await flushNotificationsAfter(
-    { emails: [{ rows: emailRows, emailType: "SUBSCRIPTION_RENEWED" }] },
-    "subscription-cycle.renewed",
-  );
-  return result.staged ? [result.staged] : [];
+      }).catch(() => [])
+    : [];
+  const bells: StagedCycleTriggers = result.staged ? [result.staged] : [];
+  if (emailRows.length > 0) {
+    bells.emailRows = emailRows;
+  }
+  return bells;
 }

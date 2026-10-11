@@ -255,45 +255,56 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
 
       if (result.claimed) {
         generated++;
-        const origin = getAppUrl();
-        const orgId = sub.contract.organization.id;
-        const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
-        const ownerRows = prisma.membership?.findMany
-          ? await prisma.membership.findMany({
-              where: {
+        try {
+          const origin = getAppUrl();
+          const orgId = sub.contract.organization.id;
+          const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
+          const ownerRows = prisma.membership?.findMany
+            ? await prisma.membership.findMany({
+                where: {
+                  organizationId: orgId,
+                  status: "ACTIVE",
+                  role: "OWNER",
+                },
+                select: { userId: true },
+              })
+            : [];
+          const ownerUserIds = ownerRows.map((r) => r.userId);
+          await Promise.all([
+            Promise.resolve(
+              notifyOrgInvoiceIssued(orgId, {
+                invoiceNumber: result.invoiceNumber,
+                orgName: sub.contract.organization.name,
+                totalPaise: result.totalPaise,
+                currency: Currency.INR,
+                dueDate: dueDate.toISOString(),
+                dashboardUrl,
+                pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
+              }),
+            ).catch((err) => {
+              console.error("[cron] notifyOrgInvoiceIssued failed:", err);
+              return [];
+            }),
+            Promise.resolve(
+              sendOrgBillingEmail({
+                recipientUserIds: ownerUserIds,
                 organizationId: orgId,
-                status: "ACTIVE",
-                role: "OWNER",
-              },
-              select: { userId: true },
-            })
-          : [];
-        const ownerUserIds = ownerRows.map((r) => r.userId);
-        await Promise.all([
-          notifyOrgInvoiceIssued(orgId, {
-            invoiceNumber: result.invoiceNumber,
-            orgName: sub.contract.organization.name,
-            totalPaise: result.totalPaise,
-            currency: Currency.INR,
-            dueDate: dueDate.toISOString(),
-            dashboardUrl,
-            pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
-          }),
-          sendOrgBillingEmail({
-            recipientUserIds: ownerUserIds,
-            organizationId: orgId,
-            orgName: sub.contract.organization.name,
-            kind: "INVOICE_ISSUED",
-            amountPaise: result.totalPaise,
-            currency: Currency.INR,
-            invoiceId: result.invoiceId,
-            invoiceNumber: result.invoiceNumber,
-            dueDate,
-            dashboardUrl,
-          }),
-        ]).catch((err) =>
-          console.error("[cron] notifyOrgInvoiceIssued failed:", err),
-        );
+                orgName: sub.contract.organization.name,
+                kind: "INVOICE_ISSUED",
+                amountPaise: result.totalPaise,
+                currency: Currency.INR,
+                invoiceId: result.invoiceId,
+                invoiceNumber: result.invoiceNumber,
+                dueDate,
+                dashboardUrl,
+              }),
+            ).catch((err) => {
+              console.error("[cron] sendOrgBillingEmail failed:", err);
+            }),
+          ]);
+        } catch (err) {
+          console.error("[cron] notifyOrgInvoiceIssued failed:", err);
+        }
       } else {
         console.log(
           `[cron] Subscription ${sub.id} already claimed by another worker, skipping`,
@@ -420,26 +431,35 @@ async function sendRenewalReminders(now: Date): Promise<number> {
           })
         : [];
       await Promise.all([
-        notifyOrgLicenseRenewalUpcoming(orgId, {
-          orgName: sub.contract.organization.name,
-          cycle: sub.cycle,
-          renewalDate: sub.nextInvoiceDate.toISOString(),
-          daysUntilRenewal,
-          expectedTotalPaise,
-          currency: "INR",
-          dashboardUrl,
+        Promise.resolve(
+          notifyOrgLicenseRenewalUpcoming(orgId, {
+            orgName: sub.contract.organization.name,
+            cycle: sub.cycle,
+            renewalDate: sub.nextInvoiceDate.toISOString(),
+            daysUntilRenewal,
+            expectedTotalPaise,
+            currency: "INR",
+            dashboardUrl,
+          }),
+        ).catch((err) => {
+          console.error("[cron] notifyOrgLicenseRenewalUpcoming failed:", err);
+          return [];
         }),
-        sendOrgOperationalEmail({
-          recipientUserIds: ownerRows.map((r) => r.userId),
-          organizationId: orgId,
-          orgName: sub.contract.organization.name,
-          kind: "LICENSE_RENEWAL_UPCOMING",
-          expectedTotalPaise,
-          currency: "INR",
-          renewalDate: sub.nextInvoiceDate,
-          daysUntilRenewal,
-          cycle: sub.cycle,
-          actionUrl: dashboardUrl,
+        Promise.resolve(
+          sendOrgOperationalEmail({
+            recipientUserIds: ownerRows.map((r) => r.userId),
+            organizationId: orgId,
+            orgName: sub.contract.organization.name,
+            kind: "LICENSE_RENEWAL_UPCOMING",
+            expectedTotalPaise,
+            currency: "INR",
+            renewalDate: sub.nextInvoiceDate,
+            daysUntilRenewal,
+            cycle: sub.cycle,
+            actionUrl: dashboardUrl,
+          }),
+        ).catch((err) => {
+          console.error("[cron] sendOrgOperationalEmail failed:", err);
         }),
       ]);
       sent++;

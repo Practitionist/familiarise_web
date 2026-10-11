@@ -339,16 +339,18 @@ export async function PATCH(request: NextRequest) {
     betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
 
-  await stageNowAttemptAfter("maintenance.started", () =>
-    notifyMaintenanceStarted(
-      {
-        phase: targetPhase,
-        ...(nextReason ? { reason: nextReason } : {}),
-        ...(nextEstimatedEnd ? { estimatedEnd: nextEstimatedEnd } : {}),
-      },
-      { deferAttempt: true },
-    ),
-  );
+  if (targetPhase !== currentPhase) {
+    await stageNowAttemptAfter("maintenance.started", () =>
+      notifyMaintenanceStarted(
+        {
+          phase: targetPhase,
+          ...(nextReason ? { reason: nextReason } : {}),
+          ...(nextEstimatedEnd ? { estimatedEnd: nextEstimatedEnd } : {}),
+        },
+        { deferAttempt: true },
+      ),
+    );
+  }
 
   let offlineActivation: OfflineActivationResult | undefined;
   if (

@@ -216,7 +216,7 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
                 {
                   orgName,
                   status: "RENEWED",
-                  effectiveDate: newTo.toISOString(),
+                  effectiveDate: oldTo.toISOString(),
                   dashboardUrl,
                 },
                 tx.notificationOutbox ? { tx } : undefined,
@@ -226,7 +226,7 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
               entityId: successor.id,
               kind: "CONTRACT_RENEWED",
               orgName,
-              effectiveDate: newTo,
+              effectiveDate: oldTo,
               dashboardUrl,
             });
 
@@ -243,12 +243,19 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
 
       if (result.renewed) {
         stats.renewed += 1;
-        for (const bell of result.stagedBells) await attemptTrigger(bell);
-        if (result.stagedEmails.length > 0) {
-          await attemptStaged(
-            result.stagedEmails,
-            ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
-            EMAIL_BUDGET_MS.JOB,
+        try {
+          for (const bell of result.stagedBells) await attemptTrigger(bell);
+          if (result.stagedEmails.length > 0) {
+            await attemptStaged(
+              result.stagedEmails,
+              ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+              EMAIL_BUDGET_MS.JOB,
+            );
+          }
+        } catch (notifyErr) {
+          console.error(
+            `[auto-renew-contracts] notify failed for contract ${c.id}:`,
+            notifyErr,
           );
         }
       } else {

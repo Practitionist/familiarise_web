@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
   // newsworthy happened); only the vendor attempts run after the response.
   if (!result.alreadyMember) {
     const { stagedBells, stagedWelcome, stagedOperatorEmails } = result;
-    scheduleAfter(async () => {
+    await scheduleAfter(async () => {
       for (const row of stagedBells) await attemptTrigger(row);
       if (stagedWelcome) await attemptOnboardingEmail(stagedWelcome);
       if (stagedOperatorEmails.length > 0) {
@@ -425,6 +425,7 @@ export async function POST(req: NextRequest) {
               organizationId: inv.organizationId,
               status: "ACTIVE",
               role: { in: ["OWNER", "MAINTAINER"] },
+              userId: { not: userId },
             },
             select: { userId: true },
           })

@@ -348,7 +348,7 @@ export async function PATCH(
       });
     });
 
-    flushNotificationsAfter(
+    await flushNotificationsAfter(
       {
         bells: stagedBells,
         emails:

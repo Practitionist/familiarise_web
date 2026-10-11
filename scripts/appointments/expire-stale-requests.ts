@@ -851,28 +851,26 @@ async function stageUnallocatedRefundBell(
     row.appointment?.organizationId,
     "appointments",
   );
-  const [bell, emailRows] = await Promise.all([
-    stageBell(tx, {
-      workflowId: NOVU_WORKFLOWS.SUBSCRIPTION_UNALLOCATED_REFUNDED,
-      recipients: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
-      payload: {
-        planTitle: row.subscriptionPlan.title,
-        consulteeName: row.requestedBy?.user.name ?? "The buyer",
-        dashboardUrl,
-      },
-      dedupeKey: `sub-unalloc:${row.id}`,
-    }),
-    stageAppointmentCancelledEmail(tx, {
-      appointmentId: row.id,
-      userIds: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
-      cancelledBy: "Familiarise",
-      reason:
-        "Subscription was not scheduled within 48 hours of payment and is being refunded in full.",
-      refundText: "A full refund is being processed.",
-      refundUserIds: [consulteeId],
+  const bell = await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.SUBSCRIPTION_UNALLOCATED_REFUNDED,
+    recipients: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
+    payload: {
+      planTitle: row.subscriptionPlan.title,
+      consulteeName: row.requestedBy?.user.name ?? "The buyer",
       dashboardUrl,
-    }).catch(() => []),
-  ]);
+    },
+    dedupeKey: `sub-unalloc:${row.id}`,
+  });
+  const emailRows = await stageAppointmentCancelledEmail(tx, {
+    appointmentId: row.id,
+    userIds: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
+    cancelledBy: "Familiarise",
+    reason:
+      "Subscription was not scheduled within 48 hours of payment and is being refunded in full.",
+    refundText: "A full refund is being processed.",
+    refundUserIds: [consulteeId],
+    dashboardUrl,
+  });
   return { bell, emailRows };
 }
 

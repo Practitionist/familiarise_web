@@ -424,7 +424,7 @@ export async function POST(req: NextRequest) {
     });
 
     const { stagedCreated, stagedBells, ...responseBody } = result;
-    scheduleAfter(async () => {
+    await scheduleAfter(async () => {
       for (const row of stagedBells) await attemptTrigger(row);
       await attemptOnboardingEmail(stagedCreated);
     }, "org.create.onboarding-email");

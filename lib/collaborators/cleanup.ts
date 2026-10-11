@@ -2,10 +2,9 @@ import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
-import { stageCollaboratorInviteExpiredEmail } from "@/lib/email/senders/collaborators";
+import { sendCollaboratorInviteExpiredEmail } from "@/lib/email/senders/collaborators";
 import { collaboratorRoleLabel } from "@/lib/novu/humanize";
 import { notifyCollaboratorInviteExpired } from "@/lib/novu/service";
-import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { getAppUrl } from "@/lib/url";
 
 const STALE_INVITE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -100,7 +99,7 @@ export async function expireStaleCollaboratorInvites(
           recipientUserIds.push(inviterUser.id);
         }
 
-        const [bellResults, inviteeEmails, inviterEmails] = await Promise.all([
+        await Promise.all([
           notifyCollaboratorInviteExpired(
             recipientUserIds,
             {
@@ -111,45 +110,36 @@ export async function expireStaleCollaboratorInvites(
               dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
             },
             `collaborator.expired:${c.id}`,
-            { deferAttempt: true },
           ).catch(() => []),
-          stageCollaboratorInviteExpiredEmail(prisma, {
-            recipientUserId: inviteeUser.id,
-            actorName: inviterUser?.name ?? "Plan host",
-            collaboratorName: inviteeUser.name ?? "Collaborator",
-            planTitle,
-            planType,
-            role: c.role,
-            revenueShareBps: c.revenueShareBps,
-            collaboratorId: c.id,
-          }).catch(() => []),
+          sendCollaboratorInviteExpiredEmail(
+            {
+              recipientUserId: inviteeUser.id,
+              actorName: inviterUser?.name ?? "Plan host",
+              collaboratorName: inviteeUser.name ?? "Collaborator",
+              planTitle,
+              planType,
+              role: c.role,
+              revenueShareBps: c.revenueShareBps,
+              collaboratorId: c.id,
+            },
+            EMAIL_BUDGET_MS.JOB,
+          ).catch(() => undefined),
           inviterUser?.id && inviterUser.id !== inviteeUser.id
-            ? stageCollaboratorInviteExpiredEmail(prisma, {
-                recipientUserId: inviterUser.id,
-                actorName: inviteeUser.name ?? "Collaborator",
-                collaboratorName: inviteeUser.name ?? "Collaborator",
-                planTitle,
-                planType,
-                role: c.role,
-                revenueShareBps: c.revenueShareBps,
-                collaboratorId: c.id,
-              }).catch(() => [])
-            : Promise.resolve([]),
+            ? sendCollaboratorInviteExpiredEmail(
+                {
+                  recipientUserId: inviterUser.id,
+                  actorName: inviteeUser.name ?? "Collaborator",
+                  collaboratorName: inviteeUser.name ?? "Collaborator",
+                  planTitle,
+                  planType,
+                  role: c.role,
+                  revenueShareBps: c.revenueShareBps,
+                  collaboratorId: c.id,
+                },
+                EMAIL_BUDGET_MS.JOB,
+              ).catch(() => undefined)
+            : Promise.resolve(),
         ]);
-
-        await flushNotificationsAfter(
-          {
-            bells: (bellResults ?? []).map((r) => r?.staged),
-            emails: [
-              {
-                list: [...inviteeEmails, ...inviterEmails],
-                emailType: "collaborator_expired",
-                budgetMs: EMAIL_BUDGET_MS.JOB,
-              },
-            ],
-          },
-          "collaborator.expired",
-        );
       }
 
       return { expired, scanned: candidates.length };

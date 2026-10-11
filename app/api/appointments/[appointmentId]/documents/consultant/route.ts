@@ -322,22 +322,24 @@ export async function POST(
         "consultee document-response notice",
         async () => {
           const [bell, uploadedEmails] = await Promise.all([
-            notifyDocumentUploaded(
-              recipientId,
-              {
-                ...notificationScope(apt?.organizationId),
-                appointmentId,
-                documentId: document.id,
-                uploadedByRole: "CONSULTANT",
-                fileName: parsedInput.originalName,
-                isThreaded: Boolean(parsedInput.responseToDocumentId),
-                versionNo: document.versionNo,
-                consultantName: consultantDisplayName,
-                consulteeName,
-                dashboardUrl,
-              },
-              { deferAttempt: true },
-            ),
+            Promise.resolve(
+              notifyDocumentUploaded(
+                recipientId,
+                {
+                  ...notificationScope(apt?.organizationId),
+                  appointmentId,
+                  documentId: document.id,
+                  uploadedByRole: "CONSULTANT",
+                  fileName: parsedInput.originalName,
+                  isThreaded: Boolean(parsedInput.responseToDocumentId),
+                  versionNo: document.versionNo,
+                  consultantName: consultantDisplayName,
+                  consulteeName,
+                  dashboardUrl,
+                },
+                { deferAttempt: true },
+              ),
+            ).catch(() => null),
             stageDocumentAndRecordingEmail(prisma, {
               entityId: document.id,
               userIds: [recipientId],

@@ -49,6 +49,116 @@ export function trialAndSubscriptionSubject(
   }
 }
 
+function renderNextCycleSummary(
+  consultantName: string | undefined,
+  nextBatch: number,
+  remainingSessions: number | undefined,
+): string {
+  const batchText = nextBatch === 1 ? "session" : `${nextBatch} sessions`;
+  const remainingSuffix =
+    typeof remainingSessions === "number"
+      ? ` (${remainingSessions} remaining)`
+      : "";
+  return ` — ${consultantName ?? "your consultant"} will schedule your next ${batchText}${remainingSuffix}`;
+}
+
+function renderTrialAndSubscriptionBody(args: {
+  kind: TrialAndSubscriptionEmailKind;
+  planTitle: string;
+  consultantName?: string;
+  consulteeName?: string;
+  startsAtText?: string;
+  cycleOrdinal?: number;
+  nextBatch?: number;
+  remainingSessions?: number;
+}): React.ReactNode {
+  const {
+    kind,
+    planTitle,
+    consultantName,
+    consulteeName,
+    startsAtText,
+    cycleOrdinal,
+    nextBatch,
+    remainingSessions,
+  } = args;
+
+  switch (kind) {
+    case "TRIAL_REQUESTED":
+      return (
+        <Text style={paragraph}>
+          <strong>{consulteeName ?? "A client"}</strong> requested a trial
+          session for <strong>{planTitle}</strong>
+          {startsAtText ? (
+            <>
+              {" "}
+              on <strong>{startsAtText}</strong>
+            </>
+          ) : null}
+          . Open your dashboard to accept or propose another time.
+        </Text>
+      );
+    case "TRIAL_COMPLETED":
+      return (
+        <Text style={paragraph}>
+          Your trial session for <strong>{planTitle}</strong>
+          {consultantName ? (
+            <>
+              {" "}
+              with <strong>{consultantName}</strong>
+            </>
+          ) : null}{" "}
+          has concluded. Open your dashboard to review notes or continue with a
+          full plan.
+        </Text>
+      );
+    case "TRIAL_CANCELLED":
+      return (
+        <Text style={paragraph}>
+          The trial session for <strong>{planTitle}</strong>
+          {startsAtText ? (
+            <>
+              {" "}
+              scheduled for <strong>{startsAtText}</strong>
+            </>
+          ) : null}{" "}
+          has been cancelled.
+        </Text>
+      );
+    case "SUBSCRIPTION_STARTED":
+      return (
+        <Text style={paragraph}>
+          Your subscription to <strong>{planTitle}</strong>
+          {consultantName ? (
+            <>
+              {" "}
+              with <strong>{consultantName}</strong>
+            </>
+          ) : null}{" "}
+          is active. View your scheduled sessions and shared resources from your
+          dashboard.
+        </Text>
+      );
+    case "SUBSCRIPTION_RENEWED":
+      return (
+        <Text style={paragraph}>
+          {typeof cycleOrdinal === "number"
+            ? `Cycle ${cycleOrdinal} of `
+            : "Your current cycle of "}
+          <strong>{planTitle}</strong> is complete
+          {typeof nextBatch === "number"
+            ? renderNextCycleSummary(
+                consultantName,
+                nextBatch,
+                remainingSessions,
+              )
+            : null}
+          .
+        </Text>
+      );
+  }
+}
+
 export function TrialAndSubscriptionEmail({
   kind,
   recipientName = "there",
@@ -77,80 +187,16 @@ export function TrialAndSubscriptionEmail({
       <Text style={heading}>{subject}</Text>
       <Text style={paragraph}>Hi {recipientName},</Text>
 
-      {kind === "TRIAL_REQUESTED" ? (
-        <Text style={paragraph}>
-          <strong>{consulteeName ?? "A client"}</strong> requested a trial
-          session for <strong>{planTitle}</strong>
-          {startsAtText ? (
-            <>
-              {" "}
-              on <strong>{startsAtText}</strong>
-            </>
-          ) : null}
-          . Open your dashboard to accept or propose another time.
-        </Text>
-      ) : null}
-
-      {kind === "TRIAL_COMPLETED" ? (
-        <Text style={paragraph}>
-          Your trial session for <strong>{planTitle}</strong>
-          {consultantName ? (
-            <>
-              {" "}
-              with <strong>{consultantName}</strong>
-            </>
-          ) : null}{" "}
-          has concluded. Open your dashboard to review notes or continue with a
-          full plan.
-        </Text>
-      ) : null}
-
-      {kind === "TRIAL_CANCELLED" ? (
-        <Text style={paragraph}>
-          The trial session for <strong>{planTitle}</strong>
-          {startsAtText ? (
-            <>
-              {" "}
-              scheduled for <strong>{startsAtText}</strong>
-            </>
-          ) : null}{" "}
-          has been cancelled.
-        </Text>
-      ) : null}
-
-      {kind === "SUBSCRIPTION_STARTED" ? (
-        <Text style={paragraph}>
-          Your subscription to <strong>{planTitle}</strong>
-          {consultantName ? (
-            <>
-              {" "}
-              with <strong>{consultantName}</strong>
-            </>
-          ) : null}{" "}
-          is active. View your scheduled sessions and shared resources from your
-          dashboard.
-        </Text>
-      ) : null}
-
-      {kind === "SUBSCRIPTION_RENEWED" ? (
-        <Text style={paragraph}>
-          {typeof cycleOrdinal === "number"
-            ? `Cycle ${cycleOrdinal} of `
-            : "Your current cycle of "}
-          <strong>{planTitle}</strong> is complete
-          {typeof nextBatch === "number" ? (
-            <>
-              {" "}
-              — {consultantName ?? "your consultant"} will schedule your next{" "}
-              {nextBatch === 1 ? "session" : `${nextBatch} sessions`}
-              {typeof remainingSessions === "number"
-                ? ` (${remainingSessions} remaining)`
-                : ""}
-            </>
-          ) : null}
-          .
-        </Text>
-      ) : null}
+      {renderTrialAndSubscriptionBody({
+        kind,
+        planTitle,
+        consultantName,
+        consulteeName,
+        startsAtText,
+        cycleOrdinal,
+        nextBatch,
+        remainingSessions,
+      })}
 
       <Section style={buttonContainer}>
         <Button style={button} href={dashboardUrl}>
