@@ -32,4 +32,9 @@ Functions run in Singapore (`sin`), the closest region Netlify offers to Supabas
 
 The Netlify MCP reads projects, deploys, teams, and env vars and writes env vars; it cannot read function logs, change function limits, or touch billing. Use `netlify logs --url <deploy permalink>` and `netlify api` for those, per `netlify/mcp-and-cli.md`.
 
+**Multi-Host Portability & Hot-Standby Failback (`#2095`, `#2096`, `#2097` / `docs/deployment/`)**:
+
+- **Ranked 2026 Platform Scorecard (`docs/deployment/multi-platform-evaluation.md`)**: **#1 Google Cloud Run (`asia-south1` Mumbai — `93/100`)**, **#2 Vercel Pro (`bom1` Fluid Compute — `89/100`, requires refactoring `> 4.5 MB` uploads/downloads first)**, **#3 Fly.io (`bom` Mumbai — `88/100`)**, **#4 DigitalOcean (`blr1` Bangalore — `87/100`)**, **#5 Railway (`sin` — `87/100`)**; **Cloudflare Workers (`@opennextjs/cloudflare` — `60/100`) is hard-disqualified** (`128 MB` isolate memory wall + no native `sharp`/`bcrypt`/Chromium).
+- **Dual-Boot & `< 90s` Failback (`docs/deployment/emergency-failback-runbook.md`)**: Keep `netlify.toml` and `netlify/functions/cron-tick.mts` intact on every branch so `familiarise.netlify.app` remains a pre-built hot standby. Never trust `x-nf-client-connection-ip` unless `process.env.NETLIFY === "true"`, include standard `Vary: Cookie` alongside `Netlify-Vary`, gate `output: "standalone"` and `sharp` exclusion by platform env var, renew standby TLS via ACME `DNS-01` (`POST /api/v1/sites/${NETLIFY_SITE_ID}/ssl`) or Cloudflare `Orange-Cloud Full (strict)`, and control active cron ownership via Upstash key `ops:active_cron_platform`.
+
 Every number in these references carries the date it was verified and the source it came from. When a number matters for a decision, re-open the source if the date is more than a quarter old; otherwise trust the file.
