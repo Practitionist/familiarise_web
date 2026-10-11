@@ -13,13 +13,14 @@
  * `lib/booking/transitions.ts` owns that; this only names what the rows say.
  */
 
-import { format } from "date-fns";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
   REJOIN_GRACE_MS,
   isDeadOccurrence,
+  isDeliberateEnd,
 } from "@/lib/appointments/occurrences";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
@@ -122,6 +123,10 @@ export type OccurrenceInput = {
   isTentative: boolean;
   completionStatus?: string | null;
   deletedAt?: Date | string | null;
+  meeting?: {
+    endedAt: Date | string | null;
+    endedReason?: string | null;
+  } | null;
 };
 
 export type PaymentInput = PaymentDisplayLike & {
@@ -166,6 +171,8 @@ export interface BookingPresentationInput {
   sponsorOrgName: string | null;
   /** When the held slots or the pay link release; null when nothing is held. */
   holdExpiresAt: Date | string | null;
+  /** Optional explicit IANA timezone when derived outside browser runtime. */
+  viewerZone?: string | null;
   /**
    * #1760 — the EXPIRED history edge tells a lapsed pay link apart from a
    * request nobody answered. Optional: a read without history falls back to
@@ -223,6 +230,8 @@ export interface DeriveOptions {
   now?: Date;
   /** How early before `startsAt` a session counts as joinable. */
   joinWindowMs?: number;
+  /** Explicit IANA timezone when rendered server-side outside browser runtime. */
+  viewerZone?: string | null;
 }
 
 const toDate = (v: Date | string): Date =>
@@ -322,8 +331,14 @@ export function toneBadge(tone: Tone, label: string): StatusBadgeStyle {
 
 const money = (paise: bigint | number | string, currency: string) =>
   formatCurrencyAmount(Number(paise), currency);
-const day = (d: Date) => format(d, "EEE d MMM");
-const dayTime = (d: Date) => format(d, "EEE d MMM HH:mm");
+const defaultViewerZone = () =>
+  (typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : undefined) ?? "UTC";
+const day = (d: Date, zone?: string | null) =>
+  formatInViewerZone(d, zone ?? defaultViewerZone(), "EEE d MMM");
+const dayTime = (d: Date, zone?: string | null) =>
+  formatInViewerZone(d, zone ?? defaultViewerZone(), "EEE d MMM HH:mm");
 
 function occurrenceEnd(o: OccurrenceInput): number {
   return (
@@ -333,6 +348,7 @@ function occurrenceEnd(o: OccurrenceInput): number {
 }
 
 function isOccurrencePastGrace(o: OccurrenceInput, now: Date): boolean {
+  if (isDeliberateEnd(o.meeting)) return true;
   const status = normalizeStatus(o.completionStatus);
   if (status === "COMPLETED" || status === "VOIDED") {
     return occurrenceEnd(o) < now.getTime();
@@ -376,6 +392,7 @@ function deriveBooking(
   paid: boolean,
   holdExpiresAt: Date | null,
   now: Date,
+  zone?: string | null,
 ): { state: BookingStateKind; label?: string; why: string } {
   const status = normalizeStatus(input.request?.status);
   const kind = normalizeStatus(input.request?.kind || input.appointmentType);
@@ -441,7 +458,7 @@ function deriveBooking(
     const by = allocateDeadline(input.payments);
     return {
       state: "AWAITING_ALLOCATION",
-      why: `Paid · ${c} has until ${by ? dayTime(by) : "48 h after payment"} to schedule cycle 1.`,
+      why: `Paid · ${c} has until ${by ? dayTime(by, zone) : "48 h after payment"} to schedule cycle 1.`,
     };
   }
   if (wait === "NEXT_CYCLE") {
@@ -510,6 +527,7 @@ function deriveMoney(
   booking: BookingStateKind,
   viewer: Viewer,
   holdExpiresAt: Date | null,
+  zone?: string | null,
 ): MoneyState {
   const c = input.names.consultant;
   const p = input.names.payer;
@@ -541,7 +559,11 @@ function deriveMoney(
 
   if (paid) {
     const rail = paymentRailLabel(paid);
-    const when = format(toDate(paid.createdAt), "d MMM yyyy");
+    const when = formatInViewerZone(
+      toDate(paid.createdAt),
+      zone ?? defaultViewerZone(),
+      "d MMM yyyy",
+    );
     if (
       input.disputes.some((d) => OPEN_DISPUTES.has(normalizeStatus(d.status)))
     ) {
@@ -611,7 +633,7 @@ function deriveMoney(
   if (booking === "AWAITING_PAYMENT" && pending) {
     const rail = paymentRailLabel(pending);
     const until = holdExpiresAt
-      ? ` · link valid until ${dayTime(holdExpiresAt)}`
+      ? ` · link valid until ${dayTime(holdExpiresAt, zone)}`
       : "";
     return build(
       "DUE",
@@ -620,7 +642,7 @@ function deriveMoney(
     );
   }
   if (booking === "PAYMENT_LAPSED") {
-    const on = holdExpiresAt ? ` on ${day(holdExpiresAt)}` : "";
+    const on = holdExpiresAt ? ` on ${day(holdExpiresAt, zone)}` : "";
     return build(
       "NOT_DUE",
       "Not charged",
@@ -748,6 +770,7 @@ function deriveTimeline(
   viewer: Viewer,
   paidAt: Date | null,
   holdExpiresAt: Date | null,
+  zone?: string | null,
 ): TimelineEvent[] {
   const c = input.names.consultant;
   const p = input.names.payer;
@@ -788,7 +811,7 @@ function deriveTimeline(
       ? moneyState.state === "SPONSORED"
         ? `Sponsored by ${input.sponsorOrgName ?? "the organisation"}`
         : "Paid"
-      : `${cap(payer)} pay${payer === "you" ? "" : "s"}${booking === "AWAITING_PAYMENT" && holdExpiresAt ? ` (link valid until ${dayTime(holdExpiresAt)})` : " (link valid 24 h)"}`,
+      : `${cap(payer)} pay${payer === "you" ? "" : "s"}${booking === "AWAITING_PAYMENT" && holdExpiresAt ? ` (link valid until ${dayTime(holdExpiresAt, zone)})` : " (link valid 24 h)"}`,
     done: paidDone,
   };
   const single = ["CONSULTATION", "TRIAL", "WEBINAR"].includes(
@@ -914,19 +937,20 @@ export function deriveBookingPresentation(
 ): BookingPresentation {
   const now = options.now ?? new Date();
   const joinWindowMs = options.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
+  const zone = options.viewerZone ?? input.viewerZone ?? null;
   const live = input.occurrences.filter((o) => !isDeadOccurrence(o));
   const paidRow =
     input.payments.find((x) => x.paymentStatus === "SUCCEEDED") ?? null;
   const holdExpiresAt = toDateOrNull(input.holdExpiresAt);
 
-  const b = deriveBooking(input, live, !!paidRow, holdExpiresAt, now);
+  const b = deriveBooking(input, live, !!paidRow, holdExpiresAt, now, zone);
   const bookingState: BookingState = {
     state: b.state,
     label: b.label ?? BOOKING_LABEL[b.state].label,
     tone: BOOKING_LABEL[b.state].tone,
     why: b.why,
   };
-  const moneyState = deriveMoney(input, b.state, viewer, holdExpiresAt);
+  const moneyState = deriveMoney(input, b.state, viewer, holdExpiresAt, zone);
   const nextAction = deriveNext(
     input,
     b.state,
@@ -944,6 +968,7 @@ export function deriveBookingPresentation(
     viewer,
     paidRow ? toDate(paidRow.createdAt) : null,
     holdExpiresAt,
+    zone,
   );
   // Money in but nothing confirmed: rows still tentative, or a single-sitting
   // kind with no live row at all (a subscription/class allocates lazily).

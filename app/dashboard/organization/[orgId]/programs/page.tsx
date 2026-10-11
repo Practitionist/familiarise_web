@@ -785,7 +785,9 @@ function ProgramCommercialFieldsSection({
         <>
           <div
             className={
-              showCycleSelect ? "grid grid-cols-[1fr_180px] gap-3" : "space-y-2"
+              showCycleSelect
+                ? "grid grid-cols-1 sm:grid-cols-[1fr_180px] sm:items-end gap-3"
+                : "space-y-2"
             }
           >
             <div className="space-y-2">
@@ -848,7 +850,9 @@ function ProgramCommercialFieldsSection({
       ) : (
         <div
           className={
-            showCycleSelect ? "grid grid-cols-[1fr_180px] gap-3" : "space-y-2"
+            showCycleSelect
+              ? "grid grid-cols-1 sm:grid-cols-[1fr_180px] sm:items-end gap-3"
+              : "space-y-2"
           }
         >
           <div className="space-y-2">

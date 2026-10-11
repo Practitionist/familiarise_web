@@ -149,11 +149,7 @@ export function useConsultantAppointmentsAdapter(
     rawOccurrences,
     title: activeVm?.title ?? "",
     type: typeLabel as
-      | "Consultation"
-      | "Subscription"
-      | "Webinar"
-      | "Class"
-      | "Trial",
+      "Consultation" | "Subscription" | "Webinar" | "Class" | "Trial",
   });
 
   const openDialog = (vm: AppointmentVM, kind: DialogKind) => {
@@ -180,43 +176,94 @@ export function useConsultantAppointmentsAdapter(
       },
     );
 
-  const joinVm = async (vm: AppointmentVM, force = false) => {
+  const resolveTrialJoinSlot = (
+    vm: AppointmentVM,
+    force: boolean,
+    targetOccurrence?: import("@/lib/appointments/view-model").OccurrenceVM,
+  ) => {
+    const slots = trialSlotsOf(vm);
+    if (targetOccurrence) {
+      return (
+        slots.find((s) => s.id === targetOccurrence.occurrenceId) ?? slots[0]
+      );
+    }
+    if (force) {
+      return slots[0];
+    }
+    return joinableSlotOf(vm) ?? slots[0];
+  };
+
+  const resolveAppointmentJoinTarget = (
+    vm: AppointmentVM,
+    primaryAppointment: NonNullable<AppointmentVM["raw"]["appointment"]>,
+    force: boolean,
+    targetOccurrence?: import("@/lib/appointments/view-model").OccurrenceVM,
+  ) => {
+    const candidates = vm.raw.groupAppointments?.length
+      ? vm.raw.groupAppointments
+      : [primaryAppointment];
+    if (targetOccurrence) {
+      for (const candidate of candidates) {
+        const matched = candidate.occurrences?.find(
+          (s) => s.id === targetOccurrence.occurrenceId,
+        );
+        if (matched) {
+          return { appointment: candidate, slot: matched };
+        }
+      }
+      return {
+        appointment: primaryAppointment,
+        slot: joinableSlotOf(vm) ?? undefined,
+      };
+    }
+    if (force) {
+      return {
+        appointment: primaryAppointment,
+        slot: primaryAppointment.occurrences?.[0],
+      };
+    }
+    return {
+      appointment: primaryAppointment,
+      slot: joinableSlotOf(vm) ?? undefined,
+    };
+  };
+
+  const joinVm = async (
+    vm: AppointmentVM,
+    force = false,
+    targetOccurrence?: import("@/lib/appointments/view-model").OccurrenceVM,
+  ) => {
     setJoiningId(vm.id);
     let navigating = false;
     if (vm.kind === "TRIAL") {
       const trial = vm.raw.source as ConsultantTrialLike | undefined;
       const apptId = trial?.appointment?.id ?? vm.raw.appointment?.id;
-      const slots = trialSlotsOf(vm);
-      const slot = force ? slots[0] : (joinableSlotOf(vm) ?? slots[0]);
+      const slot = resolveTrialJoinSlot(vm, force, targetOccurrence);
       if (apptId && slot) {
+        const trialSlot = {
+          id: slot.id,
+          startsAt: slot.startsAt,
+          endsAt: slot.endsAt,
+          isTentative: slot.isTentative,
+          appointmentId: apptId,
+        };
         navigating = await joinMeeting(
           {
             id: apptId,
             appointmentType: "TRIAL",
-            occurrences: [
-              {
-                id: slot.id,
-                startsAt: slot.startsAt,
-                endsAt: slot.endsAt,
-                isTentative: slot.isTentative,
-                appointmentId: apptId,
-              },
-            ],
+            occurrences: [trialSlot],
           },
-          {
-            id: slot.id,
-            startsAt: slot.startsAt,
-            endsAt: slot.endsAt,
-            isTentative: slot.isTentative,
-            appointmentId: apptId,
-          },
+          trialSlot,
         );
       }
     } else if (vm.raw.appointment) {
-      const slot = force
-        ? vm.raw.appointment.occurrences?.[0]
-        : (joinableSlotOf(vm) ?? undefined);
-      navigating = await joinMeeting(vm.raw.appointment, slot);
+      const target = resolveAppointmentJoinTarget(
+        vm,
+        vm.raw.appointment,
+        force,
+        targetOccurrence,
+      );
+      navigating = await joinMeeting(target.appointment, target.slot);
     }
     if (!navigating) setJoiningId(null);
   };
@@ -257,18 +304,6 @@ export function useConsultantAppointmentsAdapter(
     );
   };
 
-  /**
-   * The whole join gate: a confirmed booking whose session is inside its
-   * window.
-   *
-   * #1270 — the status half was missing. The non-trial branch gated on
-   * `bucket !== "cancelled"` alone, which is only the terminal-NEGATIVE
-   * statuses, so a consultant could open the room for a booking still at
-   * APPROVED_PENDING_PAYMENT (nobody has paid) or already COMPLETED (the
-   * session is over and its recording is sealed). The trial branch checked no
-   * status at all. `isConfirmedStatus` is what the consultee adapter has
-   * always required, and it subsumes the cancelled-bucket check.
-   */
   const canJoinNow = (vm: AppointmentVM): boolean => {
     if (!isConfirmedStatus(vm.status)) return false;
     return vm.kind === "TRIAL"
@@ -276,7 +311,6 @@ export function useConsultantAppointmentsAdapter(
       : joinableSlotOf(vm) !== null;
   };
 
-  /** Slot rows exist to key a room to, joinable or not — the dev arm's target. */
   const hasSlotRows = (vm: AppointmentVM): boolean => {
     if (vm.kind === "TRIAL") {
       return trialSlotsOf(vm).length > 0;
@@ -299,7 +333,7 @@ export function useConsultantAppointmentsAdapter(
       return {
         kind: "join",
         label: "Join",
-        onClick: () => void joinVm(vm),
+        onClick: (targetOccurrence) => void joinVm(vm, false, targetOccurrence),
         busy: joiningId === vm.id,
       };
     }

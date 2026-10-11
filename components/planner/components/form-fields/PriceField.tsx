@@ -84,7 +84,6 @@ export function PriceField<T extends FieldValues = FieldValues>({
         {label}
         {required && <RequiredMark />}
       </FormLabel>
-      {description && <FormDescription>{description}</FormDescription>}
 
       <div className="flex gap-2">
         <Select
@@ -116,6 +115,8 @@ export function PriceField<T extends FieldValues = FieldValues>({
           }}
         />
       </div>
+
+      {description && <FormDescription>{description}</FormDescription>}
 
       {!isOrgCatalog && (
         <p className="text-xs text-muted-foreground">
