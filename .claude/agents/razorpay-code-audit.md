@@ -90,7 +90,21 @@ Verify that `schemas/webhooks/razorpay.ts` and `app/api/webhooks/razorpay-dispat
 - **Dispute events**: All 6 events (`payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`), plus REST Disputes API support in `lib/payments/core/razorpay-disputes.ts` (`getRazorpayDispute`, `uploadDisputeDocument`, `contestDispute`).
 - **Payout events**: `payout.initiated` (initial `processing` event), `payout.updated`, `payout.processed`, `payout.reversed`, `payout.failed`, `payout.rejected`, `payout.queued`, `payout.pending`, `payout.cancelled`. Confirm failure reason extraction checks `status_details.description ?? status_details.reason ?? error.description ?? error.reason` when top-level `failure_reason` is `null`.
 - **Fund Account Validation events**: `fund_account.validation.completed` and `fund_account.validation.failed` check `results.account_status === "active"` (with fallback to `validation_results`) because `status === "completed"` only means the check finished, not that the bank account is valid.
-- **GST Invoicing (`lib/payments/billing/`, `lib/compliance/gst.ts`)**: Confirm GST invoices are generated in-house with SAC `999293` (`TAX_CONSTANTS.SAC_CODE`) and place-of-supply-driven `CGST 9% + SGST 9%` vs `IGST 18%` split, never via Razorpay's `/v1/invoices` API (which is non-GST only).
+- **GST Invoicing (`lib/payments/billing/`, `lib/compliance/gst.ts`)**: Confirm GST invoices are generated in-house with SAC `999293` (`TAX_CONSTANTS.SAC_CODE`), strict CGST Rule 46(b)/Rule 53 numbering (`^[A-Za-z0-9/-]{1,16}$`), and place-of-supply-driven `CGST 9% + SGST 9%` vs `IGST 18%` split, never via Razorpay's `/v1/invoices` API (which is non-GST only).
+
+---
+
+## Step 4B: Portable Cross-Company Cutover & Hidden-Trap Checklist (Reusable Across Any Codebase)
+
+Verify every item below — these bugs are invisible in Razorpay Sandbox (`rzp_test_*`) and surface **only** against live NPCI/bank switches (`rzp_live_*`):
+
+1. **Cross-Mode ID Poisoning (`cust_*`, `cont_*`, `fa_*`)**: `orders.create` clears stale Test-Mode `customer_id` pointers on `400`/`404` and retries without `customer_id`; pre-cutover SQL purge script clears `razorpayCustomerId`, `razorpayContactId`, and `razorpayFundAccId`/`razorpayFundAccountId`.
+2. **Order Metadata Truncation (`sanitizeRazorpayNotes`)**: Every `orders.create` call caps `notes` at `<= 15` keys and `<= 256` chars/value at the SDK wrapper boundary.
+3. **Dual Secret Rotation (`RAZORPAY_WEBHOOK_SECRET_PREVIOUS` & `RAZORPAYX_WEBHOOK_SECRET_PREVIOUS`)**: Both payment and RazorpayX webhook paths support zero-downtime secret rotation, and fallback secrets are resolved **lazily** only after enforcing the raw body cap (`<= 256 KB`).
+4. **Out-of-Order Child Webhook Deferral (`DeferSignal`)**: `refund.*`, `refund.speed_changed`, `payment.dispute.created`, and contended `upi_intent` RPD webhooks defer (`processed=false, error=null`) whenever the parent `Payment` is still `PENDING` or locked.
+5. **String `"00"` `name_match_score` Coercion & RPD Settlement**: Fund account validation schemas coerce string scores (`"00"` -> `0`) to finite numbers, read `results ?? validation_results`, and support `ifsc ?? bank_routing_code`.
+6. **Payout Narration & Mode Caps**: `narration` sanitized to `<= 30` chars `[A-Za-z0-9 ]`; `UPI <= ₹1L` (`10_000_000` paise); `IMPS <= ₹5L` (`50_000_000` paise); `RTGS >= ₹2L` (`20_000_000` paise); stale `PROCESSING` payouts with `gatewayPayoutId = NULL` query `findRazorpayPayoutByReference` before resubmitting (>7d `X-Payout-Idempotency` TTL).
+7. **24h Webhook Retry SLA vs Pending Sweeps**: Pending top-up/order cleanup grace windows exceed **24 hours** (`48h` default) so delayed live `payment.captured` webhooks never hit deleted/orphaned rows.
 
 ---
 

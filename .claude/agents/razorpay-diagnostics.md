@@ -104,6 +104,15 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/webhooks/razorp
 
 ---
 
-### CHECK 6: Output Formatted Health Report
+### CHECK 6: Portable Test-to-Live Cutover Readiness & Sandbox Entity Audit
+
+Verify whether the database contains any sandbox-scoped gateway IDs (`cust_*`, `cont_*`, `fa_*`) before cutting over to `rzp_live_*`, and confirm document numbering complies with CGST Rule 46(b)/Rule 53 (`^[A-Za-z0-9/-]{1,16}$`):
+
+- Query counts of non-null `users.razorpayCustomerId`, `PayoutAccount.razorpayContactId`/`razorpayFundAccId`, and `OrganizationPayoutAccount.razorpayContactId`/`razorpayFundAccountId`. Flag `[WARN]` if any sandbox rows remain populated before a Live-Key deployment (see `.claude/skills/finance/references/razorpay/references/go-live.md` for the atomic SQL reset transaction).
+- Confirm zero `OrganizationInvoice`, `ConsumerInvoice`, or `CreditNote` numbers exceed 16 characters (`SELECT COUNT(*) FROM "OrganizationInvoice" WHERE length("invoiceNumber") > 16`).
+
+---
+
+### CHECK 7: Output Formatted Health Report
 
 Summarize all checks (`[PASS]`, `[WARN]`, `[FAIL]`, `[SKIP]`) with exact file paths, line numbers, and copy-paste remediation steps for any failures.

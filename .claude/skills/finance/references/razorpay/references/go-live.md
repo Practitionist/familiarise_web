@@ -1,105 +1,108 @@
-# Razorpay & RazorpayX Go-Live Checklist (Familiarise Platform)
+# Razorpay & RazorpayX Go-Live Playbook, Portable Cutover Checklist & 12-Rail Live Verification Matrix
 
-Production cutover checklist for moving this repository from Razorpay Test Mode (`rzp_test_...`) to Live Mode (`rzp_live_...`).
-
----
-
-## 1. Pre-Cutover Boot Guards in This Repo (`PM-10`)
-
-This repository enforces two fail-fast runtime guards so a production deployment can never accidentally process live traffic against test keys:
-
-1. **Core Gateway Guard ([`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts))**:
-   - At module load, if `NODE_ENV === "production"` (outside `NEXT_PHASE === "phase-production-build"`) and `RAZORPAY_KEY_ID` starts with `rzp_test_`, the module throws `PaymentError("...", "RAZORPAY_TEST_KEY_IN_PRODUCTION")` unless `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION === "true"`.
-   - **Go-Live Action**: Remove `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` from Netlify/production environment variables when setting `rzp_live_...` keys.
-2. **RazorpayX Payouts Guard ([`lib/payments/payouts/razorpay-payouts.ts`](../../../../../lib/payments/payouts/razorpay-payouts.ts))**:
-   - In `getRazorpayPayoutsService()`, if `ENABLE_LIVE_PAYOUTS === true` and the resolved RazorpayX key starts with `rzp_test_`, it throws `PaymentError("...", "RAZORPAYX_TEST_KEYS_IN_LIVE_MODE")`.
-   - **Go-Live Action**: Set live `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, and `RAZORPAYX_ACCOUNT_NUMBER` before flipping `ENABLE_LIVE_PAYOUTS=true`.
+> **Portable Engineering Playbook (Company-Agnostic + Repo Bindings)**: Use this playbook when taking **any** Razorpay + RazorpayX codebase from Test Sandbox (`rzp_test_*`) to Live Production (`rzp_live_*`) without losing money in flight, double-paying vendors, breaking returning users, or tripping government tax/banking rejections.
 
 ---
 
-## 2. Credentials & Environment Variables (Netlify Production)
+## Part 1 — Portable Cross-Company Cutover Checklist (14 Hidden Production Traps)
 
-Generate Live keys in **Razorpay Dashboard** (switch top-bar toggle from **Test Mode** to **Live Mode** → **Account & Settings → API Keys**) and **RazorpayX Dashboard**:
+Copy and verify these **14 universal invariants** in **any** company or codebase integrating Razorpay Payments + RazorpayX:
 
-| Variable | Live Value Requirements |
-|---|---|
-| `RAZORPAY_KEY_ID` | Must start with `rzp_live_` |
-| `RAZORPAY_SECRET` | Live API Key Secret matching `RAZORPAY_KEY_ID` |
-| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | **Must equal `RAZORPAY_KEY_ID`** (`rzp_live_...`) — baked into the client bundle at build time, so changing it requires a fresh Netlify build/deploy |
-| `RAZORPAY_WEBHOOK_SECRET` | High-entropy secret (`openssl rand -hex 32`) configured on the Live Razorpay Dashboard webhook; **must be distinct** from `RAZORPAY_SECRET` |
-| `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` | Leave unset initially; populate with the retiring secret during any future webhook secret rotation (#1377) |
-| `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` | **Delete / unset** in production |
-| `RAZORPAYX_KEY_ID` | Live RazorpayX Key ID (`rzp_live_...`) |
-| `RAZORPAYX_KEY_SECRET` | Live RazorpayX Key Secret |
-| `RAZORPAYX_ACCOUNT_NUMBER` | Live RazorpayX virtual/current account number (note: Live `account_number` is different from Test mode!) |
-| `RAZORPAYX_WEBHOOK_SECRET` | High-entropy secret configured on the Live RazorpayX Dashboard webhook |
-| `ENABLE_LIVE_PAYOUTS` | Set to `"true"` only after live RazorpayX keys, account number, and IP allowlist are verified |
-| `ENABLE_SAVED_CARDS` | Set to `"true"` once Saved Cards / Flash Checkout tokenisation is active on the Live merchant account |
+### A. Orders, Checkout & Cross-Environment Entity Isolation
 
----
+1. **Purge All Sandbox Gateway IDs Before Flipping Live Keys (`cust_*`, `cont_*`, `fa_*`)**:
+   - Every Razorpay Customer (`cust_*`), RazorpayX Contact (`cont_*`), and Fund Account (`fa_*`) ID is strictly scoped to **either** Test Mode **or** Live Mode. Passing a sandbox `cust_*`/`cont_*`/`fa_*` under `rzp_live_*` fails with `400 BAD_REQUEST_ERROR: The id provided does not exist`.
+   - **Portable SQL Pre-Cutover Reset Template**:
+     ```sql
+     BEGIN;
+     UPDATE users SET "razorpayCustomerId" = NULL WHERE "razorpayCustomerId" IS NOT NULL;
+     UPDATE "PayoutAccount"
+       SET "razorpayContactId" = NULL, "razorpayFundAccId" = NULL, "isVerified" = false
+       WHERE "razorpayContactId" IS NOT NULL OR "razorpayFundAccId" IS NOT NULL;
+     UPDATE "OrganizationPayoutAccount"
+       SET "razorpayContactId" = NULL, "razorpayFundAccountId" = NULL, "isVerified" = false
+       WHERE "razorpayContactId" IS NOT NULL OR "razorpayFundAccountId" IS NOT NULL;
+     COMMIT;
+     ```
+2. **Self-Heal Stale `customer_id` at Order Creation**:
+   - Even with a pre-cutover SQL purge, if `orders.create({ customer_id })` returns `400`/`404` ("does not exist"), clear the stale customer pointer in DB and retry `orders.create` without `customer_id` so returning users are never blocked from paying.
+3. **Cap Order `notes` at the Gateway Boundary (`<= 15` Keys, `<= 256` Chars/Value)**:
+   - Razorpay rejects the entire `POST /v1/orders` call with `400 BAD_REQUEST_ERROR` if `notes` exceeds 15 keys or any value exceeds 256 characters. Always truncate keys/values at the SDK wrapper boundary (`sanitizeRazorpayNotes`).
+4. **Enforce Minimum Order Floor (`>= 100` Paise = ₹1.00) & Explicit Capture Expiry (`[12, 7200]` Mins)**:
+   - Never pass sub-₹1 amounts (`< 100` paise) or floats to Razorpay. Explicitly set `payment: { capture: "automatic", capture_options: { automatic_expiry_period, manual_expiry_period, refund_speed: "normal" } }` clamped to `[12, 7200]` minutes.
 
-## 3. Live Webhook Configuration (Two Dashboards)
+### B. Webhooks, Secret Rotation & Out-of-Order Race Safety
 
-Test Mode and Live Mode webhooks are completely separate. Configure both in **Live Mode**:
+5. **Enforce Body-Size Cap Before HMAC Verification & Lazy Fallback Secret Resolution**:
+   - Reject oversized requests (`Content-Length > 256 KB` / streaming cap -> `HTTP 413`) before allocating buffers or resolving fallback secrets.
+6. **Separate Payment vs RazorpayX Webhook Secrets + Zero-Downtime `_PREVIOUS` Rotation**:
+   - Verify primary payment secrets (`RAZORPAY_WEBHOOK_SECRET`, fallback `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`) first.
+   - Consult RazorpayX secrets (`RAZORPAYX_WEBHOOK_SECRET`, fallback `RAZORPAYX_WEBHOOK_SECRET_PREVIOUS`) **only** when payment secrets fail **and** `event` starts with `payout.` or `fund_account.` so a compromised/separate RazorpayX secret can never forge `payment.captured`.
+7. **Protect Against Razorpay's 24-Hour Non-2xx Webhook Auto-Disable Cliff**:
+   - Razorpay retries non-2xx deliveries with exponential backoff for **24 hours** and then **permanently disables** the webhook endpoint without self-serve replay. Always acknowledge valid deliveries within 5 seconds (`200 OK` + async processing via `after()`/queue) and set a monitored alert email on both dashboards.
+8. **Defer Out-of-Order Child Webhooks When Parent `Payment` Is Still `PENDING`**:
+   - Webhook delivery order is never guaranteed (`refund.created`, `refund.speed_changed`, or `payment.dispute.created` can arrive before delayed `payment.captured`). Never discard or mis-journal early child events — defer them cleanly (`DeferSignal` / retry queue) until parent capture commits.
 
-### A. Razorpay Payments Dashboard (Developers → Webhooks → + Add New Webhook)
-- **Webhook URL**: `https://<production-domain>/api/webhooks/razorpay`
-- **Secret**: Value of `RAZORPAY_WEBHOOK_SECRET`
-- **Alert Email**: Engineering/ops alert distribution address (Razorpay emails this address if the webhook fails for 24h and is auto-disabled)
-- **Active Events to Subscribe (`14` events)**:
-  - **Payments & Orders**: `payment.authorized`, `payment.captured`, `payment.failed`, `order.paid`
-  - **Refunds**: `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`
-  - **Disputes**: `payment.dispute.created`, `payment.dispute.won`, `payment.dispute.lost`, `payment.dispute.closed`, `payment.dispute.under_review`, `payment.dispute.action_required`
+### C. RazorpayX Payouts, Penny Drop & Reverse Penny Drop (`upi_intent`)
 
-### B. RazorpayX Dashboard (Settings → Webhooks)
-- **Webhook URL**: `https://<production-domain>/api/webhooks/razorpay`
-- **Secret**: Value of `RAZORPAYX_WEBHOOK_SECRET`
-- **Active Events to Subscribe (`11` events)**:
-  - `payout.initiated` *(mandatory for `processing` transition)*
-  - `payout.processed`
-  - `payout.updated`
-  - `payout.failed` *(mandatory per RazorpayX docs)*
-  - `payout.reversed`
-  - `payout.rejected`
-  - `payout.queued`
-  - `payout.pending`
-  - `payout.cancelled`
-  - `fund_account.validation.completed`
-  - `fund_account.validation.failed`
+9. **Sanitize Bank Statement Narration (`<= 30` Chars, `[A-Za-z0-9 ]` Only)**:
+   - Partner banks reject any `POST /v1/payouts` payload whose `narration` exceeds 30 characters or contains hyphens/punctuation (`400 BAD_REQUEST_ERROR`). Never append raw UUIDs with hyphens into `narration`.
+10. **Enforce NPCI / RBI Payout Mode Ceilings & Floors**:
+    - `UPI` (`vpa`): **hard maximum ₹1,00,000** (`10_000_000` paise) per payout; VPA validations must **omit** `amount` and `currency`.
+    - `IMPS`: **maximum ₹5,00,000** (`50_000_000` paise), 24x7 instant.
+    - `RTGS`: **minimum ₹2,00,000** (`20_000_000` paise).
+    - `NEFT`: no amount cap; use for `> ₹5L` bank transfers or fallback.
+11. **Lookup Gateway Payouts by `reference_id` Before Redriving Stale `PROCESSING` Rows (>7d TTL)**:
+    - RazorpayX `X-Payout-Idempotency` expires after **7 days**. If an outbound payout HTTP call timed out after RazorpayX accepted it (`gatewayPayoutId = NULL`), always query `GET /v1/payouts?reference_id=<id>` before re-submitting so a stale sweeper never double-pays real money.
+12. **Coerce String `"00"`–`"100"` `name_match_score` & Handle Server-Side RPD Settlement**:
+    - RazorpayX frequently serializes `name_match_score` as a string (`"00"` is truthy in JS!). Coerce to finite `number | null`, read `results ?? validation_results`, accept `ifsc ?? bank_routing_code`, and defer under Redis lock contention so mobile UPI app-switch tab closures never lose verification state.
 
----
+### D. Reconcilers, Refunds, GST E-Invoicing & Income-Tax Act 2025
 
-## 4. Zero-Downtime Webhook Secret Rotation Procedure (`#1377`)
-
-Because Razorpay continues signing in-flight retries with the secret that was active when the event originally fired, rotating `RAZORPAY_WEBHOOK_SECRET` without a grace window causes 400 rejections and risks 24h webhook auto-disable. Always rotate in 3 steps:
-
-1. **Pre-stage**: Set `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` to the **current** secret value and `RAZORPAY_WEBHOOK_SECRET` to the **new** secret value in Netlify, then redeploy. (`app/api/webhooks/razorpay/signature.ts` now accepts both).
-2. **Flip in Dashboard**: Update the webhook secret in the Razorpay Dashboard to the **new** value.
-3. **Retire old secret**: Wait 24 hours (until no `WARN` `SystemEvent` logs for `"Razorpay webhook verified with RAZORPAY_WEBHOOK_SECRET_PREVIOUS"` appear), then unset `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`.
-
----
-
-## 5. RazorpayX Production Prerequisites
-
-1. **IP Allowlisting**: RazorpayX requires server outbound IPs to be allowlisted in the RazorpayX Dashboard before live `POST /v1/payouts` calls are permitted (`https://razorpay.com/docs/x/payouts/best-practices/`).
-2. **Account Balance Preflight**: Verify `getAccountBalance()` in [`lib/payments/payouts/razorpay-payouts.ts`](../../../../../lib/payments/payouts/razorpay-payouts.ts) against the live RazorpayX account before flipping `ENABLE_LIVE_PAYOUTS=true`.
-3. **Reverse Penny Drop (`upi_intent`)**: Confirm Account Validation is enabled on the live RazorpayX account; if disabled, `startReversePennyDrop` gracefully returns `503 RPD_UNAVAILABLE` and falls back to manual bank account entry.
+13. **Set Abandoned Pending Cleanup Grace `> 24 Hours` (`48h` Standard)**:
+    - Never delete or expire pending bank/wallet top-up rows before **48 hours** — Razorpay retries delayed `payment.captured` webhooks for up to **24 hours**, so a short cleanup window orphans real settled customer money.
+14. **Enforce Indian Statutory Limits in Code**:
+    - **CGST Rule 46(b) & Rule 53**: Every tax invoice and credit note number must match `^[A-Za-z0-9/-]{1,16}$` (**strict 16-character ceiling** enforced by GSTN GSTR-1 & IRP).
+    - **Income-tax Act 2025 (`IT2025`, effective 1 Apr 2026)**: Section `393(1)` Table Sl. `8(v)` e-commerce TDS (`0.1%` = `10 bps`; no-PAN `5%` = `500 bps` under `s.397(2)(b)(i)`), Section `194J` (`s.393(1)` Sl. `6(iii)`) ₹50,000 threshold (`5_000_000` paise), Section `195` (`20%` = `2000 bps` non-resident), and CBDT payment codes (`1035`, `1027`, `1017`, `1057`).
+    - **RBI PA-CB Cross-Border Exports**: Enforce `₹25,00,000` per-invoice cap, INR settlement currency guard, and automated FIRS / e-FIRA retention.
 
 ---
 
-## 6. International Payments (PA-CB) & FIRS
+## Part 2 — Complete 12-Rail Test Key (`rzp_test_*`) vs Live Key (`rzp_live_*`) Matrix
 
-If accepting international cards or bank transfers (`https://razorpay.com/docs/payments/international-payments/`):
-1. **PA-CB Activation**: International card acceptance requires partner-bank approval under RBI's Payment Aggregator – Cross Border (PA-CB) framework (active website with pricing, Terms & Conditions, Privacy Policy, Refund & Cancellation Policy).
-2. **RBI Purpose Code & FIRS**: Configure the applicable RBI Transaction Purpose Code under **Account & Settings → International Payment Codes** so Razorpay automatically generates **FIRS (Foreign Inward Remittance Statement)** certificates per settlement cycle (`https://razorpay.com/docs/payments/international-payments/firs-automated-process/`), required to substantiate zero-rated `EXPORT_LUT` supplies under GST.
-3. **INR Settlement**: Razorpay settles international card payments in **INR** (T+7 working days default; T+2 working days for domestic payments).
+| #      | Financial Rail                                                        | What Test Key (`rzp_test_*`) Simulates                                                         | What **ONLY Live Key (`rzp_live_*`)** Unlocks & Verifies                                                                                                                                                  |
+| ------ | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1**  | **Cross-Mode Entity IDs (`cust_*`, `cont_*`, `fa_*`)**                | Accepts sandbox entity IDs without error.                                                      | **Rejects all Test-Mode IDs with `400 BAD_REQUEST_ERROR`**. Tests stale `customer_id` self-healing & SQL reset.                                                                                           |
+| **2**  | **UPI Collect / Intent Latency & Late Captures**                      | Instant modal click (`Success` / `Failure`).                                                   | Real PSP app handoffs (GPay / PhonePe / Paytm), user closing tab while bank captures minutes later, and midnight NPCI cutoffs.                                                                            |
+| **3**  | **Settlements (`T+2` / `T+7`) & Real MDR + 18% GST Fees**             | ₹0 bank movement; zero real fee/tax deduction; no bank NEFT/RTGS UTR.                          | Real bank deposits (`T+2` domestic, `T+7` international), exact MDR + 18% GST deductions, and real settlement UTRs.                                                                                       |
+| **4**  | **Reverse Penny Drop (`upi_intent`) & Bank Holder Names**             | Mock holder `"Gaurav Kumar"` / `"100"` score; QR/deep link cannot hit real NPCI bank registry. | Real Indian bank account holder formatting (`"MR K G"`, initials, prefixes), string `"00"`–`"100"` score coercion, IFSC extraction, and real ₹1 auto-refund.                                              |
+| **5**  | **RazorpayX Payout Rails & Post-Ack Bank Reversals**                  | Virtual balance; instant `processed` transition; never hits partner-bank queues.               | Real balance locks (`queue_if_low_balance`), `UPI <= ₹1L` / `IMPS <= ₹5L` / `RTGS >= ₹2L` routing, 30-char narration rules, **and `processed -> reversed` when beneficiary bank rejects after IMPS ack**. |
+| **6**  | **Unlinked Stale `PROCESSING` Payout Redrive (>7d TTL)**              | Simulated HTTP responses never drop after partner-bank dispatch.                               | Proves `GET /v1/payouts?reference_id=<id>` prevents duplicate real-INR payouts when `X-Payout-Idempotency` expires after 7 days.                                                                          |
+| **7**  | **Refund Speed Downgrades & Issuer Bank Rejections**                  | Refunds complete instantaneously in sandbox.                                                   | Acquiring bank downgrading `optimum -> normal` (`refund.speed_changed`, 5–7 business days), closed-account `refund.failed`, and multi-leg paise conservation.                                             |
+| **8**  | **Card & UPI Chargebacks (`payment.dispute.*`, `deduct_at_onset`)**   | Static mock webhook JSON only.                                                                 | Real Visa/Mastercard/RuPay & NPCI UPI dispute codes (`U01`–`U99`), immediate `deduct_at_onset: true` balance debit, and evidence file upload limits.                                                      |
+| **9**  | **Webhook Secret Isolation & Zero-Downtime Rotation**                 | Single test webhook secret.                                                                    | Live dual-secret isolation (`RAZORPAY_WEBHOOK_SECRET` vs `RAZORPAYX_WEBHOOK_SECRET`) + `_PREVIOUS` rotation grace across deployments.                                                                     |
+| **10** | **International Cards & RBI PA-CB (`₹25L` Cap & FIRS/e-FIRA)**        | Domestic INR test cards only.                                                                  | Live foreign 3DS2 friction, Amex/Diners acceptance, FX spread, `₹25,00,000` cap, and automated FIRS / e-FIRA download.                                                                                    |
+| **11** | **CGST Rule 46(b) / Rule 53 IRP E-Invoicing (`<= 16` Chars)**         | Mock/skipped IRP in dev/test.                                                                  | Live ClearTax / GSTN IRP IRN generation enforcing strict `^[A-Za-z0-9/-]{1,16}$`.                                                                                                                         |
+| **12** | **Income-Tax Act 2025 (`IT2025`) Section `393` / `194J` / `195` TDS** | Static DB table seed rows.                                                                     | Live PAN status validation (`5%` no-PAN `s.397(2)(b)(i)`), `₹50K` 194J threshold, `20%` Section 195 non-resident withholding, and quarterly challans.                                                     |
 
 ---
 
-## 7. Live Smoke Test Verification
+## Part 3 — Mandatory ₹1.00 Live Penny-Test Verification Suite
 
-1. **₹1 / Small Live Checkout**: Complete a real payment via UPI (`₹1` minimum on Razorpay Orders API).
-2. **Verify Both Confirmation Doors**:
-   - Check `SystemEvent` / logs for `/api/checkout/verify-signature` (`client-side payment confirmation`) and `WebhookEvent` for `payment.captured` (`processed = true`, `error = null`).
-   - Confirm `Payment.paymentStatus = 'SUCCEEDED'`, `Payment.gatewayPaymentId = 'pay_...'`, `Appointment` confirmed, `ConsultantEarnings` created, and `LedgerTransaction` (`booking:<paymentId>`) balanced (`SUM(DEBIT) === SUM(CREDIT)`).
-3. **Live Refund Smoke Test**: Issue a refund on the test booking, verify `X-Refund-Idempotency` succeeds (`Refund.refundId = 'rfnd_...'`), and confirm `refund.processed` runs `applyRefundCascade` and mints a `CreditNote`.
+Before opening live customer traffic, execute all 4 penny tests using real UPI/bank accounts (`₹1.00` = `100` paise net cost):
+
+1. **Live Smoke 1 — ₹1.00 Standard Checkout (`order_*` -> `pay_*`)**: Pay real ₹1 via UPI -> confirm `Payment.paymentStatus = SUCCEEDED`, `Appointment` confirmed, invoice number `<= 16` chars, and `SUM(debit) - SUM(credit) = 0` in `LedgerEntry`.
+2. **Live Smoke 2 — ₹1.00 Full Refund (`rfnd_*`)**: Refund Smoke 1 -> confirm `Refund.status = SUCCEEDED` via live `refund.processed` webhook, credit note `<= 16` chars minted, ₹1 credited to bank, and ledger net imbalance `= 0`.
+3. **Live Smoke 3 — ₹1.00 Reverse Penny Drop (`upi_intent`)**: Complete mobile UPI Intent RPD -> confirm `fund_account.validation.completed` verifies under `RAZORPAYX_WEBHOOK_SECRET`, parses `name_match_score`, sets `isVerified = true`, and refunds ₹1.
+4. **Live Smoke 4 — ₹1.00 Live Consultant Payout (`pout_*`)**: Disburse ₹1 payout with `ENABLE_LIVE_PAYOUTS=true` -> confirm live `payout.processed` webhook records real bank `gatewayUtr`, bank statement shows sanitized narration, and ledger net imbalance `= 0`.
+
+---
+
+## Part 4 — Repository File Map (`Practitionist/familiarise_web`)
+
+- **Core Gateway & Stale Customer Self-Healing**: [`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts) (`sanitizeRazorpayNotes`, `createRazorpayOrder`, boot test-key guard)
+- **Webhook Signature Isolation & Rotation**: [`app/api/webhooks/razorpay/signature.ts`](../../../../../app/api/webhooks/razorpay/signature.ts) (`resolveRazorpayPaymentSecrets`, `resolveRazorpayXSecrets`, `isPayoutEventName`) & [`route.ts`](../../../../../app/api/webhooks/razorpay/route.ts)
+- **Webhook Dispatch & Out-of-Order Deferral**: [`app/api/webhooks/razorpay-dispatch.ts`](../../../../../app/api/webhooks/razorpay-dispatch.ts) & [`app/api/webhooks/utils.ts`](../../../../../app/api/webhooks/utils.ts)
+- **RazorpayX Payouts & Redrive Safety**: [`lib/payments/payouts/razorpay-payouts.ts`](../../../../../lib/payments/payouts/razorpay-payouts.ts) & [`lib/payments/payouts/org-payout-service.ts`](../../../../../lib/payments/payouts/org-payout-service.ts)
+- **Reverse Penny Drop (`upi_intent`)**: [`lib/payments/payouts/reverse-penny-drop.ts`](../../../../../lib/payments/payouts/reverse-penny-drop.ts)
+- **Canonical Production Checklist**: [`docs/payments/gateways/razorpay/05-go-live-checklist.md`](../../../../../docs/payments/gateways/razorpay/05-go-live-checklist.md)
