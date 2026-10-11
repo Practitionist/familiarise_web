@@ -130,6 +130,7 @@ export interface DocumentThread<
   T extends ThreadableDocument = ThreadableDocument,
 > {
   rootId: string;
+  rootDocument: T;
   appointmentId: string;
   title: string;
   latestVersion: T;
@@ -174,6 +175,7 @@ export function groupDocumentsIntoThreads<T extends ThreadableDocument>(
       );
     });
 
+    const rootDocument = versions[0]!;
     const latestVersion = versions.at(-1)!;
     let latestConsulteeSubmission: T | null = null;
     let latestConsultantResponse: T | null = null;
@@ -195,9 +197,9 @@ export function groupDocumentsIntoThreads<T extends ThreadableDocument>(
 
     threads.push({
       rootId,
+      rootDocument,
       appointmentId: latestVersion.appointmentId,
-      title:
-        latestConsulteeSubmission?.originalName ?? latestVersion.originalName,
+      title: rootDocument.originalName,
       latestVersion,
       latestConsulteeSubmission,
       latestConsultantResponse,
@@ -215,6 +217,10 @@ export function groupDocumentsIntoThreads<T extends ThreadableDocument>(
 }
 
 interface ThreadSlotTx {
+  $executeRaw?: (
+    query: TemplateStringsArray,
+    ...values: unknown[]
+  ) => Promise<unknown>;
   appointmentDocument: {
     findFirst: (args: {
       where: { id: string; appointmentId: string; deletedAt: null };
@@ -243,6 +249,10 @@ export async function resolveDocumentThreadSlot(
     maxDocsPerAppointment,
     maxVersionsPerThread,
   } = params;
+
+  if (tx.$executeRaw) {
+    await tx.$executeRaw`SELECT 1 FROM "Appointment" WHERE id = ${appointmentId} FOR UPDATE`;
+  }
 
   if (!parentDocumentId) {
     const rootCount = await tx.appointmentDocument.count({

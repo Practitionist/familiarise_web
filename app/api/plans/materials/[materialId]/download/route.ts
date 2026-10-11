@@ -1,12 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { supabaseAdmin } from "@/lib/supabase";
 import { getSession } from "@/lib/auth-server";
-import {
-  formatContentDisposition,
-  isPreviewableMimeType,
-} from "@/lib/documents/urls";
+import { requireOrgAccess } from "@/lib/auth-helpers";
+import { isPreviewableMimeType } from "@/lib/documents/urls";
+import { createSignedStorageUrl } from "@/lib/documents/storage-verify";
 
 const CLOSED_OR_UNPAID_BOOKING_STATUSES = [
   "CANCELLED",
@@ -23,20 +21,22 @@ export async function GET(
 ) {
   try {
     const { materialId } = await params;
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         {
           error: "Authentication required",
           message: "Please sign in to access plan materials",
+          code: "UNAUTHORIZED",
         },
         { status: 401 },
       );
     }
 
     const userId = session.user.id;
+    const searchParams = new URL(request.url).searchParams;
     const disposition =
-      request.nextUrl.searchParams.get("disposition") === "attachment"
+      searchParams.get("disposition") === "attachment"
         ? "attachment"
         : "inline";
 
@@ -50,6 +50,7 @@ export async function GET(
         consultationPlan: {
           select: {
             id: true,
+            organizationId: true,
             consultantProfile: { select: { userId: true } },
             consultations: {
               where: {
@@ -64,6 +65,7 @@ export async function GET(
         subscriptionPlan: {
           select: {
             id: true,
+            organizationId: true,
             consultantProfile: { select: { userId: true } },
             subscriptions: {
               where: {
@@ -73,20 +75,21 @@ export async function GET(
               select: { id: true },
               take: 1,
             },
-            trials: {
-              where: {
-                consulteeProfile: { user: { id: userId } },
-                status: { in: ["SCHEDULED", "COMPLETED"] },
-              },
-              select: { id: true },
-              take: 1,
-            },
           },
         },
         webinarPlan: {
           select: {
             id: true,
+            organizationId: true,
             consultantProfile: { select: { userId: true } },
+            collaborators: {
+              where: {
+                status: "ACCEPTED",
+                consultantProfile: { userId },
+              },
+              select: { id: true },
+              take: 1,
+            },
             webinars: {
               where: {
                 status: { not: "CANCELLED" },
@@ -107,7 +110,16 @@ export async function GET(
         classPlan: {
           select: {
             id: true,
+            organizationId: true,
             consultantProfile: { select: { userId: true } },
+            collaborators: {
+              where: {
+                status: "ACCEPTED",
+                consultantProfile: { userId },
+              },
+              select: { id: true },
+              take: 1,
+            },
             classes: {
               where: {
                 status: { not: "CANCELLED" },
@@ -141,64 +153,111 @@ export async function GET(
       material.webinarPlan?.consultantProfile?.userId ||
       material.classPlan?.consultantProfile?.userId;
 
+    const hasCollaboratorAccess =
+      Boolean(material.webinarPlan?.collaborators.length) ||
+      Boolean(material.classPlan?.collaborators.length);
+
     const hasLearnerAccess =
       Boolean(material.consultationPlan?.consultations.length) ||
       Boolean(material.subscriptionPlan?.subscriptions.length) ||
-      Boolean(material.subscriptionPlan?.trials.length) ||
       Boolean(material.webinarPlan?.webinars.length) ||
       Boolean(material.classPlan?.classes.length);
 
-    if (!isDevelopment && ownerUserId !== userId && !hasLearnerAccess) {
+    let hasOrgRoleAccess = false;
+    const planOrganizationId =
+      material.organizationId ||
+      material.consultationPlan?.organizationId ||
+      material.subscriptionPlan?.organizationId ||
+      material.webinarPlan?.organizationId ||
+      material.classPlan?.organizationId ||
+      null;
+
+    if (
+      !isDevelopment &&
+      ownerUserId !== userId &&
+      !hasCollaboratorAccess &&
+      !hasLearnerAccess &&
+      planOrganizationId
+    ) {
+      const [catalogAccess, opsAccess] = await Promise.all([
+        requireOrgAccess(planOrganizationId, { permission: "catalog.manage" }),
+        requireOrgAccess(planOrganizationId, { permission: "operations.read" }),
+      ]);
+      hasOrgRoleAccess = !catalogAccess.error || !opsAccess.error;
+    }
+
+    if (
+      !isDevelopment &&
+      ownerUserId !== userId &&
+      !hasCollaboratorAccess &&
+      !hasLearnerAccess &&
+      !hasOrgRoleAccess
+    ) {
       return NextResponse.json(
         { error: "Access denied", code: "FORBIDDEN" },
         { status: 403 },
       );
     }
 
-    if (!supabaseAdmin) {
-      return NextResponse.json(
-        { error: "Storage configuration error", code: "STORAGE_CONFIG_ERROR" },
-        { status: 500 },
-      );
-    }
-
-    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
-      .from("documents")
-      .download(material.storagePath);
-
-    if (downloadError || !fileData) {
-      Sentry.captureException(
-        downloadError instanceof Error
-          ? downloadError
-          : new Error(String(downloadError)),
-        { tags: { subsystem: "plans" } },
-      );
-      return NextResponse.json(
-        { error: "Download failed", code: "STORAGE_ERROR" },
-        { status: 500 },
-      );
-    }
-
-    const buffer = Buffer.from(await fileData.arrayBuffer());
+    const previewable = isPreviewableMimeType(
+      material.mimeType,
+      material.originalName,
+    );
     const effectiveDisposition =
-      disposition === "inline" && isPreviewableMimeType(material.mimeType)
-        ? "inline"
-        : "attachment";
+      disposition === "inline" && previewable ? "inline" : "attachment";
 
-    return new NextResponse(buffer, {
-      status: 200,
-      headers: {
-        "Content-Type": material.mimeType || "application/octet-stream",
-        "Content-Disposition": formatContentDisposition(
-          effectiveDisposition,
-          material.originalName,
-        ),
-        "X-Content-Type-Options": "nosniff",
-        "Content-Security-Policy":
-          "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'",
-        "Content-Length": buffer.length.toString(),
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-      },
+    const signed = await createSignedStorageUrl({
+      bucket: "documents",
+      storagePath: material.storagePath,
+      originalName: material.originalName,
+      disposition: effectiveDisposition,
+      expiresInSeconds: 60,
+    });
+
+    if (!signed.ok) {
+      if (signed.code === "STORAGE_CONFIG_ERROR") {
+        return NextResponse.json(
+          {
+            error: "Storage configuration error",
+            code: "STORAGE_CONFIG_ERROR",
+          },
+          { status: 500 },
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error: "File unavailable",
+          message:
+            "This file is missing from storage. Upload a replacement version to restore access.",
+          code: "STORAGE_MISSING",
+        },
+        { status: 404 },
+      );
+    }
+
+    const wantsJson =
+      searchParams.get("format") === "json" ||
+      request.headers.get("accept")?.includes("application/json");
+
+    if (wantsJson) {
+      return NextResponse.json(
+        {
+          signedUrl: signed.signedUrl,
+          mimeType: material.mimeType,
+          originalName: material.originalName,
+          previewable,
+        },
+        {
+          status: 200,
+          headers: { "Cache-Control": "private, no-store" },
+        },
+      );
+    }
+
+    return NextResponse.redirect(signed.signedUrl, {
+      status: 302,
+      headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error) {
     Sentry.captureException(

@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import {
   uploadAppointmentDocument,
@@ -12,15 +13,26 @@ import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
 import { isBookingTerminal } from "@/lib/appointments/terminal-status";
 import {
   MAX_DOCS_PER_APPOINTMENT,
+  MAX_DOCUMENT_BYTES,
   MAX_VERSIONS_PER_THREAD,
   resolveDocumentThreadSlot,
   validateDocumentUpload,
   withVersionConflictRetry,
 } from "@/lib/documents/document-review";
+import { verifyDirectUploadedObject } from "@/lib/documents/storage-verify";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
+
+const DirectCommitSchema = z.object({
+  storagePath: z.string().trim().min(1),
+  originalName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(120),
+  fileSize: z.number().int().positive().max(MAX_DOCUMENT_BYTES),
+  description: z.string().trim().max(2000).nullish(),
+  responseToDocumentId: z.string().trim().min(1).nullish(),
+});
 
 // GET - List documents for an appointment
 export async function GET(
@@ -105,28 +117,6 @@ export async function GET(
             ],
           },
         },
-        {
-          trial: {
-            OR: [
-              {
-                consulteeProfile: {
-                  user: {
-                    id: session.user.id,
-                  },
-                },
-              },
-              {
-                subscriptionPlan: {
-                  consultantProfile: {
-                    user: {
-                      id: session.user.id,
-                    },
-                  },
-                },
-              },
-            ],
-          },
-        },
       ];
     }
 
@@ -163,21 +153,6 @@ export async function GET(
             },
           },
         },
-        trial: {
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: { name: true },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
       },
     });
 
@@ -197,9 +172,8 @@ export async function GET(
     if (isBookingTerminal(appointment)) {
       return NextResponse.json(
         {
-          error: "Documents unavailable",
-          message:
-            "This appointment has been cancelled or closed, so its documents are no longer available.",
+          error: "Document unavailable",
+          message: "This appointment is no longer active.",
           code: "APPOINTMENT_TERMINAL",
         },
         { status: 403 },
@@ -209,35 +183,28 @@ export async function GET(
     const appointmentTitle =
       appointment.consultation?.consultationPlan?.title ||
       appointment.subscription?.subscriptionPlan?.title ||
-      appointment.trial?.subscriptionPlan?.title ||
       "Unknown Appointment";
     const consultantName =
       appointment.consultation?.consultationPlan?.consultantProfile?.user
         ?.name ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user
         ?.name ||
-      appointment.trial?.subscriptionPlan?.consultantProfile?.user?.name ||
       "Unknown Consultant";
 
-    // Fetch documents - this should never fail, even if folder doesn't exist
     let documents;
     try {
       documents = await prisma.appointmentDocument.findMany({
         where: {
           appointmentId,
-          // Soft-deleted rows stay in the DB for audit until the nightly purge;
-          // they never render in review threads.
           deletedAt: null,
         },
         include: {
-          // Include response documents (consultant responses to this document)
           responseDocuments: {
             where: { deletedAt: null },
             orderBy: {
               uploadedAt: "desc",
             },
           },
-          // Include the document this is a response to (if any)
           responseToDocument: {
             select: {
               id: true,
@@ -256,7 +223,6 @@ export async function GET(
         dbError instanceof Error ? dbError : new Error(String(dbError)),
         { tags: { subsystem: "appointments" } },
       );
-      // Return empty array instead of failing - documents folder might not exist yet
       return NextResponse.json({
         data: [],
         message:
@@ -291,7 +257,6 @@ export async function GET(
       { tags: { subsystem: "appointments" } },
     );
 
-    // Provide specific error messages based on error type
     if (error instanceof Error) {
       if (
         error.message.includes("connect") ||
@@ -336,7 +301,7 @@ export async function GET(
   }
 }
 
-// POST - Upload a new document
+// POST - Upload a new consultee document (supports 2-phase JSON commit and multipart FormData)
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -354,7 +319,6 @@ export async function POST(
       );
     }
 
-    // DOC-2 (#694) — throttle uploads per user before any storage/DB work.
     const rateLimited = await applyRateLimit(
       documentUploadLimiter,
       session.user.id,
@@ -374,71 +338,122 @@ export async function POST(
       );
     }
 
-    let formData;
-    try {
-      formData = await request.formData();
-    } catch (_parseError) {
-      return NextResponse.json(
-        {
-          error: "Invalid file upload",
-          message:
-            "The uploaded file appears to be corrupted or invalid. Please try uploading the file again.",
-          code: "INVALID_FILE",
-        },
-        { status: 400 },
-      );
+    const contentType = request.headers.get("content-type") ?? "";
+    const isJsonCommit = contentType.includes("application/json");
+
+    let file: File | null = null;
+    let directCommitData: z.infer<typeof DirectCommitSchema> | null = null;
+    let originalName = "";
+    let description: string | null = null;
+    let revisionOf: string | null = null;
+
+    if (isJsonCommit) {
+      let rawJson: unknown;
+      try {
+        rawJson = await request.json();
+      } catch {
+        return NextResponse.json(
+          {
+            error: "Invalid JSON body",
+            message: "Invalid upload payload.",
+            code: "INVALID_INPUT",
+          },
+          { status: 400 },
+        );
+      }
+      const parsed = DirectCommitSchema.safeParse(rawJson);
+      if (!parsed.success) {
+        return NextResponse.json(
+          {
+            error: "Invalid upload metadata",
+            message: "Please check your file and try uploading again.",
+            code: "INVALID_INPUT",
+          },
+          { status: 400 },
+        );
+      }
+      directCommitData = parsed.data;
+      originalName = parsed.data.originalName;
+      description = parsed.data.description?.trim() || null;
+      revisionOf = parsed.data.responseToDocumentId?.trim() || null;
+
+      const validation = validateDocumentUpload({
+        size: parsed.data.fileSize,
+        type: parsed.data.mimeType,
+      });
+      if (!validation.ok) {
+        return NextResponse.json(
+          {
+            error:
+              validation.code === "FILE_TOO_LARGE"
+                ? "File too large"
+                : "Unsupported file type",
+            message: validation.message,
+            code: validation.code,
+          },
+          { status: 400 },
+        );
+      }
+    } else {
+      let formData: FormData;
+      try {
+        formData = await request.formData();
+      } catch {
+        return NextResponse.json(
+          {
+            error: "Invalid file upload",
+            message:
+              "The uploaded file appears to be corrupted or invalid. Please try uploading the file again.",
+            code: "INVALID_FILE",
+          },
+          { status: 400 },
+        );
+      }
+
+      const rawFile = formData.get("file");
+      file = rawFile instanceof File ? rawFile : null;
+      const rawDesc = formData.get("description");
+      description =
+        typeof rawDesc === "string" && rawDesc.trim() ? rawDesc.trim() : null;
+      const revisionOfRaw = formData.get("responseToDocumentId");
+      revisionOf =
+        typeof revisionOfRaw === "string" && revisionOfRaw.trim()
+          ? revisionOfRaw.trim()
+          : null;
+
+      if (!file || file.size === 0) {
+        return NextResponse.json(
+          {
+            error: "No file selected",
+            message:
+              "Please select a file to upload. Supported formats include PDF, Word documents, images, and text files.",
+            code: "NO_FILE",
+          },
+          { status: 400 },
+        );
+      }
+
+      const validation = validateDocumentUpload(file);
+      if (!validation.ok) {
+        return NextResponse.json(
+          {
+            error:
+              validation.code === "FILE_TOO_LARGE"
+                ? "File too large"
+                : "Unsupported file type",
+            message: validation.message,
+            code: validation.code,
+          },
+          { status: 400 },
+        );
+      }
+      originalName = file.name;
     }
 
-    const file = formData.get("file") as File;
-    const description = formData.get("description") as string;
-    // A revision re-upload threads onto the document it replaces, mirroring
-    // the consultant side. Threading rather than mutating keeps the rejected
-    // version and its reviewNotes intact — the reviewer needs to see what
-    // changed, and an audit of "why was this approved" needs the history.
-    // `formData.get` returns `FormDataEntryValue | null`, so a client can send
-    // this part as a file and the old `as string` cast would have carried a
-    // `File` straight into the Prisma `where`/`create`.
-    const revisionOfRaw = formData.get("responseToDocumentId");
-    const revisionOf =
-      typeof revisionOfRaw === "string" && revisionOfRaw.trim()
-        ? revisionOfRaw.trim()
-        : null;
-
-    if (!file || file.size === 0) {
-      return NextResponse.json(
-        {
-          error: "No file selected",
-          message:
-            "Please select a file to upload. Supported formats include PDF, Word documents, images, and text files.",
-          code: "NO_FILE",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Shared size/MIME gate (same helper the consultant route uses).
-    const validation = validateDocumentUpload(file);
-    if (!validation.ok) {
-      return NextResponse.json(
-        {
-          error:
-            validation.code === "FILE_TOO_LARGE"
-              ? "File too large"
-              : "Unsupported file type",
-          message: validation.message,
-          code: validation.code,
-        },
-        { status: 400 },
-      );
-    }
-
-    // In development mode with explicit bypass flag, allow uploads to any appointment for testing
-    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
     const isDevelopment =
       process.env.NODE_ENV === "development" &&
       process.env.DEV_BYPASS_AUTH === "true";
 
-    // Build access control conditions - bypass in development
     const uploadWhereClause: Prisma.AppointmentWhereInput = {
       id: appointmentId,
     };
@@ -457,15 +472,6 @@ export async function POST(
         {
           subscription: {
             requestedBy: {
-              user: {
-                id: session.user.id,
-              },
-            },
-          },
-        },
-        {
-          trial: {
-            consulteeProfile: {
               user: {
                 id: session.user.id,
               },
@@ -518,26 +524,6 @@ export async function POST(
             },
           },
         },
-        trial: {
-          include: {
-            consulteeProfile: {
-              include: {
-                user: true,
-              },
-            },
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: {
-                      select: { id: true, name: true },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
       },
     });
 
@@ -569,7 +555,6 @@ export async function POST(
     const consulteeId =
       appointment.consultation?.requestedBy?.id ||
       appointment.subscription?.requestedBy?.id ||
-      appointment.trial?.consulteeProfile?.id ||
       (isDevelopment ? session.user.id : null);
 
     if (!consulteeId) {
@@ -611,7 +596,7 @@ export async function POST(
             error: "Invalid revision target",
             message:
               "The document this revision replaces was not found on this appointment.",
-            code: "INVALID_REVISION_TARGET",
+            code: "INVALID_THREAD_PARENT",
           },
           { status: 400 },
         );
@@ -635,90 +620,129 @@ export async function POST(
       }
     }
 
-    // Upload file to Supabase with enhanced error handling
-    let uploadResult;
-    try {
-      uploadResult = await uploadAppointmentDocument({
-        appointmentId,
-        consulteeId,
-        description,
-        file,
+    let resolvedStorage: {
+      fileName: string;
+      fileSize: number;
+      mimeType: string;
+      fileUrl: string;
+      storagePath: string;
+    };
+
+    if (directCommitData) {
+      const verified = await verifyDirectUploadedObject({
+        bucket: "documents",
+        storagePath: directCommitData.storagePath,
+        requiredPrefix: `appointments/${appointmentId}/consultee-${consulteeId}/`,
+        claimedMimeType: directCommitData.mimeType,
       });
-    } catch (uploadError) {
-      console.error("File upload error:", uploadError);
-      Sentry.captureException(
-        uploadError instanceof Error
-          ? uploadError
-          : new Error(String(uploadError)),
-        { tags: { subsystem: "appointments" } },
-      );
+      if (!verified.ok) {
+        return NextResponse.json(
+          {
+            error: "Upload validation failed",
+            message: verified.message,
+            code: verified.code,
+          },
+          { status: verified.code === "STORAGE_CONFIG_ERROR" ? 500 : 400 },
+        );
+      }
+      resolvedStorage = {
+        fileName: verified.fileName,
+        fileSize: verified.fileSize,
+        mimeType: verified.mimeType,
+        fileUrl: verified.fileUrl,
+        storagePath: directCommitData.storagePath,
+      };
+    } else {
+      let uploadResult;
+      try {
+        uploadResult = await uploadAppointmentDocument({
+          appointmentId,
+          consulteeId,
+          description: description || undefined,
+          file: file!,
+        });
+      } catch (uploadError) {
+        console.error("File upload error:", uploadError);
+        Sentry.captureException(
+          uploadError instanceof Error
+            ? uploadError
+            : new Error(String(uploadError)),
+          { tags: { subsystem: "appointments" } },
+        );
 
-      if (uploadError instanceof Error) {
-        if (
-          uploadError.message.includes("network") ||
-          uploadError.message.includes("fetch")
-        ) {
-          return NextResponse.json(
-            {
-              error: "Network error",
-              message:
-                "Upload failed due to a network issue. Please check your connection and try again.",
-              code: "NETWORK_ERROR",
-            },
-            { status: 503 },
-          );
+        if (uploadError instanceof Error) {
+          if (
+            uploadError.message.includes("network") ||
+            uploadError.message.includes("fetch")
+          ) {
+            return NextResponse.json(
+              {
+                error: "Network error",
+                message:
+                  "Upload failed due to a network issue. Please check your connection and try again.",
+                code: "NETWORK_ERROR",
+              },
+              { status: 503 },
+            );
+          }
+
+          if (
+            uploadError.message.includes("storage") ||
+            uploadError.message.includes("bucket")
+          ) {
+            return NextResponse.json(
+              {
+                error: "Storage error",
+                message:
+                  "There's a temporary issue with file storage. Please try again in a few moments.",
+                code: "STORAGE_ERROR",
+              },
+              { status: 503 },
+            );
+          }
         }
 
-        if (
-          uploadError.message.includes("storage") ||
-          uploadError.message.includes("bucket")
-        ) {
-          return NextResponse.json(
-            {
-              error: "Storage error",
-              message:
-                "There's a temporary issue with file storage. Please try again in a few moments.",
-              code: "STORAGE_ERROR",
-            },
-            { status: 503 },
-          );
-        }
+        return NextResponse.json(
+          {
+            error: "Upload failed",
+            message:
+              "Failed to upload the file. Please try again or contact support if the issue persists.",
+            code: "UPLOAD_ERROR",
+          },
+          { status: 500 },
+        );
       }
 
-      return NextResponse.json(
-        {
-          error: "Upload failed",
-          message:
-            "Failed to upload the file. Please try again or contact support if the issue persists.",
-          code: "UPLOAD_ERROR",
-        },
-        { status: 500 },
-      );
+      if (!uploadResult.success) {
+        const isBucketError =
+          uploadResult.error?.includes("bucket") ||
+          uploadResult.error?.includes("storage");
+
+        return NextResponse.json(
+          {
+            error: "Upload failed",
+            message:
+              uploadResult.error ||
+              "The file upload was unsuccessful. Please try again.",
+            code: isBucketError ? "BUCKET_NOT_FOUND" : "UPLOAD_FAILED",
+            ...(isBucketError && {
+              instructions: getManualBucketInstructions("documents"),
+              technical: uploadResult.error,
+            }),
+          },
+          { status: 400 },
+        );
+      }
+
+      resolvedStorage = {
+        fileName: uploadResult.fileName!,
+        fileSize: uploadResult.fileSize!,
+        mimeType: uploadResult.mimeType!,
+        fileUrl: uploadResult.fileUrl!,
+        storagePath: uploadResult.storagePath!,
+      };
     }
 
-    if (!uploadResult.success) {
-      const isBucketError =
-        uploadResult.error?.includes("bucket") ||
-        uploadResult.error?.includes("storage");
-
-      return NextResponse.json(
-        {
-          error: "Upload failed",
-          message:
-            uploadResult.error ||
-            "The file upload was unsuccessful. Please try again.",
-          code: isBucketError ? "BUCKET_NOT_FOUND" : "UPLOAD_FAILED",
-          ...(isBucketError && {
-            instructions: getManualBucketInstructions("documents"),
-            technical: uploadResult.error,
-          }),
-        },
-        { status: 400 },
-      );
-    }
-
-    // Save document record to database. Thread context + quota caps are verified
-    // inside the transaction using `tx` so concurrent uploads cannot race past limits.
     let document;
     try {
       document = await withVersionConflictRetry(() =>
@@ -735,13 +759,13 @@ export async function POST(
           return tx.appointmentDocument.create({
             data: {
               appointmentId,
-              fileName: uploadResult.fileName!,
-              originalName: file.name,
-              fileSize: uploadResult.fileSize!,
-              mimeType: uploadResult.mimeType!,
-              fileUrl: uploadResult.fileUrl!,
-              storagePath: uploadResult.storagePath!,
-              description: description?.trim() || null,
+              fileName: resolvedStorage.fileName,
+              originalName,
+              fileSize: resolvedStorage.fileSize,
+              mimeType: resolvedStorage.mimeType,
+              fileUrl: resolvedStorage.fileUrl,
+              storagePath: resolvedStorage.storagePath,
+              description,
               reviewStatus: "PENDING",
               responseToDocumentId: revisionOf,
               rootDocumentId,
@@ -757,9 +781,8 @@ export async function POST(
         { tags: { subsystem: "appointments" } },
       );
 
-      // Try to clean up uploaded file if database save failed
       try {
-        await deleteAppointmentDocument(uploadResult.storagePath!);
+        await deleteAppointmentDocument(resolvedStorage.storagePath);
       } catch (cleanupError) {
         console.error("Failed to cleanup uploaded file:", cleanupError);
         Sentry.captureException(
@@ -771,13 +794,13 @@ export async function POST(
       }
 
       if (dbError instanceof Error) {
-        if (dbError.message === "INVALID_REVISION_TARGET") {
+        if (dbError.message === "INVALID_THREAD_PARENT") {
           return NextResponse.json(
             {
               error: "Invalid revision target",
               message:
                 "The document this revision replaces was not found on this appointment.",
-              code: "INVALID_REVISION_TARGET",
+              code: "INVALID_THREAD_PARENT",
             },
             { status: 400 },
           );
@@ -815,34 +838,24 @@ export async function POST(
       );
     }
 
-    // Ping the reviewer. `after()` keeps the response fast and the send
-    // survives the handler; failures are logged, never surfaced as 500s.
     const consultantUserId =
       appointment.consultation?.consultationPlan?.consultantProfile?.user?.id ||
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id ||
-      appointment.trial?.subscriptionPlan?.consultantProfile?.user?.id;
+      appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id;
     const consultantProfileId =
       appointment.consultation?.consultationPlan?.consultantProfile?.id ||
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.id ||
-      appointment.trial?.subscriptionPlan?.consultantProfile?.id;
+      appointment.subscription?.subscriptionPlan?.consultantProfile?.id;
     const consulteeName =
       appointment.consultation?.requestedBy?.user?.name ||
       appointment.subscription?.requestedBy?.user?.name ||
-      appointment.trial?.consulteeProfile?.user?.name ||
       "The consultee";
     const consultantName =
       appointment.consultation?.consultationPlan?.consultantProfile?.user
         ?.name ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user
         ?.name ||
-      appointment.trial?.subscriptionPlan?.consultantProfile?.user?.name ||
       "your consultant";
 
     if (consultantUserId) {
-      // #1861 P2r — the document write already committed above, so this is
-      // not inside its transaction; stage the outbox row now (awaited,
-      // before the response) so it survives an instance freeze, and defer
-      // only the delivery attempt to after().
       await stageNowAttemptAfter("consultant document-upload notice", () =>
         notifyDocumentUploaded(
           consultantUserId,
@@ -851,7 +864,7 @@ export async function POST(
             appointmentId,
             documentId: document.id,
             uploadedByRole: "CONSULTEE",
-            fileName: file.name,
+            fileName: originalName,
             isThreaded: Boolean(revisionOf),
             versionNo: document.versionNo,
             consultantName,
@@ -872,7 +885,6 @@ export async function POST(
     const appointmentTitle =
       appointment.consultation?.consultationPlan?.title ||
       appointment.subscription?.subscriptionPlan?.title ||
-      appointment.trial?.subscriptionPlan?.title ||
       "your appointment";
 
     const devModeMessage = isDevelopment
@@ -882,7 +894,7 @@ export async function POST(
     return NextResponse.json(
       {
         data: document,
-        message: `Successfully uploaded "${file.name}" for ${appointmentTitle}. ${consultantName} will review it and provide feedback.${devModeMessage}`,
+        message: `Successfully uploaded "${originalName}" for ${appointmentTitle}. ${consultantName} will review it and provide feedback.${devModeMessage}`,
       },
       { status: 201 },
     );
@@ -893,7 +905,6 @@ export async function POST(
       { tags: { subsystem: "appointments" } },
     );
 
-    // Provide specific error messages based on error type
     if (error instanceof Error) {
       if (
         error.message.includes("connect") ||

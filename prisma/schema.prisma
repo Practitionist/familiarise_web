@@ -5156,6 +5156,8 @@ model AppointmentDocument {
   updatedAt  DateTime @updatedAt
 
   @@index([appointmentId])
+  @@index([appointmentId, deletedAt, uploadedAt(sort: Desc)])
+  @@index([appointmentId, rootDocumentId, deletedAt])
   @@index([reviewStatus])
   @@index([uploadedByRole])
   @@index([responseToDocumentId])
@@ -5223,6 +5225,8 @@ model PlanMaterial {
   @@index([classPlanId])
   @@index([order])
   @@index([organizationId])
+  @@index([organizationId, uploadedAt(sort: Desc)])
+  @@index([storagePath])
 }
 
 // Buyer-facing Q&A on an offering. Polymorphic across the four plan types the

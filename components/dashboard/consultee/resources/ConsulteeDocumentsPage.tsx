@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/responsive-table";
 import { DocumentReviewDrawer } from "@/components/documents/DocumentReviewDrawer";
 import { useListParams } from "@/hooks/useListParams";
+import { isConfirmedStatus } from "@/lib/appointments/status";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 import {
   groupDocumentsIntoThreads,
@@ -80,6 +81,15 @@ async function fetchDocuments(
   );
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return res.json();
+}
+
+function canUploadRevisionForThread(
+  thread: DocumentThread<ConsulteeDocumentRow>,
+): boolean {
+  return (
+    thread.rootDocument.uploadedByRole === "CONSULTEE" &&
+    isConfirmedStatus(thread.latestVersion.appointmentStatus)
+  );
 }
 
 function buildThreadColumns(
@@ -144,12 +154,15 @@ function buildThreadColumns(
     {
       key: "status",
       header: "Status",
-      cell: (thread) => (
-        <StatusBadge
-          {...documentReviewStatusBadge(thread.effectiveStatus)}
-          size="sm"
-        />
-      ),
+      cell: (thread) =>
+        thread.rootDocument.uploadedByRole === "CONSULTANT" ? (
+          <Badge variant="secondary">Shared by Expert</Badge>
+        ) : (
+          <StatusBadge
+            {...documentReviewStatusBadge(thread.effectiveStatus)}
+            size="sm"
+          />
+        ),
     },
     {
       key: "updated",
@@ -164,7 +177,9 @@ function buildThreadColumns(
       key: "actions",
       header: "",
       cell: (thread) => {
-        const needsRevision = thread.effectiveStatus === "NEEDS_REVISION";
+        const needsRevision =
+          canUploadRevisionForThread(thread) &&
+          thread.effectiveStatus === "NEEDS_REVISION";
         const nextVersionNo =
           (thread.latestVersion.versionNo ?? thread.versionCount) + 1;
         return (
@@ -438,7 +453,9 @@ export function ConsulteeDocumentsPage({
         isOpen={Boolean(drawerThread)}
         onClose={() => setDrawerRootId(null)}
         viewerRole="consultee"
-        canUpload
+        canUpload={
+          drawerThread ? canUploadRevisionForThread(drawerThread) : false
+        }
         onUpdated={() => {
           void queryClient.invalidateQueries({
             queryKey: ["consultee-documents", consulteeId],

@@ -3,15 +3,18 @@
 import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
 import {
+  AlertCircle,
   CheckCircle2,
   Download,
   ExternalLink,
   FileText,
   FileUp,
   Loader2,
+  Lock,
   MessageSquare,
   Paperclip,
   RotateCcw,
+  Trash2,
   XCircle,
 } from "lucide-react";
 
@@ -27,6 +30,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
@@ -42,6 +46,7 @@ import {
   isPreviewableMimeType,
 } from "@/lib/documents/urls";
 import { formatFileSize } from "@/lib/documents/document-utils";
+import { uploadAppointmentDocumentWithProgress } from "@/lib/documents/direct-upload";
 
 interface DocumentReviewDrawerProps {
   thread: DocumentThread<ThreadableDocument> | null;
@@ -52,6 +57,9 @@ interface DocumentReviewDrawerProps {
   initialVersionId?: string;
   onUpdated?: () => void;
 }
+
+type PreviewErrorCode =
+  "STORAGE_MISSING" | "APPOINTMENT_TERMINAL" | "PREVIEW_FAILED" | null;
 
 const CONSULTANT_STATUS_OPTIONS = [
   {
@@ -92,6 +100,12 @@ export function DocumentReviewDrawer({
   const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [revisionNote, setRevisionNote] = useState<string>("");
   const [isSaving, setIsSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+
+  const [signedPreviewUrl, setSignedPreviewUrl] = useState<string | null>(null);
+  const [previewErrorCode, setPreviewErrorCode] =
+    useState<PreviewErrorCode>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   const threadRef = React.useRef(thread);
   useEffect(() => {
@@ -118,6 +132,7 @@ export function DocumentReviewDrawer({
     setNotesDraft(current.effectiveReviewNotes ?? "");
     setAttachmentFile(null);
     setRevisionNote("");
+    setUploadProgress(null);
   }, [isOpen, threadRootId, initialVersionId]);
 
   useEffect(() => {
@@ -126,30 +141,130 @@ export function DocumentReviewDrawer({
     }
   }, [isSaving, reviewTarget?.reviewStatus]);
 
-  if (!thread) return null;
-
   const activeVersion =
-    thread.versions.find((v) => v.id === selectedVersionId) ??
-    thread.latestVersion;
+    thread?.versions.find((v) => v.id === selectedVersionId) ??
+    thread?.latestVersion ??
+    null;
+
+  const canPreviewInline = activeVersion
+    ? isPreviewableMimeType(activeVersion.mimeType, activeVersion.originalName)
+    : false;
+
+  useEffect(() => {
+    if (!isOpen || !thread || !activeVersion || !canPreviewInline) {
+      setSignedPreviewUrl(null);
+      setPreviewErrorCode(null);
+      setIsLoadingPreview(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingPreview(true);
+    setPreviewErrorCode(null);
+    setSignedPreviewUrl(null);
+
+    const metadataUrl = `${getAppointmentDocumentUrl(
+      thread.appointmentId,
+      activeVersion.id,
+      "inline",
+    )}&format=json`;
+
+    fetch(metadataUrl)
+      .then(async (res) => {
+        if (cancelled) return;
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+          if (res.status === 404 || payload?.code === "STORAGE_MISSING") {
+            setPreviewErrorCode("STORAGE_MISSING");
+          } else if (
+            res.status === 403 ||
+            payload?.code === "APPOINTMENT_TERMINAL"
+          ) {
+            setPreviewErrorCode("APPOINTMENT_TERMINAL");
+          } else {
+            setPreviewErrorCode("PREVIEW_FAILED");
+          }
+          return;
+        }
+        if (payload?.signedUrl) {
+          setSignedPreviewUrl(payload.signedUrl);
+        } else {
+          setSignedPreviewUrl(
+            getAppointmentDocumentUrl(
+              thread.appointmentId,
+              activeVersion.id,
+              "inline",
+            ),
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreviewErrorCode("PREVIEW_FAILED");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingPreview(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, thread, activeVersion, canPreviewInline]);
+
+  if (!thread || !activeVersion) return null;
+
   const nextVersionNo =
     (thread.latestVersion.versionNo ?? thread.versionCount) + 1;
 
-  const inlineUrl = getAppointmentDocumentUrl(
-    thread.appointmentId,
-    activeVersion.id,
-    "inline",
-  );
+  const inlineUrl =
+    signedPreviewUrl ??
+    getAppointmentDocumentUrl(thread.appointmentId, activeVersion.id, "inline");
   const downloadUrl = getAppointmentDocumentUrl(
     thread.appointmentId,
     activeVersion.id,
     "attachment",
   );
-  const canPreviewInline = isPreviewableMimeType(activeVersion.mimeType);
   const isImage = activeVersion.mimeType.startsWith("image/");
+
+  const canDeleteActiveVersion =
+    (viewerRole === "consultee" &&
+      activeVersion.uploadedByRole === "CONSULTEE" &&
+      activeVersion.reviewStatus === "PENDING") ||
+    (viewerRole === "consultant" &&
+      activeVersion.uploadedByRole === "CONSULTANT" &&
+      activeVersion.rootDocumentId === null);
+
+  const handleDeleteActiveVersion = async () => {
+    const res = await fetch(
+      `/api/appointments/${thread.appointmentId}/documents/${activeVersion.id}`,
+      { method: "DELETE" },
+    );
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => null);
+      toast({
+        title: "Unable to delete file",
+        description:
+          errBody?.message || errBody?.error || "Could not remove this file.",
+        variant: "destructive",
+      });
+      throw new Error("Delete failed");
+    }
+
+    toast({
+      title: "Document deleted",
+      description: `${activeVersion.originalName} has been removed.`,
+    });
+    onUpdated?.();
+    onClose();
+  };
 
   const handleSaveConsultantReview = async () => {
     if (!reviewTarget) return;
     setIsSaving(true);
+    setUploadProgress(null);
     try {
       const patchRes = await fetch(
         `/api/appointments/${thread.appointmentId}/documents/${reviewTarget.id}`,
@@ -171,25 +286,22 @@ export function DocumentReviewDrawer({
       }
 
       if (attachmentFile) {
-        const formData = new FormData();
-        formData.append("file", attachmentFile);
-        formData.append("responseToDocumentId", reviewTarget.id);
-        if (notesDraft.trim()) {
-          formData.append("description", notesDraft.trim());
-        }
-        const uploadRes = await fetch(
-          `/api/appointments/${thread.appointmentId}/documents/consultant`,
-          {
-            method: "POST",
-            body: formData,
-          },
-        );
-        if (!uploadRes.ok) {
-          const uploadErr = await uploadRes.json().catch(() => null);
+        try {
+          await uploadAppointmentDocumentWithProgress({
+            appointmentId: thread.appointmentId,
+            file: attachmentFile,
+            role: "consultant",
+            responseToDocumentId: reviewTarget.id,
+            description: notesDraft.trim() || undefined,
+            onProgress: (pct) => setUploadProgress(pct),
+          });
+        } catch (uploadErr) {
           toast({
             title: "Review saved",
             description: `Status and notes were saved, but response attachment upload failed: ${
-              uploadErr?.message || uploadErr?.error || "Unknown upload error"
+              uploadErr instanceof Error
+                ? uploadErr.message
+                : "Unknown upload error"
             }`,
             variant: "destructive",
           });
@@ -217,6 +329,7 @@ export function DocumentReviewDrawer({
       });
     } finally {
       setIsSaving(false);
+      setUploadProgress(null);
     }
   };
 
@@ -231,28 +344,16 @@ export function DocumentReviewDrawer({
     }
 
     setIsSaving(true);
+    setUploadProgress(0);
     try {
-      const formData = new FormData();
-      formData.append("file", attachmentFile);
-      formData.append("responseToDocumentId", thread.latestVersion.id);
-      if (revisionNote.trim()) {
-        formData.append("description", revisionNote.trim());
-      }
-
-      const res = await fetch(
-        `/api/appointments/${thread.appointmentId}/documents`,
-        {
-          method: "POST",
-          body: formData,
-        },
-      );
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => null);
-        throw new Error(
-          errBody?.message || errBody?.error || "Failed to upload revision",
-        );
-      }
+      await uploadAppointmentDocumentWithProgress({
+        appointmentId: thread.appointmentId,
+        file: attachmentFile,
+        role: "consultee",
+        responseToDocumentId: thread.latestVersion.id,
+        description: revisionNote.trim() || undefined,
+        onProgress: (pct) => setUploadProgress(pct),
+      });
 
       toast({
         title: `Uploaded v${nextVersionNo}`,
@@ -272,6 +373,7 @@ export function DocumentReviewDrawer({
       });
     } finally {
       setIsSaving(false);
+      setUploadProgress(null);
     }
   };
 
@@ -285,7 +387,8 @@ export function DocumentReviewDrawer({
         </p>
         <p className="mt-1 max-w-xs text-xs text-muted-foreground">
           Inline preview is available for PDFs, images, and text files. Download
-          this file to inspect it locally.
+          this file ({formatFileSize(activeVersion.fileSize)}) to inspect it
+          locally.
         </p>
         <Button asChild size="sm" variant="outline" className="mt-4">
           <a href={downloadUrl}>
@@ -295,12 +398,38 @@ export function DocumentReviewDrawer({
         </Button>
       </div>
     );
+  } else if (previewErrorCode === "STORAGE_MISSING") {
+    previewStage = (
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        <AlertCircle className="mb-3 h-10 w-10 text-destructive/70" />
+        <p className="text-sm font-medium text-foreground">File unavailable</p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          This file is no longer in storage.
+        </p>
+      </div>
+    );
+  } else if (previewErrorCode === "APPOINTMENT_TERMINAL") {
+    previewStage = (
+      <div className="flex flex-col items-center justify-center p-8 text-center">
+        <Lock className="mb-3 h-10 w-10 text-muted-foreground" />
+        <p className="text-sm font-medium text-foreground">Booking closed</p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          Files on cancelled or expired sessions are closed.
+        </p>
+      </div>
+    );
+  } else if (isLoadingPreview) {
+    previewStage = (
+      <div className="flex flex-col items-center justify-center p-8 text-xs text-muted-foreground">
+        <Loader2 className="mb-2 h-6 w-6 animate-spin" />
+        Preparing preview...
+      </div>
+    );
   } else if (isImage) {
     previewStage = (
-      <object
-        data={inlineUrl}
-        type={activeVersion.mimeType}
-        aria-label={activeVersion.originalName}
+      <img
+        src={inlineUrl}
+        alt={activeVersion.originalName}
         className="max-h-[60vh] max-w-full object-contain p-2"
       />
     );
@@ -313,6 +442,9 @@ export function DocumentReviewDrawer({
       />
     );
   }
+
+  const isExpertHandoutRoot =
+    thread.rootDocument.uploadedByRole === "CONSULTANT";
 
   return (
     <ResponsiveModal open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -329,10 +461,14 @@ export function DocumentReviewDrawer({
                 {format(new Date(thread.updatedAt), "dd MMM yyyy, h:mm a")}
               </ResponsiveModalDescription>
             </div>
-            <StatusBadge
-              {...documentReviewStatusBadge(thread.effectiveStatus)}
-              size="sm"
-            />
+            {isExpertHandoutRoot ? (
+              <Badge variant="secondary">Shared by Expert</Badge>
+            ) : (
+              <StatusBadge
+                {...documentReviewStatusBadge(thread.effectiveStatus)}
+                size="sm"
+              />
+            )}
           </div>
         </ResponsiveModalHeader>
 
@@ -347,16 +483,20 @@ export function DocumentReviewDrawer({
                 </span>
               </span>
               <div className="flex shrink-0 items-center gap-1.5">
-                <a
-                  href={inlineUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
-                >
-                  Open
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-                <span className="text-muted-foreground">·</span>
+                {canPreviewInline && (
+                  <>
+                    <a
+                      href={inlineUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+                    >
+                      Open
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                    <span className="text-muted-foreground">·</span>
+                  </>
+                )}
                 <a
                   href={downloadUrl}
                   className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
@@ -364,6 +504,27 @@ export function DocumentReviewDrawer({
                   Download
                   <Download className="h-3 w-3" />
                 </a>
+                {canDeleteActiveVersion && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <ConfirmDialog
+                      title="Delete this document?"
+                      description={`"${activeVersion.originalName}" will be permanently removed from this thread.`}
+                      confirmLabel="Delete"
+                      tone="destructive"
+                      onConfirm={handleDeleteActiveVersion}
+                      trigger={
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1 font-medium text-destructive hover:underline"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Delete
+                        </button>
+                      }
+                    />
+                  </>
+                )}
               </div>
             </div>
 
@@ -480,6 +641,11 @@ export function DocumentReviewDrawer({
                           }
                           className="h-8 text-xs"
                         />
+                        {uploadProgress !== null && (
+                          <p className="text-[11px] text-muted-foreground">
+                            Uploading attachment... {uploadProgress}%
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -549,6 +715,11 @@ export function DocumentReviewDrawer({
                         onChange={(e) => setRevisionNote(e.target.value)}
                         className="h-8 text-xs"
                       />
+                      {uploadProgress !== null && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Uploading v{nextVersionNo}... {uploadProgress}%
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

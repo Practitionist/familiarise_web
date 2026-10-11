@@ -396,6 +396,8 @@ export async function handleGetMaterials(
   }
 }
 
+const MAX_MATERIALS_PER_PLAN = 25;
+
 /**
  * POST - Upload a new material
  */
@@ -437,80 +439,186 @@ export async function handleUploadMaterial(
     }
     const { organizationId, orgActor } = access;
 
-    // Parse form data
-    const formData = await request.formData();
-    const file = formData.get("file") as File | null;
-    const description = formData.get("description") as string | null;
+    const contentType = request.headers.get("content-type") ?? "";
+    let resolvedUpload: {
+      fileName: string;
+      originalName: string;
+      fileSize: number;
+      mimeType: string;
+      fileUrl: string;
+      storagePath: string;
+    };
+    let description: string | null = null;
 
-    if (!file) {
-      return NextResponse.json(
-        {
-          error: "No file provided",
-          message: "Please select a file to upload",
-          code: "INVALID_INPUT",
-        },
-        { status: 400 },
-      );
+    if (contentType.includes("application/json")) {
+      const jsonBody = (await request.json().catch(() => null)) as {
+        storagePath?: string;
+        originalName?: string;
+        mimeType?: string;
+        fileSize?: number;
+        description?: string;
+      } | null;
+
+      if (
+        !jsonBody?.storagePath ||
+        !jsonBody.originalName ||
+        !jsonBody.mimeType
+      ) {
+        return NextResponse.json(
+          {
+            error: "Invalid upload metadata",
+            message: "Please select a valid file to upload",
+            code: "INVALID_INPUT",
+          },
+          { status: 400 },
+        );
+      }
+
+      const { verifyDirectUploadedObject } =
+        await import("@/lib/documents/storage-verify");
+      const verified = await verifyDirectUploadedObject({
+        bucket: "documents",
+        storagePath: jsonBody.storagePath,
+        requiredPrefix: `plans/${config.planType}-plans/${planId}/`,
+        claimedMimeType: jsonBody.mimeType,
+      });
+      if (!verified.ok) {
+        return NextResponse.json(
+          {
+            error: "Upload validation failed",
+            message: verified.message,
+            code: verified.code,
+          },
+          { status: verified.code === "STORAGE_CONFIG_ERROR" ? 500 : 400 },
+        );
+      }
+      description = jsonBody.description?.trim() || null;
+      resolvedUpload = {
+        fileName: verified.fileName,
+        originalName: jsonBody.originalName,
+        fileSize: verified.fileSize,
+        mimeType: verified.mimeType,
+        fileUrl: verified.fileUrl,
+        storagePath: jsonBody.storagePath,
+      };
+    } else {
+      const formData = await request.formData();
+      const rawFile = formData.get("file");
+      const file = rawFile instanceof File ? rawFile : null;
+      const rawDesc = formData.get("description");
+      description =
+        typeof rawDesc === "string" && rawDesc.trim() ? rawDesc.trim() : null;
+
+      if (!file) {
+        return NextResponse.json(
+          {
+            error: "No file provided",
+            message: "Please select a file to upload",
+            code: "INVALID_INPUT",
+          },
+          { status: 400 },
+        );
+      }
+
+      const uploadResult = await uploadPlanMaterial({
+        planType: config.planType,
+        planId,
+        file,
+        description: description || undefined,
+      });
+
+      if (!uploadResult.success) {
+        return NextResponse.json(
+          {
+            error: "Upload failed",
+            message: uploadResult.error || "Failed to upload file",
+            code: "UPLOAD_ERROR",
+          },
+          { status: 500 },
+        );
+      }
+
+      resolvedUpload = {
+        fileName: uploadResult.fileName!,
+        originalName: file.name,
+        fileSize: uploadResult.fileSize!,
+        mimeType: uploadResult.mimeType!,
+        fileUrl: uploadResult.fileUrl!,
+        storagePath: uploadResult.storagePath!,
+      };
     }
 
-    // Upload to Supabase
-    const uploadResult = await uploadPlanMaterial({
-      planType: config.planType,
-      planId,
-      file,
-      description: description || undefined,
-    });
-
-    if (!uploadResult.success) {
-      return NextResponse.json(
-        {
-          error: "Upload failed",
-          message: uploadResult.error || "Failed to upload file",
-          code: "UPLOAD_ERROR",
-        },
-        { status: 500 },
-      );
-    }
-
-    // Get the current max order for this plan
     const whereClause: Prisma.PlanMaterialWhereInput = {
       [config.planIdField]: planId,
     };
 
-    const maxOrderResult = await prisma.planMaterial.aggregate({
-      where: whereClause,
-      _max: { order: true },
-    });
-    const nextOrder = (maxOrderResult._max.order ?? -1) + 1;
+    let material;
+    try {
+      material = await prisma.$transaction(async (tx) => {
+        if (config.planModel === "consultationPlan") {
+          await tx.$executeRaw`SELECT 1 FROM "ConsultationPlan" WHERE id = ${planId} FOR UPDATE`;
+        } else if (config.planModel === "subscriptionPlan") {
+          await tx.$executeRaw`SELECT 1 FROM "SubscriptionPlan" WHERE id = ${planId} FOR UPDATE`;
+        } else if (config.planModel === "webinarPlan") {
+          await tx.$executeRaw`SELECT 1 FROM "WebinarPlan" WHERE id = ${planId} FOR UPDATE`;
+        } else {
+          await tx.$executeRaw`SELECT 1 FROM "ClassPlan" WHERE id = ${planId} FOR UPDATE`;
+        }
 
-    // Create database record — mirror the plan's org tag so org dashboards
-    // can scope materials without polymorphic joins.
-    const createData = {
-      fileName: uploadResult.fileName!,
-      originalName: file.name,
-      fileSize: uploadResult.fileSize!,
-      mimeType: uploadResult.mimeType!,
-      fileUrl: uploadResult.fileUrl!,
-      storagePath: uploadResult.storagePath!,
-      description: description || null,
-      order: nextOrder,
-      organizationId,
-      [config.planIdField]: planId,
-    };
-
-    const material = await prisma.$transaction(async (tx) => {
-      const created = await tx.planMaterial.create({
-        data: createData as Prisma.PlanMaterialUncheckedCreateInput,
-      });
-      if (orgActor) {
-        await auditOrgMaterialChange(tx, orgActor, {
-          action: AUDIT_ACTIONS.CATALOG.PLAN_MATERIAL_ADDED,
-          materialId: created.id,
-          fileName: created.originalName,
+        const existingCount = await tx.planMaterial.count({
+          where: whereClause,
         });
+        if (existingCount >= MAX_MATERIALS_PER_PLAN) {
+          throw new Error("MATERIAL_LIMIT_REACHED");
+        }
+
+        const maxOrderResult = await tx.planMaterial.aggregate({
+          where: whereClause,
+          _max: { order: true },
+        });
+        const nextOrder = (maxOrderResult._max.order ?? -1) + 1;
+
+        const created = await tx.planMaterial.create({
+          data: {
+            fileName: resolvedUpload.fileName,
+            originalName: resolvedUpload.originalName,
+            fileSize: resolvedUpload.fileSize,
+            mimeType: resolvedUpload.mimeType,
+            fileUrl: resolvedUpload.fileUrl,
+            storagePath: resolvedUpload.storagePath,
+            description,
+            order: nextOrder,
+            organizationId,
+            [config.planIdField]: planId,
+          } as Prisma.PlanMaterialUncheckedCreateInput,
+        });
+
+        if (orgActor) {
+          await auditOrgMaterialChange(tx, orgActor, {
+            action: AUDIT_ACTIONS.CATALOG.PLAN_MATERIAL_ADDED,
+            materialId: created.id,
+            fileName: created.originalName,
+          });
+        }
+        return created;
+      });
+    } catch (txError) {
+      await deletePlanMaterial(resolvedUpload.storagePath).catch(() => false);
+      if (
+        txError instanceof Error &&
+        txError.message === "MATERIAL_LIMIT_REACHED"
+      ) {
+        return NextResponse.json(
+          {
+            error: "Material limit reached",
+            message: `A plan can have at most ${MAX_MATERIALS_PER_PLAN} materials.`,
+            code: "MATERIAL_LIMIT_REACHED",
+          },
+          { status: 400 },
+        );
       }
-      return created;
-    });
+      throw txError;
+    }
 
     return NextResponse.json({ data: material }, { status: 201 });
   } catch (error) {

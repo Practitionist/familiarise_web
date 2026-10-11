@@ -20,6 +20,12 @@ const BulkReviewSchema = z.object({
   reviewNotes: z.string().trim().max(MAX_NOTES).nullish(),
 });
 
+const NON_TERMINAL_REVIEW_STATUSES: DocumentReviewStatus[] = [
+  DocumentReviewStatus.PENDING,
+  DocumentReviewStatus.IN_REVIEW,
+  DocumentReviewStatus.NEEDS_REVISION,
+];
+
 export async function PATCH(request: NextRequest) {
   try {
     const session = await getSession();
@@ -59,13 +65,14 @@ export async function PATCH(request: NextRequest) {
     }
     const { documentIds, reviewStatus, reviewNotes } = parsed.data;
 
-    const ownedByConsultant: Prisma.AppointmentWhereInput = {
+    const ownedNonTerminalAppointment: Prisma.AppointmentWhereInput = {
       OR: [
         {
           consultation: {
             consultationPlan: {
               consultantProfile: { user: { id: session.user.id } },
             },
+            status: { notIn: ["CANCELLED", "REJECTED", "EXPIRED"] },
           },
         },
         {
@@ -73,84 +80,65 @@ export async function PATCH(request: NextRequest) {
             subscriptionPlan: {
               consultantProfile: { user: { id: session.user.id } },
             },
-          },
-        },
-        {
-          trial: {
-            subscriptionPlan: {
-              consultantProfile: { user: { id: session.user.id } },
-            },
+            status: { notIn: ["CANCELLED", "REJECTED", "EXPIRED"] },
           },
         },
       ],
     };
 
-    const eligibleWhere: Prisma.AppointmentDocumentWhereInput = {
-      id: { in: documentIds },
-      deletedAt: null,
-      reviewStatus: {
-        in: [
-          DocumentReviewStatus.PENDING,
-          DocumentReviewStatus.IN_REVIEW,
-          DocumentReviewStatus.NEEDS_REVISION,
-        ],
-      },
-      appointment: ownedByConsultant,
-    };
+    const statusTransitionSources = NON_TERMINAL_REVIEW_STATUSES.filter(
+      (s) => s !== reviewStatus,
+    );
 
-    const { targetDocs, result } = await prisma.$transaction(async (tx) => {
-      const updatedRows = await tx.appointmentDocument.updateManyAndReturn({
-        where: eligibleWhere,
-        data: {
-          reviewStatus,
-          ...(reviewNotes ? { reviewNotes } : {}),
-          reviewedAt: new Date(),
-          reviewedById: session.user.id,
-        },
-        select: {
-          id: true,
-          appointmentId: true,
-          originalName: true,
-          appointment: {
-            select: {
-              organizationId: true,
-              consultation: {
-                select: {
-                  requestedBy: {
-                    select: { id: true, user: { select: { id: true } } },
-                  },
-                  consultationPlan: {
-                    select: {
-                      consultantProfile: {
-                        select: { user: { select: { name: true } } },
+    const { targetDocs, totalUpdated } = await prisma.$transaction(
+      async (tx) => {
+        const updatedRows = await tx.appointmentDocument.updateManyAndReturn({
+          where: {
+            id: { in: documentIds },
+            deletedAt: null,
+            uploadedByRole: "CONSULTEE",
+            reviewStatus: { in: statusTransitionSources },
+            appointment: ownedNonTerminalAppointment,
+          },
+          data: {
+            reviewStatus,
+            ...(reviewNotes !== undefined && {
+              reviewNotes: reviewNotes === "" ? null : reviewNotes,
+            }),
+            reviewedAt: new Date(),
+            reviewedById: session.user.id,
+          },
+          select: {
+            id: true,
+            appointmentId: true,
+            originalName: true,
+            appointment: {
+              select: {
+                organizationId: true,
+                consultation: {
+                  select: {
+                    requestedBy: {
+                      select: { id: true, user: { select: { id: true } } },
+                    },
+                    consultationPlan: {
+                      select: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
                       },
                     },
                   },
                 },
-              },
-              subscription: {
-                select: {
-                  requestedBy: {
-                    select: { id: true, user: { select: { id: true } } },
-                  },
-                  subscriptionPlan: {
-                    select: {
-                      consultantProfile: {
-                        select: { user: { select: { name: true } } },
-                      },
+                subscription: {
+                  select: {
+                    requestedBy: {
+                      select: { id: true, user: { select: { id: true } } },
                     },
-                  },
-                },
-              },
-              trial: {
-                select: {
-                  consulteeProfile: {
-                    select: { id: true, user: { select: { id: true } } },
-                  },
-                  subscriptionPlan: {
-                    select: {
-                      consultantProfile: {
-                        select: { user: { select: { name: true } } },
+                    subscriptionPlan: {
+                      select: {
+                        consultantProfile: {
+                          select: { user: { select: { name: true } } },
+                        },
                       },
                     },
                   },
@@ -158,11 +146,34 @@ export async function PATCH(request: NextRequest) {
               },
             },
           },
-        },
-      });
+        });
 
-      return { targetDocs: updatedRows, result: { count: updatedRows.length } };
-    });
+        let sameStatusCount = 0;
+        if (
+          reviewNotes !== undefined &&
+          NON_TERMINAL_REVIEW_STATUSES.includes(reviewStatus)
+        ) {
+          const notesOnlyRes = await tx.appointmentDocument.updateMany({
+            where: {
+              id: { in: documentIds },
+              deletedAt: null,
+              uploadedByRole: "CONSULTEE",
+              reviewStatus,
+              appointment: ownedNonTerminalAppointment,
+            },
+            data: {
+              reviewNotes: reviewNotes === "" ? null : reviewNotes,
+            },
+          });
+          sameStatusCount = notesOnlyRes.count;
+        }
+
+        return {
+          targetDocs: updatedRows,
+          totalUpdated: updatedRows.length + sameStatusCount,
+        };
+      },
+    );
 
     if (targetDocs.length > 0) {
       await stageNowAttemptAfter(
@@ -172,19 +183,15 @@ export async function PATCH(request: NextRequest) {
             targetDocs.map((doc) => {
               const recipientId =
                 doc.appointment.consultation?.requestedBy?.user?.id ||
-                doc.appointment.subscription?.requestedBy?.user?.id ||
-                doc.appointment.trial?.consulteeProfile?.user?.id;
+                doc.appointment.subscription?.requestedBy?.user?.id;
               const consulteeProfileId =
                 doc.appointment.consultation?.requestedBy?.id ||
-                doc.appointment.subscription?.requestedBy?.id ||
-                doc.appointment.trial?.consulteeProfile?.id;
+                doc.appointment.subscription?.requestedBy?.id;
               const reviewerName =
                 doc.appointment.consultation?.consultationPlan
                   ?.consultantProfile?.user?.name ||
                 doc.appointment.subscription?.subscriptionPlan
                   ?.consultantProfile?.user?.name ||
-                doc.appointment.trial?.subscriptionPlan?.consultantProfile?.user
-                  ?.name ||
                 "The consultant";
 
               if (!recipientId) return null;
@@ -216,7 +223,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     return NextResponse.json({
-      data: { updated: result.count, requested: documentIds.length },
+      data: { updated: totalUpdated, requested: documentIds.length },
     });
   } catch (error) {
     Sentry.captureException(

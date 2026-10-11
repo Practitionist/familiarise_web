@@ -184,20 +184,20 @@ export async function createAppointmentDocuments(): Promise<void> {
       const status = getWeightedStatus();
 
       const extension = faker.helpers.arrayElement(docType.extensions);
-      const mimeType =
-        docType.mimeTypes.find(
-          (m) =>
-            m.includes(extension) ||
-            (extension === "jpg" && m.includes("jpeg")),
-        ) || docType.mimeTypes[0];
+      const mimeTypeByExtension: Record<string, string> = {
+        pdf: "application/pdf",
+        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        png: "image/png",
+        jpg: "image/jpeg",
+      };
+      const mimeType = mimeTypeByExtension[extension] ?? docType.mimeTypes[0];
 
       const fileName = `${docType.type.toLowerCase().replace(/\s+/g, "_")}_${faker.string.alphanumeric(8)}.${extension}`;
       const originalName = `${faker.person.lastName()}_${docType.type}.${extension}`;
       const fileSize = faker.number.int(docType.sizeRange);
 
-      // Static placeholder URL as per user preference
       const fileUrl = `https://placeholder.com/documents/${fileName}`;
-      const storagePath = `documents/appointments/${appointment.id}/${fileName}`;
+      const storagePath = `appointments/${appointment.id}/${fileName}`;
 
       // Get consultant user ID for reviewed documents
       let reviewedBy: string | null = null;

@@ -6,7 +6,7 @@ import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 
 import { getSession } from "@/lib/auth-server";
 import { groupDocumentsIntoThreads } from "@/lib/documents/document-review";
-// GET - Get all documents for review by consultant
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ consultantId: string }> },
@@ -40,8 +40,14 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
     const appointmentType = searchParams.get("appointmentType");
+    const rawRole = searchParams.get("uploadedByRole");
+    const uploadedByRoleFilter: "CONSULTEE" | "CONSULTANT" | null =
+      rawRole === "CONSULTANT"
+        ? "CONSULTANT"
+        : rawRole === "CONSULTEE"
+          ? "CONSULTEE"
+          : null;
 
-    // Parse + validate pagination params (issue #346)
     const DEFAULT_LIMIT = 10;
     const MAX_LIMIT = 100;
 
@@ -82,11 +88,8 @@ export async function GET(
     const take = parsedLimit;
     const skip = parsedOffset;
 
-    // Verify user is the consultant with enhanced error handling
     let consultant;
     try {
-      // In development mode with explicit bypass flag, allow access to any consultant's documents for testing
-      // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
       const isDevelopment =
         process.env.NODE_ENV === "development" &&
         process.env.DEV_BYPASS_AUTH === "true";
@@ -109,13 +112,6 @@ export async function GET(
           },
         },
       });
-
-      // In development mode, log access bypass
-      if (isDevelopment && consultant) {
-        console.log(
-          `[DEV MODE] Bypassing consultant access control for ${consultantId}`,
-        );
-      }
     } catch (dbError) {
       console.error("Database error fetching consultant:", dbError);
       Sentry.captureException(
@@ -138,17 +134,13 @@ export async function GET(
         {
           error: "Access denied",
           message:
-            process.env.NODE_ENV === "development"
-              ? `[DEV MODE] Consultant profile ${consultantId} not found in database.`
-              : "You don't have permission to view documents for this consultant profile. Please check that you're accessing the correct consultant dashboard.",
+            "You don't have permission to view documents for this consultant profile. Please check that you're accessing the correct consultant dashboard.",
           code: "ACCESS_DENIED",
         },
         { status: 403 },
       );
     }
 
-    // B1-personal-retrofit: parse + authorize ?orgScope=. Filter applies
-    // to the parent Appointment.organizationId.
     const callerMembershipsForScope = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
       select: {
@@ -163,7 +155,6 @@ export async function GET(
       memberships: callerMembershipsForScope,
       userRole: session.user.role,
       userId: session.user.id,
-      // Self-scoped consultant endpoint.
       allowAllForOwner: true,
     });
     if (!docScopeResolution.ok) {
@@ -175,7 +166,6 @@ export async function GET(
         { status: docScopeResolution.status },
       );
     }
-    // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
     const docScopedOrgId = scopeOrgId(docScopeResolution.scope);
     const docOrgFilter: Partial<Prisma.AppointmentWhereInput> =
       docScopeResolution.scope.kind === "personal"
@@ -184,38 +174,52 @@ export async function GET(
           ? { organizationId: docScopedOrgId }
           : {};
 
-    // Build where clause (non-deleted documents across consultation, subscription, and trial bookings)
-    const where: Prisma.AppointmentDocumentWhereInput = {
-      deletedAt: null,
-      appointment: {
-        OR: [
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfileId: consultantId,
-              },
+    const terminalStatuses = ["CANCELLED", "REJECTED", "EXPIRED"] as const;
+
+    const appointmentWhere: Prisma.AppointmentWhereInput = {
+      OR: [
+        {
+          consultation: {
+            consultationPlan: {
+              consultantProfileId: consultantId,
             },
+            status: { notIn: [...terminalStatuses] },
           },
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfileId: consultantId,
-              },
+        },
+        {
+          subscription: {
+            subscriptionPlan: {
+              consultantProfileId: consultantId,
             },
+            status: { notIn: [...terminalStatuses] },
           },
-          {
-            trial: {
-              subscriptionPlan: {
-                consultantProfileId: consultantId,
-              },
-            },
-          },
-        ],
-        ...docOrgFilter,
-      },
+        },
+      ],
+      ...docOrgFilter,
     };
 
-    // Validate status filter (applied at deliverable-thread effectiveStatus level below)
+    if (appointmentType) {
+      const validTypes = ["Consultation", "Subscription"];
+      if (!validTypes.includes(appointmentType)) {
+        return NextResponse.json(
+          {
+            error: "Invalid appointment type filter",
+            message: `Appointment type "${appointmentType}" is not valid. Valid types are: ${validTypes.join(", ")}`,
+            code: "INVALID_FILTER",
+          },
+          { status: 400 },
+        );
+      }
+
+      if (appointmentType === "Consultation") {
+        appointmentWhere.consultation = { isNot: null };
+        appointmentWhere.subscription = null;
+      } else if (appointmentType === "Subscription") {
+        appointmentWhere.subscription = { isNot: null };
+        appointmentWhere.consultation = null;
+      }
+    }
+
     if (status) {
       const validStatuses = [
         "PENDING",
@@ -236,87 +240,89 @@ export async function GET(
       }
     }
 
-    // Add appointment type filter with validation
-    if (appointmentType) {
-      const validTypes = ["Consultation", "Subscription"];
-      if (!validTypes.includes(appointmentType)) {
-        return NextResponse.json(
-          {
-            error: "Invalid appointment type filter",
-            message: `Appointment type "${appointmentType}" is not valid. Valid types are: ${validTypes.join(", ")}`,
-            code: "INVALID_FILTER",
-          },
-          { status: 400 },
-        );
-      }
+    const baseRootWhere: Prisma.AppointmentDocumentWhereInput = {
+      deletedAt: null,
+      rootDocumentId: null,
+      ...(uploadedByRoleFilter && { uploadedByRole: uploadedByRoleFilter }),
+      appointment: appointmentWhere,
+    };
 
-      const appointmentFilter =
-        where.appointment as Prisma.AppointmentWhereInput;
-      if (appointmentType === "Consultation" && appointmentFilter) {
-        appointmentFilter.consultation = { isNot: null };
-        appointmentFilter.subscription = null;
-        appointmentFilter.trial = null;
-      } else if (appointmentType === "Subscription" && appointmentFilter) {
-        appointmentFilter.subscription = { isNot: null };
-        appointmentFilter.consultation = null;
-        appointmentFilter.trial = null;
-      }
-    }
+    // SQL-pushed effectiveStatus filter on root document threads:
+    // A thread's effectiveStatus is the reviewStatus of its highest-version
+    // CONSULTEE upload (either a child version if none newer exists, or the root itself).
+    const rootWhereWithStatus: Prisma.AppointmentDocumentWhereInput = status
+      ? {
+          ...baseRootWhere,
+          OR: [
+            {
+              threadVersions: {
+                some: {
+                  deletedAt: null,
+                  uploadedByRole: "CONSULTEE",
+                  reviewStatus: status as DocumentReviewStatus,
+                },
+              },
+            },
+            {
+              reviewStatus: status as DocumentReviewStatus,
+              threadVersions: {
+                none: {
+                  deletedAt: null,
+                  uploadedByRole: "CONSULTEE",
+                },
+              },
+            },
+          ],
+        }
+      : baseRootWhere;
 
-    // Fetch all non-deleted documents across consultant's bookings and status breakdown in parallel,
-    // then group by deliverable thread before slicing pagination so multi-version threads never split.
-    let documents;
+    let rootRows;
+    let totalCount = 0;
     let metadataGrouped: Array<{
       reviewStatus: DocumentReviewStatus;
       _count: { _all: number };
     }>;
+
     try {
-      [documents, metadataGrouped] = await Promise.all([
+      [rootRows, totalCount, metadataGrouped] = await Promise.all([
         prisma.appointmentDocument.findMany({
-          where,
+          where: rootWhereWithStatus,
           include: {
+            threadVersions: {
+              where: { deletedAt: null },
+              orderBy: { versionNo: "asc" },
+            },
             appointment: {
               include: {
                 consultation: {
                   include: {
-                    requestedBy: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    requestedBy: { include: { user: true } },
                     consultationPlan: true,
                   },
                 },
                 subscription: {
                   include: {
-                    requestedBy: {
-                      include: {
-                        user: true,
-                      },
-                    },
-                    subscriptionPlan: true,
-                  },
-                },
-                trial: {
-                  include: {
-                    consulteeProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    requestedBy: { include: { user: true } },
                     subscriptionPlan: true,
                   },
                 },
               },
             },
           },
-          orderBy: {
-            uploadedAt: "desc",
-          },
+          orderBy: { uploadedAt: "desc" },
+          skip,
+          take,
+        }),
+        prisma.appointmentDocument.count({
+          where: rootWhereWithStatus,
         }),
         prisma.appointmentDocument.groupBy({
           by: ["reviewStatus"],
-          where,
+          where: {
+            deletedAt: null,
+            uploadedByRole: "CONSULTEE",
+            appointment: appointmentWhere,
+          },
           _count: { _all: true },
         }),
       ]);
@@ -330,12 +336,12 @@ export async function GET(
       return NextResponse.json({
         data: [],
         count: 0,
-        message:
-          "Unable to load documents at the moment. This might be because no documents have been uploaded yet, or there's a temporary system issue. Please try again later.",
+        message: "Unable to load documents at the moment.",
         consultant: consultant.user.name,
         filters: {
           status,
           appointmentType,
+          uploadedByRole: uploadedByRoleFilter,
         },
         pagination: {
           limit: take,
@@ -355,107 +361,62 @@ export async function GET(
       });
     }
 
-    // Transform data for frontend with complete threading fields preserved
-    const transformedDocuments = documents.map((doc) => {
-      try {
-        const appointment = doc.appointment;
-        const consultation = appointment.consultation;
-        const subscription = appointment.subscription;
-        const trial = appointment.trial;
+    const flattenedRows = rootRows.flatMap((rootDoc) => {
+      const appointment = rootDoc.appointment;
+      const consultation = appointment.consultation;
+      const subscription = appointment.subscription;
 
-        let clientName = "Unknown Client";
-        let clientId = "";
-        let appointmentTitle = "Unknown Appointment";
-        let resolvedAppointmentType = "Unknown";
+      let clientName = "Unknown Client";
+      let clientId = "";
+      let appointmentTitle = "Unknown Appointment";
+      let resolvedAppointmentType = "Unknown";
 
-        if (consultation) {
-          clientName = consultation.requestedBy?.user?.name || "Unknown Client";
-          clientId = consultation.requestedBy?.user?.id || "";
-          appointmentTitle =
-            consultation.consultationPlan?.title || "Consultation";
-          resolvedAppointmentType = "Consultation";
-        } else if (subscription) {
-          clientName = subscription.requestedBy?.user?.name || "Unknown Client";
-          clientId = subscription.requestedBy?.user?.id || "";
-          appointmentTitle =
-            subscription.subscriptionPlan?.title || "Subscription";
-          resolvedAppointmentType = "Subscription";
-        } else if (trial) {
-          clientName = trial.consulteeProfile?.user?.name || "Unknown Client";
-          clientId = trial.consulteeProfile?.user?.id || "";
-          appointmentTitle = trial.subscriptionPlan?.title || "Trial Session";
-          resolvedAppointmentType = "Subscription";
-        }
-
-        return {
-          id: doc.id,
-          appointmentId: doc.appointmentId,
-          fileName: doc.fileName,
-          originalName: doc.originalName,
-          fileSize: doc.fileSize,
-          mimeType: doc.mimeType,
-          fileUrl: doc.fileUrl,
-          description: doc.description,
-          reviewStatus: doc.reviewStatus,
-          reviewNotes: doc.reviewNotes,
-          reviewedAt: doc.reviewedAt,
-          uploadedByRole: doc.uploadedByRole,
-          versionNo: doc.versionNo,
-          rootDocumentId: doc.rootDocumentId,
-          responseToDocumentId: doc.responseToDocumentId,
-          uploadedAt: doc.uploadedAt,
-          clientName,
-          clientId,
-          appointmentTitle,
-          appointmentType: resolvedAppointmentType,
-          title: doc.originalName,
-          invoiceNo: `DOC-${doc.id.slice(-8)}`,
-          tag: doc.reviewStatus,
-        };
-      } catch (transformError) {
-        console.error("Error transforming document:", transformError, doc);
-        Sentry.captureException(
-          transformError instanceof Error
-            ? transformError
-            : new Error(String(transformError)),
-          { tags: { subsystem: "dashboard" } },
-        );
-
-        return {
-          id: doc.id || "unknown",
-          appointmentId: doc.appointmentId || "unknown",
-          fileName: doc.fileName || "Unknown File",
-          originalName: doc.originalName || "Unknown Document",
-          fileSize: doc.fileSize || 0,
-          mimeType: doc.mimeType || "application/octet-stream",
-          fileUrl: doc.fileUrl || "",
-          description: doc.description || null,
-          reviewStatus: doc.reviewStatus || "PENDING",
-          reviewNotes: doc.reviewNotes || null,
-          reviewedAt: doc.reviewedAt || null,
-          uploadedByRole: doc.uploadedByRole || "CONSULTEE",
-          versionNo: doc.versionNo ?? 1,
-          rootDocumentId: doc.rootDocumentId ?? null,
-          responseToDocumentId: doc.responseToDocumentId ?? null,
-          uploadedAt: doc.uploadedAt || new Date(),
-          clientName: "Unknown Client",
-          clientId: "",
-          appointmentTitle: "Unknown Appointment",
-          appointmentType: "Unknown",
-          title: doc.originalName || "Unknown Document",
-          invoiceNo: `DOC-${(doc.id || "unknown").slice(-8)}`,
-          tag: doc.reviewStatus || "PENDING",
-        };
+      if (consultation) {
+        clientName = consultation.requestedBy?.user?.name || "Unknown Client";
+        clientId = consultation.requestedBy?.user?.id || "";
+        appointmentTitle =
+          consultation.consultationPlan?.title || "Consultation";
+        resolvedAppointmentType = "Consultation";
+      } else if (subscription) {
+        clientName = subscription.requestedBy?.user?.name || "Unknown Client";
+        clientId = subscription.requestedBy?.user?.id || "";
+        appointmentTitle =
+          subscription.subscriptionPlan?.title || "Subscription";
+        resolvedAppointmentType = "Subscription";
       }
+
+      const rawVersions = [rootDoc, ...rootDoc.threadVersions];
+      return rawVersions.map((doc) => ({
+        id: doc.id,
+        appointmentId: doc.appointmentId,
+        fileName: doc.fileName,
+        originalName: doc.originalName,
+        fileSize: doc.fileSize,
+        mimeType: doc.mimeType,
+        fileUrl: doc.fileUrl,
+        description: doc.description,
+        reviewStatus: doc.reviewStatus,
+        reviewNotes: doc.reviewNotes,
+        reviewedAt: doc.reviewedAt,
+        uploadedByRole: doc.uploadedByRole,
+        versionNo: doc.versionNo,
+        rootDocumentId: doc.rootDocumentId,
+        responseToDocumentId: doc.responseToDocumentId,
+        uploadedAt: doc.uploadedAt,
+        clientName,
+        clientId,
+        appointmentTitle,
+        appointmentType: resolvedAppointmentType,
+        title: rootDoc.originalName,
+        tag: doc.reviewStatus,
+      }));
     });
 
-    const allThreads = groupDocumentsIntoThreads(transformedDocuments);
-    const matchingThreads = status
-      ? allThreads.filter((thread) => thread.effectiveStatus === status)
-      : allThreads;
-    const totalCount = matchingThreads.length;
-    const pageThreads = matchingThreads.slice(skip, skip + take);
-    const pagedDocuments = pageThreads.flatMap((thread) => thread.versions);
+    const pageThreads = groupDocumentsIntoThreads(flattenedRows);
+    const filteredThreads = status
+      ? pageThreads.filter((thread) => thread.effectiveStatus === status)
+      : pageThreads;
+    const pagedDocuments = filteredThreads.flatMap((thread) => thread.versions);
 
     const countByStatus = new Map<DocumentReviewStatus, number>(
       metadataGrouped.map((row) => [row.reviewStatus, row._count._all]),
@@ -469,38 +430,20 @@ export async function GET(
         (countByStatus.get("REJECTED") ?? 0),
     };
 
-    let message = "";
-    const isDevelopment = process.env.NODE_ENV === "development";
-    const devModeMessage = isDevelopment
-      ? " [DEV MODE - Access control bypassed]"
-      : "";
-
-    if (totalCount === 0) {
-      if (status || appointmentType) {
-        message = `No documents found with the applied filters. Try removing some filters to see more documents.${devModeMessage}`;
-      } else {
-        message = `No documents have been submitted for review yet. Documents will appear here when clients upload files for their appointments.${devModeMessage}`;
-      }
-    } else {
-      const filterText = [];
-      if (status) filterText.push(`status: ${status}`);
-      if (appointmentType) filterText.push(`type: ${appointmentType}`);
-
-      const filterSuffix =
-        filterText.length > 0 ? ` (filtered by ${filterText.join(", ")})` : "";
-      message = `Found ${totalCount} document thread${totalCount === 1 ? "" : "s"} for review${filterSuffix}.${devModeMessage}`;
-    }
+    const message =
+      totalCount === 0
+        ? "No documents found for the current filters."
+        : `Found ${totalCount} document thread${totalCount === 1 ? "" : "s"}.`;
 
     return NextResponse.json({
       data: pagedDocuments,
       count: totalCount,
       message,
-      consultant: isDevelopment
-        ? `${consultant.user.name} [DEV MODE]`
-        : consultant.user.name,
+      consultant: consultant.user.name,
       filters: {
         status,
         appointmentType,
+        uploadedByRole: uploadedByRoleFilter,
       },
       pagination: {
         limit: take,
@@ -520,44 +463,11 @@ export async function GET(
       { tags: { subsystem: "dashboard" } },
     );
 
-    // Provide specific error messages based on error type
-    if (error instanceof Error) {
-      if (
-        error.message.includes("connect") ||
-        error.message.includes("timeout")
-      ) {
-        return NextResponse.json(
-          {
-            error: "Connection error",
-            message:
-              "Unable to connect to the document system. Please check your internet connection and try again.",
-            code: "CONNECTION_ERROR",
-          },
-          { status: 503 },
-        );
-      }
-
-      if (
-        error.message.includes("Prisma") ||
-        error.message.includes("database")
-      ) {
-        return NextResponse.json(
-          {
-            error: "Database temporarily unavailable",
-            message:
-              "The document review system is temporarily unavailable. Please try again in a few moments.",
-            code: "DATABASE_ERROR",
-          },
-          { status: 503 },
-        );
-      }
-    }
-
     return NextResponse.json(
       {
         error: "Unable to load documents",
         message:
-          "Something went wrong while loading documents for review. Please refresh the page or try again later. If the problem persists, contact support.",
+          "Something went wrong while loading documents for review. Please refresh the page or try again later.",
         code: "UNKNOWN_ERROR",
       },
       { status: 500 },

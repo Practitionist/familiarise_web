@@ -47,7 +47,6 @@ import {
   ChevronRight,
   MoreHorizontal,
 } from "lucide-react";
-import { ConsultantResponseUpload } from "./ConsultantResponseUpload";
 import { DocumentReviewDrawer } from "@/components/documents/DocumentReviewDrawer";
 import {
   groupDocumentsIntoThreads,
@@ -58,7 +57,7 @@ import {
   getDocumentTypeIcon,
 } from "@/lib/documents/document-utils";
 
-const APPOINTMENT_TYPES = ["Consultation", "Subscription", "Trial"] as const;
+const APPOINTMENT_TYPES = ["Consultation", "Subscription"] as const;
 
 const REVIEW_STATUSES = [
   "PENDING",
@@ -70,6 +69,8 @@ const REVIEW_STATUSES = [
 
 interface ExtendedDocumentsTabProps extends DocumentsTabProps {
   onRefresh?: () => void;
+  uploadedByRole?: "CONSULTEE" | "CONSULTANT";
+  onUploadedByRoleChange?: (role: "CONSULTEE" | "CONSULTANT") => void;
 }
 
 function buildConsultantDocumentColumns(
@@ -85,11 +86,12 @@ function buildConsultantDocumentColumns(
         const thread = threadsByRootId.get(
           document.rootDocumentId ?? document.id,
         );
+        const rootDoc = thread?.rootDocument ?? document;
         const vCount = thread?.versionCount ?? 1;
         return (
           <div className="flex items-start gap-3">
             <div className="mt-0.5 shrink-0">
-              {getDocumentTypeIcon(document.mimeType)}
+              {getDocumentTypeIcon(rootDoc.mimeType)}
             </div>
             <div className="min-w-0 flex-1 space-y-0.5">
               <div className="flex flex-wrap items-center gap-1.5">
@@ -98,7 +100,7 @@ function buildConsultantDocumentColumns(
                   onClick={() => onView(document)}
                   className="truncate text-left text-sm font-medium text-foreground underline-offset-4 hover:underline"
                 >
-                  {document.originalName}
+                  {rootDoc.originalName}
                 </button>
                 <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
                   v{document.versionNo ?? 1}
@@ -109,9 +111,9 @@ function buildConsultantDocumentColumns(
                   </span>
                 )}
               </div>
-              {document.reviewNotes && (
+              {thread?.effectiveReviewNotes && (
                 <p className="line-clamp-1 text-xs text-muted-foreground">
-                  Feedback: {document.reviewNotes}
+                  Feedback: {thread.effectiveReviewNotes}
                 </p>
               )}
               <div className="text-xs text-muted-foreground/70">
@@ -126,13 +128,8 @@ function buildConsultantDocumentColumns(
       key: "client",
       header: "Learner",
       cell: (document) => (
-        <div className="text-sm">
-          <div className="font-medium text-foreground">
-            {document.clientName}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            {document.invoiceNo}
-          </div>
+        <div className="text-sm font-medium text-foreground">
+          {document.clientName}
         </div>
       ),
     },
@@ -167,16 +164,30 @@ function buildConsultantDocumentColumns(
     {
       key: "status",
       header: "Status",
-      cell: (document) => (
-        <div>
-          <StatusBadge {...documentReviewStatusBadge(document.reviewStatus)} />
-          {document.reviewedAt && (
-            <div className="mt-1 text-xs text-muted-foreground">
-              Reviewed {format(new Date(document.reviewedAt), "MMM d, yyyy")}
-            </div>
-          )}
-        </div>
-      ),
+      cell: (document) => {
+        const thread = threadsByRootId.get(
+          document.rootDocumentId ?? document.id,
+        );
+        const isExpertHandout =
+          (thread?.rootDocument ?? document).uploadedByRole === "CONSULTANT";
+
+        if (isExpertHandout) {
+          return <Badge variant="secondary">Shared by Expert</Badge>;
+        }
+
+        const effectiveStatus =
+          thread?.effectiveStatus ?? document.reviewStatus;
+        return (
+          <div>
+            <StatusBadge {...documentReviewStatusBadge(effectiveStatus)} />
+            {document.reviewedAt && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Reviewed {format(new Date(document.reviewedAt), "MMM d, yyyy")}
+              </div>
+            )}
+          </div>
+        );
+      },
     },
   ];
 }
@@ -193,18 +204,25 @@ export function DocumentsTab({
   typeFilter,
   onStatusFilterChange,
   onTypeFilterChange,
+  uploadedByRole,
+  onUploadedByRoleChange,
 }: Readonly<ExtendedDocumentsTabProps>) {
+  const [internalRole, setInternalRole] = useState<"CONSULTEE" | "CONSULTANT">(
+    "CONSULTEE",
+  );
+  const activeRole = uploadedByRole ?? internalRole;
+  const handleRoleChange = (next: "CONSULTEE" | "CONSULTANT") => {
+    setInternalRole(next);
+    onUploadedByRoleChange?.(next);
+  };
+
   const [selectedDocument, setSelectedDocument] = useState<IDocument | null>(
     null,
   );
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
-  const [responseDialogOpen, setResponseDialogOpen] = useState(false);
-  const [documentForResponse, setDocumentForResponse] =
-    useState<IDocument | null>(null);
   const [reviewStatus, setReviewStatus] = useState<string>("");
   const [reviewNotes, setReviewNotes] = useState<string>("");
   const [isUpdating, setIsUpdating] = useState(false);
-  const [viewMode, setViewMode] = useState<"threaded" | "all">("threaded");
   const [drawerRootId, setDrawerRootId] = useState<string | null>(null);
   const [drawerInitialVersionId, setDrawerInitialVersionId] = useState<
     string | undefined
@@ -254,13 +272,14 @@ export function DocumentsTab({
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [page, pageSize]);
+  }, [page, pageSize, activeRole]);
 
   const filteredDocuments = useMemo(() => {
-    const baseDocs =
-      viewMode === "threaded"
-        ? Array.from(threadsByRootId.values()).map((t) => t.latestVersion)
-        : documents;
+    const baseDocs = Array.from(threadsByRootId.values())
+      .filter((t) =>
+        uploadedByRole ? true : t.rootDocument.uploadedByRole === activeRole,
+      )
+      .map((t) => t.latestVersion);
 
     if (!debouncedSearch) return baseDocs;
     const query = debouncedSearch.toLowerCase();
@@ -273,7 +292,7 @@ export function DocumentsTab({
         (doc.reviewNotes?.toLowerCase().includes(query) ?? false)
       );
     });
-  }, [documents, threadsByRootId, viewMode, debouncedSearch]);
+  }, [threadsByRootId, uploadedByRole, activeRole, debouncedSearch]);
 
   const showStart = totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const showEnd = Math.min(currentPage * pageSize, totalCount);
@@ -364,11 +383,6 @@ export function DocumentsTab({
     } finally {
       setIsBulkUpdating(false);
     }
-  };
-
-  const handleUploadResponse = (document: IDocument) => {
-    setDocumentForResponse(document);
-    setResponseDialogOpen(true);
   };
 
   const handleReviewClick = (document: IDocument) => {
@@ -496,20 +510,24 @@ export function DocumentsTab({
           <Download className="mr-2 h-4 w-4" />
           Download
         </DropdownMenuItem>
-        <DropdownMenuItem
-          className="cursor-pointer"
-          onClick={() => handleUploadResponse(document)}
-        >
-          <Reply className="mr-2 h-4 w-4" />
-          Upload Response
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          className="cursor-pointer"
-          onClick={() => handleReviewClick(document)}
-        >
-          <MessageSquare className="mr-2 h-4 w-4" />
-          Quick Status
-        </DropdownMenuItem>
+        {activeRole === "CONSULTEE" && (
+          <>
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => handleView(document)}
+            >
+              <Reply className="mr-2 h-4 w-4" />
+              Review & Attach Markup
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => handleReviewClick(document)}
+            >
+              <MessageSquare className="mr-2 h-4 w-4" />
+              Quick Status
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -538,11 +556,14 @@ export function DocumentsTab({
     <div className="py-12 text-center text-muted-foreground">
       <FileText className="mx-auto mb-4 h-12 w-12 text-muted-foreground/40" />
       <p className="text-lg font-medium text-foreground">
-        No documents for review
+        {activeRole === "CONSULTEE"
+          ? "No deliverables submitted yet"
+          : "No shared handouts yet"}
       </p>
       <p className="mx-auto mt-1 max-w-md text-sm">
-        When learners submit files for their consultations or subscriptions, you
-        can review, approve, or request revisions from this tab.
+        {activeRole === "CONSULTEE"
+          ? "When learners upload files for review on their bookings, they appear here."
+          : "Standalone handouts shared with learners during sessions appear here."}
       </p>
     </div>
   );
@@ -551,32 +572,27 @@ export function DocumentsTab({
     <>
       <DashboardHeader
         title="Documents For Review"
-        subtitle="Review deliverable threads and submissions across your sessions"
+        subtitle="Review learner deliverable threads and manage session handouts"
         actions={
-          <div className="flex items-center gap-2">
-            <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
-              <Button
-                type="button"
-                size="sm"
-                variant={viewMode === "threaded" ? "default" : "ghost"}
-                className="h-7 px-2.5 text-xs"
-                onClick={() => setViewMode("threaded")}
-              >
-                Threaded ({threadsByRootId.size})
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={viewMode === "all" ? "default" : "ghost"}
-                className="h-7 px-2.5 text-xs"
-                onClick={() => setViewMode("all")}
-              >
-                All Uploads ({documents.length})
-              </Button>
-            </div>
-            <Badge variant="secondary" className="text-sm">
-              {totalCount}
-            </Badge>
+          <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
+            <Button
+              type="button"
+              size="sm"
+              variant={activeRole === "CONSULTEE" ? "default" : "ghost"}
+              className="h-7 px-3 text-xs"
+              onClick={() => handleRoleChange("CONSULTEE")}
+            >
+              Deliverables
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={activeRole === "CONSULTANT" ? "default" : "ghost"}
+              className="h-7 px-3 text-xs"
+              onClick={() => handleRoleChange("CONSULTANT")}
+            >
+              Shared Handouts
+            </Button>
           </div>
         }
       />
@@ -603,19 +619,21 @@ export function DocumentsTab({
               </button>
             )}
           </div>
-          <Select value={statusFilter} onValueChange={onStatusFilterChange}>
-            <SelectTrigger className="w-full sm:w-[160px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              {REVIEW_STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {documentReviewStatusBadge(s).label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {activeRole === "CONSULTEE" && (
+            <Select value={statusFilter} onValueChange={onStatusFilterChange}>
+              <SelectTrigger className="w-full sm:w-[160px]">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                {REVIEW_STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {documentReviewStatusBadge(s).label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <Select value={typeFilter} onValueChange={onTypeFilterChange}>
             <SelectTrigger className="w-full sm:w-[160px]">
               <SelectValue placeholder="Type" />
@@ -651,20 +669,13 @@ export function DocumentsTab({
 
         {totalCount > 0 && (
           <div className="mb-2 text-sm text-muted-foreground">
-            Showing {showStart}-{showEnd} of {totalCount} document
+            Showing {showStart}-{showEnd} of {totalCount}{" "}
+            {activeRole === "CONSULTEE" ? "deliverable" : "handout"}
             {totalCount !== 1 ? "s" : ""}
-            {debouncedSearch &&
-              filteredDocuments.length !== documents.length && (
-                <>
-                  {" "}
-                  ({filteredDocuments.length} match
-                  {filteredDocuments.length !== 1 ? "es" : ""} on this page)
-                </>
-              )}
           </div>
         )}
 
-        {selectedIds.size > 0 && (
+        {activeRole === "CONSULTEE" && selectedIds.size > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
             <span className="text-sm font-medium text-foreground">
               {selectedIds.size} selected
@@ -690,7 +701,7 @@ export function DocumentsTab({
           columns={columns}
           rows={filteredDocuments}
           getRowId={(d) => d.id}
-          selectable
+          selectable={activeRole === "CONSULTEE"}
           selectedIds={selectedIds}
           onToggle={toggleSelect}
           onToggleAll={toggleSelectAll}
@@ -907,19 +918,6 @@ export function DocumentsTab({
             </ResponsiveModalFooter>
           </ResponsiveModalContent>
         </ResponsiveModal>
-
-        {documentForResponse && (
-          <ConsultantResponseUpload
-            appointmentId={documentForResponse.appointmentId}
-            responseToDocument={documentForResponse}
-            isOpen={responseDialogOpen}
-            onClose={() => {
-              setResponseDialogOpen(false);
-              setDocumentForResponse(null);
-            }}
-            onSuccess={onRefresh}
-          />
-        )}
 
         <DocumentReviewDrawer
           thread={drawerThread}

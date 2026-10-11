@@ -72,36 +72,44 @@ async function listAllFilesInBucket(
   path = "",
 ): Promise<{ path: string; name: string; createdAt?: Date }[]> {
   const allFiles: { path: string; name: string; createdAt?: Date }[] = [];
+  const PAGE_LIMIT = 1000;
+  let offset = 0;
 
-  const { data: items, error } = await supabase.storage
-    .from(bucket)
-    .list(path, { limit: 1000 });
-  if (error) {
-    console.error(`Error listing files in ${bucket}/${path}:`, error);
-    throw error;
-  }
-
-  for (const item of items ?? []) {
-    const itemPath = path ? `${path}/${item.name}` : item.name;
-
-    // If it's a folder (no metadata), recurse into it
-    if (!item.metadata) {
-      const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
-      allFiles.push(...subFiles);
-    } else {
-      // It's a file
-      allFiles.push({
-        path: itemPath,
-        name: item.name,
-        createdAt: item.created_at ? new Date(item.created_at) : undefined,
-      });
+  while (true) {
+    const { data: items, error } = await supabase.storage
+      .from(bucket)
+      .list(path, { limit: PAGE_LIMIT, offset });
+    if (error) {
+      console.error(`Error listing files in ${bucket}/${path}:`, error);
+      throw error;
     }
+
+    const batch = items ?? [];
+    for (const item of batch) {
+      const itemPath = path ? `${path}/${item.name}` : item.name;
+
+      if (!item.metadata) {
+        const subFiles = await listAllFilesInBucket(supabase, bucket, itemPath);
+        allFiles.push(...subFiles);
+      } else {
+        allFiles.push({
+          path: itemPath,
+          name: item.name,
+          createdAt: item.created_at ? new Date(item.created_at) : undefined,
+        });
+      }
+    }
+
+    if (batch.length < PAGE_LIMIT) {
+      break;
+    }
+    offset += PAGE_LIMIT;
   }
 
   return allFiles;
 }
 
-/** Objects in `bucket` that no DB row points at. */
+/** Objects in `bucket` that no active or within-grace-window DB row points at. */
 async function findOrphanedFiles(
   supabase: SupabaseClient,
   bucket: string,
@@ -123,10 +131,18 @@ async function findOrphanedFiles(
   return orphanedFiles;
 }
 
+const SOFT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 /** The documents bucket holds appointment documents, plan materials and verification documents. */
 async function documentsBucketPaths(): Promise<Set<string>> {
+  const retentionCutoff = new Date(Date.now() - SOFT_DELETE_RETENTION_MS);
   const [appointmentDocs, planMaterials, verificationDocs] = await Promise.all([
-    prisma.appointmentDocument.findMany({ select: { storagePath: true } }),
+    prisma.appointmentDocument.findMany({
+      where: {
+        OR: [{ deletedAt: null }, { deletedAt: { gte: retentionCutoff } }],
+      },
+      select: { storagePath: true },
+    }),
     prisma.planMaterial.findMany({ select: { storagePath: true } }),
     prisma.profileVerificationDocument.findMany({
       select: { storagePath: true },
@@ -149,14 +165,9 @@ async function supportAttachmentPaths(): Promise<Set<string>> {
 interface MissingFile {
   id: string;
   storagePath: string;
-  isStorageMissing: boolean; // #694 — prior flag state, to skip redundant updates
+  isStorageMissing: boolean;
 }
 
-/**
- * Find missing files (in DB but not in storage), plus rows previously flagged
- * as missing whose file is present again (recovered) so the flag can be cleared.
- * Uses the already-listed bucket file paths instead of downloading every file.
- */
 async function findMissingFiles(
   supabase: SupabaseClient,
 ): Promise<{ missingFiles: MissingFile[]; recoveredIds: string[] }> {
@@ -168,6 +179,7 @@ async function findMissingFiles(
   const [storageFiles, dbDocuments] = await Promise.all([
     listAllFilesInBucket(supabase, "documents"),
     prisma.appointmentDocument.findMany({
+      where: { deletedAt: null },
       select: { id: true, storagePath: true, isStorageMissing: true },
     }),
   ]);
@@ -178,7 +190,6 @@ async function findMissingFiles(
   for (const doc of dbDocuments) {
     const present = storagePaths.has(doc.storagePath);
     if (present) {
-      // #694 — file is back; clear a stale missing flag if one was set.
       if (doc.isStorageMissing) recoveredIds.push(doc.id);
     } else {
       missingFiles.push({

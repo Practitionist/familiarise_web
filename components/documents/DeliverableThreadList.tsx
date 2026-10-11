@@ -13,11 +13,13 @@ import {
   Loader2,
   MessageSquare,
   Plus,
+  Trash2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
@@ -28,6 +30,7 @@ import {
 } from "@/lib/documents/document-review";
 import { getAppointmentDocumentUrl } from "@/lib/documents/urls";
 import { formatFileSize } from "@/lib/documents/document-utils";
+import { uploadAppointmentDocumentWithProgress } from "@/lib/documents/direct-upload";
 import { DocumentReviewDrawer } from "./DocumentReviewDrawer";
 
 interface DeliverableThreadListProps {
@@ -65,6 +68,7 @@ export function DeliverableThreadList({
   const [newFile, setNewFile] = useState<File | null>(null);
   const [newDescription, setNewDescription] = useState("");
   const [isUploadingNew, setIsUploadingNew] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const {
     data: documents = [],
@@ -101,30 +105,40 @@ export function DeliverableThreadList({
     });
   };
 
+  const handleDeleteDocument = async (docId: string, fileName: string) => {
+    const res = await fetch(
+      `/api/appointments/${appointmentId}/documents/${docId}`,
+      { method: "DELETE" },
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      toast({
+        title: "Unable to delete file",
+        description:
+          body?.message || body?.error || "Could not remove this document.",
+        variant: "destructive",
+      });
+      throw new Error("Delete failed");
+    }
+    toast({
+      title: "Document deleted",
+      description: `${fileName} has been removed.`,
+    });
+    refresh();
+  };
+
   const handleCreateRootDocument = async () => {
     if (!newFile) return;
     setIsUploadingNew(true);
+    setUploadProgress(0);
     try {
-      const formData = new FormData();
-      formData.append("file", newFile);
-      if (newDescription.trim()) {
-        formData.append("description", newDescription.trim());
-      }
-
-      const endpoint =
-        viewerRole === "consultant"
-          ? `/api/appointments/${appointmentId}/documents/consultant`
-          : `/api/appointments/${appointmentId}/documents`;
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        body: formData,
+      await uploadAppointmentDocumentWithProgress({
+        appointmentId,
+        file: newFile,
+        role: viewerRole,
+        description: newDescription.trim() || undefined,
+        onProgress: (pct) => setUploadProgress(pct),
       });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message || body?.error || "Upload failed");
-      }
 
       toast({
         title: "Document uploaded",
@@ -142,6 +156,7 @@ export function DeliverableThreadList({
       });
     } finally {
       setIsUploadingNew(false);
+      setUploadProgress(null);
     }
   };
 
@@ -184,6 +199,15 @@ export function DeliverableThreadList({
           {threads.map((thread) => {
             const isExpanded = expandedRoots.has(thread.rootId);
             const needsRevision = thread.effectiveStatus === "NEEDS_REVISION";
+            const isExpertHandoutRoot =
+              thread.rootDocument.uploadedByRole === "CONSULTANT";
+            const canDeleteLatest =
+              (viewerRole === "consultee" &&
+                thread.latestVersion.uploadedByRole === "CONSULTEE" &&
+                thread.latestVersion.reviewStatus === "PENDING") ||
+              (viewerRole === "consultant" &&
+                thread.rootDocument.uploadedByRole === "CONSULTANT" &&
+                thread.rootDocument.rootDocumentId === null);
 
             return (
               <div
@@ -216,10 +240,14 @@ export function DeliverableThreadList({
                     </div>
                   </div>
 
-                  <StatusBadge
-                    {...documentReviewStatusBadge(thread.effectiveStatus)}
-                    size="sm"
-                  />
+                  {isExpertHandoutRoot ? (
+                    <Badge variant="secondary">Shared by Expert</Badge>
+                  ) : (
+                    <StatusBadge
+                      {...documentReviewStatusBadge(thread.effectiveStatus)}
+                      size="sm"
+                    />
+                  )}
                 </div>
 
                 {/* Inline Feedback Note Banner */}
@@ -269,9 +297,36 @@ export function DeliverableThreadList({
                       </a>
                     </Button>
 
+                    {canDeleteLatest && (
+                      <ConfirmDialog
+                        title="Delete this document?"
+                        description={`"${thread.latestVersion.originalName}" will be permanently removed.`}
+                        confirmLabel="Delete"
+                        tone="destructive"
+                        onConfirm={() =>
+                          handleDeleteDocument(
+                            thread.latestVersion.id,
+                            thread.latestVersion.originalName,
+                          )
+                        }
+                        trigger={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="mr-1 h-3 w-3" />
+                            Delete
+                          </Button>
+                        }
+                      />
+                    )}
+
                     {viewerRole === "consultee" &&
                       canUpload &&
-                      needsRevision && (
+                      needsRevision &&
+                      !isExpertHandoutRoot && (
                         <Button
                           type="button"
                           size="sm"
@@ -389,6 +444,11 @@ export function DeliverableThreadList({
                 onChange={(e) => setNewDescription(e.target.value)}
                 className="h-8 text-xs"
               />
+              {uploadProgress !== null && (
+                <p className="text-[11px] text-muted-foreground">
+                  Uploading... {uploadProgress}%
+                </p>
+              )}
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
@@ -427,7 +487,11 @@ export function DeliverableThreadList({
           setDrawerInitialVersionId(undefined);
         }}
         viewerRole={viewerRole}
-        canUpload={canUpload}
+        canUpload={
+          canUpload &&
+          (viewerRole === "consultant" ||
+            drawerThread?.rootDocument.uploadedByRole === "CONSULTEE")
+        }
         initialVersionId={drawerInitialVersionId}
         onUpdated={refresh}
       />

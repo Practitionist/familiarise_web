@@ -1,17 +1,12 @@
 /**
- * #1527 — the consultee's Documents page in one read: the plan materials of
- * the sessions they booked, plus every file on their own bookings (their
- * uploads and the expert's responses), paged like the consultant's documents
- * route. Personal pin (ADR 19): org-funded bookings live on the org side.
- *
- * Auth stays with the caller, which binds the session to `consulteeId`.
+ * Consultee documents reader: session handouts from booked plans plus
+ * deliverable threads across personal bookings.
  */
 
 import type { DocumentReviewStatus, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { groupDocumentsIntoThreads } from "@/lib/documents/document-review";
 
-/** DOC-1 (#694) — a closed booking's files are no longer served. */
 const CLOSED_STATUSES = ["CANCELLED", "REJECTED", "EXPIRED"] as const;
 const PAID_PARTICIPANT_STATUSES = ["CONFIRMED", "ATTENDED"] as const;
 
@@ -42,6 +37,7 @@ export interface ConsulteeDocumentRow {
   uploadedByRole: "CONSULTEE" | "CONSULTANT";
   uploadedAt: Date | string;
   appointmentTitle: string;
+  appointmentStatus: string;
   consultantName: string | null;
 }
 
@@ -106,12 +102,6 @@ function ownBookingWhere(consulteeId: string): Prisma.AppointmentWhereInput {
           status: { notIn: [...CLOSED_STATUSES] },
         },
       },
-      {
-        trial: {
-          consulteeProfileId: consulteeId,
-          status: { notIn: ["REJECTED", "CANCELLED"] },
-        },
-      },
     ],
   };
 }
@@ -130,7 +120,6 @@ function materialsWhere(
   const paidSeat = {
     status: { not: "CANCELLED" as const },
     appointment: {
-      organizationId: null,
       participants: {
         some: {
           userId,
@@ -149,21 +138,9 @@ function materialsWhere(
       { consultationPlan: { consultations: { some: openRequest } } },
       {
         subscriptionPlan: {
-          OR: [
-            {
-              subscriptions: {
-                some: { ...openRequest, appointment: { organizationId: null } },
-              },
-            },
-            {
-              trials: {
-                some: {
-                  consulteeProfileId: consulteeId,
-                  status: { in: ["SCHEDULED", "COMPLETED"] },
-                },
-              },
-            },
-          ],
+          subscriptions: {
+            some: { ...openRequest, appointment: { organizationId: null } },
+          },
         },
       },
       { webinarPlan: { webinars: { some: paidSeat } } },
@@ -205,9 +182,12 @@ export async function readConsulteeDocuments(args: {
         uploadedAt: true,
         appointment: {
           select: {
-            consultation: { select: { consultationPlan: planSelect } },
-            subscription: { select: { subscriptionPlan: planSelect } },
-            trial: { select: { subscriptionPlan: planSelect } },
+            consultation: {
+              select: { status: true, consultationPlan: planSelect },
+            },
+            subscription: {
+              select: { status: true, subscriptionPlan: planSelect },
+            },
           },
         },
       },
@@ -238,8 +218,11 @@ export async function readConsulteeDocuments(args: {
     const plan =
       doc.appointment.consultation?.consultationPlan ??
       doc.appointment.subscription?.subscriptionPlan ??
-      doc.appointment.trial?.subscriptionPlan ??
       null;
+    const appointmentStatus =
+      doc.appointment.consultation?.status ??
+      doc.appointment.subscription?.status ??
+      "UNKNOWN";
     return {
       id: doc.id,
       appointmentId: doc.appointmentId,
@@ -255,12 +238,11 @@ export async function readConsulteeDocuments(args: {
       uploadedByRole: doc.uploadedByRole,
       uploadedAt: doc.uploadedAt,
       appointmentTitle: plan?.title ?? "Booking",
+      appointmentStatus,
       consultantName: plan?.consultantProfile.user.name ?? null,
     };
   });
 
-  // Group into deliverable threads BEFORE applying thread status filtering and
-  // page slicing so a multi-version thread is never split across pages.
   const allThreads = groupDocumentsIntoThreads(mappedDocuments);
   const matchingThreads = status
     ? allThreads.filter((thread) => thread.effectiveStatus === status)

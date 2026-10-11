@@ -14,7 +14,7 @@ import {
 } from "@/lib/documents/urls";
 
 describe("groupDocumentsIntoThreads", () => {
-  it("groups multi-round learner revisions and consultant responses into a single root thread", () => {
+  it("groups multi-round learner revisions and consultant responses into a single root thread anchored to rootDocument", () => {
     const threads = groupDocumentsIntoThreads([
       {
         id: "doc-v3",
@@ -76,6 +76,8 @@ describe("groupDocumentsIntoThreads", () => {
 
     expect(threads).toHaveLength(2);
     expect(threads[0].rootId).toBe("doc-v1");
+    expect(threads[0].rootDocument.id).toBe("doc-v1");
+    expect(threads[0].title).toBe("Resume_Kaustav.pdf");
     expect(threads[0].versionCount).toBe(3);
     expect(threads[0].versions.map((v) => v.id)).toEqual([
       "doc-v1",
@@ -93,7 +95,7 @@ describe("groupDocumentsIntoThreads", () => {
   });
 });
 
-describe("canonical non-expiring URLs, Content-Disposition, and review transition rules", () => {
+describe("canonical non-expiring URLs, Content-Disposition, preview allowlist, and review transition rules", () => {
   it("builds inline and attachment streaming paths without expiring JWT query tokens", () => {
     expect(getAppointmentDocumentUrl("appt-1", "doc-1", "inline")).toBe(
       "/api/appointments/appt-1/documents/doc-1/download?disposition=inline",
@@ -118,15 +120,22 @@ describe("canonical non-expiring URLs, Content-Disposition, and review transitio
     expect(header).toContain("filename*=UTF-8''");
   });
 
-  it("identifies previewable MIME types accurately", () => {
-    expect(isPreviewableMimeType("application/pdf")).toBe(true);
-    expect(isPreviewableMimeType("image/png")).toBe(true);
-    expect(isPreviewableMimeType("text/plain")).toBe(true);
+  it("identifies previewable MIME types and blocks non-previewable Office/archive extensions", () => {
+    expect(isPreviewableMimeType("application/pdf", "Resume.pdf")).toBe(true);
+    expect(isPreviewableMimeType("image/png", "Portfolio.png")).toBe(true);
+    expect(isPreviewableMimeType("text/plain", "Notes.txt")).toBe(true);
     expect(
       isPreviewableMimeType(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Resume.docx",
       ),
     ).toBe(false);
+    // Even if a seeded or legacy row recorded application/pdf, .docx/.xlsx/.zip never render inline
+    expect(isPreviewableMimeType("application/pdf", "Resume_Seeded.docx")).toBe(
+      false,
+    );
+    expect(isPreviewableMimeType("application/pdf", "Sheet.xlsx")).toBe(false);
+    expect(isPreviewableMimeType("text/plain", "Export.csv")).toBe(false);
   });
 
   it("permits note-only updates on decided statuses while blocking reopening to another status", () => {

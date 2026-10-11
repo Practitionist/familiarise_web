@@ -21,10 +21,33 @@ export function getPlanMaterialUrl(
   return `/api/plans/materials/${encodeURIComponent(materialId)}/download?disposition=${disposition}`;
 }
 
+const NON_PREVIEWABLE_EXTENSIONS = new Set([
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".ppt",
+  ".pptx",
+  ".zip",
+  ".rar",
+  ".csv",
+]);
+
 export function isPreviewableMimeType(
   mimeType: string | null | undefined,
+  fileName?: string | null,
 ): boolean {
   if (!mimeType) return false;
+  if (fileName) {
+    const lowerName = fileName.trim().toLowerCase();
+    const dotIdx = lowerName.lastIndexOf(".");
+    if (
+      dotIdx !== -1 &&
+      NON_PREVIEWABLE_EXTENSIONS.has(lowerName.slice(dotIdx))
+    ) {
+      return false;
+    }
+  }
   return (
     mimeType === "application/pdf" ||
     mimeType.startsWith("image/") ||

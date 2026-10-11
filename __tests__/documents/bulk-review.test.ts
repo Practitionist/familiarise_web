@@ -2,13 +2,6 @@
  * @jest-environment node
  */
 
-/**
- * #347 — bulk document review endpoint. Pins the contract that makes it a safe
- * replacement for the client's N-PATCH fan-out: it authenticates, validates the
- * status + batch, and scopes the single updateMany to the requesting
- * consultant's own documents (so the ids passed can never touch anyone else's).
- */
-
 import { PATCH } from "../../app/api/documents/bulk-review/route";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
@@ -22,6 +15,7 @@ jest.mock("../../lib/prisma", () => {
   const txClient = {
     appointmentDocument: {
       updateManyAndReturn: jest.fn(),
+      updateMany: jest.fn(),
     },
   };
   return {
@@ -44,6 +38,7 @@ const mockedGetSession = getSession as jest.Mock;
 const mockedApplyRateLimit = applyRateLimit as jest.Mock;
 const mockedUpdateManyAndReturn = prisma.appointmentDocument
   .updateManyAndReturn as jest.Mock;
+const mockedUpdateMany = prisma.appointmentDocument.updateMany as jest.Mock;
 
 function req(body: unknown) {
   return new Request("http://localhost/api/documents/bulk-review", {
@@ -53,7 +48,6 @@ function req(body: unknown) {
   }) as never;
 }
 
-// Raw (possibly invalid) body so request.json() can throw.
 function rawReq(text: string) {
   return new Request("http://localhost/api/documents/bulk-review", {
     method: "PATCH",
@@ -66,6 +60,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockedApplyRateLimit.mockResolvedValue(null);
   mockedGetSession.mockResolvedValue({ user: { id: "consultant-user-1" } });
+  mockedUpdateMany.mockResolvedValue({ count: 0 });
   mockedUpdateManyAndReturn.mockResolvedValue([
     {
       id: "d1",
@@ -75,7 +70,6 @@ beforeEach(() => {
         organizationId: null,
         consultation: null,
         subscription: null,
-        trial: null,
       },
     },
     {
@@ -86,7 +80,6 @@ beforeEach(() => {
         organizationId: null,
         consultation: null,
         subscription: null,
-        trial: null,
       },
     },
   ]);
@@ -135,7 +128,7 @@ describe("PATCH /api/documents/bulk-review", () => {
     expect(mockedUpdateManyAndReturn).not.toHaveBeenCalled();
   });
 
-  it("updates only the consultant's own documents and stamps the reviewer", async () => {
+  it("updates only non-terminal consultee submissions owned by the consultant and stamps reviewer on status transitions", async () => {
     const res = await PATCH(
       req({
         documentIds: ["d1", "d2"],
@@ -150,12 +143,37 @@ describe("PATCH /api/documents/bulk-review", () => {
 
     const arg = mockedUpdateManyAndReturn.mock.calls[0][0];
     expect(arg.where.id).toEqual({ in: ["d1", "d2"] });
-    // Ownership is enforced through the appointment's consultant relations (consultation, subscription, trial).
-    expect(arg.where.appointment.OR).toHaveLength(3);
+    expect(arg.where.uploadedByRole).toBe("CONSULTEE");
+    expect(arg.where.deletedAt).toBeNull();
+    expect(arg.where.appointment.OR).toHaveLength(2);
     expect(arg.data.reviewStatus).toBe("APPROVED");
     expect(arg.data.reviewedById).toBe("consultant-user-1");
     expect(arg.data.reviewedAt).toBeInstanceOf(Date);
-    expect(arg.data.reviewNotes).toBe("looks good"); // trimmed
+    expect(arg.data.reviewNotes).toBe("looks good");
+  });
+
+  it("updates reviewNotes without overwriting reviewedAt when updating rows already in target status", async () => {
+    mockedUpdateManyAndReturn.mockResolvedValue([]);
+    mockedUpdateMany.mockResolvedValue({ count: 1 });
+
+    const res = await PATCH(
+      req({
+        documentIds: ["d1"],
+        reviewStatus: "IN_REVIEW",
+        reviewNotes: "Updated note only",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      data: { updated: 1, requested: 1 },
+    });
+
+    expect(mockedUpdateMany).toHaveBeenCalledTimes(1);
+    const sameStatusArg = mockedUpdateMany.mock.calls[0][0];
+    expect(sameStatusArg.where.reviewStatus).toBe("IN_REVIEW");
+    expect(sameStatusArg.data).toEqual({ reviewNotes: "Updated note only" });
+    expect("reviewedAt" in sameStatusArg.data).toBe(false);
+    expect("reviewedById" in sameStatusArg.data).toBe(false);
   });
 
   it("omits reviewNotes when none is provided (does not clear existing notes)", async () => {
