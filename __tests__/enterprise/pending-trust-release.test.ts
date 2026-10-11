@@ -72,9 +72,9 @@ jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock("../../lib/novu/service", () => ({
-  notifyOrgInvoicePaid: jest.fn().mockResolvedValue(undefined),
-  notifyOrgWalletTopupConfirmed: jest.fn().mockResolvedValue(undefined),
+jest.mock("../../lib/novu/org-workflows", () => ({
+  notifyOrgInvoicePaid: jest.fn().mockResolvedValue([]),
+  notifyOrgWalletTopupConfirmed: jest.fn().mockResolvedValue([]),
 }));
 
 import { NextRequest } from "next/server";

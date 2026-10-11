@@ -25,7 +25,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import {
   notifyOrgInvoicePaid,
   notifyOrgWalletTopupConfirmed,
-} from "@/lib/novu/service";
+} from "@/lib/novu/org-workflows";
 import {
   sendOrgBillingEmail,
   stageDisputeNoticeEmail,
