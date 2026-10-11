@@ -195,16 +195,28 @@ export async function handleRecordingStarted(
     const startedAt = new Date(created_at);
     const shouldAdvanceStartedAt =
       !meeting.recordingStartedAt || startedAt > meeting.recordingStartedAt;
-    await prisma.meeting.update({
-      where: { id: meeting.id },
+    const metadataUpdate = {
+      ...(shouldAdvanceStartedAt ? { recordingStartedAt: startedAt } : {}),
+      ...(!meeting.recordingStartedBy && user?.id
+        ? { recordingStartedBy: user.id }
+        : {}),
+    };
+
+    // Guard isRecording=true via CAS on endedAt=null so out-of-order starts never re-arm ended meetings.
+    const activated = await prisma.meeting.updateMany({
+      where: { id: meeting.id, endedAt: null },
       data: {
         isRecording: true,
-        ...(shouldAdvanceStartedAt ? { recordingStartedAt: startedAt } : {}),
-        ...(!meeting.recordingStartedBy && user?.id
-          ? { recordingStartedBy: user.id }
-          : {}),
+        ...metadataUpdate,
       },
     });
+
+    if (activated.count === 0 && Object.keys(metadataUpdate).length > 0) {
+      await prisma.meeting.updateMany({
+        where: { id: meeting.id },
+        data: metadataUpdate,
+      });
+    }
 
     streamLogger.info("Meeting session updated - recording started", {
       sessionId: meeting.id,
@@ -366,7 +378,7 @@ function resolveRecordingNotificationMeta(
   };
 }
 
-async function stageAndSendRecordingReadyNotifications(
+export async function stageAndSendRecordingReadyNotifications(
   appointment: RecordingNotificationAppointment | null | undefined,
   recordingId: string,
   streamCallId: string,
@@ -412,7 +424,7 @@ async function stageAndSendRecordingReadyNotifications(
   }
 }
 
-type ReadyRecordingParams = {
+export type ReadyRecordingParams = {
   meetingId: string;
   streamCallId: string;
   filename: string;
@@ -424,9 +436,9 @@ type ReadyRecordingParams = {
   organizationId: string | null;
 };
 
-async function createReadyRecordingOrAdoptRace(
+export async function createReadyRecordingOrAdoptRace(
   params: ReadyRecordingParams,
-): Promise<{ id: string }> {
+) {
   try {
     return await prisma.recording.create({
       data: {
@@ -555,7 +567,9 @@ export async function handleRecordingReady(
       streamLogger.warn("Meeting session not found for recording ready event", {
         streamCallId,
       });
-      return;
+      throw new Error(
+        `Meeting session not found for recording ready event (${streamCallId})`,
+      );
     }
 
     const startDate = new Date(start_time);

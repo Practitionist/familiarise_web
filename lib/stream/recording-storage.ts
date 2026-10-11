@@ -40,10 +40,10 @@ export function durablyOursWhere(): Prisma.RecordingWhereInput {
   };
 }
 
-const MIN_PLAYBACK_URL_TTL_S = 3600;
+export const MIN_PLAYBACK_URL_TTL_S = 14_400;
 const MAX_PLAYBACK_URL_TTL_S = 24 * 3600;
 
-/** Twice the recording's length plus an hour, so a paused or rewound watch never outlives its URL. */
+/** Twice the recording's length plus an hour (minimum 4 hours), so long webinars/classes never expire mid-watch. */
 export function playbackUrlTtlSeconds(
   durationInMinutes: number | null | undefined,
 ): number {
@@ -56,7 +56,10 @@ export function playbackUrlTtlSeconds(
   }
   return Math.min(
     MAX_PLAYBACK_URL_TTL_S,
-    MIN_PLAYBACK_URL_TTL_S + Math.ceil(durationInMinutes) * 2 * 60,
+    Math.max(
+      MIN_PLAYBACK_URL_TTL_S,
+      3600 + Math.ceil(durationInMinutes) * 2 * 60,
+    ),
   );
 }
 

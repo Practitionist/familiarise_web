@@ -17,8 +17,11 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { streamLogger } from "@/lib/stream-logger";
 import { deleteRecordingAssets } from "@/lib/stream/recording-storage";
+import { RecordingService } from "@/lib/stream/recording-service";
+import { streamCopyExpiresAt } from "@/lib/stream/recording-utils";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const STREAM_REFRESH_WINDOW_DAYS = 15;
 const ONE_TO_ONE_RETENTION_DAYS = 90;
 const SUBSCRIPTION_RETENTION_DAYS = 90;
 const GROUP_RETENTION_DAYS = 365;
@@ -212,8 +215,76 @@ interface ExpireRecordingsResult {
   errors: string[];
 }
 
-/** READY rows whose Stream copy lapsed before our copy existed. */
+/** Refresh a single lapsed READY recording URL from Stream if still retained upstream. */
+async function rescueLapsedStreamRecording(
+  row: {
+    id: string;
+    streamCallId: string | null;
+    streamRecordingId: string | null;
+  },
+  now: Date,
+): Promise<void> {
+  if (!row.streamCallId) return;
+  const streamRecordings = await RecordingService.getCallRecordingsFromStream(
+    row.streamCallId,
+  );
+  if (!streamRecordings) return;
+
+  // Match strictly by filename when streamRecordingId is set; single-result fallback applies only when unset.
+  let match = undefined;
+  if (row.streamRecordingId) {
+    match = streamRecordings.find((r) => r.filename === row.streamRecordingId);
+  } else if (streamRecordings.length === 1) {
+    match = streamRecordings[0];
+  }
+
+  if (!match?.url) return;
+
+  const endDate = new Date(match.end_time);
+  const computedExpiry = streamCopyExpiresAt(endDate);
+  const refreshedExpiry =
+    computedExpiry > now ? computedExpiry : addDays(now, 1);
+
+  await prisma.recording.updateMany({
+    where: {
+      id: row.id,
+      status: RecordingStatus.READY,
+      storageType: RecordingStorageType.STREAM_S3,
+    },
+    data: {
+      recordingUrl: match.url,
+      streamUrlExpiresAt: refreshedExpiry,
+    },
+  });
+}
+
+/**
+ * READY rows whose Stream copy lapsed before R2 transfer completed.
+ * Bounded batches query Stream within the 15-day window to refresh live URLs before marking EXPIRED.
+ */
 async function expireLapsedCopies(now: Date): Promise<number> {
+  const refreshCutoff = addDays(now, -STREAM_REFRESH_WINDOW_DAYS);
+
+  const recentLapsed = await prisma.recording.findMany({
+    where: {
+      status: RecordingStatus.READY,
+      storageType: RecordingStorageType.STREAM_S3,
+      streamUrlExpiresAt: { lt: now },
+      recordedAt: { gte: refreshCutoff },
+      streamCallId: { not: null },
+    },
+    take: SCAN_PAGE_SIZE,
+    select: {
+      id: true,
+      streamCallId: true,
+      streamRecordingId: true,
+    },
+  });
+
+  await Promise.all(
+    recentLapsed.map((row) => rescueLapsedStreamRecording(row, now)),
+  );
+
   const lapsed = await prisma.recording.updateMany({
     where: {
       status: RecordingStatus.READY,

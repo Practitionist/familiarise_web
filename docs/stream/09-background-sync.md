@@ -1057,7 +1057,45 @@ DRY_RUN=true npm run scripts:stream-sync
 3. Click "Run workflow"
 4. Select branch
 5. Monitor execution in real-time
-6. Review logs after completion
+
+## Orphaned Recording Reconciliation (`reconcile-orphaned-recordings`)
+
+Alongside stale-user pruning, `reconcile-orphaned-recordings` (`scripts/stream/reconcile-orphaned-recordings.ts`, registered in `lib/cron/cleanup-registry.ts` and dispatched via `/api/cleanup/reconcile-orphaned-recordings` and `/api/admin/system-jobs/run`) ensures dropped `call.recording_ready` webhooks or multi-segment egress splits never lose a session recording before Stream's 14-day retention expires.
+
+### Candidate Windows & Two-Pass Recovery
+
+1. **Eligibility Window (`2 hours` to `14 days`):** Scans `Meeting` rows where `recordingStartedAt` is at least `2 hours` old (so active egress uploads are never raced) and within Stream's `14-day` retention horizon.
+2. **Pass 1 — Zero-Row Orphans (`recordings: { none: {} }`):** Prioritizes sessions that have zero persisted `Recording` rows (`take: 200`, ordered oldest-first).
+3. **Pass 2 — Multi-Segment Partial Sessions (`recordings: { some: {} }`):** Spends remaining run budget inspecting recorded meetings that already hold one or more rows so 2-hour egress split segments missed during partial webhook outages are backfilled.
+4. **Retryable Notification Staging:** `RecordingService.syncSessionRecordings` processes each segment via `syncSingleRecordingSegment`, persisting new segments (`READY`, `STREAM_S3`, `streamUrlExpiresAt = end_time + 14 days`) and invoking idempotent `stageAndSendRecordingReadyNotifications` (`recording.ready:<id>`) on both newly persisted and existing rows so prior transient outbox failures self-heal automatically.
+
+```mermaid
+sequenceDiagram
+    participant Cron as Cleanup Registry / Scheduler
+    participant Job as reconcileOrphanedRecordings
+    participant DB as PostgreSQL (Prisma)
+    participant Stream as Stream Video API
+    participant Outbox as Notification Outbox
+
+    Cron->>Job: Dispatch under Postgres cron lock (failMode: "open")
+    Job->>DB: Snapshot Pass 1 (recordings: none) + Pass 2 (recordings: some) within 2h..14d
+    loop Each candidate session
+        Job->>Stream: listRecordings(streamCallId)
+        Stream-->>Job: StreamRecording[]
+        Job->>DB: Persist missing segments (READY, STREAM_S3, 14d expiry)
+        Job->>Outbox: Idempotent stageAndSendRecordingReadyNotifications (new & existing rows)
+    end
+```
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Bespoke Redis cron locks without execution heartbeats:** Background sync jobs previously managed ad-hoc Redis keys directly and produced no `SystemJobExecution` rows. All background jobs now run through `withCronLock` (`lib/cron/with-cron-lock.ts`) and register in `CLEANUP_REGISTRY` (`lib/cron/cleanup-registry.ts`).
+- **Unpaced Bulk User/Channel Mutations:** Superseded by 100-item batching with `RATE_LIMIT_DELAY_MS = 10_000` delays keeping Stream operations well inside `DeleteUser: 60/min` and `UpdateUsers: 300/min`.
+- **Zero-row-only orphan reconciliation:** Early reconciliation sweeps filtered exclusively on `recordings: { none: {} }`, missing multi-segment calls (> 2 hours) where segment 1 arrived via webhook but segment 2 dropped. Pre-snapshotting `recordings: { some: {} }` before Pass 1 mutates rows closes multi-segment gaps without double-scanning repaired sessions.
+- **Skipping ready notifications on already-persisted sync rows:** Previously, if `stageAndSendRecordingReadyNotifications` failed transiently after `Recording` row creation, subsequent sync runs skipped notification staging altogether once `existingRecording` existed in Postgres. Re-running idempotent outbox staging on existing rows guarantees eventual attendee notification delivery.
+- **Unbounded 3-layer cron script wrappers:** Standalone wrapper hierarchies duplicating scheduler dispatch across multiple script directories were superseded by direct registration in `lib/cron/cleanup-registry.ts`.
 
 ---
 
@@ -1066,10 +1104,4 @@ DRY_RUN=true npm run scripts:stream-sync
 - [User Management](./07-user-management.md)
 - [Token Management](./08-token-management.md)
 - [API Endpoints](./10-api-endpoints.md)
-
----
-
-## Deprecated & Superseded Approaches
-
-- **Bespoke Redis Locks for Scheduled Sync Jobs**: Superseded by unified PostgreSQL cron leases (`withCronLock` in `lib/cron/with-cron-lock.ts`).
-- **Unpaced Bulk User/Channel Mutations**: Superseded by 100-item batching with `RATE_LIMIT_DELAY_MS = 10_000` delays keeping Stream operations well inside `DeleteUser: 60/min` and `UpdateUsers: 300/min`.
+- [Stream Recording & Webhooks](./13-recording-webhooks.md)

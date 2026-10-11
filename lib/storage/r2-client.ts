@@ -221,7 +221,7 @@ export function createR2PresignedGetUrl(opts: {
   const { amzDate, dateStamp } = formatAmzTimestamps(opts.now ?? new Date());
   const expires = Math.max(
     1,
-    Math.min(604800, Math.floor(opts.expiresInSeconds ?? 3600)),
+    Math.min(604800, Math.floor(opts.expiresInSeconds ?? 14400)),
   );
   const host = config.endpoint.host;
   const canonicalUri = objectUri(config, opts.key);

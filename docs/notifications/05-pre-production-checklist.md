@@ -235,6 +235,10 @@ Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment 
 | **Content + Newsletter (Month 6+)** | \$20    | \$25    | \$0  | \$25     | **\$70/mo**      |
 | **Full Scale (Month 12+)**          | \$20–90 | \$25–50 | \$39 | \$25     | **\$109–204/mo** |
 
+_Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for automated drip sequences._
+
+**Note:** These costs are separate from the shared platform stack (Supabase, Stream.io, Upstash, Sentry).
+
 ---
 
 ## Deprecated & Superseded Approaches

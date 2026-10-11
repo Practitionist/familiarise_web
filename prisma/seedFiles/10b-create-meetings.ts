@@ -132,8 +132,9 @@ export async function createMeetings(): Promise<void> {
           // Duration between 30 and 120 minutes
           const durationInMinutes = faker.number.int({ min: 30, max: 120 });
 
-          // Recording URL (placeholder)
-          const recordingUrl = `https://placeholder.com/recordings/${meeting.id}/${faker.string.alphanumeric(16)}.mp4`;
+          const segmentNonce = faker.string.alphanumeric(12);
+          const recordingUrl = `https://us-east.stream-io-cdn.com/recordings/${meeting.id}/${segmentNonce}.mp4`;
+          const storagePath = `recordings/${meeting.id}-${j + 1}/attempt-1.mp4`;
 
           // Recording date is around the slot time
           const recordedAt = faker.date.between({
@@ -141,10 +142,15 @@ export async function createMeetings(): Promise<void> {
             to: slotEndsAt,
           });
 
+          // Seed completed session recordings in durable PLATFORM storage so rows satisfy Recording_storage_and_publish_check.
           await prisma.recording.create({
             data: {
               title: j > 0 ? `${title} (Part ${j + 1})` : title,
               recordingUrl,
+              storageType: "PLATFORM",
+              status: "AVAILABLE",
+              storagePath,
+              transferredAt: slotEndsAt,
               durationInMinutes,
               recordedAt,
               meetingId: meeting.id,

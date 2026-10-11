@@ -306,7 +306,7 @@ Known cost inflection points:
 - **Netlify:** Costs scale with serverless invocations and bandwidth, $500-2000+/mo at high traffic
 - **Supabase:** Free → $25/mo Pro tier is manageable; higher tiers scale with usage
 
-**Fix:** This is a business problem, not a technical one. If traffic is high enough to trigger these costs, revenue should be covering them. The unit economics were analyzed in `docs/finances/11-cfo-master-plan.md`.
+**Fix:** This is a business problem, not a technical one. If traffic is high enough to trigger these costs, revenue should be covering them.
 
 ### Wall 4: Managed Serverless Costs Exceed Self-Hosting (~100K+ MAU)
 
