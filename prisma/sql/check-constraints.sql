@@ -1135,3 +1135,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS "support_case_event_legacy_csat_key"
   ON "SupportCaseEvent" ("legacyTicketId")
   WHERE "kind" = 'CSAT_RATED';
 
+-- SPLIT
+-- Partial indexes backing active outbox relay scans and the 7-day SENT body scrub sweep.
+CREATE INDEX IF NOT EXISTS "FailedEmail_active_outbox_idx"
+  ON "FailedEmail" ("nextRetryAt" ASC NULLS FIRST)
+  WHERE "status" IN ('PENDING', 'RETRY');
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "FailedEmail_sent_unscrubbed_updatedAt_idx"
+  ON "FailedEmail" ("updatedAt")
+  WHERE "status" = 'SENT' AND ("htmlBody" <> '' OR "textBody" IS NOT NULL);
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "FailedEmailBatch_active_outbox_idx"
+  ON "FailedEmailBatch" ("nextRetryAt" ASC NULLS FIRST)
+  WHERE "status" IN ('PENDING', 'RETRY');
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "NotificationOutbox_active_outbox_idx"
+  ON "NotificationOutbox" ("nextRetryAt" ASC NULLS FIRST, "notBefore")
+  WHERE "status" IN ('PENDING', 'RETRY');
+

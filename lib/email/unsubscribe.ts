@@ -9,9 +9,16 @@
  */
 
 import { getAppUrl } from "@/lib/url";
-import { safeEquals, signToken } from "@/lib/waitlist/tokens";
+import {
+  buildUnsubscribeUrl,
+  canSignLinks,
+  safeEquals,
+  signToken,
+} from "@/lib/waitlist/tokens";
 
 const PURPOSE = "email-unsubscribe";
+const NOTIFICATION_UNSUBSCRIBE_RE =
+  /\/api\/notifications\/unsubscribe\?u=([^&"'\s]+)/;
 
 export function generateEmailUnsubscribeToken(userId: string): string {
   return signToken(PURPOSE, userId, 0);
@@ -42,4 +49,32 @@ export function listUnsubscribeHeaders(url: string): Record<string, string> {
     "List-Unsubscribe": `<${url}>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
   };
+}
+
+/**
+ * Reconstructs RFC 8058 one-click headers from a persisted `FailedEmail` row's
+ * body links when HMAC signing is available; returns `undefined` for mandatory
+ * notices (`category === null`) that carry no unsubscribe link.
+ */
+export function reconstructUnsubscribeHeaders(row: {
+  htmlBody: string;
+  textBody: string | null;
+  recipient: string;
+}): Record<string, string> | undefined {
+  if (!canSignLinks()) return undefined;
+  const src = row.textBody ?? row.htmlBody;
+  const notifMatch =
+    NOTIFICATION_UNSUBSCRIBE_RE.exec(src) ??
+    NOTIFICATION_UNSUBSCRIBE_RE.exec(row.htmlBody);
+  if (notifMatch?.[1]) {
+    const userId = decodeURIComponent(notifMatch[1]);
+    return listUnsubscribeHeaders(buildEmailUnsubscribeUrl(userId));
+  }
+  if (
+    src.includes("/api/waitlist/unsubscribe") ||
+    row.htmlBody.includes("/api/waitlist/unsubscribe")
+  ) {
+    return listUnsubscribeHeaders(buildUnsubscribeUrl(row.recipient));
+  }
+  return undefined;
 }

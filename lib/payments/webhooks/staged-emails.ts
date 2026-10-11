@@ -20,8 +20,14 @@ import {
   type StagedEmail,
   type StagedRecipientEmail,
 } from "@/lib/email";
+import {
+  notifyAppointmentBooked,
+  notifyPaymentSuccess,
+  type StagedTrigger,
+} from "@/lib/novu";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import { notificationScope } from "@/lib/novu/workflows";
 import { reportSentryError } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
 
@@ -382,4 +388,87 @@ export async function stagePaymentFailedEmail(
     entityRef: `payment:${payment.id}`,
   });
   return staged ? { staged, message } : null;
+}
+
+export async function stagePaymentSuccessBells(
+  tx: Tx,
+  payment: PaymentWithUser,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+): Promise<StagedTrigger[]> {
+  const plan = planForEmails(appointment);
+  const consultantName = plan?.consultantProfile?.user?.name || "Consultant";
+  const consultantUserId = plan?.consultantProfile?.user?.id;
+  const resolvedPlanTitle =
+    appointmentType === AppointmentsType.TRIAL
+      ? "Trial session"
+      : planTitleOrSessionLabel(plan?.title ?? null, appointmentType);
+
+  const orgId = appointment.organizationId ?? null;
+  const scope = notificationScope(orgId, appointment.organization?.name);
+  const dashboardUrl = notificationHref(orgId, "appointments");
+
+  const staged: StagedTrigger[] = [];
+
+  const paymentTrigger = await notifyPaymentSuccess(
+    payment.userId,
+    {
+      ...scope,
+      amount: payment.amount,
+      currency: payment.currency,
+      consultantName,
+      appointmentType,
+      planTitle: resolvedPlanTitle,
+      dashboardUrl,
+    },
+    { tx, dedupeKey: payment.id },
+  );
+  if (paymentTrigger?.staged) staged.push(paymentTrigger.staged);
+
+  const notifUserIds = [payment.userId];
+  if (consultantUserId && consultantUserId !== payment.userId) {
+    notifUserIds.push(consultantUserId);
+  }
+  const collaborators =
+    appointment.webinar?.webinarPlan?.collaborators ??
+    appointment.class?.classPlan?.collaborators ??
+    [];
+  for (const collaborator of collaborators) {
+    const uid = collaborator.consultantProfile.user.id;
+    if (uid && !notifUserIds.includes(uid)) {
+      notifUserIds.push(uid);
+    }
+  }
+
+  const firstSlot = appointment.occurrences?.[0];
+  if (!firstSlot?.startsAt) {
+    console.log(
+      JSON.stringify({
+        event: "appointment_booked_notification_skipped_no_slots",
+        appointmentId: appointment.id,
+        paymentId: payment.id,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  } else {
+    const bookedTriggers = await notifyAppointmentBooked(
+      notifUserIds,
+      {
+        ...scope,
+        appointmentId: appointment.id,
+        dateTime: firstSlot.startsAt.toISOString(),
+        appointmentType,
+        consultantName,
+        consulteeName: payment.user.name || "User",
+        planTitle: resolvedPlanTitle,
+        dashboardUrl,
+      },
+      { tx },
+    );
+    for (const item of bookedTriggers ?? []) {
+      if (item?.staged) staged.push(item.staged);
+    }
+  }
+
+  return staged;
 }

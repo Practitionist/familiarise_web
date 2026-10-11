@@ -3591,7 +3591,6 @@ model OrgWorkspaceProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([userId])
   @@map("org_workspace_profiles")
 }
 
@@ -7228,6 +7227,7 @@ model SystemJobExecution {
   @@index([jobId])
   @@index([status])
   @@index([startedAt])
+  @@index([status, startedAt])
   @@index([triggeredBy])
 }
 
@@ -7487,6 +7487,7 @@ model FailedEmailBatch {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([status, nextRetryAt])
+  @@index([status, updatedAt])
 }
 
 /// #1654 — the Novu trigger outbox: written where the business change commits, drained by
@@ -7513,6 +7514,7 @@ model NotificationOutbox {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([status, nextRetryAt])
+  @@index([status, updatedAt])
   @@index([entityRef])
 }
 
@@ -7544,6 +7546,7 @@ model EmailEvent {
 
   @@index([resendId])
   @@index([recipient, receivedAt])
+  @@index([receivedAt])
 }
 
 /// #1647 — addresses the senders must not write to; mirrors Resend's own list so support can

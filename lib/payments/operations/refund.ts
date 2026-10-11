@@ -49,9 +49,24 @@ import {
   RefundStatus,
   UserRole,
 } from "@prisma/client";
+import {
+  attemptTrigger,
+  notifyRefundProcessed,
+  type StagedTrigger,
+} from "@/lib/novu";
 import { notifyRefundRequested } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import {
+  MONEY_EMAIL_TYPES,
+  stageRefundProcessedEmail,
+} from "@/lib/email/senders/money";
+import {
+  attemptStaged as attemptStagedEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
 
 // Type-only on purpose: the gateway barrel loads lib/payments/core/razorpay,
 // whose #1219 guard throws at module load on a TEST key in production. A
@@ -116,6 +131,8 @@ export type RefundInput = {
   /** Defaults to full remaining (Payment.amount − sum(existing refunds)). */
   amountPaise?: number;
   reason: string;
+  /** Optional customer-facing reason included in customer refund notifications. */
+  customerReason?: string;
   /** For audit; staff/admin/customer userId. Optional — gateway-driven
    *  cascades pass null since there's no human actor. */
   initiatedByUserId?: string | null;
@@ -272,6 +289,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     where: { id: input.paymentId },
     select: {
       id: true,
+      userId: true,
       amount: true,
       currency: true,
       paymentStatus: true,
@@ -785,9 +803,13 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     status: "SUCCEEDED" | "PENDING";
     gatewayRefundId: string | undefined;
   };
+  let stagedBell: StagedTrigger | null = null;
+  let stagedEmails: StagedRecipientEmail[] = [];
   try {
-    settled = await withSerializableRetry(() =>
-      prisma.$transaction(
+    settled = await withSerializableRetry(() => {
+      stagedBell = null;
+      stagedEmails = [];
+      return prisma.$transaction(
         async (tx) => {
           const settledClaim = await tx.refund.updateMany({
             where: { id: boundRefundRowId, status: RefundStatus.PENDING },
@@ -836,6 +858,36 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
             );
           }
 
+          if (payment.userId) {
+            if (typeof tx.notificationOutbox?.upsert === "function") {
+              const bell = await notifyRefundProcessed(
+                payment.userId,
+                {
+                  ...notificationScope(payment.organizationId),
+                  amount: requested,
+                  currency: payment.currency,
+                  ...(input.customerReason
+                    ? { reason: input.customerReason }
+                    : {}),
+                  dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+                },
+                { tx, entityRef: `payment:${payment.id}` },
+              );
+              stagedBell = bell?.staged ?? null;
+            }
+            if (
+              typeof tx.user?.findMany === "function" &&
+              typeof tx.failedEmail?.create === "function"
+            ) {
+              stagedEmails = await stageRefundProcessedEmail(tx, {
+                userId: payment.userId,
+                paymentId: payment.id,
+                amountPaise: requested,
+                currency: payment.currency,
+              });
+            }
+          }
+
           return {
             refundId: boundRefundRowId,
             amountRefundedPaise: requested,
@@ -849,10 +901,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           maxWait: 10_000,
           timeout: 15_000,
         },
-      ),
-    );
+      );
+    });
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
+    stagedBell = null;
+    stagedEmails = [];
     reportSentryError(err, { subsystem: "payments", expected: true });
     const current = await prisma.refund.findUnique({
       where: { id: boundRefundRowId },
@@ -873,6 +927,15 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       gatewayRefundId: gateway.refundId || undefined,
     };
   }
+
+  await Promise.allSettled([
+    ...(stagedBell ? [attemptTrigger(stagedBell)] : []),
+    attemptStagedEmails(
+      stagedEmails,
+      MONEY_EMAIL_TYPES.REFUND_PROCESSED,
+      EMAIL_BUDGET_MS.REQUEST,
+    ),
+  ]);
 
   await refundMemberOverageSidePayment({
     parentPaymentId: input.paymentId,

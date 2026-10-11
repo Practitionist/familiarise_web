@@ -198,7 +198,6 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           processedEventsDeleted: r.processedEventsDeleted,
           terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
           failedEventsDeleted: r.failedEventsDeleted,
-          emailEventsDeleted: r.emailEventsDeleted,
           outboundDeliveriesDeleted: r.outboundDeliveriesDeleted,
           totalDeleted: r.totalDeleted,
         }),
@@ -545,6 +544,16 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             await import("@/scripts/cleanup/prune-system-job-executions");
           return pruneSystemJobExecutions();
         },
+        summarize: (r) => ({
+          pruned: r.pruned,
+          stranded: r.stranded,
+          failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed ?? 0,
+          failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed ?? 0,
+          failedEmailsPruned: r.failedEmailsPruned ?? 0,
+          failedEmailBatchesPruned: r.failedEmailBatchesPruned ?? 0,
+          notificationOutboxPruned: r.notificationOutboxPruned ?? 0,
+          emailEventsPruned: r.emailEventsPruned ?? 0,
+        }),
         status: () => 200,
         failureMessage: "System job execution prune failed",
       }),

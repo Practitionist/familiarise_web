@@ -14,8 +14,9 @@ import prisma, {
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma, UserRole } from "@prisma/client";
 import { notifySupportTicketUpdate } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageBell } from "@/lib/novu/stage-bell";
-import { EMAIL_BUDGET_MS, sendSupportTicketUpdateEmail } from "@/lib/email";
+import { stageSupportTicketUpdateEmail } from "@/lib/email/senders/people";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "@/lib/support/case-key";
@@ -438,7 +439,7 @@ async function notifyTicketCustomerStatusChange(
     updatedTicket.appointmentSupportThread?.organizationId,
   );
 
-  await Promise.all([
+  const [bellResult, emailRows] = await Promise.all([
     notifySupportTicketUpdate(
       updatedTicket.user.id,
       {
@@ -451,20 +452,25 @@ async function notifyTicketCustomerStatusChange(
         ...notificationScope(updatedTicket.organizationId),
       },
       `ticket-status:${updatedTicket.id}:${updatedTicket.status}:${now.getTime()}`,
+      { deferAttempt: true },
     ),
-    sendSupportTicketUpdateEmail(
-      {
-        ticketId: updatedTicket.id,
-        ownerUserId: updatedTicket.user.id,
-        reference,
-        title: ticketTitle,
-        statusCode: updatedTicket.status,
-        statusLabel,
-        ticketUrl: requestUrl,
-      },
-      EMAIL_BUDGET_MS.REQUEST,
-    ),
+    stageSupportTicketUpdateEmail(prisma, {
+      ticketId: updatedTicket.id,
+      ownerUserId: updatedTicket.user.id,
+      reference,
+      title: ticketTitle,
+      statusCode: updatedTicket.status,
+      statusLabel,
+      ticketUrl: requestUrl,
+    }).catch(() => []),
   ]);
+  await flushNotificationsAfter(
+    {
+      bells: [bellResult?.staged],
+      emails: [{ rows: emailRows, emailType: "SUPPORT_TICKET_UPDATE" }],
+    },
+    "staff-support-ticket.status",
+  );
 }
 
 async function validateStaffTicketAssignee(

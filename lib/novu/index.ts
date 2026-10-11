@@ -19,6 +19,7 @@ export { notificationHref, personalHref, scopedHref } from "./resolve-href";
  * These helpers are deterministic and want to run for real in tests anyway.
  */
 export {
+  computeSubscriberHash,
   syncSubscriber,
   deleteSubscriber,
   updateSubscriberPreferences,
@@ -32,6 +33,7 @@ export {
   notifyAppointmentReminder,
   notifyAppointmentCompleted,
   // Payments
+  notifyPaymentLink,
   notifyPaymentSuccess,
   notifyPaymentFailed,
   notifyRefundProcessed,

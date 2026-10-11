@@ -95,7 +95,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "You can leave with a full refund",
-      body: "{{payload.planTitle}} has had {{payload.misses}} missed sessions. You may leave the series with a full refund of the sessions still to come.",
+      body: "{{payload.planTitle}} has had {{payload.misses}} missed session{% if payload.misses != 1 %}s{% endif %}. You may leave the series with a full refund of the sessions still to come.",
       redirect: "dashboardUrl",
     },
   },
@@ -107,7 +107,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "We didn't see you in your session",
-      body: "Your {{payload.dateTime}} session of {{payload.planTitle}} went ahead without you, so it counts as held. If you couldn't get in, tell support and we will look at the call record.{% if payload.recordingUrl %} The recording is in your recordings: {{payload.recordingUrl}}{% endif %}",
+      body: "Your {{payload.dateTime}} session of {{payload.planTitle}} went ahead without you, so it counts as held. If you couldn't get in, tell support and we will look at the call record.{% if payload.recordingUrl %} A recording is available in your dashboard.{% endif %}",
       redirect: "supportUrl",
     },
   },
@@ -178,12 +178,25 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject:
         "{% if payload.nudgeHours %}Waiting for session times{% else %}New booking request{% endif %}",
-      body: "{% if payload.nudgeHours %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeHours}} h since payment. Schedule cycle 1 within 48 h or the buyer is refunded in full.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
+      body: "{% if payload.nudgeHours %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeHours}}h since payment. Schedule cycle 1 within 48h or the buyer is refunded in full.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
 
   // ── Money ───────────────────────────────────────────────────────────────
+  {
+    workflowId: W.PAYMENT_LINK,
+    name: "Payment due",
+    description:
+      "The consultee, when an approved booking awaits payment or is nudged.",
+    category: "payments",
+    inApp: {
+      subject:
+        "{% if payload.reminder %}Reminder: payment due{% else %}Payment required{% endif %}",
+      body: "{% if payload.reminder %}Reminder: {{payload.amountFormatted}} is still due{% else %}{{payload.amountFormatted}} is due{% endif %} to confirm your {{payload.appointmentType}}{% if payload.planTitle %} for {{payload.planTitle}}{% endif %} with {{payload.consultantName}}{% if payload.expiresAt %} (pay by {{payload.expiresAt}}){% endif %}.",
+      redirect: "paymentUrl",
+    },
+  },
   {
     workflowId: W.PAYMENT_SUCCESS,
     name: "Payment received",
@@ -254,11 +267,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     workflowId: W.PAYOUT_FAILED,
     name: "Payout failed",
     description:
-      "The consultant, when a payout fails or is cancelled (earnings return to READY for the next batch).",
+      "The consultant, when a payout fails or is reversed (earnings return to READY for the next batch).",
     category: "payments",
     inApp: {
-      subject: "Payout needs attention",
-      body: "Your payout of {{payload.amount}} could not be completed{% if payload.payoutId %} ({{payload.payoutId}}){% endif %}. The earnings are back in your balance for the next payout run.",
+      subject:
+        "{% if payload.kind == 'REVERSED' %}Payout reversed{% else %}Payout needs attention{% endif %}",
+      body: "{% if payload.kind == 'REVERSED' %}Your payout of {{payload.amount}} was reversed by the bank.{% else %}Your payout of {{payload.amount}} could not be completed.{% endif %} The earnings are back in your balance for the next payout run.",
       redirect: "dashboardUrl",
     },
   },
@@ -362,7 +376,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "subscriptions",
     inApp: {
       subject: "Next sessions coming",
-      body: "Cycle {{payload.cycleOrdinal}} of {{payload.planTitle}} is done — {{payload.consultantName}} will schedule your next {{payload.nextBatch}} sessions ({{payload.remainingSessions}} left).",
+      body: "Cycle {{payload.cycleOrdinal}} of {{payload.planTitle}} is done — {{payload.consultantName}} will schedule your next {% if payload.nextBatch == 1 %}session{% else %}{{payload.nextBatch}} sessions{% endif %} ({{payload.remainingSessions}} left).",
       redirect: "dashboardUrl",
     },
   },
@@ -572,7 +586,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: null,
     inApp: {
       subject: "New expert application",
-      body: "{{payload.applicantName}} ({{payload.applicantEmail}}) applied to become an expert.",
+      body: "{{payload.applicantName | default: 'An applicant'}}{% if payload.applicantEmail %} ({{payload.applicantEmail}}){% endif %} applied to become an expert.",
       redirect: "dashboardUrl",
     },
   },
@@ -584,6 +598,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Warning",
       body: "You have received a warning from our moderation team{% if payload.reason %}: {{payload.reason}}{% endif %}. Further reports may lead to suspension.",
+      redirect: "supportUrl",
     },
   },
   {
@@ -604,6 +619,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Account suspended",
       body: `Your account is suspended until {{payload.suspendedUntil}}{% if payload.reason %}. Reason: {{payload.reason}}{% endif %}.${CANCELLED_COUNT}`,
+      redirect: "supportUrl",
     },
   },
   {
@@ -614,6 +630,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Account closed",
       body: `Your account has been permanently closed{% if payload.reason %}. Reason: {{payload.reason}}{% endif %}.${CANCELLED_COUNT}`,
+      redirect: "supportUrl",
     },
   },
   {
@@ -635,6 +652,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Scheduled maintenance",
       body: "Maintenance is coming up{% if payload.estimatedEnd %}; we expect to be back by {{payload.estimatedEnd}}{% endif %}.{% if payload.reason %} {{payload.reason}}{% endif %}",
+      redirect: "statusUrl",
     },
   },
   {
@@ -645,6 +663,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Under maintenance",
       body: "Familiarise is under maintenance{% if payload.estimatedEnd %} and should be back by {{payload.estimatedEnd}}{% endif %}.{% if payload.reason %} {{payload.reason}}{% endif %}",
+      redirect: "statusUrl",
     },
   },
   {
@@ -655,6 +674,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Back online",
       body: "Maintenance is finished — everything is back to normal.",
+      redirect: "statusUrl",
     },
   },
 
@@ -699,7 +719,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "appointments",
     inApp: {
       subject: "Document reviewed",
-      body: `{{payload.consultantName}} {% case payload.reviewStatus %}{% when 'APPROVED' %}approved{% when 'REJECTED' %}declined{% when 'NEEDS_REVISION' %}sent back{% when 'IN_REVIEW' %}is reviewing{% else %}has queued{% endcase %} {{payload.originalName}}.{% if payload.reviewNotes %} "{{payload.reviewNotes | truncate: 140}}"{% endif %}`,
+      body: `{{payload.consultantName}} {% case payload.reviewStatus %}{% when 'APPROVED' %}approved{% when 'REJECTED' %}declined{% when 'NEEDS_REVISION' %}requested revisions on{% when 'IN_REVIEW' %}is reviewing{% else %}updated{% endcase %} {{payload.originalName}}.{% if payload.reviewNotes %} "{{payload.reviewNotes | truncate: 140}}"{% endif %}`,
       redirect: "dashboardUrl",
     },
   },

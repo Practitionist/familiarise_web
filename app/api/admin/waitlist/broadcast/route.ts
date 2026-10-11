@@ -180,14 +180,17 @@ async function sendBatch(
     create: {
       idempotencyKey,
       emailType: "WAITLIST_BROADCAST",
-      // Exactly what resend.batch.send accepts, so the relay passes it through.
       payload: emails as Prisma.InputJsonValue,
+      nextRetryAt: new Date(Date.now() + 60_000),
     },
     update: {},
     select: { id: true },
   });
   try {
-    const result = await resend.batch.send(emails, { idempotencyKey });
+    const result = await resend.batch.send(emails, {
+      idempotencyKey,
+      batchValidation: "permissive",
+    });
     if (result.error) {
       throw new Error(resendErrorText(result.error));
     }

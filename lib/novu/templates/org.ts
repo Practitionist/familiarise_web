@@ -39,7 +39,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     category: "orgBilling",
     inApp: {
       subject: "Invoice overdue",
-      body: "Invoice {{payload.invoiceNumber}} for {{payload.total}} is {{payload.daysLate}} day{% if payload.daysLate != 1 %}s{% endif %} overdue.{% if payload.reminderStage > 1 %} This is reminder {{payload.reminderStage}}.{% endif %}",
+      body: "Invoice {{payload.invoiceNumber}} for {{payload.total}} is {{payload.daysLate}} day{% if payload.daysLate != 1 %}s{% endif %} overdue.{% if payload.reminderStage >= 1 %} This is reminder {{payload.reminderStage}}.{% endif %}",
       redirect: "payUrl",
     },
   },
@@ -85,7 +85,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     category: "orgBilling",
     inApp: {
       subject: "Payout failed",
-      body: "A payout of {{payload.amount}} to {{payload.orgName}} failed: {{payload.reason}}.",
+      body: "A payout of {{payload.amount}} to {{payload.orgName}} failed{% if payload.reason %}: {{payload.reason}}{% endif %}.",
       redirect: "dashboardUrl",
     },
   },
@@ -97,7 +97,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     category: "orgBilling",
     inApp: {
       subject: "Payout reversed",
-      body: "A payout of {{payload.amount}} to {{payload.orgName}} was reversed: {{payload.reason}}{% if payload.withheld %} (includes {{payload.withheld}} withheld as TDS, netted on the return).{% endif %}",
+      body: "A payout of {{payload.amount}} to {{payload.orgName}} was reversed{% if payload.reason %}: {{payload.reason}}{% endif %}{% if payload.withheld %} (includes {{payload.withheld}} withheld as TDS, netted on the return){% endif %}.",
       redirect: "dashboardUrl",
     },
   },
@@ -190,7 +190,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     category: "orgProgram",
     inApp: {
       subject: "Programme nearly used up",
-      body: "{{payload.assigneeName}} has used {{payload.engagementsUsed}} of {{payload.cap}} engagements ({{payload.usedPct}}%) in {{payload.programName}} at {{payload.orgName}}.",
+      body: "{{payload.assigneeName}} has used {{payload.engagementsUsed}} of {{payload.cap}} engagement{% if payload.cap != 1 %}s{% endif %} ({{payload.usedPct}}%) in {{payload.programName}} at {{payload.orgName}}.",
       redirect: "dashboardUrl",
     },
   },

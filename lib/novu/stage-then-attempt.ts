@@ -1,10 +1,24 @@
 import * as Sentry from "@sentry/nextjs";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import {
+  attemptStaged,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
 import {
   attemptTrigger,
   type StagedTrigger,
   type TriggerResult,
 } from "./outbox";
+
+export interface StagedNotificationBundle {
+  bells?: Array<StagedTrigger | null | undefined>;
+  emails?: Array<{
+    rows: StagedRecipientEmail[];
+    emailType: string;
+    budgetMs?: number;
+  }>;
+}
 
 function report(message: string, err: unknown): void {
   console.error(message, err);
@@ -13,36 +27,77 @@ function report(message: string, err: unknown): void {
   });
 }
 
+function isBundle(
+  value: TriggerResult | TriggerResult[] | StagedNotificationBundle,
+): value is StagedNotificationBundle {
+  return (
+    !Array.isArray(value) &&
+    typeof value === "object" &&
+    value !== null &&
+    ("bells" in value || "emails" in value)
+  );
+}
+
 /**
- * #1861 P2r — for a notice whose business write already committed with no
- * transaction left to ride: await the outbox stage so the row exists before
- * the response returns, and defer only the delivery attempt. A row whose
- * attempt never runs (instance frozen after the response) is still drained by
- * the ticker. Never throws.
+ * Dispatches staged Novu bells and staged recipient emails after the response
+ * settles, isolating individual delivery failures so none blocks the batch.
+ */
+export function flushNotificationsAfter(
+  bundle: StagedNotificationBundle,
+  op = "flushNotificationsAfter",
+): Promise<void> {
+  const bells = (bundle.bells ?? []).filter((row): row is StagedTrigger =>
+    Boolean(row),
+  );
+  const emails = (bundle.emails ?? []).filter((entry) => entry.rows.length > 0);
+  if (bells.length === 0 && emails.length === 0) {
+    return Promise.resolve();
+  }
+  return scheduleAfter(async () => {
+    await Promise.all([
+      ...bells.map((row) =>
+        attemptTrigger(row).catch((err) =>
+          report(`Failed to deliver ${op}`, err),
+        ),
+      ),
+      ...emails.map((entry) =>
+        attemptStaged(
+          entry.rows,
+          entry.emailType,
+          entry.budgetMs ?? EMAIL_BUDGET_MS.LIFECYCLE,
+        ).catch((err) =>
+          report(`Failed to deliver email ${entry.emailType}`, err),
+        ),
+      ),
+    ]);
+  }, op);
+}
+
+/**
+ * Awaits outbox staging before the response returns and defers wire delivery
+ * to `scheduleAfter`. Supports single triggers, arrays, or combined bundles.
  */
 export async function stageNowAttemptAfter(
   label: string,
-  stage: () => Promise<TriggerResult | TriggerResult[]>,
+  stage: () => Promise<
+    TriggerResult | TriggerResult[] | StagedNotificationBundle
+  >,
 ): Promise<void> {
-  let results: TriggerResult[];
+  let produced: TriggerResult | TriggerResult[] | StagedNotificationBundle;
   try {
-    const result = await stage();
-    results = Array.isArray(result) ? result : [result];
+    produced = await stage();
   } catch (err) {
     report(`Failed to stage ${label}`, err);
     return;
   }
-  const rows = results
+  if (isBundle(produced)) {
+    await flushNotificationsAfter(produced, label);
+    return;
+  }
+  const results = Array.isArray(produced) ? produced : [produced];
+  const bells = results
     .map((r) => r.staged)
     .filter((row): row is StagedTrigger => Boolean(row));
-  if (rows.length === 0) return;
-  scheduleAfter(() =>
-    Promise.all(
-      rows.map((row) =>
-        attemptTrigger(row).catch((err) =>
-          report(`Failed to deliver ${label}`, err),
-        ),
-      ),
-    ),
-  );
+  if (bells.length === 0) return;
+  await flushNotificationsAfter({ bells }, label);
 }

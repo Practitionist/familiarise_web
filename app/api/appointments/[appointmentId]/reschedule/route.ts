@@ -38,7 +38,8 @@ import {
 import { apiError } from "@/lib/errors/api-error";
 import { isRefusal } from "@/lib/errors/refusal";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
-import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { stageAppointmentRescheduledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
@@ -1066,27 +1067,24 @@ export async function POST(
             proposedAt,
             autoConfirmed,
           });
-          await notifyAppointmentRescheduled(uniqueUserIds, {
-            ...notificationScope(appointment.organizationId),
-            ...variant,
-            appointmentType,
-            consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
-            consulteeName: requestedBy?.user?.name ?? "Participant",
-            // #536 — "Unknown" read as the name of the booking being moved.
-            planTitle: planTitleOrSessionLabel(plan?.title, appointmentType),
-            // Group events fan out to every attendee, so one href must serve
-            // them all — org route when org-hosted, router bounce otherwise.
-            dashboardUrl: notificationHref(
-              appointment.organizationId,
-              "appointments",
-            ),
-          }).catch((err) =>
-            console.error("[reschedule] Failed to send notification:", err),
+          const dashboardUrl = notificationHref(
+            appointment.organizationId,
+            "appointments",
           );
-          // #1653 — the email twin: same recipients, same outcome, same href.
-          // The initiator is excluded above, so `proposedBy` names them.
-          await sendAppointmentRescheduledEmail(
-            {
+          const [, emailRows] = await Promise.all([
+            notifyAppointmentRescheduled(uniqueUserIds, {
+              ...notificationScope(appointment.organizationId),
+              ...variant,
+              appointmentType,
+              consultantName:
+                plan?.consultantProfile?.user?.name ?? "Consultant",
+              consulteeName: requestedBy?.user?.name ?? "Participant",
+              planTitle: planTitleOrSessionLabel(plan?.title, appointmentType),
+              dashboardUrl,
+            }).catch((err) =>
+              console.error("[reschedule] Failed to send notification:", err),
+            ),
+            stageAppointmentRescheduledEmail(prisma, {
               appointmentId,
               userIds: uniqueUserIds,
               outcome: variant.outcome,
@@ -1095,12 +1093,16 @@ export async function POST(
               newStartsAt: proposedAt,
               proposedBy: session.user.name || undefined,
               respondBy: result.proposalExpiresAt,
-              dashboardUrl: notificationHref(
-                appointment.organizationId,
-                "appointments",
-              ),
+              dashboardUrl,
+            }).catch(() => []),
+          ]);
+          await flushNotificationsAfter(
+            {
+              emails: [
+                { rows: emailRows, emailType: "APPOINTMENT_RESCHEDULED" },
+              ],
             },
-            EMAIL_BUDGET_MS.REQUEST,
+            "reschedule-route",
           );
         }
       }

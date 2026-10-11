@@ -258,6 +258,7 @@ describe("runEmailRetryTick — success path", () => {
             html: "<p>Thanks</p>",
           },
           "PAYMENT_SUCCESS",
+          "fe-1",
         ),
       }),
     );

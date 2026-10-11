@@ -47,13 +47,16 @@ function reportAuthFailure(error: unknown, op: string): void {
 /** Novu holds the address, so only proven (verified) users get a subscriber. */
 function syncVerifiedSubscriber(user: LifecycleUser): void {
   const nameParts = (user.name || "User").split(" ");
-  syncSubscriber({
-    userId: user.id,
-    email: user.email,
-    firstName: nameParts[0],
-    lastName: nameParts.slice(1).join(" ") || undefined,
-    routingMode: "BELL_AND_EMAIL",
-  }).catch((error) => reportAuthFailure(error, "novu-subscriber-sync"));
+  scheduleAfter(
+    () =>
+      syncSubscriber({
+        userId: user.id,
+        email: user.email,
+        firstName: nameParts[0],
+        lastName: nameParts.slice(1).join(" ") || undefined,
+      }),
+    "auth:novu-subscriber-sync",
+  );
 }
 
 /**

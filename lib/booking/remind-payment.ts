@@ -6,6 +6,9 @@ import { deliver, EMAIL_BUDGET_MS, emailPayUrl, SENDERS } from "@/lib/email";
 import { renderEmail } from "@/lib/email/render";
 import { apiError, isRefusal, Refusal } from "@/lib/errors";
 import { reportSentryError } from "@/lib/observability/report";
+import { notifyPaymentLink } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { remindLimiter } from "@/lib/rate-limit";
 import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 
@@ -36,6 +39,8 @@ const REMIND_SELECT = {
   appointment: {
     select: {
       id: true,
+      organizationId: true,
+      organization: { select: { name: true } },
       payment: {
         where: { paymentStatus: PaymentStatus.PENDING },
         orderBy: { createdAt: "desc" as const },
@@ -47,6 +52,7 @@ const REMIND_SELECT = {
 } as const;
 const REMIND_PLAN_SELECT = {
   select: {
+    title: true,
     consultantProfileId: true,
     consultantProfile: { select: { user: { select: { name: true } } } },
   },
@@ -154,29 +160,59 @@ export async function remindApprovedPayment(args: {
     });
   }
 
+  const consultantName = plan?.consultantProfile?.user?.name ?? "Consultant";
+  const paymentUrl = emailPayUrl(payment.id, row.pendingPaymentUrl);
   // The approval's own template and envelope, under the manual email type.
   const rendered = await renderEmail(
     PaymentLinkEmail({
       name: consultee.name ?? "User",
-      consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
+      consultantName,
       appointmentType: args.kind,
       amount: payment.amount,
       currency: payment.currency,
       // #1775 P-1 — the stored link is an order id on Razorpay.
-      paymentUrl: emailPayUrl(payment.id, row.pendingPaymentUrl),
+      paymentUrl,
       expiresAt: payment.expiresAt.toISOString(),
       reminder: true,
     }),
   );
-  await deliver(
-    {
-      from: SENDERS.payments,
-      to: consultee.email,
-      subject: `Reminder: payment due - ${args.kind === "consultation" ? "Consultation" : "Subscription"} with ${plan?.consultantProfile?.user?.name ?? "Consultant"}`,
-      ...rendered,
-    },
-    PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE,
-    { entityRef: `payment:${payment.id}`, budgetMs: EMAIL_BUDGET_MS.REQUEST },
+  const [, bellResult] = await Promise.all([
+    deliver(
+      {
+        from: SENDERS.payments,
+        to: consultee.email,
+        subject: `Reminder: payment due - ${args.kind === "consultation" ? "Consultation" : "Subscription"} with ${consultantName}`,
+        ...rendered,
+      },
+      PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE,
+      { entityRef: `payment:${payment.id}`, budgetMs: EMAIL_BUDGET_MS.REQUEST },
+    ),
+    notifyPaymentLink(
+      consultee.id,
+      {
+        ...notificationScope(
+          row.appointment.organizationId,
+          row.appointment.organization?.name,
+        ),
+        paymentId: payment.id,
+        appointmentId: row.appointment.id,
+        amount: payment.amount,
+        currency: payment.currency,
+        consultantName,
+        appointmentType:
+          args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+        planTitle: plan?.title,
+        paymentUrl,
+        expiresAt: payment.expiresAt,
+        reminder: true,
+      },
+      `payment-link-remind:${payment.id}:${now.getTime()}`,
+      { deferAttempt: true },
+    ).catch(() => null),
+  ]);
+  await flushNotificationsAfter(
+    { bells: [bellResult?.staged] },
+    "remind-payment.bell",
   );
   return { nextAllowedAt };
 }

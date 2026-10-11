@@ -15,11 +15,9 @@ import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
-import {
-  EMAIL_BUDGET_MS,
-  refundOnItsWay,
-  sendAppointmentCancelledEmail,
-} from "@/lib/email";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { refundOnItsWay } from "@/lib/email";
+import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
@@ -978,41 +976,6 @@ export async function POST(
       ),
     );
     if (userIds.length > 0) {
-      await notifyAppointmentCancelled(userIds, {
-        ...notificationScope(appointment.organizationId),
-        appointmentId,
-        appointmentType: notificationMeta.appointmentType,
-        consultantName: notificationMeta.consultantName || "Consultant",
-        consulteeName: notificationMeta.consulteeName || "Consultee",
-        // #536 — "N/A" is a developer's placeholder; it used to be the name the
-        // customer read for the session they had just lost.
-        planTitle: planTitleOrSessionLabel(
-          notificationMeta.planTitle,
-          notificationMeta.appointmentType,
-        ),
-        dateTime: notificationMeta.dateTime,
-        // Both parties receive one payload, so the href has to suit either.
-        dashboardUrl: notificationHref(
-          appointment.organizationId,
-          "appointments",
-        ),
-        reason: validatedData.reason || undefined,
-        // Three-way, not two. A group event has no consultee at all, so the
-        // old else-branch told every attendee that "the consultee cancelled"
-        // whenever an admin did — and on a 1:1 it said the same of a platform
-        // cancellation. `system` is what the payload has for that.
-        cancelledBy:
-          notificationMeta.cancelledBy === notificationMeta.consultantUserId ||
-          (isHostOrgOperator && session.user.id !== consulteeUserId)
-            ? "consultant"
-            : notificationMeta.cancelledBy === consulteeUserId
-              ? "consultee"
-              : "system",
-      });
-
-      // #1653 — the email twin of the bell: same recipients, same href. The
-      // refund line reaches only the people whose money moved; the sender
-      // never throws, so it cannot fail a cancellation that already committed.
       const refundText =
         refund?.status === "REFUNDED"
           ? refund.rail === "CREDITS"
@@ -1032,27 +995,49 @@ export async function POST(
           "appointments",
         ),
       };
-      // #1780 R-3 — each attendee rail gets its own refund sentence; a free
-      // seat gets the notice with no money line.
-      if (attendees && eventRefund) {
-        for (const group of attendeeEmailGroups(
-          attendees,
-          !!appointment.class,
-          eventRefund.failures.map((f) => f.paymentId),
-        )) {
-          await sendAppointmentCancelledEmail(
-            {
-              ...emailArgs,
-              userIds: group.userIds,
-              refundText: group.refundText,
-              refundUserIds: group.refundText ? group.userIds : [],
-            },
-            EMAIL_BUDGET_MS.REQUEST,
-          );
-        }
-      }
-      await sendAppointmentCancelledEmail(
-        {
+      const attendeeGroups =
+        attendees && eventRefund
+          ? attendeeEmailGroups(
+              attendees,
+              !!appointment.class,
+              eventRefund.failures.map((f) => f.paymentId),
+            )
+          : [];
+      const [, ...stagedEmailBatches] = await Promise.all([
+        notifyAppointmentCancelled(userIds, {
+          ...notificationScope(appointment.organizationId),
+          appointmentId,
+          appointmentType: notificationMeta.appointmentType,
+          consultantName: notificationMeta.consultantName || "Consultant",
+          consulteeName: notificationMeta.consulteeName || "Consultee",
+          planTitle: planTitleOrSessionLabel(
+            notificationMeta.planTitle,
+            notificationMeta.appointmentType,
+          ),
+          dateTime: notificationMeta.dateTime,
+          dashboardUrl: notificationHref(
+            appointment.organizationId,
+            "appointments",
+          ),
+          reason: validatedData.reason || undefined,
+          cancelledBy:
+            notificationMeta.cancelledBy ===
+              notificationMeta.consultantUserId ||
+            (isHostOrgOperator && session.user.id !== consulteeUserId)
+              ? "consultant"
+              : notificationMeta.cancelledBy === consulteeUserId
+                ? "consultee"
+                : "system",
+        }),
+        ...attendeeGroups.map((group) =>
+          stageAppointmentCancelledEmail(prisma, {
+            ...emailArgs,
+            userIds: group.userIds,
+            refundText: group.refundText,
+            refundUserIds: group.refundText ? group.userIds : [],
+          }).catch(() => []),
+        ),
+        stageAppointmentCancelledEmail(prisma, {
           appointmentId,
           userIds: userIds.filter((id) => !attendeeUserIds.includes(id)),
           startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
@@ -1071,8 +1056,18 @@ export async function POST(
             appointment.organizationId,
             "appointments",
           ),
+        }).catch(() => []),
+      ]);
+      await flushNotificationsAfter(
+        {
+          emails: [
+            {
+              rows: stagedEmailBatches.flat(),
+              emailType: "APPOINTMENT_CANCELLED",
+            },
+          ],
         },
-        EMAIL_BUDGET_MS.REQUEST,
+        "cancel-route",
       );
     }
 
