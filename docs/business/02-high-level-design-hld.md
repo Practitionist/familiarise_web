@@ -39,7 +39,6 @@ flowchart TB
         STREAM["Stream.io Video SFU (1,000-Seat WebRTC)<br/>& Booking-Gated Stream Chat"]
         PAY["Razorpay (India INR/UPI/Route)<br/>& Stripe (Global USD/Connect)"]
         RESEND["Resend + Novu<br/>(Transactional Email & In-App Alerts)"]
-        ELLUMINAR["Elluminar (elluminar_web)<br/>Practitionist SSO & Cross-Sell Bridge"]
     end
 
     WEB --> NEXT_API
@@ -59,7 +58,6 @@ flowchart TB
     FIN --> PG
     ENT --> PG
     NEXT_API --> RESEND
-    NEXT_API <-->|"OIDC SSO + Signed Webhooks"| ELLUMINAR
 ```
 
 ---
@@ -98,6 +96,7 @@ sequenceDiagram
 ```
 
 ### Key Architectural Properties:
+
 1. **Layer 1 — Application Distributed Mutex (`utils/appointmentlock.ts`):** Serializes concurrent allocation requests per `consultantProfileId` at the edge using Upstash Redis before hitting PostgreSQL.
 2. **Layer 2 — `SERIALIZABLE` Isolation with `P2034` Retry (`lib/scheduling/allocationService.ts`):** Prevents phantom reads when verifying `SubscriptionCycle` weekly call caps (`callsPerWeek`) and consultant availability windows.
 3. **Layer 3 — Database Kernel GiST Exclusion Constraint (`prisma/sql/check-constraints.sql`):** Even if a bug or direct SQL script bypasses application code, PostgreSQL physically blocks any two `CONFIRMED` or `PAYMENT_IN_PROGRESS` `AppointmentOccurrence` rows for the same `consultant_profile_id` whose `[starts_at, ends_at)` `tstzrange` intervals overlap.
@@ -156,7 +155,6 @@ flowchart TB
         ACC2["PLATFORM_ESCROW (Held until SessionOutcome == HELD)"]
         ACC3["TAX_CGST_PAYABLE / TAX_SGST_PAYABLE / TAX_IGST_PAYABLE (18% GST)"]
         ACC4["TDS_194O_PAYABLE (0.1% PAN / 5% No-PAN)"]
-        ACC5["PLATFORM_REVENUE (20% Marketplace | 10% Host RateCard | 0% OWN_LINK)"]
         ACC6["HOST_ORG_PAYABLE (10% Agency Royalty)"]
         ACC7["CREATOR_PAYABLE (80% - 100% Net + Collaborator Splits)"]
     end
@@ -168,27 +166,23 @@ flowchart TB
 
     CALC --> LEGS --> TRIG1 --> TXN
     TXN --> ACC1 --> ACC2
-    ACC2 -->|"SessionOutcome == HELD"| ACC3 & ACC4 & ACC5 & ACC6 & ACC7
+    ACC2 -->|"SessionOutcome == HELD"| ACC3 & ACC4 & ACC6 & ACC7
     ACC7 --> RECON --> BATCH
 ```
-
-### Commission & Split Routing Matrix (`lib/payments/core/splits.ts`)
-| Booking Quadrant / Attribution | Platform Take Rate (`PLATFORM_REVENUE`) | Host Agency Royalty (`HOST_ORG_PAYABLE`) | Creator / Collaborator Pool (`CREATOR_PAYABLE`) |
-|---|---|---|---|
-| **Marketplace Discovery (`PLATFORM_DISCOVERY`)** | `20.0%` (`2000 bps`) | `0.0%` | `80.0%` (`8000 bps`, split across `Collaborator`s if applicable) |
-| **Creator Direct Link (`OWN_LINK` / `ConsultantFeeWaiver`)** | `0.0%` (`0 bps`) | `0.0%` | `100.0%` (`10000 bps` minus gateway processing fee) |
-| **Enterprise `SPONSOR × HOST` Agency (`RateCard`)** | `10.0%` (`1000 bps`) | `10.0%` (`1000 bps`) | `80.0%` (`8000 bps`) |
 
 ---
 
 ## 5. Core Subsystem 4: 2-Axis (`SPONSOR × HOST`) Enterprise Topology
 
 Unlike single-sided B2B LMS portals, Familiarise models corporate organizations along **two orthogonal axes** (`familiarise_web_enterprise` PR `#1997`):
+
 1. **Buyer Axis (`Organization` as `SPONSOR`):** Corporate HR/L&D teams or engineering leaders who fund employee coaching (`SeatGrant`), set departmental `SponsorSpendCap`s, manage `CreditPool`s, or sponsor `ProgramCohort` group classes via net-30 `INVOICE_ACCRUAL` billing.
 2. **Supply Axis (`Organization` as `HOST`):** Boutique consulting firms, law/tax practices, or architecture advisories that roster multiple `ConsultantProfile`s (`HostMember`), negotiate custom `RateCard`s with `SPONSOR` organizations, and receive consolidated agency payouts (`HOST_ORG_PAYABLE`).
 
 ### 7-Axis Enterprise Checkout Resolution
+
 When an enterprise employee books a session, the checkout engine resolves:
+
 1. **Identity & SSO (`SsoConnection`)** -> 2. **Vendor Approval (`VendorApproval`)** -> 3. **Negotiated Rate Card (`RateCard`)** -> 4. **Seat/Cohort Entitlement (`SeatGrant` / `ProgramCohort`)** -> 5. **Spend Cap & Credit Pool (`SponsorSpendCap` / `CreditPool`)** -> 6. **Hybrid Overage Split (`INVOICE_ACCRUAL` + personal `CARD`/`WALLET`)** -> 7. **3-Way Settlement Split (`10% Platform / 10% Host Org / 80% Consultant`)**.
 
 ---

@@ -213,58 +213,7 @@ regression** on the axis we have done the most work on. **No credible
 India-resident session-replay product exists.** We use no replay today, so there
 is nothing to migrate.
 
-## 8. What we would lose — measured in our own repo
-
-520 direct `Sentry.captureException` sites across 325 files · 254 helper sites ·
-171 `Sentry.logger.*` · 414 files · **48 distinct `subsystem:` tags** · **73 of 80**
-workflows call `notify-ops-failure.sh`, a hand-written Sentry envelope in bash+jq,
-and it is the **only** working page-a-human for money-critical cron failure · 72
-bare-Node `runJob()` entrypoints · ~1,500 lines of operational doctrine.
-
-```mermaid
-flowchart LR
-    subgraph Cheap["Cheap assets - already vendor-neutral"]
-        A["reportSentryError<br/>254 sites, agnostic signature"]
-        B["runJob wrapper<br/>72 entrypoints"]
-        C["Throttle + verdict model<br/>plus Resend alerting"]
-    end
-    subgraph Expensive["Expensive to port"]
-        D["sentry.shared.config.ts<br/>the load-bearing wall"]
-        E["dataCollection PII map<br/>plus query-string trap"]
-        F["isolation-scope identity"]
-        G["cron check-in protocol<br/>73-workflow bash envelope"]
-    end
-    A --> X["Migration =<br/>28-46 engineer-days<br/>6-10 weeks"]
-    B --> X
-    C --> X
-    D --> X
-    E --> X
-    F --> X
-    G --> X
-```
-
-| Rework item                                                                                    | Days      |
-| ---------------------------------------------------------------------------------------------- | --------- |
-| Rewrite `sentry.shared.config.ts`                                                              | 2–3       |
-| **Re-derive the PII policy** (dataCollection map, query-string trap, timezone, 4 scrub passes) | **4–6**   |
-| 520 + 254 capture sites                                                                        | 5–8       |
-| `job-sentry.ts` + 72 `runJob()` entrypoints                                                    | 2–3       |
-| `cron-tick.mts` check-in + `alertFailedTargets`                                                | 3–4       |
-| `notify-ops-failure.sh` bash envelope, 73 workflows                                            | 2–3       |
-| `sentry-issues.ts` + `user.id` join — **no cross-vendor equivalent**                           | 3–5       |
-| Source maps (new plugin, _and_ they don't work today)                                          | 2–3       |
-| 48 subsystem tags, searches, dashboards, alert rules                                           | 2–3       |
-| Re-author 9 observability docs                                                                 | 2–3       |
-| Parallel run, alert re-authoring, MCP re-onboarding, cutover                                   | 3–5       |
-| **Total**                                                                                      | **28–46** |
-
-Add **2–4 more weeks** via OpenTelemetry: Next.js's own OTel bindings are
-**serverless-functions-only** (we would lose edge + client), we have no
-long-lived runtime to host a Collector, and `opentelemetry-go#7596` documents
-that `Shutdown()` does not force-flush. We would also be migrating _away from_ an
-SDK that has been OTel-native since v8.
-
-## 9. Recommendation
+## 8. Recommendation
 
 **Upgrade Developer → Team. $26/mo.** Then fix two live defects, then enable the
 second sink we already own.
@@ -277,9 +226,7 @@ second sink we already own.
 3. **Every alternative is worse on the axes that matter.** Two have no error tools
    in their MCP and no server-side scrubber. GlitchTip takes away
    "Users affected". Netlify-native cannot group. Clarity is US-only.
-4. **Migration costs 6–10 senior weeks for negative benefit.** Three engineers,
-   pre-scale.
-5. **Source maps are already broken** — a bug fix, not migration overhead.
+4. **Source maps are already broken** — a bug fix, not migration overhead.
 
 ### The two defects to fix first
 

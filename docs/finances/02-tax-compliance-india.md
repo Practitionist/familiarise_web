@@ -6,38 +6,9 @@ This document covers tax obligations for Familiarise as an Indian marketplace pl
 
 **Disclaimer**: This is a reference guide. Consult a qualified CA/tax professional for specific advice.
 
-**Recommended Entity:** Sole Proprietorship (see CFO Master Plan -- maintained outside repository). Section 44AD presumptive taxation makes this the most tax-efficient structure up to ₹2Cr revenue.
-
 ---
 
 ## Entity Structure & Income Tax
-
-### Recommended: Sole Proprietorship + Section 44AD
-
-Section 44AD allows eligible businesses to declare income at a **presumptive rate** instead of maintaining full books of accounts:
-
-| Parameter              | Details                                                       |
-| ---------------------- | ------------------------------------------------------------- |
-| **Eligible entities**  | Individuals, HUFs, Partnership firms (NOT LLP, NOT companies) |
-| **Turnover limit**     | ₹2 Crore (₹3 Crore if 95%+ digital receipts/payments)         |
-| **Deemed profit rate** | 8% of turnover (6% if 95%+ received digitally)                |
-| **Books of account**   | NOT required to maintain                                      |
-| **Advance tax**        | Single installment by March 15                                |
-| **Tax audit**          | NOT required (unless opting out of 44AD)                      |
-
-### Tax Impact at Different Revenue Levels (FY 2025-26)
-
-| Annual Platform Revenue | Deemed Profit (8%) | Income Tax (New Regime FY 2025-26) | Effective Tax Rate |
-| ----------------------- | ------------------ | ---------------------------------- | ------------------ |
-| ₹5L                     | ₹40,000            | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
-| ₹10L                    | ₹80,000            | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
-| ₹25L                    | ₹2,00,000          | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
-| ₹50L                    | ₹4,00,000          | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
-| ₹1Cr                    | ₹8,00,000          | ₹0 (87A rebate, income < ₹12L)     | **0%**             |
-| ₹1.5Cr                  | ₹12,00,000         | ₹0 (87A rebate, income = ₹12L)     | **0%**             |
-| ₹2Cr                    | ₹16,00,000         | ~₹1,24,800 (₹1,20,000 + 4% cess)  | **0.06%**          |
-
-> **Key insight:** With Budget 2025's enhanced Section 87A rebate (income up to ₹12L = zero tax under new regime), a Sole Prop pays ₹0 income tax all the way up to ₹1.5Cr revenue. A Pvt Ltd at ₹50L revenue would pay ~₹10.8L (22% + cess). **Section 44AD saves ₹10+ lakh/year.**
 
 ### Comparison: Sole Prop vs Pvt Ltd vs LLP
 
@@ -229,14 +200,14 @@ flowchart TD
 
 ### TDS Compliance Calendar
 
-| Due Date          | Action         | Form        |
-| ----------------- | -------------- | ----------- |
-| 7th of each month | TDS deposit    | Challan 281 |
-| 31st July         | Q1 return      | 26Q         |
-| 31st October      | Q2 return      | 26Q         |
-| 31st January      | Q3 return      | 26Q         |
-| 31st May          | Q4 return      | 26Q         |
-| Quarterly (15th of month after return due) | Form 16A issue (Aug 15, Nov 15, Feb 15, Jun 15) | 16A |
+| Due Date                                   | Action                                          | Form        |
+| ------------------------------------------ | ----------------------------------------------- | ----------- |
+| 7th of each month                          | TDS deposit                                     | Challan 281 |
+| 31st July                                  | Q1 return                                       | 26Q         |
+| 31st October                               | Q2 return                                       | 26Q         |
+| 31st January                               | Q3 return                                       | 26Q         |
+| 31st May                                   | Q4 return                                       | 26Q         |
+| Quarterly (15th of month after return due) | Form 16A issue (Aug 15, Nov 15, Feb 15, Jun 15) | 16A         |
 
 ### TDS Calculation Example
 
@@ -357,11 +328,8 @@ Consultants can claim TDS deducted by platform:
 
 ### Pending
 
-- [ ] CA opinion on e-commerce operator classification
-- [ ] LUT filing with GST authorities
 - [ ] Form 16A auto-generation for consultants
 - [ ] EU VAT OSS registration (when thresholds approached)
-- [ ] Razorpay IBT activation on dashboard (KYC process)
 
 See `docs/payments/multi-currency/` for detailed architecture docs.
 
@@ -477,42 +445,27 @@ model TDSRecord {
 - [ ] Renew LUT for export zero-rating (if applicable)
 - [ ] Reconcile all tax credits
 - [ ] Audit if turnover > ₹2 crore
-- [ ] Review entity structure (Sole Prop vs Pvt Ltd)
-
-### Section 44AD Advantage
-
-As a Sole Proprietorship with presumptive taxation, the government assumes profit is **6–8% of revenue** (6% if 95%+ payments are digital):
-
-| Revenue | Deemed Profit (6%) | Income Tax |
-|---------|-------------------|------------|
-| Rs 5 lakh | Rs 30K | Rs 0 |
-| Rs 10 lakh | Rs 60K | Rs 0 |
-| Rs 25 lakh | Rs 1.5L | Rs 0 |
-| Rs 50 lakh | Rs 3L | Rs 0 |
-| Rs 1 crore | Rs 6L | Rs 10K–31K |
-
-A Pvt Ltd at Rs 50 lakh revenue would pay ~Rs 10.8 lakh in tax. A Sole Prop with 44AD pays Rs 0. Stay as Sole Prop until you need VC funding or cross Rs 2–3 crore revenue.
 
 ### Penalties for Non-Compliance
 
-| Violation | Penalty |
-|-----------|---------|
-| Not registering for GST (when required) | Rs 10,000 or tax due, whichever is higher |
-| Late GST filing | Rs 100/day statutory max (Rs 50 CGST + Rs 50 SGST), capped at Rs 5,000 per Act = **Rs 10,000 total** per return. Practical rates lower: Rs 50/day for GSTR-3B with tax, Rs 20/day for nil returns |
-| **Not deducting TDS** | **Interest at 1% per month from due date — NO CAP** |
-| **Late TDS deposit** | **Interest at 1.5% per month — NO CAP** |
-| Late TDS return filing | Rs 200/day until filed, **capped at total TDS deductible amount** (Section 234E), plus possible prosecution |
-| Incorrect TDS return | Rs 10,000–Rs 1,00,000 per incorrect statement |
+| Violation                               | Penalty                                                                                                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Not registering for GST (when required) | Rs 10,000 or tax due, whichever is higher                                                                                                                                                         |
+| Late GST filing                         | Rs 100/day statutory max (Rs 50 CGST + Rs 50 SGST), capped at Rs 5,000 per Act = **Rs 10,000 total** per return. Practical rates lower: Rs 50/day for GSTR-3B with tax, Rs 20/day for nil returns |
+| **Not deducting TDS**                   | **Interest at 1% per month from due date — NO CAP**                                                                                                                                               |
+| **Late TDS deposit**                    | **Interest at 1.5% per month — NO CAP**                                                                                                                                                           |
+| Late TDS return filing                  | Rs 200/day until filed, **capped at total TDS deductible amount** (Section 234E), plus possible prosecution                                                                                       |
+| Incorrect TDS return                    | Rs 10,000–Rs 1,00,000 per incorrect statement                                                                                                                                                     |
 
 > **The scariest penalties are for TDS.** Interest accumulates monthly with no upper cap.
 
 ### What Can Be Automated vs Needs a CA?
 
-| Category | Items |
-|----------|-------|
-| **Automated (in code)** | GST calculation, TDS calculation and tracking, invoice generation |
-| **Semi-automated (accounting software)** | GSTR-1 filing, GSTR-3B filing, GSTR-8 filing, ITC reconciliation |
-| **CA handles** | TDS return (Form 26Q), annual GST return (GSTR-9), income tax return, e-commerce operator classification (one-time) |
+| Category                                 | Items                                                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Automated (in code)**                  | GST calculation, TDS calculation and tracking, invoice generation                                                   |
+| **Semi-automated (accounting software)** | GSTR-1 filing, GSTR-3B filing, GSTR-8 filing, ITC reconciliation                                                    |
+| **CA handles**                           | TDS return (Form 26Q), annual GST return (GSTR-9), income tax return, e-commerce operator classification (one-time) |
 
 **Estimated CA cost:** Rs 2,000–5,000/month for GST filing + Rs 4,000–11,000/year for ITR and compliance = **~Rs 30,000–70,000/year total**.
 
@@ -602,10 +555,3 @@ TDS @ 20% = ₹4,000 (higher rate)
 - [GST Rates 2025](https://cleartax.in/s/gst-rates)
 
 ---
-
-## Related Documents
-
-- [08-saas-expenditures.md](./08-saas-expenditures.md) - Cost structure (with GST/RCM)
-- [04-revenue-distribution.md](./04-revenue-distribution.md) - Revenue split
-- [06-payout-implementation-plan.md](./06-payout-implementation-plan.md) - Payout system
-- CFO Master Plan -- comprehensive financial blueprint (maintained outside repository)

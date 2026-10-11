@@ -6,7 +6,7 @@ status: live
 last-reviewed: 2026-10-10
 ---
 
-# ADR 35 — User session visibility, lifetime and revocation
+# ADR 34 — User session visibility, lifetime and revocation
 
 ## Context
 

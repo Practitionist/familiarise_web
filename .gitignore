@@ -92,6 +92,11 @@ next-env.d.ts
 # Private financial documents - DO NOT COMMIT
 docs/finances/private/
 
+# Private strategy docs live in the founders' Notion workspace - DO NOT COMMIT
+docs/competition/private/*
+!docs/competition/private/README.md
+launch-guide/
+
 # Other Repos
 node-payment-main/
 # Local Netlify folder
