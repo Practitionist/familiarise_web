@@ -53,8 +53,12 @@ function bodyText(props: SsoProviderEmailProps): string {
       return `Your OIDC provider ${props.providerId} (${issuer}) for ${domains} was not approved. Members continue signing in with their existing methods.`;
     case "REVOKED":
       return `Sign-in through ${issuer} for ${domains} was revoked and has stopped. Members can use their other sign-in methods unless SSO is enforced.`;
-    case "DELETED":
-      return `${props.deletedByName ? `${props.deletedByName} removed ` : "The "}SSO provider ${props.providerId} from ${props.orgName}. Workspace members now sign in with email.`;
+    case "DELETED": {
+      const actorPrefix = props.deletedByName
+        ? `${props.deletedByName} removed `
+        : "The ";
+      return `${actorPrefix}SSO provider ${props.providerId} from ${props.orgName}. Workspace members now sign in with email.`;
+    }
   }
 }
 

@@ -612,6 +612,8 @@ export async function stageWindowOpenedEmail(
 
 // ── Class session & outcome notices ─────────────────────────────────────────
 
+export type EmailTimestampInput = Date | string | null;
+
 export interface ClassSessionLifecycleEmailArgs {
   appointmentId: string;
   userIds: string[];
@@ -619,8 +621,8 @@ export interface ClassSessionLifecycleEmailArgs {
   planTitle: string;
   consultantName?: string;
   appointmentType?: string;
-  startsAt?: Date | string | null;
-  makeUpBy?: Date | string | null;
+  startsAt?: EmailTimestampInput;
+  makeUpBy?: EmailTimestampInput;
   amountPaise?: number;
   currency?: string;
   missedCount?: number;
@@ -726,7 +728,7 @@ export interface SessionOutcomeEmailArgs {
   userIds: string[];
   outcome: "NO_SHOW" | "MISSED_RECORDING";
   planTitle: string;
-  startsAt?: Date | string | null;
+  startsAt?: EmailTimestampInput;
   recordingUrl?: string | null;
   supportUrl?: string | null;
   dashboardUrl: string;
@@ -804,7 +806,7 @@ export interface TrialLifecycleEmailArgs {
   planTitle: string;
   consultantName?: string;
   consulteeName?: string;
-  startsAt?: Date | string | null;
+  startsAt?: EmailTimestampInput;
   dashboardUrl: string;
 }
 

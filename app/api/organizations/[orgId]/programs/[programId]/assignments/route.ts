@@ -394,6 +394,57 @@ async function assignBulkMembershipsInTx(
   };
 }
 
+function buildAssignmentErrorResponse(
+  outcome:
+    | { ok: false; code: "FOREIGN"; membershipId: string }
+    | { ok: false; code: "INACTIVE"; status: string; membershipId: string },
+  includeMembershipId: boolean,
+): NextResponse {
+  const extraMember = includeMembershipId
+    ? { membershipId: outcome.membershipId }
+    : {};
+  if (outcome.code === "FOREIGN") {
+    return NextResponse.json(
+      {
+        error: "Membership does not belong to this organization",
+        code: "MEMBERSHIP_FOREIGN",
+        ...extraMember,
+      },
+      { status: 400 },
+    );
+  }
+  return NextResponse.json(
+    {
+      error: `Cannot assign a ${outcome.status} membership to a program`,
+      code: "MEMBERSHIP_NOT_ACTIVE",
+      ...extraMember,
+    },
+    { status: 409 },
+  );
+}
+
+async function flushSeatAssignedNotifications(
+  stagedBells: StagedTrigger[],
+  stagedEmails: StagedEmail[],
+): Promise<void> {
+  await flushNotificationsAfter(
+    {
+      bells: stagedBells,
+      emails:
+        stagedEmails.length > 0
+          ? [
+              {
+                rows: stagedEmails,
+                emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                budgetMs: EMAIL_BUDGET_MS.REQUEST,
+              },
+            ]
+          : [],
+    },
+    "org.program.seat-assigned",
+  );
+}
+
 export async function POST(
   req: NextRequest,
   {
@@ -475,44 +526,12 @@ export async function POST(
     );
 
     if (!outcome.ok) {
-      const extraMember = body.membershipIds
-        ? { membershipId: outcome.membershipId }
-        : {};
-      if (outcome.code === "FOREIGN") {
-        return NextResponse.json(
-          {
-            error: "Membership does not belong to this organization",
-            code: "MEMBERSHIP_FOREIGN",
-            ...extraMember,
-          },
-          { status: 400 },
-        );
-      }
-      return NextResponse.json(
-        {
-          error: `Cannot assign a ${outcome.status} membership to a program`,
-          code: "MEMBERSHIP_NOT_ACTIVE",
-          ...extraMember,
-        },
-        { status: 409 },
-      );
+      return buildAssignmentErrorResponse(outcome, Boolean(body.membershipIds));
     }
 
-    await flushNotificationsAfter(
-      {
-        bells: outcome.stagedBells,
-        emails:
-          outcome.stagedEmails.length > 0
-            ? [
-                {
-                  rows: outcome.stagedEmails,
-                  emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
-                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
-                },
-              ]
-            : [],
-      },
-      "org.program.seat-assigned",
+    await flushSeatAssignedNotifications(
+      outcome.stagedBells,
+      outcome.stagedEmails,
     );
 
     return NextResponse.json(

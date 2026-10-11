@@ -52,6 +52,24 @@ export function supportTicketResponseSubject({
     : `${respondedBy} replied to your ticket`;
 }
 
+function renderFollowUpParagraph(
+  kind: SupportTicketEmailKind,
+  nextStepText?: string,
+): React.ReactNode {
+  if (kind === "RESPONSE") {
+    return (
+      <Text style={paragraph}>
+        To reply, open the ticket and write in the conversation. The support
+        team sees your message as soon as it is sent.
+      </Text>
+    );
+  }
+  if (nextStepText) {
+    return <Text style={paragraph}>{nextStepText}</Text>;
+  }
+  return null;
+}
+
 export default function SupportTicketResponseEmail({
   kind = "RESPONSE",
   recipientName,
@@ -125,14 +143,7 @@ export default function SupportTicketResponseEmail({
         </Section>
       ) : null}
 
-      {kind === "RESPONSE" ? (
-        <Text style={paragraph}>
-          To reply, open the ticket and write in the conversation. The support
-          team sees your message as soon as it is sent.
-        </Text>
-      ) : nextStepText ? (
-        <Text style={paragraph}>{nextStepText}</Text>
-      ) : null}
+      {renderFollowUpParagraph(kind, nextStepText)}
 
       <Section style={buttonContainer}>
         <Button style={button} href={ticketUrl}>

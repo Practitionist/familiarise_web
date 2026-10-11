@@ -124,7 +124,8 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
     candidates[0].detectedAt.getTime() +
       REPORTING_DEADLINE_HOURS * 60 * 60 * 1000,
   );
-  const title = `[DPDP] ${atRisk} breach(es) approaching 72h deadline${overdue > 0 ? ` — ${overdue} OVERDUE` : ""}`;
+  const overdueSuffix = overdue > 0 ? ` — ${overdue} OVERDUE` : "";
+  const title = `[DPDP] ${atRisk} breach(es) approaching 72h deadline${overdueSuffix}`;
   const summaryReason = `${atRisk} unreported breach(es) approaching or past the 72-hour DPB reporting deadline under Section 8(6) of the DPDP Act (${overdue} overdue).`;
 
   const adminUsers = await prisma.user.findMany({

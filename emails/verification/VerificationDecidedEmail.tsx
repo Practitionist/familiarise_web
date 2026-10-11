@@ -44,6 +44,59 @@ export function verificationDecidedSubject(
   }
 }
 
+function renderVerificationBody(
+  status: VerificationDecidedStatus,
+  daysLeft?: number,
+): React.ReactNode {
+  switch (status) {
+    case "VERIFIED":
+      return (
+        <Text style={paragraph}>
+          Your expert profile is verified and now visible to clients. You can
+          start receiving bookings from your dashboard.
+        </Text>
+      );
+    case "REJECTED":
+      return (
+        <Text style={paragraph}>
+          Your expert profile verification was not approved. Read the feedback
+          below, update your profile, and resubmit when ready.
+        </Text>
+      );
+    case "UNDER_REVIEW":
+      return (
+        <Text style={paragraph}>
+          We received your expert profile submission and our verification team
+          is reviewing it. We will notify you as soon as a decision is recorded.
+        </Text>
+      );
+    case "NEEDS_INFO_REMINDER": {
+      const dayUnit = daysLeft === 1 ? "day" : "days";
+      const deadlineClause =
+        typeof daysLeft === "number"
+          ? ` within ${daysLeft} ${dayUnit}`
+          : " soon";
+      return (
+        <Text style={paragraph}>
+          A reviewer asked for more information on your expert profile and has
+          not heard back. Reply from your profile settings
+          {deadlineClause}, or the request will close and you will need to
+          submit again.
+        </Text>
+      );
+    }
+    case "PENDING_VERIFICATION":
+    default:
+      return (
+        <Text style={paragraph}>
+          A reviewer looked at your expert profile and needs a little more
+          information before it can be approved. Read the note below and update
+          your profile.
+        </Text>
+      );
+  }
+}
+
 // Required notice mirroring the verification-status-changed bell: the
 // consultant must know the review outcome even with all mail muted.
 export default function VerificationDecidedEmail({
@@ -59,37 +112,7 @@ export default function VerificationDecidedEmail({
     <EmailLayout preview={subject} requiredNotice>
       <Text style={heading}>{subject}</Text>
       <Text style={paragraph}>Hi {recipientName},</Text>
-      {status === "VERIFIED" ? (
-        <Text style={paragraph}>
-          Your expert profile is verified and now visible to clients. You can
-          start receiving bookings from your dashboard.
-        </Text>
-      ) : status === "REJECTED" ? (
-        <Text style={paragraph}>
-          Your expert profile verification was not approved. Read the feedback
-          below, update your profile, and resubmit when ready.
-        </Text>
-      ) : status === "UNDER_REVIEW" ? (
-        <Text style={paragraph}>
-          We received your expert profile submission and our verification team
-          is reviewing it. We will notify you as soon as a decision is recorded.
-        </Text>
-      ) : status === "NEEDS_INFO_REMINDER" ? (
-        <Text style={paragraph}>
-          A reviewer asked for more information on your expert profile and has
-          not heard back. Reply from your profile settings
-          {typeof daysLeft === "number"
-            ? ` within ${daysLeft} ${daysLeft === 1 ? "day" : "days"}`
-            : " soon"}
-          , or the request will close and you will need to submit again.
-        </Text>
-      ) : (
-        <Text style={paragraph}>
-          A reviewer looked at your expert profile and needs a little more
-          information before it can be approved. Read the note below and update
-          your profile.
-        </Text>
-      )}
+      {renderVerificationBody(status, daysLeft)}
       {reason && (
         <Text style={paragraph}>
           Reviewer note: <em>{reason}</em>

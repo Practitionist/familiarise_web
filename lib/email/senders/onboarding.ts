@@ -33,10 +33,10 @@ import {
   greet,
   type RecipientEmailSpec,
   type StagedOnboardingEmail,
-  type StagingTx,
 } from "./shared";
 
-export type { OrgContractAndSeatEmailKind, StagedOnboardingEmail, StagingTx };
+export type { OrgContractAndSeatEmailKind, StagedOnboardingEmail };
+export { type StagingTx } from "./shared";
 
 export const ONBOARDING_EMAIL_TYPES = {
   VERIFICATION_DECIDED: "VERIFICATION_DECIDED",

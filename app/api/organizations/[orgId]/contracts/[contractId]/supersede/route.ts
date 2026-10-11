@@ -383,7 +383,7 @@ export async function POST(
       const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/billing`;
       const kind =
         body.reason === "RENEWAL" ? "CONTRACT_RENEWED" : "CONTRACT_ACTIVATED";
-      const effectiveDateVal = successor.effectiveFrom;
+      const effectiveDateVal = successor.effectiveFrom ?? new Date();
       const operatorRows = tx.membership?.findMany
         ? await tx.membership.findMany({
             where: {
@@ -405,14 +405,15 @@ export async function POST(
           },
           tx.notificationOutbox ? { tx } : undefined,
         )) ?? [];
-      stagedEmails = await stageOrgContractAndSeatEmail(tx, {
-        recipientUserIds: operatorRows.map((r) => r.userId),
-        entityId: successor.id,
-        kind,
-        orgName: access.org.name,
-        effectiveDate: effectiveDateVal,
-        dashboardUrl,
-      });
+      stagedEmails =
+        (await stageOrgContractAndSeatEmail(tx, {
+          recipientUserIds: operatorRows.map((r) => r.userId),
+          entityId: successor.id,
+          kind,
+          orgName: access.org.name,
+          effectiveDate: effectiveDateVal,
+          dashboardUrl,
+        })) ?? [];
 
       return successor;
     });

@@ -65,6 +65,124 @@ interface AdvanceStats {
   skipped: number;
 }
 
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+async function closeProgramAssignmentInTx(
+  tx: TxClient,
+  args: {
+    assignmentId: string;
+    programId: string;
+    orgId: string;
+    orgName: string;
+    programName: string;
+    targetUserId?: string;
+    reason: string;
+    now: Date;
+  },
+): Promise<
+  | { outcome: "skipped" }
+  | {
+      outcome: "closed";
+      stagedBells: StagedTrigger[];
+      stagedEmails: StagedEmail[];
+    }
+> {
+  const {
+    assignmentId,
+    programId,
+    orgId,
+    orgName,
+    programName,
+    targetUserId,
+    reason,
+    now,
+  } = args;
+  // Claim ACTIVE→CLOSED. Gate doubles as the distributed lock.
+  const claim = await tx.programAssignment.updateMany({
+    where: { id: assignmentId, status: "ACTIVE", rolledAt: null },
+    data: { status: "CLOSED", rolledAt: now },
+  });
+  if (claim.count === 0) return { outcome: "skipped" };
+  // #1744 row 4 — a successorless close gives the billed seat back.
+  await releaseSeatsForClosedAssignments(tx, programId, 1);
+
+  await tx.orgAuditLog.create({
+    data: {
+      organizationId: orgId,
+      actorMembershipId: null,
+      targetMembershipId: null,
+      category: "PROGRAM",
+      action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_ROLLED,
+      description: `ProgramAssignment ${assignmentId} closed (${reason}); no successor`,
+      details: {
+        assignmentId,
+        programId,
+        closed: true,
+        reason,
+      },
+    },
+  });
+
+  if (!targetUserId) {
+    return {
+      outcome: "closed",
+      stagedBells: [],
+      stagedEmails: [],
+    };
+  }
+
+  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/programs`;
+  const outboxOpts = tx.notificationOutbox ? { tx } : undefined;
+  const stagedBells: StagedTrigger[] =
+    (await notifyOrgSeatRevoked(
+      targetUserId,
+      {
+        organizationId: orgId,
+        orgName,
+        programName,
+        reason,
+        dashboardUrl,
+      },
+      outboxOpts,
+    )) ?? [];
+  const stagedEmails: StagedEmail[] = await stageOrgContractAndSeatEmail(tx, {
+    recipientUserIds: [targetUserId],
+    entityId: assignmentId,
+    kind: "SEAT_REVOKED",
+    orgName,
+    programName,
+    reason,
+    dashboardUrl,
+  });
+  return {
+    outcome: "closed",
+    stagedBells,
+    stagedEmails,
+  };
+}
+
+async function dispatchClosedSeatNotifications(
+  assignmentId: string,
+  stagedBells: StagedTrigger[],
+  stagedEmails: StagedEmail[],
+): Promise<void> {
+  try {
+    for (const bell of stagedBells) await attemptTrigger(bell);
+    if (stagedEmails.length > 0) {
+      await attemptStaged(
+        stagedEmails,
+        ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+        EMAIL_BUDGET_MS.JOB,
+      );
+    }
+  } catch (notifyErr) {
+    console.error(
+      `[advance-program-cycles] notify failed for assignment ${assignmentId}:`,
+      notifyErr,
+    );
+  }
+}
+
 export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
   const stats: AdvanceStats = { scanned: 0, rolled: 0, closed: 0, skipped: 0 };
   const now = new Date();
@@ -190,65 +308,17 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
                     contractEffectiveTo: null,
                   });
             if (effectiveDecision.action === "CLOSE") {
-              // Claim ACTIVE→CLOSED. Gate doubles as the distributed lock.
-              const claim = await tx.programAssignment.updateMany({
-                where: { id: a.id, status: "ACTIVE", rolledAt: null },
-                data: { status: "CLOSED", rolledAt: now },
+              return closeProgramAssignmentInTx(tx, {
+                assignmentId: a.id,
+                programId: a.programId,
+                orgId,
+                orgName:
+                  a.program.contract.organization?.name ?? "Organization",
+                programName: a.program.name ?? "Program",
+                targetUserId: a.membership?.userId,
+                reason: effectiveDecision.reason,
+                now,
               });
-              if (claim.count === 0) return { outcome: "skipped" as const };
-              // #1744 row 4 — a successorless close gives the billed seat back.
-              await releaseSeatsForClosedAssignments(tx, a.programId, 1);
-
-              await tx.orgAuditLog.create({
-                data: {
-                  organizationId: orgId,
-                  actorMembershipId: null,
-                  targetMembershipId: null,
-                  category: "PROGRAM",
-                  action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNMENT_ROLLED,
-                  description: `ProgramAssignment ${a.id} closed (${effectiveDecision.reason}); no successor`,
-                  details: {
-                    assignmentId: a.id,
-                    programId: a.programId,
-                    closed: true,
-                    reason: effectiveDecision.reason,
-                  },
-                },
-              });
-              const targetUserId = a.membership?.userId;
-              const orgName =
-                a.program.contract.organization?.name ?? "Organization";
-              const programName = a.program.name ?? "Program";
-              const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/programs`;
-              const stagedBells: StagedTrigger[] = targetUserId
-                ? ((await notifyOrgSeatRevoked(
-                    targetUserId,
-                    {
-                      organizationId: orgId,
-                      orgName,
-                      programName,
-                      reason: effectiveDecision.reason,
-                      dashboardUrl,
-                    },
-                    tx.notificationOutbox ? { tx } : undefined,
-                  )) ?? [])
-                : [];
-              const stagedEmails: StagedEmail[] = targetUserId
-                ? await stageOrgContractAndSeatEmail(tx, {
-                    recipientUserIds: [targetUserId],
-                    entityId: a.id,
-                    kind: "SEAT_REVOKED",
-                    orgName,
-                    programName,
-                    reason: effectiveDecision.reason,
-                    dashboardUrl,
-                  })
-                : [];
-              return {
-                outcome: "closed" as const,
-                stagedBells,
-                stagedEmails,
-              };
             }
 
             // ROLL: claim ACTIVE→ROLLED, then mint the successor for next cycle.
@@ -306,21 +376,11 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
         stats.rolled += 1;
       } else if (result.outcome === "closed") {
         stats.closed += 1;
-        try {
-          for (const bell of result.stagedBells) await attemptTrigger(bell);
-          if (result.stagedEmails.length > 0) {
-            await attemptStaged(
-              result.stagedEmails,
-              ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
-              EMAIL_BUDGET_MS.JOB,
-            );
-          }
-        } catch (notifyErr) {
-          console.error(
-            `[advance-program-cycles] notify failed for assignment ${a.id}:`,
-            notifyErr,
-          );
-        }
+        await dispatchClosedSeatNotifications(
+          a.id,
+          result.stagedBells,
+          result.stagedEmails,
+        );
       } else {
         stats.skipped += 1;
       }

@@ -354,6 +354,72 @@ export async function decideSlotOutcome(
 
 const PLAN_BELL = { select: { title: true, recordingEnabled: true } } as const;
 
+function resolveNoShowPlan(
+  row: {
+    consultation?: {
+      consultationPlan: { title: string; recordingEnabled: boolean };
+    } | null;
+    subscription?: {
+      subscriptionPlan: { title: string; recordingEnabled: boolean };
+    } | null;
+    trial?: {
+      subscriptionPlan: { title: string; recordingEnabled: boolean };
+    } | null;
+    webinar?: {
+      webinarPlan: { title: string; recordingEnabled: boolean };
+    } | null;
+    class?: {
+      classPlan: { title: string; recordingEnabled: boolean };
+    } | null;
+  } | null,
+  shape: "one-to-one" | "group",
+) {
+  if (!row) return null;
+  if (shape === "group") {
+    return row.class?.classPlan ?? row.webinar?.webinarPlan ?? null;
+  }
+  return (
+    row.consultation?.consultationPlan ??
+    row.subscription?.subscriptionPlan ??
+    row.trial?.subscriptionPlan ??
+    null
+  );
+}
+
+async function buildSeatNoShowBell(
+  tx: Tx,
+  args: {
+    slot: OutcomeSlot;
+    seat: { userId: string; user: { consulteeProfileId: string | null } };
+    shape: "one-to-one" | "group";
+    planTitle: string;
+    zone?: string;
+    hasRecording: boolean;
+  },
+): Promise<StagedTrigger | null> {
+  const { slot, seat, shape, planTitle, zone, hasRecording } = args;
+  const profileId = seat.user.consulteeProfileId;
+  const recordingUrl = profileId
+    ? personalHref("consultee", profileId, "recordings")
+    : `${getAppUrl()}/dashboard`;
+  return stageBell(tx, {
+    workflowId:
+      shape === "group"
+        ? NOVU_WORKFLOWS.SESSION_MISSED_RECORDING
+        : NOVU_WORKFLOWS.SESSION_NO_SHOW,
+    recipients: [seat.userId],
+    payload: {
+      planTitle,
+      dateTime:
+        formatNotificationDateTime(slot.startsAt, zone) ??
+        slot.startsAt.toISOString(),
+      supportUrl: `${getAppUrl()}/support`,
+      ...(hasRecording && { recordingUrl }),
+    },
+    dedupeKey: `no-show:${slot.id}:${seat.userId}`,
+  });
+}
+
 /**
  * D7 — a 1:1 learner who never joined forfeits the session; one bell says so,
  * links "couldn't get in?" to support, and names the recording when there is
@@ -382,12 +448,7 @@ async function stageNoShowBells(
       },
     },
   });
-  const plan =
-    shape === "group"
-      ? (row?.class?.classPlan ?? row?.webinar?.webinarPlan)
-      : (row?.consultation?.consultationPlan ??
-        row?.subscription?.subscriptionPlan ??
-        row?.trial?.subscriptionPlan);
+  const plan = resolveNoShowPlan(row, shape);
   if (!row || !plan) return { bells: [], emails: [] };
   const recording = plan.recordingEnabled
     ? await tx.recording.findFirst({
@@ -404,34 +465,19 @@ async function stageNoShowBells(
     shape === "group"
       ? row.participants.filter((seat) => !present.has(seat.userId))
       : row.participants;
-  // One bell per seat, each in its own zone (the house format, like the
-  // class-session bells) — a single UTC stamp was wrong for everyone
-  // outside the platform zone.
   const zones = await resolveRecipientTimezones(
     absent.map((seat) => seat.userId),
     tx,
   );
   const bells: StagedTrigger[] = [];
   for (const seat of absent) {
-    const profileId = seat.user.consulteeProfileId;
-    const recordingUrl = profileId
-      ? personalHref("consultee", profileId, "recordings")
-      : `${getAppUrl()}/dashboard`;
-    const bell = await stageBell(tx, {
-      workflowId:
-        shape === "group"
-          ? NOVU_WORKFLOWS.SESSION_MISSED_RECORDING
-          : NOVU_WORKFLOWS.SESSION_NO_SHOW,
-      recipients: [seat.userId],
-      payload: {
-        planTitle: plan.title,
-        dateTime:
-          formatNotificationDateTime(slot.startsAt, zones.get(seat.userId)) ??
-          slot.startsAt.toISOString(),
-        supportUrl: `${getAppUrl()}/support`,
-        ...(recording && { recordingUrl }),
-      },
-      dedupeKey: `no-show:${slot.id}:${seat.userId}`,
+    const bell = await buildSeatNoShowBell(tx, {
+      slot,
+      seat,
+      shape,
+      planTitle: plan.title,
+      zone: zones.get(seat.userId),
+      hasRecording: Boolean(recording),
     });
     if (bell) bells.push(bell);
   }

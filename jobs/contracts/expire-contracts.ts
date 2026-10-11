@@ -51,6 +51,85 @@ interface ExpireStats {
   assignmentsClosed: number;
 }
 
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+async function stageExpiredContractNotifications(
+  tx: TxClient,
+  contract: {
+    id: string;
+    organizationId: string;
+    effectiveTo: Date | null;
+    organization: { name: string } | null;
+  },
+): Promise<{
+  stagedBells: StagedTrigger[];
+  stagedEmails: StagedEmail[];
+}> {
+  const orgName = contract.organization?.name ?? "Organization";
+  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${contract.organizationId}/billing`;
+  const operatorRows = tx.membership?.findMany
+    ? await tx.membership.findMany({
+        where: {
+          organizationId: contract.organizationId,
+          status: "ACTIVE",
+          role: { in: ["OWNER", "MAINTAINER"] },
+        },
+        select: { userId: true },
+      })
+    : [];
+  const stagedBells =
+    (await notifyOrgContractStatusChanged(
+      contract.organizationId,
+      {
+        orgName,
+        status: "EXPIRED",
+        effectiveDate: contract.effectiveTo?.toISOString(),
+        dashboardUrl,
+      },
+      tx.notificationOutbox ? { tx } : undefined,
+    )) ?? [];
+  const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+    recipientUserIds: operatorRows.map((r) => r.userId),
+    entityId: contract.id,
+    kind: "CONTRACT_ENDED",
+    orgName,
+    effectiveDate: contract.effectiveTo ?? undefined,
+    dashboardUrl,
+  });
+  return { stagedBells, stagedEmails };
+}
+
+async function notifyExpiredContract(
+  contractId: string,
+  stagedBells: StagedTrigger[],
+  stagedEmails: StagedEmail[],
+): Promise<void> {
+  for (const bell of stagedBells) {
+    try {
+      await attemptTrigger(bell);
+    } catch (err) {
+      console.error(
+        `[expire-contracts] Bell dispatch failed for contract ${contractId}:`,
+        err,
+      );
+    }
+  }
+  if (stagedEmails.length > 0) {
+    try {
+      await attemptStaged(
+        stagedEmails,
+        ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+        EMAIL_BUDGET_MS.JOB,
+      );
+    } catch (err) {
+      console.error(
+        `[expire-contracts] Email dispatch failed for contract ${contractId}:`,
+        err,
+      );
+    }
+  }
+}
+
 export async function runExpireContracts(): Promise<ExpireStats> {
   const stats: ExpireStats = { scanned: 0, expired: 0, assignmentsClosed: 0 };
   const now = new Date();
@@ -130,37 +209,8 @@ export async function runExpireContracts(): Promise<ExpireStats> {
             },
           });
 
-          const orgName = c.organization?.name ?? "Organization";
-          const dashboardUrl = `${getAppUrl()}/dashboard/organization/${c.organizationId}/billing`;
-          const operatorRows = tx.membership?.findMany
-            ? await tx.membership.findMany({
-                where: {
-                  organizationId: c.organizationId,
-                  status: "ACTIVE",
-                  role: { in: ["OWNER", "MAINTAINER"] },
-                },
-                select: { userId: true },
-              })
-            : [];
-          const stagedBells =
-            (await notifyOrgContractStatusChanged(
-              c.organizationId,
-              {
-                orgName,
-                status: "EXPIRED",
-                effectiveDate: c.effectiveTo?.toISOString(),
-                dashboardUrl,
-              },
-              tx.notificationOutbox ? { tx } : undefined,
-            )) ?? [];
-          const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
-            recipientUserIds: operatorRows.map((r) => r.userId),
-            entityId: c.id,
-            kind: "CONTRACT_ENDED",
-            orgName,
-            effectiveDate: c.effectiveTo ?? undefined,
-            dashboardUrl,
-          });
+          const { stagedBells, stagedEmails } =
+            await stageExpiredContractNotifications(tx, c);
 
           return {
             expired: true,
@@ -175,30 +225,11 @@ export async function runExpireContracts(): Promise<ExpireStats> {
 
     if (claimed.expired) {
       stats.expired += 1;
-      for (const bell of claimed.stagedBells) {
-        try {
-          await attemptTrigger(bell);
-        } catch (err) {
-          console.error(
-            `[expire-contracts] Bell dispatch failed for contract ${c.id}:`,
-            err,
-          );
-        }
-      }
-      if (claimed.stagedEmails.length > 0) {
-        try {
-          await attemptStaged(
-            claimed.stagedEmails,
-            ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
-            EMAIL_BUDGET_MS.JOB,
-          );
-        } catch (err) {
-          console.error(
-            `[expire-contracts] Email dispatch failed for contract ${c.id}:`,
-            err,
-          );
-        }
-      }
+      await notifyExpiredContract(
+        c.id,
+        claimed.stagedBells,
+        claimed.stagedEmails,
+      );
     }
     stats.assignmentsClosed += claimed.assignmentsClosed;
   }

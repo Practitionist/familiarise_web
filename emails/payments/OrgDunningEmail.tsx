@@ -43,10 +43,13 @@ export function orgOperationalEmailSubject(
   switch (args.kind) {
     case "MEMBER_OVERAGE_TIMED_OUT":
       return `Payment window closed for ${args.programName ?? "programme"} at ${args.orgName}`;
-    case "LICENSE_RENEWAL_UPCOMING":
-      return typeof args.daysUntilRenewal === "number"
-        ? `Licence renewal in ${args.daysUntilRenewal} ${args.daysUntilRenewal === 1 ? "day" : "days"} for ${args.orgName}`
-        : `Upcoming licence renewal for ${args.orgName}`;
+    case "LICENSE_RENEWAL_UPCOMING": {
+      if (typeof args.daysUntilRenewal !== "number") {
+        return `Upcoming licence renewal for ${args.orgName}`;
+      }
+      const dayUnit = args.daysUntilRenewal === 1 ? "day" : "days";
+      return `Licence renewal in ${args.daysUntilRenewal} ${dayUnit} for ${args.orgName}`;
+    }
     case "PROGRAM_CAP_NEAR":
       return `Programme allowance nearly used up: ${args.programName ?? args.orgName}`;
     case "PROGRAM_EXHAUSTED":

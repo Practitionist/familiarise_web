@@ -269,7 +269,7 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
     it("maps every single NOVU_WORKFLOWS constant onto a registered FamilyId", () => {
       const validFamilyIds = new Set(FAMILIES.map((f) => f.id));
       const allWorkflowIds = Object.values(NOVU_WORKFLOWS);
-      expect(allWorkflowIds.length).toBe(Object.keys(EVENT_FAMILY).length);
+      expect(allWorkflowIds).toHaveLength(Object.keys(EVENT_FAMILY).length);
 
       for (const workflowId of allWorkflowIds) {
         const family = familyOf(workflowId);

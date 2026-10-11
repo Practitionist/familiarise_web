@@ -469,13 +469,16 @@ export async function rollupOrgInvoiceAccruals(params: {
   );
   const { result, notifyStaged, emailStaged } = outcome;
 
+  const stagedBells = notifyStaged ?? [];
+  const stagedEmails = emailStaged ?? [];
+
   // #1744 row 2 — the post-commit attempt; `attemptTrigger` never throws, the
   // guard only protects the loop so a bell failure cannot hide a committed invoice.
   try {
-    for (const row of notifyStaged) await attemptTrigger(row);
-    if (emailStaged.length > 0) {
+    for (const row of stagedBells) await attemptTrigger(row);
+    if (stagedEmails.length > 0) {
       await attemptStaged(
-        emailStaged,
+        stagedEmails,
         MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
         EMAIL_BUDGET_MS.JOB,
       );

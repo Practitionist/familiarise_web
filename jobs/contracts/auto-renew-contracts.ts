@@ -39,12 +39,15 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
-import { attemptStaged } from "@/lib/email/send-to-recipients";
+import {
+  attemptStaged,
+  type StagedRecipientEmail as StagedEmail,
+} from "@/lib/email/send-to-recipients";
 import {
   ONBOARDING_EMAIL_TYPES,
   stageOrgContractAndSeatEmail,
 } from "@/lib/email/senders/onboarding";
-import { attemptTrigger } from "@/lib/novu";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { notifyOrgContractStatusChanged } from "@/lib/novu/org-workflows";
 import { getAppUrl } from "@/lib/url";
 
@@ -54,6 +57,76 @@ interface RenewStats {
   scanned: number;
   renewed: number;
   skipped: number;
+}
+
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+async function stageAutoRenewedNotifications(
+  tx: TxClient,
+  args: {
+    organizationId: string;
+    orgName: string;
+    successorId: string;
+    oldTo: Date;
+  },
+): Promise<{
+  stagedBells: StagedTrigger[];
+  stagedEmails: StagedEmail[];
+}> {
+  const { organizationId, orgName, successorId, oldTo } = args;
+  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${organizationId}/billing`;
+  const operatorRows = tx.membership?.findMany
+    ? await tx.membership.findMany({
+        where: {
+          organizationId,
+          status: "ACTIVE",
+          role: { in: ["OWNER", "MAINTAINER"] },
+        },
+        select: { userId: true },
+      })
+    : [];
+  const stagedBells =
+    (await notifyOrgContractStatusChanged(
+      organizationId,
+      {
+        orgName,
+        status: "RENEWED",
+        effectiveDate: oldTo.toISOString(),
+        dashboardUrl,
+      },
+      tx.notificationOutbox ? { tx } : undefined,
+    )) ?? [];
+  const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+    recipientUserIds: operatorRows.map((r) => r.userId),
+    entityId: successorId,
+    kind: "CONTRACT_RENEWED",
+    orgName,
+    effectiveDate: oldTo,
+    dashboardUrl,
+  });
+  return { stagedBells, stagedEmails };
+}
+
+async function notifyAutoRenewedContract(
+  contractId: string,
+  stagedBells: StagedTrigger[],
+  stagedEmails: StagedEmail[],
+): Promise<void> {
+  try {
+    for (const bell of stagedBells) await attemptTrigger(bell);
+    if (stagedEmails.length > 0) {
+      await attemptStaged(
+        stagedEmails,
+        ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+        EMAIL_BUDGET_MS.JOB,
+      );
+    }
+  } catch (notifyErr) {
+    console.error(
+      `[auto-renew-contracts] notify failed for contract ${contractId}:`,
+      notifyErr,
+    );
+  }
 }
 
 export async function runAutoRenewContracts(): Promise<RenewStats> {
@@ -198,37 +271,13 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
               },
             });
 
-            const orgName = c.organization?.name ?? "Organization";
-            const dashboardUrl = `${getAppUrl()}/dashboard/organization/${c.organizationId}/billing`;
-            const operatorRows = tx.membership?.findMany
-              ? await tx.membership.findMany({
-                  where: {
-                    organizationId: c.organizationId,
-                    status: "ACTIVE",
-                    role: { in: ["OWNER", "MAINTAINER"] },
-                  },
-                  select: { userId: true },
-                })
-              : [];
-            const stagedBells =
-              (await notifyOrgContractStatusChanged(
-                c.organizationId,
-                {
-                  orgName,
-                  status: "RENEWED",
-                  effectiveDate: oldTo.toISOString(),
-                  dashboardUrl,
-                },
-                tx.notificationOutbox ? { tx } : undefined,
-              )) ?? [];
-            const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
-              recipientUserIds: operatorRows.map((r) => r.userId),
-              entityId: successor.id,
-              kind: "CONTRACT_RENEWED",
-              orgName,
-              effectiveDate: oldTo,
-              dashboardUrl,
-            });
+            const { stagedBells, stagedEmails } =
+              await stageAutoRenewedNotifications(tx, {
+                organizationId: c.organizationId,
+                orgName: c.organization?.name ?? "Organization",
+                successorId: successor.id,
+                oldTo,
+              });
 
             return {
               renewed: true as const,
@@ -243,21 +292,11 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
 
       if (result.renewed) {
         stats.renewed += 1;
-        try {
-          for (const bell of result.stagedBells) await attemptTrigger(bell);
-          if (result.stagedEmails.length > 0) {
-            await attemptStaged(
-              result.stagedEmails,
-              ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
-              EMAIL_BUDGET_MS.JOB,
-            );
-          }
-        } catch (notifyErr) {
-          console.error(
-            `[auto-renew-contracts] notify failed for contract ${c.id}:`,
-            notifyErr,
-          );
-        }
+        await notifyAutoRenewedContract(
+          c.id,
+          result.stagedBells,
+          result.stagedEmails,
+        );
       } else {
         stats.skipped += 1;
       }
