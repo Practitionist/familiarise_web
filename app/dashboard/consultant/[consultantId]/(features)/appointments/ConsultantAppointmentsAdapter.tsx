@@ -32,7 +32,13 @@ import { useConsultantEventActions } from "./components/useConsultantEventAction
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { chatAffordancesForVm } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { UnscheduleConfirmationDialog } from "@/components/appointments/UnscheduleConfirmationDialog";
-import { ConsultantResponseUpload } from "../documents/ConsultantResponseUpload";
+import {
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
+import { DeliverableThreadList } from "@/components/documents/DeliverableThreadList";
 
 type DialogKind = "cancel" | "unschedule" | "documents";
 
@@ -60,8 +66,6 @@ function actionableRawSlots(vm: AppointmentVM) {
       : vm.raw.appointment
         ? [vm.raw.appointment]
         : [];
-  // Shared with the timings page's own gate, so the menu cannot offer a route
-  // that then 404s on a different reading of the same slots (#1082).
   return upcomingOccurrences(sources.flatMap((a) => a.occurrences ?? []));
 }
 
@@ -127,11 +131,6 @@ export function useConsultantAppointmentsAdapter(
   const [activeVm, setActiveVm] = useState<AppointmentVM | null>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
 
-  // #1270 — one flag, not three. This surface keyed off NODE_ENV while its
-  // consultee sibling keyed off NEXT_PUBLIC_ENABLE_DEV_TOOLS, so the same
-  // backdoor was open in different places on the same build. The explicit
-  // opt-in wins: NODE_ENV is true for every local run whether or not the
-  // developer asked for the escape hatch.
   const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
 
   const typeLabel = activeVm
@@ -268,16 +267,6 @@ export function useConsultantAppointmentsAdapter(
     if (!navigating) setJoiningId(null);
   };
 
-  /**
-   * `vm.id` already carries the `unscheduled-class-`/`unscheduled-webinar-`
-   * prefix for an offering with no `Appointment` row yet; a scheduled one
-   * routes on the real appointment id. The timings page resolves either
-   * shape itself (lib/data/manage-timings-target.ts).
-   *
-   * Pure href builder so the primary "Set schedule" action can render as a
-   * prefetching Link (PrimaryAction.href); the overflow menu items below
-   * still go through `openTimings` because OverflowItem only carries onClick.
-   */
   const timingsHref = (vm: AppointmentVM): string | null => {
     const targetId =
       vm.id.startsWith("unscheduled-class-") ||
@@ -393,7 +382,7 @@ export function useConsultantAppointmentsAdapter(
     if (canOfferDocuments(vm)) {
       items.push({
         key: "documents",
-        label: "Upload document",
+        label: "Session documents",
         onClick: () => openDialog(vm, "documents"),
       });
     }
@@ -448,12 +437,23 @@ export function useConsultantAppointmentsAdapter(
           />
 
           {activeVm.appointmentId && dialog === "documents" && (
-            <ConsultantResponseUpload
-              appointmentId={activeVm.appointmentId}
-              isOpen
-              onClose={closeDialog}
-              onSuccess={closeDialog}
-            />
+            <ResponsiveModal
+              open
+              onOpenChange={(open) => !open && closeDialog()}
+            >
+              <ResponsiveModalContent className="max-w-2xl">
+                <ResponsiveModalHeader>
+                  <ResponsiveModalTitle>
+                    Session Deliverables & Handouts
+                  </ResponsiveModalTitle>
+                </ResponsiveModalHeader>
+                <DeliverableThreadList
+                  appointmentId={activeVm.appointmentId}
+                  viewerRole="consultant"
+                  canUpload
+                />
+              </ResponsiveModalContent>
+            </ResponsiveModal>
           )}
         </>
       )}

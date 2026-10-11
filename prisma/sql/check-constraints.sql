@@ -1136,6 +1136,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS "support_case_event_legacy_csat_key"
   WHERE "kind" = 'CSAT_RATED';
 
 -- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "AppointmentDocument_active_storagePath_key"
+  ON "AppointmentDocument" ("storagePath")
+  WHERE "deletedAt" IS NULL;
+
+-- SPLIT
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'AppointmentDocument_fileSize_positive_check') THEN
+    ALTER TABLE "AppointmentDocument"
+      ADD CONSTRAINT "AppointmentDocument_fileSize_positive_check"
+      CHECK ("fileSize" > 0 AND "versionNo" >= 1);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PlanMaterial_single_plan_fk_check') THEN
+    ALTER TABLE "PlanMaterial"
+      ADD CONSTRAINT "PlanMaterial_single_plan_fk_check"
+      CHECK (num_nonnulls("consultationPlanId", "subscriptionPlanId", "webinarPlanId", "classPlanId") = 1 AND "fileSize" > 0);
+  END IF;
+END $$;
+
+-- SPLIT
 -- Recording storage and marketplace listing invariants:
 -- Active PLATFORM rows require a storagePath; AVAILABLE rows require PLATFORM
 -- storage + storagePath; PUBLISHED listings require PLATFORM storage, storagePath,

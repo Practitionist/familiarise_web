@@ -1,20 +1,19 @@
 /**
- * #1527 — the consultee's Documents page in one read: the plan materials of
- * the sessions they booked, plus every file on their own bookings (their
- * uploads and the expert's responses), paged like the consultant's documents
- * route. Personal pin (ADR 19): org-funded bookings live on the org side.
- *
- * Auth stays with the caller, which binds the session to `consulteeId`.
+ * Consultee documents reader: session handouts from booked plans plus
+ * deliverable threads across personal bookings.
  */
 
 import type { DocumentReviewStatus, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
+import {
+  buildRootThreadStatusWhere,
+  groupDocumentsIntoThreads,
+} from "@/lib/documents/document-review";
 
-/** DOC-1 (#694) — a closed booking's files are no longer served. */
 const CLOSED_STATUSES = ["CANCELLED", "REJECTED", "EXPIRED"] as const;
+const PAID_PARTICIPANT_STATUSES = ["CONFIRMED", "ATTENDED"] as const;
 
-export const CONSULTEE_DOCUMENTS_PAGE_SIZE = 20;
+const CONSULTEE_DOCUMENTS_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 const MATERIALS_CAP = 200;
 
@@ -32,13 +31,16 @@ export interface ConsulteeDocumentRow {
   originalName: string;
   fileSize: number;
   mimeType: string;
-  fileUrl: string;
   description: string | null;
   reviewStatus: DocumentReviewStatus;
-  /** CONSULTEE = the learner's upload; CONSULTANT = the expert's response. */
+  reviewNotes: string | null;
+  versionNo: number;
+  rootDocumentId: string | null;
+  responseToDocumentId: string | null;
   uploadedByRole: "CONSULTEE" | "CONSULTANT";
   uploadedAt: Date | string;
   appointmentTitle: string;
+  appointmentStatus: string;
   consultantName: string | null;
 }
 
@@ -47,7 +49,6 @@ export interface ConsulteeMaterialRow {
   originalName: string;
   fileSize: number;
   mimeType: string;
-  fileUrl: string;
   description: string | null;
   uploadedAt: Date | string;
   planTitle: string;
@@ -69,7 +70,7 @@ export interface ConsulteeDocumentsPayload {
   materials: ConsulteeMaterialRow[];
 }
 
-export function normalizeDocumentsQuery(raw: {
+function normalizeDocumentsQuery(raw: {
   limit?: number;
   offset?: number;
   status?: string | null;
@@ -88,7 +89,6 @@ export function normalizeDocumentsQuery(raw: {
   return { limit, offset, status };
 }
 
-/** The learner's own personal 1:1 bookings that are still open for files. */
 function ownBookingWhere(consulteeId: string): Prisma.AppointmentWhereInput {
   return {
     organizationId: null,
@@ -116,19 +116,19 @@ const planSelect = {
   },
 } as const;
 
-/**
- * Materials of the plans behind the learner's bookings — the same arms the
- * resources read uses: their 1:1 requests, trials and the group events they
- * hold a seat on. A withdrawn request keeps none.
- */
 function materialsWhere(
   consulteeId: string,
   userId: string,
 ): Prisma.PlanMaterialWhereInput {
-  const seat = {
+  const paidSeat = {
+    status: { not: "CANCELLED" as const },
     appointment: {
-      organizationId: null,
-      participants: { some: liveParticipant(userId) },
+      participants: {
+        some: {
+          userId,
+          status: { in: [...PAID_PARTICIPANT_STATUSES] },
+        },
+      },
     },
   };
   const openRequest = {
@@ -141,18 +141,13 @@ function materialsWhere(
       { consultationPlan: { consultations: { some: openRequest } } },
       {
         subscriptionPlan: {
-          OR: [
-            {
-              subscriptions: {
-                some: { ...openRequest, appointment: { organizationId: null } },
-              },
-            },
-            { trials: { some: { consulteeProfileId: consulteeId } } },
-          ],
+          subscriptions: {
+            some: { ...openRequest, appointment: { organizationId: null } },
+          },
         },
       },
-      { webinarPlan: { webinars: { some: seat } } },
-      { classPlan: { classes: { some: seat } } },
+      { webinarPlan: { webinars: { some: paidSeat } } },
+      { classPlan: { classes: { some: paidSeat } } },
     ],
   };
 }
@@ -166,39 +161,66 @@ export async function readConsulteeDocuments(args: {
 }): Promise<ConsulteeDocumentsPayload> {
   const { consulteeId, userId } = args;
   const { limit, offset, status } = normalizeDocumentsQuery(args);
-  const where: Prisma.AppointmentDocumentWhereInput = {
-    deletedAt: null,
-    appointment: ownBookingWhere(consulteeId),
-    ...(status && { reviewStatus: status }),
-  };
 
-  const [documents, totalCount, materials] = await Promise.all([
+  const baseRootWhere: Prisma.AppointmentDocumentWhereInput = {
+    deletedAt: null,
+    rootDocumentId: null,
+    appointment: ownBookingWhere(consulteeId),
+  };
+  const rootWhere = buildRootThreadStatusWhere(baseRootWhere, status);
+
+  const [rootRows, totalCount, materials] = await Promise.all([
     prisma.appointmentDocument.findMany({
-      where,
+      where: rootWhere,
       select: {
         id: true,
         appointmentId: true,
         originalName: true,
         fileSize: true,
         mimeType: true,
-        fileUrl: true,
         description: true,
         reviewStatus: true,
+        reviewNotes: true,
+        versionNo: true,
+        rootDocumentId: true,
+        responseToDocumentId: true,
         uploadedByRole: true,
         uploadedAt: true,
+        threadVersions: {
+          where: { deletedAt: null },
+          orderBy: { versionNo: "asc" },
+          select: {
+            id: true,
+            appointmentId: true,
+            originalName: true,
+            fileSize: true,
+            mimeType: true,
+            description: true,
+            reviewStatus: true,
+            reviewNotes: true,
+            versionNo: true,
+            rootDocumentId: true,
+            responseToDocumentId: true,
+            uploadedByRole: true,
+            uploadedAt: true,
+          },
+        },
         appointment: {
           select: {
-            consultation: { select: { consultationPlan: planSelect } },
-            subscription: { select: { subscriptionPlan: planSelect } },
+            consultation: {
+              select: { status: true, consultationPlan: planSelect },
+            },
+            subscription: {
+              select: { status: true, subscriptionPlan: planSelect },
+            },
           },
         },
       },
       orderBy: { uploadedAt: "desc" },
-      take: limit,
       skip: offset,
+      take: limit,
     }),
-    prisma.appointmentDocument.count({ where }),
-    // The status filter narrows the learner's own files only; materials have none.
+    prisma.appointmentDocument.count({ where: rootWhere }),
     status
       ? Promise.resolve([])
       : prisma.planMaterial.findMany({
@@ -208,7 +230,6 @@ export async function readConsulteeDocuments(args: {
             originalName: true,
             fileSize: true,
             mimeType: true,
-            fileUrl: true,
             description: true,
             uploadedAt: true,
             consultationPlan: planSelect,
@@ -221,27 +242,46 @@ export async function readConsulteeDocuments(args: {
         }),
   ]);
 
+  const flattenedDocs: ConsulteeDocumentRow[] = rootRows.flatMap((rootDoc) => {
+    const plan =
+      rootDoc.appointment.consultation?.consultationPlan ??
+      rootDoc.appointment.subscription?.subscriptionPlan ??
+      null;
+    const appointmentStatus =
+      rootDoc.appointment.consultation?.status ??
+      rootDoc.appointment.subscription?.status ??
+      "UNKNOWN";
+    const appointmentTitle = plan?.title ?? "Booking";
+    const consultantName = plan?.consultantProfile.user.name ?? null;
+
+    return [rootDoc, ...rootDoc.threadVersions].map((doc) => ({
+      id: doc.id,
+      appointmentId: doc.appointmentId,
+      originalName: doc.originalName,
+      fileSize: doc.fileSize,
+      mimeType: doc.mimeType,
+      description: doc.description,
+      reviewStatus: doc.reviewStatus,
+      reviewNotes: doc.reviewNotes,
+      versionNo: doc.versionNo,
+      rootDocumentId: doc.rootDocumentId,
+      responseToDocumentId: doc.responseToDocumentId,
+      uploadedByRole: doc.uploadedByRole,
+      uploadedAt: doc.uploadedAt,
+      appointmentTitle,
+      appointmentStatus,
+      consultantName,
+    }));
+  });
+
+  const pageThreads = groupDocumentsIntoThreads(flattenedDocs);
+  const filteredThreads = status
+    ? pageThreads.filter((thread) => thread.effectiveStatus === status)
+    : pageThreads;
+  const pageDocuments = filteredThreads.flatMap((thread) => thread.versions);
+
   return {
-    data: documents.map((doc) => {
-      const plan =
-        doc.appointment.consultation?.consultationPlan ??
-        doc.appointment.subscription?.subscriptionPlan ??
-        null;
-      return {
-        id: doc.id,
-        appointmentId: doc.appointmentId,
-        originalName: doc.originalName,
-        fileSize: doc.fileSize,
-        mimeType: doc.mimeType,
-        fileUrl: doc.fileUrl,
-        description: doc.description,
-        reviewStatus: doc.reviewStatus,
-        uploadedByRole: doc.uploadedByRole,
-        uploadedAt: doc.uploadedAt,
-        appointmentTitle: plan?.title ?? "Booking",
-        consultantName: plan?.consultantProfile.user.name ?? null,
-      };
-    }),
+    data: pageDocuments,
     count: totalCount,
     pagination: {
       limit,
@@ -263,7 +303,6 @@ export async function readConsulteeDocuments(args: {
         originalName: m.originalName,
         fileSize: m.fileSize,
         mimeType: m.mimeType,
-        fileUrl: m.fileUrl,
         description: m.description,
         uploadedAt: m.uploadedAt,
         planTitle: plan?.title ?? "Plan",

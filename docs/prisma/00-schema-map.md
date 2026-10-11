@@ -880,13 +880,18 @@ erDiagram
     AppointmentDocument {
         string id
         string appointmentId
+        string rootDocumentId
         string responseToDocumentId
+        int versionNo
         string fileName
+        string storagePath
         string fileUrl
+        boolean isStorageMissing
         DocumentReviewStatus reviewStatus
         DocumentUploadRole uploadedByRole
-        string reviewedBy
+        string reviewedById
         datetime reviewedAt
+        datetime deletedAt
     }
     ConsultantProfile {
         string id
@@ -913,7 +918,7 @@ erDiagram
     }
 
     Appointment ||--o{ AppointmentDocument : "session docs"
-    AppointmentDocument ||--o{ AppointmentDocument : "consultant response doc"
+    AppointmentDocument ||--o{ AppointmentDocument : "threadVersions / responseToDocument"
     ConsultantProfile ||--o{ ConsultantProfileVerification : "verification submissions"
     ConsultantProfileVerification ||--o{ ProfileVerificationDocument : "supporting docs"
 ```
