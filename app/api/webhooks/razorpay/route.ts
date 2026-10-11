@@ -48,10 +48,6 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const razorpayXSecrets = resolveRazorpayXSecrets().filter(
-    (xCandidate) => !paymentSecrets.some((p) => p.value === xCandidate.value),
-  );
-
   const signature = req.headers.get("x-razorpay-signature");
   const body = signature ? await readBodyWithinCap(req) : "";
   if (body === null) {
@@ -79,6 +75,12 @@ export async function POST(req: NextRequest) {
     const isPossiblyRazorpayXEvent = signature
       ? isPayoutEventName(body)
       : false;
+    const razorpayXSecrets = isPossiblyRazorpayXEvent
+      ? resolveRazorpayXSecrets().filter(
+          (xCandidate) =>
+            !paymentSecrets.some((p) => p.value === xCandidate.value),
+        )
+      : [];
 
     const matchedXRole =
       isPossiblyRazorpayXEvent && signature
