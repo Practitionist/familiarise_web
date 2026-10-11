@@ -36,6 +36,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 
 import { deleteRecordingAssets } from "../../lib/stream/recording-storage";
+import { RecordingService } from "../../lib/stream/recording-service";
 import { reportSentryMessage } from "../../lib/observability/report";
 import {
   expireRecordings,
@@ -330,5 +331,46 @@ describe("expireRecordings", () => {
       (ctx as { fingerprint: string[] }).fingerprint.includes("scan-cap"),
     );
     expect(scanCapWarnings).toHaveLength(1);
+  });
+
+  it("refreshes recordingUrl and streamUrlExpiresAt from Stream within 15 days instead of expiring a live recording", async () => {
+    const futureEnd = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    jest
+      .spyOn(RecordingService, "getCallRecordingsFromStream")
+      .mockResolvedValueOnce([
+        {
+          filename: "rec-live.mp4",
+          url: "https://us-east.stream-io-cdn.com/rec-live-refreshed.mp4",
+          start_time: new Date(futureEnd.getTime() - 3600_000),
+          end_time: futureEnd,
+          session_id: "sess-live",
+        },
+      ]);
+
+    mockRecording.updateMany.mockResolvedValue({ count: 0 });
+    mockRecording.updateManyAndReturn.mockResolvedValueOnce([
+      {
+        id: "rec-rescue-1",
+        streamCallId: "call-rescue-1",
+        streamRecordingId: "rec-live.mp4",
+      },
+    ]);
+    mockRecording.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    const result = await expireRecordings();
+
+    expect(result.lapsed).toBe(0);
+    expect(mockRecording.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "rec-rescue-1",
+        status: "READY",
+        storageType: "STREAM_S3",
+      },
+      data: expect.objectContaining({
+        recordingUrl:
+          "https://us-east.stream-io-cdn.com/rec-live-refreshed.mp4",
+        streamUrlExpiresAt: expect.any(Date),
+      }),
+    });
   });
 });

@@ -154,6 +154,7 @@ const orphanedSessionInclude = {
         include: {
           consultation: { include: { consultationPlan: true } },
           subscription: { include: { subscriptionPlan: true } },
+          trial: { include: { subscriptionPlan: true } },
           webinar: { include: { webinarPlan: true } },
           class: { include: { classPlan: true } },
         },

@@ -5648,6 +5648,7 @@ model Recording {
   @@index([status])
   @@index([storageType])
   @@index([streamUrlExpiresAt])
+  @@index([status, storageType, streamUrlExpiresAt, id])
   @@index([listingStatus, publishedAt])
 }
 

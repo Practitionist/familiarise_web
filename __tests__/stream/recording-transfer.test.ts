@@ -45,9 +45,11 @@ import {
   streamMultipartToR2,
 } from "../../lib/storage/r2-client";
 import {
+  MAX_TRANSFER_ATTEMPTS,
   isAllowedStreamRecordingUrl,
   transferRecording,
   transferRecordings,
+  transferRetryBackoffMs,
 } from "../../lib/stream/recording-transfer-service";
 
 const recording = (
@@ -285,4 +287,21 @@ it("validates Stream recording URLs against the SSRF host allowlist", () => {
   expect(
     isAllowedStreamRecordingUrl("https://169.254.169.254/latest/meta-data/"),
   ).toBe(false);
+});
+
+it("uses deterministic composite.mp4 R2 keys and spaces 12 retry attempts with exponential backoff", async () => {
+  (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
+  await transferRecording("rec-det");
+  expect(streamMultipartToR2).toHaveBeenCalledWith(
+    expect.objectContaining({
+      key: "recordings/rec-det/composite.mp4",
+    }),
+  );
+  expect(MAX_TRANSFER_ATTEMPTS).toBe(12);
+  expect(transferRetryBackoffMs(0)).toBe(0);
+  expect(transferRetryBackoffMs(1)).toBe(15 * 60 * 1000);
+  expect(transferRetryBackoffMs(2)).toBe(60 * 60 * 1000);
+  expect(transferRetryBackoffMs(3)).toBe(6 * 60 * 60 * 1000);
+  expect(transferRetryBackoffMs(4)).toBe(24 * 60 * 60 * 1000);
+  expect(transferRetryBackoffMs(11)).toBe(24 * 60 * 60 * 1000);
 });

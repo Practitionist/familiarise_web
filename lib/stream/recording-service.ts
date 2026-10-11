@@ -27,6 +27,10 @@ import {
   wasDeclinedDuringRecording,
 } from "@/lib/stream/recording-decline";
 import {
+  createReadyRecordingOrAdoptRace,
+  stageAndSendRecordingReadyNotifications,
+} from "@/lib/stream/recording-handlers";
+import {
   webinarRecordingScope,
   webinarRecordingWhere,
   type WebinarRecordingScope,
@@ -88,7 +92,10 @@ export type SyncableSession = {
   occurrence: {
     appointment:
       | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> &
-          AppointmentWithOwnership & {
+          AppointmentWithOwnership &
+          NonNullable<
+            Parameters<typeof stageAndSendRecordingReadyNotifications>[0]
+          > & {
             organizationId: string | null;
           })
       | null;
@@ -1160,23 +1167,31 @@ export class RecordingService {
         const title = generateRecordingTitle(appointment, startDate);
         const streamUrlExpiresAt = streamCopyExpiresAt(endDate);
 
-        const recording = await prisma.recording.create({
-          data: {
-            title,
-            recordingUrl: streamRec.url,
-            durationInMinutes,
-            recordedAt: startDate,
-            streamRecordingId: streamRec.filename,
-            streamCallId: session.streamCallId,
-            storageType: "STREAM_S3",
-            status: "READY",
-            streamUrlExpiresAt,
-            meetingId: session.id,
-            organizationId: appointment?.organizationId ?? null,
-          },
+        const recording = await createReadyRecordingOrAdoptRace({
+          meetingId: session.id,
+          streamCallId: session.streamCallId,
+          filename: streamRec.filename,
+          title,
+          url: streamRec.url,
+          durationInMinutes,
+          startDate,
+          streamUrlExpiresAt,
+          organizationId: appointment?.organizationId ?? null,
         });
 
         syncedRecordings.push(recording);
+
+        await stageAndSendRecordingReadyNotifications(
+          appointment,
+          recording.id,
+          session.streamCallId,
+        ).catch((err) =>
+          streamLogger.error(
+            "Failed to stage recording ready notifications during sync",
+            err,
+            { recordingId: recording.id, streamCallId: session.streamCallId },
+          ),
+        );
 
         streamLogger.info("Recording synced successfully", {
           recordingId: recording.id,

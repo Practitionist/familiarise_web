@@ -514,4 +514,125 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
       }),
     });
   });
+
+  it("does not re-arm isRecording when call.recording_started arrives after meeting endedAt", async () => {
+    mockMeetingFindUnique.mockResolvedValue({
+      id: "m-ended",
+      streamCallId: "slot-ended",
+      endedAt: new Date("2026-10-03T11:00:00.000Z"),
+      recordingStartedAt: null,
+      recordingStartedBy: null,
+    });
+    mockMeetingUpdate.mockResolvedValue({ id: "m-ended", isRecording: false });
+
+    await handleRecordingStarted({
+      type: "call.recording_started",
+      call_cid: "default:slot-ended",
+      user: { id: "host-1" },
+      created_at: "2026-10-03T10:00:00.000Z",
+    });
+
+    expect(mockMeetingUpdate).toHaveBeenCalledWith({
+      where: { id: "m-ended" },
+      data: {
+        recordingStartedAt: new Date("2026-10-03T10:00:00.000Z"),
+        recordingStartedBy: "host-1",
+      },
+    });
+    expect(mockMeetingUpdate.mock.calls[0][0].data).not.toHaveProperty(
+      "isRecording",
+    );
+  });
+
+  it("throws when call.recording_ready arrives before meeting persistence so the webhook outbox retries", async () => {
+    mockMeetingFindUnique.mockResolvedValue(null);
+
+    await expect(
+      handleRecordingReady({
+        type: "call.recording_ready",
+        call_cid: "default:slot-missing",
+        call_recording: {
+          filename: "rec-missing.mp4",
+          url: "https://us-east.stream-io-cdn.com/rec-missing.mp4",
+          start_time: "2026-10-03T10:00:00.000Z",
+          end_time: "2026-10-03T10:30:00.000Z",
+        },
+        created_at: "2026-10-03T10:31:00.000Z",
+      }),
+    ).rejects.toThrow("Meeting session not found for recording ready event");
+  });
+
+  it("adopts P2002 concurrent create races across multi-segment sync and stages recording-ready notifications", async () => {
+    const start1 = new Date("2026-09-20T10:00:00.000Z");
+    const end1 = new Date("2026-09-20T11:00:00.000Z");
+    const start2 = new Date("2026-09-20T11:05:00.000Z");
+    const end2 = new Date("2026-09-20T12:00:00.000Z");
+
+    jest
+      .spyOn(RecordingService, "getCallRecordingsFromStream")
+      .mockResolvedValueOnce([
+        {
+          filename: "seg-1.mp4",
+          url: "https://us-east.stream-io-cdn.com/seg-1.mp4",
+          start_time: start1,
+          end_time: end1,
+          session_id: "sess-multi",
+        },
+        {
+          filename: "seg-2.mp4",
+          url: "https://us-east.stream-io-cdn.com/seg-2.mp4",
+          start_time: start2,
+          end_time: end2,
+          session_id: "sess-multi",
+        },
+      ]);
+
+    mockRecordingFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "rec-seg-1",
+        status: "READY",
+        storageType: "STREAM_S3",
+        recordingUrl: "https://us-east.stream-io-cdn.com/seg-1.mp4",
+      })
+      .mockResolvedValueOnce(null);
+
+    mockRecordingCreate
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+      )
+      .mockImplementationOnce(async ({ data }) => ({
+        id: "rec-seg-2",
+        ...data,
+      }));
+
+    mockGetEventAttendeeIds.mockResolvedValue(["attendee-1"]);
+
+    const synced: unknown[] = [];
+    const outcome = await RecordingService.syncSessionRecordings(
+      {
+        id: "m-sync-multi",
+        streamCallId: "call-sync-multi",
+        occurrence: {
+          appointment: {
+            organizationId: "org-sync",
+            trial: {
+              subscriptionPlan: { title: "Trial Cohort" },
+            },
+          } as never,
+        },
+      },
+      synced as never,
+    );
+
+    expect(outcome).toEqual({ ok: true });
+    expect(synced).toHaveLength(2);
+    expect(mockNotifyRecordingAvailable).toHaveBeenCalledTimes(2);
+    expect(mockNotifyRecordingAvailable).toHaveBeenCalledWith(
+      ["attendee-1"],
+      expect.any(Object),
+      "recording.ready:rec-seg-2",
+      { deferAttempt: true, entityRef: "recording:rec-seg-2" },
+    );
+  });
 });
