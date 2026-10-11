@@ -275,6 +275,47 @@ export async function GET(
   }
 }
 
+function mapMultipartUploadError(uploadError: unknown): NextResponse {
+  console.error("File upload error:", uploadError);
+  Sentry.captureException(
+    uploadError instanceof Error ? uploadError : new Error(String(uploadError)),
+    { tags: { subsystem: "appointments" } },
+  );
+
+  const errMsg = uploadError instanceof Error ? uploadError.message : "";
+  if (errMsg.includes("network") || errMsg.includes("fetch")) {
+    return NextResponse.json(
+      {
+        error: "Network error",
+        message:
+          "Upload failed due to a network issue. Please check your connection and try again.",
+        code: "NETWORK_ERROR",
+      },
+      { status: 503 },
+    );
+  }
+  if (errMsg.includes("storage") || errMsg.includes("bucket")) {
+    return NextResponse.json(
+      {
+        error: "Storage error",
+        message:
+          "There's a temporary issue with file storage. Please try again in a few moments.",
+        code: "STORAGE_ERROR",
+      },
+      { status: 503 },
+    );
+  }
+  return NextResponse.json(
+    {
+      error: "Upload failed",
+      message:
+        "Failed to upload the file. Please try again or contact support if the issue persists.",
+      code: "UPLOAD_ERROR",
+    },
+    { status: 500 },
+  );
+}
+
 async function resolveConsulteeStorageObject(params: {
   appointmentId: string;
   consulteeId: string;
@@ -329,64 +370,7 @@ async function resolveConsulteeStorageObject(params: {
       file: uploadInput.file,
     });
   } catch (uploadError) {
-    console.error("File upload error:", uploadError);
-    Sentry.captureException(
-      uploadError instanceof Error
-        ? uploadError
-        : new Error(String(uploadError)),
-      { tags: { subsystem: "appointments" } },
-    );
-
-    if (uploadError instanceof Error) {
-      if (
-        uploadError.message.includes("network") ||
-        uploadError.message.includes("fetch")
-      ) {
-        return {
-          ok: false,
-          response: NextResponse.json(
-            {
-              error: "Network error",
-              message:
-                "Upload failed due to a network issue. Please check your connection and try again.",
-              code: "NETWORK_ERROR",
-            },
-            { status: 503 },
-          ),
-        };
-      }
-
-      if (
-        uploadError.message.includes("storage") ||
-        uploadError.message.includes("bucket")
-      ) {
-        return {
-          ok: false,
-          response: NextResponse.json(
-            {
-              error: "Storage error",
-              message:
-                "There's a temporary issue with file storage. Please try again in a few moments.",
-              code: "STORAGE_ERROR",
-            },
-            { status: 503 },
-          ),
-        };
-      }
-    }
-
-    return {
-      ok: false,
-      response: NextResponse.json(
-        {
-          error: "Upload failed",
-          message:
-            "Failed to upload the file. Please try again or contact support if the issue persists.",
-          code: "UPLOAD_ERROR",
-        },
-        { status: 500 },
-      ),
-    };
+    return { ok: false, response: mapMultipartUploadError(uploadError) };
   }
 
   if (!uploadResult.success) {

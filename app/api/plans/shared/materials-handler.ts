@@ -543,7 +543,7 @@ async function lockPlanRowForUpdate(
   }
 }
 
-async function persistPlanMaterialRecord(args: {
+function persistPlanMaterialRecord(args: {
   planId: string;
   config: PlanMaterialsConfig;
   resolvedUpload: ResolvedMaterialUpload;

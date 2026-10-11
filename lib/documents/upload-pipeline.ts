@@ -68,61 +68,67 @@ function validationFailureResponse(validation: {
 }
 
 /** Parses either a 2-phase presigned JSON commit body or legacy server multipart FormData. */
+async function parseDirectCommitBody(
+  request: NextRequest,
+): Promise<ParsedUploadRequest> {
+  let rawJson: unknown;
+  try {
+    rawJson = await request.json();
+  } catch {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Invalid JSON body",
+          message: "Invalid upload payload.",
+          code: "INVALID_INPUT",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const parsed = DirectCommitSchema.safeParse(rawJson);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Invalid upload metadata",
+          message: "Please check your file and try uploading again.",
+          code: "INVALID_INPUT",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const validation = validateDocumentUpload({
+    size: parsed.data.fileSize,
+    type: parsed.data.mimeType,
+  });
+  if (!validation.ok) {
+    return { ok: false, response: validationFailureResponse(validation) };
+  }
+
+  return {
+    ok: true,
+    mode: "direct",
+    directCommitData: parsed.data,
+    file: null,
+    originalName: parsed.data.originalName,
+    description: parsed.data.description?.trim() || null,
+    responseToDocumentId: parsed.data.responseToDocumentId?.trim() || null,
+  };
+}
+
 export async function parseDocumentUploadInput(
   request: NextRequest,
   opts: { emptyFileCode?: "NO_FILE" | "INVALID_INPUT" } = {},
 ): Promise<ParsedUploadRequest> {
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
-    let rawJson: unknown;
-    try {
-      rawJson = await request.json();
-    } catch {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          {
-            error: "Invalid JSON body",
-            message: "Invalid upload payload.",
-            code: "INVALID_INPUT",
-          },
-          { status: 400 },
-        ),
-      };
-    }
-
-    const parsed = DirectCommitSchema.safeParse(rawJson);
-    if (!parsed.success) {
-      return {
-        ok: false,
-        response: NextResponse.json(
-          {
-            error: "Invalid upload metadata",
-            message: "Please check your file and try uploading again.",
-            code: "INVALID_INPUT",
-          },
-          { status: 400 },
-        ),
-      };
-    }
-
-    const validation = validateDocumentUpload({
-      size: parsed.data.fileSize,
-      type: parsed.data.mimeType,
-    });
-    if (!validation.ok) {
-      return { ok: false, response: validationFailureResponse(validation) };
-    }
-
-    return {
-      ok: true,
-      mode: "direct",
-      directCommitData: parsed.data,
-      file: null,
-      originalName: parsed.data.originalName,
-      description: parsed.data.description?.trim() || null,
-      responseToDocumentId: parsed.data.responseToDocumentId?.trim() || null,
-    };
+    return parseDirectCommitBody(request);
   }
 
   let formData: FormData;

@@ -15,10 +15,7 @@ const CLOSED_OR_UNPAID_BOOKING_STATUSES = [
 
 const PAID_PARTICIPANT_STATUSES = ["CONFIRMED", "ATTENDED"] as const;
 
-async function fetchMaterialWithAccessContext(
-  materialId: string,
-  userId: string,
-) {
+function fetchMaterialWithAccessContext(materialId: string, userId: string) {
   return prisma.planMaterial.findUnique({
     where: { id: materialId },
     include: {

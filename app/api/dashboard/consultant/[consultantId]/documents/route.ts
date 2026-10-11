@@ -424,10 +424,11 @@ export async function GET(
         (countByStatus.get("REJECTED") ?? 0),
     };
 
+    const pluralSuffix = totalCount === 1 ? "" : "s";
     const message =
       totalCount === 0
         ? "No documents found for the current filters."
-        : `Found ${totalCount} document thread${totalCount === 1 ? "" : "s"}.`;
+        : `Found ${totalCount} document thread${pluralSuffix}.`;
 
     return NextResponse.json({
       data: pagedDocuments,

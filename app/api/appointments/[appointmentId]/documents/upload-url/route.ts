@@ -91,10 +91,7 @@ async function parseUploadUrlBody(request: NextRequest): Promise<
   return { ok: true, data: parsed.data };
 }
 
-async function loadUploadTargetAppointment(
-  appointmentId: string,
-  userId: string,
-) {
+function loadUploadTargetAppointment(appointmentId: string, userId: string) {
   const isDevelopment =
     process.env.NODE_ENV === "development" &&
     process.env.DEV_BYPASS_AUTH === "true";
