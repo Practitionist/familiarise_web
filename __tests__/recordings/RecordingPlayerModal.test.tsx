@@ -138,4 +138,60 @@ describe("RecordingPlayerModal mid-stream presigned URL recovery", () => {
     );
     expect(document.body.textContent).toContain("Retry");
   });
+
+  it("preserves savedTimeRef when parent re-renders with a refreshed playbackUrl prop for the same recording", async () => {
+    const onOpenChange = jest.fn();
+
+    await act(async () => {
+      root.render(
+        <RecordingPlayerModal
+          open={true}
+          onOpenChange={onOpenChange}
+          recording={{
+            id: "rec-prop-refresh",
+            title: "Webinar Replay",
+            playbackUrl:
+              "https://acct.r2.cloudflarestorage.com/recordings/rec-prop-refresh/attempt-1.mp4?sig=initial",
+            storageType: "PLATFORM",
+            durationInMinutes: 90,
+          }}
+        />,
+      );
+    });
+
+    const video = document.body.querySelector("video") as HTMLVideoElement;
+    expect(video).toBeTruthy();
+
+    Object.defineProperty(video, "currentTime", {
+      writable: true,
+      value: 2150,
+    });
+    await act(async () => {
+      video.dispatchEvent(new Event("timeupdate"));
+    });
+
+    // Parent passes a freshly minted presigned URL for the same open recording
+    await act(async () => {
+      root.render(
+        <RecordingPlayerModal
+          open={true}
+          onOpenChange={onOpenChange}
+          recording={{
+            id: "rec-prop-refresh",
+            title: "Webinar Replay",
+            playbackUrl:
+              "https://acct.r2.cloudflarestorage.com/recordings/rec-prop-refresh/attempt-1.mp4?sig=refreshed",
+            storageType: "PLATFORM",
+            durationInMinutes: 90,
+          }}
+        />,
+      );
+    });
+
+    video.currentTime = 0;
+    await act(async () => {
+      video.dispatchEvent(new Event("loadedmetadata"));
+    });
+    expect(video.currentTime).toBe(2150);
+  });
 });

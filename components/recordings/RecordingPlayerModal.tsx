@@ -134,6 +134,11 @@ function PlayerViewport({
         preload="metadata"
         controlsList="nodownload"
         className="w-full rounded-lg bg-black aspect-video"
+        onTimeUpdate={(event) => {
+          if (event.currentTarget.currentTime > 0) {
+            savedTimeRef.current = event.currentTarget.currentTime;
+          }
+        }}
         onLoadedMetadata={() => {
           if (videoRef.current) {
             if (savedTimeRef.current > 0) {
@@ -248,6 +253,12 @@ export function RecordingPlayerModal({
     }
   }, []);
 
+  // Sync latest initialPlaybackUrl in a ref so URL refreshes from props never reset savedTimeRef.
+  const initialPlaybackUrlRef = useRef(initialPlaybackUrl);
+  useEffect(() => {
+    initialPlaybackUrlRef.current = initialPlaybackUrl;
+  }, [initialPlaybackUrl]);
+
   useEffect(() => {
     abortControllerRef.current?.abort();
     savedTimeRef.current = 0;
@@ -262,14 +273,14 @@ export function RecordingPlayerModal({
       return;
     }
 
-    if (!initialPlaybackUrl) {
+    if (!initialPlaybackUrlRef.current) {
       void fetchPresignedUrl(recordingId);
     }
 
     return () => {
       abortControllerRef.current?.abort();
     };
-  }, [open, recordingId, initialPlaybackUrl, fetchPresignedUrl]);
+  }, [open, recordingId, fetchPresignedUrl]);
 
   const handleSpeedChange = (speed: PlaybackSpeed) => {
     setPlaybackSpeed(speed);

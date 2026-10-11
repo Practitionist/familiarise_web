@@ -1,33 +1,6 @@
 /**
- * Orphaned Recording Reconciliation — Core Logic (#1270)
- *
- * A recording reaches our database exactly one way in normal operation: Stream
- * delivers `call.recording_ready` and the webhook writes a `Recording` row.
- * When that delivery is lost — a narrowed subscription, a missing webhook
- * secret, a 5xx from our own route during a deploy — nothing notices. The
- * `Meeting` still carries `recordingStartedAt`, because the START of the
- * recording was written by our own code rather than by a webhook, so the
- * database says a recording was made and simply has no row for it.
- *
- * The only existing repair was `RecordingService.syncRecordingsFor*`, reachable
- * solely through `POST /api/stream/recordings/sync`, which a consultant has to
- * click. That is not a backstop, because the person who would click it is the
- * person who does not yet know anything is missing.
- *
- * The deadline is what makes this urgent rather than untidy. Stream keeps a
- * recording for fourteen days and then deletes the file. A dropped webhook is
- * therefore a silent, permanent loss of the customer's recording on a
- * fourteen-day fuse, and #1134 established that dropped webhooks here were not
- * hypothetical: for the entire period the webhook secret was unset in
- * production, every single delivery was lost.
- *
- * This sweep asks Stream directly for the recordings of any session that claims
- * to have one and has no row, and writes what it finds through the same single
- * writer the user-triggered sync uses.
- *
- * Imported by:
- * - jobs/stream/reconcile-orphaned-recordings.ts (GitHub Actions)
- * - app/api/admin/system-jobs/run/route.ts (operator surface)
+ * Reconciles recorded Stream sessions whose `call.recording_ready` webhook never persisted a `Recording` row.
+ * Scans meetings aged 2h–14d via `RecordingService.syncSessionRecordings` for both zero-row and multi-segment sessions.
  */
 
 import prisma from "../../lib/prisma";
@@ -164,10 +137,7 @@ const orphanedSessionInclude = {
 } as const;
 
 export async function reconcileOrphanedRecordings(): Promise<OrphanedRecordingResult> {
-  // #476 — entry-level cron lock, in the CORE so the Actions entry and the
-  // operator surface both inherit it. Fail-open: the work is idempotent
-  // (`syncSessionRecordings` skips a `streamRecordingId` it already has), so a
-  // double run costs duplicate Stream reads and nothing else.
+  // Postgres-backed fail-open cron lock prevents concurrent scheduler/manual sweeps.
   return withCronLock(
     "reconcile-orphaned-recordings",
     { failMode: "open" },

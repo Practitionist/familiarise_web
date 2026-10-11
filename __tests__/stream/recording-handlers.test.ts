@@ -19,6 +19,7 @@ jest.mock("../../lib/prisma", () => ({
     meeting: {
       findUnique: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
     recording: {
       findUnique: jest.fn(),
@@ -75,7 +76,7 @@ import { getEventAttendeeIds } from "../../lib/stream/recording-utils";
 const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
 
 const mockMeetingFindUnique = prisma.meeting.findUnique as jest.Mock;
-const mockMeetingUpdate = prisma.meeting.update as jest.Mock;
+const mockMeetingUpdateMany = prisma.meeting.updateMany as jest.Mock;
 const mockRecordingFindFirst = prisma.recording.findFirst as jest.Mock;
 const mockRecordingCreate = prisma.recording.create as jest.Mock;
 const mockRecordingUpdateMany = prisma.recording.updateMany as jest.Mock;
@@ -93,6 +94,7 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
     mockGetEventAttendeeIds.mockResolvedValue([]);
     mockNotifyRecordingAvailable.mockResolvedValue([]);
     mockConsentCount.mockResolvedValue(0);
+    mockMeetingUpdateMany.mockResolvedValue({ count: 1 });
     mockRecordingUpdateMany.mockResolvedValue({ count: 1 });
     mockRecordingUpdateManyAndReturn.mockImplementation(
       async ({ where, data }: { where: { id: string }; data: object }) => [
@@ -109,7 +111,7 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
       recordingStartedAt: null,
       recordingStartedBy: null,
     });
-    mockMeetingUpdate.mockResolvedValue({ id: "m-1", isRecording: true });
+    mockMeetingUpdateMany.mockResolvedValueOnce({ count: 1 });
 
     await handleRecordingStarted({
       type: "call.recording_started",
@@ -121,8 +123,8 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
     expect(mockMeetingFindUnique).toHaveBeenCalledWith({
       where: { streamCallId: "slot-1" },
     });
-    expect(mockMeetingUpdate).toHaveBeenCalledWith({
-      where: { id: "m-1" },
+    expect(mockMeetingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "m-1", endedAt: null },
       data: {
         isRecording: true,
         recordingStartedAt: new Date("2026-10-03T10:00:00.000Z"),
@@ -515,15 +517,17 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
     });
   });
 
-  it("does not re-arm isRecording when call.recording_started arrives after meeting endedAt", async () => {
+  it("does not re-arm isRecording when call.ended raced ahead before write time (CAS count === 0)", async () => {
     mockMeetingFindUnique.mockResolvedValue({
       id: "m-ended",
       streamCallId: "slot-ended",
-      endedAt: new Date("2026-10-03T11:00:00.000Z"),
+      endedAt: null,
       recordingStartedAt: null,
       recordingStartedBy: null,
     });
-    mockMeetingUpdate.mockResolvedValue({ id: "m-ended", isRecording: false });
+    mockMeetingUpdateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
 
     await handleRecordingStarted({
       type: "call.recording_started",
@@ -532,14 +536,22 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
       created_at: "2026-10-03T10:00:00.000Z",
     });
 
-    expect(mockMeetingUpdate).toHaveBeenCalledWith({
+    expect(mockMeetingUpdateMany).toHaveBeenNthCalledWith(1, {
+      where: { id: "m-ended", endedAt: null },
+      data: {
+        isRecording: true,
+        recordingStartedAt: new Date("2026-10-03T10:00:00.000Z"),
+        recordingStartedBy: "host-1",
+      },
+    });
+    expect(mockMeetingUpdateMany).toHaveBeenNthCalledWith(2, {
       where: { id: "m-ended" },
       data: {
         recordingStartedAt: new Date("2026-10-03T10:00:00.000Z"),
         recordingStartedBy: "host-1",
       },
     });
-    expect(mockMeetingUpdate.mock.calls[0][0].data).not.toHaveProperty(
+    expect(mockMeetingUpdateMany.mock.calls[1][0].data).not.toHaveProperty(
       "isRecording",
     );
   });
@@ -560,6 +572,51 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
         created_at: "2026-10-03T10:31:00.000Z",
       }),
     ).rejects.toThrow("Meeting session not found for recording ready event");
+  });
+
+  it("retries recording-ready notifications during sync even when the recording row already exists", async () => {
+    jest
+      .spyOn(RecordingService, "getCallRecordingsFromStream")
+      .mockResolvedValueOnce([
+        {
+          filename: "existing-rec.mp4",
+          url: "https://us-east.stream-io-cdn.com/existing-rec.mp4",
+          start_time: new Date("2026-09-20T10:00:00.000Z"),
+          end_time: new Date("2026-09-20T11:00:00.000Z"),
+          session_id: "sess-existing",
+        },
+      ]);
+    mockRecordingFindFirst.mockResolvedValueOnce({
+      id: "rec-already-persisted",
+      status: "READY",
+      storageType: "STREAM_S3",
+      recordingUrl: "https://us-east.stream-io-cdn.com/existing-rec.mp4",
+    });
+    mockGetEventAttendeeIds.mockResolvedValueOnce(["attendee-existing"]);
+
+    const synced: unknown[] = [];
+    const outcome = await RecordingService.syncSessionRecordings(
+      {
+        id: "m-existing",
+        streamCallId: "call-existing",
+        occurrence: {
+          appointment: {
+            organizationId: "org-1",
+            webinar: { webinarPlan: { title: "Retryable Notify" } },
+          } as never,
+        },
+      },
+      synced as never,
+    );
+
+    expect(outcome).toEqual({ ok: true });
+    expect(synced).toHaveLength(0);
+    expect(mockNotifyRecordingAvailable).toHaveBeenCalledWith(
+      ["attendee-existing"],
+      expect.any(Object),
+      "recording.ready:rec-already-persisted",
+      { deferAttempt: true, entityRef: "recording:rec-already-persisted" },
+    );
   });
 
   it("adopts P2002 concurrent create races across multi-segment sync and stages recording-ready notifications", async () => {

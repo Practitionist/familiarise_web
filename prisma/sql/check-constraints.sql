@@ -1144,19 +1144,28 @@ ALTER TABLE "Recording" DROP CONSTRAINT IF EXISTS "Recording_storage_and_publish
 -- SPLIT
 ALTER TABLE "Recording" ADD CONSTRAINT "Recording_storage_and_publish_check"
   CHECK (
-    ("storageType" <> 'PLATFORM' OR "status" = 'EXPIRED' OR "storagePath" IS NOT NULL)
-    AND ("status" <> 'AVAILABLE' OR ("storageType" = 'PLATFORM' AND "storagePath" IS NOT NULL))
-    AND (
-      "listingStatus" <> 'PUBLISHED'
-      OR (
-        "storageType" = 'PLATFORM'
-        AND "storagePath" IS NOT NULL
-        AND "listPricePaise" IS NOT NULL
-        AND "listPricePaise" > 0
-        AND "consentAttestedAt" IS NOT NULL
-        AND "consentAttestedById" IS NOT NULL
+    (
+      "storageType" = 'PLATFORM'
+      AND ("status" = 'EXPIRED' OR "storagePath" IS NOT NULL)
+      AND (
+        "listingStatus" <> 'PUBLISHED'
+        OR (
+          "storagePath" IS NOT NULL
+          AND "listPricePaise" IS NOT NULL
+          AND "listPricePaise" > 0
+          AND "consentAttestedAt" IS NOT NULL
+          AND "consentAttestedById" IS NOT NULL
+        )
       )
     )
-  );
+    OR (
+      "storageType" <> 'PLATFORM'
+      AND "status" <> 'AVAILABLE'
+      AND "listingStatus" <> 'PUBLISHED'
+    )
+  ) NOT VALID;
+-- SPLIT
+ALTER TABLE "Recording" VALIDATE CONSTRAINT "Recording_storage_and_publish_check";
+
 
 

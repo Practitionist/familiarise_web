@@ -289,14 +289,29 @@ it("validates Stream recording URLs against the SSRF host allowlist", () => {
   ).toBe(false);
 });
 
-it("uses deterministic composite.mp4 R2 keys and spaces 12 retry attempts with exponential backoff", async () => {
+it("uses attempt-scoped R2 keys (attempt-N.mp4), cleans up prior attempts on success, and spaces 12 retry attempts with exponential backoff", async () => {
   (headR2Object as jest.Mock).mockResolvedValue({ contentLength: 100 });
+  recording.findUnique.mockResolvedValueOnce({
+    recordingUrl: STREAM_URL,
+    transferAttempts: 2,
+  });
+
   await transferRecording("rec-det");
+
   expect(streamMultipartToR2).toHaveBeenCalledWith(
     expect.objectContaining({
-      key: "recordings/rec-det/composite.mp4",
+      key: "recordings/rec-det/attempt-3.mp4",
     }),
   );
+  expect(deleteR2Object).toHaveBeenCalledWith({
+    key: "recordings/rec-det/attempt-1.mp4",
+  });
+  expect(deleteR2Object).toHaveBeenCalledWith({
+    key: "recordings/rec-det/attempt-2.mp4",
+  });
+  expect(deleteR2Object).not.toHaveBeenCalledWith({
+    key: "recordings/rec-det/attempt-3.mp4",
+  });
   expect(MAX_TRANSFER_ATTEMPTS).toBe(12);
   expect(transferRetryBackoffMs(0)).toBe(0);
   expect(transferRetryBackoffMs(1)).toBe(15 * 60 * 1000);

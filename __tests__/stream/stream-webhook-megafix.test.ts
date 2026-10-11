@@ -829,6 +829,7 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         recordingStartedBy: "host-1",
       });
       (prisma.meeting.update as jest.Mock).mockResolvedValue({});
+      (prisma.meeting.updateMany as jest.Mock).mockResolvedValue({ count: 1 });
       (prisma.recording.updateMany as jest.Mock).mockResolvedValue({
         count: 1,
       });
@@ -839,8 +840,8 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         call_cid: "default:call-rec",
         created_at: "2026-10-10T10:05:00Z",
       });
-      expect(prisma.meeting.update).toHaveBeenLastCalledWith({
-        where: { id: "mtg-rec" },
+      expect(prisma.meeting.updateMany).toHaveBeenLastCalledWith({
+        where: { id: "mtg-rec", endedAt: null },
         data: { isRecording: true },
       });
 
@@ -850,8 +851,8 @@ describe("Stream Webhook Megafix Regression Suite", () => {
         call_cid: "default:call-rec",
         created_at: "2026-10-10T10:15:00Z",
       });
-      expect(prisma.meeting.update).toHaveBeenLastCalledWith({
-        where: { id: "mtg-rec" },
+      expect(prisma.meeting.updateMany).toHaveBeenLastCalledWith({
+        where: { id: "mtg-rec", endedAt: null },
         data: {
           isRecording: true,
           recordingStartedAt: new Date("2026-10-10T10:15:00Z"),
