@@ -111,6 +111,10 @@ const tx: Record<string, Record<string, jest.Mock>> = {
     findFirst: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(async (...a: unknown[]) => {
+      tx.refund.update(...a);
+      return { count: 1 };
+    }),
   },
   payment: { findUniqueOrThrow: jest.fn() },
   consultantEarnings: {

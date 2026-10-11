@@ -40,7 +40,7 @@ export async function createTdsRates() {
       // §393(1) Table Sl. 8(v) — the 194-O successor; same economics.
       lawCode: "IT2025" as const,
       section: "393-8(v)",
-      paymentCode: null, // pending the final CBDT notification — never guess
+      paymentCode: "1035",
       rateBps: 10,
       noPanRateBps: 500, // §397(2) e-commerce carve-out
       thresholdPaise: BigInt(50_000_000),
@@ -50,20 +50,30 @@ export async function createTdsRates() {
     {
       lawCode: "IT2025" as const,
       section: "194J",
-      paymentCode: null,
+      paymentCode: "1027",
       rateBps: 1000,
       noPanRateBps: 2000,
-      thresholdPaise: BigInt(3_000_000),
+      thresholdPaise: BigInt(5_000_000), // ₹50K per-FY threshold under Finance Act 2025 / IT Act 2025 §393(1) Sl. 6(iii)
       effectiveFrom: new Date("2026-04-01T00:00:00+05:30"),
       effectiveTo: null,
     },
     {
       lawCode: "IT2025" as const,
       section: "194C",
-      paymentCode: null,
+      paymentCode: "1017",
       rateBps: 200,
       noPanRateBps: 2000,
       thresholdPaise: BigInt(10_000_000),
+      effectiveFrom: new Date("2026-04-01T00:00:00+05:30"),
+      effectiveTo: null,
+    },
+    {
+      lawCode: "IT2025" as const,
+      section: "195",
+      paymentCode: "1057",
+      rateBps: 2000,
+      noPanRateBps: 2000,
+      thresholdPaise: null,
       effectiveFrom: new Date("2026-04-01T00:00:00+05:30"),
       effectiveTo: null,
     },

@@ -48,6 +48,10 @@ jest.mock("../../lib/prisma", () => ({
           findMany: (...a: unknown[]) => mockRefundFindMany(...a),
           create: (...a: unknown[]) => mockRefundCreate(...a),
           update: (...a: unknown[]) => mockRefundUpdate(...a),
+          updateMany: async (...a: unknown[]) => {
+            mockRefundUpdate(...a);
+            return { count: 1 };
+          },
         },
       }),
   },
@@ -232,7 +236,7 @@ describe("refundBookingPayment", () => {
       }),
     );
     expect(mockRefundUpdate).toHaveBeenCalledWith({
-      where: { id: "refund-row-1" },
+      where: { id: "refund-row-1", status: "PENDING" },
       data: { status: "SUCCEEDED" },
     });
   });

@@ -75,7 +75,11 @@ import {
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import { applyCreditsToPayment, getUserCredits } from "@/lib/referrals/service";
+import {
+  applyCreditsToPayment,
+  getUserCredits,
+  reverseCreditsForPayment,
+} from "@/lib/referrals/service";
 import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
 import {
   asWelcomeDiscountConflict,
@@ -668,6 +672,10 @@ async function releaseSupersededHolds(params: {
       data: claimData,
       select: { id: true, appointmentId: true },
     });
+
+    await Promise.all(
+      claimed.map((row) => reverseCreditsForPayment(row.id, tx)),
+    );
 
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
