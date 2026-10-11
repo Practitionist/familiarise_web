@@ -14,16 +14,16 @@
 3. **No JS Reconcilers for Postgres-Enforced Invariants**:
    - Before writing a reconciliation check or runtime assertion, check `prisma/sql/{check-constraints,ledger-triggers,payment-legs-triggers}.sql`.
    - If a Postgres `CHECK` constraint, `EXCLUDE USING gist` index (`slot_no_confirmed_overlap`), or `CONSTRAINT TRIGGER` (`ledger_balance_check`, `payment_legs_sum_to_amount`, `ledger_*_immutable`) already prevents an invalid state at `COMMIT`, **do not** write application-level sweeps to re-verify it. Only reconcile across external vendor boundaries (Razorpay, Stream, Resend, Supabase Storage).
-4. **No Dual Schedulers by Default**:
-   - Latency-sensitive recovery sweeps run on the 5/15-min Netlify ticker (`netlify/functions/cron-tick.mts` -> `/api/cleanup/[job]?limit=N`). Daily/weekly batch jobs run in GitHub Actions. Do not add both a sub-hourly GHA workflow and a Netlify ticker entry for the same job unless explicitly requested.
+4. **No Dual Schedulers by Default & Fleet Cron Switch (`ops:active_cron_platform`)**:
+   - Latency-sensitive recovery sweeps run on the 5/15-min ticker (`netlify/functions/cron-tick.mts` or active platform scheduler -> `/api/cleanup/[job]?limit=N`), gated dynamically via Upstash REST key `ops:active_cron_platform` (`"netlify"` vs active Mumbai host) so standby Netlify never double-fires scheduled jobs. Daily/weekly batch jobs run in GitHub Actions.
 5. **No Ticket-Number Archaeology in Code Comments**:
    - **NEVER** write multi-paragraph docblocks or inline comments citing historical PR/issue numbers (`#1234`, `FIX #568`, `P1-W02a`, `owner decision Q3`) or narrating what old deleted code used to do.
    - Comments must state **only** the current invariant or non-obvious runtime constraint in 1–2 concise lines. Git blame owns history.
 
-## 2. Core Runtime & Database Invariants
+## 2. Core Runtime, Database & Multi-Host Portability Invariants
 
-1. **`PG_POOL_MAX=1` (No Global Prisma Reads Inside `$transaction`)**:
-   - Serverless functions run with a 1-connection pool. Inside `prisma.$transaction(async (tx) => ...)`, **every** helper call must receive and query `tx`, never the global `prisma` client (which deadlocks waiting for the single connection).
+1. **Serverless Single-Connection Pool (`PG_POOL_MAX=1` on Lambda/Netlify — Never Global Prisma Reads Inside `$transaction`)**:
+   - Single-invocation serverless runtimes (`NETLIFY=true`) run with `PG_POOL_MAX=1`, while multi-request runtimes (`Cloud Run` / `Vercel Fluid` / `Fly`) share a bounded pool (`PG_POOL_MAX=5..10`). Inside `prisma.$transaction(async (tx) => ...)`, **every** helper call must receive and query `tx`, never the global `prisma` client (which deadlocks under `PG_POOL_MAX=1`).
 2. **Money & State Transitions**:
    - All money columns are `BigInt` paise in Postgres (mapped to `number` at the Prisma client boundary in `lib/prisma.ts`). Settlement is INR-only.
    - Every status transition on `Payment`, `Appointment`, `Refund`, or `Payout` must use conditional `updateMany` with the expected prior status in `WHERE` (CAS-in-WHERE), never read-then-update.
@@ -34,7 +34,10 @@
    - Run `npx prisma generate` after editing `prisma/schema.prisma`. Any new `CHECK`, partial unique index, or trigger belongs in `prisma/sql/*.sql`.
 4. **Locking (`Postgres` vs `Upstash Redis`)**:
    - Cron mutual exclusion (`withCronLock` in `lib/cron/with-cron-lock.ts`) is backed by Postgres (`SystemJobExecution` lease). Do not add Redis locks for cron jobs.
-   - Upstash Redis (`lib/redis.ts`, `lib/rate-limit.ts`, `utils/appointmentlock.ts`) is used only for request rate limiting, maintenance-mode edge state, and short-lived interactive checkout/payout mutexes.
+   - Upstash Redis (`lib/redis.ts`, `lib/rate-limit.ts`, `utils/appointmentlock.ts`) is used only for request rate limiting, maintenance-mode / `ops:active_cron_platform` edge state, and short-lived interactive checkout/payout mutexes.
+5. **Dual-Boot Multi-Host Portability (`Platform X <-> Hot-Standby Netlify`)**:
+   - Keep `netlify.toml` and `netlify/functions/cron-tick.mts` intact alongside any container (`Dockerfile`) or platform (`vercel.json`) config so every `prod`/`dev` SHA builds cleanly on both active compute and hot-standby Netlify (`< 90s` failback; see `docs/deployment/README.md`).
+   - Trust client IP headers strictly by runtime (`x-nf-client-connection-ip` **only** when `process.env.NETLIFY === "true"`, `x-vercel-forwarded-for` **only** when `process.env.VERCEL === "1"`); include standard `Vary: Cookie` alongside `Netlify-Vary` on public cookie-aware routes; exclude `sharp`/`@img` in `next.config.mjs` **only** on `NETLIFY === "true" || VERCEL === "1"`; and use direct Supabase Storage presigned URLs (`createSignedUploadUrl`) for any binary upload or download `> 4 MB`.
 
 ## 3. Cloudtop Worktree & Dependency Hygiene
 

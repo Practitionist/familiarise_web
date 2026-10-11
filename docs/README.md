@@ -267,6 +267,18 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [sentry/03-actions-failure-sink.md](./observability/sentry/03-actions-failure-sink.md) - `notify-ops-failure.sh`, the envelope endpoint, the dead DSN that silenced it for three weeks, how to tell it is working
 - [sentry/04-triage-runbook.md](./observability/sentry/04-triage-runbook.md) - Scope by release, attribute every issue to one of three causes, decide with a written reason, the chronic ids, the tools
 
+---
+
+### Deployment & Hosting Architecture (`deployment/`)
+
+Live hosting operations on Netlify Pro, multi-platform Mumbai compute evaluation, and zero-downtime hot-standby rollback runbooks.
+
+- [README.md](./deployment/README.md) - Deployment index & Dual-Boot multi-host portability invariants
+- [multi-platform-evaluation.md](./deployment/multi-platform-evaluation.md) - Ranked 10-platform evaluation scorecard (`Cloud Run asia-south1`, `Vercel Pro bom1`, `Fly.io bom`, `Netlify Pro sin`, etc.)
+- [emergency-failback-runbook.md](./deployment/emergency-failback-runbook.md) - `< 90s` hot-standby failback runbook (`Platform X -> Netlify` with zero code reverts)
+- [netlify.md](./deployment/netlify.md) - Full operating handbook for live Netlify Pro (`sin`) deployments, env contexts, and build/cold-start controls
+- [google-cloud.md](./deployment/google-cloud.md) - GCP project `familiarise` (`384845845365`), Google OAuth setup, and `gcloud` CLI guide
+
 ## Guides & Developer Resources
 
 ### Guides

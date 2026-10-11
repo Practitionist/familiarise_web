@@ -6,7 +6,7 @@ status: live
 last-reviewed: 2026-10-10
 ---
 
-# ADR 36 — Auth schema freeze
+# ADR 35 — Auth schema freeze
 
 ## Context
 

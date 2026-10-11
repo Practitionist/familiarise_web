@@ -2,6 +2,7 @@
 
 > Written for junior developers who will maintain and extend Familiarise's deployment infrastructure.
 > This document covers everything we learned the hard way, so you don't have to.
+> **Companion Guides**: [Deployment Index & Dual-Boot Invariants](./README.md) · [Multi-Platform Evaluation Scorecard](./multi-platform-evaluation.md) · [Emergency Hot-Standby Failback Runbook (`Platform X -> Netlify`)](./emergency-failback-runbook.md)
 
 ---
 

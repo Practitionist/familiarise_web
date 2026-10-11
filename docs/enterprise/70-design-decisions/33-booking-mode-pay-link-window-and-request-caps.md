@@ -6,7 +6,7 @@ status: live
 last-reviewed: 2026-09-18
 ---
 
-# ADR 34 — Booking mode, the pay-link window and per-consultant request caps
+# ADR 33 — Booking mode, the pay-link window and per-consultant request caps
 
 ## Context
 
