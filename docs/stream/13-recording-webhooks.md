@@ -518,40 +518,36 @@ sequenceDiagram
     participant R2 as Cloudflare R2
 
     Job->>DB: Reset TRANSFERRING rows stale > 15 min to READY
-    Job->>DB: Oldest READY rows with live streamUrlExpiresAt (batch of 10)
-    loop Each recording
-        Job->>DB: CAS READY -> TRANSFERRING
-        Job->>Stream: GET recording (SSRF host allowlist)
-        Job->>R2: Multipart upload (10 MB parts, 20 GiB ceiling)
-        Job->>R2: HEAD object, compare size with bytes streamed and source Content-Length
+    Job->>DB: Keyset page READY rows with live streamUrlExpiresAt & eligible backoff
+    loop Bounded chunks (concurrency = 2, budget = 25m)
+        Job->>DB: CAS READY -> TRANSFERRING (attempt = transferAttempts + 1)
+        Job->>Stream: GET recording (SSRF host allowlist, 12m timeout)
+        Job->>R2: Multipart upload to recordings/{id}/attempt-{attempt}.mp4 (20 GiB ceiling)
+        Job->>R2: HEAD object, verify exact byte match against streamed & Content-Length
         alt verified
-            Job->>DB: CAS TRANSFERRING -> AVAILABLE (storageType PLATFORM)
-        else any failure
-            Job->>R2: Abort upload / delete object
-            Job->>DB: CAS TRANSFERRING -> READY, transferAttempts++, lastTransferError
+            Job->>DB: CAS TRANSFERRING -> AVAILABLE (storageType PLATFORM, storagePath)
+            Job-->>R2: Best-effort delete prior recordings/{id}/attempt-1..{attempt-1}.mp4
+        else CAS count == 0 or upload/size failure
+            Job->>R2: Delete only own recordings/{id}/attempt-{attempt}.mp4
+            Job->>DB: CAS TRANSFERRING -> READY, transferAttempts++, exponential backoff
         end
     end
-    Job->>DB: Rows at MAX_TRANSFER_ATTEMPTS, not yet alerted
-    Job-->>Job: One Sentry report per run, stamp transferFailureAlertedAt
+    Job->>DB: Rows at MAX_TRANSFER_ATTEMPTS (12), not yet alerted
+    Job-->>Job: Single Sentry batch report per run, stamp transferFailureAlertedAt
 ```
 
 ### Invariants
 
-- A failed copy never hides a playable recording: the transfer path only
-  writes `READY`, `TRANSFERRING` or `AVAILABLE`. `FAILED` is reserved for
-  `call.recording_failed`. While `READY` or `TRANSFERRING`, playback uses
-  Stream's URL.
-- `streamUrlExpiresAt` is `end_time + 14 days`, computed by
-  `streamCopyExpiresAt` in both the webhook and `syncSessionRecordings`.
-- A CompleteMultipartUpload answer is parsed for an `<Error>` body even on
-  HTTP 200; any upload error aborts the multipart upload.
-- READY rows whose Stream copy lapsed without a copy become `EXPIRED` in the
-  daily `expire-recordings` job.
+- **Out-of-order webhook CAS (`endedAt: null`):** `handleRecordingStarted` sets `isRecording = true` strictly via `updateMany({ where: { id, endedAt: null } })`. If `call.ended` arrived earlier (`count === 0`), only `{ recordingStartedAt, recordingStartedBy }` metadata is updated without re-arming `isRecording`.
+- **Transfer resilience & exponential backoff (`[15m, 1h, 6h, 24h]`):** Failed copies return to `READY` and retry up to `MAX_TRANSFER_ATTEMPTS = 12` spaced by `15 min`, `1 hour`, `6 hours`, and `24 hours`. While `READY` or `TRANSFERRING`, playback serves Stream's URL seamlessly.
+- **Attempt-isolated R2 object keys (`recordings/{recordingId}/attempt-{attempt}.mp4`):** Each upload writes to its own `attempt-{attempt}.mp4` key so a timed-out worker's failure cleanup (`deleteR2Object`) can only delete its own object and can never remove a newer winning worker's published MP4. Once `status = AVAILABLE` commits, prior `attempt-1..{attempt-1}.mp4` keys are deleted asynchronously best-effort.
+- **Database CHECK invariant (`Recording_storage_and_publish_check`):** Enforced in `prisma/sql/check-constraints.sql` (`NOT VALID` + `VALIDATE CONSTRAINT`): active `PLATFORM` rows require `storagePath IS NOT NULL`; `AVAILABLE` rows require `PLATFORM` storage; `PUBLISHED` rows require `PLATFORM`, `storagePath`, `listPricePaise > 0`, and consent attestation.
+- **Playback continuity (`>= 4h` TTL & `savedTimeRef` resume):** Presigned R2 GET URLs expire after `max(4 hours, min(24 hours, 1 hour + 2 × duration))` (`playbackUrlTtlSeconds`). If a viewer's session outlives a presigned URL or the parent refreshes `recording.playbackUrl`, `RecordingPlayerModal` preserves `savedTimeRef.current` (`[open, recordingId]` reset boundary), fetches a fresh presigned URL in the background without unmounting `<video>`, and restores `video.currentTime` automatically on `loadedmetadata`.
 
 ### Storage Path Format
 
 ```
-recordings/{recordingId}/{uuid}.mp4
+recordings/{recordingId}/attempt-{attempt}.mp4
 ```
 
 ### Mid-session decline
@@ -562,16 +558,12 @@ recording from Stream (`call.deleteRecording({ session, filename })`) and
 CAS-expire any row instead of creating a playable one
 (`lib/stream/recording-decline.ts`). Retries are no-ops.
 
-### Retention
+### Retention & Pre-Expiry Stream URL Refresh
 
-`lib/stream/recording-retention.ts` holds the one rule and the daily
-`expire-recordings` job: 1:1 sessions are kept 90 days after the session,
-subscription and trial recordings 90 days after the subscription ends, webinars
-365 days, and classes 365 days after their final session. Published replays and
-recordings with a PENDING or SUCCEEDED purchase are exempt. An org's
-`streamRecordingRetentionDays` (owner-set, nullable) caps org-scoped
-recordings only. Expiry deletes the R2 object and the preview clip and
-thumbnail, and writes a `STREAM_RECORDING_DELETED` org audit row. The reasoning behind the windows is in the [ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md).
+`lib/stream/recording-retention.ts` holds the retention schedule and daily `expire-recordings` sweep:
+
+- **Pre-expiry Stream refresh (`expireLapsedCopies`):** Before expiring `READY` rows on `STREAM_S3` whose `streamUrlExpiresAt < now`, bounded batches (`findMany({ take: 200 })`) recorded within the last 15 days query `RecordingService.getCallRecordingsFromStream`. When `row.streamRecordingId` is present, matching strictly checks `r.filename === row.streamRecordingId` (falling back to a single-item result only when `row.streamRecordingId` is null). Live upstream URLs refresh `recordingUrl` and extend `streamUrlExpiresAt` so `transfer-recordings` can finish copying them.
+- **Retention schedule:** 1:1 consultations retain for 90 days after session end, subscriptions/trials for 90 days after subscription end, webinars for 365 days, and classes for 365 days after the final occurrence. Published replays and recordings with `PENDING` or `SUCCEEDED` purchases are exempt. Organization caps (`streamRecordingRetentionDays`) shorten org-scoped retention only. Expiry deletes R2 + preview objects and records a `STREAM_RECORDING_DELETED` audit event.
 
 ---
 
@@ -1014,6 +1006,9 @@ Three scheduled jobs keep the recording pipeline honest under GitHub Actions, ac
 
 ## Deprecated & Superseded Approaches
 
+- **Shared `recordings/{id}/composite.mp4` R2 keys during transfer retries**: Using a single static object key across retry attempts allowed a stalled worker's late `deleteR2Object` cleanup on CAS loss to delete a newer winning attempt's published MP4. Superseded by attempt-scoped `recordings/{recordingId}/attempt-{attempt}.mp4` keys with asynchronous cleanup of prior `attempt-1..{attempt-1}.mp4` objects after `status = AVAILABLE` commits.
+- **Unconditional `Meeting.isRecording = true` writes on late `call.recording_started`**: Checking `meeting.endedAt` only at `findUnique` time allowed out-of-order `call.recording_started` webhooks to re-arm `isRecording = true` if `call.ended` raced in between. Superseded by CAS `updateMany({ where: { id, endedAt: null } })` with metadata-only fallback.
+- **Short 1-hour fixed presigned playback URLs & player state wipes on URL refresh**: Fixed 1-hour URLs expired mid-watch on 2+ hour sessions and prop refreshes reset `savedTimeRef.current = 0`. Superseded by duration-scaled `playbackUrlTtlSeconds` (`>= 4 hours`) and `[open, recordingId]`-scoped player state preservation in `RecordingPlayerModal`.
 - **Per-plan storage tiers and manual transfer route**: `recordingStoragePolicy` (`STREAM_ONLY` / `PERMANENT`), `POST /api/stream/recordings/[id]/transfer`, and the Supabase recordings bucket fallback were replaced by automatic Cloudflare R2 transfer (`transfer-recordings`) and platform-wide retention (`expire-recordings`).
 - **Ready-time `after()` transfer kicks**: `call.recording_ready` now only persists the `READY` row; `transfer-recordings` handles streaming multipart copies asynchronously with CAS retries.
 - **Webhook-only `Meeting.endedAt` writes on host end**: `POST /api/meetings/[meetingId]/end` now calls `recordMeetingEndedSynchronously` (`lib/stream/session-handlers.ts`) synchronously so dashboard cards reflect ended status immediately, while `handleCallEnded` / `handleSessionEnded` reconcile monotonically (`endedAt > existing.endedAt`).

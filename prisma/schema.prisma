@@ -5611,11 +5611,7 @@ model Recording {
   publishedAt        DateTime?
   unpublishedAt      DateTime?
 
-  // #1244 review — accessibility gate. A preview clip that carries SPEECH is
-  // inaccessible to anyone who needs text, so publishing one requires a text
-  // alternative and the detail page renders it beside the player. Plain text
-  // rather than WebVTT: this is a transcript, not timed captions (those are
-  // the follow-up), and a consultant can paste one without tooling.
+  // Required when publishing a recording with previewClipUrl so speech clips expose a text transcript.
   previewTranscript String? @db.Text
 
   // Preview assets are copied into the PUBLIC `recordings-previews` bucket so
@@ -5648,6 +5644,7 @@ model Recording {
   @@index([status])
   @@index([storageType])
   @@index([streamUrlExpiresAt])
+  @@index([status, storageType, streamUrlExpiresAt, id])
   @@index([listingStatus, publishedAt])
 }
 
