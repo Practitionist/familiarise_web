@@ -137,4 +137,3 @@ Set a **1,500 MAU alert** (75% of the 2K hard cap) in the Stream dashboard to ge
 
 - [`14-pricing-and-cost-model.md`](./14-pricing-and-cost-model.md) — Full rate matrix with participant-count permutation tables (all qualities × FPS × duration × session count)
 - [`15-enterprise-and-maker-account.md`](./15-enterprise-and-maker-account.md) — Enterprise tiers, SLA details, AI Moderation PAYG rates, Familiarise tier roadmap
-- [`docs/finances/09-pricing-strategy.md`](../finances/09-pricing-strategy.md) — Competitive pricing strategy and commission model
