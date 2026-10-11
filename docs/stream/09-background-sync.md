@@ -73,7 +73,7 @@ a forty-minute time to live, which is longer than the workflow's own
 finds the lock held exits cleanly rather than reporting a failure, because
 skipping is the correct outcome for every runner that loses that race.
 
-Until #1270 the job held a bespoke Redis lock of its own instead of the fleet's
+Previously the job held a bespoke Redis lock instead of the fleet's
 `withCronLock`. It excluded correctly, but it was invisible: `withCronLock` is
 what writes the `SystemJobExecution` row and refreshes the fleet heartbeat, so
 the sweep had no recorded last run, no recorded duration, and no presence at all
@@ -643,65 +643,65 @@ The following flowchart illustrates the complete background sync process.
 
 ```mermaid
 flowchart TD
-    Start([GitHub Actions Trigger<br/>Daily at 03:30 UTC]) --> CheckEnv{Environment<br/>Variables Set?}
+    Start([GitHub Actions Trigger · Daily at 03:30 UTC]) --> CheckEnv{Environment · Variables Set?}
 
     CheckEnv -->|No| ErrorExit1[Exit with Error Code 1]
-    CheckEnv -->|Yes| InitClient[Initialize Stream Client<br/>timeout: 30s]
+    CheckEnv -->|Yes| InitClient["Initialize Stream Client · timeout: 30s"]
 
-    InitClient --> InitVars[Initialize Variables<br/>- totalProcessed = 0<br/>- totalStale = 0<br/>- totalDeleted = 0<br/>- failedDeletions = []]
+    InitClient --> InitVars["Initialize Variables · - totalProcessed = 0 · - totalStale = 0 · - totalDeleted = 0 · - failedDeletions = ["]]
 
-    InitVars --> StartLoop{More Stream<br/>Users?}
+    InitVars --> StartLoop{More Stream · Users?}
 
     StartLoop -->|No| GenerateSummary[Generate Summary Report]
-    StartLoop -->|Yes| FetchPage[Fetch Page of Stream Users<br/>limit: 100, sort by ID]
+    StartLoop -->|Yes| FetchPage["Fetch Page of Stream Users · limit: 100, sort by ID"]
 
-    FetchPage --> CheckPage{Users<br/>Returned?}
+    FetchPage --> CheckPage{Users · Returned?}
     CheckPage -->|No| GenerateSummary
     CheckPage -->|Yes| UpdateProcessed[totalProcessed += page.length]
 
     UpdateProcessed --> ExtractIDs[Extract User IDs from Page]
-    ExtractIDs --> QueryPrisma[Query Prisma for Active Users<br/>WHERE id IN ...]
+    ExtractIDs --> QueryPrisma["Query Prisma for Active Users · WHERE id IN ..."]
 
     QueryPrisma --> CreateSet[Create Set of Active User IDs]
     CreateSet --> InitStale[Initialize staleUsersInPage = []]
 
     InitStale --> LoopUsers[For Each Stream User ID]
 
-    LoopUsers --> CheckPrisma{User in<br/>Prisma?}
+    LoopUsers --> CheckPrisma{User in · Prisma?}
     CheckPrisma -->|Yes| NextUser[Continue to Next User]
-    CheckPrisma -->|No| CheckSystem{Starts with<br/>'system-'?}
+    CheckPrisma -->|No| CheckSystem{Starts with · 'system-'?}
 
     CheckSystem -->|Yes| NextUser
-    CheckSystem -->|No| CheckRecording{Starts with<br/>'recording-egress-'?}
+    CheckSystem -->|No| CheckRecording{Starts with · 'recording-egress-'?}
 
     CheckRecording -->|Yes| NextUser
-    CheckRecording -->|No| CheckExcluded{In<br/>EXCLUDED_USER_IDS?}
+    CheckRecording -->|No| CheckExcluded{In · EXCLUDED_USER_IDS?}
 
     CheckExcluded -->|Yes| NextUser
     CheckExcluded -->|No| AddToStale[Add to staleUsersInPage]
 
     AddToStale --> NextUser
-    NextUser --> MoreUsers{More Users<br/>in Page?}
+    NextUser --> MoreUsers{More Users · in Page?}
 
     MoreUsers -->|Yes| LoopUsers
-    MoreUsers -->|No| CheckStale{staleUsersInPage<br/>empty?}
+    MoreUsers -->|No| CheckStale{staleUsersInPage · empty?}
 
-    CheckStale -->|Yes| UpdateCursor[Update lastStreamUserId<br/>to last user in page]
+    CheckStale -->|Yes| UpdateCursor["Update lastStreamUserId · to last user in page"]
     CheckStale -->|No| UpdateStaleCount[totalStale += staleUsersInPage.length]
 
-    UpdateStaleCount --> TryDelete{Attempt Batch<br/>Deletion}
+    UpdateStaleCount --> TryDelete{Attempt Batch · Deletion}
 
-    TryDelete -->|Success| CheckFailed{Any Failed<br/>Deletions?}
+    TryDelete -->|Success| CheckFailed{Any Failed · Deletions?}
     TryDelete -->|Error| LogError[Log Batch Error]
 
-    LogError --> MarkAllFailed[Mark All Users in Batch<br/>as Failed]
+    LogError --> MarkAllFailed["Mark All Users in Batch · as Failed"]
     MarkAllFailed --> UpdateCursor
 
-    CheckFailed -->|Yes| ExtractFailed[Extract Failed User IDs<br/>and Error Messages]
-    CheckFailed -->|No| UpdateDeleted[totalDeleted +=<br/>staleUsersInPage.length]
+    CheckFailed -->|Yes| ExtractFailed["Extract Failed User IDs · and Error Messages"]
+    CheckFailed -->|No| UpdateDeleted["totalDeleted += · staleUsersInPage.length"]
 
     ExtractFailed --> AddFailures[Add to failedDeletions Array]
-    AddFailures --> CalcSuccess[Calculate Successful Deletions<br/>= total - failed]
+    AddFailures --> CalcSuccess["Calculate Successful Deletions · = total - failed"]
     CalcSuccess --> UpdateDeletedPartial[totalDeleted += successful]
 
     UpdateDeletedPartial --> LogResults[Log Deletion Results]
@@ -710,14 +710,14 @@ flowchart TD
     LogResults --> UpdateCursor
     UpdateCursor --> StartLoop
 
-    GenerateSummary --> LogSummary[Log Summary to Console<br/>- Total Processed<br/>- Total Stale<br/>- Total Deleted<br/>- Total Failed]
+    GenerateSummary --> LogSummary["Log Summary to Console · - Total Processed · - Total Stale · - Total Deleted · - Total Failed"]
 
-    LogSummary --> CheckFailures{Any Failed<br/>Deletions?}
+    LogSummary --> CheckFailures{Any Failed · Deletions?}
 
-    CheckFailures -->|Yes| LogFailureDetails[Log Failed Deletion Details<br/>User IDs and Errors]
-    CheckFailures -->|No| SuccessExit[Exit with Code 0<br/>Success]
+    CheckFailures -->|Yes| LogFailureDetails["Log Failed Deletion Details · User IDs and Errors"]
+    CheckFailures -->|No| SuccessExit["Exit with Code 0 · Success"]
 
-    LogFailureDetails --> WarnPartial[Warn: Partial Success]
+    LogFailureDetails --> WarnPartial["Warn: Partial Success"]
     WarnPartial --> SuccessExit
 
     ErrorExit1 --> End([End])
@@ -1066,3 +1066,10 @@ DRY_RUN=true npm run scripts:stream-sync
 - [User Management](./07-user-management.md)
 - [Token Management](./08-token-management.md)
 - [API Endpoints](./10-api-endpoints.md)
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Bespoke Redis Locks for Scheduled Sync Jobs**: Superseded by unified PostgreSQL cron leases (`withCronLock` in `lib/cron/with-cron-lock.ts`).
+- **Unpaced Bulk User/Channel Mutations**: Superseded by 100-item batching with `RATE_LIMIT_DELAY_MS = 10_000` delays keeping Stream operations well inside `DeleteUser: 60/min` and `UpdateUsers: 300/min`.

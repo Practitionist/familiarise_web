@@ -126,6 +126,13 @@ Set a **1,500 MAU alert** (75% of the 2K hard cap) in the Stream dashboard to ge
 
 ---
 
+## Deprecated & Superseded Approaches
+
+- **Unbounded Default Call Roles (`user` / `guest`)**: Superseded by stripping all billable media permissions from unauthenticated roles so idle accounts never incur participant-minute billing.
+- **Per-Plan Recording Storage Tiers (`STREAM_ONLY` / `PERMANENT`)**: Superseded by universal Cloudflare R2 multipart transfer (`transfer-recordings`) so Stream CDN overage storage is never billed.
+
+---
+
 ## Related Documents
 
 - [`14-pricing-and-cost-model.md`](./14-pricing-and-cost-model.md) — Full rate matrix with participant-count permutation tables (all qualities × FPS × duration × session count)

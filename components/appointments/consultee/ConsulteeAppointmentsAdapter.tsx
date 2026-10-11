@@ -364,7 +364,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
       return {
         kind: "join",
         label: "Join",
-        onClick: () => void joinNow(vm, joinable),
+        onClick: (targetOccurrence) => {
+          const targetSlot = targetOccurrence
+            ? ((vm.raw.rawOccurrences ?? []).find(
+                (s) => s.id === targetOccurrence.occurrenceId,
+              ) ?? joinable)
+            : joinable;
+          void joinNow(vm, targetSlot);
+        },
         busy: joiningId === vm.id,
       };
     }

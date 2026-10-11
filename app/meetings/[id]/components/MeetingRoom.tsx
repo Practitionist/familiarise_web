@@ -23,8 +23,6 @@ import {
   Grid3X3,
   Monitor,
   X,
-  Phone,
-  MoreVertical,
   Radio,
   MessageCircle,
   MessageSquareText,
@@ -36,7 +34,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import EndCallButton from "./EndCallButton";
+import CallExitButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
 import { StageControls } from "./StageControls";
@@ -424,7 +422,6 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 <X className="w-5 h-5 text-zinc-400" />
               </button>
             </div>
-
             {(() => {
               if (activeSideTab === "chat" && inCallChatAllowed) {
                 return (
@@ -496,17 +493,11 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 />
               )}
 
-              <button
-                type="button"
-                aria-label="Leave call"
-                onClick={async () => {
-                  await cleanupAndNavigate(getDashboardUrl());
-                }}
-                className="p-3 rounded-full bg-red-500 hover:bg-red-600 transition-colors"
-                title="Leave call"
-              >
-                <Phone className="w-5 h-5 rotate-[135deg] text-white" />
-              </button>
+              <CallExitButton
+                isHost={isHost}
+                onLeaveForSelf={() => cleanupAndNavigate(getDashboardUrl())}
+                onEnding={handleEnding}
+              />
 
               <div className="w-px h-8 bg-zinc-700 mx-1" />
 
@@ -623,51 +614,28 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
                 )}
               </button>
 
-              <div className="w-px h-8 bg-zinc-700 mx-1" />
-
               {isHost && meetingId && recordingEnabled && (
-                <RecordingControls
-                  meetingId={meetingId}
-                  recordingEnabled={recordingEnabled}
-                  showOnlyIndicator={true}
-                  isHost={isHost}
-                />
-              )}
-
-              {isHost && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
-                      title="Session options"
-                    >
-                      <MoreVertical className="w-5 h-5 text-white" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="w-72 bg-zinc-900 border-zinc-800 p-3 rounded-xl"
-                    sideOffset={12}
-                  >
-                    <p className="text-sm font-medium text-white">
-                      End for everyone
-                    </p>
-                    <p className="mt-1 mb-3 text-xs text-zinc-400">
-                      Disconnects every participant and closes the room. Leaving
-                      instead only removes you.
-                    </p>
-                    <EndCallButton onEnding={handleEnding} />
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <>
+                  <div className="w-px h-8 bg-zinc-700 mx-1" />
+                  <RecordingControls
+                    meetingId={meetingId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                    isHost={isHost}
+                  />
+                </>
               )}
 
               {!isHost && meetingId && recordingEnabled && (
-                <RecordingControls
-                  meetingId={meetingId}
-                  recordingEnabled={recordingEnabled}
-                  showOnlyIndicator={true}
-                  isHost={false}
-                />
+                <>
+                  <div className="w-px h-8 bg-zinc-700 mx-1" />
+                  <RecordingControls
+                    meetingId={meetingId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                    isHost={false}
+                  />
+                </>
               )}
             </div>
           </div>
@@ -696,6 +664,7 @@ const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
               callId={call?.id ?? null}
               startsAt={info.startsAt}
               endsAt={info.endsAt}
+              baseEndsAt={info.baseEndsAt}
               extendedSeconds={info.extendedSeconds}
               extensionsUsed={info.extensionsUsed}
               isHost={isHost}

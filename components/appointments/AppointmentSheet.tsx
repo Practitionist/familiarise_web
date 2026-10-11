@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { format } from "date-fns";
 import { ArrowUpRight, CreditCard } from "lucide-react";
 import {
   Sheet,
@@ -16,11 +15,15 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  isDeadOccurrence,
+  isDeliberateEnd,
+} from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { CountdownBadge } from "./CountdownBadge";
 import { KIND_LABEL } from "./AppointmentRow";
 import { RowPrimaryAction } from "./RowPrimaryAction";
@@ -56,6 +59,7 @@ export function AppointmentSheet({
   joinWindowMs,
 }: AppointmentSheetProps) {
   const router = useRouter();
+  const format = useZonedFormat();
   if (!vm) return null;
 
   const action = adapter.primaryAction(vm);
@@ -65,8 +69,15 @@ export function AppointmentSheet({
   const anchorSession = vm.nextAt
     ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
+  const anchorDeliberatelyEnded = anchorSession
+    ? isDeliberateEnd({
+        endedAt: anchorSession.meetingEndedAt,
+        endedReason: anchorSession.meetingEndedReason,
+      })
+    : false;
   const anchorOver = vm.nextAt
-    ? (anchorSession?.endsAt?.getTime() ??
+    ? anchorDeliberatelyEnded ||
+      (anchorSession?.endsAt?.getTime() ??
         vm.nextAt.getTime() + 60 * 60 * 1000) < Date.now()
     : false;
   const liveOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
@@ -145,6 +156,7 @@ export function AppointmentSheet({
                     <CountdownBadge
                       targetDate={vm.nextAt}
                       sessionEndDate={anchorSession?.endsAt ?? undefined}
+                      meetingEnded={anchorDeliberatelyEnded}
                     />
                   )}
                 </div>
@@ -162,9 +174,6 @@ export function AppointmentSheet({
                 </div>
                 <Progress
                   value={
-                    // A group whose sessions have no slots yet has total 0,
-                    // and 0/0 is NaN — which reaches Progress as an
-                    // attribute value and renders a broken bar.
                     vm.group.total > 0
                       ? (vm.group.completed / vm.group.total) * 100
                       : 0
@@ -195,7 +204,7 @@ export function AppointmentSheet({
                   isJoining={action.kind === "join" && !!action.busy}
                   onJoinSession={
                     action.kind === "join" && action.onClick
-                      ? () => action.onClick!()
+                      ? action.onClick
                       : undefined
                   }
                 />

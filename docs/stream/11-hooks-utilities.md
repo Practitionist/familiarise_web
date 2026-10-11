@@ -30,7 +30,7 @@ Comprehensive guide to custom hooks and utilities for Stream Chat and Video inte
 
 ### useGetCallById
 
-The `useGetCallById` hook fetches or creates a Stream Video call by its ID. It handles both existing and new calls seamlessly.
+The `useGetCallById` hook validates server-side admission (`POST /api/meetings/[meetingId]/join`), self-heals unprovisioned Stream rooms via `provisionAppointmentMeeting`, and returns a local `Call` handle along with structured lobby gate state (`MeetingAccessGateState`).
 
 #### Location
 
@@ -46,118 +46,66 @@ The `useGetCallById` hook fetches or creates a Stream Video call by its ID. It h
 
 #### Return Values
 
-| Property        | Type            | Description                                      |
-| --------------- | --------------- | ------------------------------------------------ |
-| `call`          | `Call \| null`  | Stream Video call instance or null if not loaded |
-| `isCallLoading` | `boolean`       | Loading state indicator                          |
-| `error`         | `Error \| null` | Error object if call fetch/creation failed       |
+| Property        | Type                             | Description                                                        |
+| --------------- | -------------------------------- | ------------------------------------------------------------------ |
+| `call`          | `Call \| null`                   | Local Stream Video `Call` handle (`client.call(callType, callId)`) |
+| `isCallLoading` | `boolean`                        | Loading state indicator while admission check runs                 |
+| `error`         | `Error \| null`                  | Error object if call admission or network fails                    |
+| `access`        | `MeetingAccessGateState \| null` | Structured lobby gate descriptor (`too_early`, `ended`, etc.)      |
+| `retry`         | `() => void`                     | Re-runs admission check (`POST /api/meetings/[meetingId]/join`)    |
 
-#### Implementation
+#### Implementation Flow
 
 ```typescript
-import { useGetCallById } from '@/app/meetings/[id]/hooks/useGetCallById';
+import { useGetCallById } from "@/app/meetings/[id]/hooks/useGetCallById";
+import { MeetingLobbyGateCard } from "@/app/meetings/[id]/components/MeetingLobbyGateCard";
 
-function MeetingPage({ callId }: { callId: string }) {
-  const { call, isCallLoading, error } = useGetCallById(callId);
+function MeetingContainer({ callId }: { callId: string }) {
+  const { call, isCallLoading, error, access, retry } = useGetCallById(callId);
 
   if (isCallLoading) {
     return <LoadingSpinner />;
   }
 
-  if (error) {
-    return <ErrorDisplay error={error} />;
+  if (access) {
+    return (
+      <MeetingLobbyGateCard
+        meetingId={callId}
+        access={access}
+        onRetryJoin={retry}
+      />
+    );
   }
 
   if (!call) {
-    return <div>No call found</div>;
+    return <ErrorDisplay error={error} />;
   }
 
-  return <StreamCall call={call}>{/* Meeting UI */}</StreamCall>;
+  return <StreamCall call={call}>{/* MeetingSetup / MeetingRoom */}</StreamCall>;
 }
 ```
 
 #### How It Works
 
-The hook performs the following steps:
+1. **Server Admission & Stale-Link Alias Resolution (`POST /api/meetings/[meetingId]/join`)**:
+   - Sends a `POST` request validated against `JoinResponseSchema`. On the server, `loadMeeting` matches exact `streamCallId` first and falls back to `parseOccurrenceIdFromCallId(callId)` (`occurrence-<uuid>`) so older calendar links transparently route into active rotated call segments (`occurrence-<uuid>-r<base36>`).
+2. **Automatic Room Self-Heal (`409 ROOM_NOT_PROVISIONED`)**:
+   - When Postgres contains a `Meeting` row whose Stream call has not yet been minted on Stream servers and `callId` resolves an occurrence ID (`parseOccurrenceIdFromCallId`), invokes `provisionAppointmentMeeting({ kind: "occurrence", occurrenceId })` once and retries `/join`.
+3. **Structured Gate Exposure & Clock-Skew Retry Backoff**:
+   - Maps HTTP `401` / `403` / `404` / `409` responses into typed `MeetingAccessResult` (`code: "TOO_EARLY" | "SESSION_ENDED" | "CONSENT_REQUIRED"`, `message`, `startsAt`, `endsAt`, `canReopen`) consumed by `<MeetingLobbyGateCard />` (`MAX_AUTO_RETRIES = 3`, `5_000ms` backoff per window).
+4. **Local Call Handle Binding**:
+   - Calls `client.call(payload.callType, payload.callId)` synchronously without issuing browser `queryCalls` or `call.getOrCreate()` requests.
 
-1. **Validates Prerequisites**
-   - Checks if `StreamVideoClient` is available
-   - Validates that `callId` is provided
+### Call Identifier & Timezone Normalization Helpers
 
-2. **Query First Approach**
-
-   ```typescript
-   // First, attempts to find existing call
-   const { calls } = await client.queryCalls({
-     filter_conditions: { id: callId },
-   });
-   ```
-
-3. **Fallback Creation**
-
-   ```typescript
-   // If no call found, creates new call with default type
-   if (calls.length === 0) {
-     const callInstance = client.call("default", callId);
-     await callInstance.getOrCreate();
-   }
-   ```
-
-4. **Error Handling**
-   - Sets error state for missing client
-   - Sets error state for missing call ID
-   - Catches and logs all fetch/creation errors
-
-#### Error States
-
-| Error Condition      | Error Message                | Description                         |
-| -------------------- | ---------------------------- | ----------------------------------- |
-| No client            | "Video client not available" | StreamProvider not initialized      |
-| No call ID           | "Call ID is required"        | Invalid or missing callId parameter |
-| Query/Create failure | Varies                       | Network, permission, or API errors  |
-
-#### Usage Example with Error Handling
-
-```typescript
-function MeetingRoom({ meetingId }: { meetingId: string }) {
-  const { call, isCallLoading, error } = useGetCallById(meetingId);
-
-  useEffect(() => {
-    if (error) {
-      console.error('Failed to get call:', error);
-
-      if (error.message.includes('client not available')) {
-        // Handle client initialization error
-        toast.error('Video service not initialized');
-      } else if (error.message.includes('Call ID is required')) {
-        // Handle missing ID
-        redirect('/meetings');
-      }
-    }
-  }, [error]);
-
-  if (isCallLoading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <Spinner />
-        <p>Loading call...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <ErrorBoundary error={error}>
-        <Button onClick={() => window.location.reload()}>
-          Retry
-        </Button>
-      </ErrorBoundary>
-    );
-  }
-
-  return call ? <VideoMeeting call={call} /> : null;
-}
-```
+| Helper                            | Location                                         | Purpose & Contract                                                                                                         |
+| --------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| **`toCallId(cidOrId)`**           | `lib/stream/call-cid.ts`                         | Strips optional `"default:"` prefix so bare call IDs (`occurrence-<uuid>`) are persisted and queried uniformly.            |
+| **`toCallCid(callId)`**           | `lib/stream/call-cid.ts`                         | Idempotently formats bare call IDs as `"default:<callId>"` when constructing SFU resource descriptors.                     |
+| **`parseOccurrenceIdFromCallId`** | `lib/stream/call-cid.ts`                         | Extracts `<uuid>` across canonical (`occurrence-<uuid>`) and rotated (`occurrence-<uuid>-r<base36>`) call identifiers.     |
+| **`getOccurrenceJoinState`**      | `lib/appointments/occurrences.ts`                | Evaluates `[startsAt - 15m, effectiveEndsAt + 30m]` envelope (`disabled`, `countdown`, `joinable`, `ended`).               |
+| **`formatInViewerZone`**          | `lib/time/viewer-zone.ts`                        | Renders timestamps and `"yyyy-MM-dd"` civil keys in the viewer's IANA zone without server-timezone or DST arithmetic bugs. |
+| **`resolveCapEndsAtMs`**          | `app/meetings/[id]/components/OverrunBanner.tsx` | Derives SFU hard wall from `session.timer_ends_at` or `baseEndsAt + 30m + extendedSeconds` without double-counting grace.  |
 
 ---
 
@@ -822,12 +770,15 @@ function useStreamWithErrorContext(userId: string) {
 
 ---
 
+## Deprecated & Superseded Approaches
+
+- **Browser-side call discovery & creation inside `useGetCallById` (`client.queryCalls` + `callInstance.getOrCreate()`)**: Superseded by server-admitted `POST /api/meetings/[meetingId]/join`, automatic `provisionAppointmentMeeting` self-heal on `409 ROOM_NOT_PROVISIONED`, and synchronous local handle attachment (`client.call(callType, callId)`).
+- **Plain string error alerts for lobby rejections**: Superseded by structured `MeetingAccessGateState` descriptors (`code`, `startsAt`, `endsAt`, `canReopen`) rendered by `<MeetingLobbyGateCard />`.
+
+---
+
 ## Next Steps
 
 - Learn about [Error Handling](./12-error-handling.md)
 - Review [Troubleshooting Guide](./troubleshooting.md)
 - Check [Recording & Webhooks](./13-recording-webhooks.md)
-
----
-
-**Last Updated:** 2025-11-29
