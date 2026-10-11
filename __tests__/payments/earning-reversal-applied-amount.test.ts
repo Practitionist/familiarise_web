@@ -52,7 +52,15 @@ const tx: Record<string, Record<string, jest.Mock>> = {
   referralCreditUsage: { findMany: jest.fn() },
   appointment: { findUnique: jest.fn() },
   appointmentOccurrence: { findMany: jest.fn() },
-  refund: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
+  refund: {
+    findFirst: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    updateMany: jest.fn(async (...a: unknown[]) => {
+      tx.refund.update(...a);
+      return { count: 1 };
+    }),
+  },
   payment: { findUniqueOrThrow: jest.fn() },
   consultantEarnings: {
     update: jest.fn(),

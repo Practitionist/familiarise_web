@@ -93,6 +93,7 @@ describe("applyReversal — CLASS_MULTI", () => {
           id: `cn-${data.paymentId}`,
         })),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     };
   }
@@ -116,7 +117,7 @@ describe("applyReversal — CLASS_MULTI", () => {
     expect(shares).toEqual([25, 26]);
     // Each child got its own Refund row created + marked SUCCEEDED.
     expect(tx.refund.create).toHaveBeenCalledTimes(2);
-    expect(tx.refund.update).toHaveBeenCalledTimes(2);
+    expect(tx.refund.updateMany).toHaveBeenCalledTimes(2);
     // #781 §C — each child refund carries the parent payment's FX snapshot.
     expect(tx.refund.create).toHaveBeenCalledWith(
       expect.objectContaining({

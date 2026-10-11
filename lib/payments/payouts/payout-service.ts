@@ -1916,6 +1916,18 @@ export async function handlePayoutWebhook(
   const stampWhere = stampProviderId ? { providerPayoutId: null } : {};
   const stampData = stampProviderId ? { providerPayoutId } : {};
 
+  async function backfillCompletedPayoutUtr(tx: Tx): Promise<void> {
+    if (!gatewayUtr) return;
+    await tx.consultantPayout.updateMany({
+      where: {
+        id: matched.id,
+        status: PayoutStatus.COMPLETED,
+        gatewayUtr: null,
+      },
+      data: { gatewayUtr },
+    });
+  }
+
   const didTransition = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -1954,16 +1966,7 @@ export async function handlePayoutWebhook(
 
         if (count === 0) {
           if (payoutStatus === PayoutStatus.COMPLETED) {
-            if (gatewayUtr) {
-              await tx.consultantPayout.updateMany({
-                where: {
-                  id: matched.id,
-                  status: PayoutStatus.COMPLETED,
-                  gatewayUtr: null,
-                },
-                data: { gatewayUtr },
-              });
-            }
+            await backfillCompletedPayoutUtr(tx);
             const current =
               (await tx.consultantPayout.findFirst({
                 where: { id: matched.id },
