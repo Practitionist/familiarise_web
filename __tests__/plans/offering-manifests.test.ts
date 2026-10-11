@@ -168,6 +168,39 @@ describe("offering manifests", () => {
     expect(inputIdx).toBeGreaterThan(-1);
     expect(descriptionIdx).toBeGreaterThan(inputIdx);
   });
+
+  it("renders ThisMonthCard in a 2x2 StatRow grid and prevents Stat value overflow", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const cardSource = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "app/dashboard/consultant/[consultantId]/(features)/home/ThisMonthCard.tsx",
+      ),
+      "utf8",
+    );
+    expect(cardSource).toContain("<StatRow columns={2}>");
+
+    const statSource = fs.readFileSync(
+      path.join(process.cwd(), "components/dashboard/Stat.tsx"),
+      "utf8",
+    );
+    expect(statSource).toContain("min-w-0 truncate text-[26px]");
+  });
+
+  it("matches OfferingEditor sticky full-bleed bars to DashboardShell padding without double negative margins", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const editorSource = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "components/offerings/editor/OfferingEditor.tsx",
+      ),
+      "utf8",
+    );
+    expect(editorSource).not.toContain("-mx-10");
+    expect(editorSource).toContain("-mx-4 -mt-4");
+  });
 });
 
 /**

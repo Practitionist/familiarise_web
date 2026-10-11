@@ -103,7 +103,7 @@ export function ThisMonthCard({
 
   return (
     <Section title="This month" variant="card">
-      <StatRow columns={4}>
+      <StatRow columns={2}>
         <Stat
           label="Sessions"
           value={sessionsThisMonth ?? "—"}
