@@ -355,7 +355,7 @@ export async function handleFundAccountValidationWebhook(
   eventType:
     "fund_account.validation.completed" | "fund_account.validation.failed",
   entity: ValidationWebhookEntity,
-): Promise<void> {
+): Promise<"deferred" | void> {
   const fundAccountId = entity.fund_account?.id;
   const vpaAddress = entity.fund_account?.vpa?.address;
   const referenceId =
@@ -377,6 +377,24 @@ export async function handleFundAccountValidationWebhook(
         registeredName: summary.registeredName,
         vpaAddress,
       });
+    } else if (
+      referenceId &&
+      summary.bankAccount &&
+      isRazorpayPayoutsConfigured()
+    ) {
+      const lockKey = `rpd:settle:${entity.id}`;
+      const lockToken = await acquireLock(lockKey, SETTLE_LOCK_TTL_MS);
+      if (!lockToken) {
+        return "deferred";
+      }
+      try {
+        await persistVerifiedAccount(getRazorpayPayoutsService(), referenceId, {
+          ...summary,
+          bankAccount: summary.bankAccount,
+        });
+      } finally {
+        await releaseLock(lockKey, lockToken);
+      }
     }
     return;
   }

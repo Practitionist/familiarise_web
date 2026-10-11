@@ -35,12 +35,17 @@ import {
   razorpayPaymentFailedEventSchema,
   razorpayOrderPaidEventSchema,
   razorpayNotesSchema,
+  razorpayPayoutStatusDetailsSchema,
+  razorpayPayoutErrorSchema,
   fundAccountValidationEntitySchema,
   disputeUpdateEntitySchema,
   type RazorpayWebhookEnvelope,
 } from "@/schemas/webhooks/razorpay";
 import { handleFundAccountValidationWebhook } from "@/lib/payments/payouts/reverse-penny-drop";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { reportSentryError } from "@/lib/observability/report";
@@ -52,6 +57,11 @@ const refundEntitySchema = z.object({
   amount: z.number(),
   currency: z.string().optional(),
   status: z.string(),
+  speed_requested: z.enum(["normal", "optimum"]).nullable().optional(),
+  speed_processed: z
+    .enum(["normal", "instant", "optimum"])
+    .nullable()
+    .optional(),
   notes: razorpayNotesSchema,
 });
 
@@ -71,22 +81,9 @@ const payoutEntitySchema = z.object({
   id: z.string(),
   status: z.string(),
   failure_reason: z.string().nullable().optional(),
-  // Official RazorpayX docs mark top-level `failure_reason` as deprecated in
-  // favor of `status_details: { description, source, reason }`.
-  status_details: z
-    .object({
-      description: z.string().nullable().optional(),
-      source: z.string().nullable().optional(),
-      reason: z.string().nullable().optional(),
-    })
-    .passthrough()
-    .nullable()
-    .optional(),
-  // A1+A8: bank-side UTR. Present on `payout.processed`; absent on
-  // queued/initiated/pending. Plumbed through to OrganizationPayout.gatewayUtr.
+  status_details: razorpayPayoutStatusDetailsSchema,
+  error: razorpayPayoutErrorSchema,
   utr: z.string().nullable().optional(),
-  // #1846 N1 — our payout row id, sent as `reference_id` at creation. It
-  // matches a consultant payout whose submit reply was lost.
   reference_id: z.string().nullable().optional(),
 });
 
@@ -252,20 +249,26 @@ export async function processRazorpayWebhookEvent(
         const refundEvent = refundEntitySchema.parse(
           event.payload?.refund?.entity,
         );
-        let paymentIntentId = refundEvent.payment_id;
+        const embeddedOrderId =
+          event.payload?.payment?.entity?.order_id ?? undefined;
+        let paymentIntentId = embeddedOrderId ?? refundEvent.payment_id;
 
-        const knownPayment = await prisma.payment.findFirst({
-          where: { gatewayPaymentId: refundEvent.payment_id },
-          select: { paymentIntent: true },
-        });
-        const razorpayClient = knownPayment ? null : getRazorpayClient();
+        const knownPayment = embeddedOrderId
+          ? null
+          : await prisma.payment.findFirst({
+              where: { gatewayPaymentId: refundEvent.payment_id },
+              select: { paymentIntent: true },
+            });
+        const razorpayClient =
+          embeddedOrderId || knownPayment ? null : getRazorpayClient();
         if (knownPayment) {
           paymentIntentId = knownPayment.paymentIntent;
         }
         if (razorpayClient) {
           try {
-            const rzpPayment = await razorpayClient.payments.fetch(
-              refundEvent.payment_id,
+            const rzpPayment = await withRazorpaySdkTimeout(
+              "payments.fetch",
+              () => razorpayClient.payments.fetch(refundEvent.payment_id),
             );
             if (rzpPayment.order_id) {
               paymentIntentId = rzpPayment.order_id;
@@ -322,8 +325,9 @@ export async function processRazorpayWebhookEvent(
         }
         if (razorpayClient) {
           try {
-            const rzpPayment = await razorpayClient.payments.fetch(
-              failedRefundEvent.payment_id,
+            const rzpPayment = await withRazorpaySdkTimeout(
+              "payments.fetch",
+              () => razorpayClient.payments.fetch(failedRefundEvent.payment_id),
             );
             if (rzpPayment.order_id) {
               failedPaymentIntentId = rzpPayment.order_id;
@@ -365,9 +369,33 @@ export async function processRazorpayWebhookEvent(
       }
 
       case "refund.speed_changed": {
-        console.log(
-          `📄 Refund speed changed: ${event.payload?.refund?.entity?.id}`,
+        const speedEvent = refundEntitySchema.parse(
+          event.payload?.refund?.entity,
         );
+        const existingRefund = await prisma.refund.findFirst({
+          where: { refundId: speedEvent.id },
+          select: { id: true, status: true, metadata: true },
+        });
+        if (!existingRefund) {
+          deferred = true;
+          break;
+        }
+        const prevMeta =
+          existingRefund.metadata &&
+          typeof existingRefund.metadata === "object" &&
+          !Array.isArray(existingRefund.metadata)
+            ? existingRefund.metadata
+            : {};
+        await prisma.refund.updateMany({
+          where: { id: existingRefund.id, status: existingRefund.status },
+          data: {
+            metadata: {
+              ...prevMeta,
+              speedRequested: speedEvent.speed_requested ?? null,
+              speedProcessed: speedEvent.speed_processed ?? null,
+            },
+          },
+        });
         break;
       }
 
@@ -499,6 +527,8 @@ export async function processRazorpayWebhookEvent(
           payoutEvent.failure_reason ??
           payoutEvent.status_details?.description ??
           payoutEvent.status_details?.reason ??
+          payoutEvent.error?.description ??
+          payoutEvent.error?.reason ??
           undefined;
         await handleRazorpayPayoutWebhook(eventType, {
           id: payoutEvent.id,
@@ -510,12 +540,28 @@ export async function processRazorpayWebhookEvent(
         break;
       }
 
+      case "settlement.processed": {
+        const settlementEntity = event.payload?.settlement?.entity;
+        console.log("Razorpay settlement processed", {
+          settlementId: settlementEntity?.id,
+          amount: settlementEntity?.amount,
+          utr: settlementEntity?.utr,
+        });
+        break;
+      }
+
       case "fund_account.validation.completed":
       case "fund_account.validation.failed": {
         const validationEntity = fundAccountValidationEntitySchema.parse(
           event.payload?.["fund_account.validation"]?.entity,
         );
-        await handleFundAccountValidationWebhook(eventType, validationEntity);
+        const validationResult = await handleFundAccountValidationWebhook(
+          eventType,
+          validationEntity,
+        );
+        if (validationResult === "deferred") {
+          deferred = true;
+        }
         break;
       }
 

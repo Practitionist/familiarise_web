@@ -185,8 +185,10 @@ export async function POST(req: NextRequest) {
     // retries it; a synchronous "valid" verifies on the spot.
     if (razorpayFundAccId) {
       try {
-        const validation =
-          await razorpayPayouts.validateBankAccount(razorpayFundAccId);
+        const validation = await razorpayPayouts.validateBankAccount(
+          razorpayFundAccId,
+          { accountType: data.accountType === "UPI" ? "vpa" : "bank_account" },
+        );
         pennyDropVerified = validation.accountStatus === "valid";
       } catch (err) {
         // Non-fatal: creation must not fail because the validator did.

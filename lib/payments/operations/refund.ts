@@ -593,8 +593,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     // the gateway (covers "call actually landed but we never heard back")
     // or FAILs it after 24h, which triggers the payer notification (#779).
     await prisma.refund
-      .update({
-        where: { id: reserved.id },
+      .updateMany({
+        where: { id: reserved.id, status: RefundStatus.PENDING },
         data: {
           metadata: {
             initiatedByUserId: input.initiatedByUserId ?? null,
@@ -1138,19 +1138,28 @@ export async function applyRefundCascade(
   let walletOwnerOrgId: string | null = null;
   // legAmounts holds only positive legs — LICENSE/zero-value legs are excluded
   // here so they never skew the proportional split.
+  const positiveLegs = payment.legs.filter((l) => l.amountPaise > 0);
+  const totalPositivePaise = positiveLegs.reduce(
+    (sum, l) => sum + l.amountPaise,
+    0,
+  );
+  const eligibleLegs =
+    totalPositivePaise > payment.amount
+      ? positiveLegs.filter((l) => l.source !== "REFERRAL_CREDIT")
+      : positiveLegs;
+
   const legAmounts: Array<{
     leg: (typeof payment.legs)[number];
     reverse: number;
-  }> = payment.legs
-    .filter((l) => l.amountPaise > 0) // negative refund legs already in place
-    .map((leg) => ({ leg, reverse: proportion(leg.amountPaise) }));
+  }> = eligibleLegs.map((leg) => ({
+    leg,
+    reverse: proportion(leg.amountPaise),
+  }));
 
-  if (legAmounts.length > 0) {
+  const lastCashLeg = legAmounts.at(-1);
+  if (lastCashLeg) {
     const totalAssigned = legAmounts.reduce((a, l) => a + l.reverse, 0);
-    const remainder = input.amountPaise - totalAssigned;
-    // Last reversed leg absorbs the floor remainder so the legs sum to exactly
-    // input.amountPaise (#776).
-    legAmounts[legAmounts.length - 1].reverse += remainder;
+    lastCashLeg.reverse += input.amountPaise - totalAssigned;
   }
 
   const linkedOrgInvoice = payment.billableToOrgInvoiceId

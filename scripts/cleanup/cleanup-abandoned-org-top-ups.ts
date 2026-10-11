@@ -28,7 +28,7 @@
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
-const DEFAULT_GRACE_HOURS = 6; // gateway retry budget + user completion window
+const DEFAULT_GRACE_HOURS = 48; // exceeds Razorpay 24h webhook exponential retry SLA
 
 export interface AbandonedOrgTopUpCleanupResult {
   success: boolean;
@@ -52,8 +52,10 @@ export interface AbandonedOrgTopUpCleanupOptions {
 export async function cleanupAbandonedOrgTopUps(
   options: AbandonedOrgTopUpCleanupOptions = {},
 ): Promise<AbandonedOrgTopUpCleanupResult> {
-  return withCronLock("cleanup-abandoned-org-top-ups", { failMode: "closed" }, () =>
-    cleanupAbandonedOrgTopUpsUnlocked(options),
+  return withCronLock(
+    "cleanup-abandoned-org-top-ups",
+    { failMode: "closed" },
+    () => cleanupAbandonedOrgTopUpsUnlocked(options),
   );
 }
 
@@ -66,7 +68,9 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
   let reaped = 0;
 
   console.log("🧹 Starting abandoned org wallet top-up cleanup...");
-  console.log(`   Cutoff: ${cutoff.toISOString()} (${graceHours}h grace window)`);
+  console.log(
+    `   Cutoff: ${cutoff.toISOString()} (${graceHours}h grace window)`,
+  );
 
   try {
     // Identify candidates first so we can log per-row context for ops.
@@ -132,7 +136,9 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
     // that row as reaped would forge an audit record for a paid top-up.
     if (reaped === candidates.length) {
       for (const c of candidates) {
-        console.log(`   Reaped WalletTopUp ${c.id} (order ${c.providerOrderId})`);
+        console.log(
+          `   Reaped WalletTopUp ${c.id} (order ${c.providerOrderId})`,
+        );
       }
     } else {
       console.log(

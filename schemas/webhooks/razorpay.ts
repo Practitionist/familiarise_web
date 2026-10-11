@@ -60,38 +60,59 @@ export const razorpayFetchedPaymentSchema = z
   })
   .passthrough();
 
-const pennyDropResultsSchema = z
+const numericScoreSchema = z
+  .union([z.number(), z.string()])
+  .transform((v) => (v === "" ? null : Number(v)))
+  .pipe(z.number().finite().nullable())
+  .nullish()
+  .transform((v) => v ?? undefined);
+
+const validationBankAccountSchema = z
   .object({
-    account_status: z.enum(["active", "invalid"]).nullable().optional(),
+    bank_routing_code: z.string().nullable().optional(),
+    ifsc: z.string().nullable().optional(),
+    account_number: z.string().nullable().optional(),
+    bank_name: z.string().nullable().optional(),
+    account_type: z.string().nullable().optional(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const validationResultsSchema = z
+  .object({
+    account_status: z
+      .enum(["active", "inactive", "invalid", ""])
+      .nullable()
+      .optional(),
     registered_name: z.string().nullable().optional(),
-    name_match_score: z.number().nullable().optional(),
+    name_match_score: numericScoreSchema,
+    bank_account: validationBankAccountSchema,
   })
   .passthrough()
   .nullish()
   .transform((v) => v ?? undefined);
 
-const reversePennyDropResultsSchema = z
+export const razorpayPayoutStatusDetailsSchema = z
   .object({
-    account_status: z
-      .enum(["active", "inactive", "invalid"])
-      .nullable()
-      .optional(),
-    registered_name: z.string().nullable().optional(),
-    name_match_score: z.number().nullable().optional(),
-    bank_account: z
-      .object({
-        bank_routing_code: z.string().nullable().optional(),
-        account_number: z.string().nullable().optional(),
-        bank_name: z.string().nullable().optional(),
-        account_type: z.string().nullable().optional(),
-      })
-      .passthrough()
-      .nullable()
-      .optional(),
+    description: z.string().nullable().optional(),
+    source: z.string().nullable().optional(),
+    reason: z.string().nullable().optional(),
   })
   .passthrough()
-  .nullish()
-  .transform((v) => v ?? undefined);
+  .nullable()
+  .optional();
+
+export const razorpayPayoutErrorSchema = z
+  .object({
+    code: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    source: z.string().nullable().optional(),
+    reason: z.string().nullable().optional(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
 
 export const fundAccountValidationEntitySchema = z
   .object({
@@ -112,8 +133,8 @@ export const fundAccountValidationEntitySchema = z
       .nullish()
       .transform((v) => v ?? undefined),
     status: z.string().optional(),
-    results: pennyDropResultsSchema,
-    validation_results: reversePennyDropResultsSchema,
+    results: validationResultsSchema,
+    validation_results: validationResultsSchema,
     status_details: z
       .object({
         description: z.string().nullable().optional(),
@@ -160,7 +181,13 @@ const orderEventPayloadSchema = z.object({
   }),
   payment: z
     .object({
-      entity: z.object({ id: z.string(), amount: z.number().int().optional() }),
+      entity: z
+        .object({
+          id: z.string(),
+          amount: z.number().int().optional(),
+          notes: razorpayNotesSchema,
+        })
+        .passthrough(),
     })
     .optional()
     .catch(undefined),
@@ -240,6 +267,14 @@ export const razorpayWebhookEnvelopeSchema = z
                 amount: z.number().optional(),
                 currency: z.string().optional(),
                 status: z.string().optional(),
+                speed_requested: z
+                  .enum(["normal", "optimum"])
+                  .nullable()
+                  .optional(),
+                speed_processed: z
+                  .enum(["normal", "instant", "optimum"])
+                  .nullable()
+                  .optional(),
                 notes: razorpayNotesSchema,
               })
               .passthrough()
@@ -275,15 +310,8 @@ export const razorpayWebhookEnvelopeSchema = z
                 failure_reason: z.string().nullable().optional(),
                 utr: z.string().nullable().optional(),
                 reference_id: z.string().nullable().optional(),
-                status_details: z
-                  .object({
-                    description: z.string().nullable().optional(),
-                    source: z.string().nullable().optional(),
-                    reason: z.string().nullable().optional(),
-                  })
-                  .passthrough()
-                  .nullable()
-                  .optional(),
+                status_details: razorpayPayoutStatusDetailsSchema,
+                error: razorpayPayoutErrorSchema,
               })
               .passthrough()
               .optional(),
@@ -293,6 +321,23 @@ export const razorpayWebhookEnvelopeSchema = z
         "fund_account.validation": z
           .object({
             entity: fundAccountValidationEntitySchema.optional(),
+          })
+          .passthrough()
+          .optional()
+          .catch(undefined),
+        settlement: z
+          .object({
+            entity: z
+              .object({
+                id: z.string().optional(),
+                amount: z.number().optional(),
+                status: z.string().optional(),
+                fees: z.number().optional(),
+                tax: z.number().optional(),
+                utr: z.string().nullable().optional(),
+              })
+              .passthrough()
+              .optional(),
           })
           .passthrough()
           .optional(),

@@ -79,7 +79,7 @@ Inside Razorpay Checkout, all payment attempts within one checkout session share
 
 ### 3. `refund.entity.speed_requested` vs `speed_processed` & In-Place Placeholder Adoption
 
-- `speed_requested` is `"normal" | "optimum"` (never `"instant"`); `speed_processed` is `"normal" | "instant"`.
+- `speed_requested` is `"normal" | "optimum"` (never `"instant"`); `speed_processed` is `"normal" | "instant" | "optimum"`, and incoming `refund.speed_changed` events persist `{ speedRequested, speedProcessed }` on `Refund.metadata`.
 - In `handleRefundCreated`, incoming `refund.created` / `refund.processed` webhooks inspect `refund.entity.notes?.reservationId` inside a Serializable transaction to **adopt existing `pending_<uuid>` reservation rows in place** (`refundId = rfnd_...`) instead of creating duplicate `Refund` rows when the webhook outraces Phase 3 of the outbound HTTP call.
 
 ### 4. Dispute Lifecycle & Multi-Dispute Earnings Guard
@@ -92,10 +92,10 @@ Inside Razorpay Checkout, all payment attempts within one checkout session share
 ### 5. RazorpayX `payout.*` & `fund_account.validation.*` Entities
 
 - `payout.initiated` marks transition into `processing` (`payout.processing` does not exist), while non-terminal events (`payout.queued`, `payout.pending`, `payout.initiated`) preserve `PayoutStatus.PROCESSING` on submitted consultant payouts.
-- `failure_reason` is deprecated and often `null`; always read `failure_reason ?? status_details?.description ?? status_details?.reason`.
+- `failure_reason` is deprecated and often `null`; always read `failure_reason ?? status_details?.description ?? status_details?.reason ?? error?.description`.
 - Terminal `COMPLETED` transitions exclude terminal statuses via CAS `WHERE` so delayed `payout.processed` / `payout.updated` events never resurrect reversed payouts, while raising `PAYOUT_COMPLETED_AFTER_LOCAL_FAILED` error alerts if RazorpayX disburses a payout previously marked `FAILED`.
 - `markConsultantPayoutReversed` and `markOrgPayoutReversed` handle both `COMPLETED -> REVERSED` (inverse ledger journal + reopening `PAID -> READY` earnings + TDS reversal) and pre-settlement `PENDING`/`PROCESSING`(/`APPROVED`) -> `REVERSED` (detaching `BATCHED -> READY` earnings with no inverse journal) inside **one atomic Prisma transaction (`tx`)**.
-- `fundAccountValidationEntitySchema` normalizes `null` values on `fund_account`, `results`, `validation_results`, and `status_details` to `undefined`. `handleFundAccountValidationWebhook` requires **both** `status === "completed"` and `summary.accountStatus === "valid"` (`account_status === "active"`), verifying `PayoutAccount` / `OrganizationPayoutAccount` strictly by `fund_account.id` and falling back to `{ id: referenceId, status: "PENDING_VERIFICATION" }` -> `"FAILED_VERIFICATION"` when `fund_account` is `null` on failed validations.
+- `fundAccountValidationEntitySchema` normalizes `null` values on `fund_account`, `results`, `validation_results`, and `status_details` to `undefined`. `handleFundAccountValidationWebhook` requires **both** `status === "completed"` and `summary.accountStatus === "valid"` (`account_status === "active"`), updating existing accounts by `fund_account.id` or provisioning Contact + Fund Account + verified `PayoutAccount` under Redis mutex `rpd:settle:<entity.id>` when `fund_account` is omitted on `upi_intent` Reverse Penny Drop completions (`reference_id` + `validation_results.bank_account`).
 
 ---
 

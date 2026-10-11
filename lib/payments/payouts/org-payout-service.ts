@@ -923,7 +923,7 @@ async function submitOrgPayoutToGateway(payoutId: string): Promise<void> {
     mode,
     purpose: "payout",
     referenceId: payoutId,
-    narration: `Familiarise org payout ${payoutId}`,
+    narration: "Familiarise org payout",
     queueIfLowBalance: true,
     idempotencyKey,
   });
@@ -1014,6 +1014,75 @@ export async function processPendingOrgPayouts(): Promise<OrgProcessingResult> {
 
 const ORG_PROCESSING_REDRIVE_AFTER_MS = 60 * 60 * 1000;
 
+async function redriveSingleOrgPayoutRow(
+  p: { id: string; gatewayPayoutId: string | null },
+  result: OrgProcessingResult,
+): Promise<void> {
+  const { findRazorpayPayoutByReference } =
+    await import("./payout-gateway-lookup");
+  const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
+  const sdk = getRazorpayPayoutsService();
+  let gatewayPayoutId = p.gatewayPayoutId;
+
+  if (!gatewayPayoutId) {
+    const lookup = await findRazorpayPayoutByReference(p.id);
+    if (lookup.kind === "found") {
+      gatewayPayoutId = lookup.providerPayoutId;
+      await prisma.organizationPayout.update({
+        where: { id: p.id },
+        data: { gatewayPayoutId },
+      });
+    } else if (lookup.kind === "none") {
+      await submitOrgPayoutToGateway(p.id);
+      result.advanced++;
+      return;
+    } else {
+      result.errors.push(
+        `OrgPayout ${p.id}: reference lookup ${lookup.kind}: ${lookup.detail}`,
+      );
+      return;
+    }
+  }
+
+  const remote = await sdk.fetchPayout(gatewayPayoutId);
+  switch (remote.status) {
+    case "processed":
+      if (remote.utr) {
+        await prisma.organizationPayout.updateMany({
+          where: { id: p.id, gatewayUtr: null },
+          data: { gatewayUtr: remote.utr },
+        });
+      }
+      await markOrgPayoutCompleted(p.id);
+      result.advanced++;
+      break;
+    case "failed":
+      await markOrgPayoutFailed(
+        p.id,
+        remote.failure_reason ??
+          remote.status_details?.description ??
+          remote.status_details?.reason ??
+          "Gateway reports the payout failed",
+      );
+      result.advanced++;
+      break;
+    case "cancelled":
+    case "rejected":
+      await markOrgPayoutFailed(
+        p.id,
+        `Gateway reports the payout ${remote.status}`,
+      );
+      result.advanced++;
+      break;
+    case "reversed":
+      await markOrgPayoutReversed(p.id, "Gateway reports the payout reversed");
+      result.advanced++;
+      break;
+    default:
+      break;
+  }
+}
+
 async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> {
   const result: OrgProcessingResult = { scanned: 0, advanced: 0, errors: [] };
   const staleBefore = new Date(Date.now() - ORG_PROCESSING_REDRIVE_AFTER_MS);
@@ -1025,61 +1094,25 @@ async function redriveStaleProcessingOrgPayouts(): Promise<OrgProcessingResult> 
   });
   result.scanned = stale.length;
 
-  for (const p of stale) {
-    try {
-      if (!p.gatewayPayoutId) {
-        await submitOrgPayoutToGateway(p.id);
-        result.advanced++;
-        continue;
+  await Promise.all(
+    stale.map(async (p) => {
+      try {
+        await redriveSingleOrgPayoutRow(p, result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
+          err instanceof PayoutValidationError
+        ) {
+          await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
+          result.advanced++;
+          return;
+        }
+        reportSentryError(err, { subsystem: "payments" });
+        result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
       }
-
-      const { getRazorpayPayoutsService } = await import("./razorpay-payouts");
-      const sdk = getRazorpayPayoutsService();
-      const remote = await sdk.fetchPayout(p.gatewayPayoutId);
-      switch (remote.status) {
-        case "processed":
-          await markOrgPayoutCompleted(p.id);
-          result.advanced++;
-          break;
-        case "failed":
-          await markOrgPayoutFailed(
-            p.id,
-            remote.failureReason ?? "Gateway reports the payout failed",
-          );
-          result.advanced++;
-          break;
-        case "cancelled":
-        case "rejected":
-          await markOrgPayoutFailed(
-            p.id,
-            `Gateway reports the payout ${remote.status}`,
-          );
-          result.advanced++;
-          break;
-        case "reversed":
-          await markOrgPayoutReversed(
-            p.id,
-            "Gateway reports the payout reversed",
-          );
-          result.advanced++;
-          break;
-        default:
-          break;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (
-        classifyGatewaySubmissionError(err) === "PERMANENT_4XX" ||
-        err instanceof PayoutValidationError
-      ) {
-        await markOrgPayoutFailed(p.id, `redrive rejected: ${message}`);
-        result.advanced++;
-        continue;
-      }
-      reportSentryError(err, { subsystem: "payments" });
-      result.errors.push(`OrgPayout redrive ${p.id}: ${message}`);
-    }
-  }
+    }),
+  );
 
   return result;
 }
