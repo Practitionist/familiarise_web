@@ -45,10 +45,6 @@ export function PositioningSections<T extends FieldValues = FieldValues>({
           render={({ field }) => (
             <FormItem>
               <FormLabel>Subtitle</FormLabel>
-              <FormDescription>
-                One line under the title. This is the sentence that appears on
-                cards and search results.
-              </FormDescription>
               <FormControl>
                 <Input
                   placeholder={`e.g., A hands-on ${offeringNoun} for engineers moving into their first lead role`}
@@ -57,6 +53,10 @@ export function PositioningSections<T extends FieldValues = FieldValues>({
                   value={field.value ?? ""}
                 />
               </FormControl>
+              <FormDescription>
+                One line under the title. This is the sentence that appears on
+                cards and search results.
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
