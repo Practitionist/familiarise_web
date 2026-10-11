@@ -5,8 +5,8 @@
  * - Processed `WebhookEvent` (`processed = true, error = null`): 30 days
  * - Terminal unreplayable `WebhookEvent` (`processed = false, error IS NOT NULL`): 30 days
  * - Failed / aged `WebhookEvent` (`processed = false, error IS NOT NULL`): 90 days
- * - `EmailEvent` delivery audit rows: 90 days
  * - Terminal `OutboundWebhookDelivery` (`SUCCESS`, `FAILED`, `DEAD_LETTER`): 30 days
+ * (`EmailEvent` batched 30d pruning is owned by `prune-system-job-executions.ts`.)
  */
 
 import prisma from "@/lib/prisma";
@@ -27,7 +27,6 @@ export interface WebhookArchiveResult {
   processedEventsDeleted: number;
   terminalUnprocessedDeleted: number;
   failedEventsDeleted: number;
-  emailEventsDeleted: number;
   outboundDeliveriesDeleted: number;
   totalDeleted: number;
   errors: string[];
@@ -45,7 +44,6 @@ async function archiveWebhookEventsUnlocked(): Promise<WebhookArchiveResult> {
   let processedEventsDeleted = 0;
   let terminalUnprocessedDeleted = 0;
   let failedEventsDeleted = 0;
-  let emailEventsDeleted = 0;
   let outboundDeliveriesDeleted = 0;
 
   const processedRetention = new Date(
@@ -104,14 +102,6 @@ async function archiveWebhookEventsUnlocked(): Promise<WebhookArchiveResult> {
     }),
   );
 
-  emailEventsDeleted = await runStep("aged email events", () =>
-    prisma.emailEvent.deleteMany({
-      where: {
-        receivedAt: { lt: failedRetention },
-      },
-    }),
-  );
-
   outboundDeliveriesDeleted = await runStep(
     "terminal outbound webhook deliveries",
     () =>
@@ -127,7 +117,6 @@ async function archiveWebhookEventsUnlocked(): Promise<WebhookArchiveResult> {
     processedEventsDeleted +
     terminalUnprocessedDeleted +
     failedEventsDeleted +
-    emailEventsDeleted +
     outboundDeliveriesDeleted;
 
   return {
@@ -135,7 +124,6 @@ async function archiveWebhookEventsUnlocked(): Promise<WebhookArchiveResult> {
     processedEventsDeleted,
     terminalUnprocessedDeleted,
     failedEventsDeleted,
-    emailEventsDeleted,
     outboundDeliveriesDeleted,
     totalDeleted,
     errors,

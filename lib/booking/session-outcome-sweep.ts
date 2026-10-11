@@ -32,6 +32,7 @@ import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant, transitionParticipant } from "./participants";
 import { NEEDS_HUMAN } from "./misses";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
 
 /** Ends after which Stream must have sent participant events (#1543 watchdog). */
@@ -192,14 +193,14 @@ async function backfillMissingPresencesFromStream(
   return [...presences, ...additionalPresences];
 }
 
-function writeSlotOutcomeTransaction(
+async function writeSlotOutcomeTransaction(
   slot: OutcomeSlot,
   presences: OutcomeSlot["presences"],
   to: OccurrenceCompletionStatus,
   verdict: SessionOutcomeVerdict,
   now: Date,
 ): Promise<boolean> {
-  return prisma.$transaction(async (tx) => {
+  const txResult = await prisma.$transaction(async (tx) => {
     const count = await transitionOccurrenceCompletion(tx, {
       // voidedAt: null — a re-run never re-stamps a void.
       where: {
@@ -245,17 +246,30 @@ function writeSlotOutcomeTransaction(
       await stageNoShowBells(tx, { ...slot, presences }, "group");
     }
     // A void is a class miss: bells, and the exit right re-checked in this tx.
-    if (count > 0 && to === "VOIDED" && slot.appointment.classId) {
-      await onClassSessionVoided(tx, {
-        appointmentId: slot.appointmentId,
-        occurrenceId: slot.id,
-        startsAt: slot.startsAt,
-        voidedAt: now,
-        hostAttributed: verdict.hostAttributed,
-      });
-    }
-    return count > 0;
+    const voided =
+      count > 0 && to === "VOIDED" && slot.appointment.classId
+        ? await onClassSessionVoided(tx, {
+            appointmentId: slot.appointmentId,
+            occurrenceId: slot.id,
+            startsAt: slot.startsAt,
+            voidedAt: now,
+            hostAttributed: verdict.hostAttributed,
+          })
+        : null;
+    return { applied: count > 0, voided };
   });
+  if (txResult.voided) {
+    await flushNotificationsAfter(
+      {
+        bells: txResult.voided.bells,
+        emails: [
+          { rows: txResult.voided.emails, emailType: "APPOINTMENT_CANCELLED" },
+        ],
+      },
+      "class-sessions.voided",
+    );
+  }
+  return txResult.applied;
 }
 
 /** Classify one past session and write its outcome, or defer it. */

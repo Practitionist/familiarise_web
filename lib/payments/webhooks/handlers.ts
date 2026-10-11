@@ -79,6 +79,7 @@ import {
   notifyPaymentSuccess,
   notifyPaymentFailed,
   notifyAppointmentBooked,
+  type StagedTrigger,
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -98,6 +99,7 @@ import {
   resolveAppointmentNotificationContext,
   stageBookedEmails,
   stagePaymentFailedEmail,
+  stagePaymentSuccessBells,
   stagePaymentSuccessEmail,
   type AppointmentForEmails,
   type StagedOutboxEmail,
@@ -134,6 +136,7 @@ type PaymentSuccessTxResult =
       appointmentForEmails: AppointmentForEmails | null;
       successEmail: StagedOutboxEmail | null;
       bookedEmails: StagedRecipientEmail[];
+      stagedBells: StagedTrigger[];
     };
 
 const PHASE_2_DEADLINE_MS = 5_000;
@@ -790,6 +793,15 @@ export async function handlePaymentSuccess(
                 metadata.appointmentType,
               )
             : [];
+          const stagedBells =
+            appointmentForEmails && tx.notificationOutbox
+              ? await stagePaymentSuccessBells(
+                  tx,
+                  payment,
+                  appointmentForEmails,
+                  metadata.appointmentType,
+                )
+              : [];
 
           return {
             outcome: "confirmed",
@@ -807,6 +819,7 @@ export async function handlePaymentSuccess(
             appointmentForEmails,
             successEmail,
             bookedEmails,
+            stagedBells,
           };
         },
         {
@@ -1035,22 +1048,29 @@ export async function handlePaymentSuccess(
     return txResult.outcome;
   }
 
-  // Phase 2: Post-commit emails, earnings, referrals, invoice, Novu notifications, and Stream channels.
-  if (txResult.successEmail) {
-    await attemptEmail(
-      txResult.successEmail.staged,
-      txResult.successEmail.message,
-      "PAYMENT_SUCCESS",
-      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
-    );
-  }
-  if (txResult.bookedEmails.length > 0) {
-    await attemptStaged(
-      txResult.bookedEmails,
-      "APPOINTMENT_BOOKED",
-      EMAIL_BUDGET_MS.WEBHOOK,
-    );
-  }
+  // Phase 2: Post-commit concurrent flush of staged emails & Novu bells, earnings fallback, invoice, and Stream channels.
+  await Promise.allSettled([
+    ...(txResult.successEmail
+      ? [
+          attemptEmail(
+            txResult.successEmail.staged,
+            txResult.successEmail.message,
+            "PAYMENT_SUCCESS",
+            { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
+          ),
+        ]
+      : []),
+    ...(txResult.bookedEmails.length > 0
+      ? [
+          attemptStaged(
+            txResult.bookedEmails,
+            "APPOINTMENT_BOOKED",
+            EMAIL_BUDGET_MS.WEBHOOK,
+          ),
+        ]
+      : []),
+    ...txResult.stagedBells.map((bell) => attemptTrigger(bell)),
+  ]);
 
   const { paymentId, appointmentId, userId, userName, amount, currency } =
     txResult;
@@ -1093,118 +1113,120 @@ export async function handlePaymentSuccess(
 
   await mintConsumerInvoiceBestEffort({ paymentId });
 
-  try {
-    const appointmentForNotif = await resolveAppointmentNotificationContext(
-      appointmentId,
-      txResult.appointmentForEmails,
-    );
-
-    const consultantProfileData =
-      appointmentForNotif?.consultation?.consultationPlan?.consultantProfile ||
-      appointmentForNotif?.subscription?.subscriptionPlan?.consultantProfile ||
-      appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
-      appointmentForNotif?.class?.classPlan?.consultantProfile ||
-      appointmentForNotif?.trial?.subscriptionPlan?.consultantProfile;
-
-    const consultantNameForNotif =
-      consultantProfileData?.user?.name || "Consultant";
-    const consultantUserId = consultantProfileData?.user?.id;
-
-    const resolvedPlanTitle =
-      metadata.appointmentType === AppointmentsType.TRIAL
-        ? "Trial session"
-        : planTitleOrSessionLabel(
-            appointmentForNotif?.consultation?.consultationPlan?.title ??
-              appointmentForNotif?.subscription?.subscriptionPlan?.title ??
-              appointmentForNotif?.webinar?.webinarPlan?.title ??
-              appointmentForNotif?.class?.classPlan?.title ??
-              appointmentForNotif?.trial?.subscriptionPlan?.title ??
-              null,
-            metadata.appointmentType,
-          );
-
-    const orgId = appointmentForNotif?.organizationId ?? null;
-    const scope = notificationScope(
-      orgId,
-      appointmentForNotif?.organization?.name,
-    );
-    const dashboardUrl = notificationHref(orgId, "appointments");
-
-    const notifications: Promise<unknown>[] = [];
-
-    notifications.push(
-      Promise.resolve(
-        notifyPaymentSuccess(userId, {
-          ...scope,
-          amount,
-          currency,
-          consultantName: consultantNameForNotif,
-          appointmentType: metadata.appointmentType,
-          planTitle: resolvedPlanTitle,
-          dashboardUrl,
-        }),
-      ),
-    );
-
-    const notifUserIds = [userId];
-    if (consultantUserId && consultantUserId !== userId) {
-      notifUserIds.push(consultantUserId);
-    }
-    const webinarPlanId = appointmentForNotif?.webinar?.webinarPlan?.id;
-    const classPlanId = appointmentForNotif?.class?.classPlan?.id;
-    if (webinarPlanId || classPlanId) {
-      const collaboratorIds = webinarPlanId
-        ? await collaboratorUserIds("webinar", webinarPlanId)
-        : await collaboratorUserIds("class", classPlanId as string);
-      for (const id of collaboratorIds) {
-        if (!notifUserIds.includes(id)) notifUserIds.push(id);
-      }
-    }
-
-    const firstSlot =
-      txResult.appointmentForEmails?.occurrences?.[0] ??
-      (await prisma.appointmentOccurrence.findFirst({
-        where: { appointmentId },
-        orderBy: { startsAt: "asc" },
-        select: { startsAt: true },
-      }));
-    if (!firstSlot?.startsAt) {
-      console.log(
-        JSON.stringify({
-          event: "appointment_booked_notification_skipped_no_slots",
-          appointmentId,
-          paymentId: paymentId,
-          timestamp: new Date().toISOString(),
-        }),
+  if (txResult.stagedBells.length === 0) {
+    try {
+      const appointmentForNotif = await resolveAppointmentNotificationContext(
+        appointmentId,
+        txResult.appointmentForEmails,
       );
-    } else {
+
+      const consultantProfileData =
+        appointmentForNotif?.consultation?.consultationPlan
+          ?.consultantProfile ||
+        appointmentForNotif?.subscription?.subscriptionPlan
+          ?.consultantProfile ||
+        appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
+        appointmentForNotif?.class?.classPlan?.consultantProfile ||
+        appointmentForNotif?.trial?.subscriptionPlan?.consultantProfile;
+
+      const consultantNameForNotif =
+        consultantProfileData?.user?.name || "Consultant";
+      const consultantUserId = consultantProfileData?.user?.id;
+
+      const resolvedPlanTitle =
+        metadata.appointmentType === AppointmentsType.TRIAL
+          ? "Trial session"
+          : planTitleOrSessionLabel(
+              appointmentForNotif?.consultation?.consultationPlan?.title ??
+                appointmentForNotif?.subscription?.subscriptionPlan?.title ??
+                appointmentForNotif?.webinar?.webinarPlan?.title ??
+                appointmentForNotif?.class?.classPlan?.title ??
+                appointmentForNotif?.trial?.subscriptionPlan?.title ??
+                null,
+              metadata.appointmentType,
+            );
+
+      const orgId = appointmentForNotif?.organizationId ?? null;
+      const scope = notificationScope(
+        orgId,
+        appointmentForNotif?.organization?.name,
+      );
+      const dashboardUrl = notificationHref(orgId, "appointments");
+
+      const notifications: Promise<unknown>[] = [];
+
       notifications.push(
         Promise.resolve(
-          notifyAppointmentBooked(notifUserIds, {
+          notifyPaymentSuccess(userId, {
             ...scope,
-            appointmentId,
-            dateTime: firstSlot.startsAt.toISOString(),
-            appointmentType: metadata.appointmentType,
+            amount,
+            currency,
             consultantName: consultantNameForNotif,
-            consulteeName: userName || "User",
+            appointmentType: metadata.appointmentType,
             planTitle: resolvedPlanTitle,
             dashboardUrl,
           }),
         ),
       );
-    }
 
-    await Promise.allSettled(
-      notifications.map((notification, i) =>
-        withPhase2Deadline(notification, `novu-trigger[${i}] ${paymentId}`),
-      ),
-    );
-  } catch (novuError) {
-    reportSentryError(novuError, { subsystem: "payments", level: "warning" });
-    console.error(
-      `⚠️ Failed to send Novu notifications for payment ${paymentId}:`,
-      novuError,
-    );
+      const notifUserIds = [userId];
+      if (consultantUserId && consultantUserId !== userId) {
+        notifUserIds.push(consultantUserId);
+      }
+      const webinarPlanId = appointmentForNotif?.webinar?.webinarPlan?.id;
+      const classPlanId = appointmentForNotif?.class?.classPlan?.id;
+      if (webinarPlanId || classPlanId) {
+        const collaboratorIds = webinarPlanId
+          ? await collaboratorUserIds("webinar", webinarPlanId)
+          : await collaboratorUserIds("class", classPlanId as string);
+        for (const id of collaboratorIds) {
+          if (!notifUserIds.includes(id)) notifUserIds.push(id);
+        }
+      }
+
+      const firstSlot = await prisma.appointmentOccurrence.findFirst({
+        where: { appointmentId },
+        orderBy: { startsAt: "asc" },
+        select: { startsAt: true },
+      });
+      if (!firstSlot?.startsAt) {
+        console.log(
+          JSON.stringify({
+            event: "appointment_booked_notification_skipped_no_slots",
+            appointmentId,
+            paymentId,
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      } else {
+        notifications.push(
+          Promise.resolve(
+            notifyAppointmentBooked(notifUserIds, {
+              ...scope,
+              appointmentId,
+              dateTime: firstSlot.startsAt.toISOString(),
+              appointmentType: metadata.appointmentType,
+              consultantName: consultantNameForNotif,
+              consulteeName: userName || "User",
+              planTitle: resolvedPlanTitle,
+              dashboardUrl,
+            }),
+          ),
+        );
+      }
+
+      await Promise.allSettled(
+        notifications.map((notification, i) =>
+          withPhase2Deadline(notification, `novu-trigger[${i}] ${paymentId}`),
+        ),
+      );
+    } catch (novuError) {
+      reportSentryError(novuError, { subsystem: "payments", level: "warning" });
+      console.error(
+        `⚠️ Failed to send Novu notifications for payment ${paymentId}:`,
+        novuError,
+      );
+    }
   }
 
   void (async () => {

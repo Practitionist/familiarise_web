@@ -23,15 +23,15 @@ import {
   notifySupportTicketResponse,
   notifySupportTicketUpdate,
 } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "@/lib/support/case-key";
 import {
-  EMAIL_BUDGET_MS,
-  sendSupportTicketResponseEmail,
-  sendSupportTicketUpdateEmail,
-} from "@/lib/email";
+  stageSupportTicketResponseEmail,
+  stageSupportTicketUpdateEmail,
+} from "@/lib/email/senders/people";
 import { SupportThreadIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { MESSAGE_ORDER, allocateMessageSeq } from "@/lib/support/message-seq";
@@ -51,6 +51,77 @@ const replySchema = z.object({
 const patchSchema = z.object({
   status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]),
 });
+
+const PRESENTER_COLLABORATOR_SELECT = {
+  where: {
+    tier: "PRESENTER" as const,
+    status: "ACCEPTED" as const,
+    consultantProfile: { deletedAt: null },
+  },
+  select: { consultantProfile: { select: { userId: true } } },
+};
+
+async function resolveAppointmentProviderUserIds(
+  appointmentId: string | null | undefined,
+): Promise<string[]> {
+  if (!appointmentId) return [];
+  const appointment = await prisma.appointment
+    ?.findUnique({
+      where: { id: appointmentId },
+      select: {
+        consultation: {
+          select: {
+            consultationPlan: {
+              select: { consultantProfile: { select: { userId: true } } },
+            },
+          },
+        },
+        subscription: {
+          select: {
+            subscriptionPlan: {
+              select: { consultantProfile: { select: { userId: true } } },
+            },
+          },
+        },
+        webinar: {
+          select: {
+            webinarPlan: {
+              select: {
+                consultantProfile: { select: { userId: true } },
+                collaborators: PRESENTER_COLLABORATOR_SELECT,
+              },
+            },
+          },
+        },
+        class: {
+          select: {
+            classPlan: {
+              select: {
+                consultantProfile: { select: { userId: true } },
+                collaborators: PRESENTER_COLLABORATOR_SELECT,
+              },
+            },
+          },
+        },
+      },
+    })
+    .catch(() => null);
+  if (!appointment) return [];
+  const ids = new Set<string>();
+  const primaryUserId =
+    appointment.consultation?.consultationPlan?.consultantProfile?.userId ??
+    appointment.subscription?.subscriptionPlan?.consultantProfile?.userId ??
+    appointment.webinar?.webinarPlan?.consultantProfile?.userId ??
+    appointment.class?.classPlan?.consultantProfile?.userId;
+  if (primaryUserId) ids.add(primaryUserId);
+  for (const c of [
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
+    ...(appointment.class?.classPlan?.collaborators ?? []),
+  ]) {
+    ids.add(c.consultantProfile.userId);
+  }
+  return Array.from(ids);
+}
 
 function loadThread(threadId: string) {
   return prisma.appointmentSupportThread.findUnique({
@@ -172,6 +243,7 @@ async function persistStaffReplyTx(
 async function notifyThreadReplyCustomer(params: {
   ticketId: string;
   userId: string;
+  providerUserIds: string[];
   organizationId: string | null;
   referenceNumber: string | null | undefined;
   title: string | null | undefined;
@@ -185,34 +257,52 @@ async function notifyThreadReplyCustomer(params: {
   );
   const reference = params.referenceNumber ?? undefined;
   const ticketTitle = params.title ?? "Support";
+  const recipientIds = [params.userId];
 
-  await Promise.all([
-    notifySupportTicketResponse(
-      params.userId,
-      {
-        ticketId: params.ticketId,
-        reference,
-        ticketTitle,
-        message: params.message,
-        respondedBy: params.respondedBy,
-        dashboardUrl,
-        ...notificationScope(params.organizationId),
-      },
-      `thread-resp:${params.replyId}`,
+  const [bellResults, emailBatches] = await Promise.all([
+    Promise.all(
+      recipientIds.map((recipientId) =>
+        notifySupportTicketResponse(
+          recipientId,
+          {
+            ticketId: params.ticketId,
+            reference,
+            ticketTitle,
+            message: params.message,
+            respondedBy: params.respondedBy,
+            dashboardUrl,
+            ...notificationScope(params.organizationId),
+          },
+          recipientId === params.userId
+            ? `thread-resp:${params.replyId}`
+            : `thread-resp:${params.replyId}:${recipientId}`,
+          { deferAttempt: true },
+        ),
+      ),
     ),
-    sendSupportTicketResponseEmail(
-      {
-        ticketId: params.ticketId,
-        ownerUserId: params.userId,
-        reference,
-        title: ticketTitle,
-        respondedBy: params.respondedBy,
-        replyText: params.message,
-        ticketUrl: dashboardUrl,
-      },
-      EMAIL_BUDGET_MS.REQUEST,
+    Promise.all(
+      recipientIds.map((recipientId) =>
+        stageSupportTicketResponseEmail(prisma, {
+          ticketId: params.ticketId,
+          ownerUserId: recipientId,
+          reference,
+          title: ticketTitle,
+          respondedBy: params.respondedBy,
+          replyText: params.message,
+          ticketUrl: dashboardUrl,
+        }).catch(() => []),
+      ),
     ),
   ]);
+  await flushNotificationsAfter(
+    {
+      bells: bellResults.map((r) => r?.staged),
+      emails: [
+        { rows: emailBatches.flat(), emailType: "SUPPORT_TICKET_RESPONSE" },
+      ],
+    },
+    "support-thread.reply",
+  );
 }
 
 export async function POST(req: NextRequest, { params }: RouteParams) {
@@ -305,9 +395,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
 
     if (thread.supportTicketId) {
+      const providerUserIds = await resolveAppointmentProviderUserIds(
+        thread.appointmentId,
+      );
       await notifyThreadReplyCustomer({
         ticketId: thread.supportTicketId,
         userId: thread.userId,
+        providerUserIds,
         organizationId: thread.organizationId,
         referenceNumber: thread.supportTicket?.referenceNumber,
         title: thread.supportTicket?.title,
@@ -422,6 +516,7 @@ async function notifyThreadStatusCustomer(params: {
   threadId: string;
   ticketId: string;
   userId: string;
+  providerUserIds: string[];
   organizationId: string | null;
   referenceNumber: string | null | undefined;
   title: string | null | undefined;
@@ -435,34 +530,54 @@ async function notifyThreadStatusCustomer(params: {
   const reference = params.referenceNumber ?? undefined;
   const ticketTitle = params.title ?? "Support";
   const statusLabel = supportTicketStatusLabel(params.status);
+  const recipientIds = Array.from(
+    new Set([params.userId, ...params.providerUserIds]),
+  );
 
-  await Promise.all([
-    notifySupportTicketUpdate(
-      params.userId,
-      {
-        ticketId: params.ticketId,
-        reference,
-        ticketTitle,
-        status: statusLabel,
-        statusCode: params.status,
-        dashboardUrl,
-        ...notificationScope(params.organizationId),
-      },
-      `thread-status:${params.threadId}:${params.status}:${params.now.getTime()}`,
+  const [bellResults, emailBatches] = await Promise.all([
+    Promise.all(
+      recipientIds.map((recipientId) =>
+        notifySupportTicketUpdate(
+          recipientId,
+          {
+            ticketId: params.ticketId,
+            reference,
+            ticketTitle,
+            status: statusLabel,
+            statusCode: params.status,
+            dashboardUrl,
+            ...notificationScope(params.organizationId),
+          },
+          recipientId === params.userId
+            ? `thread-status:${params.threadId}:${params.status}:${params.now.getTime()}`
+            : `thread-status:${params.threadId}:${params.status}:${params.now.getTime()}:${recipientId}`,
+          { deferAttempt: true },
+        ),
+      ),
     ),
-    sendSupportTicketUpdateEmail(
-      {
-        ticketId: params.ticketId,
-        ownerUserId: params.userId,
-        reference,
-        title: ticketTitle,
-        statusCode: params.status,
-        statusLabel,
-        ticketUrl: dashboardUrl,
-      },
-      EMAIL_BUDGET_MS.REQUEST,
+    Promise.all(
+      recipientIds.map((recipientId) =>
+        stageSupportTicketUpdateEmail(prisma, {
+          ticketId: params.ticketId,
+          ownerUserId: recipientId,
+          reference,
+          title: ticketTitle,
+          statusCode: params.status,
+          statusLabel,
+          ticketUrl: dashboardUrl,
+        }).catch(() => []),
+      ),
     ),
   ]);
+  await flushNotificationsAfter(
+    {
+      bells: bellResults.map((r) => r?.staged),
+      emails: [
+        { rows: emailBatches.flat(), emailType: "SUPPORT_TICKET_UPDATE" },
+      ],
+    },
+    "support-thread.status",
+  );
 }
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
@@ -491,6 +606,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       where: { id: threadId },
       select: {
         id: true,
+        appointmentId: true,
         supportTicketId: true,
         status: true,
         userId: true,
@@ -527,10 +643,14 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     if (thread.supportTicketId) {
+      const providerUserIds = await resolveAppointmentProviderUserIds(
+        thread.appointmentId,
+      );
       await notifyThreadStatusCustomer({
         threadId: thread.id,
         ticketId: thread.supportTicketId,
         userId: thread.userId,
+        providerUserIds,
         organizationId: thread.organizationId,
         referenceNumber: thread.supportTicket?.referenceNumber,
         title: thread.supportTicket?.title,

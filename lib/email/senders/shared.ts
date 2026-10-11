@@ -5,14 +5,25 @@ import type { PreferenceCategory } from "@/lib/novu/templates/types";
 import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
 import { getAppUrl } from "@/lib/url";
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { SENDERS } from "../config";
+import { EMAIL_BUDGET_MS, SENDERS } from "../config";
 import { loadEmailRecipients, type EmailRecipient } from "../preferences";
 import {
+  attemptStaged,
+  prepareRecipientEmails,
   sendToRecipients,
+  stagePreparedEmails,
   stageToRecipients,
+  type PreparedRecipientEmails,
   type SendToRecipientsResult,
   type StagedRecipientEmail,
 } from "../send-to-recipients";
+
+export {
+  attemptStaged,
+  prepareRecipientEmails,
+  stagePreparedEmails,
+  type PreparedRecipientEmails,
+};
 
 export type Paise = number | bigint;
 export type StagingTx = Pick<Tx, "failedEmail" | "emailSuppression" | "user">;
@@ -56,11 +67,27 @@ export function money(amountPaise: Paise, currency: string): string {
   return formatCurrencyAmount(Number(amountPaise), currency);
 }
 
+export async function prepareSpecEmails(
+  spec: RecipientEmailSpec,
+  userIds: string[],
+): Promise<PreparedRecipientEmails> {
+  const recipients = await loadEmailRecipients(userIds, spec.category);
+  return prepareRecipientEmails({
+    recipients,
+    emailType: spec.emailType,
+    from: spec.from ?? SENDERS.notifications,
+    subject: spec.subject,
+    render: spec.render,
+    entityRef: spec.entityRef,
+  });
+}
+
 export async function sendSpecGuarded(
   spec: RecipientEmailSpec,
   userIds: string[],
   budgetMs: number,
   fallback: SendToRecipientsResult = FAILED,
+  deferAttempt?: boolean,
 ): Promise<SendToRecipientsResult> {
   try {
     const recipients = await loadEmailRecipients(userIds, spec.category);
@@ -72,6 +99,7 @@ export async function sendSpecGuarded(
       render: spec.render,
       entityRef: spec.entityRef,
       budgetMs,
+      ...(deferAttempt ? { deferAttempt: true } : {}),
     });
   } catch (error) {
     Sentry.captureException(
@@ -89,6 +117,7 @@ export async function stageSpecGuarded(
   tx?: StagingTx,
 ): Promise<StagedRecipientEmail[]> {
   const db = tx ?? prisma;
+  if (tx && !db.user) return [];
   const recipients = await loadEmailRecipients(userIds, spec.category, db);
   return stageToRecipients({
     tx: db,
@@ -104,15 +133,20 @@ export async function stageSpecGuarded(
 export function defineBudgetedEmailSender<TArgs>(
   build: (args: TArgs) => { userIds: string[]; spec: RecipientEmailSpec },
   fallback?: SendToRecipientsResult,
+  defaultBudgetMs: number = EMAIL_BUDGET_MS.REQUEST,
 ) {
   return (
     args: TArgs,
-    budgetOrOpts: number | { budgetMs: number },
+    budgetOrOpts?: number | { budgetMs?: number; deferAttempt?: boolean },
   ): Promise<SendToRecipientsResult> => {
     const { userIds, spec } = build(args);
     const budgetMs =
-      typeof budgetOrOpts === "number" ? budgetOrOpts : budgetOrOpts.budgetMs;
-    return sendSpecGuarded(spec, userIds, budgetMs, fallback);
+      typeof budgetOrOpts === "number"
+        ? budgetOrOpts
+        : (budgetOrOpts?.budgetMs ?? defaultBudgetMs);
+    const deferAttempt =
+      typeof budgetOrOpts === "number" ? undefined : budgetOrOpts?.deferAttempt;
+    return sendSpecGuarded(spec, userIds, budgetMs, fallback, deferAttempt);
   };
 }
 
@@ -125,6 +159,53 @@ export function defineFixedBudgetEmailSender<TArgs>(
     const { userIds, spec } = build(args);
     return sendSpecGuarded(spec, userIds, budgetMs, fallback);
   };
+}
+
+function looksLikePrismaClient(val: unknown): val is StagingTx {
+  if (!val || typeof val !== "object") return false;
+  if (
+    "failedEmail" in val ||
+    "notificationOutbox" in val ||
+    "$transaction" in val
+  ) {
+    return true;
+  }
+  return Object.values(val).some(
+    (v) =>
+      typeof v === "object" &&
+      v !== null &&
+      ("findUnique" in v ||
+        "findMany" in v ||
+        "findFirst" in v ||
+        "updateMany" in v ||
+        "create" in v),
+  );
+}
+
+export function defineLifecycleStager<TArgs extends object>(
+  build: (args: TArgs) => { userIds: string[]; spec: RecipientEmailSpec },
+) {
+  function stageEmail(
+    tx: StagingTx,
+    args: TArgs,
+  ): Promise<StagedRecipientEmail[]>;
+  function stageEmail(
+    args: TArgs,
+    tx?: StagingTx,
+  ): Promise<StagedRecipientEmail[]>;
+  async function stageEmail(
+    first: StagingTx | TArgs,
+    second?: TArgs | StagingTx,
+  ): Promise<StagedRecipientEmail[]> {
+    const isTxFirst = looksLikePrismaClient(first);
+    const tx = isTxFirst
+      ? (first as StagingTx)
+      : (second as StagingTx | undefined);
+    const args = isTxFirst ? (second as TArgs) : (first as TArgs);
+    const { userIds, spec } = build(args);
+    return stageSpecGuarded(spec, userIds, tx);
+  }
+  return stageEmail;
 }
 
 export function defineStagedEmailSender<TArgs>(

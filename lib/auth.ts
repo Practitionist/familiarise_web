@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
@@ -82,6 +83,46 @@ import {
 const staffAc = defaultAc.newRole({
   user: ["list", "get"],
 });
+
+const AUTH_MAIL_MAX_PER_HOUR = 3;
+const AUTH_MAIL_WINDOW_SECONDS = 3600;
+const AUTH_MAIL_CONSUME_SCRIPT = `
+local count = redis.call("INCR", KEYS[1])
+if count == 1 then
+redis.call("PEXPIRE", KEYS[1], ARGV[1])
+end
+return count
+`;
+
+// Per-recipient hourly cap (`rl:mail:{reset|verify}:<sha256_email>`); fails open if Redis is unavailable.
+async function allowAuthMailSend(
+  kind: "reset" | "verify",
+  email: string,
+): Promise<boolean> {
+  const emailHash = createHash("sha256")
+    .update(email.trim().toLowerCase())
+    .digest("hex");
+  const key = `rl:mail:${kind}:${emailHash}`;
+  try {
+    const redis = (await import("@/lib/redis")).default;
+    const count = Number(
+      await redis.eval(
+        AUTH_MAIL_CONSUME_SCRIPT,
+        [key],
+        [String(AUTH_MAIL_WINDOW_SECONDS * 1000)],
+      ),
+    );
+    if (count > AUTH_MAIL_MAX_PER_HOUR) {
+      console.warn(
+        `[auth] skipping ${kind} email: rate limit exceeded (${count}/${AUTH_MAIL_MAX_PER_HOUR} per ${AUTH_MAIL_WINDOW_SECONDS}s) for ${key}`,
+      );
+      return false;
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
@@ -228,6 +269,7 @@ export const auth = betterAuth({
       },
     },
     sendResetPassword: async ({ user, token }) => {
+      if (!(await allowAuthMailSend("reset", user.email))) return;
       // A new operator's first "reset" is their invitation: the account was
       // created with a random password (lib/auth/operators.ts), so the email
       // says "set your password" until they have enrolled 2FA.
@@ -581,6 +623,7 @@ export const auth = betterAuth({
       disableSignUp: true,
       sendVerificationOTP: async ({ email, otp, type }) => {
         if (type === "email-verification") {
+          if (!(await allowAuthMailSend("verify", email))) return;
           await sendVerificationCode(email, otp);
         }
       },

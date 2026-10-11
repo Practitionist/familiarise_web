@@ -5,8 +5,13 @@ const TERMINAL_PATTERNS: ReadonlyArray<[reason: string, pattern: RegExp]> = [
   ["domain_not_verified", /domain is not verified/i],
   ["not_verified", /not verified/i],
   ["validation_error", /validation_error/i],
+  ["invalid_from_address", /invalid_from_address/i],
   ["invalid_from", /invalid `from`/i],
   ["restricted_api_key", /restricted_api_key/i],
+  ["invalid_idempotency_key", /invalid_idempotency_key/i],
+  ["invalid_idempotent_request", /invalid_idempotent_request/i],
+  ["invalid_parameter", /invalid_parameter/i],
+  ["missing_required_field", /missing_required_field/i],
 ];
 
 /** `name: message` for a Resend error body, so the name survives into lastError. */

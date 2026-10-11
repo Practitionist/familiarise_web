@@ -152,12 +152,14 @@ async function attemptRefundNotice(
   staged: StagedRefundNotice | null,
 ): Promise<void> {
   if (!staged) return;
-  if (staged.bell) await attemptTrigger(staged.bell);
-  await attemptStagedEmails(
-    staged.emails,
-    MONEY_EMAIL_TYPES.REFUND_PROCESSED,
-    EMAIL_BUDGET_MS.REQUEST,
-  );
+  await Promise.allSettled([
+    ...(staged.bell ? [attemptTrigger(staged.bell)] : []),
+    attemptStagedEmails(
+      staged.emails,
+      MONEY_EMAIL_TYPES.REFUND_PROCESSED,
+      EMAIL_BUDGET_MS.REQUEST,
+    ),
+  ]);
 }
 
 export type BookingRefundResult = {

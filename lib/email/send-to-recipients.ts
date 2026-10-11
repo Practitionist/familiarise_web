@@ -28,18 +28,29 @@ export interface SendToRecipientsArgs {
   entityRef: string;
   budgetMs: number;
   replyTo?: string;
+  deferAttempt?: boolean;
 }
 
 export interface SendToRecipientsResult {
   sent: number;
   skipped: number;
   failed: number;
+  stagedEmails?: StagedRecipientEmail[];
 }
 
 /** A staged row and the message it holds, for `attemptStaged()` after commit. */
 export interface StagedRecipientEmail {
   staged: StagedEmail | null;
   message: RenderedEmail;
+}
+
+/** Pre-rendered messages ready to stage inside a short database transaction. */
+export interface PreparedRecipientEmails {
+  emailType: string;
+  entityRef: string;
+  messages: RenderedEmail[];
+  skipped: number;
+  failed: number;
 }
 
 type Outcome =
@@ -49,8 +60,6 @@ type Outcome =
 
 type PrepareArgs = Omit<SendToRecipientsArgs, "budgetMs">;
 
-// One place decides skip / render-failure / message so the inline and the
-// transactional fan-outs cannot disagree about the gate or the headers.
 async function prepare(
   recipient: EmailRecipient,
   args: PrepareArgs,
@@ -86,10 +95,58 @@ async function prepare(
   }
 }
 
+/** Pre-renders HTML, plain text, and unsubscribe headers in memory outside any DB transaction. */
+export async function prepareRecipientEmails(
+  args: PrepareArgs,
+): Promise<PreparedRecipientEmails> {
+  const messages: RenderedEmail[] = [];
+  let skipped = 0;
+  let failed = 0;
+  for (const recipient of args.recipients) {
+    const outcome = await prepare(recipient, args);
+    if (outcome.kind === "skipped") {
+      skipped += 1;
+    } else if (outcome.kind === "failed") {
+      failed += 1;
+    } else {
+      messages.push(outcome.message);
+    }
+  }
+  if (skipped > 0) {
+    console.info(
+      `[email] skipped ${args.emailType} for ${skipped} recipient(s): preference`,
+    );
+  }
+  return {
+    emailType: args.emailType,
+    entityRef: args.entityRef,
+    messages,
+    skipped,
+    failed,
+  };
+}
+
+/** Persists pre-rendered messages to `FailedEmail` inside `tx`. */
+export async function stagePreparedEmails(
+  tx: Pick<Tx, "failedEmail" | "emailSuppression">,
+  prepared: PreparedRecipientEmails,
+): Promise<StagedRecipientEmail[]> {
+  const list: StagedRecipientEmail[] = [];
+  for (const message of prepared.messages) {
+    const staged = await stage(message, prepared.emailType, {
+      tx,
+      entityRef: prepared.entityRef,
+    });
+    list.push({ staged, message });
+  }
+  return list;
+}
+
 export async function sendToRecipients(
   args: SendToRecipientsArgs,
 ): Promise<SendToRecipientsResult> {
   const result: SendToRecipientsResult = { sent: 0, skipped: 0, failed: 0 };
+  const stagedEmails: StagedRecipientEmail[] = [];
   for (const recipient of args.recipients) {
     const outcome = await prepare(recipient, args);
     if (outcome.kind !== "message") {
@@ -99,9 +156,14 @@ export async function sendToRecipients(
     const delivered = await deliver(outcome.message, args.emailType, {
       entityRef: args.entityRef,
       budgetMs: args.budgetMs,
+      ...(args.deferAttempt ? { deferAttempt: true } : {}),
     });
-    // A timed-out or transiently failed send is still staged for the relay;
-    // only a message that reached neither Resend nor the outbox counts failed.
+    if (args.deferAttempt && (delivered.stagedRow ?? delivered.stagedEmail)) {
+      stagedEmails.push({
+        staged: delivered.stagedRow ?? delivered.stagedEmail ?? null,
+        message: outcome.message,
+      });
+    }
     if (delivered.success || delivered.staged) result.sent += 1;
     else result.failed += 1;
   }
@@ -110,39 +172,18 @@ export async function sendToRecipients(
       `[email] skipped ${args.emailType} for ${result.skipped} recipient(s): preference`,
     );
   }
-  return result;
+  return args.deferAttempt ? { ...result, stagedEmails } : result;
 }
 
 /**
- * The transaction owner's twin of `sendToRecipients()`: stage every allowed
- * recipient's message inside `tx`, then call `attemptStaged()` after commit.
- * A render failure is reported and dropped; a staging failure propagates so
- * the transaction rolls back with it.
+ * Stages every allowed recipient's rendered message inside `tx` so callers can
+ * invoke `attemptStaged()` post-commit.
  */
 export async function stageToRecipients(
   args: PrepareArgs & { tx: Pick<Tx, "failedEmail" | "emailSuppression"> },
 ): Promise<StagedRecipientEmail[]> {
-  const list: StagedRecipientEmail[] = [];
-  let skippedByPreference = 0;
-  for (const recipient of args.recipients) {
-    const outcome = await prepare(recipient, args);
-    if (outcome.kind === "skipped") {
-      skippedByPreference += 1;
-      continue;
-    }
-    if (outcome.kind !== "message") continue;
-    const staged = await stage(outcome.message, args.emailType, {
-      tx: args.tx,
-      entityRef: args.entityRef,
-    });
-    list.push({ staged, message: outcome.message });
-  }
-  if (skippedByPreference > 0) {
-    console.info(
-      `[email] skipped ${args.emailType} for ${skippedByPreference} recipient(s): preference`,
-    );
-  }
-  return list;
+  const prepared = await prepareRecipientEmails(args);
+  return stagePreparedEmails(args.tx, prepared);
 }
 
 export async function attemptStaged(

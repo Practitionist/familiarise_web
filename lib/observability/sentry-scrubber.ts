@@ -30,10 +30,11 @@ const MAX_DEPTH = 6;
 const REDACTED = "[redacted]";
 const REDACTED_EMAIL = "[REDACTED_EMAIL]";
 
-const EMAIL_VALUE_RX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+const EMAIL_VALUE_RX =
+  /[\w.+-]+(?:@|%40)[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/gi;
 const BEARER_VALUE_RX = /Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi;
 const INLINE_QUERY_SECRET_RX =
-  /([?&](?:token|secret|signature|code)=)[^&\s#]+/gi;
+  /([?&](?:token|secret|signature|code|t|email)=)[^&\s#]+/gi;
 
 /**
  * Scrubs free-form string values (log messages, span descriptions, exception
@@ -42,9 +43,9 @@ const INLINE_QUERY_SECRET_RX =
  */
 export function scrubStringValue(value: string): string {
   return value
+    .replace(INLINE_QUERY_SECRET_RX, `$1${REDACTED}`)
     .replace(EMAIL_VALUE_RX, REDACTED_EMAIL)
-    .replace(BEARER_VALUE_RX, "Bearer [REDACTED]")
-    .replace(INLINE_QUERY_SECRET_RX, `$1${REDACTED}`);
+    .replace(BEARER_VALUE_RX, "Bearer [REDACTED]");
 }
 
 // Exact header names, matched case-insensitively, plus a substring match on
@@ -210,8 +211,8 @@ export function scrubSentryEvent<T extends Sentry.Event = ErrorEvent>(
   return event;
 }
 
-// `code` is the OAuth authorization code on the Better Auth callback URL.
-const SENSITIVE_QUERY_PARAM_RX = /token|secret|signature|^code$/i;
+// `code` is the OAuth callback code; `t` and `email` carry unsubscribe HMAC tokens and recipient PII.
+const SENSITIVE_QUERY_PARAM_RX = /token|secret|signature|^(?:code|t|email)$/i;
 
 type QueryString = NonNullable<
   NonNullable<ErrorEvent["request"]>["query_string"]
