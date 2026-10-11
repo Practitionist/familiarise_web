@@ -8,18 +8,13 @@ CFO-level business documentation covering revenue strategy, pricing, metrics, an
 
 ## Documents
 
-| #   | Document                                                 | Description                                                |
-| --- | -------------------------------------------------------- | ---------------------------------------------------------- |
-| 01  | [Business Model](./01-business-model.md)                 | Commission models, revenue strategy, marketplace economics |
-| 02  | [Revenue Distribution](./02-revenue-distribution.md)     | Revenue splits, consultant compensation, employee models   |
-| 03  | [Pricing Calculator](./03-pricing-calculator.md)         | Minimum pricing thresholds, tier calculations              |
-| 04  | [Profitability Analysis](./04-profitability-analysis.md) | Per-transaction profitability, break-even analysis         |
-| 05  | [SaaS Metrics](./05-saas-metrics-monthly.md)             | MRR, ARR, churn, LTV:CAC, monthly tracking framework       |
-| 06  | [Tax Compliance (India)](./06-tax-compliance-india.md)   | GST, TDS, Section 44AD, entity structure                   |
-| 07  | [Marketplace Obligations](./07-tax-compliance-marketplace-obligations.md) | E-commerce operator, TCS, cross-border, PF/ESI/Gratuity  |
-| 08  | [Tax Essentials — Simplified](./08-tax-essentials-simplified.md) | Beginner-friendly GST and TDS guide for technical founders |
-| 09  | [Pricing Strategy](./09-pricing-strategy.md)             | Competitive pricing analysis and commission tier model      |
+| #   | Document                                                                  | Description                                                |
+| --- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 01  | [SaaS Metrics](./01-saas-metrics-monthly.md)                              | MRR, ARR, churn, LTV:CAC, monthly tracking framework       |
+| 02  | [Tax Compliance (India)](./02-tax-compliance-india.md)                    | GST, TDS and penalties                                     |
+| 03  | [Marketplace Obligations](./03-tax-compliance-marketplace-obligations.md) | E-commerce operator, TCS, cross-border, PF/ESI/Gratuity    |
+| 04  | [Tax Essentials — Simplified](./04-tax-essentials-simplified.md)          | Beginner-friendly GST and TDS guide for technical founders |
 
 ## Private Documents
 
-Confidential financial planning documents are in [private/](./private/).
+The business model, revenue distribution, pricing and profitability docs live in the founders' private Notion workspace.

@@ -10,15 +10,15 @@
 
 Familiarise uses **Razorpay as the primary payment gateway** for both domestic and international payments:
 
-| Gateway      | Region                    | Currency | Payouts Product   |
-| ------------ | ------------------------- | -------- | ----------------- |
-| **Razorpay** | India + International     | INR      | RazorpayX Payouts |
+| Gateway      | Region                | Currency | Payouts Product   |
+| ------------ | --------------------- | -------- | ----------------- |
+| **Razorpay** | India + International | INR      | RazorpayX Payouts |
 
 ### Previously Evaluated
 
-| Gateway | Status | Reason |
-|---------|--------|--------|
-| Stripe | **Removed from the code on 2026-10-04** | Invite-only in India since May 2024, no UPI, 5–6% international fees |
+| Gateway | Status                                  | Reason                                                               |
+| ------- | --------------------------------------- | -------------------------------------------------------------------- |
+| Stripe  | **Removed from the code on 2026-10-04** | Invite-only in India since May 2024, no UPI, 5–6% international fees |
 
 Stripe checkout, Stripe webhooks and Stripe Connect payouts were deleted on
 2026-10-04, after the request→approve flow had moved to Razorpay and the rail
@@ -31,13 +31,13 @@ money path that meets one refuses it as a gateway with no implementation.
 
 Based on the October 2026 regulatory and technical audit ([`gateway-evaluation-2026.md`](./gateway-evaluation-2026.md)), Familiarise's planned multi-gateway architecture is:
 
-| Gateway | Role | Target Use Case & Why |
-|---------|------|-----------------------|
-| **Razorpay International + MoneySaver** | Immediate International Layer | Enable **Apple Pay**, **PayPal**, **3DS 2.0**, and **MoneySaver Export Account** (virtual USD ACH / EUR SEPA / GBP FPS accounts at `1% + GST`) on our existing Indian entity (`<= ₹25,00,000` per unit under RBI PA-CB with automated e-FIRA/FIRS). See [`razorpay/06-international-payments-and-moneysaver.md`](./razorpay/06-international-payments-and-moneysaver.md). |
-| **Cashfree (`CASHFREE`)** | #1 Full-Stack Backup (Pay-ins + Payouts v2 + Verification + Split) | Direct 1:1 drop-in backup to **both** Razorpay PG and RazorpayX Payouts. Holds full **RBI PA + PA-CB** licenses. Lower domestic card fees (`1.60%–1.95%` vs `2%`), `0%` UPI, **Cashfree Payouts v2** (`IMPS`/`UPI`/`NEFT`/`RTGS`), **Secure ID** Penny Drop & Reverse Penny Drop, and **Easy Split**. See [`cashfree/README.md`](./cashfree/README.md). |
-| **Tazapay (`TAZAPAY`)** | #1 Global Pay-in + Foreign Consultant Payout Engine | Explicitly supports **EdTech, 1:1 consulting, coaching, and service marketplaces**. Collects in **173+ countries** (cards + **80+ local bank rails** like US ACH, EU SEPA, UK Faster Payments, Pix, PayNow) and holds **multi-currency USD/EUR/GBP balances** to pay **foreign (non-Indian) consultants in 70+ countries** in their local currency without double-FX conversion (`USD -> INR -> USD`) or per-payout Indian Section 393 / Forms 145 & 146 (pre-cutover Section 195 / Forms 15CA & 15CB) wire friction. See [`tazapay/README.md`](./tazapay/README.md). |
-| **Xflow (`XFLOW`)** | High-Ticket ($500+) International & B2B Export Rail | Built on **Stripe + JPMorgan Chase N.A.** rails for Indian service exporters. `0.4%–0.6%` tiered fee (`$12` min on Starter) with **0% FX markup** over the live mid-market Google rate and **24-hour automated e-FIRA**. Ideal for `>= $500` international mentorship cohorts and B2B `OrganizationInvoice` collections (`< $300` B2C sessions stay on Razorpay/Cashfree/Tazapay due to the `$12` minimum fee floor). See [`xflow/README.md`](./xflow/README.md). |
-| **Dodo Payments (`DODO_PAYMENTS`) & Polar (`Polar.sh`)** | **Disqualified for 1:1 Consulting & Marketplaces** (MoR Reference Only) | Both are **Merchants of Record (MoRs)** whose Acceptable Use Policies explicitly prohibit human 1:1 consulting, coaching, and two-sided marketplaces (see below and [`mor-guardrails/README.md`](./mor-guardrails/README.md)). Restricted strictly to hypothetical 100% automated first-party SaaS or self-paced digital downloads. |
+| Gateway                                                  | Role                                                                    | Target Use Case & Why                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Razorpay International + MoneySaver**                  | Immediate International Layer                                           | Enable **Apple Pay**, **PayPal**, **3DS 2.0**, and **MoneySaver Export Account** (virtual USD ACH / EUR SEPA / GBP FPS accounts at `1% + GST`) on our existing Indian entity (`<= ₹25,00,000` per unit under RBI PA-CB with automated e-FIRA/FIRS). See [`razorpay/06-international-payments-and-moneysaver.md`](./razorpay/06-international-payments-and-moneysaver.md).                                                                                                                                                                                             |
+| **Cashfree (`CASHFREE`)**                                | #1 Full-Stack Backup (Pay-ins + Payouts v2 + Verification + Split)      | Direct 1:1 drop-in backup to **both** Razorpay PG and RazorpayX Payouts. Holds full **RBI PA + PA-CB** licenses. Lower domestic card fees (`1.60%–1.95%` vs `2%`), `0%` UPI, **Cashfree Payouts v2** (`IMPS`/`UPI`/`NEFT`/`RTGS`), **Secure ID** Penny Drop & Reverse Penny Drop, and **Easy Split**. See [`cashfree/README.md`](./cashfree/README.md).                                                                                                                                                                                                               |
+| **Tazapay (`TAZAPAY`)**                                  | #1 Global Pay-in + Foreign Consultant Payout Engine                     | Explicitly supports **EdTech, 1:1 consulting, coaching, and service marketplaces**. Collects in **173+ countries** (cards + **80+ local bank rails** like US ACH, EU SEPA, UK Faster Payments, Pix, PayNow) and holds **multi-currency USD/EUR/GBP balances** to pay **foreign (non-Indian) consultants in 70+ countries** in their local currency without double-FX conversion (`USD -> INR -> USD`) or per-payout Indian Section 393 / Forms 145 & 146 (pre-cutover Section 195 / Forms 15CA & 15CB) wire friction. See [`tazapay/README.md`](./tazapay/README.md). |
+| **Xflow (`XFLOW`)**                                      | High-Ticket ($500+) International & B2B Export Rail                     | Built on **Stripe + JPMorgan Chase N.A.** rails for Indian service exporters. `0.4%–0.6%` tiered fee (`$12` min on Starter) with **0% FX markup** over the live mid-market Google rate and **24-hour automated e-FIRA**. Ideal for `>= $500` international mentorship cohorts and B2B `OrganizationInvoice` collections (`< $300` B2C sessions stay on Razorpay/Cashfree/Tazapay due to the `$12` minimum fee floor). See [`xflow/README.md`](./xflow/README.md).                                                                                                     |
+| **Dodo Payments (`DODO_PAYMENTS`) & Polar (`Polar.sh`)** | **Disqualified for 1:1 Consulting & Marketplaces** (MoR Reference Only) | Both are **Merchants of Record (MoRs)** whose Acceptable Use Policies explicitly prohibit human 1:1 consulting, coaching, and two-sided marketplaces (see below and [`mor-guardrails/README.md`](./mor-guardrails/README.md)). Restricted strictly to hypothetical 100% automated first-party SaaS or self-paced digital downloads.                                                                                                                                                                                                                                   |
 
 ### `DODO_PAYMENTS` — schema-only, and disqualified for 1:1 consulting & marketplaces
 
@@ -45,13 +45,15 @@ Based on the October 2026 regulatory and technical audit ([`gateway-evaluation-2
 is no client, no checkout path, no webhook handler and no payout submitter.
 
 In our October 2026 audit ([`mor-guardrails/README.md`](./mor-guardrails/README.md)), we verified against official Acceptable Use Policies that **Dodo Payments (`dodopayments.com`), Polar (`polar.sh`), Lemon Squeezy, and Paddle cannot be used as a backup gateway for Familiarise's core marketplace**:
-1. **Dodo Payments AUP Disqualification**: Explicitly prohibits *"Any product or service where significant human intervention is needed to deliver the good/service"* (Clause #2), *"Consulting Services"* (Clause #14), *"Coaching or anything similar"* (Clause #30), *"Services: Freelance, design, development, marketing, consulting, or agency services"* (Clause #31), and *"Marketplaces: Platforms connecting buyers and sellers"* (Clause #10), backed by a **$425,000 fine** clause for non-compliant card-network transactions and a strict **0.5% dispute/refund threshold**.
-2. **Polar.sh AUP Disqualification**: Explicitly prohibits *"Human services"* (Item #2: *"Live courses, synchronous tutoring, or real-time instruction; Consulting, coaching, or mentoring sessions; Custom development, design, or freelance work; Any service requiring scheduled human time or personalized human delivery"*) and *"Marketplaces and platforms"* (Item #4).
+
+1. **Dodo Payments AUP Disqualification**: Explicitly prohibits _"Any product or service where significant human intervention is needed to deliver the good/service"_ (Clause #2), _"Consulting Services"_ (Clause #14), _"Coaching or anything similar"_ (Clause #30), _"Services: Freelance, design, development, marketing, consulting, or agency services"_ (Clause #31), and _"Marketplaces: Platforms connecting buyers and sellers"_ (Clause #10), backed by a **$425,000 fine** clause for non-compliant card-network transactions and a strict **0.5% dispute/refund threshold**.
+2. **Polar.sh AUP Disqualification**: Explicitly prohibits _"Human services"_ (Item #2: _"Live courses, synchronous tutoring, or real-time instruction; Consulting, coaching, or mentoring sessions; Custom development, design, or freelance work; Any service requiring scheduled human time or personalized human delivery"_) and _"Marketplaces and platforms"_ (Item #4).
 3. **MoR Structural Incompatibility**: A Merchant of Record legally acts as the Principal Seller of software on the buyer's card statement and remits a single net bulk payout to the platform; it cannot split funds or pay third-party consultants directly.
 
 Why `DODO_PAYMENTS` remains in the Postgres enum:
+
 - Postgres has no `ALTER TYPE … DROP VALUE`, so keeping the reserved enum value avoids a type recreation and swap before the pre-MVP schema reset.
-- Because a schema value with no implementation is exactly the kind of thing that gets picked up by a `default:` branch and silently used, it fails loudly instead. `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` names it, and `lib/payments/validation/gateway-guards.ts` throws an `UnsupportedGatewayError` if it ever reaches gateway routing, a refund, or a payout submitter. The payout service also skips a stub-gateway account at *selection* time rather than at disbursement, so a consultant's earnings stay `READY` for the next batch instead of being claimed into `BATCHED` against an unimplemented gateway.
+- Because a schema value with no implementation is exactly the kind of thing that gets picked up by a `default:` branch and silently used, it fails loudly instead. `UNIMPLEMENTED_GATEWAYS` in `lib/payments/constants.ts` names it, and `lib/payments/validation/gateway-guards.ts` throws an `UnsupportedGatewayError` if it ever reaches gateway routing, a refund, or a payout submitter. The payout service also skips a stub-gateway account at _selection_ time rather than at disbursement, so a consultant's earnings stay `READY` for the next batch instead of being claimed into `BATCHED` against an unimplemented gateway.
 
 **For a finance or CA review:** treat Dodo as not existing. No money has ever
 moved through it, no fees are payable on it, and it appears in no reconciliation
@@ -85,6 +87,7 @@ the DTAA engine written but unreachable (both callers hardcode
 uncalled stub.
 
 That throw is the correct behaviour on the INR domestic rail and should not be "fixed" without either:
+
 1. Building the full Section 393 (`§393(2) Table Sl.17`) + AD-bank Form 145 (and Part C Form 146; pre-cutover Section 195 + Form 15CA and Part C Form 15CB) outbound wire path, OR
 2. Onboarding **Tazapay (`TAZAPAY`)** as our international collection + multi-currency treasury rail ([`tazapay/README.md`](./tazapay/README.md)), where foreign buyer funds stay in a USD/EUR/GBP Tazapay treasury balance to pay non-Indian consultants directly in 70+ countries (`POST /v3/payout`, `purpose: "PYR003"`) and only Familiarise's net platform commission is repatriated to India in INR with an automated `e-FIRA`.
 
@@ -108,6 +111,7 @@ All payments route through **Razorpay**. Currency is always **INR** — Razorpay
 | `order_` or `pay_` | Razorpay |
 
 **Buyer location detection** determines tax treatment:
+
 - Indian buyer → Plan price + 18% GST
 - International buyer → Plan price only (zero-rated export)
 
@@ -121,20 +125,20 @@ All payments route through **Razorpay**. Currency is always **INR** — Razorpay
 
 ## Razorpay Features
 
-| Feature | Details |
-| ------- | ------- |
-| **Checkout** | Order (`POST /v1/orders`) → Standard Checkout Modal (`checkout.js`) |
-| **Saved Cards** | Customers API (`POST /v1/customers` with `fail_existing: 0`) + RBI Card-on-File Tokenization (CoFT) |
-| **Refunds** | Full API (`POST /v1/payments/:id/refund` with `X-Refund-Idempotency`). Original PG fee is NOT reversed. |
-| **Disputes** | Full REST API (`GET /v1/disputes/:id`, `POST /v1/documents`, `PATCH /v1/disputes/:id/contest`) + all 6 `payment.dispute.*` webhooks (`lib/payments/core/razorpay-disputes.ts`) |
-| **Payouts** | RazorpayX: Contacts + Fund Accounts + Penny Drop / Reverse Penny Drop (`POST /v1/fund_accounts/validations`) + Payouts API (`X-Payout-Idempotency`), Section 194-O TDS |
-| **KYC & Bank Verification** | Platform collects payee details, creates Contact + Fund Account via API, verifies via Penny Drop (`₹1` IMPS) or Reverse Penny Drop (UPI Intent) |
-| **Payment methods** | Cards (Visa, Mastercard, RuPay, Amex, Diners), UPI (0%), Net Banking, Wallets, EMI, PayLater |
-| **Domestic fee** | UPI: 0% / Cards & Netbanking: ~2% + 18% GST (~2.36%) |
-| **International fee** | Cards: ~3% + GST / International Bank Transfer (IBT): 1% + GST |
-| **Settlement** | T+2 working days domestic, T+7 working days international (PA-CB & automatic FIRS/FIRC) |
-| **Architecture Choices** | Uses **RazorpayX Payouts** (not Razorpay Route) and **in-house `BillingSubscription` + per-cycle Orders** (not `/v1/subscriptions`) |
-| **RBI Licenses** | PA-O + PA-P + PA-CB |
+| Feature                     | Details                                                                                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Checkout**                | Order (`POST /v1/orders`) → Standard Checkout Modal (`checkout.js`)                                                                                                            |
+| **Saved Cards**             | Customers API (`POST /v1/customers` with `fail_existing: 0`) + RBI Card-on-File Tokenization (CoFT)                                                                            |
+| **Refunds**                 | Full API (`POST /v1/payments/:id/refund` with `X-Refund-Idempotency`). Original PG fee is NOT reversed.                                                                        |
+| **Disputes**                | Full REST API (`GET /v1/disputes/:id`, `POST /v1/documents`, `PATCH /v1/disputes/:id/contest`) + all 6 `payment.dispute.*` webhooks (`lib/payments/core/razorpay-disputes.ts`) |
+| **Payouts**                 | RazorpayX: Contacts + Fund Accounts + Penny Drop / Reverse Penny Drop (`POST /v1/fund_accounts/validations`) + Payouts API (`X-Payout-Idempotency`), Section 194-O TDS         |
+| **KYC & Bank Verification** | Platform collects payee details, creates Contact + Fund Account via API, verifies via Penny Drop (`₹1` IMPS) or Reverse Penny Drop (UPI Intent)                                |
+| **Payment methods**         | Cards (Visa, Mastercard, RuPay, Amex, Diners), UPI (0%), Net Banking, Wallets, EMI, PayLater                                                                                   |
+| **Domestic fee**            | UPI: 0% / Cards & Netbanking: ~2% + 18% GST (~2.36%)                                                                                                                           |
+| **International fee**       | Cards: ~3% + GST / International Bank Transfer (IBT): 1% + GST                                                                                                                 |
+| **Settlement**              | T+2 working days domestic, T+7 working days international (PA-CB & automatic FIRS/FIRC)                                                                                        |
+| **Architecture Choices**    | Uses **RazorpayX Payouts** (not Razorpay Route) and **in-house `BillingSubscription` + per-cycle Orders** (not `/v1/subscriptions`)                                            |
+| **RBI Licenses**            | PA-O + PA-P + PA-CB                                                                                                                                                            |
 
 ---
 
@@ -161,24 +165,24 @@ Customer pays grossAmount (+ 18% GST for domestic IN buyers)
 
 ### Razorpay (Payments & Webhooks)
 
-| Variable                            | Purpose                                                                 |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| `RAZORPAY_KEY_ID`                   | Server-side API key ID (`rzp_test_...` or `rzp_live_...`)               |
-| `RAZORPAY_SECRET`                   | Server-side API key secret (named `RAZORPAY_SECRET` in this repo)       |
-| `NEXT_PUBLIC_RAZORPAY_KEY_ID`       | Client-side publishable key (must match `RAZORPAY_KEY_ID`)              |
-| `RAZORPAY_WEBHOOK_SECRET`           | Webhook HMAC-SHA256 verification secret                                 |
-| `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`  | Optional previous webhook secret during zero-downtime secret rotation   |
+| Variable                           | Purpose                                                               |
+| ---------------------------------- | --------------------------------------------------------------------- |
+| `RAZORPAY_KEY_ID`                  | Server-side API key ID (`rzp_test_...` or `rzp_live_...`)             |
+| `RAZORPAY_SECRET`                  | Server-side API key secret (named `RAZORPAY_SECRET` in this repo)     |
+| `NEXT_PUBLIC_RAZORPAY_KEY_ID`      | Client-side publishable key (must match `RAZORPAY_KEY_ID`)            |
+| `RAZORPAY_WEBHOOK_SECRET`          | Webhook HMAC-SHA256 verification secret                               |
+| `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` | Optional previous webhook secret during zero-downtime secret rotation |
 
 ### RazorpayX (Payouts & Fund Account Validation)
 
-| Variable                   | Purpose                                                              |
-| -------------------------- | -------------------------------------------------------------------- |
-| `RAZORPAYX_KEY_ID`         | RazorpayX API key (falls back to `RAZORPAY_KEY_ID` in non-prod)      |
-| `RAZORPAYX_KEY_SECRET`     | RazorpayX API secret (falls back to `RAZORPAY_SECRET` in non-prod)   |
-| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX virtual/current account number debited for payouts & FAV   |
-| `RAZORPAYX_WEBHOOK_SECRET` | Optional separate RazorpayX webhook signature verification secret    |
-| `ENABLE_LIVE_PAYOUTS`      | Must be `"true"` in production to disburse live payouts              |
-| `RAZORPAY_RPD_VPA`         | Optional platform UPI VPA for Reverse Penny Drop fallback            |
+| Variable                   | Purpose                                                            |
+| -------------------------- | ------------------------------------------------------------------ |
+| `RAZORPAYX_KEY_ID`         | RazorpayX API key (falls back to `RAZORPAY_KEY_ID` in non-prod)    |
+| `RAZORPAYX_KEY_SECRET`     | RazorpayX API secret (falls back to `RAZORPAY_SECRET` in non-prod) |
+| `RAZORPAYX_ACCOUNT_NUMBER` | RazorpayX virtual/current account number debited for payouts & FAV |
+| `RAZORPAYX_WEBHOOK_SECRET` | Optional separate RazorpayX webhook signature verification secret  |
+| `ENABLE_LIVE_PAYOUTS`      | Must be `"true"` in production to disburse live payouts            |
+| `RAZORPAY_RPD_VPA`         | Optional platform UPI VPA for Reverse Penny Drop fallback          |
 
 ---
 
@@ -186,17 +190,17 @@ Customer pays grossAmount (+ 18% GST for domestic IN buyers)
 
 The payment and payout subsystem shares a common orchestration layer:
 
-| File                                           | Purpose                                                                                                                                                |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `lib/payments/index.ts`                        | Unified orchestration — routes `createPaymentIntent()`, `cancelPaymentIntent()`, `createRefund()` to the active gateway                                |
-| `lib/payments/core/razorpay.ts`                | Razorpay SDK singleton, checkout & webhook HMAC verification, `ensureRazorpayCustomer()`, PM-10 live-key guard                                         |
-| `lib/payments/core/types.ts`                   | Shared types (`PaymentIntent`, `RefundResult`, `DisputeResult`) and error classes (`PaymentError`, `RefundError`, `DisputeError`)                      |
-| `lib/payments/core/razorpay-disputes.ts`       | Razorpay REST Disputes & Documents API client (`getRazorpayDispute`, `uploadDisputeDocument`, `contestDispute`, `isRazorpayUnknownDisputeIdError`)      |
-| `lib/payments/payouts/razorpay-payouts.ts`     | RazorpayX Contacts, Fund Accounts, and Payouts REST client (`X-Payout-Idempotency`, `boundPayoutIdempotencyKey`)                                       |
-| `lib/payments/payouts/reverse-penny-drop.ts`   | Bank & UPI verification via Penny Drop (`POST /v1/fund_accounts/validations`) and Reverse Penny Drop (UPI Intent)                                      |
-| `lib/payments/payouts/payout-service.ts`       | Provider-agnostic payout orchestration (batch creation, admin approval, processing)                                                                    |
-| `lib/payments/payouts/earnings-service.ts`     | Earnings calculation (`PlatformFeeSchedule`, `RateCard`, subscription tranches, collaborator splits)                                                   |
-| `lib/payments/payouts/constants.ts`            | Hold periods, minimum amounts, fee percentages, SAC codes (`999293`), payout mode limits                                                               |
+| File                                         | Purpose                                                                                                                                            |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/payments/index.ts`                      | Unified orchestration — routes `createPaymentIntent()`, `cancelPaymentIntent()`, `createRefund()` to the active gateway                            |
+| `lib/payments/core/razorpay.ts`              | Razorpay SDK singleton, checkout & webhook HMAC verification, `ensureRazorpayCustomer()`, PM-10 live-key guard                                     |
+| `lib/payments/core/types.ts`                 | Shared types (`PaymentIntent`, `RefundResult`, `DisputeResult`) and error classes (`PaymentError`, `RefundError`, `DisputeError`)                  |
+| `lib/payments/core/razorpay-disputes.ts`     | Razorpay REST Disputes & Documents API client (`getRazorpayDispute`, `uploadDisputeDocument`, `contestDispute`, `isRazorpayUnknownDisputeIdError`) |
+| `lib/payments/payouts/razorpay-payouts.ts`   | RazorpayX Contacts, Fund Accounts, and Payouts REST client (`X-Payout-Idempotency`, `boundPayoutIdempotencyKey`)                                   |
+| `lib/payments/payouts/reverse-penny-drop.ts` | Bank & UPI verification via Penny Drop (`POST /v1/fund_accounts/validations`) and Reverse Penny Drop (UPI Intent)                                  |
+| `lib/payments/payouts/payout-service.ts`     | Provider-agnostic payout orchestration (batch creation, admin approval, processing)                                                                |
+| `lib/payments/payouts/earnings-service.ts`   | Earnings calculation (`PlatformFeeSchedule`, `RateCard`, subscription tranches, collaborator splits)                                               |
+| `lib/payments/payouts/constants.ts`          | Hold periods, minimum amounts, fee percentages, SAC codes (`999293`), payout mode limits                                                           |
 
 ---
 
@@ -230,4 +234,4 @@ The payment and payout subsystem shares a common orchestration layer:
 - [Status Enums Reference](../03-status-enums-reference.md) — PaymentStatus, RefundStatus, DisputeStatus
 - [Payouts](../payouts/README.md) — Payout algorithm, earnings lifecycle, batch processing
 - [Webhooks](../webhooks/README.md) — Webhook monitoring and schemas
-- [Tax Compliance — Marketplace Obligations](../../finances/07-tax-compliance-marketplace-obligations.md) — GST, TCS, TDS, Section 44AD, cross-border compliance
+- [Tax Compliance — Marketplace Obligations](../../finances/03-tax-compliance-marketplace-obligations.md) — GST, TCS, TDS, Section 44AD, cross-border compliance

@@ -340,15 +340,10 @@ Generic software architecture patterns and learning material (not Familiarise-sp
 
 CFO-level business documentation. See [finances/README.md](./finances/README.md) for full index.
 
-- [01-business-model.md](./finances/01-business-model.md) - Revenue model
-- [02-revenue-distribution.md](./finances/02-revenue-distribution.md) - Revenue splitting
-- [03-pricing-calculator.md](./finances/03-pricing-calculator.md) - Pricing calculator
-- [04-profitability-analysis.md](./finances/04-profitability-analysis.md) - Profitability
-- [05-saas-metrics-monthly.md](./finances/05-saas-metrics-monthly.md) - SaaS metrics
-- [06-tax-compliance-india.md](./finances/06-tax-compliance-india.md) - Tax compliance
-- [07-tax-compliance-marketplace-obligations.md](./finances/07-tax-compliance-marketplace-obligations.md) - Marketplace obligations
-- [08-tax-essentials-simplified.md](./finances/08-tax-essentials-simplified.md) - Simplified tax guide
-- [09-pricing-strategy.md](./finances/09-pricing-strategy.md) - Competitive pricing strategy
+- [01-saas-metrics-monthly.md](./finances/01-saas-metrics-monthly.md) - SaaS metrics
+- [02-tax-compliance-india.md](./finances/02-tax-compliance-india.md) - Tax compliance
+- [03-tax-compliance-marketplace-obligations.md](./finances/03-tax-compliance-marketplace-obligations.md) - Marketplace obligations
+- [04-tax-essentials-simplified.md](./finances/04-tax-essentials-simplified.md) - Simplified tax guide
 
 ---
 
@@ -388,8 +383,6 @@ Competitor analysis and research.
 - [04-upgrad-com.md](./competition/competitors/04-upgrad-com.md) - upGrad analysis
 - [05-propeers-in.md](./competition/competitors/05-propeers-in.md) - ProPeers analysis
 - [06-growthschool-io.md](./competition/competitors/06-growthschool-io.md) - GrowthSchool analysis
-
-- [competitor-analysis.md](./competition/competitors/competitor-analysis.md) - Consolidated competitor analysis
 
 ---
 

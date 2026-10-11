@@ -481,9 +481,3 @@ ARPU = Total Revenue / Active Users
 | Gross margin       | < 70%            | < 60%            | Cost optimization    |
 
 ---
-
-## Related Documents
-
-- [01-business-model.md](./01-business-model.md) - Revenue model
-- [04-revenue-distribution.md](./04-revenue-distribution.md) - Revenue calculations
-- [07-pricing-calculator.md](./07-pricing-calculator.md) - Pricing for profitability
