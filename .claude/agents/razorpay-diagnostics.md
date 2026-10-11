@@ -9,6 +9,7 @@ color: red
 ## Before you start
 
 **Read these first under `.claude/skills/finance/references/razorpay/`:**
+
 1. `references/this-repo.md` — exact env var names, file paths, and architecture in this repo.
 2. `references/debugging.md` — symptom-to-cause playbook for orders, webhooks, refunds, disputes, and RazorpayX payouts.
 3. `references/go-live.md` — PM-10 boot guards and production checklist.
@@ -33,9 +34,8 @@ Inspect `.env.local`, `.env`, and `.env.example` (never print secret values — 
 3. **RazorpayX Payouts & Fund Account Validation**:
    - `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, `RAZORPAYX_ACCOUNT_NUMBER` (falls back to `RAZORPAY_KEY_ID` / `RAZORPAY_SECRET` in non-prod only if unset)
    - `ENABLE_LIVE_PAYOUTS` (`"true"` required in production for live payouts)
-   - `RAZORPAY_RPD_VPA` (optional platform VPA for Reverse Penny Drop fallback)
 4. **PM-10 Production Guards**:
-   - Check `lib/payments/core/razorpay.ts` (`assertNoTestKeysInLiveProduction`) and `lib/payments/payouts/razorpay-payouts.ts` (`assertNoTestKeysInLivePayouts`) to confirm `rzp_test_` keys are blocked when `NODE_ENV=production` on live deploys.
+   - Check `lib/payments/core/razorpay.ts` and `lib/payments/payouts/razorpay-payouts.ts` (`getRazorpayPayoutsService`) to confirm `rzp_test_` keys are blocked when `NODE_ENV=production` on live deploys.
 
 ---
 
@@ -104,6 +104,15 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/webhooks/razorp
 
 ---
 
-### CHECK 6: Output Formatted Health Report
+### CHECK 6: Portable Test-to-Live Cutover Readiness & Sandbox Entity Audit
+
+Verify whether the database contains any sandbox-scoped gateway IDs (`cust_*`, `cont_*`, `fa_*`) before cutting over to `rzp_live_*`, and confirm document numbering complies with CGST Rule 46(b)/Rule 53 (`^[A-Za-z0-9/-]{1,16}$`):
+
+- Query counts of non-null `users.razorpayCustomerId`, `PayoutAccount.razorpayContactId`/`razorpayFundAccId`, and `OrganizationPayoutAccount.razorpayContactId`/`razorpayFundAccountId`. Flag `[WARN]` if any sandbox rows remain populated before a Live-Key deployment (see `.claude/skills/finance/references/razorpay/references/go-live.md` for the atomic SQL reset transaction).
+- Confirm zero `OrganizationInvoice`, `ConsumerInvoice`, or `CreditNote` numbers exceed 16 characters (`SELECT COUNT(*) FROM "OrganizationInvoice" WHERE length("invoiceNumber") > 16`).
+
+---
+
+### CHECK 7: Output Formatted Health Report
 
 Summarize all checks (`[PASS]`, `[WARN]`, `[FAIL]`, `[SKIP]`) with exact file paths, line numbers, and copy-paste remediation steps for any failures.

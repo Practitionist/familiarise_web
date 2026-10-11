@@ -363,27 +363,22 @@ export const getNextUpcomingSlotTime = (
 };
 
 // Check if appointment has any slots today
-export const hasTodaySlots = (appointment: TAppointment): boolean => {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayEnd = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    23,
-    59,
-    59,
-    999,
-  );
+export const hasTodaySlots = (
+  appointment: TAppointment,
+  zone = "Asia/Kolkata",
+): boolean => {
+  const todayKey = formatInViewerZone(new Date(), zone, "yyyy-MM-dd");
 
-  return getSlotTimes(appointment).some((time) => {
-    const date = new Date(time);
-    return date >= todayStart && date <= todayEnd;
-  });
+  return getSlotTimes(appointment).some(
+    (time) => formatInViewerZone(time, zone, "yyyy-MM-dd") === todayKey,
+  );
 };
 
 // Get appointment status
-export const getAppointmentStatus = (appointment: TAppointment): string => {
+export const getAppointmentStatus = (
+  appointment: TAppointment,
+  zone = "Asia/Kolkata",
+): string => {
   const startTime = getStartTime(appointment);
 
   // Handle appointments with no slots
@@ -433,51 +428,33 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
   // For appointments with both past and future slots, use the next upcoming slot
   const effectiveTime = getNextUpcomingSlotTime(appointment) ?? startTime;
 
-  // Calculate time differences using local time
   const diffMs = effectiveTime.getTime() - now.getTime();
   const diffMinutes = Math.floor(diffMs / (1000 * 60));
 
-  // Use calendar-based day comparison for accurate "Today"/"Tomorrow" labels
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrowStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 1,
-  );
-  const dayAfterTomorrowStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 2,
-  );
-
-  const appointmentDate = new Date(effectiveTime);
-
-  // Upcoming appointments with more precise timing
   if (diffMinutes <= 5 && diffMinutes > 0) return "Meeting in 5 min";
   if (diffMinutes <= 15 && diffMinutes > 5) return "Starting soon";
 
-  // Check if appointment is today (same calendar day)
-  if (appointmentDate >= todayStart && appointmentDate < tomorrowStart) {
+  const dayNumber = (key: string): number => {
+    const [year, month, day] = key.split("-").map(Number);
+    return Date.UTC(year, month - 1, day) / 86_400_000;
+  };
+  const targetDayKey = formatInViewerZone(effectiveTime, zone, "yyyy-MM-dd");
+  const todayKey = formatInViewerZone(now, zone, "yyyy-MM-dd");
+  const diffDays = dayNumber(targetDayKey) - dayNumber(todayKey);
+
+  if (diffDays === 0) {
     return "Today";
   }
 
-  // Check if appointment is tomorrow (next calendar day)
-  if (
-    appointmentDate >= tomorrowStart &&
-    appointmentDate < dayAfterTomorrowStart
-  ) {
+  if (diffDays === 1) {
     return "Tomorrow";
   }
 
-  // Calculate day difference for appointments further out
-  const diffDays = Math.floor(
-    (appointmentDate.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24),
-  );
-
-  if (diffDays < 7) return `In ${diffDays} days`;
+  const boundedDays = Math.max(1, diffDays);
+  if (boundedDays < 7) return `In ${boundedDays} days`;
 
   // For weekly intervals, show exact week number
-  const exactWeeks = Math.ceil(diffDays / 7);
+  const exactWeeks = Math.ceil(boundedDays / 7);
   return `In ${exactWeeks} ${exactWeeks === 1 ? "week" : "weeks"}`;
 };
 

@@ -30,6 +30,7 @@ jest.mock("../../app/api/webhooks/razorpay/signature", () => ({
   isPayoutEventName: jest.fn().mockReturnValue(false),
   matchRazorpayWebhookSecret: jest.fn().mockReturnValue("current"),
   resolveRazorpayPaymentSecrets: jest.fn().mockReturnValue(["secret"]),
+  resolveRazorpayXSecrets: jest.fn().mockReturnValue([]),
   verifyRazorpaySignature: jest.fn().mockReturnValue(true),
 }));
 

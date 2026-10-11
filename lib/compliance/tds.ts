@@ -70,13 +70,11 @@ import dtaaRatesJson from "./dtaa-rates.json";
 
 /** Default rates per section in integer basis points (10000 = 100%, 10 = 0.1%). (#1367) */
 export const TDS_SECTION_DEFAULT_BPS: Record<string, number> = {
-  // #771 P0-1 / #737 / #738 — 194-O was cut to 0.1% (10 bps) w.e.f. 1-Oct-2024 by
-  // the Finance (No. 2) Act 2024. Under IT Act 2025, §393(1) Table Sl. 8(v) carries
-  // the same 10 bps rate.
   "194O": 10,
   "393-8(v)": 10,
   "194J": 1000,
   "194C": 200,
+  "195": 2000,
 };
 
 /** Default rates per section as decimal fractions (kept for backwards compatibility). */
@@ -85,6 +83,7 @@ export const TDS_SECTION_DEFAULTS: Record<string, number> = {
   "393-8(v)": 0.001,
   "194J": 0.1,
   "194C": 0.02,
+  "195": 0.2,
 };
 
 /** No-PAN punitive rate in integer bps (old §206AA, now §397(2) IT Act 2025) — applies to 194J/194C. */
@@ -109,7 +108,7 @@ const DTAA_RATES: Record<string, number> =
   (dtaaRatesJson as { rates: Record<string, number> }).rates ?? {};
 
 export interface TdsComputation {
-  tdsSection: string; // "194J" | "194O" | "194C" | "393-8(v)"
+  tdsSection: string; // "194J" | "194O" | "194C" | "393-8(v)" | "195"
   /** #1367 — exact integer basis points applied (e.g. 10 = 0.1%, 1000 = 10%). */
   rateAppliedBps: number;
   /** #1367 — decimal fraction derived from rateAppliedBps / 10_000. */
@@ -152,12 +151,15 @@ function isEcoSection(section: string): boolean {
   return section === "194O" || section === "393-8(v)";
 }
 
-function defaultThresholdPaiseForSection(section: string): bigint | null {
+function defaultThresholdPaiseForSection(
+  section: string,
+  lawCode: "IT1961" | "IT2025",
+): bigint | null {
   if (isEcoSection(section)) {
     return BigInt(50_000_000);
   }
   if (section === "194J") {
-    return BigInt(3_000_000);
+    return lawCode === "IT2025" ? BigInt(5_000_000) : BigInt(3_000_000);
   }
   return null;
 }
@@ -235,7 +237,10 @@ export async function resolveEffectiveTdsRate(
     lawCode: defaultLawCode,
     rateBps: defaultRateBps,
     noPanRateBps: defaultNoPanBps,
-    thresholdPaise: defaultThresholdPaiseForSection(normalizedSection),
+    thresholdPaise: defaultThresholdPaiseForSection(
+      normalizedSection,
+      defaultLawCode,
+    ),
     paymentCode: null,
     source: "default",
   };

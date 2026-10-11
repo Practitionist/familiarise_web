@@ -233,8 +233,8 @@ function computeRecarvedDraftInvoiceTotals(
   }
   const interState = oldIgst > 0;
   const newIgst = interState ? newTax : 0;
-  const newSgst = interState ? 0 : Math.floor(newTax / 2);
-  const newCgst = interState ? 0 : newTax - newSgst;
+  const newCgst = interState ? 0 : Math.floor(newTax / 2);
+  const newSgst = interState ? 0 : newTax - newCgst;
   const newTotal = newSubtotal + newTax;
 
   return {

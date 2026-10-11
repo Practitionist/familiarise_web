@@ -35,6 +35,7 @@ import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
+import { isDeliberateEnd } from "@/lib/appointments/occurrences";
 import {
   toOccurrenceVM,
   type NeedsActionReason,
@@ -150,7 +151,9 @@ function getTimeAway(
   reason: NeedsActionReason | null,
   endsAt?: Date | null,
   now: Date = new Date(),
+  meetingEnded = false,
 ): { text: string; urgent: boolean } {
+  if (meetingEnded) return { text: "Completed", urgent: false };
   if (!date)
     return { text: awaitingLabel(reason), urgent: reason === "PAY_NOW" };
   const startMs = date.getTime();
@@ -217,6 +220,7 @@ function NextUpCard({
     event.needsActionReason,
     event.endsAt,
     now,
+    isDeliberateEnd(event.joinableOccurrence?.meeting),
   );
 
   // Shared guards (lib/appointments/status-guards.ts) — same semantics as the

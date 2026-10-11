@@ -68,6 +68,7 @@ import {
 import {
   getOccurrenceVMJoinState,
   isDeadOccurrence,
+  isDeliberateEnd,
   isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
 import { NeedsYouCallout } from "./NeedsYouCallout";
@@ -609,6 +610,14 @@ export function AppointmentDetailClient({
                     <CountdownBadge
                       targetDate={vm.nextAt}
                       sessionEndDate={anchorSession?.endsAt ?? undefined}
+                      meetingEnded={
+                        anchorSession
+                          ? isDeliberateEnd({
+                              endedAt: anchorSession.meetingEndedAt,
+                              endedReason: anchorSession.meetingEndedReason,
+                            })
+                          : false
+                      }
                     />
                   )}
                 </div>
@@ -892,7 +901,7 @@ export function AppointmentDetailClient({
                     isJoining={action.kind === "join" && !!action.busy}
                     onJoinSession={
                       action.kind === "join" && action.onClick
-                        ? () => action.onClick!()
+                        ? action.onClick
                         : undefined
                     }
                     showHeld

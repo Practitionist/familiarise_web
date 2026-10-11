@@ -93,3 +93,9 @@ Use case: simultaneously broadcast a webinar to the Stream platform and YouTube 
 - [`00-pricing-overview.md`](./00-pricing-overview.md) — Stream pricing quick reference and cost cliff
 - [`14-pricing-and-cost-model.md`](./14-pricing-and-cost-model.md) — Full rate tables and permutation matrices
 - [`15-enterprise-and-maker-account.md`](./15-enterprise-and-maker-account.md) — Enterprise tiers, Maker account, AI Moderation
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Stream Automatic Cloud Push Storage**: Superseded by pull-based SigV4 multipart transfer (`transfer-recordings`) from Stream S3 (14-day primary copy) into Cloudflare R2 with HEAD byte-size verification.

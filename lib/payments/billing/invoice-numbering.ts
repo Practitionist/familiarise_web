@@ -17,8 +17,6 @@ import type { Tx } from "@/lib/prisma";
  * lands in FY 2026; one issued in March 2026 lands in FY 2025.
  */
 
-import type { Prisma } from "@prisma/client";
-
 /**
  * CGST Rule 46(b): a tax-invoice number may not exceed sixteen characters.
  * Rule 53 imposes the same limit on credit notes. #789 — the prior code
@@ -41,12 +39,9 @@ export function fitPrefixToRule46(
   prefix: string,
   nonPrefixLength: number,
 ): string {
+  const sanitized = prefix.replace(/[^A-Za-z0-9/-]/g, "").replace(/^[-/]+/, "");
   const budget = GST_DOC_NUMBER_MAX_LEN - nonPrefixLength;
-  // The non-prefix segments already fit comfortably for both our formats, so
-  // the budget is always positive. If it were ever zero or negative we drop the
-  // prefix entirely rather than keep one character, which would push the total
-  // back over the 16-character cap (#789 review).
-  return budget >= 1 ? prefix.slice(0, budget) : "";
+  return budget >= 1 ? sanitized.slice(0, budget) : "";
 }
 
 export function indianFiscalYear(d: Date): number {
@@ -105,7 +100,9 @@ export async function generateOrgInvoiceNumber(
     nonPrefixLength,
   );
   return {
-    invoiceNumber: `${prefix}-${fiscalYear}-${padded}`,
+    invoiceNumber: prefix
+      ? `${prefix}-${fiscalYear}-${padded}`
+      : `${fiscalYear}-${padded}`,
     fiscalYear,
     seq,
   };
@@ -163,8 +160,11 @@ export async function generateConsumerInvoiceNumber(
   const seq = await allocatePlatformInvoiceSeq(tx, fiscalYear);
   const padded = seq.toString().padStart(5, "0");
   const nonPrefixLength = 2 + String(fiscalYear).length + padded.length;
+  const prefix = platformPrefix(nonPrefixLength);
   return {
-    invoiceNumber: `${platformPrefix(nonPrefixLength)}-${fiscalYear}-${padded}`,
+    invoiceNumber: prefix
+      ? `${prefix}-${fiscalYear}-${padded}`
+      : `${fiscalYear}-${padded}`,
     fiscalYear,
     seq,
   };

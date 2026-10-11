@@ -28,6 +28,7 @@ export interface OverrunBannerState {
 function resolveCapEndsAtMs(args: {
   startsAt: Date | null;
   endsAt: Date;
+  baseEndsAt?: Date | null;
   extendedSeconds: number;
   timerEndsAt?: Date | string | null;
 }): number {
@@ -40,9 +41,10 @@ function resolveCapEndsAtMs(args: {
       return parsed;
     }
   }
+  const unextendedEndsAt = args.baseEndsAt ?? args.endsAt;
   if (args.startsAt) {
     const bookedMs = Math.max(
-      args.endsAt.getTime() - args.startsAt.getTime(),
+      unextendedEndsAt.getTime() - args.startsAt.getTime(),
       MIN_CALL_DURATION_MS,
     );
     return (
@@ -53,7 +55,9 @@ function resolveCapEndsAtMs(args: {
     );
   }
   return (
-    args.endsAt.getTime() + CALL_DURATION_GRACE_MS + args.extendedSeconds * 1000
+    unextendedEndsAt.getTime() +
+    CALL_DURATION_GRACE_MS +
+    args.extendedSeconds * 1000
   );
 }
 
@@ -61,11 +65,19 @@ function resolveCapEndsAtMs(args: {
 export function computeOverrunBannerState(args: {
   startsAt: Date | null;
   endsAt: Date | null;
+  baseEndsAt?: Date | null;
   extendedSeconds?: number;
   timerEndsAt?: Date | string | null;
   now: Date;
 }): OverrunBannerState {
-  const { startsAt, endsAt, extendedSeconds = 0, timerEndsAt, now } = args;
+  const {
+    startsAt,
+    endsAt,
+    baseEndsAt,
+    extendedSeconds = 0,
+    timerEndsAt,
+    now,
+  } = args;
   if (!endsAt) {
     return {
       phase: "hidden",
@@ -80,6 +92,7 @@ export function computeOverrunBannerState(args: {
   const capEndsAtMs = resolveCapEndsAtMs({
     startsAt,
     endsAt,
+    baseEndsAt,
     extendedSeconds,
     timerEndsAt,
   });
@@ -134,6 +147,7 @@ interface OverrunBannerProps {
   callId: string | null;
   startsAt: Date | null;
   endsAt: Date | null;
+  baseEndsAt?: Date | null;
   extendedSeconds?: number;
   extensionsUsed?: number;
   isHost: boolean;
@@ -143,6 +157,7 @@ export function OverrunBanner({
   callId,
   startsAt,
   endsAt,
+  baseEndsAt = null,
   extendedSeconds = 0,
   extensionsUsed = 0,
   isHost,
@@ -164,6 +179,7 @@ export function OverrunBanner({
   const banner = computeOverrunBannerState({
     startsAt,
     endsAt,
+    baseEndsAt,
     extendedSeconds: totalExtendedSeconds,
     timerEndsAt: localExtendedSeconds > 0 ? null : session?.timer_ends_at,
     now,
