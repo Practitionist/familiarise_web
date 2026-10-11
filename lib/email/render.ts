@@ -14,11 +14,7 @@ export async function renderEmail(
     return { html, text };
   };
   if (typeof Sentry.startSpan === "function") {
-    return Sentry.startSpan(
-      { name: "email.render", op: "serialize" },
-      run,
-    );
+    return Sentry.startSpan({ name: "email.render", op: "serialize" }, run);
   }
   return run();
 }
-

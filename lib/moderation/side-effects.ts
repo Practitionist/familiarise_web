@@ -35,13 +35,14 @@ import {
   notifyAccountSuspended,
   notifyAccountBanned,
   notifyVerificationStatusChanged,
+  type StagedTrigger,
 } from "@/lib/novu";
 import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
+import { stageVerificationDecidedEmail } from "@/lib/email/senders/onboarding";
 import {
-  EMAIL_BUDGET_MS,
-  sendAccountBannedEmail,
-  sendAccountSuspendedEmail,
-} from "@/lib/email";
+  stageAccountModerationEmail,
+  stageModerationReportOutcomeEmail,
+} from "@/lib/email/senders/people";
 import {
   cancelFutureEngagementsForUser,
   type BulkCancelSummary,
@@ -49,6 +50,7 @@ import {
 import { formatReportReference } from "./report-reference";
 import { reportReasonLabel } from "@/lib/labels/report-reasons";
 import { stageBell } from "@/lib/novu/stage-bell";
+import type { StagedEmailBundleEntry } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 
@@ -86,6 +88,8 @@ export interface TransactionalEffectResult {
   reviewRemovedConsultantProfileId?: string;
   banExpires?: string | null;
   collaborationsRemoved?: CollaborationRef[];
+  stagedBells?: StagedTrigger[];
+  stagedEmails?: StagedEmailBundleEntry[];
 }
 
 export type StepStatus = "ok" | "failed" | "skipped" | "gave_up";
@@ -166,11 +170,11 @@ export function reporterIsNotifiedExpert(
 async function stageReporterDispositionBell(
   tx: Tx,
   input: ModerationSideEffectInput,
-): Promise<void> {
-  if (!input.report.reportedById) return;
+): Promise<StagedTrigger | null> {
+  if (!input.report.reportedById) return null;
   const reference = formatReportReference(input.report.id);
   const dedupeSuffix = input.actionId ?? input.actionType;
-  await stageBell(tx, {
+  return stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.MODERATION_REPORT_OUTCOME,
     recipients: [input.report.reportedById],
     payload: {
@@ -192,29 +196,97 @@ export async function applyTransactionalEffects(
   input: ModerationSideEffectInput,
 ): Promise<TransactionalEffectResult> {
   const result = await applyActionEffects(tx, input);
+  const stagedBells: StagedTrigger[] = [...(result.stagedBells ?? [])];
+  const stagedEmails: StagedEmailBundleEntry[] = [
+    ...(result.stagedEmails ?? []),
+  ];
+  const statementReason = moderationStatementOfReasons({
+    actionType: input.actionType,
+    reportId: input.report.id,
+    reportReason: input.report.reason,
+  });
+
   if (
     input.actionType === "CONTENT_REMOVED" ||
     input.actionType === "REVIEW_REMOVED"
   ) {
     const contentRemovedSuffix = input.actionId ?? input.report.id;
-    await stageBell(tx, {
+    const contentRemovedBell = await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.CONTENT_REMOVED_NOTICE,
       recipients: [input.report.targetUserId],
       payload: {
-        reason: moderationStatementOfReasons({
-          actionType: input.actionType,
-          reportId: input.report.id,
-          reportReason: input.report.reason,
-        }),
+        reason: statementReason,
+        supportUrl: "/support",
       },
       dedupeKey: `content-removed:${contentRemovedSuffix}`,
     });
+    if (contentRemovedBell) stagedBells.push(contentRemovedBell);
+    const contentRemovedRows = await stageAccountModerationEmail(tx, {
+      userId: input.report.targetUserId,
+      kind: "CONTENT_REMOVED",
+      reason: statementReason,
+      supportUrl: "/support",
+    }).catch(() => []);
+    stagedEmails.push({
+      rows: contentRemovedRows,
+      emailType: "CONTENT_REMOVED_NOTICE",
+    });
+  } else if (input.actionType === "WARNING_ISSUED") {
+    const warningRows = await stageAccountModerationEmail(tx, {
+      userId: input.report.targetUserId,
+      kind: "MODERATION_WARNING",
+      reason: statementReason,
+      supportUrl: "/support",
+    }).catch(() => []);
+    stagedEmails.push({
+      rows: warningRows,
+      emailType: "MODERATION_WARNING",
+    });
+  } else if (input.actionType === "PROFILE_UNVERIFIED") {
+    const unverifiedEmail = await stageVerificationDecidedEmail(
+      {
+        userId: input.report.targetUserId,
+        verificationId: `moderation:${input.report.id}`,
+        status: "REJECTED",
+        reason: statementReason,
+        dashboardUrl: goHref("expert", "settings"),
+      },
+      tx,
+    ).catch(() => ({ list: [] }));
+    stagedEmails.push({
+      rows: unverifiedEmail.list,
+      emailType: "VERIFICATION_DECIDED",
+    });
   }
+
   // The expert already gets the exclusion notice; one message is enough.
   if (!reporterIsNotifiedExpert(input, result)) {
-    await stageReporterDispositionBell(tx, input);
+    const outcomeBell = await stageReporterDispositionBell(tx, input);
+    if (outcomeBell) stagedBells.push(outcomeBell);
+    if (input.report.reportedById) {
+      const outcomeRows = await stageModerationReportOutcomeEmail(tx, {
+        reporterUserId: input.report.reportedById,
+        reportId: input.report.id,
+        reference: formatReportReference(input.report.id),
+        ...reportOutcomeCopy(
+          input.actionType,
+          input.report.id,
+          input.report.reason,
+        ),
+        dashboardUrl: goHref("auto", "feedbacks"),
+      }).catch(() => []);
+      stagedEmails.push({
+        rows: outcomeRows,
+        emailType: "MODERATION_REPORT_OUTCOME",
+      });
+    }
   }
-  return result;
+
+  return {
+    ...result,
+    stagedBells,
+    stagedEmails,
+  };
 }
 
 async function applyActionEffects(
@@ -421,25 +493,37 @@ async function excludeReviewFromAggregate(
   }
   await recomputeConsultantRating(tx, review.consultantProfileId);
   const expertUserId = review.consultantProfile.userId;
-  await stageBell(tx, {
+  const statementReason = moderationStatementOfReasons({
+    actionType: "REVIEW_EXCLUDED_FROM_AGGREGATE",
+    reportId: report.id,
+    reportReason: report.reason,
+  });
+  const dashboardUrl = goHref("expert", "reviews");
+  const excludedBell = await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.REVIEW_EXCLUDED_FROM_RATING,
     recipients: [expertUserId],
     payload: {
       reviewId,
       reference: formatReportReference(report.id),
-      reason: moderationStatementOfReasons({
-        actionType: "REVIEW_EXCLUDED_FROM_AGGREGATE",
-        reportId: report.id,
-        reportReason: report.reason,
-      }),
-      dashboardUrl: goHref("expert", "reviews"),
+      reason: statementReason,
+      dashboardUrl,
     },
     dedupeKey: `review-excluded:${reviewId}`,
   });
+  const excludedRows = await stageAccountModerationEmail(tx, {
+    userId: expertUserId,
+    kind: "REVIEW_EXCLUDED",
+    reason: statementReason,
+    dashboardUrl,
+  }).catch(() => []);
   return {
     reviewExcludedFromAggregate: true,
     reviewRemovedConsultantProfileId: review.consultantProfileId,
     expertUserId,
+    stagedBells: excludedBell ? [excludedBell] : [],
+    stagedEmails: [
+      { rows: excludedRows, emailType: "REVIEW_EXCLUDED_FROM_RATING" },
+    ],
   };
 }
 
@@ -468,7 +552,11 @@ export async function applyBestEffortEffects(
   transactional: TransactionalEffectResult,
 ): Promise<SideEffectSummary> {
   const { actionType } = input;
-  const summary: SideEffectSummary = { ...transactional };
+  const summary: SideEffectSummary = {
+    ...transactional,
+    stagedBells: [...(transactional.stagedBells ?? [])],
+    stagedEmails: [...(transactional.stagedEmails ?? [])],
+  };
   const errors: string[] = [];
 
   if (actionType === "USER_SUSPENDED" || actionType === "USER_BANNED") {
@@ -735,12 +823,16 @@ async function triggerModerationNotification(
     reportReason: report.reason,
   });
   switch (actionType) {
-    case "WARNING_ISSUED":
-      return notifyModerationWarning(
+    case "WARNING_ISSUED": {
+      const bell = await notifyModerationWarning(
         report.targetUserId,
         { reason: statementReason },
         dedupeKey,
+        { deferAttempt: true },
       );
+      if (bell.staged) summary.stagedBells?.push(bell.staged);
+      return bell;
+    }
     case "USER_SUSPENDED": {
       const bell = await notifyAccountSuspended(
         report.targetUserId,
@@ -750,16 +842,21 @@ async function triggerModerationNotification(
           appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         },
         dedupeKey,
+        { deferAttempt: true },
       );
-      await sendAccountSuspendedEmail(
-        {
-          userId: report.targetUserId,
-          reason: statementReason,
-          suspendedUntil: transactional.banExpires,
-          appointmentsCancelled: summary.cancellations?.engagementsCancelled,
-        },
-        EMAIL_BUDGET_MS.REQUEST,
-      );
+      if (bell.staged) summary.stagedBells?.push(bell.staged);
+      const suspendedRows = await stageAccountModerationEmail(prisma, {
+        userId: report.targetUserId,
+        kind: "SUSPENDED",
+        reason: statementReason,
+        suspendedUntil: transactional.banExpires,
+        appointmentsCancelled: summary.cancellations?.engagementsCancelled,
+        supportUrl: "/support",
+      }).catch(() => []);
+      summary.stagedEmails?.push({
+        rows: suspendedRows,
+        emailType: "ACCOUNT_SUSPENDED",
+      });
       return bell;
     }
     case "USER_BANNED": {
@@ -770,19 +867,24 @@ async function triggerModerationNotification(
           appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         },
         dedupeKey,
+        { deferAttempt: true },
       );
-      await sendAccountBannedEmail(
-        {
-          userId: report.targetUserId,
-          reason: statementReason,
-          appointmentsCancelled: summary.cancellations?.engagementsCancelled,
-        },
-        EMAIL_BUDGET_MS.REQUEST,
-      );
+      if (bell.staged) summary.stagedBells?.push(bell.staged);
+      const bannedRows = await stageAccountModerationEmail(prisma, {
+        userId: report.targetUserId,
+        kind: "BANNED",
+        reason: statementReason,
+        appointmentsCancelled: summary.cancellations?.engagementsCancelled,
+        supportUrl: "/support",
+      }).catch(() => []);
+      summary.stagedEmails?.push({
+        rows: bannedRows,
+        emailType: "ACCOUNT_BANNED",
+      });
       return bell;
     }
-    case "PROFILE_UNVERIFIED":
-      return notifyVerificationStatusChanged(
+    case "PROFILE_UNVERIFIED": {
+      const bell = await notifyVerificationStatusChanged(
         report.targetUserId,
         {
           status: "REJECTED",
@@ -790,7 +892,11 @@ async function triggerModerationNotification(
           dashboardUrl: goHref("expert", "settings"),
         },
         dedupeKey,
+        { deferAttempt: true },
       );
+      if (bell.staged) summary.stagedBells?.push(bell.staged);
+      return bell;
+    }
     case "NO_ACTION":
     case "USER_REINSTATED":
     case "REVIEW_REPLY_REMOVED":

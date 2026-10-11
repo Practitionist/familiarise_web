@@ -38,6 +38,15 @@ import { runJob } from "@/lib/observability/job-sentry";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import { attemptStaged } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import { attemptTrigger } from "@/lib/novu";
+import { notifyOrgContractStatusChanged } from "@/lib/novu/org-workflows";
+import { getAppUrl } from "@/lib/url";
 
 const BATCH_SIZE = 500;
 
@@ -69,6 +78,7 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
       paymentTermsDays: true,
       autoRenew: true,
       rateCardId: true,
+      organization: { select: { name: true } },
     },
   });
   stats.scanned = due.length;
@@ -188,14 +198,62 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
               },
             });
 
-            return { renewed: true as const, successorId: successor.id };
+            const orgName = c.organization?.name ?? "Organization";
+            const dashboardUrl = `${getAppUrl()}/dashboard/organization/${c.organizationId}/billing`;
+            const operatorRows = tx.membership?.findMany
+              ? await tx.membership.findMany({
+                  where: {
+                    organizationId: c.organizationId,
+                    status: "ACTIVE",
+                    role: { in: ["OWNER", "MAINTAINER"] },
+                  },
+                  select: { userId: true },
+                })
+              : [];
+            const stagedBells =
+              (await notifyOrgContractStatusChanged(
+                c.organizationId,
+                {
+                  orgName,
+                  status: "RENEWED",
+                  effectiveDate: newTo.toISOString(),
+                  dashboardUrl,
+                },
+                tx.notificationOutbox ? { tx } : undefined,
+              )) ?? [];
+            const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+              recipientUserIds: operatorRows.map((r) => r.userId),
+              entityId: successor.id,
+              kind: "CONTRACT_RENEWED",
+              orgName,
+              effectiveDate: newTo,
+              dashboardUrl,
+            });
+
+            return {
+              renewed: true as const,
+              successorId: successor.id,
+              stagedBells,
+              stagedEmails,
+            };
           },
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
         ),
       );
 
-      if (result.renewed) stats.renewed += 1;
-      else stats.skipped += 1;
+      if (result.renewed) {
+        stats.renewed += 1;
+        for (const bell of result.stagedBells) await attemptTrigger(bell);
+        if (result.stagedEmails.length > 0) {
+          await attemptStaged(
+            result.stagedEmails,
+            ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+            EMAIL_BUDGET_MS.JOB,
+          );
+        }
+      } else {
+        stats.skipped += 1;
+      }
     } catch (err) {
       // supersededByContractId @unique tripped — another replica already
       // renewed this contract. Idempotent; skip cleanly.

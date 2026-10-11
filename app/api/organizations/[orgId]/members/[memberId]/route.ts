@@ -44,6 +44,8 @@ import {
   stageOrgMembershipChangedEmail,
   type StagedOnboardingEmail,
 } from "@/lib/email";
+import { notifyOrgRoleChanged } from "@/lib/novu/org-workflows";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { getAppUrl } from "@/lib/url";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
@@ -453,6 +455,7 @@ export async function PATCH(
   }
 
   let stagedRoleEmail: StagedOnboardingEmail | null = null;
+  let stagedRoleBells: StagedTrigger[] = [];
 
   try {
     const result = await withSerializableRetry(() =>
@@ -523,6 +526,11 @@ export async function PATCH(
           });
 
           if (roleChanged) {
+            const actorName =
+              access.session.user.name ??
+              access.session.user.email ??
+              "An operator";
+            const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/home`;
             stagedRoleEmail = await stageOrgMembershipChangedEmail(
               {
                 userId: current.userId,
@@ -531,14 +539,26 @@ export async function PATCH(
                 orgName: access.org.name,
                 roleBefore: current.role,
                 roleAfter: patch.role,
-                actorName:
-                  access.session.user.name ??
-                  access.session.user.email ??
-                  "An operator",
-                dashboardUrl: `${getAppUrl()}/dashboard/organization/${orgId}/home`,
+                actorName,
+                dashboardUrl,
               },
               tx,
             );
+            if (patch.role !== undefined) {
+              stagedRoleBells =
+                (await notifyOrgRoleChanged(
+                  current.userId,
+                  {
+                    organizationId: orgId,
+                    orgName: access.org.name,
+                    previousRole: current.role,
+                    newRole: patch.role,
+                    changedByName: actorName,
+                    dashboardUrl,
+                  },
+                  tx.notificationOutbox ? { tx } : undefined,
+                )) ?? [];
+            }
           }
 
           return updated;
@@ -547,12 +567,13 @@ export async function PATCH(
       ),
     );
 
-    if (stagedRoleEmail) {
+    if (stagedRoleEmail || stagedRoleBells.length > 0) {
       const staged = stagedRoleEmail;
-      scheduleAfter(
-        () => attemptOnboardingEmail(staged),
-        "member.onboarding-email",
-      );
+      const bells = stagedRoleBells;
+      scheduleAfter(async () => {
+        for (const row of bells) await attemptTrigger(row);
+        if (staged) await attemptOnboardingEmail(staged);
+      }, "member.onboarding-email");
     }
 
     return NextResponse.json({ membership: result });

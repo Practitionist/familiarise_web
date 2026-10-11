@@ -204,7 +204,30 @@ To protect the 5,000/month Sentry error quota:
 
 ## Deprecated & Superseded Approaches
 
-- **Post-Commit Fire-and-Forget Notifications & In-Transaction React SSR**: Previously, routes rendered React Email inside `Serializable` transactions or fired un-awaited Novu calls post-commit that dropped silently on container freeze; superseded by `prepareRecipientEmails` pre-rendering outside `tx`, `stage()` + `stageBell(tx, ...)` inside `tx`, and `flushNotificationsAfter` concurrent post-response settlement.
-- **Immediate `nextRetryAt: NOW()` & Content-Hashed Resend Keys (`to + subject + html`)**: Previously allowed cron sweeps to race inline sends and caused Resend's 24-hour key deduplication to drop repeat identical transactional emails; superseded by 60-second inline leases (`nextRetryAt = now + 60s`) and `<EMAIL_TYPE>/failed-email/<row.id>` keys.
-- **Stripped `List-Unsubscribe` Retry Headers & Mutating `GET /api/waitlist/unsubscribe`**: Previously dropped RFC 8058 headers on retried rows and unsubscribed waitlist readers on `GET`; superseded by stateless `reconstructUnsubscribeHeaders(row)` and confirmation-only `GET /api/waitlist/unsubscribe`.
-- **Fail-Open `buildSubscriberCustomData` & Non-Idempotent Subscriber PATCH**: Previously caught DB errors during preference sync (reverting opted-out users to `masterEnabled: true`) and 404ed on unsynced users; superseded by fail-closed error propagation and idempotent `novu.subscribers.create(...)`.
+```text
++=======================================================================================+
+|                LEGACY ASYMMETRIC DUAL-PATH HLD (Pre-Outbox Unification)               |
++=======================================================================================+
+  [API Route / Webhook / Cron]
+     |
+     +---> PATH A: In-App Bell (`lib/novu/`)
+     |       - Some routes staged `NotificationOutbox`; `handlePaymentSuccess` called
+     |         `notify*` post-commit outside `tx` (lost on container freeze).
+     |       - `stageBell(tx)` bypassed `NotificationPreference` & `notificationRoutingMode`.
+     |       - `<Inbox />` connected without `subscriberHash` HMAC verification.
+     |
+     +---> PATH B: Email (`lib/email/` -> Resend)
+             - React SSR ran inside `Serializable` `tx` or blocked routes for 5-23s
+               while holding Redis `lockConsulteeBooking` / `lockSlotBooking` mutexes.
+             - `FailedEmail` stamped immediate `nextRetryAt: NOW()` (cron race) + hashed
+               `to+subject+html` (24h Resend idempotency cache dropped repeat notices).
+             - `retry-failed-emails` dropped RFC 8058 `List-Unsubscribe` headers on retry,
+               while `GET /api/waitlist/unsubscribe` mutated DB state on bot prefetch.
+```
+
+- **Removed Accidental Operational Asymmetries**:
+  - **Post-Commit Fire-and-Forget vs. In-Tx SSR**: Replaced mixed staging with `prepareRecipientEmails` outside `tx`, atomic `stage()` + policy-aware `stageBell(tx, ...)` (`60s` inline lease) inside `tx`, and `flushNotificationsAfter` concurrent settlement.
+  - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and confirmation-only `GET /api/waitlist/unsubscribe`.
+  - **Fail-Open Subscriber Sync**: Replaced catch-all defaults (`masterEnabled: true`) and 404-prone PATCH calls with fail-closed DB propagation and idempotent `novu.subscribers.create(...)`.
+- **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
+  - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.

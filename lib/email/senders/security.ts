@@ -9,7 +9,13 @@ import SecurityEventEmail, {
   type SecurityEvent,
 } from "@/emails/auth/SecurityEventEmail";
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
-import { defineFixedBudgetEmailSender, greet, whenText } from "./shared";
+import {
+  defineFixedBudgetEmailSender,
+  defineLifecycleStager,
+  greet,
+  whenText,
+  type RecipientEmailSpec,
+} from "./shared";
 
 export type { SecurityEvent };
 
@@ -19,28 +25,39 @@ export interface SecurityEventEmailArgs {
   occurredAt: Date;
 }
 
+function buildSecurityEventSpec({
+  userId,
+  event,
+  occurredAt,
+}: SecurityEventEmailArgs): { userIds: string[]; spec: RecipientEmailSpec } {
+  return {
+    userIds: [userId],
+    spec: {
+      emailType: "SECURITY_EVENT",
+      category: null,
+      from: SENDERS.security,
+      entityRef: `user:${userId}`,
+      subject: () => securityEventSubject(event),
+      render: (r) =>
+        React.createElement(SecurityEventEmail, {
+          recipientName: greet(r),
+          event,
+          occurredAtText: whenText(occurredAt, r.zone),
+          lockedUntilText:
+            event.kind === "two-factor-locked"
+              ? whenText(event.lockedUntil, r.zone)
+              : undefined,
+          supportEmail: supportEmail(),
+        }),
+    },
+  };
+}
+
 export const sendSecurityNoticeEmail =
   defineFixedBudgetEmailSender<SecurityEventEmailArgs>(
     EMAIL_BUDGET_MS.AUTH,
-    ({ userId, event, occurredAt }) => ({
-      userIds: [userId],
-      spec: {
-        emailType: "SECURITY_EVENT",
-        category: null,
-        from: SENDERS.security,
-        entityRef: `user:${userId}`,
-        subject: () => securityEventSubject(event),
-        render: (r) =>
-          React.createElement(SecurityEventEmail, {
-            recipientName: greet(r),
-            event,
-            occurredAtText: whenText(occurredAt, r.zone),
-            lockedUntilText:
-              event.kind === "two-factor-locked"
-                ? whenText(event.lockedUntil, r.zone)
-                : undefined,
-            supportEmail: supportEmail(),
-          }),
-      },
-    }),
+    buildSecurityEventSpec,
   );
+
+export const stageSecurityNoticeEmail =
+  defineLifecycleStager<SecurityEventEmailArgs>(buildSecurityEventSpec);

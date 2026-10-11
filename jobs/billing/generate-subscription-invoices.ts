@@ -37,6 +37,10 @@ import {
   notifyOrgLicenseRenewalUpcoming,
   notifyOrgInvoiceIssued,
 } from "@/lib/novu/org-workflows";
+import {
+  sendOrgBillingEmail,
+  sendOrgOperationalEmail,
+} from "@/lib/email/senders/money";
 import { getAppUrl } from "@/lib/url";
 import { Currency, OrgInvoiceStatus, Prisma } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -253,15 +257,41 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         generated++;
         const origin = getAppUrl();
         const orgId = sub.contract.organization.id;
-        await notifyOrgInvoiceIssued(orgId, {
-          invoiceNumber: result.invoiceNumber,
-          orgName: sub.contract.organization.name,
-          totalPaise: result.totalPaise,
-          currency: Currency.INR,
-          dueDate: dueDate.toISOString(),
-          dashboardUrl: `${origin}/dashboard/organization/${orgId}/billing`,
-          pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
-        }).catch((err) =>
+        const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
+        const ownerRows = prisma.membership?.findMany
+          ? await prisma.membership.findMany({
+              where: {
+                organizationId: orgId,
+                status: "ACTIVE",
+                role: "OWNER",
+              },
+              select: { userId: true },
+            })
+          : [];
+        const ownerUserIds = ownerRows.map((r) => r.userId);
+        await Promise.all([
+          notifyOrgInvoiceIssued(orgId, {
+            invoiceNumber: result.invoiceNumber,
+            orgName: sub.contract.organization.name,
+            totalPaise: result.totalPaise,
+            currency: Currency.INR,
+            dueDate: dueDate.toISOString(),
+            dashboardUrl,
+            pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${result.invoiceId}/pdf`,
+          }),
+          sendOrgBillingEmail({
+            recipientUserIds: ownerUserIds,
+            organizationId: orgId,
+            orgName: sub.contract.organization.name,
+            kind: "INVOICE_ISSUED",
+            amountPaise: result.totalPaise,
+            currency: Currency.INR,
+            invoiceId: result.invoiceId,
+            invoiceNumber: result.invoiceNumber,
+            dueDate,
+            dashboardUrl,
+          }),
+        ]).catch((err) =>
           console.error("[cron] notifyOrgInvoiceIssued failed:", err),
         );
       } else {
@@ -377,15 +407,41 @@ async function sendRenewalReminders(now: Date): Promise<number> {
     if (claimed.count === 0) continue;
 
     try {
-      await notifyOrgLicenseRenewalUpcoming(sub.contract.organization.id, {
-        orgName: sub.contract.organization.name,
-        cycle: sub.cycle,
-        renewalDate: sub.nextInvoiceDate.toISOString(),
-        daysUntilRenewal,
-        expectedTotalPaise,
-        currency: "INR",
-        dashboardUrl: `${getAppUrl()}/dashboard/organization/${sub.contract.organization.id}/billing`,
-      });
+      const orgId = sub.contract.organization.id;
+      const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/billing`;
+      const ownerRows = prisma.membership?.findMany
+        ? await prisma.membership.findMany({
+            where: {
+              organizationId: orgId,
+              status: "ACTIVE",
+              role: "OWNER",
+            },
+            select: { userId: true },
+          })
+        : [];
+      await Promise.all([
+        notifyOrgLicenseRenewalUpcoming(orgId, {
+          orgName: sub.contract.organization.name,
+          cycle: sub.cycle,
+          renewalDate: sub.nextInvoiceDate.toISOString(),
+          daysUntilRenewal,
+          expectedTotalPaise,
+          currency: "INR",
+          dashboardUrl,
+        }),
+        sendOrgOperationalEmail({
+          recipientUserIds: ownerRows.map((r) => r.userId),
+          organizationId: orgId,
+          orgName: sub.contract.organization.name,
+          kind: "LICENSE_RENEWAL_UPCOMING",
+          expectedTotalPaise,
+          currency: "INR",
+          renewalDate: sub.nextInvoiceDate,
+          daysUntilRenewal,
+          cycle: sub.cycle,
+          actionUrl: dashboardUrl,
+        }),
+      ]);
       sent++;
     } catch (err) {
       // Novu non-throwing already, but belt-and-braces — the claim

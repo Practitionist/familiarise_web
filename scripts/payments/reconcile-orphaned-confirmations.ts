@@ -394,8 +394,10 @@ function orphanPaymentWhere(graceCutoff: Date, windowCutoff: Date) {
 export async function reconcileOrphanedPayments(
   opts: { graceMinutes?: number; limit?: number } = {},
 ): Promise<OrphanedPaymentHealResult> {
-  return withCronLock("reconcile-orphaned-payments", { failMode: "closed" }, () =>
-    reconcileOrphanedPaymentsUnlocked(opts),
+  return withCronLock(
+    "reconcile-orphaned-payments",
+    { failMode: "closed" },
+    () => reconcileOrphanedPaymentsUnlocked(opts),
   );
 }
 
@@ -570,7 +572,11 @@ async function healOneOrphan(
         await withSerializableRetry(() =>
           prisma.$transaction(
             async (tx) => {
-              await confirmExistingAppointment(tx, appointmentId, payment.userId);
+              await confirmExistingAppointment(
+                tx,
+                appointmentId,
+                payment.userId,
+              );
             },
             {
               isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

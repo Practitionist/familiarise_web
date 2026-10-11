@@ -17,10 +17,18 @@ import {
   DisputeNoticeEmail,
   type DisputeNoticeKind,
 } from "@/emails/payments/DisputeNoticeEmail";
+import OrgDunningEmail, {
+  orgOperationalEmailSubject,
+  type OrgOperationalEmailKind,
+} from "@/emails/payments/OrgDunningEmail";
 import {
   PayoutStatusEmail,
   type PayoutStatusKind,
 } from "@/emails/payments/PayoutStatusEmail";
+import ReferralBonusEmail, {
+  referralBonusSubject,
+  type ReferralBonusEmailKind,
+} from "@/emails/payments/ReferralBonusEmail";
 import { RefundFailedEmail } from "@/emails/payments/RefundFailedEmail";
 import { RefundProcessedEmail } from "@/emails/payments/RefundProcessedEmail";
 import { getAppUrl } from "@/lib/url";
@@ -539,3 +547,152 @@ export const sendOrgBillingEmail =
 
 export const stageOrgBillingEmail =
   defineLifecycleStager<OrgBillingEmailArgs>(buildOrgBillingEmail);
+
+// ── Org operational & dunning threshold notices ─────────────────────────────
+
+export interface OrgOperationalEmailArgs {
+  recipientUserIds: string[];
+  organizationId: string;
+  orgName: string;
+  kind: OrgOperationalEmailKind;
+  programName?: string;
+  assigneeName?: string;
+  amountPaise?: Paise;
+  expectedTotalPaise?: Paise;
+  currency?: string;
+  renewalDate?: Date | string;
+  expiresAt?: Date | string;
+  daysUntilRenewal?: number;
+  cycle?: string;
+  engagementsUsed?: number;
+  cap?: number;
+  usedPct?: number;
+  actionUrl: string;
+}
+
+function buildOrgOperationalEmail(args: OrgOperationalEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const currency = args.currency ?? "INR";
+  const amountText =
+    args.amountPaise !== undefined && args.amountPaise !== null
+      ? money(args.amountPaise, currency)
+      : undefined;
+  const expectedTotalText =
+    args.expectedTotalPaise !== undefined && args.expectedTotalPaise !== null
+      ? money(args.expectedTotalPaise, currency)
+      : undefined;
+  const category =
+    args.kind === "MEMBER_OVERAGE_TIMED_OUT" ? "orgBilling" : "orgProgram";
+
+  return {
+    userIds: args.recipientUserIds,
+    spec: {
+      emailType: `ORG_${args.kind}`,
+      category,
+      from: SENDERS.finance,
+      entityRef: `org:${args.organizationId}:${args.kind.toLowerCase()}`,
+      subject: () =>
+        orgOperationalEmailSubject({
+          kind: args.kind,
+          orgName: args.orgName,
+          programName: args.programName,
+          daysUntilRenewal: args.daysUntilRenewal,
+        }),
+      render: (r: EmailRecipient): ReactElement =>
+        OrgDunningEmail({
+          kind: args.kind,
+          recipientName: greet(r),
+          orgName: args.orgName,
+          programName: args.programName,
+          assigneeName: args.assigneeName,
+          amountText,
+          expectedTotalText,
+          renewalDateText: args.renewalDate
+            ? dateText(args.renewalDate, r.zone)
+            : undefined,
+          expiresAtText: args.expiresAt
+            ? dateText(args.expiresAt, r.zone)
+            : undefined,
+          daysUntilRenewal: args.daysUntilRenewal,
+          cycle: args.cycle,
+          engagementsUsed: args.engagementsUsed,
+          cap: args.cap,
+          usedPct: args.usedPct,
+          actionUrl: args.actionUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const sendOrgOperationalEmail =
+  defineBudgetedEmailSender<OrgOperationalEmailArgs>(
+    buildOrgOperationalEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.JOB,
+  );
+
+export const stageOrgOperationalEmail =
+  defineLifecycleStager<OrgOperationalEmailArgs>(buildOrgOperationalEmail);
+
+// ── Referral bonus & welcome credits ────────────────────────────────────────
+
+export interface ReferralBonusEmailArgs {
+  userId: string;
+  referralId: string;
+  kind: ReferralBonusEmailKind;
+  counterpartyName?: string;
+  amountPaise: Paise;
+  remainingPaise?: Paise;
+  currency?: string;
+  appointmentType?: string;
+  dashboardUrl?: string;
+}
+
+function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const currency = args.currency ?? "INR";
+  const amountText = money(args.amountPaise, currency);
+  const remainingText =
+    args.remainingPaise !== undefined && args.remainingPaise !== null
+      ? money(args.remainingPaise, currency)
+      : undefined;
+  const dashboardUrl =
+    args.dashboardUrl ?? `${getAppUrl()}${goHref("client", "payments")}`;
+
+  return {
+    userIds: [args.userId],
+    spec: {
+      emailType: `REFERRAL_${args.kind}`,
+      category: "payments",
+      from: SENDERS.payments,
+      entityRef: `referral:${args.referralId}:${args.kind.toLowerCase()}`,
+      subject: () => referralBonusSubject({ kind: args.kind, amountText }),
+      render: (r: EmailRecipient): ReactElement =>
+        ReferralBonusEmail({
+          kind: args.kind,
+          recipientName: greet(r),
+          counterpartyName: args.counterpartyName,
+          amountText,
+          remainingText,
+          appointmentType: args.appointmentType,
+          dashboardUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const sendReferralBonusEmail =
+  defineBudgetedEmailSender<ReferralBonusEmailArgs>(
+    buildReferralBonusEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.REQUEST,
+  );
+
+export const stageReferralBonusEmail =
+  defineLifecycleStager<ReferralBonusEmailArgs>(buildReferralBonusEmail);

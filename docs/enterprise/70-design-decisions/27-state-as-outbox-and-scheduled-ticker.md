@@ -108,6 +108,14 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
 
 ## Deprecated & Superseded Approaches
 
+```text
+  [API / Webhook Producer]
+     ├── Path A (Bell): mixed `NotificationOutbox` vs post-commit floating `notify*()`,
+     │                  `stageBell()` skipped preference/routing/quiet-hours filtering.
+     └── Path B (Email): inline `await deliver()` blocking HTTP + Redis slot locks,
+                         `FailedEmail` due at `NOW()` (racing cron), body-hash Resend key,
+                         and retried rows stripped of RFC 8058 `List-Unsubscribe` headers.
+```
+
 - **Unstaggered Ticker Thundering Herd (`minute % every < 5` without offsets)**: Previously fired 18+ targets simultaneously at `:00`/`:30` while leaving `:05, :25, :35, :55` idle, exhausting `PG_POOL_MAX=1` connections; superseded by deterministic `TARGET_OFFSET_MINUTES` capping concurrent targets at `<= 8` per 5-minute tick.
-- **Immediate `nextRetryAt: NOW()` & Content-Hashed Resend Idempotency Keys**: Staging rows due immediately allowed cron ticks to double-send inline attempts, while hashing `to + subject + html` caused Resend's 24-hour idempotency cache to silently drop legitimate repeat transactional emails; superseded by the 60s inline lease window and `<EMAIL_TYPE>/failed-email/<row.id>` row keys.
-- **In-Transaction React Email SSR & Stripped Retry Unsubscribe Headers**: Rendering React Email inside `Serializable` transactions bloated lock hold times, and omitting header reconstruction stripped RFC 8058 one-click headers on retries; superseded by `prepareRecipientEmails` pre-rendering and stateless `reconstructUnsubscribeHeaders(row)`.
+- **Removed Reliability Asymmetries vs. Retained Provider Split**: Eliminated mixed outbox atomicity, immediate `nextRetryAt: NOW()` inline/cron races, 24h payload-hash Resend collisions (`<EMAIL_TYPE>/failed-email/<row.id>`), and stripped retry headers (`reconstructUnsubscribeHeaders`), while deliberately keeping Novu (WebSocket `<Inbox />`) and Resend (direct React Email + `EmailEvent` Svix telemetry) as independent delivery planes underneath one unified Postgres outbox contract.

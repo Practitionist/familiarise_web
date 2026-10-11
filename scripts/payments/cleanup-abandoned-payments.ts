@@ -49,6 +49,8 @@ import {
   PAYMENT_LINK_REMINDER_EMAIL_TYPE,
   sendPaymentLinkEmail,
 } from "@/lib/email";
+import { notifyPaymentLink } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { APPROVAL_PAYMENT_REMINDER_MS } from "@/lib/payments/constants";
 
 /**
@@ -1287,6 +1289,29 @@ async function remindApprovalPaymentsDueUnlocked(
           // Sent or awaiting the relay: the row exists, so the once-guard
           // holds. A send with no row would repeat next pass, so it is not
           // counted as done.
+          const bellResult = await notifyPaymentLink(
+            candidate.consultee.id,
+            {
+              paymentId: candidate.payment.id,
+              appointmentId: candidate.requestId,
+              amount: candidate.payment.amount,
+              currency: candidate.payment.currency,
+              consultantName: candidate.consultantName,
+              appointmentType:
+                candidate.kind === "consultation"
+                  ? "CONSULTATION"
+                  : "SUBSCRIPTION",
+              paymentUrl: candidate.pendingPaymentUrl,
+              expiresAt: candidate.payment.expiresAt,
+              reminder: true,
+            },
+            `payment-link-remind:${candidate.payment.id}:auto`,
+            { deferAttempt: true },
+          ).catch(() => null);
+          await flushNotificationsAfter(
+            { bells: [bellResult?.staged] },
+            "cleanup-abandoned-payments.remind",
+          );
           result.cleanedCount++;
         } else {
           result.errorCount++;

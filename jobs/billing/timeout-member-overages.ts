@@ -22,6 +22,7 @@
 
 import "dotenv/config";
 import prisma from "@/lib/prisma";
+import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
 import { notifyMemberOverageTimedOut } from "@/lib/novu/org-workflows";
 import { restoreOverageBaseCarve } from "@/lib/payments/billing/overage-base-carve";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
@@ -63,7 +64,9 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
             select: {
               name: true,
               contract: {
-                select: { organization: { select: { name: true } } },
+                select: {
+                  organization: { select: { id: true, name: true } },
+                },
               },
             },
           },
@@ -115,14 +118,28 @@ export async function runTimeoutMemberOverages(): Promise<TimeoutStats> {
       });
     }
 
+    const payUrl = `${getAppUrl()}/dashboard/overage?charge=${ev.id}`;
     // Fire-and-forget — committed state, no DB writes in the notify path.
-    await notifyMemberOverageTimedOut(ev.programAssignment.membership.userId, {
-      orgName: ev.programAssignment.program.contract.organization.name,
-      programName: ev.programAssignment.program.name,
-      amountPaise: ev.marginalPaise,
-      currency: ev.currency,
-      payUrl: `${getAppUrl()}/dashboard/overage?charge=${ev.id}`,
-    }).catch((err) =>
+    await Promise.all([
+      notifyMemberOverageTimedOut(ev.programAssignment.membership.userId, {
+        orgName: ev.programAssignment.program.contract.organization.name,
+        programName: ev.programAssignment.program.name,
+        amountPaise: ev.marginalPaise,
+        currency: ev.currency,
+        payUrl,
+      }),
+      sendOrgOperationalEmail({
+        recipientUserIds: [ev.programAssignment.membership.userId],
+        organizationId:
+          ev.programAssignment.program.contract.organization.id ?? "",
+        orgName: ev.programAssignment.program.contract.organization.name,
+        kind: "MEMBER_OVERAGE_TIMED_OUT",
+        programName: ev.programAssignment.program.name,
+        amountPaise: ev.marginalPaise,
+        currency: ev.currency,
+        actionUrl: payUrl,
+      }),
+    ]).catch((err) =>
       console.error("[timeout-member-overages] notify failed:", err),
     );
   }

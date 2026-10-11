@@ -22,6 +22,7 @@ import type { NovuWorkflowId } from "./templates/types";
 import {
   NOVU_WORKFLOWS,
   type AccountBannedPayload,
+  type AccountSecurityNoticePayload,
   type AccountSuspendedInput,
   type AccountSuspendedPayload,
   type AnnouncementPayload,
@@ -37,9 +38,11 @@ import {
   type BookingRequestPayload,
   type CollaboratorAcceptedPayload,
   type CollaboratorDeclinedPayload,
+  type CollaboratorInviteExpiredPayload,
   type CollaboratorInvitedPayload,
   type CollaboratorRemovedPayload,
   type CollaboratorWithdrawnPayload,
+  type ComplianceAlertPayload,
   type ConsultantApplicationPayload,
   type DisputeInput,
   type DisputePayload,
@@ -60,6 +63,10 @@ import {
   type PayoutPayload,
   type RecordingFailedPayload,
   type RecordingPayload,
+  type RefereeWelcomeBonusInput,
+  type RefereeWelcomeBonusPayload,
+  type ReferralBonusEarnedInput,
+  type ReferralBonusEarnedPayload,
   type ReferralCreditsAppliedInput,
   type ReferralCreditsAppliedPayload,
   type RefundInput,
@@ -821,6 +828,57 @@ export const notifyReferralCreditsApplied = defineSingleNotifier(
   referralCreditsAppliedWire,
 );
 
+export const notifyReferralBonusEarned =
+  defineSingleNotifier<ReferralBonusEarnedInput>(
+    W.REFERRAL_BONUS_EARNED,
+    (p): ReferralBonusEarnedPayload => ({
+      refereeName: p.refereeName,
+      bonusAmount:
+        typeof p.bonusAmount === "number"
+          ? formatNotificationMoney(p.bonusAmount, p.currency ?? "INR")
+          : p.bonusAmount,
+      ...(typeof p.bonusAmount === "number"
+        ? { bonusAmountPaise: p.bonusAmount }
+        : {}),
+      ...(p.currency ? { currency: p.currency } : {}),
+      dashboardUrl: p.dashboardUrl,
+    }),
+  );
+
+export const notifyRefereeWelcomeBonus =
+  defineSingleNotifier<RefereeWelcomeBonusInput>(
+    W.REFEREE_WELCOME_BONUS,
+    (p): RefereeWelcomeBonusPayload => ({
+      referrerName: p.referrerName,
+      bonusAmount:
+        typeof p.bonusAmount === "number"
+          ? formatNotificationMoney(p.bonusAmount, p.currency ?? "INR")
+          : p.bonusAmount,
+      ...(typeof p.bonusAmount === "number"
+        ? { bonusAmountPaise: p.bonusAmount }
+        : {}),
+      ...(p.currency ? { currency: p.currency } : {}),
+      dashboardUrl: p.dashboardUrl,
+    }),
+  );
+
+export function notifyAccountSecurityNotice(
+  userIds: string | string[],
+  payload: AccountSecurityNoticePayload,
+  dedupeKeyOrOpts?: string | TriggerOptions,
+  opts?: TriggerOptions,
+): Promise<TriggerResult[]> {
+  const r = resolveTriggerArgs(dedupeKeyOrOpts, opts);
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  return triggerForMultiple(
+    W.ACCOUNT_SECURITY_NOTICE,
+    ids,
+    payload,
+    r.dedupeKey,
+    r.opts,
+  );
+}
+
 // Collaborators
 export const notifyCollaboratorInvited =
   defineSingleNotifier<CollaboratorInvitedPayload>(W.COLLABORATOR_INVITED);
@@ -833,7 +891,24 @@ export const notifyCollaboratorRemoved =
 export const notifyCollaboratorWithdrawn =
   defineSingleNotifier<CollaboratorWithdrawnPayload>(W.COLLABORATOR_WITHDRAWN);
 
-// Maintenance
+export function notifyCollaboratorInviteExpired(
+  userIds: string | string[],
+  payload: CollaboratorInviteExpiredPayload,
+  dedupeKeyOrOpts?: string | TriggerOptions,
+  opts?: TriggerOptions,
+): Promise<TriggerResult[]> {
+  const r = resolveTriggerArgs(dedupeKeyOrOpts, opts);
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  return triggerForMultiple(
+    W.COLLABORATOR_INVITE_EXPIRED,
+    ids,
+    payload,
+    r.dedupeKey,
+    r.opts,
+  );
+}
+
+// Maintenance & Compliance
 export const notifyMaintenanceScheduled = defineBroadcastNotifier(
   W.MAINTENANCE_SCHEDULED,
   maintenanceWire,
@@ -846,3 +921,28 @@ export const notifyMaintenanceEnded = defineBroadcastNotifier(
   W.MAINTENANCE_ENDED,
   maintenanceWire,
 );
+
+export function notifyComplianceAlert(
+  userIds: string | string[],
+  payload: ComplianceAlertPayload,
+  dedupeKeyOrOpts?: string | TriggerOptions,
+  opts?: TriggerOptions,
+): Promise<TriggerResult[]> {
+  const r = resolveTriggerArgs(dedupeKeyOrOpts, opts);
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  const formattedDue = payload.dueDate
+    ? formatNotificationDateTime(payload.dueDate, DEFAULT_NOTIFICATION_TIMEZONE)
+    : undefined;
+  return triggerForMultiple(
+    W.COMPLIANCE_DEADLINE_ALERT,
+    ids,
+    {
+      ...payload,
+      ...(formattedDue
+        ? { dueDate: formattedDue, dueDateIso: payload.dueDate }
+        : {}),
+    },
+    r.dedupeKey,
+    r.opts,
+  );
+}

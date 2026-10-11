@@ -316,54 +316,60 @@ export async function mintApprovalPaymentAfterCommit(args: {
 
   const expiresAt = new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS);
   const consultantName = plan.consultantProfile.user.name || "Consultant";
-  const bellResult = await notifyPaymentLink(
-    row.requestedBy.user.id,
-    {
-      ...notificationScope(
-        row.appointment?.organizationId,
-        row.appointment?.organization?.name,
-      ),
-      paymentId: paymentResult.paymentId,
-      appointmentId: row.appointment?.id ?? row.id,
-      amount: paymentResult.amount,
-      currency: paymentResult.currency,
-      consultantName,
-      appointmentType:
-        args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
-      planTitle: plan.title,
-      paymentUrl: email.emailPayUrl(paymentResult.paymentId, paymentUrl),
-      expiresAt,
-      reminder: false,
-    },
-    `payment-link:${paymentResult.paymentId}`,
-    { deferAttempt: true },
-  ).catch(() => null);
+  const [bellResult] = await Promise.all([
+    notifyPaymentLink(
+      row.requestedBy.user.id,
+      {
+        ...notificationScope(
+          row.appointment?.organizationId,
+          row.appointment?.organization?.name,
+        ),
+        paymentId: paymentResult.paymentId,
+        appointmentId: row.appointment?.id ?? row.id,
+        amount: paymentResult.amount,
+        currency: paymentResult.currency,
+        consultantName,
+        appointmentType:
+          args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+        planTitle: plan.title,
+        paymentUrl: email.emailPayUrl(paymentResult.paymentId, paymentUrl),
+        expiresAt,
+        reminder: false,
+      },
+      `payment-link:${paymentResult.paymentId}`,
+      { deferAttempt: true },
+    ).catch(() => null),
+    email
+      .sendPaymentLinkEmail(
+        {
+          email: row.requestedBy.user.email || "",
+          name: row.requestedBy.user.name || "User",
+          consultantName,
+          appointmentType: args.kind,
+          amount: paymentResult.amount,
+          currency: paymentResult.currency,
+          paymentUrl,
+          expiresAt,
+          paymentId: paymentResult.paymentId,
+        },
+        { deferAttempt: true },
+      )
+      .then(() => {
+        console.log(`📧 Payment link email staged for ${args.kind} ${row.id}`);
+      })
+      .catch((emailError) => {
+        // The link is live on the dashboard via pendingPaymentUrl; mail is best-effort.
+        console.error(
+          `⚠️ Failed to stage payment link email for ${args.kind} ${row.id}:`,
+          emailError instanceof Error ? emailError.message : "Unknown error",
+        );
+        report(emailError);
+      }),
+  ]);
   await flushNotificationsAfter(
     { bells: [bellResult?.staged] },
     "approve-request.payment-link",
   );
-
-  try {
-    await email.sendPaymentLinkEmail({
-      email: row.requestedBy.user.email || "",
-      name: row.requestedBy.user.name || "User",
-      consultantName,
-      appointmentType: args.kind,
-      amount: paymentResult.amount,
-      currency: paymentResult.currency,
-      paymentUrl,
-      expiresAt,
-      paymentId: paymentResult.paymentId,
-    });
-    console.log(`📧 Payment link email sent for ${args.kind} ${row.id}`);
-  } catch (emailError) {
-    // The link is live on the dashboard via pendingPaymentUrl; mail is best-effort.
-    console.error(
-      `⚠️ Failed to send payment link email for ${args.kind} ${row.id}:`,
-      emailError instanceof Error ? emailError.message : "Unknown error",
-    );
-    report(emailError);
-  }
   return {
     status: "minted",
     paymentUrl,

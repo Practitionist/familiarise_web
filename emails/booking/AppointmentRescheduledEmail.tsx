@@ -9,12 +9,7 @@ import {
 } from "@/emails/components/styles";
 
 export type RescheduleEmailOutcome =
-  | "PROPOSED"
-  | "MOVED"
-  | "DECLINED"
-  | "WITHDRAWN"
-  | "EXPIRED"
-  | "RELEASED";
+  "PROPOSED" | "MOVED" | "DECLINED" | "WITHDRAWN" | "EXPIRED" | "RELEASED";
 
 export interface AppointmentRescheduledEmailProps {
   outcome: RescheduleEmailOutcome;

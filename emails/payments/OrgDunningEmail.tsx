@@ -1,0 +1,175 @@
+import * as React from "react";
+import { Button, Section, Text } from "react-email";
+import { EmailLayout } from "@/emails/components/EmailLayout";
+import {
+  button,
+  buttonContainer,
+  heading,
+  paragraph,
+} from "@/emails/components/styles";
+
+export type OrgOperationalEmailKind =
+  | "MEMBER_OVERAGE_TIMED_OUT"
+  | "LICENSE_RENEWAL_UPCOMING"
+  | "PROGRAM_CAP_NEAR"
+  | "PROGRAM_EXHAUSTED"
+  | "DATA_EXPORT_READY";
+
+export interface OrgDunningEmailProps {
+  kind: OrgOperationalEmailKind;
+  recipientName?: string;
+  orgName: string;
+  programName?: string;
+  assigneeName?: string;
+  amountText?: string;
+  expectedTotalText?: string;
+  renewalDateText?: string;
+  expiresAtText?: string;
+  daysUntilRenewal?: number;
+  cycle?: string;
+  engagementsUsed?: number;
+  cap?: number;
+  usedPct?: number;
+  actionUrl: string;
+  unsubscribeUrl?: string | null;
+}
+
+export function orgOperationalEmailSubject(
+  args: Pick<
+    OrgDunningEmailProps,
+    "kind" | "orgName" | "programName" | "daysUntilRenewal"
+  >,
+): string {
+  switch (args.kind) {
+    case "MEMBER_OVERAGE_TIMED_OUT":
+      return `Payment window closed for ${args.programName ?? "programme"} at ${args.orgName}`;
+    case "LICENSE_RENEWAL_UPCOMING":
+      return typeof args.daysUntilRenewal === "number"
+        ? `Licence renewal in ${args.daysUntilRenewal} ${args.daysUntilRenewal === 1 ? "day" : "days"} for ${args.orgName}`
+        : `Upcoming licence renewal for ${args.orgName}`;
+    case "PROGRAM_CAP_NEAR":
+      return `Programme allowance nearly used up: ${args.programName ?? args.orgName}`;
+    case "PROGRAM_EXHAUSTED":
+      return `Programme allowance reached: ${args.programName ?? args.orgName}`;
+    case "DATA_EXPORT_READY":
+      return `Your data export for ${args.orgName} is ready`;
+  }
+}
+
+export function OrgDunningEmail({
+  kind,
+  recipientName = "there",
+  orgName,
+  programName,
+  assigneeName,
+  amountText,
+  expectedTotalText,
+  renewalDateText,
+  expiresAtText,
+  daysUntilRenewal,
+  cycle,
+  engagementsUsed,
+  cap,
+  usedPct,
+  actionUrl,
+  unsubscribeUrl,
+}: Readonly<OrgDunningEmailProps>) {
+  const subject = orgOperationalEmailSubject({
+    kind,
+    orgName,
+    programName,
+    daysUntilRenewal,
+  });
+
+  const buttonLabel =
+    kind === "DATA_EXPORT_READY"
+      ? "Download export"
+      : kind === "MEMBER_OVERAGE_TIMED_OUT"
+        ? "Open billing"
+        : "Open workspace";
+
+  return (
+    <EmailLayout preview={subject} unsubscribeUrl={unsubscribeUrl} showSupport>
+      <Text style={heading}>{subject}</Text>
+      <Text style={paragraph}>Hi {recipientName},</Text>
+
+      {kind === "MEMBER_OVERAGE_TIMED_OUT" ? (
+        <Text style={paragraph}>
+          The payment window for your{" "}
+          <strong>{programName ?? "programme"}</strong> overage
+          {amountText ? (
+            <>
+              {" "}
+              of <strong>{amountText}</strong>
+            </>
+          ) : null}{" "}
+          at <strong>{orgName}</strong> has closed. Contact your programme
+          administrator if you still need to schedule this session.
+        </Text>
+      ) : null}
+
+      {kind === "LICENSE_RENEWAL_UPCOMING" ? (
+        <Text style={paragraph}>
+          <strong>{orgName}</strong>&apos;s{" "}
+          {cycle ? `${cycle.toLowerCase()} ` : ""}enterprise licence renews
+          {renewalDateText ? (
+            <>
+              {" "}
+              on <strong>{renewalDateText}</strong>
+            </>
+          ) : null}
+          {expectedTotalText ? (
+            <>
+              {" "}
+              for an estimated <strong>{expectedTotalText}</strong>
+            </>
+          ) : null}
+          . Review your active seats and billing method ahead of renewal.
+        </Text>
+      ) : null}
+
+      {kind === "PROGRAM_CAP_NEAR" ? (
+        <Text style={paragraph}>
+          <strong>{assigneeName ?? "A member"}</strong> has used{" "}
+          <strong>
+            {engagementsUsed ?? 0} of {cap ?? 0}
+          </strong>{" "}
+          engagements
+          {typeof usedPct === "number" ? ` (${usedPct}%)` : ""} in{" "}
+          <strong>{programName ?? "your programme"}</strong> at{" "}
+          <strong>{orgName}</strong>.
+        </Text>
+      ) : null}
+
+      {kind === "PROGRAM_EXHAUSTED" ? (
+        <Text style={paragraph}>
+          <strong>{assigneeName ?? "A member"}</strong> has used their full
+          allowance in <strong>{programName ?? "your programme"}</strong> at{" "}
+          <strong>{orgName}</strong>. Additional bookings will require raising
+          the programme cap or member co-pay.
+        </Text>
+      ) : null}
+
+      {kind === "DATA_EXPORT_READY" ? (
+        <Text style={paragraph}>
+          Your requested data export for <strong>{orgName}</strong> is ready to
+          download
+          {expiresAtText ? (
+            <>
+              . The download link expires on <strong>{expiresAtText}</strong>
+            </>
+          ) : null}
+          .
+        </Text>
+      ) : null}
+
+      <Section style={buttonContainer}>
+        <Button style={button} href={actionUrl}>
+          {buttonLabel}
+        </Button>
+      </Section>
+    </EmailLayout>
+  );
+}
+
+export default OrgDunningEmail;

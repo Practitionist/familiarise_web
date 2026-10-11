@@ -12,6 +12,7 @@ export type VerificationDecidedStatus =
   | "VERIFIED"
   | "REJECTED"
   | "PENDING_VERIFICATION"
+  | "UNDER_REVIEW"
   /** Day-7 reminder from the sweep: the NEEDS_INFO above is still unanswered. */
   | "NEEDS_INFO_REMINDER";
 
@@ -33,6 +34,8 @@ export function verificationDecidedSubject(
       return "Your Familiarise expert profile is verified";
     case "REJECTED":
       return "Your Familiarise expert profile was not approved";
+    case "UNDER_REVIEW":
+      return "Your Familiarise expert profile is under review";
     case "NEEDS_INFO_REMINDER":
       return "Reminder: your expert profile is waiting on you";
     case "PENDING_VERIFICATION":
@@ -65,6 +68,11 @@ export default function VerificationDecidedEmail({
         <Text style={paragraph}>
           Your expert profile verification was not approved. Read the feedback
           below, update your profile, and resubmit when ready.
+        </Text>
+      ) : status === "UNDER_REVIEW" ? (
+        <Text style={paragraph}>
+          We received your expert profile submission and our verification team
+          is reviewing it. We will notify you as soon as a decision is recorded.
         </Text>
       ) : status === "NEEDS_INFO_REMINDER" ? (
         <Text style={paragraph}>

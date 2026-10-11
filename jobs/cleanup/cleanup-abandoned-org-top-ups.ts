@@ -67,7 +67,9 @@ async function main(): Promise<void> {
       return;
     }
 
-    Sentry.logger.info("job:cleanup-abandoned-org-top-ups finished", { reaped: result.reaped });
+    Sentry.logger.info("job:cleanup-abandoned-org-top-ups finished", {
+      reaped: result.reaped,
+    });
   } finally {
     await disconnectDatabase();
   }

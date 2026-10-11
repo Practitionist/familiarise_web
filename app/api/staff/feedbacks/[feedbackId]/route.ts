@@ -4,8 +4,9 @@ import prisma from "lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { goHref } from "@/lib/dashboard/go";
-import { attemptTrigger } from "@/lib/novu/outbox";
+import { stageFeedbackUpdateEmail } from "@/lib/email/senders/people";
 import { stageBell } from "@/lib/novu/stage-bell";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { PatchFeedbackSchema } from "@/schemas/moderation";
 
@@ -79,7 +80,7 @@ export async function PATCH(
     const result = await prisma.$transaction(async (tx) => {
       const existing = await tx.platformFeedback.findUnique({
         where: { id: feedbackId },
-        select: { id: true, status: true, userId: true },
+        select: { id: true, status: true, userId: true, title: true },
       });
       if (!existing) {
         return { kind: "not_found" as const };
@@ -95,6 +96,7 @@ export async function PATCH(
         }
       }
 
+      const dashboardUrl = goHref("auto", "feedbacks");
       const stagedBell =
         existing.status !== nextStatus
           ? await stageBell(tx, {
@@ -103,11 +105,21 @@ export async function PATCH(
               payload: {
                 feedbackId,
                 status: nextStatus,
-                dashboardUrl: goHref("auto", "feedbacks"),
+                dashboardUrl,
               },
               dedupeKey: `platform-feedback:${feedbackId}:${existing.status}->${nextStatus}:${Date.now()}`,
             })
           : null;
+      const stagedEmails =
+        existing.status !== nextStatus
+          ? await stageFeedbackUpdateEmail(tx, {
+              feedbackId,
+              userId: existing.userId,
+              title: existing.title ?? undefined,
+              statusLabel: nextStatus.toLowerCase().replace(/_/g, " "),
+              dashboardUrl,
+            }).catch(() => [])
+          : [];
 
       const feedback = await tx.platformFeedback.findUniqueOrThrow({
         where: { id: feedbackId },
@@ -123,7 +135,7 @@ export async function PATCH(
         },
       });
 
-      return { kind: "ok" as const, feedback, stagedBell };
+      return { kind: "ok" as const, feedback, stagedBell, stagedEmails };
     });
 
     if (result.kind === "not_found") {
@@ -140,9 +152,18 @@ export async function PATCH(
       );
     }
 
-    if (result.stagedBell) {
-      await attemptTrigger(result.stagedBell);
-    }
+    await flushNotificationsAfter(
+      {
+        bells: [result.stagedBell],
+        emails: [
+          {
+            rows: result.stagedEmails,
+            emailType: "PLATFORM_FEEDBACK_UPDATE",
+          },
+        ],
+      },
+      "staff.feedback.patch",
+    );
 
     return NextResponse.json(result.feedback);
   } catch (error) {

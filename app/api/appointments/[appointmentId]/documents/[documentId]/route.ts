@@ -20,6 +20,7 @@ import {
   REVIEW_NOTIFICATION_APPOINTMENT_SELECT,
 } from "@/lib/documents/upload-pipeline";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
+import { stageDocumentAndRecordingEmail } from "@/lib/email/senders/booking";
 import { notifyDocumentReviewed } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -347,30 +348,52 @@ export async function PATCH(
 
       if (target.recipientId) {
         const recipientId = target.recipientId;
-        await stageNowAttemptAfter("consultee document-review notice", () =>
-          notifyDocumentReviewed(
-            recipientId,
-            {
-              ...notificationScope(target.organizationId),
-              appointmentId,
-              documentId,
-              reviewStatus: validStatus as ReviewStatus,
-              reviewNotes: validNotes || undefined,
-              originalName: document.originalName,
-              consultantName: target.reviewerName,
-              dashboardUrl: scopedHref({
-                organizationId: target.organizationId,
-                surface: "appointments",
-                personal: target.consulteeProfileId
-                  ? {
-                      kind: "consultee",
-                      profileId: target.consulteeProfileId,
-                    }
-                  : undefined,
-              }),
-            },
-            { deferAttempt: true },
-          ),
+        const dashboardUrl = scopedHref({
+          organizationId: target.organizationId,
+          surface: "appointments",
+          personal: target.consulteeProfileId
+            ? {
+                kind: "consultee",
+                profileId: target.consulteeProfileId,
+              }
+            : undefined,
+        });
+        await stageNowAttemptAfter(
+          "consultee document-review notice",
+          async () => {
+            const [bell, reviewedEmails] = await Promise.all([
+              notifyDocumentReviewed(
+                recipientId,
+                {
+                  ...notificationScope(target.organizationId),
+                  appointmentId,
+                  documentId,
+                  reviewStatus: validStatus as ReviewStatus,
+                  reviewNotes: validNotes || undefined,
+                  originalName: document.originalName,
+                  consultantName: target.reviewerName,
+                  dashboardUrl,
+                },
+                { deferAttempt: true },
+              ),
+              stageDocumentAndRecordingEmail(prisma, {
+                entityId: documentId,
+                userIds: [recipientId],
+                kind: "DOCUMENT_REVIEWED",
+                actorName: target.reviewerName,
+                fileName: document.originalName,
+                reviewStatus: validStatus,
+                reviewNotes: validNotes ?? null,
+                dashboardUrl,
+              }).catch(() => []),
+            ]);
+            return {
+              bells: [bell?.staged],
+              emails: [
+                { list: reviewedEmails, emailType: "DOCUMENT_REVIEWED" },
+              ],
+            };
+          },
         );
       }
     }

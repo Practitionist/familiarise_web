@@ -44,6 +44,16 @@ import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import { attemptStaged } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import { notifyOrgSeatRevoked } from "@/lib/novu/org-workflows";
+import { getAppUrl } from "@/lib/url";
 
 // Bounded scan — one batch per run; the next tick drains the remainder.
 const BATCH_SIZE = 500;
@@ -82,9 +92,11 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
       programId: true,
       membershipId: true,
       periodEnd: true,
+      membership: { select: { userId: true } },
       program: {
         select: {
           id: true,
+          name: true,
           contract: {
             select: {
               id: true,
@@ -92,6 +104,7 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
               status: true,
               autoRenew: true,
               effectiveTo: true,
+              organization: { select: { name: true } },
             },
           },
           licensedSeatConfig: { select: { cycle: true } },
@@ -202,7 +215,40 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
                   },
                 },
               });
-              return { outcome: "closed" as const };
+              const targetUserId = a.membership?.userId;
+              const orgName =
+                a.program.contract.organization?.name ?? "Organization";
+              const programName = a.program.name ?? "Program";
+              const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/programs`;
+              const stagedBells: StagedTrigger[] = targetUserId
+                ? ((await notifyOrgSeatRevoked(
+                    targetUserId,
+                    {
+                      organizationId: orgId,
+                      orgName,
+                      programName,
+                      reason: effectiveDecision.reason,
+                      dashboardUrl,
+                    },
+                    tx.notificationOutbox ? { tx } : undefined,
+                  )) ?? [])
+                : [];
+              const stagedEmails: StagedEmail[] = targetUserId
+                ? await stageOrgContractAndSeatEmail(tx, {
+                    recipientUserIds: [targetUserId],
+                    entityId: a.id,
+                    kind: "SEAT_REVOKED",
+                    orgName,
+                    programName,
+                    reason: effectiveDecision.reason,
+                    dashboardUrl,
+                  })
+                : [];
+              return {
+                outcome: "closed" as const,
+                stagedBells,
+                stagedEmails,
+              };
             }
 
             // ROLL: claim ACTIVE→ROLLED, then mint the successor for next cycle.
@@ -256,9 +302,21 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
         ),
       );
 
-      if (result.outcome === "rolled") stats.rolled += 1;
-      else if (result.outcome === "closed") stats.closed += 1;
-      else stats.skipped += 1;
+      if (result.outcome === "rolled") {
+        stats.rolled += 1;
+      } else if (result.outcome === "closed") {
+        stats.closed += 1;
+        for (const bell of result.stagedBells) await attemptTrigger(bell);
+        if (result.stagedEmails.length > 0) {
+          await attemptStaged(
+            result.stagedEmails,
+            ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+            EMAIL_BUDGET_MS.JOB,
+          );
+        }
+      } else {
+        stats.skipped += 1;
+      }
     } catch (err) {
       // Double-mint backstop: the successor's @@unique([programId,
       // membershipId, periodStart]) or rolledToAssignmentId @unique tripped

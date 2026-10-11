@@ -13,7 +13,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
-import { notifyMaintenanceScheduled } from "@/lib/novu/service";
+import {
+  notifyMaintenanceEnded,
+  notifyMaintenanceScheduled,
+  notifyMaintenanceStarted,
+} from "@/lib/novu/service";
+import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import { signMaintenanceBypassCookie } from "@/lib/maintenance-edge";
@@ -211,24 +216,19 @@ export async function POST(request: NextRequest) {
     betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
 
-  // The scheduling moment: broadcast the advance notice (Started/Ended
-  // fire from the drain/post-recovery actions). Warn-only — a Novu hiccup
-  // must not fail the admin action.
-  try {
-    await notifyMaintenanceScheduled({
-      phase: targetPhase,
-      ...(reason ? { reason } : {}),
-      ...(estimatedEndDate
-        ? { estimatedEnd: estimatedEndDate.toISOString() }
-        : {}),
-    });
-  } catch (error) {
-    reportSentryError(error, {
-      subsystem: "maintenance",
-      op: "MaintenanceScheduledNotice",
-      level: "warning",
-    });
-  }
+  // Stage broadcast row synchronously before returning; flush Novu trigger in after().
+  await stageNowAttemptAfter("maintenance.scheduled", () =>
+    notifyMaintenanceScheduled(
+      {
+        phase: targetPhase,
+        ...(reason ? { reason } : {}),
+        ...(estimatedEndDate
+          ? { estimatedEnd: estimatedEndDate.toISOString() }
+          : {}),
+      },
+      { deferAttempt: true },
+    ),
+  );
 
   let offlineActivation: OfflineActivationResult | undefined;
   if (targetPhase === MaintenancePhase.OFFLINE) {
@@ -339,6 +339,17 @@ export async function PATCH(request: NextRequest) {
     betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
 
+  await stageNowAttemptAfter("maintenance.started", () =>
+    notifyMaintenanceStarted(
+      {
+        phase: targetPhase,
+        ...(nextReason ? { reason: nextReason } : {}),
+        ...(nextEstimatedEnd ? { estimatedEnd: nextEstimatedEnd } : {}),
+      },
+      { deferAttempt: true },
+    ),
+  );
+
   let offlineActivation: OfflineActivationResult | undefined;
   if (
     currentPhase !== MaintenancePhase.OFFLINE &&
@@ -385,6 +396,16 @@ export async function DELETE() {
     endedBy: auth.userId,
   });
 
+  await stageNowAttemptAfter("maintenance.ended", () =>
+    notifyMaintenanceEnded(
+      {
+        phase: MaintenancePhase.OFF,
+        ...(currentState.reason ? { reason: currentState.reason } : {}),
+      },
+      { deferAttempt: true },
+    ),
+  );
+
   // #1146 — the unfreeze must not be able to be skipped by something upstream
   // of it throwing.
   //
@@ -424,8 +445,7 @@ export async function DELETE() {
   // REPORTED and returned — a silent unfreeze failure is indistinguishable from
   // success, and being invisible is the entire problem with a frozen channel.
   let chat:
-    | Awaited<ReturnType<typeof unfreezeChannelsAfterMaintenance>>
-    | undefined;
+    Awaited<ReturnType<typeof unfreezeChannelsAfterMaintenance>> | undefined;
   try {
     chat = await unfreezeChannelsAfterMaintenance();
     if (chat.errors.length > 0) {

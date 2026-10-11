@@ -11,13 +11,25 @@ import {
   type TriggerResult,
 } from "./outbox";
 
+export type StagedEmailBundleEntry =
+  | {
+      rows: StagedRecipientEmail[];
+      emailType: string;
+      budgetMs?: number;
+    }
+  | {
+      list: StagedRecipientEmail[];
+      emailType: string;
+      budgetMs?: number;
+    };
+
 export interface StagedNotificationBundle {
   bells?: Array<StagedTrigger | null | undefined>;
-  emails?: Array<{
-    rows: StagedRecipientEmail[];
-    emailType: string;
-    budgetMs?: number;
-  }>;
+  emails?: StagedEmailBundleEntry[];
+}
+
+function entryRows(entry: StagedEmailBundleEntry): StagedRecipientEmail[] {
+  return "rows" in entry ? entry.rows : entry.list;
 }
 
 function report(message: string, err: unknown): void {
@@ -49,7 +61,9 @@ export function flushNotificationsAfter(
   const bells = (bundle.bells ?? []).filter((row): row is StagedTrigger =>
     Boolean(row),
   );
-  const emails = (bundle.emails ?? []).filter((entry) => entry.rows.length > 0);
+  const emails = (bundle.emails ?? []).filter(
+    (entry) => entryRows(entry).length > 0,
+  );
   if (bells.length === 0 && emails.length === 0) {
     return Promise.resolve();
   }
@@ -62,7 +76,7 @@ export function flushNotificationsAfter(
       ),
       ...emails.map((entry) =>
         attemptStaged(
-          entry.rows,
+          entryRows(entry),
           entry.emailType,
           entry.budgetMs ?? EMAIL_BUDGET_MS.LIFECYCLE,
         ).catch((err) =>

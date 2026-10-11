@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { uploadConsultantDocument } from "@/lib/supabase";
 import { Prisma } from "@prisma/client";
@@ -14,6 +14,8 @@ import {
   preflightThreadLimits,
   type ResolvedStorageObject,
 } from "@/lib/documents/upload-pipeline";
+import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
+import { stageDocumentAndRecordingEmail } from "@/lib/email/senders/booking";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -308,33 +310,49 @@ export async function POST(
       apt?.consultation?.requestedBy?.id || apt?.subscription?.requestedBy?.id;
 
     if (recipientId) {
-      after(() =>
-        notifyDocumentUploaded(recipientId, {
-          ...notificationScope(apt?.organizationId),
-          appointmentId,
-          documentId: document.id,
-          uploadedByRole: "CONSULTANT",
-          fileName: parsedInput.originalName,
-          isThreaded: Boolean(parsedInput.responseToDocumentId),
-          versionNo: document.versionNo,
-          consultantName: session.user.name ?? "Your consultant",
-          consulteeName,
-          dashboardUrl: scopedHref({
-            organizationId: apt?.organizationId,
-            surface: "appointments",
-            personal: consulteeProfileId
-              ? { kind: "consultee", profileId: consulteeProfileId }
-              : undefined,
-          }),
-        }).catch((notifyError) => {
-          console.error("Failed to notify consultee of response", notifyError);
-          Sentry.captureException(
-            notifyError instanceof Error
-              ? notifyError
-              : new Error(String(notifyError)),
-            { tags: { subsystem: "novu" } },
-          );
-        }),
+      const consultantDisplayName = session.user.name ?? "Your consultant";
+      const dashboardUrl = scopedHref({
+        organizationId: apt?.organizationId,
+        surface: "appointments",
+        personal: consulteeProfileId
+          ? { kind: "consultee", profileId: consulteeProfileId }
+          : undefined,
+      });
+      await stageNowAttemptAfter(
+        "consultee document-response notice",
+        async () => {
+          const [bell, uploadedEmails] = await Promise.all([
+            notifyDocumentUploaded(
+              recipientId,
+              {
+                ...notificationScope(apt?.organizationId),
+                appointmentId,
+                documentId: document.id,
+                uploadedByRole: "CONSULTANT",
+                fileName: parsedInput.originalName,
+                isThreaded: Boolean(parsedInput.responseToDocumentId),
+                versionNo: document.versionNo,
+                consultantName: consultantDisplayName,
+                consulteeName,
+                dashboardUrl,
+              },
+              { deferAttempt: true },
+            ),
+            stageDocumentAndRecordingEmail(prisma, {
+              entityId: document.id,
+              userIds: [recipientId],
+              kind: "DOCUMENT_UPLOADED",
+              actorName: consultantDisplayName,
+              fileName: parsedInput.originalName,
+              versionNo: document.versionNo,
+              dashboardUrl,
+            }).catch(() => []),
+          ]);
+          return {
+            bells: [bell?.staged],
+            emails: [{ list: uploadedEmails, emailType: "DOCUMENT_UPLOADED" }],
+          };
+        },
       );
     }
 

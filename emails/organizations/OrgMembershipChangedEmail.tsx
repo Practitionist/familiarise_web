@@ -10,7 +10,8 @@ import {
 } from "@/emails/components/styles";
 import { MEMBER_ROLE_LABEL } from "@/lib/labels/org-labels";
 
-export type OrgMembershipChangeKind = "ROLE_CHANGED" | "REMOVED";
+export type OrgMembershipChangeKind =
+  "ROLE_CHANGED" | "REMOVED" | "MEMBER_JOINED";
 
 export interface OrgMembershipChangedEmailProps {
   recipientName?: string;
@@ -19,6 +20,7 @@ export interface OrgMembershipChangedEmailProps {
   roleBefore?: string;
   roleAfter?: string;
   actorName: string;
+  memberEmail?: string;
   dashboardUrl: string;
   supportEmail: string;
 }
@@ -31,14 +33,18 @@ export function memberRoleLabel(role: string): string {
 export function orgMembershipChangedSubject(args: {
   kind: OrgMembershipChangeKind;
   orgName: string;
+  actorName?: string;
 }): string {
+  if (args.kind === "MEMBER_JOINED") {
+    return `${args.actorName ?? "A new member"} joined ${args.orgName}`;
+  }
   return args.kind === "REMOVED"
     ? `You were removed from ${args.orgName}`
     : `Your role in ${args.orgName} changed`;
 }
 
-// Required notice to the affected member: role and roster changes affect
-// access, so they cannot be muted.
+// Required notice to the affected member or operator: role and roster changes
+// affect workspace access.
 export default function OrgMembershipChangedEmail({
   recipientName = "there",
   kind,
@@ -46,17 +52,31 @@ export default function OrgMembershipChangedEmail({
   roleBefore,
   roleAfter,
   actorName,
+  memberEmail,
   dashboardUrl,
   supportEmail,
 }: OrgMembershipChangedEmailProps) {
-  const subject = orgMembershipChangedSubject({ kind, orgName });
+  const subject = orgMembershipChangedSubject({ kind, orgName, actorName });
   const beforeLabel = roleBefore ? memberRoleLabel(roleBefore) : null;
   const afterLabel = roleAfter ? memberRoleLabel(roleAfter) : null;
   return (
     <EmailLayout preview={subject} requiredNotice>
       <Text style={heading}>{subject}</Text>
       <Text style={paragraph}>Hi {recipientName},</Text>
-      {kind === "REMOVED" ? (
+      {kind === "MEMBER_JOINED" ? (
+        <Text style={paragraph}>
+          <strong>{actorName}</strong>
+          {memberEmail ? ` (${memberEmail})` : ""} accepted an invitation to
+          join <strong>{orgName}</strong>
+          {afterLabel ? (
+            <>
+              {" "}
+              as <strong>{afterLabel}</strong>
+            </>
+          ) : null}
+          .
+        </Text>
+      ) : kind === "REMOVED" ? (
         <Text style={paragraph}>
           {actorName} removed you from <strong>{orgName}</strong>
           {beforeLabel ? (

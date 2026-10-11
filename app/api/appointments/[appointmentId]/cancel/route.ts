@@ -1003,32 +1003,36 @@ export async function POST(
               eventRefund.failures.map((f) => f.paymentId),
             )
           : [];
-      const [, ...stagedEmailBatches] = await Promise.all([
-        notifyAppointmentCancelled(userIds, {
-          ...notificationScope(appointment.organizationId),
-          appointmentId,
-          appointmentType: notificationMeta.appointmentType,
-          consultantName: notificationMeta.consultantName || "Consultant",
-          consulteeName: notificationMeta.consulteeName || "Consultee",
-          planTitle: planTitleOrSessionLabel(
-            notificationMeta.planTitle,
-            notificationMeta.appointmentType,
-          ),
-          dateTime: notificationMeta.dateTime,
-          dashboardUrl: notificationHref(
-            appointment.organizationId,
-            "appointments",
-          ),
-          reason: validatedData.reason || undefined,
-          cancelledBy:
-            notificationMeta.cancelledBy ===
-              notificationMeta.consultantUserId ||
-            (isHostOrgOperator && session.user.id !== consulteeUserId)
-              ? "consultant"
-              : notificationMeta.cancelledBy === consulteeUserId
-                ? "consultee"
-                : "system",
-        }).catch((err) => {
+      const [bellResults, ...stagedEmailBatches] = await Promise.all([
+        notifyAppointmentCancelled(
+          userIds,
+          {
+            ...notificationScope(appointment.organizationId),
+            appointmentId,
+            appointmentType: notificationMeta.appointmentType,
+            consultantName: notificationMeta.consultantName || "Consultant",
+            consulteeName: notificationMeta.consulteeName || "Consultee",
+            planTitle: planTitleOrSessionLabel(
+              notificationMeta.planTitle,
+              notificationMeta.appointmentType,
+            ),
+            dateTime: notificationMeta.dateTime,
+            dashboardUrl: notificationHref(
+              appointment.organizationId,
+              "appointments",
+            ),
+            reason: validatedData.reason || undefined,
+            cancelledBy:
+              notificationMeta.cancelledBy ===
+                notificationMeta.consultantUserId ||
+              (isHostOrgOperator && session.user.id !== consulteeUserId)
+                ? "consultant"
+                : notificationMeta.cancelledBy === consulteeUserId
+                  ? "consultee"
+                  : "system",
+          },
+          { deferAttempt: true },
+        ).catch((err) => {
           console.error(
             "Failed to send appointment cancellation notification:",
             err,
@@ -1066,6 +1070,7 @@ export async function POST(
       ]);
       await flushNotificationsAfter(
         {
+          bells: (bellResults ?? []).map((r) => r?.staged),
           emails: [
             {
               rows: stagedEmailBatches.flat(),

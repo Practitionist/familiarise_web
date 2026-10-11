@@ -4,11 +4,13 @@
  */
 
 import type { z } from "zod";
-import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 import prisma from "@/lib/prisma";
 import { RecordingStatus, RecordingStorageType } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
-import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import { stageDocumentAndRecordingEmail } from "@/lib/email/senders/booking";
+import { type StagedTrigger } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import {
   notifyRecordingAvailable,
   notifyRecordingFailed,
@@ -381,47 +383,52 @@ function resolveRecordingNotificationMeta(
 export async function stageAndSendRecordingReadyNotifications(
   appointment: RecordingNotificationAppointment | null | undefined,
   recordingId: string,
-  streamCallId: string,
+  _streamCallId: string,
 ): Promise<void> {
   const userIds = await getEventAttendeeIds(appointment);
   if (userIds.length === 0) return;
 
   const { appointmentType, consultantName } =
     resolveRecordingNotificationMeta(appointment);
+  const dashboardUrl = notificationHref(
+    appointment?.organizationId,
+    "recordings",
+  );
 
-  const staged =
-    (await notifyRecordingAvailable(
+  const [staged, readyEmails] = await Promise.all([
+    notifyRecordingAvailable(
       userIds,
       {
         ...notificationScope(appointment?.organizationId),
         appointmentType,
         consultantName,
-        dashboardUrl: notificationHref(
-          appointment?.organizationId,
-          "recordings",
-        ),
+        dashboardUrl,
       },
       `recording.ready:${recordingId}`,
       { deferAttempt: true, entityRef: `recording:${recordingId}` },
-    )) ?? [];
+    ),
+    stageDocumentAndRecordingEmail(prisma, {
+      entityId: recordingId,
+      userIds,
+      kind: "RECORDING_READY",
+      appointmentType,
+      dashboardUrl,
+    }).catch(() => []),
+  ]);
 
-  const stagedRows = staged
-    .map((r) => r.staged)
-    .filter((row): row is StagedTrigger => Boolean(row));
-
-  if (stagedRows.length > 0) {
-    await runAfterOrInline(() =>
-      Promise.all(
-        stagedRows.map((row) =>
-          attemptTrigger(row).catch((err) =>
-            streamLogger.error("Failed to send recording notification", err, {
-              streamCallId,
-            }),
-          ),
-        ),
-      ),
-    );
-  }
+  await flushNotificationsAfter(
+    {
+      bells: (staged ?? []).map((r) => r?.staged),
+      emails: [
+        {
+          list: readyEmails,
+          emailType: "RECORDING_READY",
+          budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
+        },
+      ],
+    },
+    "recording.ready",
+  );
 }
 
 export type ReadyRecordingParams = {
@@ -646,8 +653,17 @@ async function notifyRecordingFailedChunked(
   streamCallId: string,
   organizationId: string | null | undefined,
 ): Promise<void> {
+  if (userIds.length === 0) return;
   const dashboardUrl = notificationHref(organizationId, "recordings");
-  const results: PromiseSettledResult<unknown>[] = [];
+  const stagedBells: Array<StagedTrigger | undefined> = [];
+  let failureCount = 0;
+
+  const failedEmailsPromise = stageDocumentAndRecordingEmail(prisma, {
+    entityId: streamCallId,
+    userIds,
+    kind: "RECORDING_FAILED",
+    dashboardUrl,
+  }).catch(() => []);
 
   for (
     let i = 0;
@@ -657,22 +673,47 @@ async function notifyRecordingFailedChunked(
     const batch = userIds.slice(i, i + RECORDING_FAILED_NOTIFY_CONCURRENCY);
     const settled = await Promise.allSettled(
       batch.map((userId) =>
-        notifyRecordingFailed(userId, {
-          streamCallId,
-          dashboardUrl,
-        }),
+        notifyRecordingFailed(
+          userId,
+          {
+            streamCallId,
+            dashboardUrl,
+          },
+          { deferAttempt: true },
+        ),
       ),
     );
-    results.push(...settled);
+    for (const r of settled) {
+      if (r.status === "fulfilled") {
+        stagedBells.push(r.value?.staged);
+      } else {
+        failureCount++;
+      }
+    }
   }
 
-  const failures = results.filter((r) => r.status === "rejected");
-  if (failures.length > 0) {
+  const failedEmails = await failedEmailsPromise;
+
+  if (failureCount > 0) {
     streamLogger.warn(
-      `${failures.length}/${userIds.length} recording-failed notifications failed`,
+      `${failureCount}/${userIds.length} recording-failed notifications failed`,
       { streamCallId },
     );
   }
+
+  await flushNotificationsAfter(
+    {
+      bells: stagedBells,
+      emails: [
+        {
+          list: failedEmails,
+          emailType: "RECORDING_FAILED",
+          budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
+        },
+      ],
+    },
+    "recording.failed",
+  );
 }
 
 /**

@@ -9,11 +9,16 @@
 import { OccurrenceCompletionStatus, type Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
+import {
+  stageSessionOutcomeEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/senders/booking";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import {
   formatNotificationDateTime,
   resolveRecipientTimezones,
 } from "@/lib/novu/humanize";
+import type { StagedTrigger } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { personalHref } from "@/lib/novu/resolve-href";
 import {
@@ -237,14 +242,16 @@ async function writeSlotOutcomeTransaction(
         { fromIn: ["CONFIRMED"] },
       );
     }
-    if (count > 0 && verdict.outcome === "LEARNER_ABSENT") {
-      await stageNoShowBells(tx, slot, "one-to-one");
-    }
+    const noShow =
+      count > 0 && verdict.outcome === "LEARNER_ABSENT"
+        ? await stageNoShowBells(tx, slot, "one-to-one")
+        : null;
     // Owner decision — a group seat absent from a held session hears only of its recording.
     const isGroup = !!(slot.appointment.classId ?? slot.appointment.webinarId);
-    if (count > 0 && verdict.outcome === "HELD" && isGroup) {
-      await stageNoShowBells(tx, { ...slot, presences }, "group");
-    }
+    const missedRecording =
+      count > 0 && verdict.outcome === "HELD" && isGroup
+        ? await stageNoShowBells(tx, { ...slot, presences }, "group")
+        : null;
     // A void is a class miss: bells, and the exit right re-checked in this tx.
     const voided =
       count > 0 && to === "VOIDED" && slot.appointment.classId
@@ -256,19 +263,36 @@ async function writeSlotOutcomeTransaction(
             hostAttributed: verdict.hostAttributed,
           })
         : null;
-    return { applied: count > 0, voided };
+    return { applied: count > 0, noShow, missedRecording, voided };
   });
-  if (txResult.voided) {
-    await flushNotificationsAfter(
-      {
-        bells: txResult.voided.bells,
-        emails: [
-          { rows: txResult.voided.emails, emailType: "APPOINTMENT_CANCELLED" },
-        ],
-      },
-      "class-sessions.voided",
-    );
-  }
+  await flushNotificationsAfter(
+    {
+      bells: [
+        ...(txResult.noShow?.bells ?? []),
+        ...(txResult.missedRecording?.bells ?? []),
+        ...(txResult.voided?.bells ?? []),
+      ],
+      emails: [
+        {
+          rows: txResult.noShow?.emails ?? [],
+          emailType: "CLASS_SESSION_NO_SHOW",
+        },
+        {
+          rows: txResult.missedRecording?.emails ?? [],
+          emailType: "CLASS_SESSION_MISSED_RECORDING",
+        },
+        {
+          rows: txResult.voided?.emails ?? [],
+          emailType: "APPOINTMENT_CANCELLED",
+        },
+        {
+          rows: txResult.voided?.exitEmails ?? [],
+          emailType: "CLASS_SESSION_EXIT_AVAILABLE",
+        },
+      ],
+    },
+    "class-sessions.voided",
+  );
   return txResult.applied;
 }
 
@@ -340,7 +364,7 @@ async function stageNoShowBells(
   tx: Tx,
   slot: OutcomeSlot,
   shape: "one-to-one" | "group",
-) {
+): Promise<{ bells: StagedTrigger[]; emails: StagedRecipientEmail[] }> {
   const row = await tx.appointment.findUnique({
     where: { id: slot.appointmentId },
     select: {
@@ -364,7 +388,7 @@ async function stageNoShowBells(
       : (row?.consultation?.consultationPlan ??
         row?.subscription?.subscriptionPlan ??
         row?.trial?.subscriptionPlan);
-  if (!row || !plan) return;
+  if (!row || !plan) return { bells: [], emails: [] };
   const recording = plan.recordingEnabled
     ? await tx.recording.findFirst({
         where: {
@@ -374,7 +398,7 @@ async function stageNoShowBells(
         select: { id: true },
       })
     : null;
-  if (shape === "group" && !recording) return;
+  if (shape === "group" && !recording) return { bells: [], emails: [] };
   const present = new Set(slot.presences.map((p) => p.userId));
   const absent =
     shape === "group"
@@ -387,12 +411,13 @@ async function stageNoShowBells(
     absent.map((seat) => seat.userId),
     tx,
   );
+  const bells: StagedTrigger[] = [];
   for (const seat of absent) {
     const profileId = seat.user.consulteeProfileId;
     const recordingUrl = profileId
       ? personalHref("consultee", profileId, "recordings")
       : `${getAppUrl()}/dashboard`;
-    await stageBell(tx, {
+    const bell = await stageBell(tx, {
       workflowId:
         shape === "group"
           ? NOVU_WORKFLOWS.SESSION_MISSED_RECORDING
@@ -408,7 +433,22 @@ async function stageNoShowBells(
       },
       dedupeKey: `no-show:${slot.id}:${seat.userId}`,
     });
+    if (bell) bells.push(bell);
   }
+  const absentUserIds = absent.map((seat) => seat.userId);
+  const emails =
+    absentUserIds.length > 0
+      ? await stageSessionOutcomeEmails(tx, {
+          appointmentId: slot.appointmentId,
+          userIds: absentUserIds,
+          outcome: shape === "group" ? "MISSED_RECORDING" : "NO_SHOW",
+          planTitle: plan.title,
+          startsAt: slot.startsAt,
+          supportUrl: `${getAppUrl()}/support`,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        }).catch(() => [])
+      : [];
+  return { bells, emails };
 }
 
 /** Owner decision — a needs-human item older than this raises a Sentry warning. */

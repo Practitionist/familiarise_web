@@ -114,20 +114,36 @@ async function remindUnanswered(now: Date, errors: string[]): Promise<number> {
           data: { reminderSentAt: now },
         });
         if (stamped.count === 0) return null;
-        return stageVerificationDecidedEmail(
+        const dashboardUrl = `/dashboard/consultant/${row.consultantProfile.id}/settings`;
+        const reason = row.rejectionReason || row.feedbackDetails || undefined;
+        const bell = await notifyVerificationStatusChanged(
+          row.consultantProfile.userId,
+          {
+            status: "NEEDS_INFO",
+            reason,
+            dashboardUrl,
+          },
+          `verification-remind:${row.id}`,
+          { tx },
+        );
+        const email = await stageVerificationDecidedEmail(
           {
             userId: row.consultantProfile.userId,
             verificationId: row.id,
             status: "NEEDS_INFO_REMINDER",
-            reason: row.rejectionReason || row.feedbackDetails || undefined,
-            dashboardUrl: `/dashboard/consultant/${row.consultantProfile.id}/settings`,
+            reason,
+            dashboardUrl,
             daysLeft: NEEDS_INFO_CLOSE_DAYS - NEEDS_INFO_REMINDER_DAYS,
           },
           tx,
         );
+        return { bell, email };
       });
       if (!staged) continue;
-      await attemptOnboardingEmail(staged);
+      if (staged.bell.success && staged.bell.staged) {
+        await attemptTrigger(staged.bell.staged);
+      }
+      await attemptOnboardingEmail(staged.email);
       sent += 1;
     } catch (error) {
       errors.push(`remind ${row.id}: ${String(error)}`);

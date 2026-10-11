@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, documentReviewLimiter } from "@/lib/rate-limit";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
+import { stageDocumentAndRecordingEmail } from "@/lib/email/senders/booking";
 import { notifyDocumentReviewed } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -155,36 +156,61 @@ export async function PATCH(request: NextRequest) {
       await stageNowAttemptAfter(
         "bulk consultee document-review notices",
         async () => {
-          const results = await Promise.all(
-            targetDocs.map((doc) => {
+          const perDoc = await Promise.all(
+            targetDocs.map(async (doc) => {
               const target = extractReviewNotificationTarget(doc.appointment);
               if (!target.recipientId) return null;
-              return notifyDocumentReviewed(
-                target.recipientId,
-                {
-                  ...notificationScope(target.organizationId),
-                  appointmentId: doc.appointmentId,
-                  documentId: doc.id,
-                  reviewStatus: reviewStatus as ReviewStatus,
-                  reviewNotes: reviewNotes || undefined,
-                  originalName: doc.originalName,
-                  consultantName: target.reviewerName,
-                  dashboardUrl: scopedHref({
-                    organizationId: target.organizationId,
-                    surface: "appointments",
-                    personal: target.consulteeProfileId
-                      ? {
-                          kind: "consultee",
-                          profileId: target.consulteeProfileId,
-                        }
-                      : undefined,
-                  }),
-                },
-                { deferAttempt: true },
-              );
+              const dashboardUrl = scopedHref({
+                organizationId: target.organizationId,
+                surface: "appointments",
+                personal: target.consulteeProfileId
+                  ? {
+                      kind: "consultee",
+                      profileId: target.consulteeProfileId,
+                    }
+                  : undefined,
+              });
+              const [bell, docEmails] = await Promise.all([
+                notifyDocumentReviewed(
+                  target.recipientId,
+                  {
+                    ...notificationScope(target.organizationId),
+                    appointmentId: doc.appointmentId,
+                    documentId: doc.id,
+                    reviewStatus: reviewStatus as ReviewStatus,
+                    reviewNotes: reviewNotes || undefined,
+                    originalName: doc.originalName,
+                    consultantName: target.reviewerName,
+                    dashboardUrl,
+                  },
+                  { deferAttempt: true },
+                ),
+                stageDocumentAndRecordingEmail(prisma, {
+                  entityId: doc.id,
+                  userIds: [target.recipientId],
+                  kind: "DOCUMENT_REVIEWED",
+                  actorName: target.reviewerName,
+                  fileName: doc.originalName,
+                  reviewStatus,
+                  reviewNotes: reviewNotes ?? null,
+                  dashboardUrl,
+                }).catch(() => []),
+              ]);
+              return { bell: bell?.staged, emails: docEmails };
             }),
           );
-          return results.filter((r): r is NonNullable<typeof r> => r !== null);
+          const valid = perDoc.filter(
+            (item): item is NonNullable<typeof item> => item !== null,
+          );
+          return {
+            bells: valid.map((item) => item.bell),
+            emails: [
+              {
+                list: valid.flatMap((item) => item.emails),
+                emailType: "DOCUMENT_REVIEWED",
+              },
+            ],
+          };
         },
       );
     }

@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import type { UserRole } from "@prisma/client";
 import { notifyGeneralAnnouncement } from "@/lib/novu";
+import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateAnnouncementSchema } from "@/schemas/announcements";
 import { ANNOUNCEMENTS_TAG } from "@/lib/cache-tags";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
@@ -158,13 +159,17 @@ export async function POST(request: NextRequest) {
     // Invalidate the cached banner read so the new announcement shows immediately.
     revalidateTag(ANNOUNCEMENTS_TAG);
 
-    // Fire-and-forget: broadcast announcement to all subscribers via Novu
-    await notifyGeneralAnnouncement({
-      title: announcement.title,
-      content: announcement.content,
-      linkUrl: announcement.linkUrl || undefined,
-      linkText: announcement.linkText || undefined,
-    });
+    await stageNowAttemptAfter("announcements.create", () =>
+      notifyGeneralAnnouncement(
+        {
+          title: announcement.title,
+          content: announcement.content,
+          linkUrl: announcement.linkUrl || undefined,
+          linkText: announcement.linkText || undefined,
+        },
+        { deferAttempt: true },
+      ),
+    );
 
     return NextResponse.json({
       success: true,

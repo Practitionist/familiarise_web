@@ -24,6 +24,16 @@ import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import type { StagedTrigger } from "@/lib/novu";
+import { notifyOrgSeatAssigned } from "@/lib/novu/org-workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 
 const CreateBodySchema = z
   .object({
@@ -110,13 +120,16 @@ async function assignSingleMembershipInTx(
   tx: TxClient,
   args: {
     orgId: string;
+    orgName: string;
     programId: string;
+    programName: string;
     actorMembershipId: string;
     singleMembershipId: string;
     body: CreateAssignmentBody;
   },
 ) {
-  const { orgId, programId, singleMembershipId, body } = args;
+  const { orgId, orgName, programId, programName, singleMembershipId, body } =
+    args;
   const membership = await tx.membership.findFirst({
     where: { id: singleMembershipId, organizationId: orgId },
     select: { id: true, status: true, userId: true },
@@ -143,7 +156,10 @@ async function assignSingleMembershipInTx(
     periodStart: body.periodStart,
     periodEnd: body.periodEnd,
   });
+  let stagedBells: StagedTrigger[] = [];
+  let stagedEmails: StagedEmail[] = [];
   if (created) {
+    const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/programs`;
     await adjustActiveSeatCount(tx, { programId, delta: 1 });
     await tx.program.updateMany({
       where: { id: programId, configLockedAt: null },
@@ -161,6 +177,25 @@ async function assignSingleMembershipInTx(
         periodStart: body.periodStart.toISOString(),
         periodEnd: body.periodEnd.toISOString(),
       },
+    });
+    stagedBells =
+      (await notifyOrgSeatAssigned(
+        membership.userId,
+        {
+          organizationId: orgId,
+          orgName,
+          programName,
+          dashboardUrl,
+        },
+        tx.notificationOutbox ? { tx } : undefined,
+      )) ?? [];
+    stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+      recipientUserIds: [membership.userId],
+      entityId: assignment.id,
+      kind: "SEAT_ASSIGNED",
+      orgName,
+      programName,
+      dashboardUrl,
     });
   }
   await tx.orgAuditLog.create({
@@ -183,6 +218,8 @@ async function assignSingleMembershipInTx(
     ok: true as const,
     assignment,
     assignments: [assignment],
+    stagedBells,
+    stagedEmails,
   };
 }
 
@@ -190,13 +227,16 @@ async function assignBulkMembershipsInTx(
   tx: TxClient,
   args: {
     orgId: string;
+    orgName: string;
     programId: string;
+    programName: string;
     actorMembershipId: string;
     targetMembershipIds: string[];
     body: CreateAssignmentBody;
   },
 ) {
-  const { orgId, programId, targetMembershipIds, body } = args;
+  const { orgId, orgName, programId, programName, targetMembershipIds, body } =
+    args;
   const foundMemberships = await tx.membership.findMany({
     where: { id: { in: targetMembershipIds }, organizationId: orgId },
     select: { id: true, status: true, userId: true },
@@ -291,7 +331,11 @@ async function assignBulkMembershipsInTx(
   const newlyCreatedAssignments = createdAssignments.filter(
     (a) => !existingExactSet.has(a.membershipId),
   );
+  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/programs`;
+  const stagedBells: StagedTrigger[] = [];
+  const stagedEmails: StagedEmail[] = [];
   for (const created of newlyCreatedAssignments) {
+    const targetUserId = membershipById.get(created.membershipId)?.userId;
     await dispatchWebhookEvent({
       prisma: tx,
       organizationId: orgId,
@@ -300,11 +344,34 @@ async function assignBulkMembershipsInTx(
         assignmentId: created.id,
         programId,
         membershipId: created.membershipId,
-        userId: membershipById.get(created.membershipId)?.userId,
+        userId: targetUserId,
         periodStart: body.periodStart.toISOString(),
         periodEnd: body.periodEnd.toISOString(),
       },
     });
+    if (targetUserId) {
+      const bells =
+        (await notifyOrgSeatAssigned(
+          targetUserId,
+          {
+            organizationId: orgId,
+            orgName,
+            programName,
+            dashboardUrl,
+          },
+          tx.notificationOutbox ? { tx } : undefined,
+        )) ?? [];
+      const emails = await stageOrgContractAndSeatEmail(tx, {
+        recipientUserIds: [targetUserId],
+        entityId: created.id,
+        kind: "SEAT_ASSIGNED",
+        orgName,
+        programName,
+        dashboardUrl,
+      });
+      stagedBells.push(...bells);
+      stagedEmails.push(...emails);
+    }
   }
 
   if (createdCount > 0) {
@@ -322,6 +389,8 @@ async function assignBulkMembershipsInTx(
     ok: true as const,
     assignment: createdAssignments[0],
     assignments: createdAssignments,
+    stagedBells,
+    stagedEmails,
   };
 }
 
@@ -365,7 +434,7 @@ export async function POST(
 
   const program = await prisma.program.findFirst({
     where: { id: programId, contract: { organizationId: orgId } },
-    select: { id: true, status: true },
+    select: { id: true, name: true, status: true },
   });
   if (!program) {
     return NextResponse.json({ error: "Program not found" }, { status: 404 });
@@ -376,6 +445,7 @@ export async function POST(
       { status: 409 },
     );
   }
+  const programName = program.name ?? "Program";
 
   try {
     const outcome = await withSerializableRetry(() =>
@@ -384,14 +454,18 @@ export async function POST(
           targetMembershipIds.length === 1
             ? assignSingleMembershipInTx(tx, {
                 orgId,
+                orgName: access.org.name,
                 programId,
+                programName,
                 actorMembershipId: access.member.id,
                 singleMembershipId: targetMembershipIds[0],
                 body,
               })
             : assignBulkMembershipsInTx(tx, {
                 orgId,
+                orgName: access.org.name,
                 programId,
+                programName,
                 actorMembershipId: access.member.id,
                 targetMembershipIds,
                 body,
@@ -423,6 +497,23 @@ export async function POST(
         { status: 409 },
       );
     }
+
+    flushNotificationsAfter(
+      {
+        bells: outcome.stagedBells,
+        emails:
+          outcome.stagedEmails.length > 0
+            ? [
+                {
+                  rows: outcome.stagedEmails,
+                  emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                },
+              ]
+            : [],
+      },
+      "org.program.seat-assigned",
+    );
 
     return NextResponse.json(
       { assignment: outcome.assignment, assignments: outcome.assignments },

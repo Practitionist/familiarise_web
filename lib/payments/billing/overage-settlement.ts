@@ -5,6 +5,7 @@
  * dependency-light); this module carries the heavier graph (computeOverage +
  * the Novu member-due notification).
  */
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
@@ -940,21 +941,21 @@ async function recordWalletCollectedOrgOverage(
 export function notifyOverageDueAfterCommit(
   pending: PendingOverageNotification,
 ): void {
-  void prisma.programAssignment
-    .findUnique({
-      where: { id: pending.programAssignmentId },
-      select: {
-        program: {
-          select: {
-            name: true,
-            contract: {
-              select: { organization: { select: { name: true } } },
+  scheduleAfter(async () => {
+    try {
+      const ctx = await prisma.programAssignment.findUnique({
+        where: { id: pending.programAssignmentId },
+        select: {
+          program: {
+            select: {
+              name: true,
+              contract: {
+                select: { organization: { select: { name: true } } },
+              },
             },
           },
         },
-      },
-    })
-    .then(async (ctx) => {
+      });
       if (!ctx) return;
       const orgName = ctx.program.contract.organization.name;
       await notifyOrgProgramOverageDue(pending.userId, {
@@ -972,12 +973,12 @@ export function notifyOverageDueAfterCommit(
         currency: pending.currency,
         payUrl: `${getAppUrl()}/dashboard/overage?charge=${pending.overageEventId}`,
       });
-    })
-    .catch((notifyErr) => {
+    } catch (notifyErr) {
       console.error("[notifyOrgProgramOverageDue] failed:", notifyErr);
       reportSentryError(notifyErr, {
         subsystem: "payments",
         level: "warning",
       });
-    });
+    }
+  }, "notifyOrgProgramOverageDue");
 }

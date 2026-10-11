@@ -10,6 +10,8 @@
 import * as Sentry from "@sentry/nextjs";
 
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
@@ -717,7 +719,24 @@ export async function freezeAppointments(
   // Fire-and-forget: notification failures don't affect the freeze result.
   for (const { userIds, data } of pendingNotifications) {
     try {
-      await notifyAppointmentCancelled(userIds, data);
+      const [bellResults, emailRows] = await Promise.all([
+        notifyAppointmentCancelled(userIds, data, { deferAttempt: true }),
+        stageAppointmentCancelledEmail(prisma, {
+          appointmentId: data.appointmentId ?? "",
+          userIds,
+          cancelledBy: "Familiarise",
+          reason: data.reason,
+          dashboardUrl:
+            data.dashboardUrl ?? notificationHref(null, "appointments"),
+        }).catch(() => []),
+      ]);
+      await flushNotificationsAfter(
+        {
+          bells: (bellResults ?? []).map((r) => r?.staged),
+          emails: [{ rows: emailRows, emailType: "APPOINTMENT_CANCELLED" }],
+        },
+        "freeze-appointments",
+      );
       notified += userIds.length;
     } catch (err) {
       Sentry.captureException(

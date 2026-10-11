@@ -31,7 +31,9 @@ import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { stageSubscriptionLifecycleEmail } from "@/lib/email/senders/booking";
 import { notifySubscriptionStarted } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { goHref } from "@/lib/dashboard/go";
 import {
   UpdateSubscriptionSchema,
@@ -681,16 +683,40 @@ export async function PATCH(
         const consulteeUserId = subData.requestedBy?.user?.id;
 
         if (status === AppointmentStatus.APPROVED && consulteeUserId) {
-          await notifySubscriptionStarted(consulteeUserId, {
-            subscriptionId: subData.id,
-            planTitle: subData.subscriptionPlan?.title || "Subscription",
-            consultantName:
-              subData.subscriptionPlan?.consultantProfile?.user?.name ||
-              "Consultant",
-            consulteeName: subData.requestedBy?.user?.name || undefined,
-            // #1527 — single known recipient, the consultee.
-            dashboardUrl: goHref("client", "appointments"),
-          });
+          const planTitle = subData.subscriptionPlan?.title || "Subscription";
+          const consultantName =
+            subData.subscriptionPlan?.consultantProfile?.user?.name ||
+            "Consultant";
+          const dashboardUrl = goHref("client", "appointments");
+          const [bellResult, emailRows] = await Promise.all([
+            notifySubscriptionStarted(
+              consulteeUserId,
+              {
+                subscriptionId: subData.id,
+                planTitle,
+                consultantName,
+                consulteeName: subData.requestedBy?.user?.name || undefined,
+                dashboardUrl,
+              },
+              undefined,
+              { deferAttempt: true },
+            ).catch(() => null),
+            stageSubscriptionLifecycleEmail(prisma, {
+              subscriptionId: subData.id,
+              userIds: [consulteeUserId],
+              kind: "SUBSCRIPTION_STARTED",
+              planTitle,
+              consultantName,
+              dashboardUrl,
+            }).catch(() => []),
+          ]);
+          await flushNotificationsAfter(
+            {
+              bells: [bellResult?.staged],
+              emails: [{ rows: emailRows, emailType: "SUBSCRIPTION_STARTED" }],
+            },
+            "subscriptions.started",
+          );
         }
       }
 

@@ -11,6 +11,8 @@ import prisma, { type PrismaLike } from "@/lib/prisma";
 import {
   NOVU_WORKFLOWS,
   notificationScope,
+  type OrgContractStatusChangedPayload,
+  type OrgCreatedPayload,
   type OrgDataExportReadyInput,
   type OrgDataExportReadyPayload,
   type OrgInviteAcceptedPayload,
@@ -26,6 +28,7 @@ import {
   type OrgLicenseRenewalUpcomingPayload,
   type OrgMemberOverageTimedOutInput,
   type OrgMemberOverageTimedOutPayload,
+  type OrgMemberRemovedPayload,
   type OrgPayoutCompletedInput,
   type OrgPayoutCompletedPayload,
   type OrgPayoutFailedInput,
@@ -34,7 +37,12 @@ import {
   type OrgProgramExhaustedPayload,
   type OrgProgramOverageDueInput,
   type OrgProgramOverageDuePayload,
+  type OrgRoleChangedPayload,
+  type OrgSeatAssignedPayload,
+  type OrgSeatRevokedPayload,
+  type OrgSsoProviderDecidedPayload,
   type OrgSsoProviderDeletedPayload,
+  type OrgSsoProviderSubmittedPayload,
   type OrgWalletLowInput,
   type OrgWalletLowPayload,
   type OrgWalletTopupConfirmedInput,
@@ -401,4 +409,80 @@ export const notifyOrgSsoProviderDeleted =
   defineOrgRosterNotifier<OrgSsoProviderDeletedPayload>(
     W.ORG_SSO_PROVIDER_DELETED,
     OWNER_ONLY,
+  );
+
+export const notifyOrgCreated = defineOrgRosterNotifier<OrgCreatedPayload>(
+  W.ORG_CREATED,
+  OWNER_ONLY,
+);
+
+export const notifyOrgRoleChanged =
+  defineOrgMemberNotifier<OrgRoleChangedPayload>(W.ORG_ROLE_CHANGED, (p) => ({
+    ...notificationScope(p.organizationId, p.orgName),
+  }));
+
+export const notifyOrgMemberRemoved =
+  defineOrgMemberNotifier<OrgMemberRemovedPayload>(
+    W.ORG_MEMBER_REMOVED,
+    (p) => ({
+      ...notificationScope(p.organizationId, p.orgName),
+    }),
+  );
+
+export async function notifyOrgSsoProviderSubmitted(
+  orgId: string,
+  payload: OrgSsoProviderSubmittedPayload,
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const db = opts?.tx ?? prisma;
+  const admins = db.user?.findMany
+    ? await db.user.findMany({
+        where: { role: "ADMIN" },
+        select: { id: true },
+      })
+    : [];
+  const recipientIds = admins.map((a) => a.id);
+  const domains = Array.isArray(payload.domains)
+    ? payload.domains.join(", ")
+    : payload.domains;
+  return triggerMany(
+    W.ORG_SSO_PROVIDER_SUBMITTED,
+    recipientIds,
+    {
+      ...notificationScope(orgId, payload.orgName),
+      ...payload,
+      domains,
+    },
+    opts,
+  );
+}
+
+export const notifyOrgSsoProviderDecided =
+  defineOrgRosterNotifier<OrgSsoProviderDecidedPayload>(
+    W.ORG_SSO_PROVIDER_DECIDED,
+    OWNER_ONLY,
+  );
+
+export const notifyOrgSeatAssigned =
+  defineOrgMemberNotifier<OrgSeatAssignedPayload>(W.ORG_SEAT_ASSIGNED, (p) => ({
+    ...notificationScope(p.organizationId, p.orgName),
+  }));
+
+export const notifyOrgSeatRevoked =
+  defineOrgMemberNotifier<OrgSeatRevokedPayload>(W.ORG_SEAT_REVOKED, (p) => ({
+    ...notificationScope(p.organizationId, p.orgName),
+  }));
+
+export const notifyOrgContractStatusChanged =
+  defineOrgZonedRosterNotifier<OrgContractStatusChangedPayload>(
+    W.ORG_CONTRACT_STATUS_CHANGED,
+    OPERATOR_ROLES,
+    (p, tz): Partial<OrgContractStatusChangedPayload> => ({
+      ...(p.effectiveDate
+        ? {
+            effectiveDate: zonedDate(p.effectiveDate, tz),
+            effectiveDateIso: p.effectiveDate,
+          }
+        : {}),
+    }),
   );

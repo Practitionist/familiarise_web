@@ -176,42 +176,46 @@ export async function remindApprovedPayment(args: {
       reminder: true,
     }),
   );
+  const message = {
+    from: SENDERS.payments,
+    to: consultee.email,
+    subject: `Reminder: payment due - ${args.kind === "consultation" ? "Consultation" : "Subscription"} with ${consultantName}`,
+    ...rendered,
+  };
   const [, bellResult] = await Promise.all([
-    deliver(
-      {
-        from: SENDERS.payments,
-        to: consultee.email,
-        subject: `Reminder: payment due - ${args.kind === "consultation" ? "Consultation" : "Subscription"} with ${consultantName}`,
-        ...rendered,
-      },
-      PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE,
-      { entityRef: `payment:${payment.id}`, budgetMs: EMAIL_BUDGET_MS.REQUEST },
-    ),
-    notifyPaymentLink(
-      consultee.id,
-      {
-        ...notificationScope(
-          row.appointment.organizationId,
-          row.appointment.organization?.name,
-        ),
-        paymentId: payment.id,
-        appointmentId: row.appointment.id,
-        amount: payment.amount,
-        currency: payment.currency,
-        consultantName,
-        appointmentType:
-          args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
-        planTitle: plan?.title,
-        paymentUrl,
-        expiresAt: payment.expiresAt,
-        reminder: true,
-      },
-      `payment-link-remind:${payment.id}:${Math.floor(now.getTime() / REMIND_WINDOW_MS)}`,
-      { deferAttempt: true },
+    deliver(message, PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE, {
+      entityRef: `payment:${payment.id}`,
+      budgetMs: EMAIL_BUDGET_MS.REQUEST,
+    }),
+    Promise.resolve(
+      notifyPaymentLink(
+        consultee.id,
+        {
+          ...notificationScope(
+            row.appointment.organizationId,
+            row.appointment.organization?.name,
+          ),
+          paymentId: payment.id,
+          appointmentId: row.appointment.id,
+          amount: payment.amount,
+          currency: payment.currency,
+          consultantName,
+          appointmentType:
+            args.kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+          planTitle: plan?.title,
+          paymentUrl,
+          expiresAt: payment.expiresAt,
+          reminder: true,
+        },
+        `payment-link-remind:${payment.id}:${Math.floor(now.getTime() / REMIND_WINDOW_MS)}`,
+        { deferAttempt: true },
+      ),
     ).catch(() => null),
   ]);
   await flushNotificationsAfter(
-    { bells: [bellResult?.staged] },
+    {
+      bells: [bellResult?.staged],
+    },
     "remind-payment.bell",
   );
   return { nextAllowedAt };

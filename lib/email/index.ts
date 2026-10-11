@@ -28,6 +28,13 @@ import {
   type StageOptions,
 } from "./deliver";
 import { renderEmail } from "./render";
+import {
+  defineLifecycleStager,
+  greet,
+  prepareSpecEmails,
+  stageSpecGuarded,
+  type StagingTx,
+} from "./senders/shared";
 
 export { DEFAULT_FROM_ADDRESS, EMAIL_BUDGET_MS, SENDERS } from "./config";
 export {
@@ -45,6 +52,7 @@ export {
 } from "./deliver";
 export * from "./send-to-recipients";
 export * from "./senders/booking";
+export * from "./senders/collaborators";
 export * from "./senders/money";
 export * from "./senders/onboarding";
 export * from "./senders/people";
@@ -55,7 +63,7 @@ export {
   prepareSpecEmails,
   stageSpecGuarded,
   type StagingTx,
-} from "./senders/shared";
+};
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
 
@@ -163,6 +171,21 @@ export const sendWelcomeEmail = defineDirectEmailSender<{
   defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
 }));
 
+export const stageWelcomeEmail = defineLifecycleStager<{
+  userId: string;
+  dashboardUrl?: string;
+}>(({ userId, dashboardUrl = `${getAppUrl()}/dashboard` }) => ({
+  userIds: [userId],
+  spec: {
+    emailType: "WELCOME",
+    category: null,
+    from: SENDERS.onboarding,
+    entityRef: `user:${userId}:welcome`,
+    subject: () => "Welcome to Familiarise!",
+    render: (r) => WelcomeEmail({ name: greet(r), dashboardUrl }),
+  },
+}));
+
 export const sendPasswordResetEmail = defineDirectEmailSender<{
   email: string;
   name: string;
@@ -241,6 +264,24 @@ export const sendPasswordChangedEmail = defineDirectEmailSender<{
   defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
 }));
 
+export const stagePasswordChangedEmail = defineLifecycleStager<{
+  userId: string;
+}>(({ userId }) => ({
+  userIds: [userId],
+  spec: {
+    emailType: "PASSWORD_CHANGED",
+    category: null,
+    from: SENDERS.security,
+    entityRef: `user:${userId}:password_changed`,
+    subject: () => "Your Familiarise password was changed",
+    render: (r) =>
+      PasswordChangedEmail({
+        name: greet(r),
+        resetUrl: `${getAppUrl()}/auth/forgot-password`,
+      }),
+  },
+}));
+
 export const sendAccountLinkedEmail = defineDirectEmailSender<{
   email: string;
   name: string;
@@ -265,6 +306,23 @@ export const sendAccountLinkedEmail = defineDirectEmailSender<{
     defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
   }),
 );
+
+export const stageAccountLinkedEmail = defineLifecycleStager<{
+  userId: string;
+  provider: string;
+  dashboardUrl?: string;
+}>(({ userId, provider, dashboardUrl = `${getAppUrl()}/dashboard` }) => ({
+  userIds: [userId],
+  spec: {
+    emailType: "ACCOUNT_LINKED",
+    category: null,
+    from: SENDERS.security,
+    entityRef: `user:${userId}:account_linked:${provider}`,
+    subject: () => `Your Familiarise account is now linked with ${provider}`,
+    render: (r) =>
+      AccountLinkedEmail({ name: greet(r), provider, dashboardUrl }),
+  },
+}));
 
 // ── Payment Senders ─────────────────────────────────────────────────────────
 

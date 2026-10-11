@@ -129,6 +129,8 @@ import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
 } from "@/lib/novu/org-workflows";
+import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
+import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   MARKETPLACE_VISIBILITY,
@@ -3521,48 +3523,97 @@ function dispatchProgramBell(
         usedPct: number;
       },
 ): void {
-  void prisma.programAssignment
-    .findUnique({
-      where: { id: programAssignmentId },
-      select: {
-        membership: {
-          select: {
-            userId: true,
-            user: { select: { name: true, email: true } },
+  const label =
+    bell.kind === "EXHAUSTED"
+      ? "notifyOrgProgramExhausted"
+      : "notifyOrgProgramCapNear";
+  scheduleAfter(async () => {
+    try {
+      const ctx = await prisma.programAssignment.findUnique({
+        where: { id: programAssignmentId },
+        select: {
+          membership: {
+            select: {
+              userId: true,
+              user: { select: { name: true, email: true } },
+            },
           },
-        },
-        program: {
-          select: {
-            name: true,
-            contract: {
-              select: {
-                organizationId: true,
-                organization: { select: { name: true } },
+          program: {
+            select: {
+              name: true,
+              contract: {
+                select: {
+                  organizationId: true,
+                  organization: { select: { name: true } },
+                },
               },
             },
           },
         },
-      },
-    })
-    .then((ctx) => {
+      });
       if (!ctx) return;
       const orgId = ctx.program.contract.organizationId;
+      const orgName = ctx.program.contract.organization.name;
+      const programName = ctx.program.name;
+      const assigneeName =
+        ctx.membership.user.name ?? ctx.membership.user.email;
+      const dashboardUrl = `/dashboard/organization/${orgId}/programs`;
+      const actionUrl = `${getAppUrl()}${dashboardUrl}`;
+      const operatorRows = prisma.membership?.findMany
+        ? await prisma.membership.findMany({
+            where: {
+              organizationId: orgId,
+              status: "ACTIVE",
+              role: { in: ["OWNER", "MAINTAINER"] },
+            },
+            select: { userId: true },
+          })
+        : [];
+      const recipientUserIds = Array.from(
+        new Set([ctx.membership.userId, ...operatorRows.map((r) => r.userId)]),
+      );
       const common = {
-        orgName: ctx.program.contract.organization.name,
-        programName: ctx.program.name,
-        assigneeName: ctx.membership.user.name ?? ctx.membership.user.email,
-        dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+        orgName,
+        programName,
+        assigneeName,
+        dashboardUrl,
       };
-      return bell.kind === "EXHAUSTED"
-        ? notifyOrgProgramExhausted(orgId, ctx.membership.userId, common)
-        : notifyOrgProgramCapNear(orgId, ctx.membership.userId, {
+      if (bell.kind === "EXHAUSTED") {
+        await Promise.all([
+          notifyOrgProgramExhausted(orgId, ctx.membership.userId, common),
+          sendOrgOperationalEmail({
+            recipientUserIds,
+            organizationId: orgId,
+            orgName,
+            kind: "PROGRAM_EXHAUSTED",
+            programName,
+            assigneeName,
+            actionUrl,
+          }),
+        ]);
+      } else {
+        await Promise.all([
+          notifyOrgProgramCapNear(orgId, ctx.membership.userId, {
             ...common,
             engagementsUsed: bell.engagementsUsed,
             cap: bell.cap,
             usedPct: bell.usedPct,
-          });
-    })
-    .catch((notifyErr) => {
+          }),
+          sendOrgOperationalEmail({
+            recipientUserIds,
+            organizationId: orgId,
+            orgName,
+            kind: "PROGRAM_CAP_NEAR",
+            programName,
+            assigneeName,
+            engagementsUsed: bell.engagementsUsed,
+            cap: bell.cap,
+            usedPct: bell.usedPct,
+            actionUrl,
+          }),
+        ]);
+      }
+    } catch (notifyErr) {
       console.error(
         bell.kind === "EXHAUSTED"
           ? "[notifyOrgProgramExhausted] failed:"
@@ -3573,7 +3624,8 @@ function dispatchProgramBell(
         subsystem: "payments",
         level: "warning",
       });
-    });
+    }
+  }, label);
 }
 
 /**

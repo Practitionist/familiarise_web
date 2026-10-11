@@ -34,7 +34,9 @@ function outputToGitHubActions(result: NoShowResult): void {
     );
   }
   if (!result.success) {
-    console.log(`::warning::No-show job had errors: ${result.errors.join("; ")}`);
+    console.log(
+      `::warning::No-show job had errors: ${result.errors.join("; ")}`,
+    );
   }
 }
 

@@ -19,6 +19,10 @@ import AccountBannedEmail, {
 import AccountSuspendedEmail, {
   ACCOUNT_SUSPENDED_SUBJECT,
 } from "@/emails/account/AccountSuspendedEmail";
+import AccountRestrictedEmail, {
+  accountRestrictedSubject,
+  type AccountRestrictedEmailKind,
+} from "@/emails/auth/AccountRestrictedEmail";
 import NewReviewEmail, {
   newReviewSubject,
 } from "@/emails/reviews/NewReviewEmail";
@@ -59,50 +63,64 @@ export interface SupportTicketReceivedEmailArgs {
   ticketUrl: string;
 }
 
+function buildSupportTicketReceivedEmail(
+  args: SupportTicketReceivedEmailArgs,
+): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const subject = `Support request received (${args.reference})`;
+  return {
+    userIds: [args.ownerUserId],
+    spec: {
+      emailType: "SUPPORT_TICKET_RECEIVED",
+      category: null,
+      from: SENDERS.notifications,
+      entityRef: `ticket:${args.ticketId}`,
+      subject: () => subject,
+      render: (r) =>
+        React.createElement(EmailLayout, {
+          preview: subject,
+          children: [
+            React.createElement(Text, { style: heading, key: "h" }, subject),
+            React.createElement(
+              Text,
+              { style: paragraph, key: "greet" },
+              `Hi ${greet(r)},`,
+            ),
+            React.createElement(
+              Text,
+              { style: paragraph, key: "body" },
+              `We received your support request `,
+              React.createElement("strong", null, args.reference),
+              args.slaWindow
+                ? ` (${args.title}). Our team expects to respond within ${args.slaWindow}.`
+                : ` (${args.title}).`,
+            ),
+            React.createElement(
+              Section,
+              { style: buttonContainer, key: "cta" },
+              React.createElement(
+                Button,
+                { style: button, href: absolute(args.ticketUrl) },
+                "View request",
+              ),
+            ),
+          ],
+        }),
+    },
+  };
+}
+
 export const sendSupportTicketReceivedEmail =
-  defineBudgetedEmailSender<SupportTicketReceivedEmailArgs>((args) => {
-    const subject = `Support request received (${args.reference})`;
-    return {
-      userIds: [args.ownerUserId],
-      spec: {
-        emailType: "SUPPORT_TICKET_RECEIVED",
-        category: null,
-        from: SENDERS.notifications,
-        entityRef: `ticket:${args.ticketId}`,
-        subject: () => subject,
-        render: (r) =>
-          React.createElement(EmailLayout, {
-            preview: subject,
-            children: [
-              React.createElement(Text, { style: heading, key: "h" }, subject),
-              React.createElement(
-                Text,
-                { style: paragraph, key: "greet" },
-                `Hi ${greet(r)},`,
-              ),
-              React.createElement(
-                Text,
-                { style: paragraph, key: "body" },
-                `We received your support request `,
-                React.createElement("strong", null, args.reference),
-                args.slaWindow
-                  ? ` (${args.title}). Our team expects to respond within ${args.slaWindow}.`
-                  : ` (${args.title}).`,
-              ),
-              React.createElement(
-                Section,
-                { style: buttonContainer, key: "cta" },
-                React.createElement(
-                  Button,
-                  { style: button, href: absolute(args.ticketUrl) },
-                  "View request",
-                ),
-              ),
-            ],
-          }),
-      },
-    };
-  });
+  defineBudgetedEmailSender<SupportTicketReceivedEmailArgs>(
+    buildSupportTicketReceivedEmail,
+  );
+
+export const stageSupportTicketReceivedEmail =
+  defineLifecycleStager<SupportTicketReceivedEmailArgs>(
+    buildSupportTicketReceivedEmail,
+  );
 
 export interface SupportTicketResponseEmailArgs {
   ticketId: string;
@@ -213,7 +231,53 @@ export const stageSupportTicketUpdateEmail =
     buildSupportTicketUpdateEmail,
   );
 
-// ── Account ─────────────────────────────────────────────────────────────────
+export interface FeedbackUpdateEmailArgs {
+  feedbackId: string;
+  userId: string;
+  title?: string;
+  statusLabel: string;
+  replyText?: string | null;
+  dashboardUrl: string;
+}
+
+function buildFeedbackUpdateEmail(args: FeedbackUpdateEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const title = args.title ?? "Product feedback";
+  return {
+    userIds: [args.userId],
+    spec: {
+      emailType: "PLATFORM_FEEDBACK_UPDATE",
+      category: "feedback",
+      from: SENDERS.notifications,
+      entityRef: `feedback:${args.feedbackId}`,
+      subject: () =>
+        supportTicketResponseSubject({
+          kind: "FEEDBACK_UPDATED",
+          statusLabel: args.statusLabel,
+        }),
+      render: (r) =>
+        React.createElement(SupportTicketResponseEmail, {
+          kind: "FEEDBACK_UPDATED",
+          recipientName: greet(r),
+          title,
+          statusLabel: args.statusLabel,
+          replyText: args.replyText ?? "",
+          ticketUrl: absolute(args.dashboardUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const sendFeedbackUpdateEmail =
+  defineBudgetedEmailSender<FeedbackUpdateEmailArgs>(buildFeedbackUpdateEmail);
+
+export const stageFeedbackUpdateEmail =
+  defineLifecycleStager<FeedbackUpdateEmailArgs>(buildFeedbackUpdateEmail);
+
+// ── Account & Moderation ────────────────────────────────────────────────────
 
 export type ModerationReportOutcomeEmailArgs = {
   reportId: string;
@@ -226,55 +290,128 @@ export type ModerationReportOutcomeEmailArgs = {
   | { reporterUserId: string; userId?: string }
 );
 
-export const sendModerationReportOutcomeEmail =
-  defineBudgetedEmailSender<ModerationReportOutcomeEmailArgs>((args) => {
-    const recipientUserId = args.reporterUserId ?? args.userId ?? "";
-    const subject = `Update on your report (${args.reference})`;
-    return {
-      userIds: [recipientUserId],
-      spec: {
-        emailType: "MODERATION_REPORT_OUTCOME",
-        category: null,
-        from: SENDERS.security,
-        entityRef: `report:${args.reportId}`,
-        subject: () => subject,
-        render: (r) =>
-          React.createElement(EmailLayout, {
-            preview: subject,
-            children: [
-              React.createElement(Text, { style: heading, key: "h" }, subject),
-              React.createElement(
-                Text,
-                { style: paragraph, key: "greet" },
-                `Hi ${greet(r)},`,
-              ),
-              React.createElement(
-                Text,
-                { style: paragraph, key: "body" },
-                `We have completed reviewing your report `,
-                React.createElement("strong", null, args.reference),
-                `. Outcome: `,
-                React.createElement("strong", null, args.outcome),
-                args.reason ? `. ${args.reason}` : ".",
-              ),
-              ...(args.dashboardUrl
-                ? [
+function buildModerationReportOutcomeEmail(
+  args: ModerationReportOutcomeEmailArgs,
+): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const recipientUserId = args.reporterUserId ?? args.userId ?? "";
+  const subject = `Update on your report (${args.reference})`;
+  return {
+    userIds: [recipientUserId],
+    spec: {
+      emailType: "MODERATION_REPORT_OUTCOME",
+      category: null,
+      from: SENDERS.security,
+      entityRef: `report:${args.reportId}`,
+      subject: () => subject,
+      render: (r) =>
+        React.createElement(EmailLayout, {
+          preview: subject,
+          children: [
+            React.createElement(Text, { style: heading, key: "h" }, subject),
+            React.createElement(
+              Text,
+              { style: paragraph, key: "greet" },
+              `Hi ${greet(r)},`,
+            ),
+            React.createElement(
+              Text,
+              { style: paragraph, key: "body" },
+              `We have completed reviewing your report `,
+              React.createElement("strong", null, args.reference),
+              `. Outcome: `,
+              React.createElement("strong", null, args.outcome),
+              args.reason ? `. ${args.reason}` : ".",
+            ),
+            ...(args.dashboardUrl
+              ? [
+                  React.createElement(
+                    Section,
+                    { style: buttonContainer, key: "cta" },
                     React.createElement(
-                      Section,
-                      { style: buttonContainer, key: "cta" },
-                      React.createElement(
-                        Button,
-                        { style: button, href: absolute(args.dashboardUrl) },
-                        "Open dashboard",
-                      ),
+                      Button,
+                      { style: button, href: absolute(args.dashboardUrl) },
+                      "Open dashboard",
                     ),
-                  ]
-                : []),
-            ],
-          }),
-      },
-    };
-  });
+                  ),
+                ]
+              : []),
+          ],
+        }),
+    },
+  };
+}
+
+export const sendModerationReportOutcomeEmail =
+  defineBudgetedEmailSender<ModerationReportOutcomeEmailArgs>(
+    buildModerationReportOutcomeEmail,
+  );
+
+export const stageModerationReportOutcomeEmail =
+  defineLifecycleStager<ModerationReportOutcomeEmailArgs>(
+    buildModerationReportOutcomeEmail,
+  );
+
+export interface AccountModerationEmailArgs {
+  userId: string;
+  kind: AccountRestrictedEmailKind;
+  reason?: string | null;
+  suspendedUntil?: Date | string | null;
+  appointmentsCancelled?: number | null;
+  supportUrl?: string;
+  dashboardUrl?: string;
+}
+
+function buildAccountModerationEmail(args: AccountModerationEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const until = args.suspendedUntil || null;
+  const emailTypeMap: Record<AccountRestrictedEmailKind, string> = {
+    BANNED: "ACCOUNT_BANNED",
+    SUSPENDED: "ACCOUNT_SUSPENDED",
+    REINSTATED: "ACCOUNT_REINSTATED",
+    MODERATION_WARNING: "MODERATION_WARNING",
+    WARNING: "MODERATION_WARNING",
+    CONTENT_REMOVED: "CONTENT_REMOVED_NOTICE",
+    REVIEW_EXCLUDED: "REVIEW_EXCLUDED_FROM_RATING",
+  };
+  return {
+    userIds: [args.userId],
+    spec: {
+      emailType: emailTypeMap[args.kind],
+      category: null,
+      from: SENDERS.security,
+      entityRef: `user:${args.userId}`,
+      subject: () => accountRestrictedSubject(args.kind),
+      render: (r) =>
+        React.createElement(AccountRestrictedEmail, {
+          kind: args.kind,
+          recipientName: greet(r),
+          reason: args.reason ?? undefined,
+          suspendedUntilText: until ? whenText(until, r.zone) : undefined,
+          appointmentsCancelled: args.appointmentsCancelled ?? 0,
+          supportEmail: supportEmail(),
+          supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
+          dashboardUrl: args.dashboardUrl
+            ? absolute(args.dashboardUrl)
+            : undefined,
+        }),
+    },
+  };
+}
+
+export const sendAccountModerationEmail =
+  defineBudgetedEmailSender<AccountModerationEmailArgs>(
+    buildAccountModerationEmail,
+  );
+
+export const stageAccountModerationEmail =
+  defineLifecycleStager<AccountModerationEmailArgs>(
+    buildAccountModerationEmail,
+  );
 
 export interface AccountSuspendedEmailArgs {
   userId: string;
@@ -283,28 +420,38 @@ export interface AccountSuspendedEmailArgs {
   appointmentsCancelled?: number | null;
 }
 
+function buildAccountSuspendedEmail(args: AccountSuspendedEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const until = args.suspendedUntil || null;
+  return {
+    userIds: [args.userId],
+    spec: {
+      emailType: "ACCOUNT_SUSPENDED",
+      category: null,
+      from: SENDERS.security,
+      entityRef: `user:${args.userId}`,
+      subject: () => ACCOUNT_SUSPENDED_SUBJECT,
+      render: (r) =>
+        React.createElement(AccountSuspendedEmail, {
+          recipientName: greet(r),
+          reason: args.reason ?? undefined,
+          suspendedUntilText: until ? whenText(until, r.zone) : undefined,
+          appointmentsCancelled: args.appointmentsCancelled ?? 0,
+          supportEmail: supportEmail(),
+        }),
+    },
+  };
+}
+
 export const sendAccountSuspendedEmail =
-  defineBudgetedEmailSender<AccountSuspendedEmailArgs>((args) => {
-    const until = args.suspendedUntil || null;
-    return {
-      userIds: [args.userId],
-      spec: {
-        emailType: "ACCOUNT_SUSPENDED",
-        category: null,
-        from: SENDERS.security,
-        entityRef: `user:${args.userId}`,
-        subject: () => ACCOUNT_SUSPENDED_SUBJECT,
-        render: (r) =>
-          React.createElement(AccountSuspendedEmail, {
-            recipientName: greet(r),
-            reason: args.reason ?? undefined,
-            suspendedUntilText: until ? whenText(until, r.zone) : undefined,
-            appointmentsCancelled: args.appointmentsCancelled ?? 0,
-            supportEmail: supportEmail(),
-          }),
-      },
-    };
-  });
+  defineBudgetedEmailSender<AccountSuspendedEmailArgs>(
+    buildAccountSuspendedEmail,
+  );
+
+export const stageAccountSuspendedEmail =
+  defineLifecycleStager<AccountSuspendedEmailArgs>(buildAccountSuspendedEmail);
 
 export interface AccountBannedEmailArgs {
   userId: string;
@@ -312,8 +459,11 @@ export interface AccountBannedEmailArgs {
   appointmentsCancelled?: number | null;
 }
 
-export const sendAccountBannedEmail =
-  defineBudgetedEmailSender<AccountBannedEmailArgs>((args) => ({
+function buildAccountBannedEmail(args: AccountBannedEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  return {
     userIds: [args.userId],
     spec: {
       emailType: "ACCOUNT_BANNED",
@@ -329,7 +479,14 @@ export const sendAccountBannedEmail =
           supportEmail: supportEmail(),
         }),
     },
-  }));
+  };
+}
+
+export const sendAccountBannedEmail =
+  defineBudgetedEmailSender<AccountBannedEmailArgs>(buildAccountBannedEmail);
+
+export const stageAccountBannedEmail =
+  defineLifecycleStager<AccountBannedEmailArgs>(buildAccountBannedEmail);
 
 // ── Reviews ─────────────────────────────────────────────────────────────────
 

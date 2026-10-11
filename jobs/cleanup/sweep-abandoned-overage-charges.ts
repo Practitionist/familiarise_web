@@ -19,11 +19,17 @@ function outputToGitHubActions(result: OverageSweepResult): void {
   if (outputFile) {
     fs.appendFileSync(
       outputFile,
-      [`scanned=${result.scanned}`, `failed=${result.failed}`, `success=${result.success}`].join("\n") + "\n",
+      [
+        `scanned=${result.scanned}`,
+        `failed=${result.failed}`,
+        `success=${result.success}`,
+      ].join("\n") + "\n",
     );
   }
   if (result.failed > 0) {
-    console.log(`::notice::Failed ${result.failed} abandoned overage charge(s)`);
+    console.log(
+      `::notice::Failed ${result.failed} abandoned overage charge(s)`,
+    );
   }
 }
 
@@ -38,7 +44,10 @@ async function main(): Promise<void> {
     console.log(`   Scanned: ${result.scanned}`);
     console.log(`   Failed (ceiling freed): ${result.failed}`);
     outputToGitHubActions(result);
-    Sentry.logger.info("job:sweep-abandoned-overage-charges finished", { scanned: result.scanned, failed: result.failed });
+    Sentry.logger.info("job:sweep-abandoned-overage-charges finished", {
+      scanned: result.scanned,
+      failed: result.failed,
+    });
   } finally {
     await disconnectDatabase();
   }

@@ -8,6 +8,9 @@ import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import prisma from "@/lib/prisma";
 import { applyRateLimit, reauthLimiter } from "@/lib/rate-limit";
 import { sendSecurityEventEmail } from "@/lib/auth/security-email";
+import { notifyAccountSecurityNotice } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 import {
   isTwoFactorLocked,
   recordTwoFactorFailure,
@@ -100,10 +103,27 @@ export async function POST(req: NextRequest) {
             select: { lockedUntil: true },
           });
           if (lock?.lockedUntil) {
-            await sendSecurityEventEmail(user, {
-              kind: "two-factor-locked",
-              lockedUntil: lock.lockedUntil,
-            });
+            const [, bellResults] = await Promise.all([
+              sendSecurityEventEmail(user, {
+                kind: "two-factor-locked",
+                lockedUntil: lock.lockedUntil,
+              }),
+              notifyAccountSecurityNotice(
+                user.id,
+                {
+                  kind: "TWO_FACTOR_DISABLED",
+                  dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+                },
+                `reauth-lockout:${user.id}:${lock.lockedUntil.getTime()}`,
+                { deferAttempt: true },
+              ).catch(() => []),
+            ]);
+            flushNotificationsAfter(
+              {
+                bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])),
+              },
+              "auth.reauthenticate.lockout",
+            );
           }
         }
         return refuse(400, "INVALID_CODE", "That code is not correct.");

@@ -23,6 +23,10 @@ import {
   restoreStreamAccess,
   type SideEffectSummary,
 } from "@/lib/moderation/side-effects";
+import { goHref } from "@/lib/dashboard/go";
+import { notifyAccountSecurityNotice } from "@/lib/novu";
+import { stageAccountModerationEmail } from "@/lib/email/senders/people";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 
 interface RouteParams {
   params: Promise<{ reportId: string }>;
@@ -66,23 +70,47 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     // Clearing the columns and recording who cleared them commit together, so
     // a reinstated account can never be missing its audit row.
-    const action = await prisma.$transaction(async (tx) => {
-      await tx.user.updateMany({
-        where: { id: report.targetUserId, banned: true },
-        data: { banned: false, banReason: null, banExpires: null },
-      });
-      return tx.moderationAction.create({
-        data: {
-          reportId: report.id,
-          actionType: "USER_REINSTATED",
-          notes,
-          takenById: session.user.id,
-        },
-        include: {
-          takenBy: { select: { id: true, name: true, email: true } },
-        },
-      });
-    });
+    const { action, stagedBells, stagedEmails } = await prisma.$transaction(
+      async (tx) => {
+        await tx.user.updateMany({
+          where: { id: report.targetUserId, banned: true },
+          data: { banned: false, banReason: null, banExpires: null },
+        });
+        const createdAction = await tx.moderationAction.create({
+          data: {
+            reportId: report.id,
+            actionType: "USER_REINSTATED",
+            notes,
+            takenById: session.user.id,
+          },
+          include: {
+            takenBy: { select: { id: true, name: true, email: true } },
+          },
+        });
+        const dashboardUrl = goHref("auto", "home");
+        const bellResults = await notifyAccountSecurityNotice(
+          report.targetUserId,
+          {
+            kind: "ACCOUNT_REINSTATED",
+            reason: notes,
+            dashboardUrl,
+          },
+          `moderation-unban:${createdAction.id}`,
+          { tx },
+        ).catch(() => []);
+        const emailRows = await stageAccountModerationEmail(tx, {
+          userId: report.targetUserId,
+          kind: "REINSTATED",
+          reason: notes,
+          dashboardUrl,
+        }).catch(() => []);
+        return {
+          action: createdAction,
+          stagedBells: bellResults.map((r) => r.staged),
+          stagedEmails: emailRows,
+        };
+      },
+    );
 
     const sideEffects: SideEffectSummary = {};
     try {
@@ -103,6 +131,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
     await persistActionSideEffects(action.id, sideEffects);
+    await flushNotificationsAfter(
+      {
+        bells: stagedBells,
+        emails: [{ rows: stagedEmails, emailType: "ACCOUNT_REINSTATED" }],
+      },
+      "moderation.unban",
+    );
 
     return NextResponse.json({
       action,

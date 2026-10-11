@@ -25,8 +25,18 @@ import {
   recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
+import { notifyAccountSecurityNotice } from "@/lib/novu/service";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { attemptOnboardingEmail, stageOrgWelcomeEmail } from "@/lib/email";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgInviteAcceptedOperatorEmail,
+} from "@/lib/email/senders/onboarding";
+import {
+  attemptStaged,
+  type StagedRecipientEmail as StagedEmail,
+} from "@/lib/email/send-to-recipients";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
@@ -173,10 +183,17 @@ export async function POST(req: NextRequest) {
   // transaction (skipped when the accept was idempotent — nothing
   // newsworthy happened); only the vendor attempts run after the response.
   if (!result.alreadyMember) {
-    const { stagedBells, stagedWelcome } = result;
+    const { stagedBells, stagedWelcome, stagedOperatorEmails } = result;
     scheduleAfter(async () => {
       for (const row of stagedBells) await attemptTrigger(row);
       if (stagedWelcome) await attemptOnboardingEmail(stagedWelcome);
+      if (stagedOperatorEmails.length > 0) {
+        await attemptStaged(
+          stagedOperatorEmails,
+          ONBOARDING_EMAIL_TYPES.ORG_INVITE_ACCEPTED_OPERATOR,
+          EMAIL_BUDGET_MS.REQUEST,
+        );
+      }
     }, "org.invitation.accept.post-commit");
   }
 
@@ -283,6 +300,7 @@ export async function POST(req: NextRequest) {
           alreadyMember: true,
           stagedBells: [] as StagedTrigger[],
           stagedWelcome: null,
+          stagedOperatorEmails: [] as StagedEmail[],
         };
       }
 
@@ -366,16 +384,30 @@ export async function POST(req: NextRequest) {
       // the membership or roll back with it (review round 2 on #1700); the
       // roster is read through `tx` too. Attempted in after() by the caller.
       const origin = new URL(req.url).origin;
-      const stagedBells = await notifyOrgInviteAccepted(
-        inv.organizationId,
-        {
-          accepteeName,
-          accepteeEmail,
-          orgName: org.name,
-          role: normalizedRole,
-          dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/members`,
-        },
-        { tx },
+      const rosterBells =
+        (await notifyOrgInviteAccepted(
+          inv.organizationId,
+          {
+            accepteeName,
+            accepteeEmail,
+            orgName: org.name,
+            role: normalizedRole,
+            dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/members`,
+          },
+          { tx },
+        )) ?? [];
+      const welcomeBellResults =
+        (await notifyAccountSecurityNotice(
+          userId,
+          {
+            kind: "WELCOME",
+            message: `You joined ${org.name} as ${normalizedRole}.`,
+            dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/home`,
+          },
+          tx.notificationOutbox ? { tx } : undefined,
+        )) ?? [];
+      const joinerBells = welcomeBellResults.flatMap((r) =>
+        r.success && r.staged ? [r.staged] : [],
       );
       const stagedWelcome = await stageOrgWelcomeEmail(
         {
@@ -387,13 +419,35 @@ export async function POST(req: NextRequest) {
         },
         tx,
       );
+      const operatorRows = tx.membership?.findMany
+        ? await tx.membership.findMany({
+            where: {
+              organizationId: inv.organizationId,
+              status: "ACTIVE",
+              role: { in: ["OWNER", "MAINTAINER"] },
+            },
+            select: { userId: true },
+          })
+        : [];
+      const stagedOperatorEmails = await stageOrgInviteAcceptedOperatorEmail(
+        tx,
+        {
+          recipientUserIds: operatorRows.map((r) => r.userId),
+          membershipId: created.id,
+          orgName: org.name,
+          role: normalizedRole,
+          memberName: accepteeName,
+          dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/members`,
+        },
+      );
 
       return {
         membership: created,
         organization: org,
         alreadyMember: false,
-        stagedBells,
+        stagedBells: [...rosterBells, ...joinerBells],
         stagedWelcome,
+        stagedOperatorEmails,
       };
     });
   }

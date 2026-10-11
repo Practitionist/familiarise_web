@@ -330,6 +330,8 @@ export async function POST(req: NextRequest) {
           // Only a new or revived review is news; an edit must not re-notify.
           const isNew = !existing || withdrawnByAuthor;
           let stagedBell = null;
+          let stagedEmailRows: Awaited<ReturnType<typeof stageNewReviewEmail>> =
+            [];
           if (isNew) {
             // An anonymous reviewer's name is never sent to the consultant.
             const reviewerName = created.isAnonymous
@@ -349,33 +351,34 @@ export async function POST(req: NextRequest) {
               { tx },
             );
             stagedBell = triggerResult.staged ?? null;
+            stagedEmailRows = await stageNewReviewEmail(tx, {
+              reviewId: created.id,
+              consultantUserId: created.consultantProfile.userId,
+              reviewerName,
+              rating: created.rating,
+              comment: created.reviewDescription,
+              reviewUrl: reviewsInboxHref,
+            }).catch(() => []);
           }
 
-          return { review: created, isNew, stagedBell };
+          return { review: created, isNew, stagedBell, stagedEmailRows };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
 
-    const { review: newReview, isNew, stagedBell } = writeResult;
+    const {
+      review: newReview,
+      isNew,
+      stagedBell,
+      stagedEmailRows,
+    } = writeResult;
 
     if (isNew) {
-      const reviewerName = newReview.isAnonymous
-        ? "A verified client"
-        : newReview.consulteeProfile?.user?.name || "User";
-      const reviewsInboxHref = goHref("expert", "reviews");
-      const emailRows = await stageNewReviewEmail(prisma, {
-        reviewId: newReview.id,
-        consultantUserId: newReview.consultantProfile.userId,
-        reviewerName,
-        rating: newReview.rating,
-        comment: newReview.reviewDescription,
-        reviewUrl: reviewsInboxHref,
-      }).catch(() => []);
       await flushNotificationsAfter(
         {
           bells: [stagedBell],
-          emails: [{ rows: emailRows, emailType: "NEW_REVIEW" }],
+          emails: [{ rows: stagedEmailRows, emailType: "NEW_REVIEW_RECEIVED" }],
         },
         "reviews.create",
       );

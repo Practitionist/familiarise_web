@@ -38,6 +38,7 @@ import type { NovuWorkflowId } from "@/lib/novu/templates/types";
 import {
   stageAppointmentCancelledEmail,
   stageAppointmentRescheduledEmail,
+  stageClassExitAvailableEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/senders/booking";
 import { goHref } from "@/lib/dashboard/go";
@@ -188,7 +189,7 @@ async function onExitRightTripped(
   ledger: SeriesLedger,
   seatUserIds: string[],
   opts: { missedAt: Date; hostAttributed: boolean; firstTrip: boolean },
-): Promise<StagedTrigger[]> {
+): Promise<{ bells: StagedTrigger[]; emails: StagedRecipientEmail[] }> {
   const correlationId = `class-reliability:${hosted.cls.id}`;
   if (opts.hostAttributed && exitRightFor(ledger.hostMisses, ledger.N)) {
     const latest = await tx.systemEvent.findFirst({
@@ -212,8 +213,9 @@ async function onExitRightTripped(
       });
     }
   }
-  if (!opts.firstTrip) return [];
+  if (!opts.firstTrip) return { bells: [], emails: [] };
   const misses = ledger.misses;
+  const dashboardUrl = goHref("client", "appointments");
   const bells: StagedTrigger[] = [];
   for (const userId of seatUserIds) {
     const bell = await stageBell(tx, {
@@ -223,13 +225,23 @@ async function onExitRightTripped(
         planTitle: hosted.cls.classPlan.title,
         misses,
         // #1527 — every seat holder here is a consultee.
-        dashboardUrl: goHref("client", "appointments"),
+        dashboardUrl,
       },
       dedupeKey: `exit-avail:${hosted.cls.id}:${userId}`,
     });
     if (bell) bells.push(bell);
   }
-  return bells;
+  const emails =
+    seatUserIds.length > 0
+      ? await stageClassExitAvailableEmails(tx, {
+          appointmentId: hosted.appointment.id,
+          userIds: seatUserIds,
+          planTitle: hosted.cls.classPlan.title,
+          missedCount: misses,
+          dashboardUrl,
+        }).catch(() => [])
+      : [];
+  return { bells, emails };
 }
 
 /** E-2 — cancel one future session; no deletedAt, so it stays a miss. */
@@ -275,6 +287,7 @@ export async function cancelClassSession(
       const dashboardUrl = goHref("client", "appointments");
       const bells: StagedTrigger[] = [];
       let emails: StagedRecipientEmail[] = [];
+      let exitEmails: StagedRecipientEmail[] = [];
       if (seatUserIds.length > 0) {
         bells.push(
           ...(await stageBellsByZone(
@@ -304,13 +317,13 @@ export async function cancelClassSession(
       // Past the threshold every miss re-checks the flag (an ops clear may
       // precede it); the learners' bells go out only on the first trip.
       if (ledger.exitRight) {
-        bells.push(
-          ...(await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
-            missedAt: now,
-            hostAttributed: true,
-            firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
-          })),
-        );
+        const exit = await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
+          missedAt: now,
+          hostAttributed: true,
+          firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+        });
+        bells.push(...exit.bells);
+        exitEmails = exit.emails;
       }
       return {
         occurrenceId,
@@ -320,13 +333,20 @@ export async function cancelClassSession(
         exitRight: ledger.exitRight,
         bells,
         emails,
+        exitEmails,
       };
     }),
   );
   await flushNotificationsAfter(
     {
       bells: result.bells,
-      emails: [{ rows: result.emails, emailType: "APPOINTMENT_CANCELLED" }],
+      emails: [
+        { rows: result.emails, emailType: "APPOINTMENT_CANCELLED" },
+        {
+          rows: result.exitEmails,
+          emailType: "CLASS_SESSION_EXIT_AVAILABLE",
+        },
+      ],
     },
     "class-sessions.cancel",
   );
@@ -353,13 +373,17 @@ export async function onClassSessionVoided(
     voidedAt: Date;
     hostAttributed: boolean;
   },
-): Promise<{ bells: StagedTrigger[]; emails: StagedRecipientEmail[] }> {
+): Promise<{
+  bells: StagedTrigger[];
+  emails: StagedRecipientEmail[];
+  exitEmails: StagedRecipientEmail[];
+}> {
   const appointment = await tx.appointment.findUnique({
     where: { id: args.appointmentId },
     select: HOSTED_CLASS_SELECT,
   });
   const cls = appointment?.class;
-  if (!appointment || !cls) return { bells: [], emails: [] };
+  if (!appointment || !cls) return { bells: [], emails: [], exitEmails: [] };
   const hosted: HostedClass = {
     found: true,
     isHost: false,
@@ -375,6 +399,7 @@ export async function onClassSessionVoided(
   const dashboardUrl = goHref("client", "appointments");
   const bells: StagedTrigger[] = [];
   let emails: StagedRecipientEmail[] = [];
+  let exitEmails: StagedRecipientEmail[] = [];
   if (seatUserIds.length > 0) {
     bells.push(
       ...(await stageBellsByZone(
@@ -406,15 +431,15 @@ export async function onClassSessionVoided(
   }
   const ledger = await seriesLedger(tx, args.appointmentId, args.voidedAt);
   if (ledger.exitRight) {
-    bells.push(
-      ...(await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
-        missedAt: args.voidedAt,
-        hostAttributed: args.hostAttributed,
-        firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
-      })),
-    );
+    const exit = await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
+      missedAt: args.voidedAt,
+      hostAttributed: args.hostAttributed,
+      firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+    });
+    bells.push(...exit.bells);
+    exitEmails = exit.emails;
   }
-  return { bells, emails };
+  return { bells, emails, exitEmails };
 }
 
 /**

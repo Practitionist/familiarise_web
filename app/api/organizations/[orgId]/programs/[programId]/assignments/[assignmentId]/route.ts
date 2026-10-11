@@ -16,6 +16,16 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import type { StagedTrigger } from "@/lib/novu";
+import { notifyOrgSeatRevoked } from "@/lib/novu/org-workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 
 const PatchBodySchema = z
   .object({
@@ -92,6 +102,53 @@ export async function GET(
   });
 }
 
+async function stageSeatRevokedNotices(
+  tx: Tx,
+  args: {
+    orgId: string;
+    orgName: string;
+    programId: string;
+    assignmentId: string;
+    membershipId: string;
+  },
+): Promise<{ bells: StagedTrigger[]; emails: StagedEmail[] }> {
+  const targetMembership = tx.membership?.findUnique
+    ? await tx.membership.findUnique({
+        where: { id: args.membershipId },
+        select: { userId: true },
+      })
+    : null;
+  if (!targetMembership?.userId) return { bells: [], emails: [] };
+  const prog = tx.program?.findUnique
+    ? await tx.program.findUnique({
+        where: { id: args.programId },
+        select: { name: true },
+      })
+    : null;
+  const programName = prog?.name ?? "Program";
+  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${args.orgId}/programs`;
+  const bells =
+    (await notifyOrgSeatRevoked(
+      targetMembership.userId,
+      {
+        organizationId: args.orgId,
+        orgName: args.orgName,
+        programName,
+        dashboardUrl,
+      },
+      tx.notificationOutbox ? { tx } : undefined,
+    )) ?? [];
+  const emails = await stageOrgContractAndSeatEmail(tx, {
+    recipientUserIds: [targetMembership.userId],
+    entityId: args.assignmentId,
+    kind: "SEAT_REVOKED",
+    orgName: args.orgName,
+    programName,
+    dashboardUrl,
+  });
+  return { bells, emails };
+}
+
 /**
  * S3776 — the PATCH transaction body extracted so the route handler stays
  * under the complexity budget. Behavior identical to the previous inline
@@ -104,13 +161,14 @@ async function cancelAssignment(
   tx: Tx,
   ctx: {
     orgId: string;
+    orgName: string;
     programId: string;
     assignmentId: string;
     actorMembershipId: string;
   },
   current: { membershipId: string; periodStart: Date },
 ) {
-  const { orgId, programId, assignmentId, actorMembershipId } = ctx;
+  const { orgId, orgName, programId, assignmentId, actorMembershipId } = ctx;
   const cancelEnd = new Date(
     Math.max(Date.now(), current.periodStart.getTime()),
   );
@@ -138,15 +196,24 @@ async function cancelAssignment(
       details: { programId, assignmentId, cancelledEarly: true },
     },
   });
-  return tx.programAssignment.findUniqueOrThrow({
+  const notices = await stageSeatRevokedNotices(tx, {
+    orgId,
+    orgName,
+    programId,
+    assignmentId,
+    membershipId: current.membershipId,
+  });
+  const assignment = await tx.programAssignment.findUniqueOrThrow({
     where: { id: assignmentId },
   });
+  return { assignment, ...notices };
 }
 
 async function applyAssignmentPatch(
   tx: Tx,
   ctx: {
     orgId: string;
+    orgName: string;
     programId: string;
     assignmentId: string;
     actorMembershipId: string;
@@ -177,7 +244,12 @@ async function applyAssignmentPatch(
   }
 
   // S3776 — period-edit branch extracted (see editAssignmentPeriod).
-  return editAssignmentPeriod(tx, ctx, current);
+  const assignment = await editAssignmentPeriod(tx, ctx, current);
+  return {
+    assignment,
+    bells: [] as StagedTrigger[],
+    emails: [] as StagedEmail[],
+  };
 }
 
 /**
@@ -268,6 +340,7 @@ async function authorizeAssignmentMutation(
   return {
     error: null,
     orgId,
+    orgName: access.org.name,
     programId,
     assignmentId,
     member: access.member,
@@ -306,7 +379,7 @@ export async function PATCH(
     permission: "programs.assign",
   });
   if (auth.error) return auth.error;
-  const { orgId, programId, assignmentId, member } = auth;
+  const { orgId, orgName, programId, assignmentId, member } = auth;
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);
@@ -335,9 +408,10 @@ export async function PATCH(
   }
 
   try {
-    const updated = await prisma.$transaction(async (tx) =>
+    const outcome = await prisma.$transaction(async (tx) =>
       applyAssignmentPatch(tx, {
         orgId,
+        orgName,
         programId,
         assignmentId,
         actorMembershipId: member.id,
@@ -345,7 +419,24 @@ export async function PATCH(
       }),
     );
 
-    return NextResponse.json({ assignment: updated });
+    flushNotificationsAfter(
+      {
+        bells: outcome.bells,
+        emails:
+          outcome.emails.length > 0
+            ? [
+                {
+                  rows: outcome.emails,
+                  emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                },
+              ]
+            : [],
+      },
+      "org.program.seat-revoked",
+    );
+
+    return NextResponse.json({ assignment: outcome.assignment });
   } catch (err) {
     return handleAssignmentError(err);
   }
@@ -363,10 +454,10 @@ export async function DELETE(
     permission: "programs.assign",
   });
   if (auth.error) return auth.error;
-  const { orgId, programId, assignmentId, member } = auth;
+  const { orgId, orgName, programId, assignmentId, member } = auth;
 
   try {
-    await prisma.$transaction(async (tx) => {
+    const notices = await prisma.$transaction(async (tx) => {
       const current = await tx.programAssignment.findFirst({
         where: {
           id: assignmentId,
@@ -391,8 +482,19 @@ export async function DELETE(
       await tx.programAssignment.delete({ where: { id: assignmentId } });
       // For ACTIVE LICENSED_SEAT assignments the seat is freed; PAUSED or
       // already-terminated rows do not hold an active seat.
+      let staged: { bells: StagedTrigger[]; emails: StagedEmail[] } = {
+        bells: [],
+        emails: [],
+      };
       if (current.status === "ACTIVE") {
         await adjustActiveSeatCount(tx, { programId, delta: -1 });
+        staged = await stageSeatRevokedNotices(tx, {
+          orgId,
+          orgName,
+          programId,
+          assignmentId,
+          membershipId: current.membershipId,
+        });
       }
       await tx.orgAuditLog.create({
         data: {
@@ -405,7 +507,26 @@ export async function DELETE(
           details: { programId, assignmentId },
         },
       });
+      return staged;
     });
+
+    flushNotificationsAfter(
+      {
+        bells: notices.bells,
+        emails:
+          notices.emails.length > 0
+            ? [
+                {
+                  rows: notices.emails,
+                  emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                },
+              ]
+            : [],
+      },
+      "org.program.seat-deleted",
+    );
+
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     return handleAssignmentError(err);

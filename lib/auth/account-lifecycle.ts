@@ -15,6 +15,9 @@ import {
   sendWelcomeEmail,
 } from "@/lib/email";
 import { syncSubscriber } from "@/lib/novu/subscriber";
+import { notifyAccountSecurityNotice } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import { existingAccountNoticeLimiter } from "@/lib/rate-limit";
@@ -80,15 +83,28 @@ export async function welcomeVerifiedUser(
       reportAuthFailure(error, "signup-consent");
     }
   }
-  void scheduleAfter(
-    () =>
+  void scheduleAfter(async () => {
+    const [, bellResults] = await Promise.all([
       sendWelcomeEmail({
         email: user.email,
         name: user.name || "there",
         userId: user.id,
       }),
-    "auth:welcome-email",
-  );
+      notifyAccountSecurityNotice(
+        user.id,
+        {
+          kind: "WELCOME",
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        },
+        `welcome:${user.id}`,
+        { deferAttempt: true },
+      ).catch(() => []),
+    ]);
+    flushNotificationsAfter(
+      { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
+      "auth:welcome-bell",
+    );
+  }, "auth:welcome-email");
 }
 
 /**
@@ -217,15 +233,28 @@ export async function onPasswordChanged(
     }
   }
   if (opts.notify) {
-    void scheduleAfter(
-      () =>
+    void scheduleAfter(async () => {
+      const [, bellResults] = await Promise.all([
         sendPasswordChangedEmail({
           email: user.email,
           name: user.name || "there",
           userId: user.id,
         }),
-      "auth:password-changed-email",
-    );
+        notifyAccountSecurityNotice(
+          user.id,
+          {
+            kind: "PASSWORD_CHANGED",
+            dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+          },
+          `password-changed:${user.id}:${Date.now()}`,
+          { deferAttempt: true },
+        ).catch(() => []),
+      ]);
+      flushNotificationsAfter(
+        { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
+        "auth:password-changed-bell",
+      );
+    }, "auth:password-changed-email");
   }
 }
 
@@ -269,16 +298,31 @@ export async function notifyAccountLinked(account: {
       select: { email: true, name: true },
     });
     if (!user) return;
-    void scheduleAfter(
-      () =>
+    const provider = providerLabel(account.providerId);
+    void scheduleAfter(async () => {
+      const [, bellResults] = await Promise.all([
         sendAccountLinkedEmail({
           email: user.email,
           name: user.name || "there",
-          provider: providerLabel(account.providerId),
+          provider,
           userId: account.userId,
         }),
-      "auth:account-linked-email",
-    );
+        notifyAccountSecurityNotice(
+          account.userId,
+          {
+            kind: "ACCOUNT_LINKED",
+            provider,
+            dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+          },
+          `account-linked:${account.id}`,
+          { deferAttempt: true },
+        ).catch(() => []),
+      ]);
+      flushNotificationsAfter(
+        { bells: bellResults.flatMap((r) => (r.staged ? [r.staged] : [])) },
+        "auth:account-linked-bell",
+      );
+    }, "auth:account-linked-email");
   } catch (error) {
     reportAuthFailure(error, "account-create-after");
   }

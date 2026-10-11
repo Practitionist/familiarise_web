@@ -28,7 +28,9 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { transitionTrial } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
+import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
 import { notifyTrialCancelled } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
@@ -152,17 +154,39 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
   }
   // The same notice the interactive cancel path sends; never fatal.
   try {
-    await notifyTrialCancelled([trial.consulteeProfile.user.id], {
-      consultantName:
-        trial.subscriptionPlan.consultantProfile.user.name || "Consultant",
-      consulteeName: trial.consulteeProfile.user.name || "User",
-      planTitle: trial.subscriptionPlan.title,
-      status: TrialStatus.CANCELLED,
-      dateTime: trial.appointment?.occurrences[0]?.startsAt.toISOString(),
-      // The learner's own appointments — the wire renders the dateTime
-      // in their zone, so the ISO here is correct, not a leak.
-      dashboardUrl: goHref("client", "appointments"),
-    });
+    const dashboardUrl = goHref("client", "appointments");
+    const consultantName =
+      trial.subscriptionPlan.consultantProfile.user.name || "Consultant";
+    const consulteeName = trial.consulteeProfile.user.name || "User";
+    const startsAt = trial.appointment?.occurrences[0]?.startsAt;
+    const [, emailRows] = await Promise.all([
+      Promise.resolve(
+        notifyTrialCancelled([trial.consulteeProfile.user.id], {
+          consultantName,
+          consulteeName,
+          planTitle: trial.subscriptionPlan.title,
+          status: TrialStatus.CANCELLED,
+          dateTime: startsAt?.toISOString(),
+          dashboardUrl,
+        }),
+      ).catch(() => []),
+      stageTrialLifecycleEmail(prisma, {
+        trialId: trial.id,
+        userIds: [trial.consulteeProfile.user.id],
+        kind: "TRIAL_CANCELLED",
+        planTitle: trial.subscriptionPlan.title,
+        consultantName,
+        consulteeName,
+        startsAt,
+        dashboardUrl,
+      }).catch(() => []),
+    ]);
+    await flushNotificationsAfter(
+      {
+        emails: [{ rows: emailRows, emailType: "TRIAL_CANCELLED" }],
+      },
+      "expire-unpaid-trials.lapsed",
+    );
   } catch (error) {
     reportSentryError(error, {
       subsystem: "trials",
@@ -273,12 +297,31 @@ async function refundUnansweredTrial(trial: {
       initiatedByUserId: null,
       dedupeKey: unansweredRefundKey(trial.paymentId),
     });
-    await stageTrialRefundedBell(prisma, {
-      id: trial.id,
-      consulteeUserId: trial.consulteeProfile.user.id,
-      planTitle: trial.subscriptionPlan.title,
-      consultantName: trial.subscriptionPlan.consultantProfile.user.name,
-    });
+    const consultantName =
+      trial.subscriptionPlan.consultantProfile.user.name ?? "The consultant";
+    const [refundBell, emailRows] = await Promise.all([
+      stageTrialRefundedBell(prisma, {
+        id: trial.id,
+        consulteeUserId: trial.consulteeProfile.user.id,
+        planTitle: trial.subscriptionPlan.title,
+        consultantName,
+      }),
+      stageTrialLifecycleEmail(prisma, {
+        trialId: trial.id,
+        userIds: [trial.consulteeProfile.user.id],
+        kind: "TRIAL_CANCELLED",
+        planTitle: trial.subscriptionPlan.title,
+        consultantName,
+        dashboardUrl: goHref("client", "payments"),
+      }).catch(() => []),
+    ]);
+    await flushNotificationsAfter(
+      {
+        bells: [refundBell],
+        emails: [{ rows: emailRows, emailType: "TRIAL_CANCELLED" }],
+      },
+      "expire-unpaid-trials.unanswered",
+    );
     return true;
   } catch (error) {
     reportSentryError(error, {

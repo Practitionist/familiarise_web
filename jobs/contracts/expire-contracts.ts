@@ -34,6 +34,16 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import { attemptStaged } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import { notifyOrgContractStatusChanged } from "@/lib/novu/org-workflows";
+import { getAppUrl } from "@/lib/url";
 
 interface ExpireStats {
   scanned: number;
@@ -53,7 +63,12 @@ export async function runExpireContracts(): Promise<ExpireStats> {
       status: "ACTIVE",
       effectiveTo: { lte: now, not: null },
     },
-    select: { id: true, organizationId: true, effectiveTo: true },
+    select: {
+      id: true,
+      organizationId: true,
+      effectiveTo: true,
+      organization: { select: { name: true } },
+    },
   });
   stats.scanned = due.length;
 
@@ -79,8 +94,14 @@ export async function runExpireContracts(): Promise<ExpireStats> {
             where: { id: c.id, status: "ACTIVE" },
             data: { status: "EXPIRED" },
           });
-          if (claim.count === 0)
-            return { expired: false, assignmentsClosed: 0 };
+          if (claim.count === 0) {
+            return {
+              expired: false,
+              assignmentsClosed: 0,
+              stagedBells: [] as StagedTrigger[],
+              stagedEmails: [] as StagedEmail[],
+            };
+          }
           // #1846 SM-C14 — the same seat close the manual TERMINATED/EXPIRED
           // PATCH runs: programs → EXPIRED, ACTIVE and PAUSED seats → CLOSED
           // through the assignment CAS, in-period seats end now, billed seats
@@ -109,13 +130,60 @@ export async function runExpireContracts(): Promise<ExpireStats> {
             },
           });
 
-          return { expired: true, assignmentsClosed };
+          const orgName = c.organization?.name ?? "Organization";
+          const dashboardUrl = `${getAppUrl()}/dashboard/organization/${c.organizationId}/billing`;
+          const operatorRows = tx.membership?.findMany
+            ? await tx.membership.findMany({
+                where: {
+                  organizationId: c.organizationId,
+                  status: "ACTIVE",
+                  role: { in: ["OWNER", "MAINTAINER"] },
+                },
+                select: { userId: true },
+              })
+            : [];
+          const stagedBells =
+            (await notifyOrgContractStatusChanged(
+              c.organizationId,
+              {
+                orgName,
+                status: "EXPIRED",
+                effectiveDate: c.effectiveTo?.toISOString(),
+                dashboardUrl,
+              },
+              tx.notificationOutbox ? { tx } : undefined,
+            )) ?? [];
+          const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+            recipientUserIds: operatorRows.map((r) => r.userId),
+            entityId: c.id,
+            kind: "CONTRACT_ENDED",
+            orgName,
+            effectiveDate: c.effectiveTo ?? undefined,
+            dashboardUrl,
+          });
+
+          return {
+            expired: true,
+            assignmentsClosed,
+            stagedBells,
+            stagedEmails,
+          };
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
 
-    if (claimed.expired) stats.expired += 1;
+    if (claimed.expired) {
+      stats.expired += 1;
+      for (const bell of claimed.stagedBells) await attemptTrigger(bell);
+      if (claimed.stagedEmails.length > 0) {
+        await attemptStaged(
+          claimed.stagedEmails,
+          ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+          EMAIL_BUDGET_MS.JOB,
+        );
+      }
+    }
     stats.assignmentsClosed += claimed.assignmentsClosed;
   }
 

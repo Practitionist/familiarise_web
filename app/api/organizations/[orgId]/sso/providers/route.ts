@@ -17,6 +17,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { sendSsoProviderSubmittedEmail } from "@/lib/email";
+import { notifyOrgSsoProviderSubmitted } from "@/lib/novu/org-workflows";
 import {
   createProviderSchema,
   generateProviderId,
@@ -181,8 +182,8 @@ export async function POST(
       return created;
     });
 
-    scheduleAfter(
-      () =>
+    scheduleAfter(async () => {
+      await Promise.all([
         sendSsoProviderSubmittedEmail({
           organizationId: orgId,
           orgName: access.org.name,
@@ -190,8 +191,15 @@ export async function POST(
           domains,
           issuer: body.issuer,
         }),
-      "sso.provider-submitted-email",
-    );
+        notifyOrgSsoProviderSubmitted(orgId, {
+          orgName: access.org.name,
+          providerId,
+          issuer: body.issuer,
+          domains,
+          dashboardUrl: `/dashboard/admin/organizations/${orgId}`,
+        }),
+      ]);
+    }, "sso.provider-submitted-email");
 
     return NextResponse.json(
       {

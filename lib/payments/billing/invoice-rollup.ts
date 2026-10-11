@@ -23,6 +23,13 @@ import { recordSystemError } from "@/lib/enterprise/system-events";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import { attemptStaged } from "@/lib/email/send-to-recipients";
+import {
+  MONEY_EMAIL_TYPES,
+  stageOrgBillingEmail,
+} from "@/lib/email/senders/money";
 import { reportSentryError } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
 import { generateOrgInvoiceNumber } from "./invoice-numbering";
@@ -178,7 +185,13 @@ export async function rollupOrgInvoiceAccruals(params: {
             },
           },
         });
-        if (accrued.length === 0) return { result: EMPTY, notifyStaged: [] };
+        if (accrued.length === 0) {
+          return {
+            result: EMPTY,
+            notifyStaged: [] as StagedTrigger[],
+            emailStaged: [] as StagedEmail[],
+          };
+        }
 
         // The legs are tax-inclusive (they sum to Payment.amount), so each line
         // carries the tax its booking already posted to GST_PAYABLE.
@@ -202,7 +215,13 @@ export async function rollupOrgInvoiceAccruals(params: {
           .map((l, i) => ({ ...l, position: i }));
         const subtotal = lines.reduce((s, l) => s + l.unitPricePaise, 0);
         const legsTotal = lines.reduce((s, l) => s + l.legsPaise, 0);
-        if (legsTotal <= 0) return { result: EMPTY, notifyStaged: [] };
+        if (legsTotal <= 0) {
+          return {
+            result: EMPTY,
+            notifyStaged: [] as StagedTrigger[],
+            emailStaged: [] as StagedEmail[],
+          };
+        }
 
         // #1744 row 3 — the buyer GSTIN's first two digits are the place of
         // supply; an org that never filled its state still gets the right head.
@@ -376,21 +395,46 @@ export async function rollupOrgInvoiceAccruals(params: {
         // this tx (#1669 outbox): a rollback takes them too, and one row per
         // invoice is guaranteed by the billableToOrgInvoiceId stamp above.
         let notifyStaged: StagedTrigger[] = [];
+        let emailStaged: StagedEmail[] = [];
         if (issueImmediately) {
           const origin = getAppUrl();
-          notifyStaged = await notifyOrgInvoiceIssued(
+          const dashboardUrl = `${origin}/dashboard/organization/${organizationId}/billing`;
+          const ownerRows = tx.membership?.findMany
+            ? await tx.membership.findMany({
+                where: {
+                  organizationId,
+                  status: "ACTIVE",
+                  role: "OWNER",
+                },
+                select: { userId: true },
+              })
+            : [];
+          notifyStaged =
+            (await notifyOrgInvoiceIssued(
+              organizationId,
+              {
+                invoiceNumber,
+                orgName: org.name,
+                totalPaise: gst.totalPaise,
+                currency: "INR",
+                dueDate: dueDate.toISOString(),
+                dashboardUrl,
+                pdfUrl: `${origin}/api/organizations/${organizationId}/billing-account/invoices/${invoice.id}/pdf`,
+              },
+              { tx, entityRef: `orgInvoice:${invoice.id}` },
+            )) ?? [];
+          emailStaged = await stageOrgBillingEmail(tx, {
+            recipientUserIds: ownerRows.map((r) => r.userId),
             organizationId,
-            {
-              invoiceNumber,
-              orgName: org.name,
-              totalPaise: gst.totalPaise,
-              currency: "INR",
-              dueDate: dueDate.toISOString(),
-              dashboardUrl: `${origin}/dashboard/organization/${organizationId}/billing`,
-              pdfUrl: `${origin}/api/organizations/${organizationId}/billing-account/invoices/${invoice.id}/pdf`,
-            },
-            { tx, entityRef: `orgInvoice:${invoice.id}` },
-          );
+            orgName: org.name,
+            kind: "INVOICE_ISSUED",
+            amountPaise: gst.totalPaise,
+            currency: "INR",
+            invoiceId: invoice.id,
+            invoiceNumber,
+            dueDate,
+            dashboardUrl,
+          });
           await dispatchWebhookEvent({
             prisma: tx,
             organizationId,
@@ -417,17 +461,25 @@ export async function rollupOrgInvoiceAccruals(params: {
             unbackedPo: org.requiresPO && !purchaseOrderId,
           },
           notifyStaged,
+          emailStaged,
         };
       },
       { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
     ),
   );
-  const { result, notifyStaged } = outcome;
+  const { result, notifyStaged, emailStaged } = outcome;
 
   // #1744 row 2 — the post-commit attempt; `attemptTrigger` never throws, the
   // guard only protects the loop so a bell failure cannot hide a committed invoice.
   try {
     for (const row of notifyStaged) await attemptTrigger(row);
+    if (emailStaged.length > 0) {
+      await attemptStaged(
+        emailStaged,
+        MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
+        EMAIL_BUDGET_MS.JOB,
+      );
+    }
   } catch (e) {
     reportSentryError(e, { subsystem: "payments" });
     console.error("[invoice-rollup] invoice-issued notify attempt failed:", e);

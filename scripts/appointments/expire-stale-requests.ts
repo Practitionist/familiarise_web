@@ -49,6 +49,8 @@ import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { expireBackupInterest } from "@/lib/booking/backup-interest";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import type { Tx } from "@/lib/prisma";
@@ -242,9 +244,7 @@ export interface ExpireStaleRequestsResult {
  * arm with the wrong relation.
  */
 type ExpiredRefundArm =
-  | "pending-consultation"
-  | "pending-subscription"
-  | "approved-unallocated";
+  "pending-consultation" | "pending-subscription" | "approved-unallocated";
 
 const ARM_WRAPPER: Record<ExpiredRefundArm, "consultation" | "subscription"> = {
   "pending-consultation": "consultation",
@@ -834,7 +834,7 @@ async function expireApprovedUnallocatedSubscriptions(
 
 /** #1775 C-6 — both parties hear that the unscheduled plan is refunded in full. */
 async function stageUnallocatedRefundBell(
-  tx: Pick<Tx, "notificationOutbox">,
+  tx: Tx,
   row: {
     id: string;
     requestedBy: { user: { id: string; name: string | null } } | null;
@@ -844,22 +844,36 @@ async function stageUnallocatedRefundBell(
     };
     appointment: { organizationId: string | null } | null;
   },
-): Promise<void> {
+) {
   const consulteeId = row.requestedBy?.user.id;
-  if (!consulteeId) return;
-  await stageBell(tx, {
-    workflowId: NOVU_WORKFLOWS.SUBSCRIPTION_UNALLOCATED_REFUNDED,
-    recipients: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
-    payload: {
-      planTitle: row.subscriptionPlan.title,
-      consulteeName: row.requestedBy?.user.name ?? "The buyer",
-      dashboardUrl: notificationHref(
-        row.appointment?.organizationId,
-        "appointments",
-      ),
-    },
-    dedupeKey: `sub-unalloc:${row.id}`,
-  });
+  if (!consulteeId) return { bell: null, emailRows: [] };
+  const dashboardUrl = notificationHref(
+    row.appointment?.organizationId,
+    "appointments",
+  );
+  const [bell, emailRows] = await Promise.all([
+    stageBell(tx, {
+      workflowId: NOVU_WORKFLOWS.SUBSCRIPTION_UNALLOCATED_REFUNDED,
+      recipients: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
+      payload: {
+        planTitle: row.subscriptionPlan.title,
+        consulteeName: row.requestedBy?.user.name ?? "The buyer",
+        dashboardUrl,
+      },
+      dedupeKey: `sub-unalloc:${row.id}`,
+    }),
+    stageAppointmentCancelledEmail(tx, {
+      appointmentId: row.id,
+      userIds: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
+      cancelledBy: "Familiarise",
+      reason:
+        "Subscription was not scheduled within 48 hours of payment and is being refunded in full.",
+      refundText: "A full refund is being processed.",
+      refundUserIds: [consulteeId],
+      dashboardUrl,
+    }).catch(() => []),
+  ]);
+  return { bell, emailRows };
 }
 
 const unallocatedRefundKey = (paymentId: string) => `sub-unalloc:${paymentId}`;
@@ -964,7 +978,7 @@ async function expireOneUnallocated(
   cohort: ReturnType<typeof unallocatedCohort>,
 ): Promise<boolean> {
   try {
-    await prisma.$transaction(async (tx) => {
+    const staged = await prisma.$transaction(async (tx) => {
       await transitionSubscriptionRequest(tx, {
         where: { id: subscription.id, ...cohort },
         to: AppointmentStatus.EXPIRED,
@@ -973,8 +987,20 @@ async function expireOneUnallocated(
         reason: "UNALLOCATED_48H",
       });
       // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
-      await stageUnallocatedRefundBell(tx, subscription);
+      return stageUnallocatedRefundBell(tx, subscription);
     });
+    await flushNotificationsAfter(
+      {
+        bells: [staged?.bell],
+        emails: [
+          {
+            rows: staged?.emailRows ?? [],
+            emailType: "APPOINTMENT_CANCELLED",
+          },
+        ],
+      },
+      "expire-stale-requests.unallocated",
+    );
     return true;
   } catch (error) {
     if (!(error instanceof IllegalTransitionError)) throw error;

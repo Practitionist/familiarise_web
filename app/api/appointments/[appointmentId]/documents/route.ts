@@ -17,6 +17,7 @@ import {
   type ResolvedStorageObject,
 } from "@/lib/documents/upload-pipeline";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
+import { stageDocumentAndRecordingEmail } from "@/lib/email/senders/booking";
 import { notifyDocumentUploaded } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -602,29 +603,48 @@ export async function POST(
       "your consultant";
 
     if (consultantUserId) {
-      await stageNowAttemptAfter("consultant document-upload notice", () =>
-        notifyDocumentUploaded(
-          consultantUserId,
-          {
-            ...notificationScope(appointment.organizationId),
-            appointmentId,
-            documentId: document.id,
-            uploadedByRole: "CONSULTEE",
-            fileName: parsedInput.originalName,
-            isThreaded: Boolean(parsedInput.responseToDocumentId),
-            versionNo: document.versionNo,
-            consultantName,
-            consulteeName,
-            dashboardUrl: scopedHref({
-              organizationId: appointment.organizationId,
-              surface: "documents",
-              personal: consultantProfileId
-                ? { kind: "consultant", profileId: consultantProfileId }
-                : undefined,
-            }),
-          },
-          { deferAttempt: true },
-        ),
+      const dashboardUrl = scopedHref({
+        organizationId: appointment.organizationId,
+        surface: "documents",
+        personal: consultantProfileId
+          ? { kind: "consultant", profileId: consultantProfileId }
+          : undefined,
+      });
+      await stageNowAttemptAfter(
+        "consultant document-upload notice",
+        async () => {
+          const [bell, uploadedEmails] = await Promise.all([
+            notifyDocumentUploaded(
+              consultantUserId,
+              {
+                ...notificationScope(appointment.organizationId),
+                appointmentId,
+                documentId: document.id,
+                uploadedByRole: "CONSULTEE",
+                fileName: parsedInput.originalName,
+                isThreaded: Boolean(parsedInput.responseToDocumentId),
+                versionNo: document.versionNo,
+                consultantName,
+                consulteeName,
+                dashboardUrl,
+              },
+              { deferAttempt: true },
+            ),
+            stageDocumentAndRecordingEmail(prisma, {
+              entityId: document.id,
+              userIds: [consultantUserId],
+              kind: "DOCUMENT_UPLOADED",
+              actorName: consulteeName,
+              fileName: parsedInput.originalName,
+              versionNo: document.versionNo,
+              dashboardUrl,
+            }).catch(() => []),
+          ]);
+          return {
+            bells: [bell?.staged],
+            emails: [{ list: uploadedEmails, emailType: "DOCUMENT_UPLOADED" }],
+          };
+        },
       );
     }
 

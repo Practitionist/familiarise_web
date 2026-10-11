@@ -18,6 +18,11 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
 import { redactOidcConfig } from "@/lib/sso/redact-oidc-config";
 import { notifyOrgSsoProviderDeleted } from "@/lib/novu/org-workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import type { StagedTrigger } from "@/lib/novu";
+import { stageSsoProviderEmail } from "@/lib/email/senders/sso";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
 import {
   encryptSecretPayload,
   isEncryptionKeyUsable,
@@ -317,7 +322,12 @@ export async function DELETE(
   try {
     // The bell below names the domain owners recognize; the slug stays in
     // the audit row for forensics.
+    const origin = new URL(req.url).origin;
+    const deletedByName = access.session.user.name ?? access.session.user.email;
     let deletedDomain = providerId;
+    let stagedBells: StagedTrigger[] = [];
+    let stagedEmails: StagedEmail[] = [];
+
     await prisma.$transaction(async (tx) => {
       const current = await tx.ssoProvider.findFirst({
         where: { providerId, organizationId: orgId },
@@ -372,24 +382,56 @@ export async function DELETE(
           },
         },
       });
+
+      const dashboardUrl = `${origin}/dashboard/organization/${orgId}/settings/sso`;
+      stagedBells =
+        (await notifyOrgSsoProviderDeleted(
+          orgId,
+          {
+            orgName: access.org.name,
+            providerId: deletedDomain,
+            deletedByName,
+            dashboardUrl,
+          },
+          tx.notificationOutbox ? { tx } : undefined,
+        )) ?? [];
+      const ownerRows = tx.membership?.findMany
+        ? await tx.membership.findMany({
+            where: {
+              organizationId: orgId,
+              role: "OWNER",
+              status: "ACTIVE",
+            },
+            select: { userId: true },
+          })
+        : [];
+      stagedEmails = await stageSsoProviderEmail(tx, {
+        kind: "DELETED",
+        organizationId: orgId,
+        orgName: access.org.name,
+        providerId: deletedDomain,
+        deletedByName,
+        userIds: ownerRows.map((o) => o.userId),
+        actionUrl: dashboardUrl,
+      });
     });
 
-    // Security alert: notify the org's OWNER roster via Novu. SSO
-    // deletion is a high-impact action — if a malicious OWNER strips
-    // SSO, every other OWNER sees it on their bell immediately.
-    const origin = new URL(req.url).origin;
-    notifyOrgSsoProviderDeleted(orgId, {
-      orgName: access.org.name,
-      providerId: deletedDomain,
-      deletedByName: access.session.user.name ?? access.session.user.email,
-      dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings/sso`,
-    }).catch((err) => {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "organizations" } },
-      );
-      console.error("[notifyOrgSsoProviderDeleted] failed:", err);
-    });
+    flushNotificationsAfter(
+      {
+        bells: stagedBells,
+        emails:
+          stagedEmails.length > 0
+            ? [
+                {
+                  rows: stagedEmails,
+                  emailType: "SSO_PROVIDER_DELETED",
+                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                },
+              ]
+            : [],
+      },
+      "sso.provider-deleted",
+    );
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

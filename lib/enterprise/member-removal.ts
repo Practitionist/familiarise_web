@@ -20,6 +20,8 @@ import {
   notifyCollaboratorWithdrawn,
   notifyOrgExpertRemoved,
 } from "@/lib/novu/service";
+import { notifyOrgMemberRemoved } from "@/lib/novu/org-workflows";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import type { OrgExpertRemovedPayload } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import {
@@ -77,6 +79,7 @@ interface RevokedOrgCollaboration {
 interface PostCommit {
   removedUserId: string | null;
   expertNotice: { userId: string; payload: OrgExpertRemovedPayload } | null;
+  memberBells: StagedTrigger[];
   email: StagedOnboardingEmail | null;
   revokedCollaborations: RevokedOrgCollaboration[];
 }
@@ -224,6 +227,7 @@ async function removeInTx(
       removed: false,
       removedUserId: null,
       expertNotice: null,
+      memberBells: [],
       email: null,
       revokedCollaborations: [],
     };
@@ -324,30 +328,16 @@ async function removeInTx(
       removed: true,
       removedUserId: current.userId,
       expertNotice: null,
+      memberBells: [],
       email: null,
       revokedCollaborations,
     };
   }
   const actorName = actorUser?.name ?? actorUser?.email ?? "An operator";
-
-  if (current.role === "EXPERT") {
-    return {
-      removed: true,
-      removedUserId: current.userId,
-      email: null,
-      revokedCollaborations,
-      expertNotice: {
-        userId: current.userId,
-        payload: {
-          orgName: org.name,
-          orgSlug: org.slug,
-          removedByName: actorName,
-          reason: null,
-          dashboardUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? ""}${goHref("expert")}`,
-        },
-      },
-    };
-  }
+  const dashboardUrl =
+    current.role === "EXPERT"
+      ? `${getAppUrl()}${goHref("expert")}`
+      : "/dashboard";
   const email = await stageOrgMembershipChangedEmail(
     {
       userId: current.userId,
@@ -356,14 +346,47 @@ async function removeInTx(
       orgName: org.name,
       roleBefore: current.role,
       actorName,
-      dashboardUrl: "/dashboard",
+      dashboardUrl,
     },
     tx,
   );
+
+  if (current.role === "EXPERT") {
+    return {
+      removed: true,
+      removedUserId: current.userId,
+      email,
+      memberBells: [],
+      revokedCollaborations,
+      expertNotice: {
+        userId: current.userId,
+        payload: {
+          orgName: org.name,
+          orgSlug: org.slug,
+          removedByName: actorName,
+          reason: null,
+          dashboardUrl,
+        },
+      },
+    };
+  }
+  const memberBells =
+    (await notifyOrgMemberRemoved(
+      current.userId,
+      {
+        organizationId: orgId,
+        orgName: org.name,
+        removedByName: actorName,
+        reason: null,
+        dashboardUrl,
+      },
+      tx.notificationOutbox ? { tx } : undefined,
+    )) ?? [];
   return {
     removed: true,
     removedUserId: current.userId,
     expertNotice: null,
+    memberBells,
     email,
     revokedCollaborations,
   };
@@ -826,12 +849,13 @@ export async function removeMember(
       );
     }
   }
-  if (result.email) {
+  if (result.email || result.memberBells.length > 0) {
     const staged = result.email;
-    scheduleAfter(
-      () => attemptOnboardingEmail(staged),
-      "org.member-removal.onboarding-email",
-    );
+    const bells = result.memberBells;
+    scheduleAfter(async () => {
+      for (const row of bells) await attemptTrigger(row);
+      if (staged) await attemptOnboardingEmail(staged);
+    }, "org.member-removal.onboarding-email");
   }
   if (result.removedUserId) {
     const removedUserId = result.removedUserId;

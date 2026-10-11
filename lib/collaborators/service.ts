@@ -27,12 +27,13 @@ import {
   notifyCollaboratorRemoved,
   notifyCollaboratorWithdrawn,
 } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import {
-  sendCollaboratorInvitedEmail,
-  sendCollaboratorAcceptedEmail,
-  sendCollaboratorDeclinedEmail,
-  sendCollaboratorRemovedEmail,
-  sendCollaboratorWithdrawnEmail,
+  stageCollaboratorInvitedEmail,
+  stageCollaboratorAcceptedEmail,
+  stageCollaboratorDeclinedEmail,
+  stageCollaboratorRemovedEmail,
+  stageCollaboratorWithdrawnEmail,
 } from "@/lib/email/senders/collaborators";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
@@ -407,29 +408,43 @@ export async function inviteCollaborator(
       if (invitedProfile) {
         const ownerName = inviterProfile?.user?.name ?? "Plan Owner";
         const resolvedTitle = planTitle ?? planKindLabel(planType);
-        await Promise.allSettled([
-          notifyCollaboratorInvited(invitedProfile.userId, {
-            planTitle: resolvedTitle,
-            planType,
-            role: collaboratorRoleLabel(role),
-            revenueSharePercentage,
-            ownerName,
-            dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-          }),
-          sendCollaboratorInvitedEmail(
+        const [bell, invitedEmails] = await Promise.all([
+          notifyCollaboratorInvited(
+            invitedProfile.userId,
             {
-              recipientUserId: invitedProfile.userId,
-              actorName: ownerName,
-              collaboratorName: invitedProfile.user?.name ?? "Collaborator",
               planTitle: resolvedTitle,
               planType,
-              role: txResult.role,
-              revenueShareBps: txResult.revenueShareBps,
-              collaboratorId: txResult.id,
+              role: collaboratorRoleLabel(role),
+              revenueSharePercentage,
+              ownerName,
+              dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
             },
-            EMAIL_BUDGET_MS.REQUEST,
-          ),
+            { deferAttempt: true },
+          ).catch(() => null),
+          stageCollaboratorInvitedEmail(prisma, {
+            recipientUserId: invitedProfile.userId,
+            actorName: ownerName,
+            collaboratorName: invitedProfile.user?.name ?? "Collaborator",
+            planTitle: resolvedTitle,
+            planType,
+            role: txResult.role,
+            revenueShareBps: txResult.revenueShareBps,
+            collaboratorId: txResult.id,
+          }).catch(() => []),
         ]);
+        await flushNotificationsAfter(
+          {
+            bells: [bell?.staged],
+            emails: [
+              {
+                list: invitedEmails,
+                emailType: "collaborator_invited",
+                budgetMs: EMAIL_BUDGET_MS.REQUEST,
+              },
+            ],
+          },
+          "collaborator.invited",
+        );
       }
     } catch (error) {
       Sentry.captureException(
@@ -858,15 +873,45 @@ async function notifyHostOfResponse(
       collaboratorId: updated.id,
     };
     if (updated.status === "ACCEPTED") {
-      await Promise.allSettled([
-        notifyCollaboratorAccepted(hostUserId, payload),
-        sendCollaboratorAcceptedEmail(emailPayload, EMAIL_BUDGET_MS.REQUEST),
+      const [bell, emails] = await Promise.all([
+        notifyCollaboratorAccepted(hostUserId, payload, {
+          deferAttempt: true,
+        }).catch(() => null),
+        stageCollaboratorAcceptedEmail(prisma, emailPayload).catch(() => []),
       ]);
+      await flushNotificationsAfter(
+        {
+          bells: [bell?.staged],
+          emails: [
+            {
+              list: emails,
+              emailType: "collaborator_accepted",
+              budgetMs: EMAIL_BUDGET_MS.REQUEST,
+            },
+          ],
+        },
+        "collaborators.accepted",
+      );
     } else {
-      await Promise.allSettled([
-        notifyCollaboratorDeclined(hostUserId, payload),
-        sendCollaboratorDeclinedEmail(emailPayload, EMAIL_BUDGET_MS.REQUEST),
+      const [bell, emails] = await Promise.all([
+        notifyCollaboratorDeclined(hostUserId, payload, {
+          deferAttempt: true,
+        }).catch(() => null),
+        stageCollaboratorDeclinedEmail(prisma, emailPayload).catch(() => []),
       ]);
+      await flushNotificationsAfter(
+        {
+          bells: [bell?.staged],
+          emails: [
+            {
+              list: emails,
+              emailType: "collaborator_declined",
+              budgetMs: EMAIL_BUDGET_MS.REQUEST,
+            },
+          ],
+        },
+        "collaborators.declined",
+      );
     }
   } catch (error) {
     reportSentryError(error, {
@@ -933,7 +978,7 @@ export async function removeCollaborator(
   if (profile?.userId) {
     accessRevoked = (
       await revokeCollaboratorAccess(planType, planId, profile.userId, {
-        notify: !withdrawn,
+        notify: false,
       })
     ).success;
   }
@@ -960,18 +1005,40 @@ export async function removeCollaborator(
                 },
               },
             });
-      await sendCollaboratorRemovedEmail(
-        {
+      const planTitle = plan?.title ?? planKindLabel(planType);
+      const [bell, emails] = await Promise.all([
+        notifyCollaboratorRemoved(
+          profile.userId,
+          {
+            planTitle,
+            planType,
+            dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+          },
+          { deferAttempt: true },
+        ).catch(() => null),
+        stageCollaboratorRemovedEmail(prisma, {
           recipientUserId: profile.userId,
           actorName: plan?.consultantProfile?.user?.name ?? "Plan Owner",
           collaboratorName: profile.user?.name ?? "Collaborator",
-          planTitle: plan?.title ?? planKindLabel(planType),
+          planTitle,
           planType,
           role: result.role,
           revenueShareBps: result.revenueShareBps,
           collaboratorId: result.id,
+        }).catch(() => []),
+      ]);
+      await flushNotificationsAfter(
+        {
+          bells: [bell?.staged],
+          emails: [
+            {
+              list: emails,
+              emailType: "collaborator_removed",
+              budgetMs: EMAIL_BUDGET_MS.REQUEST,
+            },
+          ],
         },
-        EMAIL_BUDGET_MS.REQUEST,
+        "collaborators.removed",
       );
     } catch (error) {
       reportSentryError(error, {
@@ -1028,27 +1095,41 @@ async function notifyHostOfWithdrawal(
       plan?.consultantProfile?.userId ?? inviterProfile?.userId ?? null;
     if (!hostUserId) return;
     const planTitle = plan?.title ?? planKindLabel(planType);
-    await Promise.allSettled([
-      notifyCollaboratorWithdrawn(hostUserId, {
-        planTitle,
-        planType,
-        collaboratorName,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-      }),
-      sendCollaboratorWithdrawnEmail(
+    const [bell, emails] = await Promise.all([
+      notifyCollaboratorWithdrawn(
+        hostUserId,
         {
-          recipientUserId: hostUserId,
-          actorName: collaboratorName,
-          collaboratorName,
           planTitle,
           planType,
-          role: collaborator.role,
-          revenueShareBps: collaborator.revenueShareBps,
-          collaboratorId: collaborator.id,
+          collaboratorName,
+          dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
         },
-        EMAIL_BUDGET_MS.REQUEST,
-      ),
+        { deferAttempt: true },
+      ).catch(() => null),
+      stageCollaboratorWithdrawnEmail(prisma, {
+        recipientUserId: hostUserId,
+        actorName: collaboratorName,
+        collaboratorName,
+        planTitle,
+        planType,
+        role: collaborator.role,
+        revenueShareBps: collaborator.revenueShareBps,
+        collaboratorId: collaborator.id,
+      }).catch(() => []),
     ]);
+    await flushNotificationsAfter(
+      {
+        bells: [bell?.staged],
+        emails: [
+          {
+            list: emails,
+            emailType: "collaborator_withdrawn",
+            budgetMs: EMAIL_BUDGET_MS.REQUEST,
+          },
+        ],
+      },
+      "collaborators.withdrawn",
+    );
   } catch (error) {
     reportSentryError(error, {
       subsystem: "collaborators",
@@ -1078,11 +1159,21 @@ export async function revokeCollaboratorAccess(
               where: { id: planId },
               select: { title: true },
             });
-      await notifyCollaboratorRemoved(userId, {
-        planTitle: plan?.title ?? planKindLabel(planType),
-        planType,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-      });
+      const bell = await notifyCollaboratorRemoved(
+        userId,
+        {
+          planTitle: plan?.title ?? planKindLabel(planType),
+          planType,
+          dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+        },
+        { deferAttempt: true },
+      ).catch(() => null);
+      if (bell?.staged) {
+        await flushNotificationsAfter(
+          { bells: [bell.staged] },
+          "collaborators.access_revoked",
+        );
+      }
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),

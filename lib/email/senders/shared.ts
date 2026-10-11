@@ -208,14 +208,27 @@ export function defineLifecycleStager<TArgs extends object>(
   return stageEmail;
 }
 
-export function defineStagedEmailSender<TArgs>(
+export function defineStagedEmailSender<TArgs extends object>(
   budgetMs: number,
   build: (args: TArgs) => { userIds: string[]; spec: RecipientEmailSpec },
 ) {
-  return async (
+  function stageEmail(
     args: TArgs,
     tx?: StagingTx,
-  ): Promise<StagedOnboardingEmail> => {
+  ): Promise<StagedOnboardingEmail>;
+  function stageEmail(
+    tx: StagingTx,
+    args: TArgs,
+  ): Promise<StagedOnboardingEmail>;
+  async function stageEmail(
+    first: TArgs | StagingTx,
+    second?: StagingTx | TArgs,
+  ): Promise<StagedOnboardingEmail> {
+    const isTxFirst = looksLikePrismaClient(first);
+    const tx = isTxFirst
+      ? (first as StagingTx)
+      : (second as StagingTx | undefined);
+    const args = isTxFirst ? (second as TArgs) : (first as TArgs);
     const { userIds, spec } = build(args);
     const run = async (): Promise<StagedOnboardingEmail> => ({
       emailType: spec.emailType,
@@ -233,5 +246,6 @@ export function defineStagedEmailSender<TArgs>(
       console.error(`[email] ${spec.emailType} stage failed:`, error);
       return { emailType: spec.emailType, budgetMs, list: [] };
     }
-  };
+  }
+  return stageEmail;
 }

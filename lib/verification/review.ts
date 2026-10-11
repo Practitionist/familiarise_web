@@ -176,19 +176,16 @@ async function stageDecisionNotices(
     },
     { tx },
   );
-  const email =
-    args.profileStatus === "UNDER_REVIEW"
-      ? null
-      : await stageVerificationDecidedEmail(
-          {
-            userId: args.consultantUserId,
-            verificationId: args.verificationId,
-            status: args.profileStatus,
-            reason: args.reason,
-            dashboardUrl,
-          },
-          tx,
-        );
+  const email = await stageVerificationDecidedEmail(
+    {
+      userId: args.consultantUserId,
+      verificationId: args.verificationId,
+      status: args.profileStatus,
+      reason: args.reason,
+      dashboardUrl,
+    },
+    tx,
+  );
   return { bell, email };
 }
 

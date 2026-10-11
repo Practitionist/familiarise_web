@@ -33,7 +33,15 @@ import {
   TrialStatus,
   Prisma,
 } from "@prisma/client";
-import { notifyAppointmentCompleted } from "../../lib/novu/service";
+import {
+  stageAppointmentCompletedEmails,
+  stageTrialLifecycleEmail,
+} from "@/lib/email/senders/booking";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import {
+  notifyAppointmentCompleted,
+  notifyTrialCompleted,
+} from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -414,28 +422,50 @@ async function completeConsultations(maxParents: number): Promise<{
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
 
-      // Fire-and-forget: notify both parties (non-blocking)
       const userIds = [consultantUserId, consulteeUserId].filter(
         (id): id is string => !!id,
       );
       if (userIds.length > 0) {
-        await notifyAppointmentCompleted(userIds, {
-          ...notificationScope(consultation.appointment?.organizationId),
-          appointmentType: "consultation",
-          consultantName:
-            consultation.consultationPlan?.consultantProfile?.user?.name ??
-            "Consultant",
-          consulteeName: consultation.requestedBy?.user?.name ?? "Consultee",
-          planTitle: consultation.consultationPlan.title,
-          dashboardUrl: notificationHref(
-            consultation.appointment?.organizationId,
-            "appointments",
-          ),
-        }).catch((error) =>
-          console.error(
-            `[auto-complete] Failed to send consultation completion notification:`,
-            error,
-          ),
+        const dashboardUrl = notificationHref(
+          consultation.appointment?.organizationId,
+          "appointments",
+        );
+        const [bellResults, emailRows] = await Promise.all([
+          notifyAppointmentCompleted(
+            userIds,
+            {
+              ...notificationScope(consultation.appointment?.organizationId),
+              appointmentType: "consultation",
+              consultantName:
+                consultation.consultationPlan?.consultantProfile?.user?.name ??
+                "Consultant",
+              consulteeName:
+                consultation.requestedBy?.user?.name ?? "Consultee",
+              planTitle: consultation.consultationPlan.title,
+              dashboardUrl,
+            },
+            { deferAttempt: true },
+          ).catch((error) => {
+            console.error(
+              `[auto-complete] Failed to send consultation completion notification:`,
+              error,
+            );
+            return [];
+          }),
+          stageAppointmentCompletedEmails(prisma, {
+            appointmentId: consultation.appointment?.id ?? consultation.id,
+            userIds,
+            planTitle: consultation.consultationPlan.title,
+            appointmentType: "Consultation",
+            dashboardUrl,
+          }).catch(() => []),
+        ]);
+        await flushNotificationsAfter(
+          {
+            bells: (bellResults ?? []).map((r) => r?.staged),
+            emails: [{ rows: emailRows, emailType: "CLASS_SESSION_COMPLETED" }],
+          },
+          "auto-complete.consultation",
         );
       }
     } catch (error) {
@@ -563,7 +593,6 @@ async function completeSubscriptions(maxParents: number): Promise<{
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
 
-      // Fire-and-forget: notify both parties (non-blocking)
       const consultantUserId =
         subscription.subscriptionPlan?.consultantProfile?.userId;
       const consulteeUserId = subscription.requestedBy?.userId;
@@ -571,23 +600,46 @@ async function completeSubscriptions(maxParents: number): Promise<{
         (id): id is string => !!id,
       );
       if (userIds.length > 0) {
-        await notifyAppointmentCompleted(userIds, {
-          ...notificationScope(subscription.appointment?.organizationId),
-          appointmentType: "subscription",
-          consultantName:
-            subscription.subscriptionPlan?.consultantProfile?.user?.name ??
-            "Consultant",
-          consulteeName: subscription.requestedBy?.user?.name ?? "Consultee",
-          planTitle: subscription.subscriptionPlan.title,
-          dashboardUrl: notificationHref(
-            subscription.appointment?.organizationId,
-            "appointments",
-          ),
-        }).catch((error) =>
-          console.error(
-            `[auto-complete] Failed to send subscription completion notification:`,
-            error,
-          ),
+        const dashboardUrl = notificationHref(
+          subscription.appointment?.organizationId,
+          "appointments",
+        );
+        const [bellResults, emailRows] = await Promise.all([
+          notifyAppointmentCompleted(
+            userIds,
+            {
+              ...notificationScope(subscription.appointment?.organizationId),
+              appointmentType: "subscription",
+              consultantName:
+                subscription.subscriptionPlan?.consultantProfile?.user?.name ??
+                "Consultant",
+              consulteeName:
+                subscription.requestedBy?.user?.name ?? "Consultee",
+              planTitle: subscription.subscriptionPlan.title,
+              dashboardUrl,
+            },
+            { deferAttempt: true },
+          ).catch((error) => {
+            console.error(
+              `[auto-complete] Failed to send subscription completion notification:`,
+              error,
+            );
+            return [];
+          }),
+          stageAppointmentCompletedEmails(prisma, {
+            appointmentId: subscription.appointment?.id ?? subscription.id,
+            userIds,
+            planTitle: subscription.subscriptionPlan.title,
+            appointmentType: "Subscription",
+            dashboardUrl,
+          }).catch(() => []),
+        ]);
+        await flushNotificationsAfter(
+          {
+            bells: (bellResults ?? []).map((r) => r?.staged),
+            emails: [{ rows: emailRows, emailType: "CLASS_SESSION_COMPLETED" }],
+          },
+          "auto-complete.subscription",
         );
       }
     } catch (error) {
@@ -650,7 +702,14 @@ async function completeTrials(maxParents: number): Promise<{
       ],
     },
     include: {
-      subscriptionPlan: { select: { title: true } },
+      subscriptionPlan: {
+        select: {
+          title: true,
+          consultantProfile: {
+            select: { userId: true, user: { select: { name: true } } },
+          },
+        },
+      },
       consulteeProfile: {
         include: {
           user: {
@@ -723,6 +782,57 @@ async function completeTrials(maxParents: number): Promise<{
 
       console.log(`   ✅ Marked as COMPLETED`);
       completed++;
+
+      const trialUserIds = [
+        trial.subscriptionPlan?.consultantProfile?.userId,
+        trial.consulteeProfile?.user?.id,
+      ].filter((id): id is string => !!id);
+      if (trialUserIds.length > 0) {
+        const dashboardUrl = notificationHref(
+          trial.appointment?.organizationId,
+          "appointments",
+        );
+        const consultantName =
+          trial.subscriptionPlan?.consultantProfile?.user?.name ?? "Consultant";
+        const consulteeName = trial.consulteeProfile?.user?.name ?? "Consultee";
+        const [bellResults, emailRows] = await Promise.all([
+          notifyTrialCompleted(
+            trialUserIds,
+            {
+              planTitle: trial.subscriptionPlan.title,
+              consultantName,
+              consulteeName,
+              status: "COMPLETED",
+              dateTime: lastSlot?.startsAt?.toISOString(),
+              dashboardUrl,
+            },
+            { deferAttempt: true },
+          ).catch((error) => {
+            console.error(
+              `[auto-complete] Failed to send trial completion notification:`,
+              error,
+            );
+            return [];
+          }),
+          stageTrialLifecycleEmail(prisma, {
+            trialId: trial.id,
+            userIds: trialUserIds,
+            kind: "TRIAL_COMPLETED",
+            planTitle: trial.subscriptionPlan.title,
+            consultantName,
+            consulteeName,
+            startsAt: lastSlot?.startsAt ?? null,
+            dashboardUrl,
+          }).catch(() => []),
+        ]);
+        await flushNotificationsAfter(
+          {
+            bells: (bellResults ?? []).map((r) => r?.staged),
+            emails: [{ rows: emailRows, emailType: "TRIAL_COMPLETED" }],
+          },
+          "auto-complete.trial",
+        );
+      }
     } catch (error) {
       const msg = `Failed to complete trial ${trial.id}: ${error}`;
       console.error(`   ❌ ${msg}`);

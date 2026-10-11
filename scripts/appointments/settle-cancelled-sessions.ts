@@ -40,6 +40,8 @@ import {
 import { AWAITING_HUMAN } from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageTrigger } from "@/lib/novu/outbox";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
@@ -596,22 +598,42 @@ async function refundAndTell(
       dedupeKey: args.dedupeKey,
       keepSeat: true,
     });
-    // After the refund committed; the outbox relay delivers it (ADR 27).
-    await stageTrigger({
-      workflowId: NOVU_WORKFLOWS.CLASS_SESSION_REFUNDED,
-      kind: "SINGLE",
-      recipients: [payment.userId],
-      payload: {
-        planTitle: planTitleOf(session),
-        amount: formatNotificationMoney(
-          refund.amountRefundedPaise,
-          payment.currency,
-        ),
-        // The seat holder is always a consultee.
-        dashboardUrl: goHref("client", "appointments"),
+    const formattedAmount = formatNotificationMoney(
+      refund.amountRefundedPaise,
+      payment.currency,
+    );
+    const dashboardUrl = goHref("client", "appointments");
+    const [staged, emailRows] = await Promise.all([
+      stageTrigger({
+        workflowId: NOVU_WORKFLOWS.CLASS_SESSION_REFUNDED,
+        kind: "SINGLE",
+        recipients: [payment.userId],
+        payload: {
+          planTitle: planTitleOf(session),
+          amount: formattedAmount,
+          // The seat holder is always a consultee.
+          dashboardUrl,
+        },
+        dedupeKey: args.dedupeKey,
+      }),
+      stageAppointmentCancelledEmail(prisma, {
+        appointmentId: session.appointmentId,
+        userIds: [payment.userId],
+        startsAt: session.startsAt,
+        cancelledBy: "Familiarise",
+        reason: args.reason,
+        refundText: `A refund of ${formattedAmount} has been issued.`,
+        refundUserIds: [payment.userId],
+        dashboardUrl,
+      }).catch(() => []),
+    ]);
+    await flushNotificationsAfter(
+      {
+        bells: [staged],
+        emails: [{ rows: emailRows, emailType: "APPOINTMENT_CANCELLED" }],
       },
-      dedupeKey: args.dedupeKey,
-    });
+      "settle-cancelled-sessions.refund",
+    );
     return true;
   } catch (error) {
     // Nothing left to give back is settled; anything else retries next tick.
