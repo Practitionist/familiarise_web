@@ -191,7 +191,7 @@ A comprehensive competitive strategy update is available in the parent [`docs/co
 - **Feature battlecard** with side-by-side comparisons across 7 competitors
 - **Pricing strategy**, go-to-market playbook, and anti-disintermediation tactics
 - **Regulatory moat**, switching cost analysis, and AI roadmap
-- **Private war-room docs** in [`private/`](../private/) (internal only — do not share)
+- **Private war-room docs** in the founders' Notion workspace (see [`private/README.md`](../private/README.md))
 
 The documents in this folder (`docs/competition/competitors/`) contain the original December 2024 deep dives. For the latest strategic analysis, refer to the parent folder.
 

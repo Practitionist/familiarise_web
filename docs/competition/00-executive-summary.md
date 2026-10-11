@@ -42,4 +42,4 @@ We have zero users, no mobile app, no AI features, no brand recognition, and a 2
 
 ---
 
-_Detailed analysis in the documents below. Private war-room docs in `private/`._
+_Detailed analysis in the documents below. Private war-room docs live in the founders' Notion workspace (see `private/README.md`)._
