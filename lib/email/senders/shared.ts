@@ -117,6 +117,7 @@ export async function stageSpecGuarded(
   tx?: StagingTx,
 ): Promise<StagedRecipientEmail[]> {
   const db = tx ?? prisma;
+  if (tx && (!db.user?.findMany || !db.failedEmail?.create)) return [];
   const recipients = await loadEmailRecipients(userIds, spec.category, db);
   return stageToRecipients({
     tx: db,
