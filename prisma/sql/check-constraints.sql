@@ -1155,4 +1155,36 @@ BEGIN
   END IF;
 END $$;
 
+-- SPLIT
+-- Recording storage and marketplace listing invariants:
+-- Active PLATFORM rows require a storagePath; AVAILABLE rows require PLATFORM
+-- storage + storagePath; PUBLISHED listings require PLATFORM storage, storagePath,
+-- positive listPricePaise, and explicit consent attestation.
+ALTER TABLE "Recording" DROP CONSTRAINT IF EXISTS "Recording_storage_and_publish_check";
+-- SPLIT
+ALTER TABLE "Recording" ADD CONSTRAINT "Recording_storage_and_publish_check"
+  CHECK (
+    (
+      "storageType" = 'PLATFORM'
+      AND ("status" = 'EXPIRED' OR "storagePath" IS NOT NULL)
+      AND (
+        "listingStatus" <> 'PUBLISHED'
+        OR (
+          "storagePath" IS NOT NULL
+          AND "listPricePaise" IS NOT NULL
+          AND "listPricePaise" > 0
+          AND "consentAttestedAt" IS NOT NULL
+          AND "consentAttestedById" IS NOT NULL
+        )
+      )
+    )
+    OR (
+      "storageType" <> 'PLATFORM'
+      AND "status" <> 'AVAILABLE'
+      AND "listingStatus" <> 'PUBLISHED'
+    )
+  ) NOT VALID;
+-- SPLIT
+ALTER TABLE "Recording" VALIDATE CONSTRAINT "Recording_storage_and_publish_check";
+
 

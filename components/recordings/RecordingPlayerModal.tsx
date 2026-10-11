@@ -92,9 +92,11 @@ interface PlayerViewportProps {
   readonly activePlaybackUrl: string | null;
   readonly captionTrackSrc: string;
   readonly videoRef: React.RefObject<HTMLVideoElement>;
+  readonly savedTimeRef: React.MutableRefObject<number>;
   readonly playbackSpeed: PlaybackSpeed;
   readonly onRetry: () => void;
   readonly onVideoError: () => void;
+  readonly onVideoCanPlay: () => void;
 }
 
 function PlayerViewport({
@@ -103,21 +105,12 @@ function PlayerViewport({
   activePlaybackUrl,
   captionTrackSrc,
   videoRef,
+  savedTimeRef,
   playbackSpeed,
   onRetry,
   onVideoError,
+  onVideoCanPlay,
 }: Readonly<PlayerViewportProps>) {
-  if (isLoadingUrl) {
-    return (
-      <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-lg bg-black text-white">
-        <Loader2 className="h-8 w-8 animate-spin text-white/80" />
-        <p className="text-xs text-white/70">
-          Preparing secure video stream...
-        </p>
-      </div>
-    );
-  }
-
   if (fetchError) {
     return (
       <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
@@ -141,11 +134,20 @@ function PlayerViewport({
         preload="metadata"
         controlsList="nodownload"
         className="w-full rounded-lg bg-black aspect-video"
+        onTimeUpdate={(event) => {
+          if (event.currentTarget.currentTime > 0) {
+            savedTimeRef.current = event.currentTarget.currentTime;
+          }
+        }}
         onLoadedMetadata={() => {
           if (videoRef.current) {
+            if (savedTimeRef.current > 0) {
+              videoRef.current.currentTime = savedTimeRef.current;
+            }
             videoRef.current.playbackRate = playbackSpeed;
           }
         }}
+        onCanPlay={onVideoCanPlay}
         onError={onVideoError}
       >
         <track
@@ -155,6 +157,17 @@ function PlayerViewport({
           src={captionTrackSrc}
         />
       </video>
+    );
+  }
+
+  if (isLoadingUrl) {
+    return (
+      <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-lg bg-black text-white">
+        <Loader2 className="h-8 w-8 animate-spin text-white/80" />
+        <p className="text-xs text-white/70">
+          Preparing secure video stream...
+        </p>
+      </div>
     );
   }
 
@@ -171,6 +184,7 @@ export function RecordingPlayerModal({
   recording,
 }: Readonly<RecordingPlayerModalProps>) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const savedTimeRef = useRef<number>(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const [resolvedPlayback, setResolvedPlayback] =
     useState<ResolvedPlaybackState | null>(null);
@@ -239,8 +253,15 @@ export function RecordingPlayerModal({
     }
   }, []);
 
+  // Sync latest initialPlaybackUrl in a ref so URL refreshes from props never reset savedTimeRef.
+  const initialPlaybackUrlRef = useRef(initialPlaybackUrl);
+  useEffect(() => {
+    initialPlaybackUrlRef.current = initialPlaybackUrl;
+  }, [initialPlaybackUrl]);
+
   useEffect(() => {
     abortControllerRef.current?.abort();
+    savedTimeRef.current = 0;
     setResolvedPlayback(null);
     setFetchError(null);
     setPlaybackSpeed(1);
@@ -252,14 +273,14 @@ export function RecordingPlayerModal({
       return;
     }
 
-    if (!initialPlaybackUrl) {
+    if (!initialPlaybackUrlRef.current) {
       void fetchPresignedUrl(recordingId);
     }
 
     return () => {
       abortControllerRef.current?.abort();
     };
-  }, [open, recordingId, initialPlaybackUrl, fetchPresignedUrl]);
+  }, [open, recordingId, fetchPresignedUrl]);
 
   const handleSpeedChange = (speed: PlaybackSpeed) => {
     setPlaybackSpeed(speed);
@@ -342,12 +363,24 @@ export function RecordingPlayerModal({
             activePlaybackUrl={activePlaybackUrl}
             captionTrackSrc={captionTrackSrc}
             videoRef={videoRef}
+            savedTimeRef={savedTimeRef}
             playbackSpeed={playbackSpeed}
-            onRetry={() => void fetchPresignedUrl(recording.id)}
+            onRetry={() => {
+              setRetriedOnError(false);
+              void fetchPresignedUrl(recording.id);
+            }}
+            onVideoCanPlay={() => {
+              setRetriedOnError(false);
+            }}
             onVideoError={() => {
+              savedTimeRef.current = videoRef.current?.currentTime ?? 0;
               if (!retriedOnError) {
                 setRetriedOnError(true);
                 void fetchPresignedUrl(recording.id);
+              } else {
+                setFetchError(
+                  "Playback stream interrupted and could not be automatically refreshed.",
+                );
               }
             }}
           />

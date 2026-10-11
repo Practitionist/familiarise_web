@@ -711,6 +711,32 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to reconcile orphaned payments",
       }),
 
+    // @cleanup-twin reconcile-orphaned-recordings
+    "reconcile-orphaned-recordings": () =>
+      cleanupRoute({
+        job: "reconcile-orphaned-recordings",
+        run: async () => {
+          const { reconcileOrphanedRecordings } =
+            await import("@/scripts/stream/reconcile-orphaned-recordings");
+          return reconcileOrphanedRecordings();
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          recovered: r.recovered,
+          stillMissing: r.stillMissing,
+          unrecoverable: r.unrecoverable,
+          partialScanned: r.partialScanned,
+          partialRecovered: r.partialRecovered,
+          errors: r.errors.slice(0, 5),
+        }),
+        status: (r) =>
+          statusFor(
+            r,
+            r.recovered > 0 || r.partialRecovered > 0 || r.unrecoverable > 0,
+          ),
+        failureMessage: "Failed to reconcile orphaned recordings",
+      }),
+
     // @cleanup-twin reconcile-payment-status
     "reconcile-payment-status": () =>
       cleanupRoute({

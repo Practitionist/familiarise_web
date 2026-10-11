@@ -48,9 +48,10 @@ describe("presigned playback URL lifetime", () => {
     expect(expires).toBe(5 * 3600);
   });
 
-  it("keeps one hour for an unknown length and caps a very long one at a day", () => {
-    expect(playbackUrlTtlSeconds(null)).toBe(3600);
-    expect(playbackUrlTtlSeconds(0)).toBe(3600);
+  it("enforces a four-hour minimum for unknown/short lengths and caps very long ones at a day", () => {
+    expect(playbackUrlTtlSeconds(null)).toBe(4 * 3600);
+    expect(playbackUrlTtlSeconds(0)).toBe(4 * 3600);
+    expect(playbackUrlTtlSeconds(90)).toBe(4 * 3600);
     expect(playbackUrlTtlSeconds(100_000)).toBe(24 * 3600);
   });
 });

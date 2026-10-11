@@ -1,6 +1,6 @@
 # Tax Compliance — Marketplace Obligations (March 2026)
 
-> Comprehensive tax, compliance, and financial infrastructure requirements for Familiarise as an Indian services marketplace. Supplements [06-tax-compliance-india.md](./06-tax-compliance-india.md).
+> Comprehensive tax, compliance, and financial infrastructure requirements for Familiarise as an Indian services marketplace. Supplements [02-tax-compliance-india.md](./02-tax-compliance-india.md).
 
 **Last Updated**: 2026-03-19
 
@@ -108,25 +108,6 @@ Commission invoices to consultants should use SAC 9962 for marketplace commissio
 | Within 15 days of quarterly filing due date | Issue TDS certificate | Form 131 (formerly 16A) |
 
 Late filing penalty: Rs 200/day (capped at total TDS amount).
-
-### Critical CA Question
-
-**Do both 194-O (0.1% on gross e-commerce sales) AND 194J (10% on professional services above Rs 50K) apply simultaneously?** They are separate tax provisions (income tax vs e-commerce). Whether one supersedes the other for our specific marketplace model needs professional opinion.
-
----
-
-## Section 44AD Risk
-
-> **WARNING**: Commission/brokerage income may be excluded from Section 44AD presumptive taxation. Persons earning commission or brokerage income, or carrying on agency businesses, are specifically excluded from 44AD in some interpretations.
-
-| Parameter         | Detail                                                          |
-| ----------------- | --------------------------------------------------------------- |
-| Turnover limit    | Rs 3 crore (if 95%+ digital receipts) or Rs 2 crore             |
-| Deemed profit     | 6% (digital) or 8% (cash) of turnover                           |
-| Lock-in           | 5 consecutive years once opted                                  |
-| NOT available for | Companies, LLPs, persons earning commission/brokerage (debated) |
-
-**Impact**: If a CA rules that marketplace commission income disqualifies us from 44AD, the "0% tax up to Rs 50L" advantage of Sole Proprietorship in the CFO Master Plan shrinks significantly. **This needs urgent CA verification before finalizing entity structure.**
 
 ---
 
@@ -267,9 +248,6 @@ PA license requirements (for reference): Rs 15 crore net worth at application, R
 
 ### ⬜ Before Launch (Non-Code — You + CA)
 
-- [ ] Get CA opinion: are we an "e-commerce operator"? (affects GST registration)
-- [ ] Get CA opinion: does 44AD apply to marketplace commission income?
-- [ ] Get CA opinion: do 194-O and 194J both apply simultaneously?
 - [ ] File LUT with GST authorities (one-time, enables zero-rating legally)
 - [ ] Activate Razorpay IBT on dashboard (KYC process with Razorpay)
 - [ ] Register for GST (likely mandatory from day 1)
@@ -294,7 +272,6 @@ PA license requirements (for reference): Rs 15 crore net worth at application, R
 - ROC filing — only for companies/LLPs, not Sole Proprietorship
 - Angel tax — abolished from FY 2025-26
 - ISO/SOC certifications — only for enterprise B2B
-- Pvt Ltd conversion — only when seeking VC funding
 
 ---
 
@@ -319,44 +296,12 @@ Platform consultants are independent contractors because they:
 - Can work on multiple platforms simultaneously
 - Are not on the platform payroll
 
-### Internal Team
-
-- **Shubham** (Rs 10K base + Rs 5K bonus): Could be employee or contractor, but with 2 people none of PF/ESI/Gratuity applies
-- **Shelu** (pure commission, Rs 200–300/conversion): Clearly a contractor — no fixed hours, no base pay
-
-**Bottom line:** Forget about PF/ESI/Gratuity until you hire 10+ people. This is an HR/payroll problem for the future, not a code problem.
-
 > **Warning about misclassification:** If someone works fixed hours, uses your tools, is under your day-to-day supervision, and works exclusively for you — calling them a "contractor" does not make them one. Labor courts look at the substance of the relationship, not the label.
-
----
-
-## CA / Legal Action Items (Non-Code)
-
-These items are for your CA or legal advisor, not engineering.
-
-### Before Launch (Priority)
-
-| #   | Action                                                           | Impact                                               | Estimated Cost            |
-| --- | ---------------------------------------------------------------- | ---------------------------------------------------- | ------------------------- |
-| 1   | CA opinion: "Are we an e-commerce operator under Section 2(45)?" | Determines GST registration, TCS, GSTR-8 obligations | Rs 5–10K one-time         |
-| 2   | CA opinion: "Which TDS section — 194J or 194-O or both?"         | Different rates and thresholds                       | Part of same consultation |
-| 3   | CA opinion: "Does 44AD apply to marketplace commission income?"  | Determines if Sole Prop tax advantage holds          | Part of same consultation |
-| 4   | GST registration (if CA advises)                                 | Must be done before first payment                    | Rs 2–5K                   |
-| 5   | LUT filing for export zero-rating                                | Must be done before first international transaction  | Free (online filing)      |
-| 6   | Monthly CA retainer for GST filing                               | GSTR-1, GSTR-3B, GSTR-8 (if applicable)              | Rs 2–5K/month             |
-
-### Immediate Non-Code Tasks
-
-1. Run Prisma migration (`npx prisma migrate deploy`) — 1 minute
-2. Set `PAN_ENCRYPTION_KEY` in environment (`openssl rand -hex 32`) — 1 minute
-3. Get IEC (Import Export Code) — Rs 500, DGFT website, 3–5 days
-4. Open business bank account (free)
 
 ---
 
 ## Related Documentation
 
-- [06-tax-compliance-india.md](./06-tax-compliance-india.md) — Original tax compliance doc
-- [Gateway Evaluation](../payments/gateways/gateway-evaluation-mar-2026.md) — Full gateway comparison
+- [02-tax-compliance-india.md](./02-tax-compliance-india.md) — Original tax compliance doc
+- [Gateway Evaluation](../payments/gateways/gateway-evaluation-2026.md) — Full gateway comparison
 - [Multi-Currency Architecture](../payments/multi-currency/) — IBT, gateway auto-routing
-- [11-cfo-master-plan.md](./11-cfo-master-plan.md) — Financial strategy and entity structure
