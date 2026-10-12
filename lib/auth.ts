@@ -708,7 +708,7 @@ export const auth = betterAuth({
         (!user.banExpires || new Date(user.banExpires) > new Date());
 
       // Load active org memberships so OrgSwitcher + checkout can render
-      // without an extra roundtrip.
+      // without an extra roundtrip. One joined statement on every session read.
       const memberships = await prisma.membership.findMany({
         where: { status: "ACTIVE", userId: user.id },
         select: {
@@ -734,6 +734,7 @@ export const auth = betterAuth({
             },
           },
         },
+        relationLoadStrategy: "join",
       });
 
       // Shape returned on every session. The session is hot — every
