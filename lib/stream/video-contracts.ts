@@ -179,8 +179,7 @@ export function assertValidUpdateCallMembers(request: unknown): void {
     }
     if (
       member.role !== undefined &&
-      (typeof member.role !== "string" ||
-        !CALL_MEMBER_ROLE_SET.has(member.role))
+      (typeof member.role !== "string" || !CALL_MEMBER_ROLE_SET.has(member.role))
     ) {
       throw new StreamContractError(
         `Invalid Stream call member role "${String(member.role)}". Allowed on default call type: ${STREAM_CALL_MEMBER_ROLES.join(", ")}`,
@@ -345,9 +344,7 @@ export function assertValidGetOrCreateCall(request?: unknown): void {
     req?.data?.settings_override?.backstage?.join_ahead_time_seconds;
   if (
     joinAhead !== undefined &&
-    (typeof joinAhead !== "number" ||
-      !Number.isFinite(joinAhead) ||
-      joinAhead < 0)
+    (typeof joinAhead !== "number" || !Number.isFinite(joinAhead) || joinAhead < 0)
   ) {
     throw new StreamContractError(
       "GetOrCreateCall requires a non-negative join_ahead_time_seconds",
@@ -369,3 +366,4 @@ export function assertValidGetOrCreateCall(request?: unknown): void {
     }
   }
 }
+
