@@ -278,23 +278,23 @@ This record holds eighteen decisions about the files attached to a booking: how 
 
 ## Deprecated & Superseded Approaches
 
-| Superseded approach | Why it was superseded | What to do with residue |
-|---|---|---|
-| Standalone consultant replies with a separate reply dialog | A reply appeared as its own "Approved" document, detached from the draft it answered | Nothing left; the remaining "Approved" display on expert rows goes with ADR-01 |
-| Expert rows displayed with their stored `APPROVED` status | Experts do not approve their own files | Readers ignore it; do not migrate the enum value |
-| Preflight, then `window.open` on the signed link | `window.open` with `noopener` returns `null`, so the fallback navigated the current tab away | Delete the helpers; "Open" is a plain link (ADR-07) |
-| In-drawer preview pane | Duplicated the viewer and had its own error paths | Delete with the drawer |
-| Stored time-limited links in `fileUrl` | Went stale an hour after upload | Write the canonical route path and stop returning the field |
-| The Resources aside as the place for document work | Review rounds and bulk upload do not fit a narrow aside | `ResourceSnapshot` cards (ADR-08) |
-| "The Session page owns every action" | The owner preferred a hub with dedicated pages | None in code |
-| Legacy upload modal `DocumentUpload` | A second upload and list implementation | Point its caller at the workspace and delete it |
-| Three list shells for libraries | Different filters and date definitions for one concept | `LibraryBrowser` (ADR-10) |
-| Regex-derived library links from `backHref` | Fragile and unscoped to the booking | Explicit `hrefs` |
-| "Session N" from the still-joinable list | Past recordings never matched a session | Use `ordinal` (ADR-13) |
-| Each other run as its own library card | Tripled lists and links to pages the learner cannot open | Catch-up slots (ADR-11) |
-| Three different cross-run recording rules | The list, the API and playback disagreed | One slot-aware rule (ADR-11) |
-| Version cap over all rows | Expert replies used up the learner's budget | Count live learner rows only (ADR-03) |
-| Client-side thread grouping | Stale feedback and drifted rules | Server-built thread view (ADR-15) |
-| Purge as a `GITHUB_OUTPUT` wrapper outside the registry | One registered implementation per job | Register it and delete the wrapper (ADR-06) |
-| Purge by tombstone age only | Purging a root first re-rooted surviving versions | Versions before roots (ADR-06) |
-| Separate 7-day and 30-day grace windows | Two jobs disagreed about when an object is orphaned | One shared constant |
+| Superseded approach                                        | Why it was superseded                                                                        | What to do with residue                                                        |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Standalone consultant replies with a separate reply dialog | A reply appeared as its own "Approved" document, detached from the draft it answered         | Nothing left; the remaining "Approved" display on expert rows goes with ADR-01 |
+| Expert rows displayed with their stored `APPROVED` status  | Experts do not approve their own files                                                       | Readers ignore it; do not migrate the enum value                               |
+| Preflight, then `window.open` on the signed link           | `window.open` with `noopener` returns `null`, so the fallback navigated the current tab away | Delete the helpers; "Open" is a plain link (ADR-07)                            |
+| In-drawer preview pane                                     | Duplicated the viewer and had its own error paths                                            | Delete with the drawer                                                         |
+| Stored time-limited links in `fileUrl`                     | Went stale an hour after upload                                                              | Write the canonical route path and stop returning the field                    |
+| The Resources aside as the place for document work         | Review rounds and bulk upload do not fit a narrow aside                                      | `ResourceSnapshot` cards (ADR-08)                                              |
+| "The Session page owns every action"                       | The owner preferred a hub with dedicated pages                                               | None in code                                                                   |
+| Legacy upload modal `DocumentUpload`                       | A second upload and list implementation                                                      | Point its caller at the workspace and delete it                                |
+| Three list shells for libraries                            | Different filters and date definitions for one concept                                       | `LibraryBrowser` (ADR-10)                                                      |
+| Regex-derived library links from `backHref`                | Fragile and unscoped to the booking                                                          | Explicit `hrefs`                                                               |
+| "Session N" from the still-joinable list                   | Past recordings never matched a session                                                      | Use `ordinal` (ADR-13)                                                         |
+| Each other run as its own library card                     | Tripled lists and links to pages the learner cannot open                                     | Catch-up slots (ADR-11)                                                        |
+| Three different cross-run recording rules                  | The list, the API and playback disagreed                                                     | One slot-aware rule (ADR-11)                                                   |
+| Version cap over all rows                                  | Expert replies used up the learner's budget                                                  | Count live learner rows only (ADR-03)                                          |
+| Client-side thread grouping                                | Stale feedback and drifted rules                                                             | Server-built thread view (ADR-15)                                              |
+| Purge as a `GITHUB_OUTPUT` wrapper outside the registry    | One registered implementation per job                                                        | Register it and delete the wrapper (ADR-06)                                    |
+| Purge by tombstone age only                                | Purging a root first re-rooted surviving versions                                            | Versions before roots (ADR-06)                                                 |
+| Separate 7-day and 30-day grace windows                    | Two jobs disagreed about when an object is orphaned                                          | One shared constant                                                            |

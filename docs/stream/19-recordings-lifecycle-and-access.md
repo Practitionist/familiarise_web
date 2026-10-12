@@ -63,13 +63,13 @@ sequenceDiagram
 
 One platform schedule applies, evaluated by the daily `expire-recordings` job (`lib/stream/recording-retention.ts`).
 
-| Session type                                                           | Deleted after                                                   |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------- |
-| 1:1 consultation                                                       | 90 days after the session                                       |
-| Subscription / trial                                                   | 90 days after the subscription ends (kept while it is active)   |
-| Webinar                                                                | 365 days after the session                                      |
-| Class                                                                  | 365 days after the class's final session                        |
-| Published replay, or any recording with a pending or succeeded purchase | Never auto-deleted                                              |
+| Session type                                                            | Deleted after                                                 |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------- |
+| 1:1 consultation                                                        | 90 days after the session                                     |
+| Subscription / trial                                                    | 90 days after the subscription ends (kept while it is active) |
+| Webinar                                                                 | 365 days after the session                                    |
+| Class                                                                   | 365 days after the class's final session                      |
+| Published replay, or any recording with a pending or succeeded purchase | Never auto-deleted                                            |
 
 - An organisation can shorten retention for org-scoped recordings (`Organization.streamRecordingRetentionDays`); the effective deadline is the earlier of the two, and sold replays are exempt.
 - Expiry deletes the R2 object, the preview clip and the thumbnail, marks the row `EXPIRED`, and (org-scoped) writes an audit row.
@@ -198,11 +198,11 @@ sequenceDiagram
 
 ### Who may play, by session type
 
-| Session type                          | Who may play                                                                                                              |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| 1:1 consultation, subscription, trial | Only that appointment's participants. Never plan-wide, never sellable.                                                    |
-| Webinar                               | Attendees (paid or seated) of that run; catch-up from another run only when the plan shares recordings.                   |
-| Class                                 | Enrolled members of the batch; catch-up from another batch for sessions their batch lacks; late-join rules apply.         |
+| Session type                          | Who may play                                                                                                      |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1:1 consultation, subscription, trial | Only that appointment's participants. Never plan-wide, never sellable.                                            |
+| Webinar                               | Attendees (paid or seated) of that run; catch-up from another run only when the plan shares recordings.           |
+| Class                                 | Enrolled members of the batch; catch-up from another batch for sessions their batch lacks; late-join rules apply. |
 
 The owner and accepted co-presenters always have access, a platform `ADMIN` has full access (audited), `STAFF` and organisation roles see metadata only, and buyers of a published replay may play it. Clients never receive a raw storage URL in a payload.
 
@@ -237,21 +237,40 @@ For a host the list has no catch-up rows (a host sees their own batch), plus a "
 
 ```ts
 type Slot = {
-  ordinal: number; title: string; // ClassContent/SubscriptionContent title or "Session k"
+  ordinal: number;
+  title: string; // ClassContent/SubscriptionContent title or "Session k"
   startsAt: string;
-  state: "recorded" | "catch_up" | "upcoming" | "processing" | "not_recorded"
-    | "declined" | "removed" | "expired" | "before_you_joined";
-  source: { kind: "own" } | { kind: "catch_up"; batchLabel: string; startsAt: string } | null;
-  parts: { recordingId: string; partNo: number; partCount: number; recordedAt: string;
-           durationInMinutes: number; makeUp: boolean; keptUntil: string | null }[];
+  state:
+    | "recorded"
+    | "catch_up"
+    | "upcoming"
+    | "processing"
+    | "not_recorded"
+    | "declined"
+    | "removed"
+    | "expired"
+    | "before_you_joined";
+  source:
+    | { kind: "own" }
+    | { kind: "catch_up"; batchLabel: string; startsAt: string }
+    | null;
+  parts: {
+    recordingId: string;
+    partNo: number;
+    partCount: number;
+    recordedAt: string;
+    durationInMinutes: number;
+    makeUp: boolean;
+    keptUntil: string | null;
+  }[];
 };
 ```
 
-| Method and path                                           | Response                                                                                  |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `GET /api/appointments/:id/recordings`                    | `{ booking: { kind, title, batchLabel, viewerRole, keptUntil }, slots: Slot[] }`          |
-| `GET /api/stream/recordings/:recordingId` (exists)        | Playback URL minted per request; the slot rule above is added                             |
-| `PATCH`, `DELETE /api/stream/recordings/:recordingId` (exist) | Host manage actions, unchanged                                                        |
+| Method and path                                                   | Response                                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GET /api/appointments/:id/recordings`                            | `{ booking: { kind, title, batchLabel, viewerRole, keptUntil }, slots: Slot[] }`                 |
+| `GET /api/stream/recordings/:recordingId` (exists)                | Playback URL minted per request; the slot rule above is added                                    |
+| `PATCH`, `DELETE /api/stream/recordings/:recordingId` (exist)     | Host manage actions, unchanged                                                                   |
 | `GET /api/dashboard/{consultant,consultee}/:profileId/recordings` | `{ groups: { appointment, slots: Slot[] }[], purchased: Part[], total, page, pageSize, facets }` |
 
 Player failures use the shared typed error codes (`OWN_RECORDING_AVAILABLE`, `LATE_JOIN_HIDDEN`, `GONE`, `RATE_LIMITED`, `SERVER_ERROR`) described in [documents/README](../documents/README.md#typed-error-model-and-copy).

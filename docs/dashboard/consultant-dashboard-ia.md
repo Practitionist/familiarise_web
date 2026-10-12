@@ -25,11 +25,11 @@ The mobile tab strip carries four tabs plus **Menu**: Home, Requests, Appointmen
 
 The Library group's Documents and Recordings entries are cross-session indexes, grouped by appointment, with filters for the learner, kind and status (Documents also has "Your turn"). Rows link out; the work happens on two dedicated per-appointment pages reached from the appointment details page, which acts as a hub with snapshot cards for Documents, Materials and Recordings.
 
-| Page                    | Route                                                                    | Purpose                                                                    |
-| ----------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| Documents workspace     | `/dashboard/consultant/[consultantId]/appointments/[appointmentId]/documents`  | Review queue, reply, share a file, status banner per thread                |
-| Recording details       | `/dashboard/consultant/[consultantId]/appointments/[appointmentId]/recordings` | Sessions, parts, player, manage sheet                                      |
-| File viewer (new tab)   | `/files/documents/[documentId]`, `/files/materials/[materialId]`         | Same-origin viewer that signs on every load                                |
+| Page                  | Route                                                                          | Purpose                                                     |
+| --------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Documents workspace   | `/dashboard/consultant/[consultantId]/appointments/[appointmentId]/documents`  | Review queue, reply, share a file, status banner per thread |
+| Recording details     | `/dashboard/consultant/[consultantId]/appointments/[appointmentId]/recordings` | Sessions, parts, player, manage sheet                       |
+| File viewer (new tab) | `/files/documents/[documentId]`, `/files/materials/[materialId]`               | Same-origin viewer that signs on every load                 |
 
 Collaborators and co-hosts see only appointments they are a party to. See [session documents](../documents/README.md#pages-and-routes-per-role) and [recordings](../stream/19-recordings-lifecycle-and-access.md#the-recording-details-page).
 
