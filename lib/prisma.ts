@@ -171,7 +171,41 @@ function makeClient() {
       ...moneyResultExtensions,
       ssoProvider: ssoSecretDecryptExtension.ssoProvider,
     },
+    query: {
+      $allModels: {
+        $allOperations({ operation, args, query }) {
+          return query(withQueryLoadDefault(operation, args));
+        },
+      },
+    },
   });
+}
+
+// The relationJoins preview makes "join" the default for every read; reads opt in
+// per query instead, so every other query keeps one statement per relation level.
+const RELATION_LOAD_OPERATIONS: ReadonlySet<string> = new Set([
+  "findUnique",
+  "findUniqueOrThrow",
+  "findFirst",
+  "findFirstOrThrow",
+  "findMany",
+  "create",
+  "update",
+  "upsert",
+  "delete",
+]);
+
+function withQueryLoadDefault<A>(operation: string, args: A): A {
+  if (!RELATION_LOAD_OPERATIONS.has(operation)) return args;
+  if (
+    args &&
+    typeof args === "object" &&
+    "relationLoadStrategy" in args &&
+    args.relationLoadStrategy !== undefined
+  ) {
+    return args;
+  }
+  return { ...args, relationLoadStrategy: "query" };
 }
 
 // Helper signatures must accept the extended client — a bare PrismaClient
