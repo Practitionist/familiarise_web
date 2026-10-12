@@ -195,7 +195,9 @@ export function timelineOf(
   view: Pick<RecordingBookingView, "kind" | "slots" | "viewerRole">,
   rows: LibraryRecording[],
 ): Omit<LibraryTimeline, "moreUpcoming"> {
-  const starts = view.slots.map((s) => s.startsAt).sort();
+  const starts = view.slots
+    .map((s) => s.startsAt)
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
   return {
     viewerRole: view.viewerRole,
     sessionCount: view.slots.length,
