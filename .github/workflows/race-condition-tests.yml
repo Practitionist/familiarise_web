@@ -49,7 +49,7 @@ jobs:
         run: npm ci
 
       - name: Join-loading parity (rolled back)
-        run: npx tsx tests/typescript/join-loading-parity.ts
+        run: node_modules/.bin/tsx tests/typescript/join-loading-parity.ts
         timeout-minutes: 3
 
       - name: Run Race Condition Tests
