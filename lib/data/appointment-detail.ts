@@ -223,6 +223,8 @@ export async function readAppointmentDetail(appointmentId: string) {
         select: { userId: true, role: true, user: userSelect },
       },
     },
+    // ~28 relation nodes: one joined statement instead of one per node.
+    relationLoadStrategy: "join",
   });
 
   if (!appointment) return null;
