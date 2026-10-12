@@ -21,6 +21,20 @@ Settings is no longer a sidebar row. It is one entry in the header's avatar menu
 
 The mobile tab strip carries four tabs plus **Menu**: Home, Requests, Appointments, Messages. Menu opens a sheet with the switcher, the full nav, Settings and Sign out — Availability, Earnings and everything else not in the four tabs is reached from there, replacing the old five-tab strip that left Messages, the planner and Availability unreachable on a phone.
 
+## Documents and Recordings pages
+
+The Library group's Documents and Recordings entries are cross-session indexes, grouped by appointment, with filters for the learner, kind and status (Documents also has "Your turn"). Rows link out; the work happens on two dedicated per-appointment pages reached from the appointment details page, which acts as a hub with snapshot cards for Documents, Materials and Recordings.
+
+| Page                    | Route                                                                    | Purpose                                                                    |
+| ----------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| Documents workspace     | `/dashboard/consultant/[consultantId]/appointments/[appointmentId]/documents`  | Review queue, reply, share a file, status banner per thread                |
+| Recording details       | `/dashboard/consultant/[consultantId]/appointments/[appointmentId]/recordings` | Sessions, parts, player, manage sheet                                      |
+| File viewer (new tab)   | `/files/documents/[documentId]`, `/files/materials/[materialId]`         | Same-origin viewer that signs on every load                                |
+
+Collaborators and co-hosts see only appointments they are a party to. See [session documents](../documents/README.md#pages-and-routes-per-role) and [recordings](../stream/19-recordings-lifecycle-and-access.md#the-recording-details-page).
+
+> Status: the two per-appointment pages and the viewer land with the documents & recordings mega-fix PR.
+
 ## The Availability page
 
 `/dashboard/consultant/[consultantId]/availability` renders `AvailabilitySection` and `AvailabilityGrid` over the same data, and the save contract is the strict whole-profile `PUT /api/user/consultants/[id]`. That logic lives once, in `settings/use-consultant-settings-form.ts`, shared with the Profile and Booking requests settings sections. The retired `settings?tab=availability` deep link still answers a 308 to this page.

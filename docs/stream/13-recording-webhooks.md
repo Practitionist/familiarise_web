@@ -880,6 +880,8 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 
 ### Recording Visibility Rules
 
+> The shared-run and multi-batch rule (own batch by session, with catch-up) is specified in [19. Recordings: Lifecycle, Retention and Access](./19-recordings-lifecycle-and-access.md#shared-run-and-multi-batch-access) and supersedes the plan-wide extensions below once it lands.
+
 Recordings are private by default. The playback route evaluates these rules ([ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md)):
 
 | Session type                          | Who may play                                                                                                                  |

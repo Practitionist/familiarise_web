@@ -391,6 +391,12 @@ Every storage write, delete and signing call runs on the server-side client, nev
 
 See [support attachments](../support/08-intake-callbacks-attachments-and-limits.md#attachments) for the worked example.
 
+## Supabase for documents, R2 for recordings
+
+Session documents and plan materials live in the private Supabase `documents` bucket: small files (up to 10 MB), opened rarely, uploaded straight from the browser and signed on demand. Recordings live in the private Cloudflare R2 recordings bucket: hundreds of MB to several GB, streamed repeatedly, pulled in server-side by `transfer-recordings`. The split follows object size and read pattern. R2 charges no egress and has no per-plan upload cap, while Supabase Storage caps a single upload by plan. Each store has one signing helper. Public preview clips stay in the Supabase `recordings-previews` bucket. See [session documents](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [recordings](../stream/19-recordings-lifecycle-and-access.md).
+
+> Status: document retention (tombstone 90 days after the booking ends, purge 7 days later by the registered `purge-deleted-documents` job) lands with the documents & recordings mega-fix PR; see [session documents](../documents/README.md#retention-and-the-purge).
+
 ## Cleanup Strategy
 
 ### 1. Orphan Sweep (`reconcile-document-storage`, daily)
