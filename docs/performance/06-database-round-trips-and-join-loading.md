@@ -24,9 +24,11 @@ The strategy is chosen per query rather than globally for three reasons. First, 
 
 ### When to opt in
 
+**Rule:** use `relationLoadStrategy: "join"` only for list and detail reads with nested relations, and never on a write path. `lib/prisma.ts` keeps `"query"` as the default because `relationJoins` is a Prisma 7 preview feature, and that default stays for as long as the app is on Prisma 7. Prisma 8 loads `include` in one statement by design, and moving to it is a separate migration.
+
 A reader should pass `relationLoadStrategy: "join"` when it runs on a request path and its `include` or `select` tree has three or more relation nodes. It also applies to any read that selects `_count`. Money columns are safe: BigInt columns travel through the JSON aggregation as text and come back as the same BigInt values, and the result extensions in `lib/prisma-extensions.ts` still convert them. Aggregates (`count`, `aggregate`, `groupBy`) do not accept the option, and do not need it. Do not opt in a read that selects a `Decimal` column while the upstream precision issue is open; none of the readers below selects one.
 
-Before opting a reader in, snapshot its payload with the query strategy and compare it with the join strategy. Every reader listed below produced a byte-identical payload under both strategies against the shared database.
+Before opting a reader in, snapshot its payload with the query strategy and compare it with the join strategy. `tests/typescript/join-loading-parity.ts` does this for one money read on every push to `dev` (the live-database job in `.github/workflows/race-condition-tests.yml`). It inserts an earnings row above 2^31 paise inside a transaction that it always rolls back, then asserts that both strategies return deeply equal money values, Dates, nulls and nested list order. Every reader listed below produced a byte-identical payload under both strategies against the shared database.
 
 ### Readers that use join loading
 
@@ -67,6 +69,8 @@ Count statements at the `pg` driver rather than through Prisma's query event, be
 - Strategy selection in the query compiler (`get_relation_load_strategy`): https://github.com/prisma/prisma-engines/blob/main/query-compiler/core/src/query_graph_builder/read/utils.rs
 - Open issue, Decimal precision with `relationJoins`: https://github.com/prisma/orm/issues/25639
 - Open issue, overhead in nested joins: https://github.com/prisma/orm/issues/22596
+- Prisma, currently active Preview features (`relationJoins` since 5.7.0): https://www.prisma.io/docs/orm/reference/preview-features/client-preview-features
+- Prisma, release status (Prisma 8 release candidate, unsupported features, Prisma 7 support window): https://www.prisma.io/docs/orm/release-status
 
 ## Deprecated & Superseded Approaches
 
