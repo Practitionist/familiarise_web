@@ -11,6 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { cn } from "@/utils/tailwind";
 
 export interface LibraryColumn<T> {
@@ -130,14 +131,16 @@ export function LibraryTable<T>({
   );
 }
 
-const DATE = new Intl.DateTimeFormat("en-IN", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
+/** "7 Oct 2026" in the page's display zone, so the Library and the booking pages agree. */
+export function useLibraryDay(): (iso: string | null) => string {
+  const format = useZonedFormat();
+  return (iso) => (iso ? format(iso, "d MMM yyyy") : "—");
+}
 
-export const formatLibraryDate = (iso: string | null) =>
-  iso ? DATE.format(new Date(iso)) : "—";
+export function LibraryDate({ iso }: Readonly<{ iso: string | null }>) {
+  const day = useLibraryDay();
+  return <>{day(iso)}</>;
+}
 
 /** An icon link that opens a file in a new tab. */
 export function OpenFileLink({

@@ -232,6 +232,9 @@ function MaterialsCard({ appointmentId }: Readonly<{ appointmentId: string }>) {
   const shown = expanded ? materials : materials.slice(0, MATERIALS_PREVIEW);
   return (
     <div className="space-y-1">
+      <p className="text-xs text-muted-foreground">
+        Files included with this offering. Open or download them here.
+      </p>
       <ul className="space-y-1">
         {shown.map((m) => (
           <li

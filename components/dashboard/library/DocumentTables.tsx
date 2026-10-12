@@ -18,7 +18,7 @@ import type {
 import {
   LibraryTable,
   OpenFileLink,
-  formatLibraryDate,
+  LibraryDate,
   type LibraryColumn,
 } from "./LibraryTable";
 
@@ -106,7 +106,7 @@ function VersionList({
               <StatusBadge label={chip.label} tone={chip.tone} size="sm" />
             )}
             <span className="shrink-0 whitespace-nowrap text-muted-foreground">
-              {formatLibraryDate(version.uploadedAt)}
+              <LibraryDate iso={version.uploadedAt} />
             </span>
             <OpenFileLink
               href={version.url}
@@ -149,7 +149,7 @@ export function ThreadTable<T extends WithSession<LibraryDocument>>({
       header: "Updated",
       cell: (t) => (
         <span className="whitespace-nowrap text-muted-foreground">
-          {formatLibraryDate(t.latest.uploadedAt)}
+          <LibraryDate iso={t.latest.uploadedAt} />
         </span>
       ),
     },

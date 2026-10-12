@@ -177,8 +177,8 @@ export function RecordingSessions({
       {data.slots.length === 0 ? (
         <EmptyState
           icon={Video}
-          title="No sessions yet"
-          description="Recorded sessions appear here after processing."
+          title="No sessions"
+          description="This booking has no sessions to show."
         />
       ) : (
         <RecordingTimelineCard
@@ -186,7 +186,8 @@ export function RecordingSessions({
           expertName={data.expertName}
           kind={data.kind}
           timeline={timeline}
-          bookingHref={backHref}
+          bookingHref={null}
+          moreHref={backHref}
           rows={rows}
           anchorRows
           manage={(row) =>

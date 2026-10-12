@@ -49,7 +49,7 @@ import {
 } from "@/lib/library/library-query";
 import { cn } from "@/utils/tailwind";
 import { MaterialsTable, ThreadTable } from "./DocumentTables";
-import { formatLibraryDate, type LibraryColumn } from "./LibraryTable";
+import { useLibraryDay, type LibraryColumn } from "./LibraryTable";
 import {
   RecordingTimelineCard,
   RecordingTimelineTable,
@@ -115,12 +115,15 @@ function toPlayerItem(
 }
 
 /** "Subscription · Started 7 Sept 2026 · 6 sessions". */
-function sessionLine(session: LibrarySession): string {
+function sessionLine(
+  session: LibrarySession,
+  day: (iso: string | null) => string,
+): string {
   const kind = LIBRARY_KIND_LABEL[session.kind] ?? session.kind;
   const date =
     session.kind === "SUBSCRIPTION" && session.startsAt
-      ? `Started ${formatLibraryDate(session.startsAt)}`
-      : formatLibraryDate(session.startsAt);
+      ? `Started ${day(session.startsAt)}`
+      : day(session.startsAt);
   const count =
     session.sessionCount && session.sessionCount > 1
       ? `${session.sessionCount} sessions`
@@ -134,7 +137,8 @@ function summaryText(group: LibraryGroup<LibraryFile>): string | null {
     return `${s.documents.threads} documents · ${s.documents.open} open · ${s.documents.done} done`;
   }
   if (s?.recordings) {
-    return `${s.recordings.count} recordings · ${s.recordings.minutes} min`;
+    const noun = s.recordings.count === 1 ? "recording" : "recordings";
+    return `${s.recordings.count} ${noun} · ${s.recordings.minutes} min`;
   }
   return null;
 }
@@ -150,6 +154,7 @@ function SessionGroup({
   href: string;
 }>) {
   const [open, setOpen] = useState(true);
+  const day = useLibraryDay();
   const { session } = group;
   const materials = group.materials ?? [];
   const hasRows = group.files.length > 0 || materials.length > 0;
@@ -182,7 +187,7 @@ function SessionGroup({
                 {session.counterpartName && ` · ${session.counterpartName}`}
               </span>
               <span className="block text-xs text-muted-foreground">
-                {sessionLine(session)}
+                {sessionLine(session, day)}
                 {summary ? ` · ${summary}` : ""}
               </span>
             </span>
@@ -310,7 +315,8 @@ export function LibraryBrowser({
     (sessionOf: ReadonlyMap<string, LibrarySession>) =>
     (row: LibraryRecording) => {
       const session = sessionOf.get(row.id);
-      if (!session || row.parts.length === 0) return null;
+      const managed = row.parts.length > 0 || row.state === "removed";
+      if (!session || !managed) return null;
       return (
         <Link
           href={`${sessionHref(session.appointmentId)}?slot=${row.slotOrdinal ?? ""}`}
@@ -394,9 +400,7 @@ export function LibraryBrowser({
         </div>
       );
   } else if (flat) {
-    const rows = flattenLibrary(groups as LibraryGroup<LibraryRecording>[]).map(
-      (row) => ({ ...row, expertName: row.session.expertName }),
-    );
+    const rows = flattenLibrary(groups as LibraryGroup<LibraryRecording>[]);
     const sessionOf = new Map(rows.map((r) => [r.id, r.session]));
     body =
       rows.length === 0 ? (
@@ -407,7 +411,6 @@ export function LibraryBrowser({
             caption="Recordings"
             rows={rows}
             retention={null}
-            expertName={null}
             booking={{
               header: "Booking",
               cell: (row) => {
@@ -634,7 +637,6 @@ export function LibraryBrowser({
               caption="Purchased replays"
               rows={data.purchased as LibraryRecording[]}
               retention={{ kind: "NEVER" }}
-              expertName={null}
               onPlay={(part) => play(part, null, null)}
             />
           </div>

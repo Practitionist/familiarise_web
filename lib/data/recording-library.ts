@@ -338,7 +338,7 @@ export function renderedGroups(
   timeline: LibraryTimeline;
 }[] {
   const needle = q.toLowerCase();
-  return candidateIds.flatMap((appointmentId) => {
+  const groups = candidateIds.flatMap((appointmentId) => {
     const view = views.get(appointmentId);
     if (!view?.slots.some(slotHasMedia)) return [];
     const all = timelineRows(view);
@@ -357,6 +357,12 @@ export function renderedGroups(
       { appointmentId, files: rows, timeline: { ...header, moreUpcoming } },
     ];
   });
+  // Cards read in schedule order: the booking whose sessions run latest first.
+  return groups.sort((a, b) =>
+    (b.timeline.lastSessionAt ?? "").localeCompare(
+      a.timeline.lastSessionAt ?? "",
+    ),
+  );
 }
 
 function librarySession(

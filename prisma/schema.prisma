@@ -5672,6 +5672,7 @@ enum RecordingRemovalReason {
   DECLINED
   COPY_LAPSED
   SUPPORT_ACTION
+  ORG_ACTION
 }
 
 enum Platform {

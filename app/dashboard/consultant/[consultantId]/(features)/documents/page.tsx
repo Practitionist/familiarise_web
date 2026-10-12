@@ -10,6 +10,8 @@ import { readDocumentLibrary } from "@/lib/data/document-library";
 import { libraryKeys } from "@/lib/documents/query-keys";
 import { parseLibraryQuery } from "@/lib/library/library-query";
 import { seedLibraryPage } from "@/lib/library/library-seed";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 export default async function ConsultantDocumentsRoute({
   params,
@@ -20,6 +22,7 @@ export default async function ConsultantDocumentsRoute({
 }>) {
   const { consultantId } = await params;
   const access = await requirePersonalProfileAccess("consultant", consultantId);
+  const viewerZone = await getViewerZone();
   const seed = await seedLibraryPage({
     name: "documents:expert",
     queryKey: libraryKeys.personal("documents", "consultant", consultantId),
@@ -40,13 +43,15 @@ export default async function ConsultantDocumentsRoute({
         description="Your learners' files and your replies, by booking. Open a booking to review."
       />
       <DashboardContent>
-        <HydrationBoundary state={seed}>
-          <PersonalLibrary
-            tree="consultant"
-            profileId={consultantId}
-            artifact="documents"
-          />
-        </HydrationBoundary>
+        <DisplayZoneProvider zone={viewerZone.zone}>
+          <HydrationBoundary state={seed}>
+            <PersonalLibrary
+              tree="consultant"
+              profileId={consultantId}
+              artifact="documents"
+            />
+          </HydrationBoundary>
+        </DisplayZoneProvider>
       </DashboardContent>
     </>
   );

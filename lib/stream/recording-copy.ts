@@ -40,7 +40,8 @@ export function partLabel(part: Pick<SlotPart, "partNo" | "partCount">) {
 }
 
 function remover(by: RemovedBy | null): string {
-  return by === "support" ? "Familiarise support" : "the expert";
+  if (by === "support") return "Familiarise support";
+  return by === "org" ? "the organisation" : "the expert";
 }
 
 /** "Removed by the expert on 11 Oct 2026." */
@@ -85,6 +86,8 @@ export function slotStateText(slot: RecordingSlot, day: DayFormat): string {
       return "Processing — the recording will appear here shortly.";
     case "before_you_joined":
       return "This session took place before you joined.";
+    case "cancelled":
+      return "This session was cancelled.";
     case "not_recorded":
     case "declined":
     case "removed":
@@ -99,19 +102,15 @@ export function catchUpExplainer(from: "batch" | "run"): string {
 }
 
 function removerName(
-  by: "expert" | "support" | null,
-  expertName: string | null,
+  by: "expert" | "support" | "org" | null,
+  name: string | null,
 ): string {
   if (by === "support") return "Familiarise support";
-  return expertName ?? "the expert";
+  return name ?? (by === "org" ? "the organisation" : "the expert");
 }
 
 /** The second line under a row's title; null for a plain recorded session. */
-export function rowBadge(
-  row: LibraryRecording,
-  expertName: string | null,
-  day: DayFormat,
-): string | null {
+export function rowBadge(row: LibraryRecording, day: DayFormat): string | null {
   switch (row.state) {
     case "recorded":
       return null;
@@ -120,7 +119,10 @@ export function rowBadge(
         ? `Catch-up · recorded ${day(row.catchUp.recordedAt)} with another ${row.catchUp.from}`
         : "Catch-up";
     case "removed": {
-      const by = removerName(row.removed?.by ?? null, expertName);
+      const by = removerName(
+        row.removed?.by ?? null,
+        row.removed?.byName ?? null,
+      );
       return row.removed?.at
         ? `Removed by ${by} on ${day(row.removed.at)}`
         : `Removed by ${by}`;
@@ -139,16 +141,17 @@ export function rowBadge(
       return "Upcoming";
     case "before_you_joined":
       return "Before you joined";
+    case "cancelled":
+      return "Cancelled";
   }
 }
 
 /** "Part 2 of 2 · Removed by Ananya Anderson on 11 Oct 2026". */
 export function removedPartBadge(
   part: LibraryRemovedPart,
-  expertName: string | null,
   day: DayFormat,
 ): string {
-  const by = removerName(part.removedBy, expertName);
+  const by = removerName(part.removedBy, part.removedByName);
   const when = part.removedAt ? ` on ${day(part.removedAt)}` : "";
   return `Part ${part.partNo} of ${part.partCount} · Removed by ${by}${when}`;
 }
@@ -162,6 +165,7 @@ const yearsOrDays = (days: number) =>
 export function retentionText(
   retention: LibraryRetention,
   day: DayFormat,
+  host = false,
 ): string {
   switch (retention.kind) {
     case "DATE":
@@ -171,7 +175,7 @@ export function retentionText(
     case "WHILE_ACTIVE":
       return "Kept while the booking is active";
     case "SUBSCRIPTION_ACTIVE":
-      return `Kept while your subscription is active, then ${RECORDING_RETENTION_SCHEDULE.subscriptionDays} days`;
+      return `Kept while ${host ? "the" : "your"} subscription is active, then ${RECORDING_RETENTION_SCHEDULE.subscriptionDays} days`;
     case "CLASS_RUNNING":
       return `Kept until ${yearsOrDays(RECORDING_RETENTION_SCHEDULE.groupDays)} after the last session`;
   }
@@ -182,7 +186,7 @@ export function timelineSubline(
   kind: string,
   timeline: Pick<
     LibraryTimeline,
-    "sessionCount" | "firstSessionAt" | "lastSessionAt"
+    "sessionCount" | "firstSessionAt" | "lastSessionAt" | "viewerRole"
   >,
   day: DayFormat,
   dateTime: DayFormat,
@@ -191,7 +195,8 @@ export function timelineSubline(
   if (!first) return null;
   const count = `${sessionCount} session${sessionCount === 1 ? "" : "s"}`;
   if (kind === "CLASS") {
-    return `Your batch ${day(first)} – ${day(last ?? first)} · ${count}`;
+    const batch = timeline.viewerRole === "host" ? "Batch" : "Your batch";
+    return `${batch} ${day(first)} – ${day(last ?? first)} · ${count}`;
   }
   if (kind === "SUBSCRIPTION") return `Started ${day(first)} · ${count}`;
   return dateTime(first);

@@ -28,6 +28,7 @@ const ROW_STATE: Record<SlotState, RecordingRowState> = {
   removed: "removed",
   expired: "expired",
   before_you_joined: "before_you_joined",
+  cancelled: "cancelled",
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -44,10 +45,20 @@ export function slotHasMedia(slot: RecordingSlot): boolean {
   );
 }
 
-function slotRow(
-  view: Pick<RecordingBookingView, "appointmentId" | "kind">,
-  slot: RecordingSlot,
-): LibraryRecording {
+type TimelineView = Pick<
+  RecordingBookingView,
+  "appointmentId" | "kind" | "expertName" | "organizationName"
+>;
+
+function removerName(
+  view: TimelineView,
+  by: RecordingSlot["removedBy"],
+): string | null {
+  if (by === "org") return view.organizationName;
+  return by === "expert" ? view.expertName : null;
+}
+
+function slotRow(view: TimelineView, slot: RecordingSlot): LibraryRecording {
   const parts = slot.parts.map((part) => ({
     id: part.recordingId,
     title: part.title,
@@ -72,7 +83,11 @@ function slotRow(
         : null,
     removed:
       slot.state === "removed"
-        ? { at: slot.removedAt, by: slot.removedBy }
+        ? {
+            at: slot.removedAt,
+            by: slot.removedBy,
+            byName: removerName(view, slot.removedBy),
+          }
         : null,
     declinedBy: slot.state === "declined" ? slot.declinedBy : null,
     keptUntil: parts[0]?.keptUntil ?? null,
@@ -82,13 +97,14 @@ function slotRow(
       partCount: p.partCount,
       removedAt: p.removedAt,
       removedBy: p.removedBy,
+      removedByName: removerName(view, p.removedBy),
     })),
   };
 }
 
 /** Every session of the viewer's booking, in session order. */
 export function timelineRows(
-  view: Pick<RecordingBookingView, "appointmentId" | "kind" | "slots">,
+  view: TimelineView & Pick<RecordingBookingView, "slots">,
 ): LibraryRecording[] {
   return [...view.slots]
     .sort((a, b) => a.ordinal - b.ordinal)
@@ -176,11 +192,12 @@ export function rowRetention(
 
 /** The card header's facts for a booking, before upcoming sessions are cut. */
 export function timelineOf(
-  view: Pick<RecordingBookingView, "kind" | "slots">,
+  view: Pick<RecordingBookingView, "kind" | "slots" | "viewerRole">,
   rows: LibraryRecording[],
 ): Omit<LibraryTimeline, "moreUpcoming"> {
   const starts = view.slots.map((s) => s.startsAt).sort();
   return {
+    viewerRole: view.viewerRole,
     sessionCount: view.slots.length,
     firstSessionAt: starts[0] ?? null,
     lastSessionAt: starts.at(-1) ?? null,

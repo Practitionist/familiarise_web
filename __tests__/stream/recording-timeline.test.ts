@@ -66,11 +66,12 @@ function view(kind: string, slots: RecordingSlot[]): RecordingBookingView {
     sharedAcrossRuns: null,
     expertName: "Ananya Anderson",
     learnerName: null,
+    organizationName: "LearnPro",
     slots,
   };
 }
 
-const badge = (row: LibraryRecording) => rowBadge(row, "Ananya Anderson", day);
+const badge = (row: LibraryRecording) => rowBadge(row, day);
 
 describe("recordings timeline", () => {
   it("gives every state its row badge", () => {
@@ -88,6 +89,11 @@ describe("recordings timeline", () => {
           removedAt: "2026-10-11T00:00:00.000Z",
           removedBy: "support",
         }),
+        slot(8, "removed", {
+          removedAt: "2026-10-11T00:00:00.000Z",
+          removedBy: "org",
+        }),
+        slot(9, "cancelled"),
         slot(4, "processing"),
         slot(5, "expired"),
         slot(6, "before_you_joined"),
@@ -102,6 +108,8 @@ describe("recordings timeline", () => {
       "Expired",
       "Before you joined",
       "Upcoming",
+      "Removed by LearnPro on 2026-10-11",
+      "Cancelled",
     ]);
     const [decline] = timelineRows(
       view("CONSULTATION", [

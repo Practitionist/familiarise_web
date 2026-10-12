@@ -9,7 +9,9 @@ jest.mock("../../lib/stream/recording-retention", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    appointment: { findMany: jest.fn() },
+    appointment: { findMany: jest.fn(), findFirst: jest.fn() },
+    recording: { count: jest.fn(async () => 0) },
+    recordingPurchase: { count: jest.fn(async () => 0) },
     consultantProfile: { findUnique: jest.fn(async () => null) },
     consulteeProfile: { findUnique: jest.fn(async () => ({ id: "cp-l" })) },
     appointmentOccurrence: { findMany: jest.fn(async () => []) },
@@ -37,6 +39,7 @@ import {
   catchUpOrdinals,
   loadRecordingViews,
   pickCatchUpSources,
+  viewerPlaybackAccess,
   recordingViewerOf,
   type BookingRow,
   type CatchUpRow,
@@ -68,6 +71,7 @@ function classBooking(id: string, planId = "plan-1"): BookingRow {
         title: "Beginner Class",
         lateJoinersGetPastRecordings: false,
         consultantProfileId: "host",
+        organizationId: null,
         collaborators: [],
         classContents: [{ order: 2, title: "Conditions" }],
       },
@@ -209,6 +213,14 @@ describe("the slot rule", () => {
     expect(slots[1]!.parts[0]!.recordedAt).not.toBe(ago(60).toISOString());
   });
 
+  it("reads a session cancelled with nothing recorded as Cancelled, not Not recorded", () => {
+    const cancelled = {
+      ...session(1, 3),
+      completionStatus: "CANCELLED" as const,
+    };
+    expect(view([cancelled]).slots[0]!.state).toBe("cancelled");
+  });
+
   it("hides sessions before a late joiner's seat and offers them no catch-up", () => {
     const viewer = recordingViewerOf(classBooking("b2"), LEARNER, true)!;
     const sessions = [session(1, 5), session(2, 1)];
@@ -294,5 +306,64 @@ describe("the batched loader and library pages", () => {
       ),
     ).toEqual(["a", "c"]);
     expect(renderedGroups(["a", "c"], views, "nothing")).toEqual([]);
+  });
+});
+
+describe("playback follows the list", () => {
+  it("plays a catch-up from another of the learner's batches that started before their seat there", async () => {
+    // b1 is the source batch (seat taken after its session 1); b2 is the learner's other batch.
+    const row = (
+      id: string,
+      seatDaysAgo: number,
+      occurrences: SessionRow[],
+    ) => ({
+      ...classBooking(id),
+      participants: [
+        { status: "CONFIRMED", createdAt: ago(seatDaysAgo), payment: null },
+      ],
+      payment: [],
+      occurrences,
+    });
+    const source = session(1, 20, [{ id: "b1-rec" }]);
+    const bookings = {
+      b1: row("b1", 10, [source]),
+      b2: row("b2", 30, [session(1, 5)]),
+    };
+    (prisma.appointment.findMany as jest.Mock).mockImplementation(
+      async (args: { where: { id: { in?: string[]; not?: string } } }) => {
+        if (args.where.id.not) return [{ id: "b2" }];
+        const ids = args.where.id.in ?? [];
+        if ("distinct" in args) return [{ appointmentType: "CLASS" }];
+        return ids.map((id) => bookings[id as "b1" | "b2"]);
+      },
+    );
+    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
+      classBooking("b1"),
+    );
+    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValue([
+      otherRun("b1", source),
+    ]);
+    (prisma.recording.count as jest.Mock).mockResolvedValue(1);
+
+    const listed = await loadRecordingViews(["b2"], "learner", NOW);
+    expect(listed.get("b2")!.view.slots[0]!.state).toBe("catch_up");
+    await expect(
+      viewerPlaybackAccess("learner", {
+        id: "b1-rec",
+        appointmentId: "b1",
+        ordinal: 1,
+        expired: false,
+      }),
+    ).resolves.toEqual({ allowed: true });
+
+    (prisma.recording.count as jest.Mock).mockResolvedValue(0);
+    await expect(
+      viewerPlaybackAccess("learner", {
+        id: "b1-rec",
+        appointmentId: "b1",
+        ordinal: 1,
+        expired: false,
+      }),
+    ).resolves.toEqual({ allowed: false, code: "LATE_JOIN_HIDDEN" });
   });
 });

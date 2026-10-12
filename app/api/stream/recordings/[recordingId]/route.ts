@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   RecordingListingStatus,
   RecordingStatus,
+  type RecordingRemovalReason,
   RecordingStorageType,
 } from "@prisma/client";
 import { z } from "zod";
@@ -28,6 +29,10 @@ import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
 
 import { getSession } from "@/lib/auth-server";
 import { notifyAttendeesOfRemovedRecording } from "@/lib/stream/recording-removal-notice";
+import {
+  resolveRecordingWriteAccess,
+  type RecordingWriteAccess,
+} from "@/lib/stream/recording-write-access";
 import {
   answerFileRoute,
   fileApiError,
@@ -230,106 +235,31 @@ function sanitizeRecordingMutationResponse(recording: unknown) {
   return safeRecording;
 }
 
-type OwnedPlan = {
-  id?: string;
-  organizationId?: string | null;
-  consultantProfileId?: string | null;
-  consultantProfile?: { userId?: string | null } | null;
-} | null;
+const REMOVAL_REASON = {
+  host: "EXPERT_DELETED",
+  org: "ORG_ACTION",
+  operator: "SUPPORT_ACTION",
+} as const satisfies Record<string, RecordingRemovalReason>;
 
-async function resolveRecordingWriteAccess(
-  user: {
-    id: string;
-    role?: string | null;
-    consultantProfileId?: string | null;
-  },
+/** Who the attendee notice names: the expert, the organisation, or support. */
+function removerName(
+  access: Exclude<RecordingWriteAccess, { allowed: false }>,
+  actorName: string | null | undefined,
+): string {
+  if (access.via === "operator") return "Familiarise support";
+  if (access.via === "org") return access.orgName;
+  return actorName ?? "Your expert";
+}
+
+function writeTarget(
   recording: NonNullable<
     Awaited<ReturnType<typeof RecordingService.getRecordingById>>
   >,
-): Promise<{ allowed: boolean; viaOperatorGrant: boolean }> {
-  let consultantProfileId = user.consultantProfileId ?? null;
-  if (!consultantProfileId && prisma.consultantProfile?.findUnique) {
-    const profile = await prisma.consultantProfile.findUnique({
-      where: { userId: user.id },
-      select: { id: true },
-    });
-    consultantProfileId = profile?.id ?? null;
-  }
-
-  const occurrence = recording.meeting?.occurrence as
-    | {
-        consultantProfileId?: string | null;
-        appointment?: unknown;
-      }
-    | undefined;
-
-  if (
-    consultantProfileId &&
-    occurrence?.consultantProfileId === consultantProfileId
-  ) {
-    return { allowed: true, viaOperatorGrant: false };
-  }
-
-  const appointment = occurrence?.appointment as
-    | {
-        organizationId?: string | null;
-        webinar?: { webinarPlan?: OwnedPlan } | null;
-        class?: { classPlan?: OwnedPlan } | null;
-        consultation?: { consultationPlan?: OwnedPlan } | null;
-        subscription?: { subscriptionPlan?: OwnedPlan } | null;
-        trial?: { subscriptionPlan?: OwnedPlan } | null;
-      }
-    | undefined;
-
-  const plans = [
-    appointment?.webinar?.webinarPlan,
-    appointment?.class?.classPlan,
-    appointment?.consultation?.consultationPlan,
-    appointment?.subscription?.subscriptionPlan,
-    appointment?.trial?.subscriptionPlan,
-  ];
-
-  const ownsAnyPlan = plans.some(
-    (plan) =>
-      Boolean(plan) &&
-      ((Boolean(consultantProfileId) &&
-        plan?.consultantProfileId === consultantProfileId) ||
-        plan?.consultantProfile?.userId === user.id),
-  );
-  if (ownsAnyPlan) {
-    return { allowed: true, viaOperatorGrant: false };
-  }
-
-  const orgId =
-    recording.organizationId ??
-    recording.meeting?.organizationId ??
-    appointment?.webinar?.webinarPlan?.organizationId ??
-    appointment?.class?.classPlan?.organizationId ??
-    null;
-
-  if (orgId && prisma.membership?.findFirst) {
-    const membership = await prisma.membership.findFirst({
-      where: {
-        organizationId: orgId,
-        userId: user.id,
-        status: "ACTIVE",
-      },
-      select: { role: true },
-    });
-    if (
-      membership &&
-      hasAnyOrgPermission(membership.role, ["catalog.manage"])
-    ) {
-      return { allowed: true, viaOperatorGrant: false };
-    }
-  }
-
-  const operator = resolveOperatorRecordingAccess(user.role);
-  if (operator.canPlay) {
-    return { allowed: true, viaOperatorGrant: true };
-  }
-
-  return { allowed: false, viaOperatorGrant: false };
+) {
+  return {
+    appointmentId: recording.meeting.occurrence.appointmentId,
+    sessionHostProfileId: recording.meeting.occurrence.consultantProfileId,
+  };
 }
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
@@ -341,15 +271,15 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const recording = await RecordingService.getRecordingById(recordingId);
     if (!recording) return fileApiError("NOT_FOUND");
 
-    const { allowed, viaOperatorGrant } = await resolveRecordingWriteAccess(
+    const access = await resolveRecordingWriteAccess(
       session.user,
-      recording,
+      writeTarget(recording),
     );
-    if (!allowed) return fileApiError("FORBIDDEN");
+    if (!access.allowed) return fileApiError("FORBIDDEN");
 
     const body = await parseJsonBody(req, patchRecordingSchema);
 
-    if (viaOperatorGrant) {
+    if (access.via === "operator") {
       await auditOperatorRecordingAccess({
         actorUserId: session.user.id,
         actorRole: String(session.user.role),
@@ -384,11 +314,11 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
     const recording = await RecordingService.getRecordingById(recordingId);
     if (!recording) return fileApiError("NOT_FOUND");
 
-    const { allowed, viaOperatorGrant } = await resolveRecordingWriteAccess(
+    const access = await resolveRecordingWriteAccess(
       session.user,
-      recording,
+      writeTarget(recording),
     );
-    if (!allowed) return fileApiError("FORBIDDEN");
+    if (!access.allowed) return fileApiError("FORBIDDEN");
 
     // Always block deletion when any PENDING or SUCCEEDED purchase exists,
     // regardless of current listingStatus (prevents unpublish-then-delete bypass).
@@ -404,7 +334,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
     const activePurchase = await findActivePurchase();
     if (activePurchase) return fileApiError("RECORDING_HAS_BUYERS");
 
-    if (viaOperatorGrant) {
+    if (access.via === "operator") {
       await auditOperatorRecordingAccess({
         actorUserId: session.user.id,
         actorRole: String(session.user.role),
@@ -441,7 +371,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         recordingUrl: "",
         listingStatus: RecordingListingStatus.UNPUBLISHED,
         removedAt: new Date(),
-        removalReason: viaOperatorGrant ? "SUPPORT_ACTION" : "EXPERT_DELETED",
+        removalReason: REMOVAL_REASON[access.via],
       },
       select: { id: true, storagePath: true },
     });
@@ -450,9 +380,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
     await notifyAttendeesOfRemovedRecording({
       appointmentId: recording.meeting.occurrence.appointmentId,
       recordingTitle: recording.title,
-      removedBy: viaOperatorGrant
-        ? "Familiarise support"
-        : (session.user.name ?? "Your expert"),
+      removedBy: removerName(access, session.user.name),
     }).catch((error: unknown) => {
       streamLogger.warn("Recording removal notice not sent", {
         recordingId,

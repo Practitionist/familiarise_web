@@ -42,7 +42,7 @@ import { cn } from "@/utils/tailwind";
  * per session of the viewer's own booking, with parts under the same columns.
  */
 
-const MUTED = new Set(["upcoming", "before_you_joined"]);
+const MUTED = new Set(["upcoming", "before_you_joined", "cancelled"]);
 
 function useDates() {
   const format = useZonedFormat();
@@ -76,10 +76,9 @@ function PlayButton({
 
 export interface TimelineTableProps {
   caption: string;
-  rows: (LibraryRecording & { expertName?: string | null })[];
+  rows: LibraryRecording[];
   /** The card's retention; rows repeat theirs only when it differs or ends soon. */
   retention: LibraryRetention | null;
-  expertName: string | null;
   onPlay: (part: LibraryRecordingPart, row: LibraryRecording) => void;
   /** Extra controls in a row's action cell (the host's Manage). */
   manage?: (row: LibraryRecording) => ReactNode;
@@ -96,7 +95,6 @@ export function RecordingTimelineTable({
   caption,
   rows,
   retention,
-  expertName,
   onPlay,
   manage,
   managePart,
@@ -146,7 +144,7 @@ export function RecordingTimelineTable({
                   (_, i) => `${base}-${index}-removed-${i}`,
                 ),
               ];
-              const badge = rowBadge(row, row.expertName ?? expertName, day);
+              const badge = rowBadge(row, day);
               const kept = rowRetention(row, retention, now);
               const first = row.parts[0];
               const playable = first && row.state !== "before_you_joined";
@@ -189,7 +187,9 @@ export function RecordingTimelineTable({
                             )}
                             aria-hidden
                           />
-                          {row.parts.length + row.removedParts.length} parts
+                          {row.removedParts.length > 0
+                            ? `${row.parts.length} of ${row.parts.length + row.removedParts.length} parts available`
+                            : `${row.parts.length} parts`}
                         </button>
                       )}
                     </TableCell>
@@ -245,8 +245,12 @@ export function RecordingTimelineTable({
                       <span className="inline-flex items-center justify-end gap-2">
                         {playable && (
                           <PlayButton
-                            label="Play"
-                            srLabel={`Play ${row.title}${multi ? ", part 1" : ""}`}
+                            label={
+                              multi && first.partLabel
+                                ? `Play ${first.partLabel.split(" of ")[0]!.toLowerCase()}`
+                                : "Play"
+                            }
+                            srLabel={`Play ${row.title}${multi && first.partLabel ? `, ${first.partLabel}` : ""}`}
                             onPlay={() => onPlay(first, row)}
                           />
                         )}
@@ -290,7 +294,7 @@ export function RecordingTimelineTable({
                         {booking && <TableCell />}
                         <TableCell />
                         <TableCell className="py-1.5 text-xs" colSpan={3}>
-                          {removedPartBadge(removed, expertName, day)}
+                          {removedPartBadge(removed, day)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -324,13 +328,18 @@ export function RecordingTimelineCard({
   kind,
   timeline,
   bookingHref,
+  moreHref,
   ...table
 }: Readonly<
   Omit<TimelineTableProps, "retention" | "moreUpcoming" | "caption"> & {
     title: string;
+    expertName: string | null;
     kind: string;
     timeline: LibraryTimeline;
+    /** "Open booking" in the header; null where the page already links back. */
     bookingHref: string | null;
+    /** Where "<n> more upcoming sessions" leads; defaults to the booking. */
+    moreHref?: string;
   }
 >) {
   const { day, dateTime } = useDates();
@@ -358,7 +367,11 @@ export function RecordingTimelineCard({
         {subline && <p className="text-xs text-muted-foreground">{subline}</p>}
         {timeline.retention && (
           <p className="text-xs text-muted-foreground">
-            {retentionText(timeline.retention, day)}
+            {retentionText(
+              timeline.retention,
+              day,
+              timeline.viewerRole === "host",
+            )}
           </p>
         )}
       </div>
@@ -366,11 +379,13 @@ export function RecordingTimelineCard({
         <RecordingTimelineTable
           {...table}
           caption={`Recordings of ${title}`}
-          expertName={expertName}
           retention={timeline.retention}
           moreUpcoming={
-            bookingHref && timeline.moreUpcoming > 0
-              ? { count: timeline.moreUpcoming, href: bookingHref }
+            (moreHref ?? bookingHref) && timeline.moreUpcoming > 0
+              ? {
+                  count: timeline.moreUpcoming,
+                  href: moreHref ?? bookingHref ?? "",
+                }
               : null
           }
         />

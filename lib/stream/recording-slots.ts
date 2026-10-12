@@ -44,7 +44,8 @@ export type SlotState =
   | "declined"
   | "removed"
   | "expired"
-  | "before_you_joined";
+  | "before_you_joined"
+  | "cancelled";
 
 export type SlotMissingReason = Extract<
   SlotState,
@@ -103,12 +104,13 @@ export interface RecordingSlot {
   removedParts: RemovedPart[];
 }
 
-export type RemovedBy = "expert" | "support";
+export type RemovedBy = "expert" | "support" | "org";
 
 /** Removals that read "Removed" rather than expired or not recorded. */
 const REMOVED_BY: Partial<Record<RecordingRemovalReason, RemovedBy>> = {
   EXPERT_DELETED: "expert",
   SUPPORT_ACTION: "support",
+  ORG_ACTION: "org",
 };
 const removedByOf = (reason: RecordingRemovalReason | null) =>
   reason ? (REMOVED_BY[reason] ?? null) : null;
@@ -128,6 +130,8 @@ export interface RecordingBookingView {
   /** The plan owner, and the learner on a 1:1 booking. */
   expertName: string | null;
   learnerName: string | null;
+  /** The organisation that owns a group plan, named when it removed a recording. */
+  organizationName: string | null;
   slots: RecordingSlot[];
 }
 
@@ -218,6 +222,7 @@ const bookingSelect = {
           title: true,
           shareRecordingsWithAllAttendees: true,
           consultantProfileId: true,
+          organizationId: true,
           collaborators: presenters,
         },
       },
@@ -233,6 +238,7 @@ const bookingSelect = {
           title: true,
           lateJoinersGetPastRecordings: true,
           consultantProfileId: true,
+          organizationId: true,
           collaborators: presenters,
           classContents: { select: { order: true, title: true } },
         },
@@ -735,12 +741,21 @@ export interface SlotInputs {
   names?: ReadonlyMap<string, string>;
   /** The plan owner and the 1:1 learner, as user ids. */
   parties?: { expert: string | null; learner: string | null };
+  organizationName?: string | null;
 }
 
 /** The booking's recordings grouped into the viewer's session slots. */
 export function buildRecordingView(
   viewer: RecordingViewer,
-  { sessions, floor, sources, labels, names, parties }: SlotInputs,
+  {
+    sessions,
+    floor,
+    sources,
+    labels,
+    names,
+    parties,
+    organizationName = null,
+  }: SlotInputs,
   now: Date,
 ): RecordingBookingView {
   const { booking } = viewer;
@@ -782,7 +797,11 @@ export function buildRecordingView(
     ]);
     return {
       ...base,
-      state: d.state,
+      // Every session of this ordinal was cancelled or moved and nothing was recorded.
+      state:
+        d.state === "not_recorded" && DEAD_SESSION.has(d.rep.completionStatus)
+          ? "cancelled"
+          : d.state,
       source: d.parts.length > 0 ? { kind: "own" } : null,
       parts: toParts(d.parts, labels, viewer.role === "host", d.removed),
       removedParts: d.removed.map((r) => ({
@@ -819,6 +838,7 @@ export function buildRecordingView(
         : null,
     expertName: nameOf(parties?.expert),
     learnerName: nameOf(parties?.learner),
+    organizationName,
     slots,
   };
 }
@@ -1037,6 +1057,35 @@ async function readPeople(
   return people;
 }
 
+function planOrgId(booking: BookingRow): string | null {
+  return (
+    booking.webinar?.webinarPlan.organizationId ??
+    booking.class?.classPlan.organizationId ??
+    null
+  );
+}
+
+/** Names of organisations that removed a recording on the page; usually no read at all. */
+async function readOrgRemovers(
+  drafts: { viewer: RecordingViewer; sessions: SessionRow[] }[],
+): Promise<Map<string, string>> {
+  const ids = drafts.flatMap(({ viewer, sessions }) => {
+    const orgId = planOrgId(viewer.booking);
+    const removedByOrg = sessions.some((s) =>
+      (s.meeting?.recordings ?? []).some(
+        (r) => r.removalReason === "ORG_ACTION",
+      ),
+    );
+    return orgId && removedByOrg ? [orgId] : [];
+  });
+  if (ids.length === 0) return new Map();
+  const orgs = await prisma.organization.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true },
+  });
+  return new Map(orgs.map((o) => [o.id, o.name]));
+}
+
 export interface LoadedRecordingView {
   view: RecordingBookingView;
   booking: BookingRow;
@@ -1134,6 +1183,7 @@ export async function loadRecordingViews(
       ),
     ),
   );
+  const orgNames = await readOrgRemovers(withSources);
   const userOf = (profileId: string | null) =>
     profileId ? (people.userByProfile.get(profileId) ?? null) : null;
   for (const d of withSources) {
@@ -1145,7 +1195,14 @@ export async function loadRecordingViews(
     loaded.set(d.viewer.booking.id, {
       view: buildRecordingView(
         d.viewer,
-        { ...d, labels, names: people.names, parties },
+        {
+          ...d,
+          labels,
+          names: people.names,
+          parties,
+          organizationName:
+            orgNames.get(planOrgId(d.viewer.booking) ?? "") ?? null,
+        },
         now,
       ),
       booking: d.viewer.booking,
@@ -1163,6 +1220,35 @@ export async function loadRecordingView(
 ): Promise<RecordingBookingView | null> {
   const loaded = await loadRecordingViews([appointmentId], userId, now);
   return loaded.get(appointmentId)?.view ?? null;
+}
+
+/**
+ * Who may rename or delete a booking's recordings, by the session-content
+ * rule: its host or an accepted co-host, and, for a group plan an
+ * organisation owns, that organisation.
+ */
+export async function recordingWriteFacts(
+  appointmentId: string,
+  userId: string,
+  sessionHostProfileId: string | null,
+): Promise<{ host: boolean; groupPlanOrgId: string | null }> {
+  const [identity, booking] = await Promise.all([
+    readIdentity(userId),
+    prisma.appointment.findFirst({
+      where: { id: appointmentId },
+      select: bookingSelect,
+    }),
+  ]);
+  if (!booking) return { host: false, groupPlanOrgId: null };
+  const sessionHost =
+    identity.consultantProfileId !== null &&
+    identity.consultantProfileId === sessionHostProfileId;
+  const planHost = recordingViewerOf(booking, identity, false)?.role === "host";
+  const groupPlan = booking.webinar?.webinarPlan ?? booking.class?.classPlan;
+  return {
+    host: sessionHost || planHost,
+    groupPlanOrgId: groupPlan?.organizationId ?? null,
+  };
 }
 
 export type CatchUpRefusal =
@@ -1249,6 +1335,7 @@ export async function viewerPlaybackAccess(
 ): Promise<{ allowed: true } | { allowed: false; code: CatchUpRefusal }> {
   const view = await loadRecordingView(recording.appointmentId, userId);
   if (view?.viewerRole === "host") return { allowed: true };
+  let hiddenFromSeat = false;
   if (view?.viewerRole === "learner") {
     if (recording.expired) return { allowed: true };
     if (
@@ -1258,18 +1345,20 @@ export async function viewerPlaybackAccess(
     ) {
       return { allowed: true };
     }
-    const own = view.slots.find((s) => s.ordinal === recording.ordinal);
-    if (own?.state === "before_you_joined") {
-      return { allowed: false, code: "LATE_JOIN_HIDDEN" };
-    }
+    // A late seat on this run still lets another of the viewer's runs catch up from it.
+    hiddenFromSeat =
+      view.slots.find((s) => s.ordinal === recording.ordinal)?.state ===
+      "before_you_joined";
   }
   const purchase = await prisma.recordingPurchase.count({
     where: { recordingId: recording.id, buyerId: userId, status: "SUCCEEDED" },
   });
   if (purchase > 0) return { allowed: true };
-  return catchUpPlaybackAccess(
+  const catchUp = await catchUpPlaybackAccess(
     recording.appointmentId,
     recording.ordinal,
     userId,
   );
+  if (catchUp.allowed || !hiddenFromSeat) return catchUp;
+  return { allowed: false, code: "LATE_JOIN_HIDDEN" };
 }

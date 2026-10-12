@@ -61,6 +61,15 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 const mockNotifyRemoved = jest.fn(async (..._args: unknown[]) => undefined);
+// The write rule has its own suite; here the fixtures' plan owner is the only writer.
+jest.mock("../../lib/stream/recording-write-access", () => ({
+  resolveRecordingWriteAccess: async (user: {
+    consultantProfileId?: string;
+  }) =>
+    user.consultantProfileId === "consultant-profile-1"
+      ? { allowed: true, via: "host" }
+      : { allowed: false },
+}));
 jest.mock("../../lib/stream/recording-removal-notice", () => ({
   notifyAttendeesOfRemovedRecording: (...args: unknown[]) =>
     mockNotifyRemoved(...args),

@@ -9,6 +9,8 @@ import {
   parseLibraryQuery,
 } from "@/lib/library/library-query";
 import { seedLibraryPage } from "@/lib/library/library-seed";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
 import { OrgLibraryPage } from "../OrgLibraryPage";
 
@@ -34,6 +36,7 @@ export default async function OrgRecordingsPage({
   const query = await searchParams;
   const requested = typeof query.scope === "string" ? query.scope : null;
   const scope = libraryScopeFor(requested, access.member);
+  const viewerZone = await getViewerZone();
   const seed = await seedLibraryPage({
     name: "recordings:org",
     queryKey: libraryKeys.org(orgId, "recordings", scope ?? "mine"),
@@ -49,12 +52,14 @@ export default async function OrgRecordingsPage({
   });
 
   return (
-    <HydrationBoundary state={seed}>
-      <OrgLibraryPage
-        orgId={orgId}
-        artifact="recordings"
-        canSeeEveryone={libraryScopeFor("everyone", access.member) !== null}
-      />
-    </HydrationBoundary>
+    <DisplayZoneProvider zone={viewerZone.zone}>
+      <HydrationBoundary state={seed}>
+        <OrgLibraryPage
+          orgId={orgId}
+          artifact="recordings"
+          canSeeEveryone={libraryScopeFor("everyone", access.member) !== null}
+        />
+      </HydrationBoundary>
+    </DisplayZoneProvider>
   );
 }
