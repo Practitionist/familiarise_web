@@ -17,17 +17,18 @@ import {
   threadRowSelect,
   type ThreadView,
 } from "@/lib/documents/thread-view";
-import {
-  getDocumentViewerUrl,
-  getMaterialViewerUrl,
-} from "@/lib/documents/urls";
+import { fileTypeLabel } from "@/lib/documents/file-policy";
+import { getMaterialViewerUrl } from "@/lib/documents/urls";
 import { materialReaderWhere } from "@/lib/plans/material-access";
+import { toLibraryThread } from "@/lib/library/document-threads";
 import {
   LIBRARY_PAGE_SIZE,
-  type DocumentSource,
+  compareLibraryThreads,
   type LibraryDocStatus,
   type LibraryDocument,
+  type LibraryGroup,
   type LibraryKind,
+  type LibraryMaterial,
   type LibraryPage,
   type LibraryQuery,
   type LibrarySession,
@@ -35,8 +36,8 @@ import {
 
 /**
  * The Documents library read, for the personal trees and the org tree. A page
- * is a page of bookings; each carries its threads (status from the latest
- * learner version) and the plan materials the viewer may open. The org
+ * is a page of bookings, read in one query; each carries its threads with
+ * every version and, apart, the plan materials the viewer may open. The org
  * Everyone view returns counts only.
  */
 
@@ -187,15 +188,13 @@ function sessionsWhere(
   return { AND: and };
 }
 
-function firstStart(sessions: { startsAt: Date }[]): string | null {
+function firstStart(
+  sessions: { startsAt: Date }[],
+  fallback: Date | null,
+): string | null {
   const times = sessions.map((s) => s.startsAt.getTime());
-  return times.length > 0 ? new Date(Math.min(...times)).toISOString() : null;
-}
-
-function sourceOf(thread: ThreadView, role: DocumentPartyRole): DocumentSource {
-  const byLearner = thread.kind === "submission";
-  if (byLearner) return role === "learner" ? "mine" : "learner";
-  return role === "expert" ? "mine" : "expert";
+  if (times.length > 0) return new Date(Math.min(...times)).toISOString();
+  return fallback?.toISOString() ?? null;
 }
 
 /** People on the other side of the viewer's bookings in scope, for the person filter. */
@@ -266,6 +265,7 @@ export async function readDocumentLibrary(args: {
           select: {
             ...documentBookingSelect.subscription.select,
             subscriptionPlanId: true,
+            schedulingPeriodStartsAt: true,
           },
         },
       },
@@ -306,13 +306,14 @@ export async function readDocumentLibrary(args: {
           select: {
             id: true,
             originalName: true,
-            uploadedAt: true,
+            mimeType: true,
+            fileSize: true,
             consultationPlanId: true,
             subscriptionPlanId: true,
           },
         });
 
-  const groups = rows.flatMap((row) => {
+  const groups = rows.flatMap((row): LibraryGroup<LibraryDocument>[] => {
     const booking = toDocumentBooking(row);
     if (!booking) return [];
     const role = partyRoleOf(booking, userId) ?? pageRole;
@@ -320,7 +321,11 @@ export async function readDocumentLibrary(args: {
       appointmentId: row.id,
       kind: row.appointmentType as LibraryKind,
       title: booking.title,
-      startsAt: firstStart(row.occurrences),
+      startsAt: firstStart(
+        row.occurrences,
+        row.subscription?.schedulingPeriodStartsAt ?? null,
+      ),
+      sessionCount: row.occurrences.length,
       expertName: booking.expert.name,
       counterpartName: everyone
         ? null
@@ -352,56 +357,54 @@ export async function readDocumentLibrary(args: {
       ];
     }
 
-    const files: LibraryDocument[] = [];
-    if (query.source === null || query.source === "materials") {
-      for (const m of materials) {
-        const samePlan =
-          (m.consultationPlanId &&
-            m.consultationPlanId === row.consultation?.consultationPlanId) ||
-          (m.subscriptionPlanId &&
-            m.subscriptionPlanId === row.subscription?.subscriptionPlanId);
-        if (!samePlan) continue;
-        files.push({
-          id: m.id,
-          name: m.originalName,
-          source: "materials",
-          url: getMaterialViewerUrl(m.id),
-          uploadedAt: m.uploadedAt.toISOString(),
-          status: null,
-          versionNo: null,
-          needsYou: false,
-          removalRequested: false,
-        });
-      }
-    }
-    for (const thread of threads) {
-      const source = sourceOf(thread, role);
-      if (query.source && query.source !== source) continue;
-      if (query.status && !threadMatches(thread, query.status, role)) continue;
-      if (
-        query.q &&
-        !booking.title.toLowerCase().includes(query.q.toLowerCase()) &&
-        !thread.versions.some((v) =>
-          v.originalName.toLowerCase().includes(query.q.toLowerCase()),
-        )
-      ) {
-        continue;
-      }
-      const latest = thread.versions.at(-1)!;
-      files.push({
-        id: thread.rootId,
-        name: thread.title,
-        source,
-        url: getDocumentViewerUrl(latest.id),
-        uploadedAt: thread.updatedAt,
-        status: thread.status,
-        versionNo: thread.latestVersionNo,
-        needsYou: threadNeedsViewer(thread, role),
-        removalRequested: thread.removal !== null,
-      });
-    }
-    if (files.length === 0) return [];
-    return [{ session, files: files.slice(0, FILES_PER_SESSION) }];
+    const groupMaterials: LibraryMaterial[] =
+      query.source === null || query.source === "materials"
+        ? materials
+            .filter(
+              (m) =>
+                (m.consultationPlanId &&
+                  m.consultationPlanId ===
+                    row.consultation?.consultationPlanId) ||
+                (m.subscriptionPlanId &&
+                  m.subscriptionPlanId ===
+                    row.subscription?.subscriptionPlanId),
+            )
+            .map((m) => ({
+              id: m.id,
+              title: m.originalName,
+              fileType: fileTypeLabel(m),
+              fileSize: m.fileSize,
+              url: getMaterialViewerUrl(m.id),
+            }))
+        : [];
+
+    const needle = query.q.toLowerCase();
+    const files: LibraryDocument[] =
+      query.source === "materials"
+        ? []
+        : threads
+            .map((thread) =>
+              toLibraryThread(thread, {
+                viewerRole: role,
+                learnerName: booking.learner.name,
+                expertName: booking.expert.name,
+              }),
+            )
+            .filter(
+              (thread, i) =>
+                (!query.source || query.source === thread.source) &&
+                (!query.status ||
+                  threadMatches(threads[i]!, query.status, role)) &&
+                (!needle ||
+                  booking.title.toLowerCase().includes(needle) ||
+                  thread.versions.some((v) =>
+                    v.originalName.toLowerCase().includes(needle),
+                  )),
+            )
+            .sort(compareLibraryThreads)
+            .slice(0, FILES_PER_SESSION);
+    if (files.length === 0 && groupMaterials.length === 0) return [];
+    return [{ session, files, materials: groupMaterials }];
   });
 
   return {

@@ -15,6 +15,8 @@ import { partLabel, slotStateText } from "@/lib/stream/recording-copy";
 import {
   readRecordingSlots,
   resolveRecordingViewer,
+  type RecordingBookingView,
+  type RecordingSlot,
 } from "@/lib/stream/recording-slots";
 import type { LibraryOwner } from "./document-library";
 
@@ -150,6 +152,7 @@ const sessionSelect = {
   },
   subscription: {
     select: {
+      schedulingPeriodStartsAt: true,
       requestedBy: userName,
       subscriptionPlan: {
         select: { title: true, consultantProfile: userName },
@@ -206,7 +209,12 @@ function toSession(row: SessionRow, learnerSide: boolean): LibrarySession {
     appointmentId: row.id,
     kind: row.appointmentType as LibraryKind,
     title,
-    startsAt: row.occurrences[0]?.startsAt.toISOString() ?? null,
+    startsAt:
+      (
+        row.occurrences[0]?.startsAt ??
+        row.subscription?.schedulingPeriodStartsAt
+      )?.toISOString() ?? null,
+    sessionCount: null,
     expertName,
     counterpartName: learnerSide ? expertName : learnerName,
   };
@@ -248,19 +256,70 @@ async function purchasedReplays(userId: string): Promise<LibraryRecording[]> {
       },
     },
   });
-  return rows.map(({ recording: r }) => ({
-    id: r.id,
-    title: r.listingTitle ?? r.title,
-    recordedAt: r.recordedAt.toISOString(),
-    durationInMinutes: r.durationInMinutes,
-    status: r.status,
-    playable: true,
-    sessionLabel: null,
-    catchUpFrom: null,
-    keptUntil: { kind: "NEVER" },
-    slotOrdinal: null,
-    notice: null,
-  }));
+  return rows.map(({ recording: r }) => {
+    const title = r.listingTitle ?? r.title;
+    const recordedAt = r.recordedAt.toISOString();
+    return {
+      id: r.id,
+      title,
+      sessionLabel: null,
+      recordedAt,
+      durationInMinutes: r.durationInMinutes,
+      catchUpFrom: null,
+      keptUntil: { kind: "NEVER" },
+      slotOrdinal: null,
+      notice: null,
+      parts: [
+        {
+          id: r.id,
+          title,
+          partLabel: null,
+          recordedAt,
+          durationInMinutes: r.durationInMinutes,
+          keptUntil: { kind: "NEVER" },
+        },
+      ],
+    };
+  });
+}
+
+/** One library row per session slot: its parts, a catch-up, or a removal or decline notice. */
+export function slotToLibraryRow(
+  appointmentId: string,
+  view: Pick<RecordingBookingView, "kind" | "slots">,
+  slot: RecordingSlot,
+): LibraryRecording | null {
+  if (
+    slot.parts.length === 0 &&
+    slot.state !== "removed" &&
+    slot.state !== "declined"
+  ) {
+    return null;
+  }
+  const sessionLabel = view.slots.length > 1 ? `Session ${slot.ordinal}` : null;
+  const catchUpFrom =
+    slot.source?.kind === "catch_up"
+      ? `From another ${view.kind === "CLASS" ? "batch" : "run"} · ${day(slot.source.startsAt)}`
+      : null;
+  return {
+    id: `${appointmentId}:slot-${slot.ordinal}`,
+    title: slot.title,
+    sessionLabel,
+    recordedAt: slot.parts[0]?.recordedAt ?? slot.startsAt,
+    durationInMinutes: slot.parts.reduce((t, p) => t + p.durationInMinutes, 0),
+    catchUpFrom,
+    keptUntil: slot.parts[0]?.keptUntil ?? null,
+    slotOrdinal: slot.ordinal,
+    notice: slot.parts.length === 0 ? slotStateText(slot, day) : null,
+    parts: slot.parts.map((part) => ({
+      id: part.recordingId,
+      title: part.title,
+      partLabel: partLabel(part),
+      recordedAt: part.recordedAt,
+      durationInMinutes: part.durationInMinutes,
+      keptUntil: part.keptUntil,
+    })),
+  };
 }
 
 export async function readRecordingLibrary(args: {
@@ -297,52 +356,19 @@ export async function readRecordingLibrary(args: {
     const viewer = await resolveRecordingViewer(row.id, userId);
     if (!viewer) continue;
     const view = await readRecordingSlots(viewer, userId);
-    const files = view.slots.flatMap((slot): LibraryRecording[] => {
-      if (slot.parts.length === 0) {
-        if (slot.state !== "removed" && slot.state !== "declined") return [];
-        return [
-          {
-            id: `${row.id}:slot-${slot.ordinal}`,
-            title: `Session ${slot.ordinal}`,
-            recordedAt: slot.startsAt,
-            durationInMinutes: 0,
-            status: "EXPIRED" as const,
-            playable: false,
-            sessionLabel: `Session ${slot.ordinal}`,
-            catchUpFrom: null,
-            keptUntil: null,
-            slotOrdinal: slot.ordinal,
-            notice: slotStateText(slot, day),
-          },
-        ];
-      }
-      return slot.parts.map((part) => ({
-        id: part.recordingId,
-        title: part.title,
-        recordedAt: part.recordedAt,
-        durationInMinutes: part.durationInMinutes,
-        status: "AVAILABLE" as const,
-        playable: true,
-        sessionLabel:
-          [
-            view.slots.length > 1 ? `Session ${slot.ordinal}` : null,
-            partLabel(part),
-          ]
-            .filter(Boolean)
-            .join(" · ") || null,
-        catchUpFrom:
-          slot.source?.kind === "catch_up" ? slot.source.batchLabel : null,
-        keptUntil: part.keptUntil,
-        slotOrdinal: slot.ordinal,
-        notice: null,
-      }));
-    });
+    const files = view.slots
+      .map((slot) => slotToLibraryRow(row.id, view, slot))
+      .filter((f): f is LibraryRecording => f !== null);
     if (query.q) {
       const needle = query.q.toLowerCase();
       const titleHit = session.title.toLowerCase().includes(needle);
       const kept = titleHit
         ? files
-        : files.filter((f) => f.title.toLowerCase().includes(needle));
+        : files.filter(
+            (f) =>
+              f.title.toLowerCase().includes(needle) ||
+              f.parts.some((p) => p.title.toLowerCase().includes(needle)),
+          );
       if (kept.length > 0) groups.push({ session, files: kept });
       continue;
     }

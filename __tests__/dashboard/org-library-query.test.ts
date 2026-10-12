@@ -42,6 +42,7 @@ describe("org Library query", () => {
       kind: "CLASS",
       title: "T",
       startsAt: null,
+      sessionCount: null,
       expertName: null,
       counterpartName: null,
     } as const;

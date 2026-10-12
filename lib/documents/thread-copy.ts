@@ -1,4 +1,5 @@
 import type { Tone } from "@/lib/ui/tone";
+import type { LibraryVersionStatus } from "@/lib/library/library-query";
 import type { ThreadBannerKind, ThreadStatus } from "./thread-view";
 import {
   DOCUMENT_RETENTION_DAYS,
@@ -44,6 +45,19 @@ export const THREAD_STATUS_NEUTRAL: Record<ThreadStatus, string> = {
   APPROVED: "Approved",
   NOT_ACCEPTED: "Not accepted",
   SHARED: "Shared",
+};
+
+/** One version's own review state, for version lists. */
+export const VERSION_STATUS_CHIP: Record<
+  LibraryVersionStatus,
+  { label: string; tone: Tone }
+> = {
+  PENDING: { label: "Waiting for review", tone: "info" },
+  IN_REVIEW: { label: "In review", tone: "info" },
+  NEEDS_REVISION: { label: "Changes requested", tone: "caution" },
+  APPROVED: { label: "Approved", tone: "success" },
+  REJECTED: { label: "Not accepted", tone: "critical" },
+  SUPERSEDED: { label: "Superseded", tone: "neutral" },
 };
 
 export function threadBannerText(args: {

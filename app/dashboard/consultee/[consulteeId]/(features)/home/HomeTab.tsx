@@ -692,7 +692,7 @@ export default function HomeTab({
               .filter((f) => f.needsYou)
               .map((f) => ({
                 id: f.id,
-                name: f.name,
+                name: f.title,
                 appointmentId: g.session.appointmentId,
               })),
           )
