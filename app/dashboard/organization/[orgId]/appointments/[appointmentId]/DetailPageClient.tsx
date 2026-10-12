@@ -4,7 +4,6 @@ import { useMemo } from "react";
 
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
 import { readOnlyAdapter } from "@/lib/appointments/adapter";
-import { ConsulteeDocuments } from "@/components/appointments/detail/ConsulteeDocuments";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 
@@ -70,9 +69,10 @@ export default function DetailPageClient({
       backHref={`/dashboard/organization/${orgId}/appointments`}
       supportRequestsBase={`/dashboard/organization/${orgId}/support/requests`}
       joinWindowMs={CONSULTEE_JOIN_WINDOW_MS}
-      renderDocuments={(vm) => (
-        <ConsulteeDocuments vm={vm} appointmentId={appointmentId} />
-      )}
+      resourceHrefs={{
+        documents: `/dashboard/organization/${orgId}/appointments/${appointmentId}/documents`,
+        recordings: `/dashboard/organization/${orgId}/appointments/${appointmentId}/recordings`,
+      }}
     />
   );
 }

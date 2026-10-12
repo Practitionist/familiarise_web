@@ -702,6 +702,17 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.RECORDING_REMOVED,
+    name: "Recording removed",
+    description: "Attendees, when the expert deletes a session recording.",
+    category: "appointments",
+    inApp: {
+      subject: "Recording removed",
+      body: '{{payload.consultantName}} removed the recording "{{payload.recordingTitle}}" from your session.',
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.DOCUMENT_UPLOADED,
     name: "Document shared",
     description: "The other party, when a document is uploaded to a booking.",

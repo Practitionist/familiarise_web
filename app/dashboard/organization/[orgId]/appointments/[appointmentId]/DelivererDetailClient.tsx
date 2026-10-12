@@ -4,7 +4,6 @@ import { useMemo } from "react";
 
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
 import { readOnlyAdapter } from "@/lib/appointments/adapter";
-import { AppointmentDocumentsList } from "@/components/appointments/detail/AppointmentDocumentsList";
 import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import { useConsultantAppointmentsAdapter } from "@/app/dashboard/consultant/[consultantId]/(features)/appointments/ConsultantAppointmentsAdapter";
 
@@ -46,9 +45,10 @@ export function DelivererDetailClient({
       supportRequestsBase={`/dashboard/organization/${orgId}/support/requests`}
       joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
       consultantId={consultantId}
-      renderDocuments={() => (
-        <AppointmentDocumentsList appointmentId={appointmentId} />
-      )}
+      resourceHrefs={{
+        documents: `/dashboard/organization/${orgId}/appointments/${appointmentId}/documents`,
+        recordings: `/dashboard/organization/${orgId}/appointments/${appointmentId}/recordings`,
+      }}
     />
   );
 }

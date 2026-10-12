@@ -1,24 +1,22 @@
 /**
- * #1527 — the Library list contract (Documents · Recordings), shared by the
- * server read and the client browser. Pure: no prisma, so client components
- * import it. One page is a page of SESSIONS (appointments), each carrying its
- * files, so the grouped and the flat view page the same way.
+ * The Library list contract (Documents · Recordings) shared by the server
+ * reads and the client browser. Pure: no prisma, so client components import
+ * it. One page is a page of sessions (appointments), each carrying its rows,
+ * so the grouped and the flat view page the same way.
  */
 
-import type {
-  DocumentReviewStatus,
-  MemberRole,
-  MemberStatus,
-  RecordingStatus,
-} from "@prisma/client";
+import type { MemberRole, MemberStatus, RecordingStatus } from "@prisma/client";
 
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import type { ThreadStatus } from "@/lib/documents/thread-view";
+import type { RetentionLabelDTO } from "@/lib/stream/recording-slots";
 
 export type LibraryScope = "mine" | "everyone";
 
 export const LIBRARY_KINDS = [
   "CONSULTATION",
   "SUBSCRIPTION",
+  "TRIAL",
   "WEBINAR",
   "CLASS",
 ] as const;
@@ -27,8 +25,25 @@ export type LibraryKind = (typeof LIBRARY_KINDS)[number];
 export const LIBRARY_KIND_LABEL: Record<LibraryKind, string> = {
   CONSULTATION: "1:1",
   SUBSCRIPTION: "Subscription",
+  TRIAL: "Trial",
   WEBINAR: "Webinar",
   CLASS: "Class",
+};
+
+/** Document thread filters, relative to the viewer. */
+export const LIBRARY_DOC_STATUSES = [
+  "your-turn",
+  "waiting",
+  "done",
+  "shared",
+] as const;
+export type LibraryDocStatus = (typeof LIBRARY_DOC_STATUSES)[number];
+
+export const LIBRARY_DOC_STATUS_LABEL: Record<LibraryDocStatus, string> = {
+  "your-turn": "Your turn",
+  waiting: "Waiting for the other side",
+  done: "Done",
+  shared: "Shared files",
 };
 
 /** Relative to the viewer: "mine" is what they uploaded on their side. */
@@ -57,6 +72,9 @@ export interface LibraryQuery {
   from: string | null;
   to: string | null;
   source: DocumentSource | null;
+  /** The other person on the booking (user id). */
+  person: string | null;
+  status: LibraryDocStatus | null;
   page: number;
 }
 
@@ -79,6 +97,8 @@ export function parseLibraryQuery(
     from: day(get("from")),
     to: day(get("to")),
     source: oneOf(DOCUMENT_SOURCES, get("source")),
+    person: /^[\w-]{1,64}$/.test(get("person") ?? "") ? get("person") : null,
+    status: oneOf(LIBRARY_DOC_STATUSES, get("status")),
     page: Number.isFinite(page) && page >= 1 ? page : 1,
   };
 }
@@ -98,9 +118,11 @@ export function libraryScopeFor(
     : null;
 }
 
-/** Plan materials and "Mine" only mean something on the viewer's own sessions. */
-export function documentSourcesFor(scope: LibraryScope): DocumentSource[] {
-  return scope === "mine" ? [...DOCUMENT_SOURCES] : ["expert", "learner"];
+/** The Everyone view is counts only, so it offers no source filter. */
+export function documentSourcesFor(
+  scope: LibraryScope,
+): DocumentSource[] | undefined {
+  return scope === "mine" ? [...DOCUMENT_SOURCES] : undefined;
 }
 
 export interface LibrarySession {
@@ -109,17 +131,23 @@ export interface LibrarySession {
   title: string;
   startsAt: string | null;
   expertName: string | null;
+  /** The other person on the booking, from the viewer's side. */
+  counterpartName: string | null;
 }
 
 export interface LibraryDocument {
+  /** The thread root, or the material id. */
   id: string;
   name: string;
   source: DocumentSource;
-  /** Null on the Everyone view: metadata only (ADR 20). */
+  /** Opens the latest version (or the material) in a new tab. */
   url: string | null;
   uploadedAt: string;
-  /** A learner upload's review outcome; null for materials and responses. */
-  reviewStatus: DocumentReviewStatus | null;
+  /** The thread's status; null for plan materials. */
+  status: ThreadStatus | null;
+  versionNo: number | null;
+  needsYou: boolean;
+  removalRequested: boolean;
 }
 
 export interface LibraryRecording {
@@ -128,13 +156,28 @@ export interface LibraryRecording {
   recordedAt: string;
   durationInMinutes: number;
   status: RecordingStatus;
-  /** False on the Everyone view or while the media isn't playable; the URL is fetched on play. */
+  /** False for a notice row; the playback URL is fetched on play. */
   playable: boolean;
+  /** "Session 3 · Part 1 of 2". */
+  sessionLabel: string | null;
+  /** The run or batch a catch-up comes from. */
+  catchUpFrom: string | null;
+  keptUntil: RetentionLabelDTO | null;
+  slotOrdinal: number | null;
+  /** Why a session has nothing to play ("Removed by the expert on 5 Oct"). */
+  notice: string | null;
+}
+
+/** The Everyone view: what happened, never what was shared. */
+export interface LibrarySummary {
+  documents?: { threads: number; open: number; done: number };
+  recordings?: { count: number; minutes: number };
 }
 
 export interface LibraryGroup<F> {
   session: LibrarySession;
   files: F[];
+  summary?: LibrarySummary;
 }
 
 export interface LibraryPage<F> {
@@ -143,6 +186,9 @@ export interface LibraryPage<F> {
   total: number;
   page: number;
   pageSize: number;
+  facets?: { people: { id: string; name: string }[] };
+  /** Recordings only: replays the viewer bought, outside their own bookings. */
+  purchased?: F[];
 }
 
 /** The flat view: every file of the page's sessions, tagged with its session. */

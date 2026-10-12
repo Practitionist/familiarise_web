@@ -11,7 +11,6 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
-import { ConsulteeDocuments } from "@/components/appointments/detail/ConsulteeDocuments";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -442,9 +441,10 @@ export default function DetailPageClient({
             />
           );
         }}
-        renderDocuments={(vm) => (
-          <ConsulteeDocuments vm={vm} appointmentId={appointmentId} />
-        )}
+        resourceHrefs={{
+          documents: `/dashboard/consultee/${consulteeId}/appointments/${appointmentId}/documents`,
+          recordings: `/dashboard/consultee/${consulteeId}/appointments/${appointmentId}/recordings`,
+        }}
       />
     </DisplayZoneProvider>
   );

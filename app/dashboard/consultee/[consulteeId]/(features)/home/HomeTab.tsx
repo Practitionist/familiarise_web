@@ -77,7 +77,7 @@ import {
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
 import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
-import type { ConsulteeDocumentsPayload } from "@/lib/data/consultee-documents";
+import type { LibraryDocument, LibraryPage } from "@/lib/library/library-query";
 import { WaitlistOfferBanner } from "../appointments/WaitlistOfferBanner";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
 import {
@@ -630,11 +630,11 @@ export default function HomeTab({
       ),
   });
   const { data: revisions } = useQuery({
-    queryKey: ["consultee-documents", consulteeId, "NEEDS_REVISION"],
+    queryKey: ["documents", "library", "consultee", consulteeId, "your-turn"],
     staleTime: 2 * 60_000,
     queryFn: () =>
-      fetchJson<ConsulteeDocumentsPayload>(
-        `/api/dashboard/consultee/${consulteeId}/documents?status=NEEDS_REVISION&limit=5`,
+      fetchJson<LibraryPage<LibraryDocument>>(
+        `/api/dashboard/consultee/${consulteeId}/documents?status=your-turn`,
         false,
       ),
   });
@@ -686,13 +686,17 @@ export default function HomeTab({
             consultantName: s.consultantName ?? "your expert",
             href: `/explore/experts/${s.consultantProfileId}#reviews`,
           })),
-        documentsToRevise: (revisions?.data ?? [])
-          .filter((d) => d.uploadedByRole === "CONSULTEE")
-          .map((d) => ({
-            id: d.id,
-            name: d.originalName,
-            appointmentId: d.appointmentId,
-          })),
+        documentsToRevise: (revisions?.groups ?? [])
+          .flatMap((g) =>
+            g.files
+              .filter((f) => f.needsYou)
+              .map((f) => ({
+                id: f.id,
+                name: f.name,
+                appointmentId: g.session.appointmentId,
+              })),
+          )
+          .slice(0, 5),
         failedRefunds: (money?.failedRefunds ?? []).map((r) => ({
           paymentId: r.paymentId,
           amountText: formatCurrencyAmount(r.amountPaise, r.currency),

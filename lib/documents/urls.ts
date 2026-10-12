@@ -21,6 +21,15 @@ export function getPlanMaterialUrl(
   return `/api/plans/materials/${encodeURIComponent(materialId)}/download?disposition=${disposition}`;
 }
 
+/** Same-origin viewer tab: signs on every load and renders friendly errors. */
+export function getDocumentViewerUrl(documentId: string): string {
+  return `/files/documents/${encodeURIComponent(documentId)}`;
+}
+
+export function getMaterialViewerUrl(materialId: string): string {
+  return `/files/materials/${encodeURIComponent(materialId)}`;
+}
+
 const NON_PREVIEWABLE_EXTENSIONS = new Set([
   ".doc",
   ".docx",
@@ -63,11 +72,20 @@ export function sanitizeContentDispositionFilename(
   return cleaned || "document";
 }
 
-/** Builds an RFC 6266 UTF-8 safe `Content-Disposition` header with ASCII fallback. */
-export function formatContentDisposition(
-  disposition: "inline" | "attachment",
-  originalName: string,
-): string {
-  const asciiFallback = sanitizeContentDispositionFilename(originalName);
-  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
+/** The per-booking Documents workspace in the viewer's own dashboard tree. */
+export function documentsWorkspacePath(args: {
+  appointmentId: string;
+  organizationId?: string | null;
+  personal?: { kind: "consultant" | "consultee"; profileId: string };
+  threadRootId?: string;
+}): string {
+  const base = args.organizationId
+    ? `/dashboard/organization/${encodeURIComponent(args.organizationId)}`
+    : args.personal
+      ? `/dashboard/${args.personal.kind}/${encodeURIComponent(args.personal.profileId)}`
+      : "/dashboard/go/auto";
+  const thread = args.threadRootId
+    ? `?thread=${encodeURIComponent(args.threadRootId)}`
+    : "";
+  return `${base}/appointments/${encodeURIComponent(args.appointmentId)}/documents${thread}`;
 }

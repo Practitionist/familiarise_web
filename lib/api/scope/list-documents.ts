@@ -22,8 +22,8 @@ export interface ListDocumentsParams {
  * #946 select-allowlist, applied to the scope split. Same rule as
  * `list-recordings.ts`, and here the stakes are plainer: the `org` arm has no
  * participant filter, so `include` handed every member's uploaded file to
- * anyone with `operations.read`. `fileUrl` and `storagePath` ARE the document,
- * and `description` is the uploader describing it in their own words — the
+ * anyone with `operations.read`. `description` is the uploader describing the
+ * file in their own words — the
  * schema's example list for that column reads "resume, ITR, legal document",
  * and an ITR is an income-tax return.
  *
@@ -58,11 +58,9 @@ const documentMetadataSelect = {
   },
 } satisfies Prisma.AppointmentDocumentSelect;
 
-/** Participant arms only — the file itself and what it says about itself. */
+/** Participant arms only — what the file says about itself; links are signed per request elsewhere. */
 const documentParticipantSelect = {
   ...documentMetadataSelect,
-  fileUrl: true,
-  storagePath: true,
   description: true,
   originalName: true,
   mimeType: true,

@@ -1,0 +1,29 @@
+import { NextResponse } from "next/server";
+
+import { readRecordingLibrary } from "@/lib/data/recording-library";
+import { answerFileRoute } from "@/lib/documents/api-error";
+import { personalLibraryRequest } from "@/lib/library/personal-library-route";
+
+/** The personal recordings library: one page of bookings with their rows, filters in the query. */
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ consultantId: string }> },
+) {
+  return answerFileRoute(async () => {
+    const { consultantId } = await params;
+    const library = await personalLibraryRequest(
+      request,
+      "consultant",
+      consultantId,
+    );
+    if (!library.ok) return library.response;
+    const page = await readRecordingLibrary({
+      userId: library.userId,
+      owner: { kind: "personal", side: "expert" },
+      query: library.query,
+    });
+    return NextResponse.json(page, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
+  }, "dashboard");
+}

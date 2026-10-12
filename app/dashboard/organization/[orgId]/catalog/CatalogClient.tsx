@@ -24,7 +24,11 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { CatalogPanel } from "./CatalogPanel";
-import { MaterialsPanel, type OrgMaterialRow } from "./MaterialsPanel";
+import {
+  MaterialsPanel,
+  type OrgMaterialRow,
+  type OrgPlanOption,
+} from "./MaterialsPanel";
 import type { CatalogRow, CatalogResponse, Kind } from "./types";
 
 interface Expert {
@@ -37,11 +41,13 @@ export function CatalogClient({
   experts,
   materials,
   materialsTotal,
+  orgPlans,
 }: Readonly<{
   orgId: string;
   experts: Expert[];
   materials: OrgMaterialRow[];
   materialsTotal: number;
+  orgPlans: OrgPlanOption[];
 }>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -300,7 +306,11 @@ export function CatalogClient({
               value: "materials",
               label: "Materials",
               content: (
-                <MaterialsPanel items={materials} total={materialsTotal} />
+                <MaterialsPanel
+                  items={materials}
+                  total={materialsTotal}
+                  plans={orgPlans}
+                />
               ),
             },
             {
