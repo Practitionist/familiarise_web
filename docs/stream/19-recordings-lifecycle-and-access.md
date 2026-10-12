@@ -42,7 +42,13 @@ The notice lasts as long as the booking's recordings would have been kept (`tomb
 
 The removal notice is sent after the row has expired, on a best-effort basis: it names the actual remover (the host's name, or "Familiarise support"), and a notice failure is logged and never fails the delete.
 
+When a session has several parts and one is removed, that part shows as its own "Part 2 of 2 · Removed by the expert on 11 Oct 2026" row in its slot, and the remaining parts keep their k-of-n numbers.
+
 The tombstone row keeps no media: the object, preview clip and thumbnail are deleted by the same flow that wrote it (or retried by `expire-recordings`).
+
+**Delete answers 200 once the tombstone is written.** `DELETE /api/stream/recordings/:id` returns 200 after the conditional `EXPIRED` write. The removal notice, the asset purge and the pointer clear that follow are best-effort, and anything left over is finished by the expiry sweep. A storage object that is already missing counts as deleted, so a retry never fails on it. The manage sheet re-reads the list after any failure.
+
+**The `Recording_storage_and_publish_check` constraint matches `prisma/sql/check-constraints.sql`.** An active `PLATFORM` row needs a `storagePath`, and an `EXPIRED` platform row may have a null `storagePath` once its object is gone. A `PUBLISHED` listing still requires the path, a positive price and the consent attestation.
 
 ## Webhook, R2 copy and playback
 
@@ -81,8 +87,8 @@ One platform schedule applies, evaluated by the daily `expire-recordings` job (`
 
 | Session type                                                            | Deleted after                                                 |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------- |
-| 1:1 consultation                                                        | 90 days after the session                                     |
-| Subscription / trial                                                    | 90 days after the subscription ends (kept while it is active) |
+| 1:1 consultation or trial                                               | 90 days after the session                                     |
+| Subscription                                                            | 90 days after the subscription ends (kept while it is active) |
 | Webinar                                                                 | 365 days after the session                                    |
 | Class                                                                   | 365 days after the class's final session                      |
 | Published replay, or any recording with a pending or succeeded purchase | Never auto-deleted                                            |
@@ -90,7 +96,7 @@ One platform schedule applies, evaluated by the daily `expire-recordings` job (`
 - An organisation can shorten retention for org-scoped recordings (`Organization.streamRecordingRetentionDays`); the effective deadline is the earlier of the two, and sold replays are exempt.
 - Expiry deletes the R2 object, the preview clip and the thumbnail, marks the row `EXPIRED`, and (org-scoped) writes an audit row.
 - A `READY` row whose Stream link lapsed without a copy is also expired; its holders get `410`.
-- **Cancelled bookings.** A cancelled, rejected or expired booking keeps its recordings watchable by the parties until their retention date, exactly like its documents. Released or refunded seats lose access, because playback checks the seat on every request. Recording surfaces show "Available until <date>", "Kept while the booking is active" or "Kept permanently" (`keptUntilText` in `lib/stream/recording-copy.ts`).
+- **Cancelled bookings.** A cancelled, rejected or expired booking keeps its recordings watchable by the parties until their retention date, exactly like its documents. Released or refunded seats lose access, because playback checks the seat on every request. Recording surfaces show "Available until <date>", "Kept while the booking is active" or "Never expires" (`retentionText` in `lib/stream/recording-copy.ts`). A trial is a single 1:1 session, so it is kept 90 days after the session whatever it later converted into.
 - **Hard delete.** Only untouched offerings can be hard-deleted. The database cascade removes the `Meeting` and `Recording` rows, so `lib/booking/offering-delete.ts` selects each recording's `storagePath` with `tx` before the guarded delete and, after the transaction commits, calls `deleteRecordingAssets` best effort, reporting failures once per request. No sweeper is added.
 
 ## Plans, runs, batches and sessions
@@ -226,44 +232,68 @@ The owner and accepted co-presenters always have access, a platform `ADMIN` has 
 
 ## The Recording details page
 
-One route per appointment serves 1:1, multi-session and catch-up cases: `.../appointments/[appointmentId]/recordings`, with `?slot=<ordinal>&r=<recordingId>` selecting a slot and part. Routes exist in the consultant, consultee and organisation trees. The appointment hub shows a snapshot card (sessions recorded of total, latest, "Kept until") that links here. Playback links are minted by each Watch click and never cached.
+One route per appointment serves 1:1, multi-session and catch-up cases: `.../appointments/[appointmentId]/recordings`, with `?slot=<ordinal>&r=<recordingId>` selecting a slot and part. Routes exist in the consultant, consultee and organisation trees. The appointment hub shows a snapshot card (sessions recorded of total, latest, "Kept until") that links here. Playback links are minted by each Play click and never cached.
+
+### The session timeline
+
+The Library and the booking's Recordings page render the same component, `RecordingTimeline`, for every booking type. The rows come from the pure `lib/stream/recording-timeline.ts` (`timelineRows`, `timelineOf`, `truncateUpcoming`, `rowRetention`) over the slot core, so a row in the Library always plays on the booking page.
 
 ```
-+----------------------------------------------------------------------------------+
-| <- Back to session   Recordings · Beginner Class (batch that started 1 Oct)       |
-| Private to this batch's members · Available until 5 Oct 2027                      |
-+----------------------------------------------------------------------------------+
-| Session 1 · Variables      3 Oct   1 part · 52 min                      [Watch]   |
-| Session 2 · Conditions     5 Oct   Not recorded. Catch-up from the batch that     |
-|                                    started 1 Sep · 49 min                [Watch]   |
-| Session 3 · Loops          8 Oct   Part 1 of 2 · 31 min                  [Watch]   |
-|                                    Part 2 of 2 · 18 min                  [Watch]   |
-| Session 4 · Functions     10 Oct   No recording: a participant chose not to be   |
-|                                    recorded. Catch-up from the batch that started  |
-|                                    1 Sep                                          |
-| Session 5 · Lists         15 Oct   Upcoming                                       |
-+----------------------------------------------------------------------------------+
+Beginner Class · Ananya Anderson                    Open booking →
+Your batch 5 Oct – 26 Oct 2026 · 4 sessions
+Recordings available until 28 Sept 2027
+
+SESSION          RECORDING                              LENGTH
+1 · Mon 5 Oct    Foundations and vocabulary            56 min  ▶ Play
+                 [Catch-up · recorded 7 Sept, other batch]
+  ⌄ 2 parts      ▶ Part 1 of 2                          32 min
+                 ▶ Part 2 of 2                          24 min
+2 · Mon 12 Oct   Workshop: your first end-to-end build 55 min  ▶ Play
+                 [Catch-up · recorded 14 Sept, other batch]
+3 · Mon 19 Oct   Upcoming                                 —
+4 · Mon 26 Oct   Upcoming                                 —
 ```
 
-"Watch" opens the player modal (`RecordingPlayerModal`), which mints the playback link on open and offers "Next part" within a session; there is no download action. For a host the list has no catch-up rows (a host sees their own batch), plus a "Manage" action per part that opens the existing `RecordingManageSheet`. The **recordings library** is the same grouped list, one group per own appointment with the same slot rows, plus a "Purchased" group; other batches never appear as groups. Each booking lists one row per session, and a session recorded in several parts expands into them.
+**Card header.**
 
-```
-+----------------------------------------------------------------------------------+
-| Recordings                         Search [Booking, plan or file name]            |
-| Kind [All v]  Learner [All v]  Date [from]-[to]                       [Clear]     |
-+----------------------------------------------------------------------------------+
-| ▾ Beginner Class · Started 1 Oct 2026 · 5 sessions     [Open recordings ->]       |
-|   Recording     Session     Length            Recorded                  Play      |
-|   Variables     Session 1   52 min            3 Oct                     [▶]       |
-|   Conditions    Session 2 · From another batch · 16 Sep                 [▶]       |
-|   ▸ Loops       Session 3   2 parts · 49 min  8 Oct                               |
-|       Part 1 of 2           31 min            8 Oct                     [▶]       |
-|       Part 2 of 2           18 min            8 Oct                     [▶]       |
-|   Functions     Session 4   Removed by the expert on 10 Oct                       |
-+----------------------------------------------------------------------------------+
-```
+- The title reads "<plan> · <expert>", with "Open booking" on the right.
+- The subline depends on the booking type: a class reads "Your batch <start> – <end> · n sessions", a subscription reads "Started <date> · n sessions", and a consultation, trial or webinar shows the session date (`timelineSubline`).
+- The header carries one retention line, phrased by type (`retentionText`): "Available until <date>", "Never expires", "Kept while your subscription is active, then 90 days", or for a running class "Kept until 1 year after the last session".
+- A row shows its own retention only when it differs from the header or ends within 30 days (`rowRetention`).
 
-A catch-up row reads "From another batch · <date>" for a class and "From another run · <date>" for a webinar. A session with nothing to play shows its notice in place of the length (`LibraryRecording.notice`).
+**Rows.** There is one row per session of the viewer's own booking, in session order. The columns are Session (number and the viewer's own date), Recording (title plus a state badge), Length and Play. Parts expand under the same columns, and Play on the parent row starts part 1. A removed part appears as a "Part k of n · Removed by … on <date>" row among its siblings.
+
+**States.** A row's badge comes from `rowBadge` in `lib/stream/recording-copy.ts`.
+
+| State             | Badge                                                                                                                                              |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recorded          | None                                                                                                                                               |
+| Catch-up          | "Catch-up · recorded <source session date> with another batch" (or "run"), with a tooltip explaining that the viewer's own session wasn't recorded |
+| Removed           | "Removed by <expert name> on <date>", or "Removed by Familiarise support on <date>" for `SUPPORT_ACTION`                                           |
+| Declined          | "Not recorded · <name> declined recording" (1:1 only)                                                                                              |
+| Not recorded      | "Not recorded"                                                                                                                                     |
+| Being prepared    | "Being prepared"                                                                                                                                   |
+| Upcoming          | "Upcoming"                                                                                                                                         |
+| Before you joined | "Before you joined"                                                                                                                                |
+| Expired           | "Expired"                                                                                                                                          |
+
+**Upcoming sessions.** The timeline lists every past session, then the next upcoming one, then "<n> more upcoming sessions" (`moreUpcoming`).
+
+**By booking type.**
+
+| Booking type        | Rows                                                                                          |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| Consultation, trial | One row                                                                                       |
+| Subscription        | Many rows, one per session; the header says "Started <date>"                                  |
+| Webinar             | The run's session; a catch-up row only when the plan shares recordings                        |
+| Class               | Catch-up rows always when the viewer's batch lacks the session, plus "Before you joined" rows |
+| Purchased replays   | Their own group at the end of the Library, marked "Never expires"                             |
+
+**Catch-up dates.** A catch-up is dated by the source session's own recording (`slot.source.recordedAt`), not by the start of the source batch or run.
+
+**Hosts.** A host sees their own batch with no catch-up rows. In the expert Library the per-row Manage is a link to the booking's Recordings page; the manage sheet itself (`RecordingManageSheet`) opens from the booking page.
+
+"Play" opens the player modal (`RecordingPlayerModal`), which mints the playback link on open and offers "Next part" within a session; there is no download action. The Library paginates by booking, a "Purchased" group follows the bookings, and other batches never appear as groups.
 
 ```ts
 type Slot = {
@@ -281,10 +311,12 @@ type Slot = {
     | "expired"
     | "before_you_joined";
   missingReason: "not_recorded" | "declined" | "removed" | "expired" | null;
-  removedAt: string | null; // when an expert removed the session's recording
+  removedAt: string | null; // when the session's recording was removed
+  removedBy: "expert" | "support" | null;
+  declinedBy: string | null; // 1:1 only
   source:
     | { kind: "own" }
-    | { kind: "catch_up"; batchLabel: string; startsAt: string }
+    | { kind: "catch_up"; batchLabel: string; recordedAt: string } // recordedAt: the source session's recording
     | null;
   parts: {
     recordingId: string;
@@ -301,16 +333,64 @@ type Slot = {
       | null;
     listing: { status: string; hasBuyers: boolean } | null; // hosts only
   }[];
+  removedParts: {
+    partNo: number;
+    partCount: number;
+    removedAt: string | null;
+    removedBy: "expert" | "support" | null;
+  }[];
 };
 ```
 
-| Method and path                                                   | Response                                                                                                                                                                      |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/appointments/:id/recordings`                            | `{ appointmentId, kind, title, batchLabel, viewerRole, audience, sharedAcrossRuns, slots: Slot[] }`; `audience` is `one_to_one`, `run` or `batch`                             |
-| `GET /api/stream/recordings/:recordingId`                         | Playback URL minted per request under the slot rule; metadata also carries `removedAt` and `removalReason`                                                                    |
-| `PATCH`, `DELETE /api/stream/recordings/:recordingId`             | Host manage actions; `DELETE` writes the `EXPERT_DELETED` tombstone, or `SUPPORT_ACTION` for an operator                                                                      |
-| `GET /api/dashboard/{consultant,consultee}/:profileId/recordings` | `LibraryPage`: `{ groups: { session, files, summary? }[], purchased?, total, page, pageSize, facets? }`, each file one session row with `parts[]`, `catchUpFrom` and `notice` |
-| `GET /api/organizations/:orgId/recordings?scope=mine\|everyone`   | The same `LibraryPage`; `everyone` needs `operations.read` and returns counts only                                                                                            |
+| Method and path                                                   | Response                                                                                                                                          |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/appointments/:id/recordings`                            | `{ appointmentId, kind, title, batchLabel, viewerRole, audience, sharedAcrossRuns, slots: Slot[] }`; `audience` is `one_to_one`, `run` or `batch` |
+| `GET /api/stream/recordings/:recordingId`                         | Playback URL minted per request under the slot rule; metadata also carries `removedAt` and `removalReason`                                        |
+| `PATCH`, `DELETE /api/stream/recordings/:recordingId`             | Host manage actions; `DELETE` writes the `EXPERT_DELETED` tombstone, or `SUPPORT_ACTION` for an operator                                          |
+| `GET /api/dashboard/{consultant,consultee}/:profileId/recordings` | `LibraryPage`: `{ groups: { session, files, timeline, summary? }[], purchased?, total, page, pageSize, facets? }`; see the library response below |
+| `GET /api/organizations/:orgId/recordings?scope=mine\|everyone`   | The same `LibraryPage`; `everyone` needs `operations.read` and returns counts only                                                                |
+
+**The library response.** Each group is one booking. `session` carries the booking's identity, `sessionCount`, `expertName` and `counterpartName`, and `timeline` carries the header summary: `{ sessionCount, firstSessionAt, lastSessionAt, retention, moreUpcoming }`, where `retention` is a date, "never", "while active", or the running-subscription or running-class phrasing. `files` holds one `LibraryRecording` per session shown:
+
+```ts
+type LibraryRecording = {
+  id: string; // "<appointmentId>:slot-<ordinal>", or the recording id for a purchased replay
+  title: string;
+  slotOrdinal: number | null; // null for a purchased replay
+  sessionAt: string; // the viewer's own session date
+  state:
+    | "recorded"
+    | "catch_up"
+    | "removed"
+    | "declined"
+    | "not_recorded"
+    | "preparing"
+    | "expired"
+    | "upcoming"
+    | "before_you_joined";
+  durationInMinutes: number;
+  catchUp: { from: "batch" | "run"; recordedAt: string } | null;
+  removed: { at: string | null; by: "expert" | "support" | null } | null;
+  declinedBy: string | null;
+  keptUntil: RetentionLabel | null;
+  parts: {
+    id: string;
+    title: string;
+    partLabel: string | null;
+    recordedAt: string;
+    durationInMinutes: number;
+    keptUntil: RetentionLabel | null;
+  }[];
+  removedParts: {
+    partNo: number;
+    partCount: number;
+    removedAt: string | null;
+    removedBy: "expert" | "support" | null;
+  }[];
+};
+```
+
+The slot view carries the expert and 1:1 learner names, read once per page, so the Library does not read them separately.
 
 The library builds each booking's view with the same core as its Recording details page, so a row there always plays there. `loadRecordingViews` reads the newest 200 candidate bookings, decides in memory which of them render, and paginates only the groups that render, so `total` and `pages` always match what the pages show. The 200 bound applies to candidate bookings, not to rendered groups: a viewer with more than 200 candidate bookings sees the newest 200 that render. The catch-up query admits only ended runs of sharing plans that have a playable recording. The organisation `everyone` view sums recordings in one read.
 
@@ -320,10 +400,13 @@ When the URL carries no filters, each of the six library pages seeds page 1 on t
 
 The recording playback, manage, publish, preview, start, stop and sync routes, the recording lists and the public replay list answer failures with the shared `{ code, message }` body from `lib/documents/file-errors.ts` (for example `OWN_RECORDING_AVAILABLE`, `LATE_JOIN_HIDDEN`, `GONE`, `RATE_LIMITED`, `RECORDING_DECLINED` when a start is refused after a 1:1 decline, `RECORDING_IN_PROGRESS`, `RECORDING_NOT_IN_PROGRESS`, `RECORDING_NOT_ENABLED`, `RECORDING_HAS_BUYERS`, `RECORDING_CHANGED` and `SERVER_ERROR`), and in-call controls show the code's fixed copy rather than server text. The replay purchase route and the meeting recording-consent and recording-info routes keep their own error shapes. The codes are described in [documents/README](../documents/README.md#typed-error-model-and-copy).
 
+**Player failures.** `MEDIA_UNPLAYABLE` is raised only by the browser. `RecordingPlayerModal` reloads the video on each retry even when the URL is unchanged, treats a source that never reaches its metadata as a failure, and shows "This recording can't be played" after one failed retry. File routes write one function-log line per unhandled error, because previews sample only 10% of errors to Sentry. Signed-out API calls receive a coded 401 `{ code, message }` from the middleware.
+
 ### Performance
 
 - **Statement budget.** A library page costs a fixed number of statements, independent of how many bookings it shows, because the loader batches every relation arm. It skips arms for booking kinds that are not on the page, and retention labels walk each subscription renewal chain once per call.
 - **Round-trip cost.** With `PG_POOL_MAX=1` every statement is serial, and one round trip costs about 95 ms from the function to the database, so cost tracks statement count rather than query speed. The per-booking loop this loader replaced issued about 495 statements for one learner's page (about 20 s locally, and a gateway timeout on the deploy preview), while the batched loader issues about 56.
+- **Late-join floor.** The loader reads a learner's late-join floor from the seat row it already loads, takes the booking kinds from the library's candidates, and skips host-only and catch-up relations the viewer cannot use.
 - **Pattern.** Do not call a per-booking resolver in a loop. Load every input for the page in one batched read, then run the pure core over the rows in memory. Catch-up playback access likewise checks the chosen source in one grouped read.
 
 ## Replay sales
@@ -354,3 +437,7 @@ Recordings live in the private R2 bucket and are served by per-request presigned
 - **Recording objects surviving a hard delete.** The cascade removed rows but not R2 objects. Superseded by post-commit asset deletion.
 - **A 30-day limit on the expert-removal notice.** The notice used to turn into "Not recorded" 30 days after the delete, so a recorded session looked unrecorded. Superseded by the retention-date rule; delete any `TOMBSTONE_DAYS` constant.
 - **One library row per recording part, with the part's session label.** Superseded by one row per session that expands into its parts.
+- **`lib/stream/late-join-recordings.ts`.** A separate late-join helper. The late-join rule now lives in the `loadRecordingViews` loader and the slot core; delete any import of the old module.
+- **`RecordingTable` and per-row `catchUpFrom`, `notice` and `sessionLabel` fields.** The Library's flat session table and its text fields. Superseded by `RecordingTimeline` and the `LibraryRecording` state fields.
+- **Catch-up dated by the source batch's start.** Superseded by the source session's own recording date.
+- **A trial kept as long as its converted subscription.** Superseded by the 1:1 rule: 90 days after the session.

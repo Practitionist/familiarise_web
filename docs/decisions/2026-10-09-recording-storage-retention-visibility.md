@@ -51,8 +51,8 @@ The consultant storage toggle `recordingStoragePolicy` is removed from the schem
 
 | Session type                                                                | Deleted after                                                 |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| 1:1 consultation                                                            | 90 days after the session                                     |
-| Subscription / trial                                                        | 90 days after the subscription ends (kept while it is active) |
+| 1:1 consultation or trial                                                   | 90 days after the session                                     |
+| Subscription                                                                | 90 days after the subscription ends (kept while it is active) |
 | Webinar                                                                     | 365 days after the session                                    |
 | Class                                                                       | 365 days after the class's final session                      |
 | Published replay, or any recording with a `PENDING` or `SUCCEEDED` purchase | never auto-deleted                                            |
