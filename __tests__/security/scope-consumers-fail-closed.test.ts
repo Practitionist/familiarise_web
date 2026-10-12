@@ -88,7 +88,6 @@ describe("every self-scoped consumer treats orgMember as an org filter", () => {
     "app/api/bookings/classes/route.ts",
     "app/api/bookings/subscriptions/route.ts",
     "app/api/bookings/webinars/route.ts",
-    "app/api/dashboard/consultant/[consultantId]/documents/route.ts",
     "app/api/dashboard/consultant/[consultantId]/planner/route.ts",
     // #1770 — the payments route delegates to this read; the org question is
     // answered there via scopeToWhereOrgId (orgMember pins an org, like org).
