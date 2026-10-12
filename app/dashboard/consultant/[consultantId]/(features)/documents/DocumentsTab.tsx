@@ -49,7 +49,8 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { DocumentReviewDrawer } from "@/components/documents/DocumentReviewDrawer";
-import { openAppointmentDocument } from "@/lib/documents/client-download";
+import { getDocumentViewerUrl } from "@/lib/documents/urls";
+import { useFileDownload } from "@/lib/documents/use-file-download";
 import {
   groupDocumentsIntoThreads,
   type DocumentThread,
@@ -187,6 +188,9 @@ function buildConsultantDocumentColumns(
         if (isExpertHandout) {
           return <Badge variant="secondary">Shared by Expert</Badge>;
         }
+        if (document.uploadedByRole === "CONSULTANT") {
+          return <Badge variant="secondary">Expert reply</Badge>;
+        }
 
         const effectiveStatus =
           thread?.effectiveStatus ?? document.reviewStatus;
@@ -242,6 +246,7 @@ export function DocumentsTab({
     string | undefined
   >(undefined);
   const { toast } = useToast();
+  const { downloadDocument } = useFileDownload();
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -454,19 +459,10 @@ export function DocumentsTab({
   };
 
   const handleDownload = (document: IDocument) => {
-    void openAppointmentDocument(
-      document.appointmentId,
-      document.id,
-      "attachment",
-      (err) => {
-        toast({
-          title: err.title,
-          description: err.description,
-          variant: "destructive",
-        });
-      },
-      document.originalName,
-    );
+    void downloadDocument(document.appointmentId, document.id, {
+      isUploader: document.uploadedByRole === "CONSULTANT",
+      role: "consultant",
+    });
   };
 
   const handleView = useCallback(
@@ -477,21 +473,14 @@ export function DocumentsTab({
         setDrawerRootId(rootId);
         return;
       }
-      void openAppointmentDocument(
-        document.appointmentId,
-        document.id,
-        "inline",
-        (err) => {
-          toast({
-            title: err.title,
-            description: err.description,
-            variant: "destructive",
-          });
-        },
-        document.originalName,
+      // Opened synchronously from the click; the viewer tab handles its own errors.
+      window.open(
+        getDocumentViewerUrl(document.id),
+        "_blank",
+        "noopener,noreferrer",
       );
     },
-    [threadsByRootId, toast],
+    [threadsByRootId],
   );
 
   const columns = useMemo(

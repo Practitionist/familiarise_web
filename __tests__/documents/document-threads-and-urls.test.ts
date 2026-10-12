@@ -88,9 +88,9 @@ describe("groupDocumentsIntoThreads", () => {
     expect(threads[0].latestConsulteeSubmission?.id).toBe("doc-v3");
     expect(threads[0].latestConsultantResponse?.id).toBe("doc-v2");
     expect(threads[0].effectiveStatus).toBe("PENDING");
-    expect(threads[0].effectiveReviewNotes).toBe(
-      "Tighten impact metrics in top 2 roles.",
-    );
+    // v1's feedback reviewed v1; the new pending v3 starts with none.
+    expect(threads[0].effectiveReviewNotes).toBeNull();
+    expect(threads[1].effectiveReviewNotes).toBe("Looks great!");
     expect(threads[1].rootId).toBe("portfolio-v1");
   });
 });

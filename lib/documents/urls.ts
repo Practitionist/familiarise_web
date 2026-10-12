@@ -21,6 +21,15 @@ export function getPlanMaterialUrl(
   return `/api/plans/materials/${encodeURIComponent(materialId)}/download?disposition=${disposition}`;
 }
 
+/** Same-origin viewer tab: signs on every load and renders friendly errors. */
+export function getDocumentViewerUrl(documentId: string): string {
+  return `/files/documents/${encodeURIComponent(documentId)}`;
+}
+
+export function getMaterialViewerUrl(materialId: string): string {
+  return `/files/materials/${encodeURIComponent(materialId)}`;
+}
+
 const NON_PREVIEWABLE_EXTENSIONS = new Set([
   ".doc",
   ".docx",

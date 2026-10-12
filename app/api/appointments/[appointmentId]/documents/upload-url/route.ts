@@ -240,13 +240,6 @@ export async function POST(
       );
     }
 
-    const preflightError = await preflightThreadLimits(
-      appointmentId,
-      responseToDocumentId,
-      { missingParentStatus: 404 },
-    );
-    if (preflightError) return preflightError;
-
     if (!supabaseAdmin) {
       return NextResponse.json(
         {
@@ -265,6 +258,14 @@ export async function POST(
       appointment.class?.classPlan?.consultantProfile;
 
     const isConsultantUploader = consultantProfile?.userId === userId;
+    const preflightError = await preflightThreadLimits(
+      appointmentId,
+      responseToDocumentId,
+      isConsultantUploader ? "CONSULTANT" : "CONSULTEE",
+      { missingParentStatus: 404 },
+    );
+    if (preflightError) return preflightError;
+
     const consulteeProfileId =
       appointment.consultation?.requestedBy?.id ||
       appointment.subscription?.requestedBy?.id ||

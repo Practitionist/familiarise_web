@@ -6,8 +6,8 @@ import { ExternalLink, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { useToast } from "@/hooks/use-toast";
-import { openAppointmentDocument } from "@/lib/documents/client-download";
+import { FileOpenLink } from "@/components/documents/FileOpenLink";
+import { getDocumentViewerUrl } from "@/lib/documents/urls";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 
 interface AppointmentDocument {
@@ -40,7 +40,6 @@ export function AppointmentDocumentsList({
   viewer?: "consultee" | "consultant";
 }) {
   const format = useZonedFormat();
-  const { toast } = useToast();
   const { data, isLoading, isError } = useQuery({
     queryKey: ["appointment-documents", appointmentId] as const,
     queryFn: async (): Promise<AppointmentDocument[]> => {
@@ -94,33 +93,17 @@ export function AppointmentDocumentsList({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {doc.reviewStatus && (
+            {doc.reviewStatus && doc.uploadedByRole === "CONSULTEE" && (
               <StatusBadge
                 {...documentReviewStatusBadge(doc.reviewStatus)}
                 size="sm"
               />
             )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void openAppointmentDocument(
-                  appointmentId,
-                  doc.id,
-                  "inline",
-                  (err) =>
-                    toast({
-                      title: err.title,
-                      description: err.description,
-                      variant: "destructive",
-                    }),
-                  doc.originalName ?? doc.fileName,
-                );
-              }}
-            >
-              Open
-              <ExternalLink className="h-3 w-3 ml-1" />
+            <Button asChild variant="outline" size="sm">
+              <FileOpenLink href={getDocumentViewerUrl(doc.id)}>
+                Open
+                <ExternalLink className="h-3 w-3 ml-1" aria-hidden />
+              </FileOpenLink>
             </Button>
           </div>
         </div>

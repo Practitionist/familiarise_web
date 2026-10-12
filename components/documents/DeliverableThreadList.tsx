@@ -25,10 +25,17 @@ import { useToast } from "@/hooks/use-toast";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 import {
   ALLOWED_DOCUMENT_ACCEPT_ATTR,
+  MAX_LEARNER_VERSIONS_PER_THREAD,
   groupDocumentsIntoThreads,
+  learnerRevisionGate,
+  versionAuthorLabel,
   type ThreadableDocument,
 } from "@/lib/documents/document-review";
-import { openAppointmentDocument } from "@/lib/documents/client-download";
+import { useFileDownload } from "@/lib/documents/use-file-download";
+import {
+  FileActionError,
+  friendlyErrorFromResponse,
+} from "@/lib/documents/file-errors";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import { uploadAppointmentDocumentWithProgress } from "@/lib/documents/direct-upload";
 import { DocumentReviewDrawer } from "./DocumentReviewDrawer";
@@ -57,6 +64,7 @@ export function DeliverableThreadList({
 }: Readonly<DeliverableThreadListProps>) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { downloadDocument } = useFileDownload();
 
   const [expandedRoots, setExpandedRoots] = useState<Set<string>>(new Set());
   const [drawerRootId, setDrawerRootId] = useState<string | null>(null);
@@ -111,11 +119,13 @@ export function DeliverableThreadList({
       { method: "DELETE" },
     );
     if (!res.ok) {
-      const body = await res.json().catch(() => null);
+      const error = await friendlyErrorFromResponse(res, {
+        isUploader: true,
+        role: viewerRole,
+      });
       toast({
         title: "Unable to delete file",
-        description:
-          body?.message || body?.error || "Could not remove this document.",
+        description: error.description,
         variant: "destructive",
       });
       throw new Error("Delete failed");
@@ -150,8 +160,11 @@ export function DeliverableThreadList({
       refresh();
     } catch (err) {
       toast({
-        title: "Upload failed",
-        description: err instanceof Error ? err.message : "Upload failed",
+        title: err instanceof FileActionError ? err.title : "Upload failed",
+        description:
+          err instanceof Error
+            ? err.message
+            : "Something went wrong. Try again.",
         variant: "destructive",
       });
     } finally {
@@ -201,6 +214,16 @@ export function DeliverableThreadList({
             const needsRevision = thread.effectiveStatus === "NEEDS_REVISION";
             const isExpertHandoutRoot =
               thread.rootDocument.uploadedByRole === "CONSULTANT";
+            const revisionGate = learnerRevisionGate(
+              thread.rootDocument.uploadedByRole,
+              thread.versions,
+            );
+            const showRevisionUpload =
+              viewerRole === "consultee" && canUpload && revisionGate.allowed;
+            const versionCapReached =
+              viewerRole === "consultee" &&
+              !revisionGate.allowed &&
+              revisionGate.code === "VERSION_LIMIT_REACHED";
             const canDeleteLatest =
               (viewerRole === "consultee" &&
                 thread.latestVersion.uploadedByRole === "CONSULTEE" &&
@@ -285,17 +308,16 @@ export function DeliverableThreadList({
                       size="sm"
                       className="h-7 px-2 text-xs"
                       onClick={() => {
-                        void openAppointmentDocument(
+                        void downloadDocument(
                           thread.appointmentId,
                           thread.latestVersion.id,
-                          "attachment",
-                          (err) =>
-                            toast({
-                              title: err.title,
-                              description: err.description,
-                              variant: "destructive",
-                            }),
-                          thread.latestVersion.originalName,
+                          {
+                            isUploader:
+                              (thread.latestVersion.uploadedByRole ===
+                                "CONSULTEE") ===
+                              (viewerRole === "consultee"),
+                            role: viewerRole,
+                          },
                         );
                       }}
                     >
@@ -329,28 +351,26 @@ export function DeliverableThreadList({
                       />
                     )}
 
-                    {viewerRole === "consultee" &&
-                      canUpload &&
-                      !isExpertHandoutRoot &&
-                      thread.effectiveStatus !== "APPROVED" &&
-                      thread.effectiveStatus !== "REJECTED" && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={needsRevision ? "default" : "outline"}
-                          className="h-7 px-2.5 text-xs"
-                          onClick={() => {
-                            setDrawerInitialVersionId(thread.latestVersion.id);
-                            setDrawerRootId(thread.rootId);
-                          }}
-                        >
-                          <FileUp className="mr-1 h-3 w-3" />
-                          Upload v
-                          {(thread.latestVersion.versionNo ??
-                            thread.versionCount) + 1}{" "}
-                          Revision
-                        </Button>
-                      )}
+                    {showRevisionUpload && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={needsRevision ? "default" : "outline"}
+                        className="h-7 px-2.5 text-xs"
+                        onClick={() => {
+                          setDrawerInitialVersionId(thread.latestVersion.id);
+                          setDrawerRootId(thread.rootId);
+                        }}
+                      >
+                        <FileUp className="mr-1 h-3 w-3" />
+                        Upload new version
+                      </Button>
+                    )}
+                    {versionCapReached && (
+                      <span className="text-[11px] text-muted-foreground">
+                        All {MAX_LEARNER_VERSIONS_PER_THREAD} versions used
+                      </span>
+                    )}
                   </div>
 
                   {thread.versionCount > 1 && (
@@ -374,7 +394,6 @@ export function DeliverableThreadList({
                   <div className="mt-2.5 space-y-1.5 border-t pt-2">
                     {thread.versions.map((ver, idx) => {
                       const vNum = ver.versionNo ?? idx + 1;
-                      const isExpert = ver.uploadedByRole === "CONSULTANT";
                       return (
                         <div
                           key={ver.id}
@@ -388,7 +407,11 @@ export function DeliverableThreadList({
                               variant="secondary"
                               className="h-4 px-1 text-[10px]"
                             >
-                              {isExpert ? "Expert" : "Learner"}
+                              {versionAuthorLabel(
+                                ver,
+                                thread.rootId,
+                                viewerRole,
+                              )}
                             </Badge>
                             <span className="truncate text-muted-foreground">
                               {ver.originalName}
@@ -495,11 +518,7 @@ export function DeliverableThreadList({
           setDrawerInitialVersionId(undefined);
         }}
         viewerRole={viewerRole}
-        canUpload={
-          canUpload &&
-          (viewerRole === "consultant" ||
-            drawerThread?.rootDocument.uploadedByRole === "CONSULTEE")
-        }
+        canUpload={canUpload}
         initialVersionId={drawerInitialVersionId}
         onUpdated={refresh}
       />

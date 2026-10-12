@@ -253,6 +253,7 @@ export async function POST(
     const preflightError = await preflightThreadLimits(
       appointmentId,
       parsedInput.responseToDocumentId,
+      "CONSULTANT",
       { missingParentStatus: 404 },
     );
     if (preflightError) return preflightError;

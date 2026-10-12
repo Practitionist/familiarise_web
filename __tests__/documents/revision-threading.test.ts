@@ -31,7 +31,7 @@ describe("consultee revision upload", () => {
 
   it("locks the parent Appointment row FOR UPDATE and scopes revision target to appointmentId", () => {
     expect(reviewSrc).toContain(
-      'SELECT 1 FROM "Appointment" WHERE id = ${appointmentId} FOR UPDATE',
+      'SELECT 1 FROM "Appointment" WHERE id = ${params.appointmentId} FOR UPDATE',
     );
     expect(reviewSrc).toMatch(
       /findFirst\(\{\s*where:\s*\{\s*id:\s*parentDocumentId,\s*appointmentId,\s*deletedAt:\s*null\s*\}/,
@@ -41,7 +41,7 @@ describe("consultee revision upload", () => {
 
   it("rejects with 400 rather than silently dropping the link", () => {
     expect(src).toContain("missingParentStatus: 400");
-    expect(pipelineSrc).toContain("status: params.missingParentStatus");
+    expect(pipelineSrc).toContain("status: copy.missingParentStatus");
   });
 
   it("persists the link on create", () => {

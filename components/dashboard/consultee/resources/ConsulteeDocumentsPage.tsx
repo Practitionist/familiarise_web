@@ -32,15 +32,14 @@ import { DocumentReviewDrawer } from "@/components/documents/DocumentReviewDrawe
 import { useListParams } from "@/hooks/useListParams";
 import { isConfirmedStatus } from "@/lib/appointments/status";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
+import { FileOpenLink } from "@/components/documents/FileOpenLink";
 import {
   groupDocumentsIntoThreads,
+  learnerRevisionGate,
   type DocumentThread,
 } from "@/lib/documents/document-review";
-import {
-  openAppointmentDocument,
-  openPlanMaterial,
-} from "@/lib/documents/client-download";
-import { useToast } from "@/hooks/use-toast";
+import { getMaterialViewerUrl } from "@/lib/documents/urls";
+import { useFileDownload } from "@/lib/documents/use-file-download";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import type {
   ConsulteeDocumentRow,
@@ -181,9 +180,11 @@ function buildThreadColumns(
       cell: (thread) => {
         const needsRevision =
           canUploadRevisionForThread(thread) &&
-          thread.effectiveStatus === "NEEDS_REVISION";
-        const nextVersionNo =
-          (thread.latestVersion.versionNo ?? thread.versionCount) + 1;
+          thread.effectiveStatus === "NEEDS_REVISION" &&
+          learnerRevisionGate(
+            thread.rootDocument.uploadedByRole,
+            thread.versions,
+          ).allowed;
         return (
           <div className="flex items-center justify-end gap-1.5">
             {needsRevision && (
@@ -194,7 +195,7 @@ function buildThreadColumns(
                 onClick={() => onOpenDrawer(thread.rootId)}
               >
                 <FileUp className="mr-1 h-3 w-3" />
-                Upload v{nextVersionNo}
+                Upload new version
               </Button>
             )}
             <Button
@@ -225,10 +226,7 @@ function buildThreadColumns(
 }
 
 function buildMaterialColumns(
-  onOpenMaterial: (
-    m: ConsulteeMaterialRow,
-    mode: "inline" | "attachment",
-  ) => void,
+  onDownloadMaterial: (m: ConsulteeMaterialRow) => void,
 ): ResponsiveColumn<ConsulteeMaterialRow>[] {
   return [
     {
@@ -237,15 +235,20 @@ function buildMaterialColumns(
       primary: true,
       cell: (m) => (
         <div className="space-y-0.5">
-          <button
-            type="button"
-            onClick={() => onOpenMaterial(m, "inline")}
+          <FileOpenLink
+            href={getMaterialViewerUrl(m.id)}
             className="inline-flex max-w-full items-center gap-1.5 text-left font-medium text-foreground underline-offset-4 hover:underline"
           >
-            <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <FileText
+              className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
             <span className="truncate">{m.originalName}</span>
-            <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
-          </button>
+            <ExternalLink
+              className="h-3 w-3 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+          </FileOpenLink>
           <p className="text-[11px] text-muted-foreground">
             {formatFileSize(m.fileSize)}
             {m.description ? ` · ${m.description}` : ""}
@@ -284,7 +287,7 @@ function buildMaterialColumns(
             variant="ghost"
             size="sm"
             className="h-7 px-2 text-xs"
-            onClick={() => onOpenMaterial(m, "attachment")}
+            onClick={() => onDownloadMaterial(m)}
           >
             <Download className="mr-1 h-3.5 w-3.5" />
             Download
@@ -300,7 +303,7 @@ export function ConsulteeDocumentsPage({
 }: Readonly<{ consulteeId: string }>) {
   const basePath = `/dashboard/consultee/${consulteeId}`;
   const queryClient = useQueryClient();
-  const { toast } = useToast();
+  const { downloadDocument, downloadMaterial } = useFileDownload();
   const { page, setPage } = useListParams();
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [search, setSearch] = useState<string>("");
@@ -348,38 +351,20 @@ export function ConsulteeDocumentsPage({
   const threadColumns = useMemo(
     () =>
       buildThreadColumns(basePath, setDrawerRootId, (thread) => {
-        void openAppointmentDocument(
-          thread.appointmentId,
-          thread.latestVersion.id,
-          "attachment",
-          (err) =>
-            toast({
-              title: err.title,
-              description: err.description,
-              variant: "destructive",
-            }),
-          thread.latestVersion.originalName,
-        );
+        void downloadDocument(thread.appointmentId, thread.latestVersion.id, {
+          isUploader: thread.latestVersion.uploadedByRole === "CONSULTEE",
+          role: "consultee",
+        });
       }),
-    [basePath, toast],
+    [basePath, downloadDocument],
   );
 
   const materialColumns = useMemo(
     () =>
-      buildMaterialColumns((material, mode) => {
-        void openPlanMaterial(
-          material.id,
-          mode,
-          (err) =>
-            toast({
-              title: err.title,
-              description: err.description,
-              variant: "destructive",
-            }),
-          material.originalName,
-        );
+      buildMaterialColumns((material) => {
+        void downloadMaterial(material.id);
       }),
-    [toast],
+    [downloadMaterial],
   );
 
   const isFirstLoad = isLoading && !data;

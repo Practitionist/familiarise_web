@@ -43,7 +43,9 @@ import {
   getStatusColor,
   getStatusIcon,
 } from "@/lib/documents/document-utils";
-import { openAppointmentDocument } from "@/lib/documents/client-download";
+import { FileOpenLink } from "@/components/documents/FileOpenLink";
+import { getDocumentViewerUrl } from "@/lib/documents/urls";
+import { useFileDownload } from "@/lib/documents/use-file-download";
 
 interface DocumentUploadProps {
   appointmentId: string;
@@ -135,6 +137,7 @@ export function DocumentUpload({
     message?: string;
   }>({});
   const { toast } = useToast();
+  const { downloadDocument } = useFileDownload();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDocuments = useCallback(async () => {
@@ -740,45 +743,29 @@ export function DocumentUpload({
                           </div>
                           <div className="flex space-x-1 ml-0 sm:ml-4 justify-end sm:justify-start">
                             <Button
-                              type="button"
+                              asChild
                               variant="ghost"
                               size="sm"
-                              onClick={() => {
-                                void openAppointmentDocument(
-                                  appointmentId,
-                                  doc.id,
-                                  "inline",
-                                  (err) =>
-                                    toast({
-                                      title: err.title,
-                                      description: err.description,
-                                      variant: "destructive",
-                                    }),
-                                  doc.originalName,
-                                );
-                              }}
                               title="View document"
                               className="h-7 w-7 sm:h-9 sm:w-9 p-0"
                             >
-                              <Eye className="h-3 w-3 sm:h-4 sm:w-4" />
+                              <FileOpenLink href={getDocumentViewerUrl(doc.id)}>
+                                <Eye
+                                  className="h-3 w-3 sm:h-4 sm:w-4"
+                                  aria-hidden
+                                />
+                                <span className="sr-only">View document</span>
+                              </FileOpenLink>
                             </Button>
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               onClick={() => {
-                                void openAppointmentDocument(
-                                  appointmentId,
-                                  doc.id,
-                                  "attachment",
-                                  (err) =>
-                                    toast({
-                                      title: err.title,
-                                      description: err.description,
-                                      variant: "destructive",
-                                    }),
-                                  doc.originalName,
-                                );
+                                void downloadDocument(appointmentId, doc.id, {
+                                  isUploader: true,
+                                  role: "consultee",
+                                });
                               }}
                               title="Download document"
                               className="h-7 w-7 sm:h-9 sm:w-9 p-0"
@@ -873,44 +860,38 @@ export function DocumentUpload({
                                       </div>
                                       <div className="flex space-x-1 justify-end">
                                         <Button
-                                          type="button"
+                                          asChild
                                           variant="ghost"
                                           size="sm"
-                                          onClick={() => {
-                                            void openAppointmentDocument(
-                                              appointmentId,
-                                              response.id,
-                                              "inline",
-                                              (err) =>
-                                                toast({
-                                                  title: err.title,
-                                                  description: err.description,
-                                                  variant: "destructive",
-                                                }),
-                                              response.originalName,
-                                            );
-                                          }}
                                           title="View response"
                                           className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                                         >
-                                          <Eye className="h-3 w-3" />
+                                          <FileOpenLink
+                                            href={getDocumentViewerUrl(
+                                              response.id,
+                                            )}
+                                          >
+                                            <Eye
+                                              className="h-3 w-3"
+                                              aria-hidden
+                                            />
+                                            <span className="sr-only">
+                                              View response
+                                            </span>
+                                          </FileOpenLink>
                                         </Button>
                                         <Button
                                           type="button"
                                           variant="ghost"
                                           size="sm"
                                           onClick={() => {
-                                            void openAppointmentDocument(
+                                            void downloadDocument(
                                               appointmentId,
                                               response.id,
-                                              "attachment",
-                                              (err) =>
-                                                toast({
-                                                  title: err.title,
-                                                  description: err.description,
-                                                  variant: "destructive",
-                                                }),
-                                              response.originalName,
+                                              {
+                                                isUploader: false,
+                                                role: "consultee",
+                                              },
                                             );
                                           }}
                                           title="Download response"

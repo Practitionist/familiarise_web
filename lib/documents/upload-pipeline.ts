@@ -8,10 +8,13 @@ import { deleteAppointmentDocument } from "@/lib/supabase";
 import {
   MAX_DOCS_PER_APPOINTMENT,
   MAX_DOCUMENT_BYTES,
-  MAX_VERSIONS_PER_THREAD,
+  MAX_LEARNER_VERSIONS_PER_THREAD,
+  ThreadSlotError,
+  checkDocumentThreadSlot,
   resolveDocumentThreadSlot,
   validateDocumentUpload,
   withVersionConflictRetry,
+  type ThreadSlotErrorCode,
 } from "@/lib/documents/document-review";
 
 /** Schema for 2-phase presigned direct upload completion payloads. */
@@ -193,79 +196,74 @@ export async function parseDocumentUploadInput(
   };
 }
 
-/** Preflights per-appointment root thread and per-thread version caps before object storage writes. */
+interface MissingParentCopy {
+  missingParentStatus?: 400 | 404;
+  missingParentError?: string;
+  missingParentMessage?: string;
+}
+
+const THREAD_SLOT_REFUSALS: Record<
+  Exclude<ThreadSlotErrorCode, "INVALID_THREAD_PARENT">,
+  { status: number; error: string; message: string }
+> = {
+  DOCUMENT_LIMIT_REACHED: {
+    status: 400,
+    error: "Document limit reached",
+    message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads.`,
+  },
+  VERSION_LIMIT_REACHED: {
+    status: 409,
+    error: "Version limit reached",
+    message: `This document already has ${MAX_LEARNER_VERSIONS_PER_THREAD} learner versions.`,
+  },
+  THREAD_IN_REVIEW: {
+    status: 409,
+    error: "Review in progress",
+    message: "The expert is reviewing the latest version.",
+  },
+  THREAD_CLOSED: {
+    status: 409,
+    error: "Document closed",
+    message: "This document no longer accepts new versions.",
+  },
+};
+
+function threadSlotRefusal(
+  code: ThreadSlotErrorCode,
+  copy: MissingParentCopy,
+): NextResponse {
+  if (code === "INVALID_THREAD_PARENT") {
+    return NextResponse.json(
+      {
+        error: copy.missingParentError ?? "Original document not found",
+        message:
+          copy.missingParentMessage ??
+          "The document you're responding to does not exist",
+        code,
+      },
+      { status: copy.missingParentStatus ?? 404 },
+    );
+  }
+  const refusal = THREAD_SLOT_REFUSALS[code];
+  return NextResponse.json(
+    { error: refusal.error, message: refusal.message, code },
+    { status: refusal.status },
+  );
+}
+
+/** Refuses an upload the commit transaction would refuse, before any storage write. */
 export async function preflightThreadLimits(
   appointmentId: string,
   parentDocumentId: string | null | undefined,
-  opts: {
-    missingParentStatus?: 400 | 404;
-    missingParentError?: string;
-    missingParentMessage?: string;
-  } = {},
+  uploadedByRole: "CONSULTEE" | "CONSULTANT",
+  copy: MissingParentCopy = {},
 ): Promise<NextResponse | null> {
-  if (!parentDocumentId) {
-    const rootCount = await prisma.appointmentDocument.count({
-      where: { appointmentId, rootDocumentId: null, deletedAt: null },
-    });
-    if (rootCount >= MAX_DOCS_PER_APPOINTMENT) {
-      return NextResponse.json(
-        {
-          error: "Document limit reached",
-          message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads.`,
-          code: "DOCUMENT_LIMIT_REACHED",
-        },
-        { status: 400 },
-      );
-    }
-    return null;
-  }
-
-  const parent = await prisma.appointmentDocument.findFirst({
-    where: { id: parentDocumentId, appointmentId, deletedAt: null },
-    select: { id: true, rootDocumentId: true },
+  const outcome = await checkDocumentThreadSlot(prisma, {
+    appointmentId,
+    parentDocumentId,
+    uploadedByRole,
   });
-  if (!parent) {
-    return NextResponse.json(
-      {
-        error: opts.missingParentError ?? "Original document not found",
-        message:
-          opts.missingParentMessage ??
-          "The document you're responding to does not exist",
-        code: "INVALID_THREAD_PARENT",
-      },
-      { status: opts.missingParentStatus ?? 404 },
-    );
-  }
-
-  const rootId = parent.rootDocumentId ?? parent.id;
-  const [versionCount, versionAgg] = await Promise.all([
-    prisma.appointmentDocument.count({
-      where: {
-        deletedAt: null,
-        OR: [{ id: rootId }, { rootDocumentId: rootId }],
-      },
-    }),
-    prisma.appointmentDocument.aggregate({
-      where: { OR: [{ id: rootId }, { rootDocumentId: rootId }] },
-      _max: { versionNo: true },
-    }),
-  ]);
-  const nextVersionNo = (versionAgg._max.versionNo ?? 1) + 1;
-  if (
-    versionCount >= MAX_VERSIONS_PER_THREAD ||
-    nextVersionNo > MAX_VERSIONS_PER_THREAD
-  ) {
-    return NextResponse.json(
-      {
-        error: "Version limit reached",
-        message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
-        code: "VERSION_LIMIT_REACHED",
-      },
-      { status: 400 },
-    );
-  }
-
-  return null;
+  return outcome.ok ? null : threadSlotRefusal(outcome.code, copy);
 }
 
 export interface ResolvedStorageObject {
@@ -310,12 +308,7 @@ export async function persistAppointmentDocumentWithRetry(params: {
       prisma.$transaction(async (tx) => {
         const { rootDocumentId, versionNo } = await resolveDocumentThreadSlot(
           tx,
-          {
-            appointmentId,
-            parentDocumentId,
-            maxDocsPerAppointment: MAX_DOCS_PER_APPOINTMENT,
-            maxVersionsPerThread: MAX_VERSIONS_PER_THREAD,
-          },
+          { appointmentId, parentDocumentId, uploadedByRole },
         );
         return tx.appointmentDocument.create({
           data: {
@@ -346,56 +339,19 @@ export async function persistAppointmentDocumentWithRetry(params: {
     );
     return { ok: true as const, document };
   } catch (dbError) {
+    await deleteAppointmentDocument(storage.storagePath).catch(() => false);
+
+    if (dbError instanceof ThreadSlotError) {
+      return {
+        ok: false as const,
+        response: threadSlotRefusal(dbError.code, params),
+      };
+    }
+
     Sentry.captureException(
       dbError instanceof Error ? dbError : new Error(String(dbError)),
       { tags: { subsystem: "appointments" } },
     );
-
-    await deleteAppointmentDocument(storage.storagePath).catch(() => false);
-
-    if (dbError instanceof Error) {
-      if (dbError.message === "INVALID_THREAD_PARENT") {
-        return {
-          ok: false as const,
-          response: NextResponse.json(
-            {
-              error: params.missingParentError ?? "Original document not found",
-              message:
-                params.missingParentMessage ??
-                "The document you're responding to does not exist",
-              code: "INVALID_THREAD_PARENT",
-            },
-            { status: params.missingParentStatus ?? 404 },
-          ),
-        };
-      }
-      if (dbError.message === "DOCUMENT_LIMIT_REACHED") {
-        return {
-          ok: false as const,
-          response: NextResponse.json(
-            {
-              error: "Document limit reached",
-              message: `This appointment already has ${MAX_DOCS_PER_APPOINTMENT} document threads.`,
-              code: "DOCUMENT_LIMIT_REACHED",
-            },
-            { status: 400 },
-          ),
-        };
-      }
-      if (dbError.message === "VERSION_LIMIT_REACHED") {
-        return {
-          ok: false as const,
-          response: NextResponse.json(
-            {
-              error: "Version limit reached",
-              message: `This document thread has reached the maximum of ${MAX_VERSIONS_PER_THREAD} versions.`,
-              code: "VERSION_LIMIT_REACHED",
-            },
-            { status: 400 },
-          ),
-        };
-      }
-    }
 
     return {
       ok: false as const,

@@ -147,6 +147,7 @@ function FileCell({
     >
       <span className="truncate">{name}</span>
       <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+      <span className="sr-only"> (opens in a new tab)</span>
     </a>
   );
 }
