@@ -105,7 +105,7 @@ const MAGIC_RULES: readonly MagicRule[] = [
   {
     matches: (b) => startsWithBytes(b, [0xff, 0xd8, 0xff]),
     resolve: (claimed) => ({
-      valid: claimed === "image/jpeg" || claimed === "image/jpg",
+      valid: claimed === "image/jpeg",
       detectedMime: "image/jpeg",
     }),
   },

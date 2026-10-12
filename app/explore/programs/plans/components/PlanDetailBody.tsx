@@ -1,5 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { fileTypeLabel } from "@/lib/documents/file-policy";
 import {
   CurriculumOutline,
   PlanFaqAccordion,
@@ -25,15 +26,6 @@ export interface PlanFileIncluded {
   id: string;
   originalName: string;
   mimeType: string;
-}
-
-function fileTypeLabel(file: PlanFileIncluded): string {
-  const ext = file.originalName.includes(".")
-    ? file.originalName.split(".").pop()?.toUpperCase()
-    : null;
-  return ext && ext.length <= 5
-    ? ext
-    : (file.mimeType.split("/").pop()?.toUpperCase() ?? "File");
 }
 
 export interface PlanDetailBodyProps {

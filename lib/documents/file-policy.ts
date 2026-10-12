@@ -27,7 +27,6 @@ const ALLOWED_FILE_TYPES: readonly AllowedFileType[] = [
     extensions: [".pptx"],
   },
   { mime: "image/jpeg", extensions: [".jpg", ".jpeg"] },
-  { mime: "image/jpg", extensions: [] },
   { mime: "image/png", extensions: [".png"] },
   { mime: "image/gif", extensions: [".gif"] },
   { mime: "image/webp", extensions: [".webp"] },
@@ -96,4 +95,15 @@ export function validateUploadFile(file: {
   return inferred
     ? { ok: true, mimeType: inferred }
     : { ok: false, code: "UNSUPPORTED_FILE_TYPE" };
+}
+
+/** A short type label ("PDF", "DOCX") from the file name, else the MIME subtype. */
+export function fileTypeLabel(file: {
+  originalName: string;
+  mimeType: string;
+}): string {
+  const ext = extensionOf(file.originalName)?.slice(1).toUpperCase();
+  return ext && ext.length <= 5
+    ? ext
+    : (file.mimeType.split("/").pop()?.toUpperCase() ?? "File");
 }
