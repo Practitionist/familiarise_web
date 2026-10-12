@@ -304,6 +304,13 @@ export async function PATCH(
       );
     }
 
+    // A review only lands on the newest live learner version of its thread.
+    const newerLearnerVersion = {
+      deletedAt: null,
+      uploadedByRole: "CONSULTEE" as const,
+      versionNo: { gt: document.versionNo },
+    };
+    const rootId = document.rootDocumentId ?? document.id;
     const casResult = await prisma.appointmentDocument.updateMany({
       where: {
         id: documentId,
@@ -311,6 +318,13 @@ export async function PATCH(
         deletedAt: null,
         uploadedByRole: "CONSULTEE",
         reviewStatus: document.reviewStatus,
+        ...(document.rootDocumentId
+          ? {
+              rootDocument: {
+                is: { threadVersions: { none: newerLearnerVersion } },
+              },
+            }
+          : { threadVersions: { none: newerLearnerVersion } }),
       },
       data: {
         ...(statusChanged && validStatus && { reviewStatus: validStatus }),
@@ -323,6 +337,19 @@ export async function PATCH(
     });
 
     if (casResult.count === 0) {
+      const superseded = await prisma.appointmentDocument.count({
+        where: { rootDocumentId: rootId, ...newerLearnerVersion },
+      });
+      if (superseded > 0) {
+        return NextResponse.json(
+          {
+            error: "Newer version uploaded",
+            message: "The learner uploaded a newer version of this document.",
+            code: "SUPERSEDED",
+          },
+          { status: 409 },
+        );
+      }
       return NextResponse.json(
         {
           error: "Concurrent review update",

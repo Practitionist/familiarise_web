@@ -47,6 +47,11 @@ interface DetailRecordingVM {
   durationInMinutes: number;
   recordedAt: Date;
   sessionStartsAt: Date;
+  /** The session's programme position (`ordinal`); null for a one-off booking. */
+  sessionNumber: number | null;
+  totalSessions: number;
+  /** Set when one session produced several recordings, in `recordedAt` order. */
+  part: { index: number; count: number } | null;
 }
 
 function person(
@@ -232,25 +237,45 @@ export function mapAppointmentDetail(
     },
   };
 
+  const totalSessions = live.length;
+
   // Playback is minted per request by GET /api/stream/recordings/[id]; only playable rows are listed.
   const recordings: DetailRecordingVM[] = all.flatMap((a) =>
-    a.occurrences.flatMap((slot) =>
-      (slot.meeting?.recordings ?? [])
+    a.occurrences.flatMap((slot) => {
+      const parts = (slot.meeting?.recordings ?? [])
         .filter((rec) => PLAYABLE_RECORDING_STATUSES.has(rec.status))
-        .map((rec) => ({
-          id: rec.id,
-          title: rec.title,
-          thumbnailUrl: rec.thumbnailUrl ?? null,
-          status: rec.status,
-          durationInMinutes: rec.durationInMinutes,
-          recordedAt: toDate(rec.recordedAt),
-          sessionStartsAt: toDate(slot.startsAt),
-        })),
-    ),
+        .sort(
+          (x, y) =>
+            toDate(x.recordedAt).getTime() - toDate(y.recordedAt).getTime(),
+        );
+      return parts.map((rec, idx) => ({
+        id: rec.id,
+        title: rec.title,
+        thumbnailUrl: rec.thumbnailUrl ?? null,
+        status: rec.status,
+        durationInMinutes: rec.durationInMinutes,
+        recordedAt: toDate(rec.recordedAt),
+        sessionStartsAt: toDate(slot.startsAt),
+        sessionNumber: totalSessions > 1 ? slot.ordinal : null,
+        totalSessions,
+        part: parts.length > 1 ? { index: idx + 1, count: parts.length } : null,
+      }));
+    }),
   );
   recordings.sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime());
 
   return { vm, recordings };
+}
+
+/** "Session 3 · Part 1 of 2"; null when neither applies. */
+export function recordingSessionLabel(
+  rec: Pick<DetailRecordingVM, "sessionNumber" | "part">,
+): string | null {
+  const labels = [
+    rec.sessionNumber === null ? null : `Session ${rec.sessionNumber}`,
+    rec.part ? `Part ${rec.part.index} of ${rec.part.count}` : null,
+  ].filter((label): label is string => label !== null);
+  return labels.length > 0 ? labels.join(" · ") : null;
 }
 
 export type { DetailRecordingVM };

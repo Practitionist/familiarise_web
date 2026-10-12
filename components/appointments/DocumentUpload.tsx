@@ -43,6 +43,9 @@ import {
   getStatusColor,
   getStatusIcon,
 } from "@/lib/documents/document-utils";
+import { FileOpenLink } from "@/components/documents/FileOpenLink";
+import { getDocumentViewerUrl } from "@/lib/documents/urls";
+import { useFileDownload } from "@/lib/documents/use-file-download";
 
 interface DocumentUploadProps {
   appointmentId: string;
@@ -65,11 +68,7 @@ interface UploadedDocument {
   fileUrl: string;
   description: string | null;
   reviewStatus:
-    | "PENDING"
-    | "IN_REVIEW"
-    | "APPROVED"
-    | "REJECTED"
-    | "NEEDS_REVISION";
+    "PENDING" | "IN_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_REVISION";
   reviewNotes: string | null;
   reviewedAt: Date | null;
   uploadedAt: Date;
@@ -138,6 +137,7 @@ export function DocumentUpload({
     message?: string;
   }>({});
   const { toast } = useToast();
+  const { downloadDocument } = useFileDownload();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchDocuments = useCallback(async () => {
@@ -743,26 +743,29 @@ export function DocumentUpload({
                           </div>
                           <div className="flex space-x-1 ml-0 sm:ml-4 justify-end sm:justify-start">
                             <Button
+                              asChild
                               variant="ghost"
                               size="sm"
-                              onClick={() => window.open(doc.fileUrl, "_blank")}
                               title="View document"
                               className="h-7 w-7 sm:h-9 sm:w-9 p-0"
                             >
-                              <Eye className="h-3 w-3 sm:h-4 sm:w-4" />
+                              <FileOpenLink href={getDocumentViewerUrl(doc.id)}>
+                                <Eye
+                                  className="h-3 w-3 sm:h-4 sm:w-4"
+                                  aria-hidden
+                                />
+                                <span className="sr-only">View document</span>
+                              </FileOpenLink>
                             </Button>
                             <Button
+                              type="button"
                               variant="ghost"
                               size="sm"
                               onClick={() => {
-                                // Use our download API endpoint instead of direct Supabase URL
-                                const downloadUrl = `/api/appointments/${appointmentId}/documents/${doc.id}/download`;
-                                const link = window.document.createElement("a");
-                                link.href = downloadUrl;
-                                link.download = doc.originalName;
-                                window.document.body.appendChild(link);
-                                link.click();
-                                window.document.body.removeChild(link);
+                                void downloadDocument(appointmentId, doc.id, {
+                                  isUploader: true,
+                                  role: "consultee",
+                                });
                               }}
                               title="Download document"
                               className="h-7 w-7 sm:h-9 sm:w-9 p-0"
@@ -857,37 +860,38 @@ export function DocumentUpload({
                                       </div>
                                       <div className="flex space-x-1 justify-end">
                                         <Button
+                                          asChild
                                           variant="ghost"
                                           size="sm"
-                                          onClick={() =>
-                                            window.open(
-                                              response.fileUrl,
-                                              "_blank",
-                                            )
-                                          }
                                           title="View response"
                                           className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                                         >
-                                          <Eye className="h-3 w-3" />
+                                          <FileOpenLink
+                                            href={getDocumentViewerUrl(
+                                              response.id,
+                                            )}
+                                          >
+                                            <Eye
+                                              className="h-3 w-3"
+                                              aria-hidden
+                                            />
+                                            <span className="sr-only">
+                                              View response
+                                            </span>
+                                          </FileOpenLink>
                                         </Button>
                                         <Button
+                                          type="button"
                                           variant="ghost"
                                           size="sm"
                                           onClick={() => {
-                                            const downloadUrl = `/api/appointments/${appointmentId}/documents/${response.id}/download`;
-                                            const link =
-                                              window.document.createElement(
-                                                "a",
-                                              );
-                                            link.href = downloadUrl;
-                                            link.download =
-                                              response.originalName;
-                                            window.document.body.appendChild(
-                                              link,
-                                            );
-                                            link.click();
-                                            window.document.body.removeChild(
-                                              link,
+                                            void downloadDocument(
+                                              appointmentId,
+                                              response.id,
+                                              {
+                                                isUploader: false,
+                                                role: "consultee",
+                                              },
                                             );
                                           }}
                                           title="Download response"

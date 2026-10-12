@@ -1,16 +1,12 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { format } from "date-fns";
 import {
-  AlertCircle,
   CheckCircle2,
   Download,
   ExternalLink,
-  FileText,
   FileUp,
   Loader2,
-  Lock,
   MessageSquare,
   Paperclip,
   RotateCcw,
@@ -34,19 +30,26 @@ import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
+import { FileOpenLink } from "@/components/documents/FileOpenLink";
 import {
   ALLOWED_DOCUMENT_ACCEPT_ATTR,
   isReviewTransitionAllowed,
+  learnerRevisionGate,
+  versionAuthorLabel,
   type DocumentThread,
   type ReviewStatus,
   type ThreadableDocument,
 } from "@/lib/documents/document-review";
+import { getDocumentViewerUrl } from "@/lib/documents/urls";
+import { useFileDownload } from "@/lib/documents/use-file-download";
 import {
-  getAppointmentDocumentUrl,
-  isPreviewableMimeType,
-} from "@/lib/documents/urls";
+  FileActionError,
+  friendlyErrorFromResponse,
+  friendlyFileError,
+} from "@/lib/documents/file-errors";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import { uploadAppointmentDocumentWithProgress } from "@/lib/documents/direct-upload";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 
 interface DocumentReviewDrawerProps {
   thread: DocumentThread<ThreadableDocument> | null;
@@ -57,9 +60,6 @@ interface DocumentReviewDrawerProps {
   initialVersionId?: string;
   onUpdated?: () => void;
 }
-
-type PreviewErrorCode =
-  "STORAGE_MISSING" | "APPOINTMENT_TERMINAL" | "PREVIEW_FAILED" | null;
 
 const CONSULTANT_STATUS_OPTIONS = [
   {
@@ -84,125 +84,6 @@ const CONSULTANT_STATUS_OPTIONS = [
   },
 ] as const;
 
-async function fetchDocumentPreviewUrl(
-  appointmentId: string,
-  documentId: string,
-): Promise<{ url: string | null; errorCode: PreviewErrorCode }> {
-  const inlineEndpoint = getAppointmentDocumentUrl(
-    appointmentId,
-    documentId,
-    "inline",
-  );
-  try {
-    const res = await fetch(`${inlineEndpoint}&format=json`);
-    const payload = await res.json().catch(() => null);
-    if (!res.ok) {
-      if (res.status === 404 || payload?.code === "STORAGE_MISSING") {
-        return { url: null, errorCode: "STORAGE_MISSING" };
-      }
-      if (res.status === 403 || payload?.code === "APPOINTMENT_TERMINAL") {
-        return { url: null, errorCode: "APPOINTMENT_TERMINAL" };
-      }
-      return { url: null, errorCode: "PREVIEW_FAILED" };
-    }
-    return {
-      url: payload?.signedUrl ?? inlineEndpoint,
-      errorCode: null,
-    };
-  } catch {
-    return { url: null, errorCode: "PREVIEW_FAILED" };
-  }
-}
-
-function DocumentPreviewStage({
-  activeVersion,
-  canPreviewInline,
-  previewErrorCode,
-  isLoadingPreview,
-  inlineUrl,
-  downloadUrl,
-}: Readonly<{
-  activeVersion: ThreadableDocument;
-  canPreviewInline: boolean;
-  previewErrorCode: PreviewErrorCode;
-  isLoadingPreview: boolean;
-  inlineUrl: string;
-  downloadUrl: string;
-}>) {
-  if (!canPreviewInline) {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <FileText className="mb-3 h-10 w-10 text-muted-foreground" />
-        <p className="text-sm font-medium text-foreground">
-          {activeVersion.originalName}
-        </p>
-        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-          Inline preview is available for PDFs, images, and text files. Download
-          this file ({formatFileSize(activeVersion.fileSize)}) to inspect it
-          locally.
-        </p>
-        <Button asChild size="sm" variant="outline" className="mt-4">
-          <a href={downloadUrl}>
-            <Download className="mr-1.5 h-3.5 w-3.5" />
-            Download ({formatFileSize(activeVersion.fileSize)})
-          </a>
-        </Button>
-      </div>
-    );
-  }
-
-  if (previewErrorCode === "STORAGE_MISSING") {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <AlertCircle className="mb-3 h-10 w-10 text-destructive/70" />
-        <p className="text-sm font-medium text-foreground">File unavailable</p>
-        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-          This file is no longer in storage.
-        </p>
-      </div>
-    );
-  }
-
-  if (previewErrorCode === "APPOINTMENT_TERMINAL") {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 text-center">
-        <Lock className="mb-3 h-10 w-10 text-muted-foreground" />
-        <p className="text-sm font-medium text-foreground">Booking closed</p>
-        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-          Files on cancelled or expired sessions are closed.
-        </p>
-      </div>
-    );
-  }
-
-  if (isLoadingPreview) {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 text-xs text-muted-foreground">
-        <Loader2 className="mb-2 h-6 w-6 animate-spin" />
-        Preparing preview...
-      </div>
-    );
-  }
-
-  if (activeVersion.mimeType.startsWith("image/")) {
-    return (
-      <img
-        src={inlineUrl}
-        alt={activeVersion.originalName}
-        className="max-h-[60vh] max-w-full object-contain p-2"
-      />
-    );
-  }
-
-  return (
-    <iframe
-      title={activeVersion.originalName}
-      src={inlineUrl}
-      className="h-[60vh] w-full border-0"
-    />
-  );
-}
-
 function DocumentThreadActionControls({
   viewerRole,
   thread,
@@ -212,11 +93,12 @@ function DocumentThreadActionControls({
   notesDraft,
   setNotesDraft,
   canUpload,
-  nextVersionNo,
+  revisionBlockedReason,
   revisionNote,
   setRevisionNote,
   setAttachmentFile,
   uploadProgress,
+  onDownloadVersion,
 }: Readonly<{
   viewerRole: "consultee" | "consultant";
   thread: DocumentThread<ThreadableDocument>;
@@ -226,11 +108,12 @@ function DocumentThreadActionControls({
   notesDraft: string;
   setNotesDraft: (val: string) => void;
   canUpload: boolean;
-  nextVersionNo: number;
+  revisionBlockedReason: string | null;
   revisionNote: string;
   setRevisionNote: (val: string) => void;
   setAttachmentFile: (file: File | null) => void;
   uploadProgress: number | null;
+  onDownloadVersion: (doc: ThreadableDocument) => void;
 }>) {
   if (viewerRole === "consultant") {
     if (!reviewTarget) {
@@ -316,6 +199,12 @@ function DocumentThreadActionControls({
     );
   }
 
+  const latestReply =
+    thread.latestConsultantResponse &&
+    thread.latestConsultantResponse.id !== thread.rootId
+      ? thread.latestConsultantResponse
+      : null;
+
   return (
     <div className="space-y-3">
       <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
@@ -332,31 +221,34 @@ function DocumentThreadActionControls({
           </p>
         )}
 
-        {thread.latestConsultantResponse && (
+        {latestReply && (
           <div className="flex items-center justify-between rounded border bg-background px-2.5 py-1.5 text-xs">
             <span className="truncate font-medium">
-              Attached response: {thread.latestConsultantResponse.originalName}
+              Expert reply: {latestReply.originalName}
             </span>
-            <a
-              href={getAppointmentDocumentUrl(
-                thread.appointmentId,
-                thread.latestConsultantResponse.id,
-                "attachment",
-              )}
+            <button
+              type="button"
+              onClick={() => onDownloadVersion(latestReply)}
               className="ml-2 inline-flex shrink-0 items-center gap-1 font-medium text-primary hover:underline"
             >
               Download
               <Download className="h-3 w-3" />
-            </a>
+            </button>
           </div>
         )}
       </div>
+
+      {revisionBlockedReason && (
+        <p className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+          {revisionBlockedReason}
+        </p>
+      )}
 
       {canUpload && (
         <div className="space-y-2.5 rounded-lg border p-3">
           <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             <FileUp className="h-3.5 w-3.5" />
-            Upload Revision (v{nextVersionNo})
+            Upload new version
           </p>
           <Input
             type="file"
@@ -375,7 +267,7 @@ function DocumentThreadActionControls({
           />
           {uploadProgress !== null && (
             <p className="text-[11px] text-muted-foreground">
-              Uploading v{nextVersionNo}... {uploadProgress}%
+              Uploading... {uploadProgress}%
             </p>
           )}
         </div>
@@ -394,6 +286,8 @@ export function DocumentReviewDrawer({
   onUpdated,
 }: Readonly<DocumentReviewDrawerProps>) {
   const { toast } = useToast();
+  const { downloadDocument } = useFileDownload();
+  const formatZoned = useZonedFormat();
   const [selectedVersionId, setSelectedVersionId] = useState<string>("");
   const [statusDraft, setStatusDraft] = useState<string>("");
   const [notesDraft, setNotesDraft] = useState<string>("");
@@ -401,11 +295,6 @@ export function DocumentReviewDrawer({
   const [revisionNote, setRevisionNote] = useState<string>("");
   const [isSaving, setIsSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-
-  const [signedPreviewUrl, setSignedPreviewUrl] = useState<string | null>(null);
-  const [previewErrorCode, setPreviewErrorCode] =
-    useState<PreviewErrorCode>(null);
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
   const threadRef = React.useRef(thread);
   useEffect(() => {
@@ -446,53 +335,21 @@ export function DocumentReviewDrawer({
     thread?.latestVersion ??
     null;
 
-  const canPreviewInline = activeVersion
-    ? isPreviewableMimeType(activeVersion.mimeType, activeVersion.originalName)
-    : false;
-
-  useEffect(() => {
-    if (!isOpen || !thread || !activeVersion || !canPreviewInline) {
-      setSignedPreviewUrl(null);
-      setPreviewErrorCode(null);
-      setIsLoadingPreview(false);
-      return;
-    }
-
-    let cancelled = false;
-    const loadPreview = async () => {
-      setIsLoadingPreview(true);
-      setPreviewErrorCode(null);
-      setSignedPreviewUrl(null);
-      const outcome = await fetchDocumentPreviewUrl(
-        thread.appointmentId,
-        activeVersion.id,
-      );
-      if (cancelled) return;
-      setSignedPreviewUrl(outcome.url);
-      setPreviewErrorCode(outcome.errorCode);
-      setIsLoadingPreview(false);
-    };
-
-    void loadPreview();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen, thread, activeVersion, canPreviewInline]);
-
   if (!thread || !activeVersion) return null;
 
-  const nextVersionNo =
-    (thread.latestVersion.versionNo ?? thread.versionCount) + 1;
-
-  const inlineUrl =
-    signedPreviewUrl ??
-    getAppointmentDocumentUrl(thread.appointmentId, activeVersion.id, "inline");
-  const downloadUrl = getAppointmentDocumentUrl(
-    thread.appointmentId,
-    activeVersion.id,
-    "attachment",
+  const revisionGate = learnerRevisionGate(
+    thread.rootDocument.uploadedByRole,
+    thread.versions,
   );
+  const canUploadRevision =
+    viewerRole === "consultee" && canUpload && revisionGate.allowed;
+  const revisionBlockedReason =
+    viewerRole === "consultee" &&
+    canUpload &&
+    !revisionGate.allowed &&
+    thread.rootDocument.uploadedByRole === "CONSULTEE"
+      ? friendlyFileError(revisionGate.code).description
+      : null;
 
   const canDeleteActiveVersion =
     (viewerRole === "consultee" &&
@@ -508,11 +365,13 @@ export function DocumentReviewDrawer({
       { method: "DELETE" },
     );
     if (!res.ok) {
-      const errBody = await res.json().catch(() => null);
+      const error = await friendlyErrorFromResponse(res, {
+        isUploader: true,
+        role: viewerRole,
+      });
       toast({
         title: "Unable to delete file",
-        description:
-          errBody?.message || errBody?.error || "Could not remove this file.",
+        description: error.description,
         variant: "destructive",
       });
       throw new Error("Delete failed");
@@ -544,9 +403,8 @@ export function DocumentReviewDrawer({
       );
 
       if (!patchRes.ok) {
-        const errBody = await patchRes.json().catch(() => null);
-        throw new Error(
-          errBody?.message || errBody?.error || "Failed to update review",
+        throw new FileActionError(
+          await friendlyErrorFromResponse(patchRes, { role: "consultant" }),
         );
       }
 
@@ -563,10 +421,10 @@ export function DocumentReviewDrawer({
         } catch (uploadErr) {
           toast({
             title: "Review saved",
-            description: `Status and notes were saved, but response attachment upload failed: ${
+            description: `Status and notes were saved, but the reply file didn't upload. ${
               uploadErr instanceof Error
                 ? uploadErr.message
-                : "Unknown upload error"
+                : "Something went wrong. Try again."
             }`,
             variant: "destructive",
           });
@@ -587,9 +445,12 @@ export function DocumentReviewDrawer({
       onClose();
     } catch (err) {
       toast({
-        title: "Unable to save review",
+        title:
+          err instanceof FileActionError ? err.title : "Unable to save review",
         description:
-          err instanceof Error ? err.message : "Failed to save review",
+          err instanceof Error
+            ? err.message
+            : "Something went wrong. Try again.",
         variant: "destructive",
       });
     } finally {
@@ -621,9 +482,8 @@ export function DocumentReviewDrawer({
       });
 
       toast({
-        title: `Uploaded v${nextVersionNo}`,
-        description:
-          "Your revised document has been threaded and sent for review.",
+        title: "New version uploaded",
+        description: "Your expert will review this version next.",
       });
       setAttachmentFile(null);
       setRevisionNote("");
@@ -631,9 +491,11 @@ export function DocumentReviewDrawer({
       onClose();
     } catch (err) {
       toast({
-        title: "Upload failed",
+        title: err instanceof FileActionError ? err.title : "Upload failed",
         description:
-          err instanceof Error ? err.message : "Failed to upload revision",
+          err instanceof Error
+            ? err.message
+            : "Something went wrong. Try again.",
         variant: "destructive",
       });
     } finally {
@@ -646,11 +508,19 @@ export function DocumentReviewDrawer({
     thread.rootDocument.uploadedByRole === "CONSULTANT";
   const showConsultantSave =
     viewerRole === "consultant" && Boolean(reviewTarget);
-  const showConsulteeSave = viewerRole === "consultee" && canUpload;
+  const showConsulteeSave = canUploadRevision;
+
+  const triggerDownload = (doc: ThreadableDocument) => {
+    void downloadDocument(thread.appointmentId, doc.id, {
+      isUploader:
+        (doc.uploadedByRole === "CONSULTEE") === (viewerRole === "consultee"),
+      role: viewerRole,
+    });
+  };
 
   return (
     <ResponsiveModal open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <ResponsiveModalContent className="max-w-5xl">
+      <ResponsiveModalContent className="max-w-3xl">
         <ResponsiveModalHeader>
           <div className="flex flex-wrap items-center justify-between gap-2 pr-6">
             <div className="min-w-0">
@@ -660,7 +530,7 @@ export function DocumentReviewDrawer({
               <ResponsiveModalDescription className="text-xs">
                 Deliverable thread · {thread.versionCount}{" "}
                 {thread.versionCount === 1 ? "version" : "versions"} · Latest{" "}
-                {format(new Date(thread.updatedAt), "dd MMM yyyy, h:mm a")}
+                {formatZoned(thread.updatedAt, "dd MMM yyyy, h:mm a")}
               </ResponsiveModalDescription>
             </div>
             {isExpertHandoutRoot ? (
@@ -674,132 +544,132 @@ export function DocumentReviewDrawer({
           </div>
         </ResponsiveModalHeader>
 
-        <div className="grid grid-cols-1 gap-4 py-2 lg:grid-cols-12">
-          {/* Left 7 columns: Live Document Preview */}
-          <div className="flex flex-col space-y-2 lg:col-span-7">
-            <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-1.5 text-xs">
-              <span className="truncate font-medium text-foreground">
-                v{activeVersion.versionNo ?? 1} · {activeVersion.originalName}{" "}
-                <span className="text-muted-foreground">
-                  ({formatFileSize(activeVersion.fileSize)})
-                </span>
+        <div className="space-y-4 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-xs">
+            <span className="min-w-0 truncate font-medium text-foreground">
+              v{activeVersion.versionNo ?? 1} · {activeVersion.originalName}{" "}
+              <span className="text-muted-foreground">
+                ({formatFileSize(activeVersion.fileSize)})
               </span>
-              <div className="flex shrink-0 items-center gap-1.5">
-                {canPreviewInline && (
-                  <>
-                    <a
-                      href={inlineUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
-                    >
-                      Open
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                    <span className="text-muted-foreground">·</span>
-                  </>
-                )}
-                <a
-                  href={downloadUrl}
-                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
-                >
-                  Download
-                  <Download className="h-3 w-3" />
-                </a>
-                {canDeleteActiveVersion && (
-                  <>
-                    <span className="text-muted-foreground">·</span>
-                    <ConfirmDialog
-                      title="Delete this document?"
-                      description={`"${activeVersion.originalName}" will be permanently removed from this thread.`}
-                      confirmLabel="Delete"
-                      tone="destructive"
-                      onConfirm={handleDeleteActiveVersion}
-                      trigger={
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1 font-medium text-destructive hover:underline"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          Delete
-                        </button>
-                      }
-                    />
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div className="flex min-h-[380px] flex-1 items-center justify-center overflow-hidden rounded-lg border bg-muted/20">
-              <DocumentPreviewStage
-                activeVersion={activeVersion}
-                canPreviewInline={canPreviewInline}
-                previewErrorCode={previewErrorCode}
-                isLoadingPreview={isLoadingPreview}
-                inlineUrl={inlineUrl}
-                downloadUrl={downloadUrl}
-              />
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <FileOpenLink
+                href={getDocumentViewerUrl(activeVersion.id)}
+                className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground"
+              >
+                Open
+                <ExternalLink className="h-3 w-3" aria-hidden />
+              </FileOpenLink>
+              <span className="text-muted-foreground" aria-hidden>
+                ·
+              </span>
+              <button
+                type="button"
+                onClick={() => triggerDownload(activeVersion)}
+                className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+              >
+                Download
+                <Download className="h-3 w-3" aria-hidden />
+              </button>
+              {canDeleteActiveVersion && (
+                <>
+                  <span className="text-muted-foreground" aria-hidden>
+                    ·
+                  </span>
+                  <ConfirmDialog
+                    title="Delete this document?"
+                    description={`"${activeVersion.originalName}" will be permanently removed from this thread.`}
+                    confirmLabel="Delete"
+                    tone="destructive"
+                    onConfirm={handleDeleteActiveVersion}
+                    trigger={
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 font-medium text-destructive hover:underline"
+                      >
+                        <Trash2 className="h-3 w-3" aria-hidden />
+                        Delete
+                      </button>
+                    }
+                  />
+                </>
+              )}
             </div>
           </div>
 
-          {/* Right 5 columns: Version Switcher + Review/Revision Controls */}
-          <div className="flex flex-col justify-between space-y-4 lg:col-span-5">
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                  Version History
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {thread.versions.map((ver, idx) => {
-                    const isSelected = ver.id === activeVersion.id;
-                    const vNum = ver.versionNo ?? idx + 1;
-                    const isExpert = ver.uploadedByRole === "CONSULTANT";
-                    return (
-                      <button
-                        key={ver.id}
-                        type="button"
-                        onClick={() => setSelectedVersionId(ver.id)}
-                        className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
-                          isSelected
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "border-border bg-background text-foreground hover:bg-muted"
-                        }`}
-                      >
-                        <span>v{vNum}</span>
-                        <Badge
-                          variant="secondary"
-                          className="h-4 px-1 text-[10px]"
-                        >
-                          {isExpert ? "Expert" : "Learner"}
-                        </Badge>
-                      </button>
-                    );
-                  })}
-                </div>
-                {activeVersion.description && (
-                  <p className="rounded-md bg-muted/40 p-2 text-xs text-muted-foreground">
-                    Note on v{activeVersion.versionNo ?? 1}:{" "}
-                    {activeVersion.description}
-                  </p>
-                )}
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Revision &amp; Feedback Timeline
+              </p>
+              <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                {thread.versions.map((ver, idx) => {
+                  const isSelected = ver.id === activeVersion.id;
+                  const vNum = ver.versionNo ?? idx + 1;
+                  return (
+                    <button
+                      key={ver.id}
+                      type="button"
+                      onClick={() => setSelectedVersionId(ver.id)}
+                      className={`flex w-full flex-col gap-1 rounded-md border px-2.5 py-2 text-left text-xs transition-colors ${
+                        isSelected
+                          ? "border-primary bg-primary/5 text-foreground"
+                          : "border-border bg-background text-foreground hover:bg-muted/60"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className="font-mono font-semibold">
+                            v{vNum}
+                          </span>
+                          <Badge
+                            variant="secondary"
+                            className="h-4 shrink-0 px-1 text-[10px]"
+                          >
+                            {versionAuthorLabel(ver, thread.rootId, viewerRole)}
+                          </Badge>
+                          <span className="truncate font-medium">
+                            {ver.originalName}
+                          </span>
+                        </div>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          {formatZoned(ver.uploadedAt, "d MMM")}
+                        </span>
+                      </div>
+                      {ver.description && (
+                        <p className="line-clamp-2 text-[11px] text-muted-foreground">
+                          Note: {ver.description}
+                        </p>
+                      )}
+                      {ver.reviewNotes && (
+                        <p className="line-clamp-2 text-[11px] text-muted-foreground">
+                          Feedback: {ver.reviewNotes}
+                        </p>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
-
-              <DocumentThreadActionControls
-                viewerRole={viewerRole}
-                thread={thread}
-                reviewTarget={reviewTarget}
-                statusDraft={statusDraft}
-                setStatusDraft={setStatusDraft}
-                notesDraft={notesDraft}
-                setNotesDraft={setNotesDraft}
-                canUpload={canUpload}
-                nextVersionNo={nextVersionNo}
-                revisionNote={revisionNote}
-                setRevisionNote={setRevisionNote}
-                setAttachmentFile={setAttachmentFile}
-                uploadProgress={uploadProgress}
-              />
             </div>
+
+            <DocumentThreadActionControls
+              viewerRole={viewerRole}
+              thread={thread}
+              reviewTarget={reviewTarget}
+              statusDraft={statusDraft}
+              setStatusDraft={setStatusDraft}
+              notesDraft={notesDraft}
+              setNotesDraft={setNotesDraft}
+              canUpload={
+                viewerRole === "consultant" ? canUpload : canUploadRevision
+              }
+              revisionBlockedReason={revisionBlockedReason}
+              revisionNote={revisionNote}
+              setRevisionNote={setRevisionNote}
+              setAttachmentFile={setAttachmentFile}
+              uploadProgress={uploadProgress}
+              onDownloadVersion={triggerDownload}
+            />
           </div>
         </div>
 
@@ -828,7 +698,7 @@ export function DocumentReviewDrawer({
               {isSaving && (
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
               )}
-              Upload v{nextVersionNo} Revision
+              Upload new version
             </Button>
           )}
         </ResponsiveModalFooter>

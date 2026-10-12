@@ -23,7 +23,13 @@ interface BookingResources {
 }
 
 export type ConsulteeRecordingCategory =
-  "all" | "consultation" | "subscription" | "webinar" | "class" | "purchased";
+  | "all"
+  | "consultation"
+  | "subscription"
+  | "webinar"
+  | "class"
+  | "trial"
+  | "purchased";
 
 const RECORDING_CATEGORIES: {
   value: ConsulteeRecordingCategory;
@@ -34,6 +40,7 @@ const RECORDING_CATEGORIES: {
   { value: "subscription", label: "Subscription" },
   { value: "webinar", label: "Webinar" },
   { value: "class", label: "Class" },
+  { value: "trial", label: "Trial" },
   { value: "purchased", label: "Purchased" },
 ];
 
@@ -188,6 +195,15 @@ export function ConsulteeRecordingsPage({
         trials: [],
       };
     }
+    if (category === "trial") {
+      return {
+        consultations: [],
+        subscriptions: [],
+        webinars: [],
+        classes: [],
+        trials: filterBySearch(recordingsData.trials),
+      };
+    }
     if (category === "purchased") {
       return {
         consultations: [],
@@ -227,6 +243,7 @@ export function ConsulteeRecordingsPage({
           description="Recordings of the sessions you've attended and purchased replays"
         />
         <ResourcesTab
+          consulteeId={consulteeId}
           data={recordingsData}
           artifact="recordings"
           sortDir={sortDir}
@@ -258,6 +275,7 @@ export function ConsulteeRecordingsPage({
         {purchasedItems.map((event) => (
           <EventResourceCard
             key={event.id}
+            consulteeId={consulteeId}
             event={event}
             artifact="recordings"
           />
@@ -277,7 +295,12 @@ export function ConsulteeRecordingsPage({
     );
   } else {
     recordingsContent = (
-      <ResourcesTab data={scopedData} artifact="recordings" sortDir={sortDir} />
+      <ResourcesTab
+        consulteeId={consulteeId}
+        data={scopedData}
+        artifact="recordings"
+        sortDir={sortDir}
+      />
     );
   }
 

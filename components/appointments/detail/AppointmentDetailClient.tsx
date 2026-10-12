@@ -25,7 +25,10 @@ import { throwSupportError } from "@/lib/support/error-copy";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
-import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
+import {
+  mapAppointmentDetail,
+  recordingSessionLabel,
+} from "@/lib/appointments/map-detail";
 import {
   presentationNames,
   toPresentationInput,
@@ -1120,6 +1123,18 @@ export function AppointmentDetailClient({
                           No documents for this booking.
                         </p>
                       )}
+                      {/^\/dashboard\/(consultant|consultee)\/[^/]+/.test(
+                        backHref,
+                      ) && (
+                        <div className="pt-2">
+                          <Link
+                            href={`${backHref.replace(/\/appointments$/, "")}/documents`}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                          >
+                            All documents <span aria-hidden>&rarr;</span>
+                          </Link>
+                        </div>
+                      )}
                     </ResourceSubgroup>
 
                     <div className="border-t border-border" />
@@ -1147,8 +1162,13 @@ export function AppointmentDetailClient({
                               {rec.title}
                             </p>
                             <p className="text-[11px] text-muted-foreground">
-                              {format(rec.recordedAt, "d MMM yyyy")} ·{" "}
-                              {rec.durationInMinutes} min
+                              {[
+                                recordingSessionLabel(rec),
+                                format(rec.recordedAt, "d MMM yyyy"),
+                                `${rec.durationInMinutes} min`,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
@@ -1166,6 +1186,18 @@ export function AppointmentDetailClient({
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {/^\/dashboard\/(consultant|consultee)\/[^/]+/.test(
+                    backHref,
+                  ) && (
+                    <div className="pt-2">
+                      <Link
+                        href={`${backHref.replace(/\/appointments$/, "")}/recordings`}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                      >
+                        Recordings library <span aria-hidden>&rarr;</span>
+                      </Link>
                     </div>
                   )}
                 </ResourceSubgroup>

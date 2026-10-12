@@ -193,6 +193,7 @@ export default function DocumentsPage({
     <DashboardErrorBoundary>
       <div className="min-w-0 overflow-x-hidden">
         <DocumentsTab
+          consultantId={consultantId}
           documentsPage={documentsPage}
           isPlaceholderData={isPlaceholderData}
           onRefresh={refetch}

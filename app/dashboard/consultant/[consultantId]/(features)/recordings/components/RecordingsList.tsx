@@ -176,7 +176,7 @@ export function RecordingsList({
 
   const { data, isPending, isError, error, refetch } = useQuery({
     ...createConsultantQueries(consultantId).recordings({
-      type: (type as "webinar" | "class" | null) ?? null,
+      type: type ?? null,
       page,
       limit,
       search: debouncedSearch,
@@ -327,6 +327,7 @@ export function RecordingsList({
           {recordings.map((recording) => (
             <RecordingCard
               key={recording.id}
+              consultantId={consultantId}
               recording={recording}
               onWatch={(rec) => setActivePlayerRecordingId(rec.id)}
               onManage={(rec) => setActiveManageRecordingId(rec.id)}
@@ -358,6 +359,9 @@ export function RecordingsList({
                 storageType: activePlayerRecording.storageType,
                 planTitle: activePlayerRecording.planTitle,
                 previewTranscript: activePlayerRecording.previewTranscript,
+                appointmentHref: activePlayerRecording.appointmentId
+                  ? `/dashboard/consultant/${consultantId}/appointments/${activePlayerRecording.appointmentId}`
+                  : null,
               }
             : null
         }

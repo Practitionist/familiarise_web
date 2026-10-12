@@ -396,6 +396,29 @@ export async function GET(
       take: 50,
     });
 
+    // Shared-run arms list runs the viewer never attended; only their own runs get a link.
+    const groupAppointmentIds = [...webinars, ...classes].flatMap((e) =>
+      e.appointment ? [e.appointment.id] : [],
+    );
+    const ownSeats =
+      groupAppointmentIds.length > 0
+        ? await prisma.appointmentParticipant.findMany({
+            where: {
+              appointmentId: { in: groupAppointmentIds },
+              ...liveParticipant(userId),
+            },
+            select: { appointmentId: true },
+          })
+        : [];
+    const ownGroupAppointmentIds = new Set(
+      ownSeats.map((seat) => seat.appointmentId),
+    );
+    const runLink = (appointmentId: string | null | undefined) => {
+      if (!appointmentId) return { appointmentId: null, fromOtherRun: false };
+      const own = ownGroupAppointmentIds.has(appointmentId);
+      return { appointmentId: own ? appointmentId : null, fromOtherRun: !own };
+    };
+
     const extractAndRedact = (
       ...args: Parameters<typeof extractRecordings>
     ) => {
@@ -420,6 +443,7 @@ export async function GET(
       consultations: consultations
         .map((c: ConsultationWithResources) => ({
           id: c.id,
+          appointmentId: c.appointment?.id ?? null,
           planTitle: c.consultationPlan.title,
           consultantName: c.consultationPlan.consultantProfile.user.name,
           consultantImage: c.consultationPlan.consultantProfile.user.image,
@@ -432,6 +456,7 @@ export async function GET(
       subscriptions: subscriptions
         .map((s: SubscriptionWithResources) => ({
           id: s.id,
+          appointmentId: s.appointment?.id ?? null,
           planTitle: s.subscriptionPlan.title,
           consultantName: s.subscriptionPlan.consultantProfile.user.name,
           consultantImage: s.subscriptionPlan.consultantProfile.user.image,
@@ -444,6 +469,7 @@ export async function GET(
       webinars: webinars
         .map((w: WebinarWithResources) => ({
           id: w.id,
+          ...runLink(w.appointment?.id),
           planTitle: w.webinarPlan.title,
           consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
           consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
@@ -456,6 +482,7 @@ export async function GET(
       classes: classes
         .map((cl: ClassWithResources) => ({
           id: cl.id,
+          ...runLink(cl.appointment?.id),
           planTitle: cl.classPlan.title,
           consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
           consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
@@ -475,6 +502,7 @@ export async function GET(
       trials: trials
         .map((t: TrialWithResources) => ({
           id: t.id,
+          appointmentId: t.appointment?.id ?? null,
           planTitle: `Trial: ${t.subscriptionPlan.title}`,
           consultantName:
             t.subscriptionPlan.consultantProfile?.user.name ?? null,

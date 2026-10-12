@@ -19,8 +19,8 @@ import {
 
 import prisma from "@/lib/prisma";
 import {
-  getAppointmentDocumentUrl,
-  getPlanMaterialUrl,
+  getDocumentViewerUrl,
+  getMaterialViewerUrl,
 } from "@/lib/documents/urls";
 import { buildWhere as appointmentScopeWhere } from "@/lib/api/scope/list-appointments";
 import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
@@ -407,7 +407,7 @@ export async function readOrgLibraryDocuments(
         id: m.id,
         name: m.originalName,
         source: "materials" as const,
-        url: mine ? getPlanMaterialUrl(m.id, "inline") : null,
+        url: mine ? getMaterialViewerUrl(m.id) : null,
         uploadedAt: m.uploadedAt.toISOString(),
         reviewStatus: null,
       })),
@@ -415,7 +415,7 @@ export async function readOrgLibraryDocuments(
         id: d.id,
         name: d.originalName,
         source: sourceOf(d.uploadedByRole),
-        url: mine ? getAppointmentDocumentUrl(row.id, d.id, "inline") : null,
+        url: mine ? getDocumentViewerUrl(d.id) : null,
         uploadedAt: d.uploadedAt.toISOString(),
         reviewStatus: d.uploadedByRole === "CONSULTEE" ? d.reviewStatus : null,
       })),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { format } from "date-fns";
 import {
   AlertCircle,
@@ -42,6 +43,7 @@ export interface RecordingPlayerItem {
   previewTranscript?: string | null;
   planType?: string | null;
   planTitle?: string | null;
+  appointmentHref?: string | null;
 }
 
 export interface ResolvedPlaybackState {
@@ -113,10 +115,13 @@ function PlayerViewport({
 }: Readonly<PlayerViewportProps>) {
   if (fetchError) {
     return (
-      <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
-        <AlertCircle className="h-8 w-8 text-destructive" />
-        <p className="text-sm font-medium text-foreground">{fetchError}</p>
-        <Button variant="outline" size="sm" onClick={onRetry}>
+      <div className="flex aspect-video w-full flex-col items-center justify-center gap-2.5 rounded-lg border border-border bg-muted/40 p-6 text-center">
+        <AlertCircle className="h-8 w-8 text-muted-foreground" />
+        <p className="text-sm font-medium text-foreground">
+          Recording unavailable right now
+        </p>
+        <p className="max-w-sm text-xs text-muted-foreground">{fetchError}</p>
+        <Button variant="outline" size="sm" className="mt-1" onClick={onRetry}>
           <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
           Retry
         </Button>
@@ -408,23 +413,37 @@ export function RecordingPlayerModal({
               ))}
             </fieldset>
 
-            {activePlaybackUrl && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                asChild
-              >
-                <a
-                  href={activePlaybackUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+            <div className="flex flex-wrap items-center gap-2">
+              {recording.appointmentHref && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  asChild
                 >
-                  Open in New Tab
-                  <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-                </a>
-              </Button>
-            )}
+                  <Link href={recording.appointmentHref}>
+                    Session details &rarr;
+                  </Link>
+                </Button>
+              )}
+              {activePlaybackUrl && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs"
+                  asChild
+                >
+                  <a
+                    href={activePlaybackUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open in New Tab
+                    <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+                  </a>
+                </Button>
+              )}
+            </div>
           </div>
 
           {transcriptText && (

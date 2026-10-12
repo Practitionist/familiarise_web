@@ -36,7 +36,7 @@ interface PlannerData {
 }
 
 export interface ConsultantRecordingsParams {
-  type?: "webinar" | "class" | null;
+  type?: "webinar" | "class" | "consultation" | "subscription" | "trial" | null;
   page?: number;
   limit?: number;
   search?: string;

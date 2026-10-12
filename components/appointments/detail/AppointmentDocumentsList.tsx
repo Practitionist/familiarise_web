@@ -6,6 +6,8 @@ import { ExternalLink, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
+import { FileOpenLink } from "@/components/documents/FileOpenLink";
+import { getDocumentViewerUrl } from "@/lib/documents/urls";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
 
 interface AppointmentDocument {
@@ -91,17 +93,17 @@ export function AppointmentDocumentsList({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {doc.reviewStatus && (
+            {doc.reviewStatus && doc.uploadedByRole === "CONSULTEE" && (
               <StatusBadge
                 {...documentReviewStatusBadge(doc.reviewStatus)}
                 size="sm"
               />
             )}
-            <Button variant="outline" size="sm" asChild>
-              <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+            <Button asChild variant="outline" size="sm">
+              <FileOpenLink href={getDocumentViewerUrl(doc.id)}>
                 Open
-                <ExternalLink className="h-3 w-3 ml-1" />
-              </a>
+                <ExternalLink className="h-3 w-3 ml-1" aria-hidden />
+              </FileOpenLink>
             </Button>
           </div>
         </div>

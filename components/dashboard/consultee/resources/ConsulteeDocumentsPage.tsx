@@ -32,14 +32,14 @@ import { DocumentReviewDrawer } from "@/components/documents/DocumentReviewDrawe
 import { useListParams } from "@/hooks/useListParams";
 import { isConfirmedStatus } from "@/lib/appointments/status";
 import { documentReviewStatusBadge } from "@/lib/labels/session-labels";
+import { FileOpenLink } from "@/components/documents/FileOpenLink";
 import {
   groupDocumentsIntoThreads,
+  learnerRevisionGate,
   type DocumentThread,
 } from "@/lib/documents/document-review";
-import {
-  getAppointmentDocumentUrl,
-  getPlanMaterialUrl,
-} from "@/lib/documents/urls";
+import { getMaterialViewerUrl } from "@/lib/documents/urls";
+import { useFileDownload } from "@/lib/documents/use-file-download";
 import { formatFileSize } from "@/lib/documents/document-utils";
 import type {
   ConsulteeDocumentRow,
@@ -95,6 +95,7 @@ function canUploadRevisionForThread(
 function buildThreadColumns(
   basePath: string,
   onOpenDrawer: (rootId: string) => void,
+  onDownload: (thread: DocumentThread<ConsulteeDocumentRow>) => void,
 ): ResponsiveColumn<DocumentThread<ConsulteeDocumentRow>>[] {
   return [
     {
@@ -179,9 +180,11 @@ function buildThreadColumns(
       cell: (thread) => {
         const needsRevision =
           canUploadRevisionForThread(thread) &&
-          thread.effectiveStatus === "NEEDS_REVISION";
-        const nextVersionNo =
-          (thread.latestVersion.versionNo ?? thread.versionCount) + 1;
+          thread.effectiveStatus === "NEEDS_REVISION" &&
+          learnerRevisionGate(
+            thread.rootDocument.uploadedByRole,
+            thread.versions,
+          ).allowed;
         return (
           <div className="flex items-center justify-end gap-1.5">
             {needsRevision && (
@@ -192,7 +195,7 @@ function buildThreadColumns(
                 onClick={() => onOpenDrawer(thread.rootId)}
               >
                 <FileUp className="mr-1 h-3 w-3" />
-                Upload v{nextVersionNo}
+                Upload new version
               </Button>
             )}
             <Button
@@ -206,21 +209,14 @@ function buildThreadColumns(
               Preview
             </Button>
             <Button
-              asChild
+              type="button"
               variant="ghost"
               size="sm"
               className="h-7 px-2 text-xs"
+              onClick={() => onDownload(thread)}
             >
-              <a
-                href={getAppointmentDocumentUrl(
-                  thread.appointmentId,
-                  thread.latestVersion.id,
-                  "attachment",
-                )}
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span className="sr-only">Download</span>
-              </a>
+              <Download className="h-3.5 w-3.5" />
+              <span className="sr-only">Download</span>
             </Button>
           </div>
         );
@@ -229,72 +225,85 @@ function buildThreadColumns(
   ];
 }
 
-const MATERIAL_COLUMNS: ResponsiveColumn<ConsulteeMaterialRow>[] = [
-  {
-    key: "name",
-    header: "Material",
-    primary: true,
-    cell: (m) => (
-      <div className="space-y-0.5">
-        <a
-          href={getPlanMaterialUrl(m.id, "inline")}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground underline-offset-4 hover:underline"
-        >
-          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate">{m.originalName}</span>
-          <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
-        </a>
-        <p className="text-[11px] text-muted-foreground">
-          {formatFileSize(m.fileSize)}
-          {m.description ? ` · ${m.description}` : ""}
-        </p>
-      </div>
-    ),
-  },
-  {
-    key: "plan",
-    header: "Plan / Offering",
-    cell: (m) => <span className="text-foreground">{m.planTitle}</span>,
-  },
-  {
-    key: "expert",
-    header: "Expert",
-    cell: (m) => (
-      <span className="text-muted-foreground">{m.consultantName ?? "—"}</span>
-    ),
-  },
-  {
-    key: "date",
-    header: "Added",
-    cell: (m) => (
-      <span className="whitespace-nowrap text-xs text-muted-foreground">
-        {DATE.format(new Date(m.uploadedAt))}
-      </span>
-    ),
-  },
-  {
-    key: "download",
-    header: "",
-    cell: (m) => (
-      <div className="flex justify-end">
-        <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">
-          <a href={getPlanMaterialUrl(m.id, "attachment")}>
+function buildMaterialColumns(
+  onDownloadMaterial: (m: ConsulteeMaterialRow) => void,
+): ResponsiveColumn<ConsulteeMaterialRow>[] {
+  return [
+    {
+      key: "name",
+      header: "Material",
+      primary: true,
+      cell: (m) => (
+        <div className="space-y-0.5">
+          <FileOpenLink
+            href={getMaterialViewerUrl(m.id)}
+            className="inline-flex max-w-full items-center gap-1.5 text-left font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            <FileText
+              className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+            <span className="truncate">{m.originalName}</span>
+            <ExternalLink
+              className="h-3 w-3 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+          </FileOpenLink>
+          <p className="text-[11px] text-muted-foreground">
+            {formatFileSize(m.fileSize)}
+            {m.description ? ` · ${m.description}` : ""}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "plan",
+      header: "Plan / Offering",
+      cell: (m) => <span className="text-foreground">{m.planTitle}</span>,
+    },
+    {
+      key: "expert",
+      header: "Expert",
+      cell: (m) => (
+        <span className="text-muted-foreground">{m.consultantName ?? "—"}</span>
+      ),
+    },
+    {
+      key: "date",
+      header: "Added",
+      cell: (m) => (
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
+          {DATE.format(new Date(m.uploadedAt))}
+        </span>
+      ),
+    },
+    {
+      key: "download",
+      header: "",
+      cell: (m) => (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => onDownloadMaterial(m)}
+          >
             <Download className="mr-1 h-3.5 w-3.5" />
             Download
-          </a>
-        </Button>
-      </div>
-    ),
-  },
-];
+          </Button>
+        </div>
+      ),
+    },
+  ];
+}
 
 export function ConsulteeDocumentsPage({
   consulteeId,
 }: Readonly<{ consulteeId: string }>) {
   const basePath = `/dashboard/consultee/${consulteeId}`;
   const queryClient = useQueryClient();
+  const { downloadDocument, downloadMaterial } = useFileDownload();
   const { page, setPage } = useListParams();
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [search, setSearch] = useState<string>("");
@@ -340,8 +349,22 @@ export function ConsulteeDocumentsPage({
   }, [data?.materials, search]);
 
   const threadColumns = useMemo(
-    () => buildThreadColumns(basePath, setDrawerRootId),
-    [basePath],
+    () =>
+      buildThreadColumns(basePath, setDrawerRootId, (thread) => {
+        void downloadDocument(thread.appointmentId, thread.latestVersion.id, {
+          isUploader: thread.latestVersion.uploadedByRole === "CONSULTEE",
+          role: "consultee",
+        });
+      }),
+    [basePath, downloadDocument],
+  );
+
+  const materialColumns = useMemo(
+    () =>
+      buildMaterialColumns((material) => {
+        void downloadMaterial(material.id);
+      }),
+    [downloadMaterial],
   );
 
   const isFirstLoad = isLoading && !data;
@@ -396,7 +419,7 @@ export function ConsulteeDocumentsPage({
 
   const materialsTabContent = (
     <ResponsiveTable<ConsulteeMaterialRow>
-      columns={MATERIAL_COLUMNS}
+      columns={materialColumns}
       rows={filteredMaterials}
       getRowId={(m) => m.id}
       isLoading={isFirstLoad}

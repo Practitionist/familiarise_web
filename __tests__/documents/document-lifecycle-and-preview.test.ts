@@ -80,7 +80,10 @@ describe("Document presigned download, CAS deletion, and review state machine in
     mockedGetSession.mockResolvedValue({ user: { id: "learner-1" } });
     mockedFindFirstAppointment.mockResolvedValue({
       id: "apt-1",
-      consultation: { status: options.appointmentStatus },
+      consultation: {
+        status: options.appointmentStatus,
+        consultationPlan: { consultantProfile: { userId: "expert-user-1" } },
+      },
       subscription: null,
       webinar: null,
       class: null,
@@ -92,6 +95,7 @@ describe("Document presigned download, CAS deletion, and review state machine in
       originalName: "Resume.pdf",
       mimeType: "application/pdf",
       isStorageMissing: false,
+      uploadedByRole: "CONSULTEE",
     });
     if (options.signedUrlResult) {
       mockedCreateSignedUrl.mockResolvedValue(options.signedUrlResult);
@@ -302,35 +306,148 @@ describe("Document presigned download, CAS deletion, and review state machine in
       expect(mockedNotifyReviewed).not.toHaveBeenCalled();
       expect(mockedFindUniqueAppointment).not.toHaveBeenCalled();
     });
+
+    it("returns 409 SUPERSEDED when the learner uploaded a newer version before the review landed", async () => {
+      mockedGetSession.mockResolvedValue({ user: { id: "expert-user-1" } });
+      mockedFindFirstDoc.mockResolvedValue({
+        id: "doc-v1",
+        appointmentId: "apt-1",
+        originalName: "Resume.pdf",
+        reviewStatus: "IN_REVIEW",
+        reviewNotes: null,
+        uploadedByRole: "CONSULTEE",
+        rootDocumentId: null,
+        versionNo: 1,
+        appointment: {
+          consultation: { status: "APPROVED" },
+          subscription: null,
+        },
+      });
+      mockedUpdateMany.mockResolvedValue({ count: 0 });
+      (prisma.appointmentDocument.count as jest.Mock).mockResolvedValue(1);
+
+      const res = await patchAppointmentDocument(
+        new Request(
+          "http://localhost/api/appointments/apt-1/documents/doc-v1",
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reviewStatus: "APPROVED" }),
+          },
+        ) as never,
+        {
+          params: Promise.resolve({
+            appointmentId: "apt-1",
+            documentId: "doc-v1",
+          }),
+        },
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("SUPERSEDED");
+      expect(mockedUpdateMany.mock.calls[0][0].where).toMatchObject({
+        reviewStatus: "IN_REVIEW",
+        threadVersions: {
+          none: {
+            deletedAt: null,
+            uploadedByRole: "CONSULTEE",
+            versionNo: { gt: 1 },
+          },
+        },
+      });
+      expect(mockedNotifyReviewed).not.toHaveBeenCalled();
+    });
   });
 
   describe("Thread slot reservation & SQL root-thread filtering invariants", () => {
-    it("throws VERSION_LIMIT_REACHED inside resolveDocumentThreadSlot when serialized max version meets cap", async () => {
-      const { resolveDocumentThreadSlot, MAX_VERSIONS_PER_THREAD } =
+    async function learnerSlot(
+      rootRole: "CONSULTEE" | "CONSULTANT",
+      liveVersions: {
+        uploadedByRole: string;
+        reviewStatus: string;
+        versionNo: number;
+      }[],
+    ) {
+      const { resolveDocumentThreadSlot } =
         await import("@/lib/documents/document-review");
-
       const mockTx = {
         $executeRaw: jest.fn().mockResolvedValue(1),
         appointmentDocument: {
           findFirst: jest.fn().mockResolvedValue({
-            id: "root-1",
-            rootDocumentId: null,
+            id: "v-latest",
+            rootDocumentId: "root-1",
+            uploadedByRole: "CONSULTEE",
+            rootDocument: { uploadedByRole: rootRole },
           }),
+          findMany: jest.fn().mockResolvedValue(liveVersions),
           aggregate: jest.fn().mockResolvedValue({
-            _max: { versionNo: MAX_VERSIONS_PER_THREAD },
+            _max: {
+              versionNo: Math.max(...liveVersions.map((v) => v.versionNo)),
+            },
           }),
           count: jest.fn(),
         },
       };
+      const slot = resolveDocumentThreadSlot(mockTx as never, {
+        appointmentId: "apt-1",
+        parentDocumentId: "v-latest",
+        uploadedByRole: "CONSULTEE",
+      });
+      return { slot, mockTx };
+    }
+    const learner = (versionNo: number, reviewStatus = "NEEDS_REVISION") => ({
+      uploadedByRole: "CONSULTEE",
+      reviewStatus,
+      versionNo,
+    });
+    const expertReply = (versionNo: number) => ({
+      uploadedByRole: "CONSULTANT",
+      reviewStatus: "APPROVED",
+      versionNo,
+    });
 
-      await expect(
-        resolveDocumentThreadSlot(mockTx as never, {
-          appointmentId: "apt-1",
-          parentDocumentId: "root-1",
-          maxDocsPerAppointment: 20,
-          maxVersionsPerThread: MAX_VERSIONS_PER_THREAD,
-        }),
-      ).rejects.toThrow("VERSION_LIMIT_REACHED");
+    it.each([
+      ["IN_REVIEW", "THREAD_IN_REVIEW"],
+      ["APPROVED", "THREAD_CLOSED"],
+      ["REJECTED", "THREAD_CLOSED"],
+    ])(
+      "refuses a learner version while the latest learner row is %s (%s), under the appointment lock",
+      async (status, code) => {
+        const { slot, mockTx } = await learnerSlot("CONSULTEE", [
+          learner(1, "NEEDS_REVISION"),
+          expertReply(2),
+          learner(3, status),
+        ]);
+        await expect(slot).rejects.toMatchObject({ code });
+        expect(mockTx.$executeRaw).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it("refuses a learner version on an expert-shared root", async () => {
+      const { slot } = await learnerSlot("CONSULTANT", [expertReply(1)]);
+      await expect(slot).rejects.toMatchObject({ code: "THREAD_CLOSED" });
+    });
+
+    it("caps learner versions at 10 and does not count expert replies", async () => {
+      const ten = Array.from({ length: 10 }, (_, i) => learner(i * 2 + 1));
+      const atCap = await learnerSlot("CONSULTEE", [
+        ...ten,
+        expertReply(2),
+        expertReply(4),
+      ]);
+      await expect(atCap.slot).rejects.toMatchObject({
+        code: "VERSION_LIMIT_REACHED",
+      });
+
+      const nine = Array.from({ length: 9 }, (_, i) => learner(i * 2 + 1));
+      const replies = Array.from({ length: 8 }, (_, i) =>
+        expertReply(i * 2 + 2),
+      );
+      const underCap = await learnerSlot("CONSULTEE", [...nine, ...replies]);
+      await expect(underCap.slot).resolves.toEqual({
+        rootDocumentId: "root-1",
+        versionNo: 18,
+      });
     });
 
     it("builds SQL-pushed OR filter on root threads via buildRootThreadStatusWhere", async () => {
@@ -408,7 +525,7 @@ describe("Document presigned download, CAS deletion, and review state machine in
       expect(rejectedMime.ok).toBe(false);
 
       (prisma.appointmentDocument.count as jest.Mock).mockResolvedValueOnce(20);
-      const capHit = await preflightThreadLimits("apt-1", null);
+      const capHit = await preflightThreadLimits("apt-1", null, "CONSULTEE");
       expect(capHit).not.toBeNull();
       expect(capHit?.status).toBe(400);
 

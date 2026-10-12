@@ -1,3 +1,9 @@
+import {
+  FileActionError,
+  friendlyErrorFromResponse,
+  friendlyFileError,
+} from "./file-errors";
+
 /**
  * Client-side 2-phase presigned upload helper with XHR upload progress:
  * mints a single-use upload URL (`/upload-url`), PUTs bytes directly to Supabase Storage,
@@ -52,8 +58,7 @@ function putFileWithProgress(
 
 async function ensureOkResponse(res: Response): Promise<Response> {
   if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.message || body?.error || "Failed to upload file");
+    throw new FileActionError(await friendlyErrorFromResponse(res));
   }
   return res;
 }
@@ -152,14 +157,20 @@ export async function uploadAppointmentDocumentWithProgress(
       ? `/api/appointments/${encodeURIComponent(appointmentId)}/documents/consultant`
       : `/api/appointments/${encodeURIComponent(appointmentId)}/documents`);
 
-  if (typeof XMLHttpRequest !== "undefined") {
-    const directRes = await tryPresignedDirectUpload(
-      appointmentId,
-      targetEndpoint,
-      params,
+  try {
+    if (typeof XMLHttpRequest !== "undefined") {
+      const directRes = await tryPresignedDirectUpload(
+        appointmentId,
+        targetEndpoint,
+        params,
+      );
+      if (directRes) return directRes;
+    }
+    return await uploadMultipartFallback(targetEndpoint, params);
+  } catch (err) {
+    if (err instanceof FileActionError) throw err;
+    throw new FileActionError(
+      friendlyFileError(err instanceof TypeError ? "NETWORK" : "SERVER_ERROR"),
     );
-    if (directRes) return directRes;
   }
-
-  return uploadMultipartFallback(targetEndpoint, params);
 }

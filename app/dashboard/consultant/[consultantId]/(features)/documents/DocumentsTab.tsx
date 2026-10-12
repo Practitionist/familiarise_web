@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import Link from "next/link";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,8 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { DocumentReviewDrawer } from "@/components/documents/DocumentReviewDrawer";
+import { getDocumentViewerUrl } from "@/lib/documents/urls";
+import { useFileDownload } from "@/lib/documents/use-file-download";
 import {
   groupDocumentsIntoThreads,
   type DocumentThread,
@@ -68,6 +71,7 @@ const REVIEW_STATUSES = [
 ];
 
 interface ExtendedDocumentsTabProps extends DocumentsTabProps {
+  consultantId?: string;
   onRefresh?: () => void;
   uploadedByRole?: "CONSULTEE" | "CONSULTANT";
   onUploadedByRoleChange?: (role: "CONSULTEE" | "CONSULTANT") => void;
@@ -76,6 +80,7 @@ interface ExtendedDocumentsTabProps extends DocumentsTabProps {
 function buildConsultantDocumentColumns(
   threadsByRootId: Map<string, DocumentThread<IDocument>>,
   onView: (doc: IDocument) => void,
+  consultantId?: string,
 ): ResponsiveColumn<IDocument>[] {
   return [
     {
@@ -138,9 +143,18 @@ function buildConsultantDocumentColumns(
       header: "Appointment",
       cell: (document) => (
         <div className="text-sm">
-          <div className="font-medium text-foreground">
-            {document.appointmentTitle}
-          </div>
+          {consultantId ? (
+            <Link
+              href={`/dashboard/consultant/${consultantId}/appointments/${document.appointmentId}`}
+              className="font-medium text-foreground underline-offset-4 hover:underline"
+            >
+              {document.appointmentTitle}
+            </Link>
+          ) : (
+            <div className="font-medium text-foreground">
+              {document.appointmentTitle}
+            </div>
+          )}
           <div className="text-xs text-muted-foreground">
             {document.appointmentType?.toLowerCase()}
           </div>
@@ -174,6 +188,9 @@ function buildConsultantDocumentColumns(
         if (isExpertHandout) {
           return <Badge variant="secondary">Shared by Expert</Badge>;
         }
+        if (document.uploadedByRole === "CONSULTANT") {
+          return <Badge variant="secondary">Expert reply</Badge>;
+        }
 
         const effectiveStatus =
           thread?.effectiveStatus ?? document.reviewStatus;
@@ -193,6 +210,7 @@ function buildConsultantDocumentColumns(
 }
 
 export function DocumentsTab({
+  consultantId,
   documentsPage,
   isPlaceholderData,
   onRefresh,
@@ -228,6 +246,7 @@ export function DocumentsTab({
     string | undefined
   >(undefined);
   const { toast } = useToast();
+  const { downloadDocument } = useFileDownload();
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -439,26 +458,11 @@ export function DocumentsTab({
     }
   };
 
-  const handleDownload = async (document: IDocument) => {
-    try {
-      const downloadUrl = `/api/appointments/${document.appointmentId}/documents/${document.id}/download`;
-      const link = window.document.createElement("a");
-      link.href = downloadUrl;
-      link.download = document.originalName;
-      window.document.body.appendChild(link);
-      link.click();
-      window.document.body.removeChild(link);
-    } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
-      toast({
-        title: "Error",
-        description: "Failed to download file",
-        variant: "destructive",
-      });
-    }
+  const handleDownload = (document: IDocument) => {
+    void downloadDocument(document.appointmentId, document.id, {
+      isUploader: document.uploadedByRole === "CONSULTANT",
+      role: "consultant",
+    });
   };
 
   const handleView = useCallback(
@@ -469,17 +473,20 @@ export function DocumentsTab({
         setDrawerRootId(rootId);
         return;
       }
+      // Opened synchronously from the click; the viewer tab handles its own errors.
       window.open(
-        `/api/appointments/${document.appointmentId}/documents/${document.id}/download?disposition=inline`,
+        getDocumentViewerUrl(document.id),
         "_blank",
+        "noopener,noreferrer",
       );
     },
     [threadsByRootId],
   );
 
   const columns = useMemo(
-    () => buildConsultantDocumentColumns(threadsByRootId, handleView),
-    [threadsByRootId, handleView],
+    () =>
+      buildConsultantDocumentColumns(threadsByRootId, handleView, consultantId),
+    [threadsByRootId, handleView, consultantId],
   );
 
   const renderRowActions = (document: IDocument) => (

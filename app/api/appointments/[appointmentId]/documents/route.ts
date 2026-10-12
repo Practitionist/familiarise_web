@@ -549,6 +549,7 @@ export async function POST(
     const preflightError = await preflightThreadLimits(
       appointmentId,
       parsedInput.responseToDocumentId,
+      "CONSULTEE",
       {
         missingParentStatus: 400,
         missingParentError: "Invalid revision target",
