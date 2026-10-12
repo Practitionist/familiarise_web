@@ -105,6 +105,8 @@ This record holds nineteen decisions about the files attached to a booking: how 
 - **Consequences:**
   - One job and one scheduler (daily Actions calling the route).
   - The reason is recorded on every tombstone.
+  - Account erasure purges every tombstoned session document in scope, whatever its earlier reason.
+  - Support remove and decline each write an ops-log row (`document.removal.remove`, `document.removal.decline`).
   - The storage reconcile shares the grace constant.
 
 ### ADR-07. "Open" is a new tab on a same-origin viewer route; Download uses the JSON preflight
@@ -184,6 +186,7 @@ This record holds nineteen decisions about the files attached to a booking: how 
   - A session whose own occurrence ended with no playable recording shows a catch-up from the most recent other batch with the same `ordinal`: classes always, webinars only with `shareRecordingsWithAllAttendees`.
   - Never for upcoming sessions, and never before a late joiner's floor unless the plan allows it.
   - One server rule decides both the list and playback, and links always point at the viewer's own appointment.
+  - The rule is a pure core (`recordingViewerOf`, `catchUpOrdinals`, `pickCatchUpSources`, `buildRecordingView`) fed by one batched loader, `loadRecordingViews`; the library, the per-appointment route and page, and playback all share it. The library decides rendering in memory over a booking's newest 200 candidates and paginates only groups that render.
 - **Alternatives considered:**
   - Own batch only.
   - Catch-up plus an "Other batches" browser (keeps today's breadth); rejected by D-B.
@@ -281,9 +284,9 @@ This record holds nineteen decisions about the files attached to a booking: how 
 - **Status:** Accepted.
 - **Context:** An expert delete, retention, a 1:1 decline and a lapsed Stream copy all left the same empty slot, so a learner could not tell whether a session was never recorded or had been removed.
 - **Decision:**
-  - Add nullable `Recording.removedAt` and `Recording.removalReason` (`RecordingRemovalReason`: `EXPERT_DELETED`, `RETENTION`, `DECLINED`, `COPY_LAPSED`), written together with the `EXPIRED` status by whichever path removed the file.
+  - Add nullable `Recording.removedAt` and `Recording.removalReason` (`RecordingRemovalReason`: `EXPERT_DELETED`, `SUPPORT_ACTION`, `RETENTION`, `DECLINED`, `COPY_LAPSED`), written together with the `EXPIRED` status by whichever path removed the file.
   - The slot resolver reads the tombstone: an expert delete reads "Removed by the expert on <date>" until the recording's retention date and then as expired; the other reasons read as declined or as the end of retention. A session that was recorded never reads "Not recorded".
-  - An expert delete also notifies the booking's learners.
+  - An expert delete also notifies the booking's learners. A support or admin removal writes `SUPPORT_ACTION` and reads "Removed by Familiarise support on <date>". The notice is best-effort, names the actual remover, and its failure never fails the delete.
 - **Alternatives considered:**
   - Infer the reason from `status` and consent rows: it cannot separate an expert delete from retention.
   - Keep the row forever with its media: contradicts deleting the object.
@@ -300,6 +303,7 @@ This record holds nineteen decisions about the files attached to a booking: how 
 
 | Superseded approach                                                                        | Why it was superseded                                                                        | What to do with residue                                                                  |
 | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `resolveRecordingViewer` and `readRecordingSlots`                                          | Per-booking resolution issued hundreds of serial statements per library page                 | Replaced by the pure core and the batched `loadRecordingViews` (ADR-11); delete callers  |
 | `POST /api/documents/bulk-review` and the plan-level and per-profile recording list routes | Each duplicated a path that now has one implementation                                       | Deleted; review is `POST .../:docId/review` and recordings follow the slot rule (ADR-11) |
 | A `resources` summary in the appointment detail read                                       | Coupled the hub to every store                                                               | Deleted; the hub cards read their own routes (ADR-08)                                    |
 | Standalone consultant replies with a separate reply dialog                                 | A reply appeared as its own "Approved" document, detached from the draft it answered         | Nothing left; the remaining "Approved" display on expert rows goes with ADR-01           |

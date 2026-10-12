@@ -30,14 +30,17 @@ A failed copy never lands in `FAILED`; every transfer failure returns the row to
 
 Every path that makes a recording unplayable writes `EXPIRED` together with two nullable `Recording` columns, `removedAt` and `removalReason` (`RecordingRemovalReason`), so attendees can tell why a session has nothing to play. The migration is additive and nullable.
 
-| `removalReason`  | Written by                                                                                                      | What the slot shows                                                                            |
-| ---------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `EXPERT_DELETED` | `DELETE /api/stream/recordings/:id`, which also notifies the booking's learners (`recording-removal-notice.ts`) | "Removed by the expert on 5 Oct." until the recording's retention date, then the expired text. |
-| `RETENTION`      | `expire-recordings` when the platform or organisation deadline passes                                           | "The recording's retention period has ended."                                                  |
-| `DECLINED`       | The 1:1 decline discard (`recording-decline.ts`)                                                                | "No recording: a participant chose not to be recorded."                                        |
-| `COPY_LAPSED`    | `expire-recordings` for a `READY` row whose Stream link lapsed before the R2 copy                               | "The recording's retention period has ended."                                                  |
+| `removalReason`  | Written by                                                                                                                  | What the slot shows                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `EXPERT_DELETED` | `DELETE /api/stream/recordings/:id` by the host, which also notifies the booking's learners (`recording-removal-notice.ts`) | "Removed by the expert on 5 Oct." until the recording's retention date, then the expired text.          |
+| `SUPPORT_ACTION` | The same route when a platform `ADMIN` or support operator removes the recording through an operator grant                  | "Removed by Familiarise support on 5 Oct." until the recording's retention date, then the expired text. |
+| `RETENTION`      | `expire-recordings` when the platform or organisation deadline passes                                                       | "The recording's retention period has ended."                                                           |
+| `DECLINED`       | The 1:1 decline discard (`recording-decline.ts`)                                                                            | "No recording: a participant chose not to be recorded."                                                 |
+| `COPY_LAPSED`    | `expire-recordings` for a `READY` row whose Stream link lapsed before the R2 copy                                           | "The recording's retention period has ended."                                                           |
 
 The notice lasts as long as the booking's recordings would have been kept (`tombstoneVisible` in `lib/stream/recording-slots.ts`): a retention label with a date ends it on that date, and a label that keeps recordings while the plan is active, or forever, never ends it. After that the slot reads as `expired`. A session that was recorded never reads "Not recorded": that text is only for a session where nothing was ever recorded.
+
+The removal notice is sent after the row has expired, on a best-effort basis: it names the actual remover (the host's name, or "Familiarise support"), and a notice failure is logged and never fails the delete.
 
 The tombstone row keeps no media: the object, preview clip and thumbnail are deleted by the same flow that wrote it (or retried by `expire-recordings`).
 
@@ -132,7 +135,7 @@ erDiagram
     int durationInMinutes
     enum status
     datetime removedAt "nullable tombstone"
-    enum removalReason "EXPERT_DELETED, RETENTION, DECLINED, COPY_LAPSED"
+    enum removalReason "EXPERT_DELETED, SUPPORT_ACTION, RETENTION, DECLINED, COPY_LAPSED"
   }
 ```
 
@@ -153,7 +156,11 @@ A class plan runs batches B1, B2 and B3, each with sessions 1 to N, and any sess
 4. **One server rule** decides both what the list shows and what playback signs, so the list can never show a recording that playback refuses.
 5. **"Session details" always opens the learner's own booking**, focused on the slot (`.../appointments/<ownAppointmentId>/recordings?slot=<k>`). A purchased replay with no own appointment links to the public listing when published, otherwise has no link. Hosts and co-hosts open their batch's appointment.
 
-The resolver is `lib/stream/recording-slots.ts` (`resolveRecordingViewer`, `readRecordingSlots`, `catchUpPlaybackAccess`, `viewerPlaybackAccess`). Each slot is in exactly one state: `recorded`, `catch_up`, `upcoming`, `processing`, `not_recorded`, `declined`, `removed`, `expired` or `before_you_joined`. A slot that is `not_recorded`, `declined`, `removed` or `expired` also carries a `missingReason`, and a `catch_up` slot keeps the reason its own session has nothing to play.
+The rule lives in `lib/stream/recording-slots.ts` as one pure core and one batched loader:
+
+- **Pure core.** `recordingViewerOf` decides the viewer's role (hosts and 1:1 learners are matched by profile id), `catchUpOrdinals` and `pickCatchUpSources` choose which sessions need a catch-up and from which run, and `buildRecordingView` turns the loaded rows into slots. None of them touch the database.
+- **Batched loader.** `loadRecordingViews` reads identity, bookings with their sessions, late-join floors, catch-up candidates and retention labels once per request for any number of bookings.
+- **Shared by every caller.** The library, the per-appointment recordings route and page, and playback access (`catchUpPlaybackAccess`, `viewerPlaybackAccess`) all call the same core, so the list and playback cannot disagree. Each slot is in exactly one state: `recorded`, `catch_up`, `upcoming`, `processing`, `not_recorded`, `declined`, `removed`, `expired` or `before_you_joined`. A slot that is `not_recorded`, `declined`, `removed` or `expired` also carries a `missingReason`, and a `catch_up` slot keeps the reason its own session has nothing to play.
 
 ### The access check
 
@@ -301,13 +308,23 @@ type Slot = {
 | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/appointments/:id/recordings`                            | `{ appointmentId, kind, title, batchLabel, viewerRole, audience, sharedAcrossRuns, slots: Slot[] }`; `audience` is `one_to_one`, `run` or `batch`                             |
 | `GET /api/stream/recordings/:recordingId`                         | Playback URL minted per request under the slot rule; metadata also carries `removedAt` and `removalReason`                                                                    |
-| `PATCH`, `DELETE /api/stream/recordings/:recordingId`             | Host manage actions; `DELETE` writes the `EXPERT_DELETED` tombstone                                                                                                           |
+| `PATCH`, `DELETE /api/stream/recordings/:recordingId`             | Host manage actions; `DELETE` writes the `EXPERT_DELETED` tombstone, or `SUPPORT_ACTION` for an operator                                                                      |
 | `GET /api/dashboard/{consultant,consultee}/:profileId/recordings` | `LibraryPage`: `{ groups: { session, files, summary? }[], purchased?, total, page, pageSize, facets? }`, each file one session row with `parts[]`, `catchUpFrom` and `notice` |
 | `GET /api/organizations/:orgId/recordings?scope=mine\|everyone`   | The same `LibraryPage`; `everyone` needs `operations.read` and returns counts only                                                                                            |
 
-The library reads each booking with the same slot rule as its Recording details page, so a row there always plays there. The earlier plan-level and per-profile recording list routes no longer exist.
+The library builds each booking's view with the same core as its Recording details page, so a row there always plays there. `loadRecordingViews` reads the newest 200 candidate bookings, decides in memory which of them render, and paginates only the groups that render, so `total` and `pages` always match what the pages show. The 200 bound applies to candidate bookings, not to rendered groups: a viewer with more than 200 candidate bookings sees the newest 200 that render. The catch-up query admits only ended runs of sharing plans that have a playable recording. The organisation `everyone` view sums recordings in one read.
+
+All six library routes (documents and recordings, for consultant, consultee and organisation) run their read inside `timedLibraryRead` (`lib/library/timed-read.ts`), which logs one `[Library:SLOW_READ]` line when a read takes longer than 10 s, or while it is still running at 20 s, whichever comes first, and never more than once per read.
+
+When the URL carries no filters, each of the six library pages seeds page 1 on the server (`seedLibraryPage` in `lib/library/library-seed.ts`) so the list renders without a client round trip. A filtered URL, and an operator inspecting another profile, fetch on the client. The earlier plan-level and per-profile recording list routes no longer exist.
 
 The recording playback, manage, publish, preview, start, stop and sync routes, the recording lists and the public replay list answer failures with the shared `{ code, message }` body from `lib/documents/file-errors.ts` (for example `OWN_RECORDING_AVAILABLE`, `LATE_JOIN_HIDDEN`, `GONE`, `RATE_LIMITED`, `RECORDING_DECLINED` when a start is refused after a 1:1 decline, `RECORDING_IN_PROGRESS`, `RECORDING_NOT_IN_PROGRESS`, `RECORDING_NOT_ENABLED`, `RECORDING_HAS_BUYERS`, `RECORDING_CHANGED` and `SERVER_ERROR`), and in-call controls show the code's fixed copy rather than server text. The replay purchase route and the meeting recording-consent and recording-info routes keep their own error shapes. The codes are described in [documents/README](../documents/README.md#typed-error-model-and-copy).
+
+### Performance
+
+- **Statement budget.** A library page costs a fixed number of statements, independent of how many bookings it shows, because the loader batches every relation arm. It skips arms for booking kinds that are not on the page, and retention labels walk each subscription renewal chain once per call.
+- **Round-trip cost.** With `PG_POOL_MAX=1` every statement is serial, and one round trip costs about 95 ms from the function to the database, so 500 per-booking statements take roughly 48 s while a batched page takes well under a second of query time.
+- **Pattern.** Do not call a per-booking resolver in a loop. Load every input for the page in one batched read, then run the pure core over the rows in memory. Catch-up playback access likewise checks the chosen source in one grouped read.
 
 ## Replay sales
 
@@ -325,6 +342,8 @@ Recordings live in the private R2 bucket and are served by per-request presigned
 ---
 
 ## Deprecated & Superseded Approaches
+
+- **`resolveRecordingViewer` and `readRecordingSlots`.** They resolved the viewer and read slots once per booking, so a learner page issued hundreds of serial statements and hit the platform timeout. Superseded by the pure core plus `loadRecordingViews`; delete any remaining caller.
 
 - **Plan-wide class access.** A viewer with an entitled seat on any batch could play every batch of a class plan (`lib/stream/recording-attendee-scope.ts`, applied in the playback route), and the webinar arm let one share flag widen access to every run. Superseded by the slot-aware catch-up rule; delete the plan-wide arm.
 - **Each other run as its own library card.** The consultee resources route listed other runs and batches as separate cards linked to appointments the learner could not open, tripling lists for multi-batch plans. Superseded by one grouped list of the learner's own slots with catch-up rows.
