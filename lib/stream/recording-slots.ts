@@ -35,9 +35,6 @@ const IN_FLIGHT: ReadonlySet<RecordingStatus> = new Set([
 const DEAD_SESSION = new Set(["CANCELLED", "RESCHEDULED"]);
 const ENDED_SESSION = new Set(["COMPLETED", "UNVERIFIED", "VOIDED"]);
 const ENTITLED_SEAT = ["CONFIRMED", "ATTENDED"] as const;
-/** An expert-deleted recording reads as "Removed" for this long. */
-const TOMBSTONE_DAYS = 30;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 export type SlotState =
   | "recorded"
@@ -429,17 +426,26 @@ function toParts(
   });
 }
 
+/** An expert-deleted recording reads "Removed" until the date it would have been deleted anyway. */
+export function tombstoneVisible(
+  label: RecordingRetentionLabel | undefined,
+  now: Date,
+): boolean {
+  return label?.kind !== "DATE" || label.until.getTime() > now.getTime();
+}
+
 function missingReasonOf(
   sessions: SessionRow[],
   now: Date,
   oneToOne: boolean,
+  removedLabels: Map<string, RecordingRetentionLabel>,
 ): { reason: SlotMissingReason; removedAt: Date | null } {
   const recordings = sessions.flatMap((s) => s.meeting?.recordings ?? []);
-  const removed = recordings.find(
-    (r) =>
-      r.removalReason === "EXPERT_DELETED" &&
-      r.removedAt &&
-      now.getTime() - r.removedAt.getTime() < TOMBSTONE_DAYS * DAY_MS,
+  const deleted = recordings.filter(
+    (r) => r.removalReason === "EXPERT_DELETED",
+  );
+  const removed = deleted.find((r) =>
+    tombstoneVisible(removedLabels.get(r.id), now),
   );
   if (removed) return { reason: "removed", removedAt: removed.removedAt };
   // Only 1:1 sessions discard a recording when someone declines.
@@ -449,12 +455,16 @@ function missingReasonOf(
   if (declined || recordings.some((r) => r.removalReason === "DECLINED")) {
     return { reason: "declined", removedAt: null };
   }
+  // A session that was recorded never reads "Not recorded".
   const expired = recordings.some(
     (r) =>
+      r.status === RecordingStatus.EXPIRED ||
       r.removalReason === ("RETENTION" satisfies RecordingRemovalReason) ||
       r.removalReason === "COPY_LAPSED",
   );
-  if (expired) return { reason: "expired", removedAt: null };
+  if (expired || deleted.length > 0) {
+    return { reason: "expired", removedAt: null };
+  }
   return { reason: "not_recorded", removedAt: null };
 }
 
@@ -568,6 +578,14 @@ export async function readRecordingSlots(
 
   const floor = await lateJoinFloor(viewer, userId);
   const isLearner = viewer.role === "learner";
+  const removedLabels = await recordingRetentionLabels(
+    sessions.flatMap((s) =>
+      (s.meeting?.recordings ?? [])
+        .filter((r) => r.removalReason === "EXPERT_DELETED")
+        .map((r) => r.id),
+    ),
+    now,
+  );
 
   interface Draft {
     ordinal: number;
@@ -605,7 +623,12 @@ export async function readRecordingSlots(
       if (inFlight) {
         return { ordinal, rep, parts, state: "processing", missing: null };
       }
-      const missing = missingReasonOf(slotSessions, now, !viewer.groupPlan);
+      const missing = missingReasonOf(
+        slotSessions,
+        now,
+        !viewer.groupPlan,
+        removedLabels,
+      );
       return { ordinal, rep, parts, state: missing.reason, missing };
     },
   );

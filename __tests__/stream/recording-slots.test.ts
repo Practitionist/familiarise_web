@@ -23,6 +23,7 @@ jest.mock("../../lib/prisma", () => ({
 
 import prisma from "@/lib/prisma";
 import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
+import { recordingRetentionLabels } from "@/lib/stream/recording-retention";
 import {
   readRecordingSlots,
   resolveRecordingViewer,
@@ -231,5 +232,31 @@ describe("one slot rule for a learner's own batch", () => {
     ]);
     const view = await readRecordingSlots(viewer!, "learner", NOW);
     expect(view.slots[0]).toMatchObject({ state: "removed", parts: [] });
+  });
+});
+
+describe("expert-removed recordings", () => {
+  async function removedSlot(label: unknown) {
+    (recordingRetentionLabels as jest.Mock).mockResolvedValueOnce(
+      new Map([["gone", label]]),
+    );
+    const view = await learnerView([
+      session(1, 60, [
+        { id: "gone", status: "EXPIRED", reason: "EXPERT_DELETED" },
+      ]),
+    ]);
+    return view.slots[0]!;
+  }
+
+  it("reads Removed until the retention date, then expired, never Not recorded", async () => {
+    expect(
+      await removedSlot({ kind: "DATE", until: new Date(NOW.getTime() + DAY) }),
+    ).toMatchObject({ state: "removed", missingReason: "removed" });
+    expect(await removedSlot({ kind: "WHILE_ACTIVE" })).toMatchObject({
+      state: "removed",
+    });
+    expect(await removedSlot({ kind: "DATE", until: ago(1) })).toMatchObject({
+      missingReason: "expired",
+    });
   });
 });
