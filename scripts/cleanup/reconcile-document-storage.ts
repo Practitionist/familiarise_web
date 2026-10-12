@@ -23,6 +23,7 @@
 import prisma from "../../lib/prisma";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { DOCUMENT_DELETE_GRACE_DAYS } from "@/lib/documents/document-dates";
 
 // Grace period before deleting orphaned files (days)
 const ORPHAN_GRACE_PERIOD_DAYS = 7;
@@ -157,7 +158,9 @@ async function findOrphanedFiles(
   return orphanedFiles;
 }
 
-const SOFT_DELETE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/** Tombstoned rows keep their objects until the purge's grace window ends. */
+const SOFT_DELETE_RETENTION_MS =
+  DOCUMENT_DELETE_GRACE_DAYS * 24 * 60 * 60 * 1000;
 
 /** The documents bucket holds appointment documents, plan materials and verification documents. */
 async function documentsBucketPaths(): Promise<Set<string>> {

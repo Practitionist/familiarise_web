@@ -80,3 +80,21 @@ export function formatContentDisposition(
   const asciiFallback = sanitizeContentDispositionFilename(originalName);
   return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
 }
+
+/** The per-booking Documents workspace in the viewer's own dashboard tree. */
+export function documentsWorkspacePath(args: {
+  appointmentId: string;
+  organizationId?: string | null;
+  personal?: { kind: "consultant" | "consultee"; profileId: string };
+  threadRootId?: string;
+}): string {
+  const base = args.organizationId
+    ? `/dashboard/organization/${encodeURIComponent(args.organizationId)}`
+    : args.personal
+      ? `/dashboard/${args.personal.kind}/${encodeURIComponent(args.personal.profileId)}`
+      : "/dashboard/go/auto";
+  const thread = args.threadRootId
+    ? `?thread=${encodeURIComponent(args.threadRootId)}`
+    : "";
+  return `${base}/appointments/${encodeURIComponent(args.appointmentId)}/documents${thread}`;
+}

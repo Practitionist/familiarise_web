@@ -240,7 +240,13 @@ jobs:
           (github.event_name == 'workflow_dispatch' && (inputs.job == '' || inputs.job == 'all' || inputs.job == 'purge-deleted-documents'))
         timeout-minutes: 5
         continue-on-error: true
-        run: node_modules/.bin/tsx jobs/cleanup/purge-deleted-documents.ts
+        env:
+          APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -X POST -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/cleanup/purge-deleted-documents"
 
       - name: Stream sync
         id: stream-sync

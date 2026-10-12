@@ -1,13 +1,12 @@
 import "server-only";
 
-import type { ParticipantStatus, Prisma } from "@prisma/client";
-
 import prisma from "@/lib/prisma";
-import { requireOrgAccess } from "@/lib/auth-helpers";
-import { isBookingTerminal } from "@/lib/appointments/terminal-status";
-import { isPreviewableMimeType } from "@/lib/documents/urls";
-import { createSignedStorageUrl } from "@/lib/documents/storage-verify";
-import type { FileErrorCode } from "@/lib/documents/file-errors";
+import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
+import { materialReaderWhere } from "@/lib/plans/material-access";
+import { resolveDocumentParty } from "./document-party";
+import { createSignedStorageUrl } from "./storage-verify";
+import { isPreviewableMimeType } from "./urls";
+import type { FileErrorCode } from "./file-errors";
 
 export interface AuthorizedFile {
   storagePath: string;
@@ -15,6 +14,7 @@ export interface AuthorizedFile {
   mimeType: string;
   previewable: boolean;
   viewerIsUploader: boolean;
+  viewerRole: "consultee" | "consultant";
   /** The booking this file belongs to; null for plan materials. */
   appointmentId: string | null;
 }
@@ -23,62 +23,15 @@ export type FileAccessOutcome =
   | { ok: true; file: AuthorizedFile }
   | {
       ok: false;
-      code: Extract<
-        FileErrorCode,
-        "FORBIDDEN" | "NOT_FOUND" | "APPOINTMENT_TERMINAL" | "STORAGE_MISSING"
-      >;
+      code: Extract<FileErrorCode, "NOT_FOUND" | "STORAGE_MISSING">;
       viewerIsUploader: boolean;
+      appointmentId: string | null;
     };
 
-export const FILE_ACCESS_STATUS: Record<
-  Exclude<FileAccessOutcome, { ok: true }>["code"],
-  number
-> = {
-  FORBIDDEN: 403,
-  NOT_FOUND: 404,
-  APPOINTMENT_TERMINAL: 403,
-  STORAGE_MISSING: 404,
-};
-
-function isDevBypass(): boolean {
-  return (
-    process.env.NODE_ENV === "development" &&
-    process.env.DEV_BYPASS_AUTH === "true"
-  );
-}
-
-const LIVE_SEAT_STATUSES: ParticipantStatus[] = ["CONFIRMED", "ATTENDED"];
-
-function documentPartyWhere(userId: string): Prisma.AppointmentWhereInput {
-  const ownsPlan = { consultantProfile: { user: { id: userId } } };
-  const holdsSeat = {
-    appointment: {
-      participants: { some: { userId, status: { in: LIVE_SEAT_STATUSES } } },
-    },
-  };
-  return {
-    OR: [
-      { consultation: { requestedBy: { user: { id: userId } } } },
-      { consultation: { consultationPlan: ownsPlan } },
-      {
-        subscription: {
-          OR: [
-            { requestedBy: { user: { id: userId } } },
-            { subscriptionPlan: ownsPlan },
-          ],
-        },
-      },
-      { webinar: { OR: [{ webinarPlan: ownsPlan }, holdsSeat] } },
-      { class: { OR: [{ classPlan: ownsPlan }, holdsSeat] } },
-    ],
-  };
-}
-
-const planOwnerSelect = {
-  select: { consultantProfile: { select: { userId: true } } },
-} as const;
-
-/** Authorises one appointment document for a party to its booking. */
+/**
+ * One booking document for a party to it. Cancelled bookings stay readable
+ * until retention tombstones their documents; removed rows read as not found.
+ */
 export async function authorizeAppointmentDocument(
   userId: string,
   documentId: string,
@@ -99,47 +52,28 @@ export async function authorizeAppointmentDocument(
       uploadedByRole: true,
     },
   });
-  if (!document) {
-    return { ok: false, code: "NOT_FOUND", viewerIsUploader: false };
+  const party = document
+    ? await resolveDocumentParty(prisma, document.appointmentId, userId)
+    : null;
+  if (!document || !party) {
+    return {
+      ok: false,
+      code: "NOT_FOUND",
+      viewerIsUploader: false,
+      appointmentId: null,
+    };
   }
 
-  const appointment = await prisma.appointment.findFirst({
-    where: {
-      id: document.appointmentId,
-      ...(isDevBypass() ? {} : documentPartyWhere(userId)),
-    },
-    select: {
-      consultation: {
-        select: { status: true, consultationPlan: planOwnerSelect },
-      },
-      subscription: {
-        select: { status: true, subscriptionPlan: planOwnerSelect },
-      },
-      webinar: { select: { status: true, webinarPlan: planOwnerSelect } },
-      class: { select: { status: true, classPlan: planOwnerSelect } },
-    },
-  });
-  if (!appointment) {
-    return { ok: false, code: "NOT_FOUND", viewerIsUploader: false };
-  }
-
-  const expertUserId =
-    appointment.consultation?.consultationPlan.consultantProfile.userId ??
-    appointment.subscription?.subscriptionPlan.consultantProfile.userId ??
-    appointment.webinar?.webinarPlan.consultantProfile?.userId ??
-    appointment.class?.classPlan.consultantProfile?.userId ??
-    null;
-  const viewerIsExpert = expertUserId === userId;
   const viewerIsUploader =
-    (document.uploadedByRole === "CONSULTANT") === viewerIsExpert;
-
-  if (isBookingTerminal(appointment)) {
-    return { ok: false, code: "APPOINTMENT_TERMINAL", viewerIsUploader };
-  }
+    (document.uploadedByRole === "CONSULTANT") === (party.role === "expert");
   if (document.isStorageMissing) {
-    return { ok: false, code: "STORAGE_MISSING", viewerIsUploader };
+    return {
+      ok: false,
+      code: "STORAGE_MISSING",
+      viewerIsUploader,
+      appointmentId: document.appointmentId,
+    };
   }
-
   return {
     ok: true,
     file: {
@@ -151,114 +85,95 @@ export async function authorizeAppointmentDocument(
         document.originalName,
       ),
       viewerIsUploader,
+      viewerRole: party.role === "expert" ? "consultant" : "consultee",
       appointmentId: document.appointmentId,
     },
   };
 }
 
-const CLOSED_OR_UNPAID_BOOKING_STATUSES = [
-  "CANCELLED",
-  "REJECTED",
-  "EXPIRED",
-  "PENDING",
-] as const;
+const planOwnerSelect = {
+  organizationId: true,
+  consultantProfile: { select: { userId: true } },
+} as const;
 
-const ACCEPTED_COLLABORATOR = (userId: string) => ({
-  where: { status: "ACCEPTED" as const, consultantProfile: { userId } },
-  select: { id: true },
-  take: 1,
-});
+const materialFileSelect = {
+  storagePath: true,
+  originalName: true,
+  mimeType: true,
+  organizationId: true,
+  consultationPlan: { select: planOwnerSelect },
+  subscriptionPlan: { select: planOwnerSelect },
+  webinarPlan: { select: planOwnerSelect },
+  classPlan: { select: planOwnerSelect },
+} as const;
 
-function fetchMaterialWithAccessContext(materialId: string, userId: string) {
-  const seated = {
-    status: { not: "CANCELLED" as const },
-    appointment: {
-      participants: { some: { userId, status: { in: LIVE_SEAT_STATUSES } } },
-    },
-  };
-  const ownedPlan = {
-    id: true,
-    organizationId: true,
-    consultantProfile: { select: { userId: true } },
-  } as const;
-  return prisma.planMaterial.findUnique({
-    where: { id: materialId },
-    include: {
-      consultationPlan: {
-        select: {
-          ...ownedPlan,
-          consultations: {
-            where: {
-              requestedBy: { user: { id: userId } },
-              status: { notIn: [...CLOSED_OR_UNPAID_BOOKING_STATUSES] },
-            },
-            select: { id: true },
-            take: 1,
-          },
-        },
-      },
-      subscriptionPlan: {
-        select: {
-          ...ownedPlan,
-          subscriptions: {
-            where: {
-              requestedBy: { user: { id: userId } },
-              status: { notIn: [...CLOSED_OR_UNPAID_BOOKING_STATUSES] },
-            },
-            select: { id: true },
-            take: 1,
-          },
-        },
-      },
-      webinarPlan: {
-        select: {
-          ...ownedPlan,
-          collaborators: ACCEPTED_COLLABORATOR(userId),
-          webinars: { where: seated, select: { id: true }, take: 1 },
-        },
-      },
-      classPlan: {
-        select: {
-          ...ownedPlan,
-          collaborators: ACCEPTED_COLLABORATOR(userId),
-          classes: { where: seated, select: { id: true }, take: 1 },
-        },
-      },
-    },
-  });
+type MaterialFileRow = {
+  organizationId: string | null;
+  consultationPlan: { organizationId: string | null } | null;
+  subscriptionPlan: { organizationId: string | null } | null;
+  webinarPlan: { organizationId: string | null } | null;
+  classPlan: { organizationId: string | null } | null;
+};
+
+function materialOrganizationId(row: MaterialFileRow): string | null {
+  return (
+    row.organizationId ??
+    row.consultationPlan?.organizationId ??
+    row.subscriptionPlan?.organizationId ??
+    row.webinarPlan?.organizationId ??
+    row.classPlan?.organizationId ??
+    null
+  );
 }
 
-/** Authorises one plan material for its owner, collaborators, paid learners or org staff. */
+/** Org operators who manage an org plan's materials may open them; other org roles see metadata only. */
+async function managesOrgMaterials(
+  organizationId: string | null,
+  userId: string,
+): Promise<boolean> {
+  if (!organizationId) return false;
+  const membership = await prisma.membership.findFirst({
+    where: { organizationId, userId, status: "ACTIVE" },
+    select: { role: true },
+  });
+  return (
+    !!membership &&
+    hasAnyOrgPermission(membership.role, ["materials.manage.orgPlan"])
+  );
+}
+
+/** One plan material for its owner, co-hosts, paid learners or org material managers. */
 export async function authorizePlanMaterial(
   userId: string,
   materialId: string,
 ): Promise<FileAccessOutcome> {
-  const material = await fetchMaterialWithAccessContext(materialId, userId);
+  const readable = await prisma.planMaterial.findFirst({
+    where: { id: materialId, ...materialReaderWhere(userId) },
+    select: materialFileSelect,
+  });
+  const material =
+    readable ??
+    (await prisma.planMaterial
+      .findUnique({ where: { id: materialId }, select: materialFileSelect })
+      .then(async (row) =>
+        row && (await managesOrgMaterials(materialOrganizationId(row), userId))
+          ? row
+          : null,
+      ));
   if (!material) {
-    return { ok: false, code: "NOT_FOUND", viewerIsUploader: false };
+    return {
+      ok: false,
+      code: "NOT_FOUND",
+      viewerIsUploader: false,
+      appointmentId: null,
+    };
   }
-
   const ownerUserId =
-    material.consultationPlan?.consultantProfile?.userId ??
-    material.subscriptionPlan?.consultantProfile?.userId ??
+    material.consultationPlan?.consultantProfile.userId ??
+    material.subscriptionPlan?.consultantProfile.userId ??
     material.webinarPlan?.consultantProfile?.userId ??
     material.classPlan?.consultantProfile?.userId;
   const viewerIsUploader = ownerUserId === userId;
-
-  const allowed =
-    isDevBypass() ||
-    viewerIsUploader ||
-    Boolean(material.webinarPlan?.collaborators.length) ||
-    Boolean(material.classPlan?.collaborators.length) ||
-    Boolean(material.consultationPlan?.consultations.length) ||
-    Boolean(material.subscriptionPlan?.subscriptions.length) ||
-    Boolean(material.webinarPlan?.webinars.length) ||
-    Boolean(material.classPlan?.classes.length) ||
-    (await hasOrgMaterialAccess(material));
-  if (!allowed) {
-    return { ok: false, code: "FORBIDDEN", viewerIsUploader };
-  }
-
   return {
     ok: true,
     file: {
@@ -270,29 +185,10 @@ export async function authorizePlanMaterial(
         material.originalName,
       ),
       viewerIsUploader,
+      viewerRole: viewerIsUploader ? "consultant" : "consultee",
       appointmentId: null,
     },
   };
-}
-
-async function hasOrgMaterialAccess(
-  material: NonNullable<
-    Awaited<ReturnType<typeof fetchMaterialWithAccessContext>>
-  >,
-): Promise<boolean> {
-  const planOrganizationId =
-    material.organizationId ??
-    material.consultationPlan?.organizationId ??
-    material.subscriptionPlan?.organizationId ??
-    material.webinarPlan?.organizationId ??
-    material.classPlan?.organizationId ??
-    null;
-  if (!planOrganizationId) return false;
-  const [catalogAccess, opsAccess] = await Promise.all([
-    requireOrgAccess(planOrganizationId, { permission: "catalog.manage" }),
-    requireOrgAccess(planOrganizationId, { permission: "operations.read" }),
-  ]);
-  return !catalogAccess.error || !opsAccess.error;
 }
 
 /** Signs an authorised file; non-previewable files are always served as attachments. */
