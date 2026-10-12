@@ -37,7 +37,7 @@ import {
   sessionsTotalOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
-import { Prisma } from "@prisma/client";
+import { Prisma, type EarningStatus } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -176,6 +176,7 @@ async function readNextCycles(
     },
     orderBy: { updatedAt: "asc" },
     take: HOME_NEXT_CYCLE_SCAN,
+    relationLoadStrategy: "join",
   });
   return candidates
     .map((row) => {
@@ -284,59 +285,74 @@ const consultantDeliveryArms = (
   },
 ];
 
-const appointmentInclude = {
+/** A plan owner as Home renders them: avatar and name. */
+const planOwnerSelect = {
+  consultantProfileId: true,
+  consultantProfile: {
+    select: { id: true, user: { select: userSelectFields } },
+  },
+} as const;
+
+/** Accepted co-hosts, for the viewer's role badge and the host avatar. */
+const acceptedCollaboratorsSelect = {
+  where: { status: "ACCEPTED" as const },
+  select: {
+    id: true,
+    role: true,
+    consultantProfileId: true,
+    consultantProfile: {
+      select: {
+        id: true,
+        user: { select: { id: true, name: true, image: true } },
+      },
+    },
+  },
+};
+
+/** Exactly what Home's appointment transform and card helpers read. */
+const appointmentSelect = {
+  id: true,
+  appointmentType: true,
+  organizationId: true,
   occurrences: {
     where: { deletedAt: null },
     orderBy: { startsAt: "asc" as const },
-    include: {
+    select: {
+      id: true,
+      startsAt: true,
+      endsAt: true,
+      isTentative: true,
+      completionStatus: true,
       meeting: {
         select: { id: true, endedAt: true, endedReason: true },
       },
     },
   },
   consultation: {
-    include: {
+    select: {
+      id: true,
+      status: true,
       consultationPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: userSelectFields,
-              },
-            },
-          },
-        },
+        select: { id: true, title: true, ...planOwnerSelect },
       },
-      requestedBy: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
+      requestedBy: { select: { id: true, user: { select: userSelectFields } } },
     },
   },
   subscription: {
     select: {
       id: true,
       subscriptionPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: userSelectFields,
-              },
-            },
-          },
+        select: {
+          id: true,
+          title: true,
+          // calculateSessionProgress reads the entitlement inputs.
+          totalSessions: true,
+          sessionsPerWeek: true,
+          durationInMonths: true,
+          ...planOwnerSelect,
         },
       },
-      requestedBy: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
+      requestedBy: { select: { id: true, user: { select: userSelectFields } } },
       schedulingPeriodStartsAt: true,
       schedulingPeriodEndsAt: true,
       // #1766 — Home's session progress reads the frozen entitlement.
@@ -346,69 +362,37 @@ const appointmentInclude = {
     },
   },
   webinar: {
-    include: {
+    select: {
+      id: true,
+      status: true,
       webinarPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: userSelectFields,
-              },
-            },
-          },
-          collaborators: {
-            where: { status: "ACCEPTED" },
-            include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      image: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
+        select: {
+          id: true,
+          title: true,
+          ...planOwnerSelect,
+          collaborators: acceptedCollaboratorsSelect,
         },
       },
     },
   },
   class: {
-    include: {
+    select: {
+      id: true,
+      status: true,
       classPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: userSelectFields,
-              },
-            },
-          },
-          collaborators: {
-            where: { status: "ACCEPTED" },
-            include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      image: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
+        select: {
+          id: true,
+          title: true,
+          ...planOwnerSelect,
+          collaborators: acceptedCollaboratorsSelect,
         },
       },
     },
   },
   trial: {
-    include: {
+    select: {
+      id: true,
+      status: true,
       subscriptionPlan: {
         select: {
           id: true,
@@ -418,15 +402,11 @@ const appointmentInclude = {
         },
       },
       consulteeProfile: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
+        select: { id: true, user: { select: userSelectFields } },
       },
     },
   },
-} satisfies Prisma.AppointmentInclude;
+} satisfies Prisma.AppointmentSelect;
 
 /** Pending-approvals widget only needs id + requester name + requestedAt. */
 const pendingConsultationInclude = {
@@ -453,7 +433,7 @@ const pendingSubscriptionInclude = {
 // GetPayload would re-introduce bigint money fields (#780).
 type DashboardAppointment = Prisma.Result<
   typeof prisma.appointment,
-  { include: typeof appointmentInclude },
+  { select: typeof appointmentSelect },
   "findFirstOrThrow"
 >;
 type DashboardConsultation = Prisma.Result<
@@ -634,6 +614,7 @@ export async function getConsultantDashboard(
       },
       orderBy: { startsAt: "asc" },
       take: HOME_ORG_SESSIONS_TAKE,
+      relationLoadStrategy: "join",
     }),
   ]);
   const homeAppointmentIds = [
@@ -670,19 +651,16 @@ export async function getConsultantDashboard(
     ratingAgg,
     slotCounts,
     trialCounts,
-    netEarningsAgg,
-    readyEarningsAgg,
-    availableEarningsAgg,
+    earningsByStatus,
   ] = await Promise.all([
-    // Fetch approved appointments for consultations, subscriptions, webinars, and
-    // classes. `appointmentInclude` carries nine nested `user` selections, so an
-    // unguarded empty id list cost nine follow-up SELECTs — see readByIds. The
-    // guard is per-query, not an early return: every other read below is
-    // consultant-scoped rather than id-scoped and must still run. (#1121)
+    // The appointments Home renders, in one joined statement. readByIds skips
+    // the read for an empty id list; every read below is consultant-scoped and
+    // still runs.
     readByIds(homeAppointmentIds, () =>
       prisma.appointment.findMany({
         where: { id: { in: homeAppointmentIds } },
-        include: appointmentInclude,
+        select: appointmentSelect,
+        relationLoadStrategy: "join",
       }),
     ),
     // Active clients / programs are counted over the consultant's whole active
@@ -716,6 +694,7 @@ export async function getConsultantDashboard(
         class: { select: { id: true } },
         trial: { select: { consulteeProfile: { select: { id: true } } } },
       },
+      relationLoadStrategy: "join",
     }),
     // Pending previews. #1703 — the list reads the SAME predicate and window
     // as the badge count below (no 90-day floor: the badge never had one, and
@@ -726,12 +705,14 @@ export async function getConsultantDashboard(
       include: pendingConsultationInclude,
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_PENDING_TAKE,
+      relationLoadStrategy: "join",
     }),
     prisma.subscription.findMany({
       where: pendingSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
       include: pendingSubscriptionInclude,
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_PENDING_TAKE,
+      relationLoadStrategy: "join",
     }),
     // The approvals badge is a total, not a list length. Counting the capped
     // list made it disagree with NeedsYou — which counts properly — on the very
@@ -764,6 +745,7 @@ export async function getConsultantDashboard(
       include: pendingConsultationInclude,
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_AWAITING_PAYMENT_TAKE,
+      relationLoadStrategy: "join",
     }),
     prisma.subscription.findMany({
       where: subscriptionRequestWhere(
@@ -774,6 +756,7 @@ export async function getConsultantDashboard(
       include: pendingSubscriptionInclude,
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_AWAITING_PAYMENT_TAKE,
+      relationLoadStrategy: "join",
     }),
     prisma.consultation.count({
       where: consultationRequestWhere(
@@ -862,33 +845,12 @@ export async function getConsultantDashboard(
     // --- Financial Summary Queries ---
     // Deliberately GLOBAL (no org filter): payouts settle one instrument
     // across every context (ADR 19 — views split, instruments don't).
-    // 5. Net earnings (all-time, excluding refunded, minus partial refunds)
-    prisma.consultantEarnings.aggregate({
+    // 5–7. Net, Ready and Available from one grouped read. A READY row never
+    // carries a payoutId: batching sets it and moves the row to BATCHED.
+    prisma.consultantEarnings.groupBy({
+      by: ["status"],
+      where: { consultantProfileId },
       _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      where: {
-        consultantProfileId,
-        status: { not: "REFUNDED" },
-      },
-    }),
-    // 6. Ready earnings (eligible for next payout — not yet assigned to a payout)
-    prisma.consultantEarnings.aggregate({
-      _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      where: {
-        consultantProfileId,
-        status: "READY",
-        payoutId: null,
-      },
-    }),
-    // 7. #1527 review — "Available" (READY + BATCHED), matching the Earnings
-    // page's bucket (lib/dashboard/earnings-state.ts bucketOf); BATCHED rows
-    // are already committed to a run but cash hasn't left, so they read as
-    // "yours" here even though they're excluded from #6's payout-eligibility.
-    prisma.consultantEarnings.aggregate({
-      _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      where: {
-        consultantProfileId,
-        status: { in: ["READY", "BATCHED"] },
-      },
     }),
   ]);
 
@@ -1115,15 +1077,21 @@ export async function getConsultantDashboard(
     trialDenom > 0 ? Math.round((convertedTrials / trialDenom) * 100) : null;
 
   // --- Financial Summary derived values ---
-  const netEarningsVal =
-    sumPaise(netEarningsAgg._sum.consultantSharePaise) -
-    sumPaise(netEarningsAgg._sum.refundedShareAmount);
-  const readyEarningsVal =
-    sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
-    sumPaise(readyEarningsAgg._sum.refundedShareAmount);
-  const availableEarningsVal =
-    sumPaise(availableEarningsAgg._sum.consultantSharePaise) -
-    sumPaise(availableEarningsAgg._sum.refundedShareAmount);
+  const netOf = (keep: (status: EarningStatus) => boolean) =>
+    earningsByStatus
+      .filter((group) => keep(group.status))
+      .reduce(
+        (sum, group) =>
+          sum +
+          sumPaise(group._sum.consultantSharePaise) -
+          sumPaise(group._sum.refundedShareAmount),
+        0,
+      );
+  const netEarningsVal = netOf((status) => status !== "REFUNDED");
+  const readyEarningsVal = netOf((status) => status === "READY");
+  const availableEarningsVal = netOf(
+    (status) => status === "READY" || status === "BATCHED",
+  );
   const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
   const payoutEligible = readyEarningsVal >= payoutMinimum;
 

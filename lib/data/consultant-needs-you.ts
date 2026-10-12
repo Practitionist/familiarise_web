@@ -59,6 +59,7 @@ async function readRescheduleReplies(consultantProfileId: string) {
     orderBy: { createdAt: "asc" },
     take: LIST_TAKE,
     select: { appointmentId: true, initiatedBy: { select: { name: true } } },
+    relationLoadStrategy: "join",
   });
   return rows.map((r) => ({
     appointmentId: r.appointmentId,
@@ -94,6 +95,7 @@ async function readOwedMakeUps(consultantProfileId: string, now: Date) {
         },
       },
     },
+    relationLoadStrategy: "join",
   });
   if (misses.length === 0) return [];
 
