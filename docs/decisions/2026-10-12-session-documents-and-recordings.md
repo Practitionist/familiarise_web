@@ -78,6 +78,7 @@ This record holds nineteen decisions about the files attached to a booking: how 
 - **Decision:**
   - "Request removal" sets `removalRequestedAt` on the root and escalates the booking's existing support thread (category `DOCUMENTS`, reason `documents_removal`).
   - Support removes the thread (reason recorded) or declines and clears the flag.
+  - The response carries `removal.supportThreadId`. When the support thread cannot be raised, the request is withdrawn and the route answers 503 `SUPPORT_UNAVAILABLE`, so no flag is left that nobody will act on.
   - Every thread shows a banner naming who acts next: "Waiting for <expert> to review", "<expert> is reviewing", "Removal requested — support will respond".
 - **Alternatives considered:**
   - Locked with no path.
@@ -115,6 +116,7 @@ This record holds nineteen decisions about the files attached to a booking: how 
   - "Open" is a plain link.
   - There is no in-drawer preview.
   - Download keeps `?format=json` so errors return to the page.
+  - Every document, material, recording, explore-recording, organisation-material and admin or staff document route answers failures with one `{ code, message }` body whose codes, statuses and fixed UI copy live in `lib/documents/file-errors.ts`. The replay purchase route, the meeting recording-consent and recording-info routes and the verification routes keep their own shapes.
 - **Alternatives considered:**
   - Preflight then signed URL (the old approach).
   - In-app preview only.
@@ -161,12 +163,15 @@ This record holds nineteen decisions about the files attached to a booking: how 
 - **Context:** Three list implementations used different filters and date definitions, and the expert could not see whose turn it was.
 - **Decision:**
   - The consultant, consultee and org libraries use `LibraryBrowser` over one `LibraryPage` contract (`groups[].files`, ten sessions per page), grouped by appointment.
+  - Document `files` are threads, not file rows. Each carries `versions[]` (newest first) and `latest`, and the UI shows one expandable row per thread: title, "Latest: <name>", a "vN · N versions" chip, Started by, status, Updated and Open latest. The expanded panel marks earlier learner versions "Superseded" and expert files "Expert reply".
+  - Plan materials are a separate per-group `materials` array shown in their own table, and recording `files` are sessions with `parts[]`.
+  - Threads sort needs-you first, then newest, then id. The kind chips are All, Consultation, Subscription and Trial, and the source filter reads "Started by anyone", "you" or "the expert", plus "Plan materials only".
   - Filters are the other person, kind, status (including "Your turn"), date and search, all in the URL.
   - Collaborators and co-hosts see only appointments they are a party to.
 - **Alternatives considered:**
   - Flat file lists.
   - Keep the three implementations.
-- **Consequences:** The person facet is returned by the library read, and the status filter reads the latest learner version.
+- **Consequences:** The person facet is returned by the library read, the status filter reads the latest learner version, and a multi-version thread is never reduced to its root.
 
 ### ADR-11. Recordings across runs and batches: own batch by session, with catch-up for missing sessions
 
@@ -277,7 +282,7 @@ This record holds nineteen decisions about the files attached to a booking: how 
 - **Context:** An expert delete, retention, a 1:1 decline and a lapsed Stream copy all left the same empty slot, so a learner could not tell whether a session was never recorded or had been removed.
 - **Decision:**
   - Add nullable `Recording.removedAt` and `Recording.removalReason` (`RecordingRemovalReason`: `EXPERT_DELETED`, `RETENTION`, `DECLINED`, `COPY_LAPSED`), written together with the `EXPIRED` status by whichever path removed the file.
-  - The slot resolver reads the tombstone: an expert delete reads "Removed by the expert on <date>" for 30 days and then as not recorded; the other reasons read as declined or as the end of retention.
+  - The slot resolver reads the tombstone: an expert delete reads "Removed by the expert on <date>" until the recording's retention date and then as expired; the other reasons read as declined or as the end of retention. A session that was recorded never reads "Not recorded".
   - An expert delete also notifies the booking's learners.
 - **Alternatives considered:**
   - Infer the reason from `status` and consent rows: it cannot separate an expert delete from retention.
@@ -315,3 +320,6 @@ This record holds nineteen decisions about the files attached to a booking: how 
 | Purge as a `GITHUB_OUTPUT` wrapper outside the registry                                    | One registered implementation per job                                                        | Register it and delete the wrapper (ADR-06)                                              |
 | Purge by tombstone age only                                                                | Purging a root first re-rooted surviving versions                                            | Versions before roots (ADR-06)                                                           |
 | Separate 7-day and 30-day grace windows                                                    | Two jobs disagreed about when an object is orphaned                                          | One shared constant                                                                      |
+| Flat root-only library rows                                                                | A multi-version thread showed only its root and hid its history                              | `LibraryDocument` thread rows with `versions[]` (ADR-10)                                 |
+| The 30-day cut-off on the expert-removal notice                                            | A recorded session then read "Not recorded"                                                  | Notice lasts until the retention date (ADR-19)                                           |
+| The `image/jpg` MIME entry                                                                 | Not a registered media type; browsers report `image/jpeg`                                    | Removed from the file policy                                                             |

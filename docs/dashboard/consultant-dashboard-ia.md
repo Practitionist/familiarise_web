@@ -23,7 +23,7 @@ The mobile tab strip carries four tabs plus **Menu**: Home, Requests, Appointmen
 
 ## Documents and Recordings pages
 
-The Library group's Documents and Recordings entries are cross-session indexes, grouped by appointment (`LibraryBrowser`, ten sessions per page), with filters for the learner, kind, date and search, and for documents a source and the status filters "Your turn", "Waiting", "Done" and "Shared". Rows link out; the work happens on two dedicated per-appointment pages reached from the appointment details page, which acts as a hub with snapshot cards for Documents, Materials and Recordings, each reading its own route.
+The Library group's Documents and Recordings entries are cross-session indexes, grouped by appointment (`LibraryBrowser`, ten sessions per page), with filters for the learner, kind (All, Consultation, Subscription, Trial and the group kinds), date and search, and for documents "Started by anyone / you / the learner" (plus "Plan materials only") and the status filters "Your turn", "Waiting", "Done" and "Shared". Subscription headers read "Started <date> · <n> sessions". Documents list one expandable row per document thread (title, "Latest: <name>", a "vN · N versions" chip, Started by, status, Updated and Open latest), sorted needs-you first; expanding it lists the versions newest first, and plan materials sit in their own table. Recordings list one row per session that expands into its parts. Rows link out; the work happens on two dedicated per-appointment pages reached from the appointment details page, which acts as a hub with snapshot cards for Documents, Materials and Recordings, each reading its own route.
 
 | Page                  | Route                                                                          | Purpose                                                     |
 | --------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
@@ -72,3 +72,7 @@ The consultee (Learner) Settings hub also uses `SettingsLayout`: its sections ar
 | Hub nav                                    | `components/dashboard/SettingsLayout.tsx`, `app/dashboard/consultant/[consultantId]/(features)/settings/layout.tsx` |
 | Shared form state and the combined PUT     | `app/dashboard/consultant/[consultantId]/(features)/settings/use-consultant-settings-form.ts`                       |
 | Pins                                       | `__tests__/dashboards/settings-hub.test.tsx`, `__tests__/dashboard/nav-targets-resolve.test.ts`                     |
+
+## Deprecated & Superseded Approaches
+
+- **Flat root-only library rows.** The Documents index listed one row per thread root and hid its versions. Superseded by expandable thread rows with version history (`components/dashboard/library/DocumentTables.tsx`).

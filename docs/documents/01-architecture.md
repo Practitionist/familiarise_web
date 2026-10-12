@@ -74,16 +74,23 @@ An expert's reply file takes the same first two steps, but its row is written by
 3. **Magic-Byte Inspection (`lib/documents/storage-verify.ts`)**:
    - Inspects the first 4,096 bytes of every uploaded object via HTTP `Range: bytes=0-4095`.
    - Unconditionally rejects binary executables (`MZ` PE, `\x7FELF`, shebang) even if renamed to `.pdf` or `.png`.
-   - Verifies header signatures for `%PDF-`, PNG, JPEG, GIF, RIFF/WebP, OLE2 Compound Document (`.doc`, `.xls`, `.ppt`), OOXML ZIP (`PK\x03\x04` for `.docx`, `.xlsx`, `.pptx`), and UTF-8 text or CSV without null bytes, each against the declared type from `lib/documents/file-policy.ts`.
+   - Verifies header signatures for `%PDF-`, PNG, JPEG (declared only as `image/jpeg`; `image/jpg` is not in the policy), GIF, RIFF/WebP, OLE2 Compound Document (`.doc`, `.xls`, `.ppt`), OOXML ZIP (`PK\x03\x04` for `.docx`, `.xlsx`, `.pptx`), and UTF-8 text or CSV without null bytes, each against the declared type from `lib/documents/file-policy.ts`.
 
 ---
 
 ## 3. Grouped, Session-Paged Libraries
 
-The documents library pages by **session** (appointment), not by file, so a multi-version thread is never split across a page boundary. `readDocumentLibrary` (`lib/data/document-library.ts`) counts and pages appointments with `skip` and `take` (ten per page), loads each page's live rows with `threadRowSelect`, and builds the same `ThreadView` objects as the workspace. Plan materials for the page's consultation and subscription plans are added as `source = materials` rows.
+The documents library pages by **session** (appointment), not by file, so a multi-version thread is never split across a page boundary. `readDocumentLibrary` (`lib/data/document-library.ts`) counts and pages appointments with `skip` and `take` (ten per page), loads each page's live rows with `threadRowSelect`, and builds the same `ThreadView` objects as the workspace. `toLibraryThread` (`lib/library/document-threads.ts`) turns each into one `LibraryDocument` row carrying `latest`, `versionCount` and `versions[]` newest first, so a library `files` entry is a thread, never a single version. Plan materials for the page's consultation and subscription plans are a separate per-group `materials` array, shown in their own table. Threads sort needs-you first, then by the latest update, then by id (`compareLibraryThreads`).
+
+The recordings library follows the same paging and returns one row per session with its `parts[]` (`lib/data/recording-library.ts`).
 
 - **Personal libraries**: `GET /api/dashboard/{consultant,consultee}/[profileId]/documents`, resolved by `lib/library/personal-library-route.ts`.
 - **Organisation library**: `GET /api/organizations/[orgId]/documents?scope=mine|everyone`; the `everyone` scope returns counts only.
+- **UI**: `LibraryBrowser` renders `ThreadTable` and `MaterialsTable` (`components/dashboard/library/DocumentTables.tsx`); expanding a thread lists its versions with "Superseded" and "Expert reply" labels.
+
+## 4. Error Model
+
+Document, material, recording, explore-recording, organisation-material and admin or staff document routes answer failures with `{ code, message }` from `lib/documents/file-errors.ts` (for example `REMOVAL_NOT_REQUESTED`, `SUPPORT_UNAVAILABLE`, `RECORDING_DECLINED`). The removal-request route returns `removal.supportThreadId`; if the support thread cannot be raised it withdraws the request with a conditional `updateMany` and answers 503 `SUPPORT_UNAVAILABLE`. The replay purchase route, the meeting recording-consent and recording-info routes and the verification routes keep their older shapes.
 
 ---
 
@@ -96,3 +103,4 @@ The documents library pages by **session** (appointment), not by file, so a mult
 2. **Separate Single and Bulk Review Routes**: Previously, a single-document `PATCH` and `POST /api/documents/bulk-review` duplicated deep nested Prisma selects to resolve notification targets. Both routes are deleted; `POST .../:docId/review` is the only review path, and `lib/documents/document-notify.ts` resolves notification targets.
 3. **Preflight-Only Version Cap Checks**: Earlier versions checked the version cap only during `/upload-url` preflight, permitting concurrent requests to race past it during commit. `resolveDocumentThreadSlot` now enforces the learner gate and the caps inside the `FOR UPDATE` critical section.
 4. **Root-Thread Pagination Helpers**: `buildRootThreadStatusWhere` and `readConsulteeDocuments` paged root threads for each dashboard separately. They are replaced by the session-paged `readDocumentLibrary`.
+5. **Flat Root-Only Library Rows**: Library `files` once held one row per thread root with the latest version's status, which hid version history. They are replaced by `LibraryDocument` threads with `versions[]`.
