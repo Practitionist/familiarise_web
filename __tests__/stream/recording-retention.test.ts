@@ -185,9 +185,9 @@ describe("expireRecordings", () => {
         occurrence: {
           endsAt: day("2020-01-01"),
           appointment: {
-            consultation: { id: "c" },
-            webinar: null,
-            class: null,
+            consultationId: "c",
+            webinarId: null,
+            classId: null,
             subscription: null,
             trial: null,
             occurrences: [],
@@ -303,9 +303,9 @@ describe("expireRecordings", () => {
         occurrence: {
           endsAt: new Date(),
           appointment: {
-            consultation: null,
-            webinar: { id: "w" },
-            class: null,
+            consultationId: null,
+            webinarId: "w",
+            classId: null,
             subscription: null,
             trial: null,
             occurrences: [],

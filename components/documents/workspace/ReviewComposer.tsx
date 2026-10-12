@@ -46,12 +46,15 @@ export function ReviewComposer({
   versionNo,
   currentStatus,
   onDone,
+  onFailed,
 }: Readonly<{
   appointmentId: string;
   documentId: string;
   versionNo: number;
   currentStatus: string | null;
   onDone: () => void;
+  /** Refreshes the thread after a failed send; the composer stays open. */
+  onFailed: () => void;
 }>) {
   const { toast } = useToast();
   const groupId = useId();
@@ -60,6 +63,7 @@ export function ReviewComposer({
   const [notes, setNotes] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -95,6 +99,7 @@ export function ReviewComposer({
         );
       }
     },
+    onMutate: () => setSendError(null),
     onSuccess: () => {
       setChoice(null);
       setNotes("");
@@ -107,12 +112,13 @@ export function ReviewComposer({
         error instanceof FileActionError
           ? { title: error.title, description: error.message }
           : friendlyFileError("SERVER_ERROR");
+      setSendError(copy.description);
       toast({
         title: copy.title,
         description: copy.description,
         variant: "destructive",
       });
-      onDone();
+      onFailed();
     },
   });
 
@@ -199,6 +205,11 @@ export function ReviewComposer({
           </p>
         )}
       </div>
+      {sendError && (
+        <p role="alert" className="text-xs text-destructive">
+          {sendError}
+        </p>
+      )}
       <div className="flex justify-end">
         <Button type="submit" size="sm" disabled={!canSend || submit.isPending}>
           {submit.isPending ? "Sending…" : "Send feedback"}

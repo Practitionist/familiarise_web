@@ -15,6 +15,27 @@ export const recordingKeys = {
   library: () => ["recordings", "library"] as const,
 };
 
+/** A Library list's key base; LibraryBrowser appends the read's query string. */
+export const libraryKeys = {
+  personal: (
+    artifact: "documents" | "recordings",
+    tree: "consultee" | "consultant",
+    profileId: string,
+  ) =>
+    [
+      ...(artifact === "documents"
+        ? documentKeys.library()
+        : recordingKeys.library()),
+      tree,
+      profileId,
+    ] as const,
+  org: (
+    orgId: string,
+    artifact: "documents" | "recordings",
+    scope: "mine" | "everyone",
+  ) => ["org-library", orgId, artifact, scope] as const,
+};
+
 export const materialKeys = {
   appointment: (appointmentId: string) =>
     ["materials", "appointment", appointmentId] as const,

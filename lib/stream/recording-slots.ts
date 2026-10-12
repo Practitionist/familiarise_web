@@ -77,14 +77,25 @@ export interface RecordingSlot {
   state: SlotState;
   /** Why the viewer's own session has nothing to play (set with catch_up too). */
   missingReason: SlotMissingReason | null;
-  /** When an expert removed the session's recording. */
+  /** When the session's recording was removed, and by whom. */
   removedAt: string | null;
+  removedBy: RemovedBy | null;
   source:
     | { kind: "own" }
     | { kind: "catch_up"; batchLabel: string; startsAt: string }
     | null;
   parts: SlotPart[];
 }
+
+export type RemovedBy = "expert" | "support";
+
+/** Removals that read "Removed" rather than expired or not recorded. */
+const REMOVED_BY: Partial<Record<RecordingRemovalReason, RemovedBy>> = {
+  EXPERT_DELETED: "expert",
+  SUPPORT_ACTION: "support",
+};
+const removedByOf = (reason: RecordingRemovalReason | null) =>
+  reason ? (REMOVED_BY[reason] ?? null) : null;
 
 export type RecordingViewerRole = "host" | "learner";
 
@@ -411,7 +422,7 @@ function toParts(
   });
 }
 
-/** An expert-deleted recording reads "Removed" until the date it would have been deleted anyway. */
+/** A removed recording reads "Removed" until the date it would have been deleted anyway. */
 export function tombstoneVisible(
   label: RecordingRetentionLabel | undefined,
   now: Date,
@@ -419,26 +430,38 @@ export function tombstoneVisible(
   return label?.kind !== "DATE" || label.until.getTime() > now.getTime();
 }
 
+interface MissingSlot {
+  reason: SlotMissingReason;
+  removedAt: Date | null;
+  removedBy: RemovedBy | null;
+}
+
 function missingReasonOf(
   sessions: SessionRow[],
   now: Date,
   oneToOne: boolean,
   removedLabels: Map<string, RecordingRetentionLabel>,
-): { reason: SlotMissingReason; removedAt: Date | null } {
+): MissingSlot {
   const recordings = sessions.flatMap((s) => s.meeting?.recordings ?? []);
   const deleted = recordings.filter(
-    (r) => r.removalReason === "EXPERT_DELETED",
+    (r) => removedByOf(r.removalReason) !== null,
   );
   const removed = deleted.find((r) =>
     tombstoneVisible(removedLabels.get(r.id), now),
   );
-  if (removed) return { reason: "removed", removedAt: removed.removedAt };
+  if (removed) {
+    return {
+      reason: "removed",
+      removedAt: removed.removedAt,
+      removedBy: removedByOf(removed.removalReason),
+    };
+  }
   // Only 1:1 sessions discard a recording when someone declines.
   const declined =
     oneToOne &&
     sessions.some((s) => (s.meeting?.recordingConsents.length ?? 0) > 0);
   if (declined || recordings.some((r) => r.removalReason === "DECLINED")) {
-    return { reason: "declined", removedAt: null };
+    return { reason: "declined", removedAt: null, removedBy: null };
   }
   // A session that was recorded never reads "Not recorded".
   const expired = recordings.some(
@@ -448,9 +471,9 @@ function missingReasonOf(
       r.removalReason === "COPY_LAPSED",
   );
   if (expired || deleted.length > 0) {
-    return { reason: "expired", removedAt: null };
+    return { reason: "expired", removedAt: null, removedBy: null };
   }
-  return { reason: "not_recorded", removedAt: null };
+  return { reason: "not_recorded", removedAt: null, removedBy: null };
 }
 
 export interface CatchUpSource {
@@ -547,7 +570,7 @@ interface Draft {
   rep: SessionRow;
   parts: { recording: RecordingRow; makeUp: boolean }[];
   state: SlotState;
-  missing: { reason: SlotMissingReason; removedAt: Date | null } | null;
+  missing: MissingSlot | null;
 }
 
 function draftSlots(
@@ -647,6 +670,7 @@ export function buildRecordingView(
       startsAt: d.rep.startsAt.toISOString(),
       missingReason: d.missing?.reason ?? null,
       removedAt: d.missing?.removedAt?.toISOString() ?? null,
+      removedBy: d.missing?.removedBy ?? null,
     };
     if (source && viewer.role === "learner") {
       return {
@@ -721,6 +745,33 @@ function viewerBookingSelect(userId: string) {
   } satisfies Prisma.AppointmentSelect;
 }
 
+const KIND_RELATION = {
+  CONSULTATION: "consultation",
+  SUBSCRIPTION: "subscription",
+  TRIAL: "trial",
+  WEBINAR: "webinar",
+  CLASS: "class",
+} as const;
+
+/**
+ * Drops the relations no booking on the page uses: Prisma sends each one as
+ * its own round trip even when every key is null. Dropped ones read as undefined.
+ */
+function onlyPresentKinds<S extends ReturnType<typeof viewerBookingSelect>>(
+  select: S,
+  kinds: ReadonlySet<string>,
+): S {
+  const pruned = { ...select };
+  for (const [kind, relation] of Object.entries(KIND_RELATION)) {
+    if (!kinds.has(kind)) Reflect.deleteProperty(pruned, relation);
+  }
+  if (!kinds.has("WEBINAR") && !kinds.has("CLASS")) {
+    Reflect.deleteProperty(pruned, "participants");
+    Reflect.deleteProperty(pruned, "payment");
+  }
+  return pruned;
+}
+
 /** One read for the catch-up candidates of every (plan, ordinal) the page needs. */
 async function readCatchUpRows(
   needs: { groupPlan: GroupPlan; ordinals: number[] }[],
@@ -765,7 +816,8 @@ function labelledRecordingIds(
     ...sessions.flatMap((s) =>
       (s.meeting?.recordings ?? [])
         .filter(
-          (r) => PLAYABLE.has(r.status) || r.removalReason === "EXPERT_DELETED",
+          (r) =>
+            PLAYABLE.has(r.status) || removedByOf(r.removalReason) !== null,
         )
         .map((r) => r.id),
     ),
@@ -812,14 +864,33 @@ export async function loadRecordingViews(
   const loaded = new Map<string, LoadedRecordingView>();
   if (appointmentIds.length === 0) return loaded;
   const identity = await readIdentity(userId);
+  const live = { id: { in: appointmentIds }, deletedAt: null };
+  const kinds = await prisma.appointment.findMany({
+    where: live,
+    select: { appointmentType: true },
+    distinct: ["appointmentType"],
+  });
   const rows = await prisma.appointment.findMany({
-    where: { id: { in: appointmentIds }, deletedAt: null },
-    select: viewerBookingSelect(userId),
+    where: live,
+    select: onlyPresentKinds(
+      viewerBookingSelect(userId),
+      new Set(kinds.map((k) => k.appointmentType)),
+    ),
   });
   const viewers = rows.flatMap((row) => {
     const holdsSeat =
-      row.participants.length > 0 || row.payment.some(isPaymentEntitled);
-    const viewer = recordingViewerOf(row, identity, holdsSeat);
+      (row.participants?.length ?? 0) > 0 ||
+      (row.payment ?? []).some(isPaymentEntitled);
+    const booking: BookingRow = {
+      id: row.id,
+      appointmentType: row.appointmentType,
+      consultation: row.consultation ?? null,
+      subscription: row.subscription ?? null,
+      trial: row.trial ?? null,
+      webinar: row.webinar ?? null,
+      class: row.class ?? null,
+    };
+    const viewer = recordingViewerOf(booking, identity, holdsSeat);
     return viewer ? [{ viewer, sessions: row.occurrences }] : [];
   });
   const floors = viewers.some(({ viewer }) => hidesEarlierSessions(viewer))
@@ -913,27 +984,35 @@ export async function catchUpPlaybackAccess(
     now,
   );
 
-  let refusal: CatchUpRefusal = "FORBIDDEN";
-  for (const run of ownRuns) {
+  const slots = ownRuns.flatMap((run) => {
     const view = views.get(run.id)?.view;
-    if (view?.viewerRole !== "learner") continue;
+    if (view?.viewerRole !== "learner") return [];
     const slot = view.slots.find((s) => s.ordinal === ordinal);
-    if (!slot) continue;
-    if (slot.state === "catch_up") {
-      const fromThisRun = await prisma.recording.count({
-        where: {
-          id: { in: slot.parts.map((p) => p.recordingId) },
-          meeting: { occurrence: { appointmentId: recordingAppointmentId } },
-        },
-      });
-      if (fromThisRun > 0) return { allowed: true };
-    }
-    refusal =
-      slot.state === "before_you_joined"
+    return slot ? [slot] : [];
+  });
+  const catchUpPartIds = slots.flatMap((slot) =>
+    slot.state === "catch_up" ? slot.parts.map((p) => p.recordingId) : [],
+  );
+  const fromThisRun =
+    catchUpPartIds.length > 0
+      ? await prisma.recording.count({
+          where: {
+            id: { in: catchUpPartIds },
+            meeting: { occurrence: { appointmentId: recordingAppointmentId } },
+          },
+        })
+      : 0;
+  if (fromThisRun > 0) return { allowed: true };
+
+  const last = slots.at(-1);
+  if (!last) return { allowed: false, code: "FORBIDDEN" };
+  return {
+    allowed: false,
+    code:
+      last.state === "before_you_joined"
         ? "LATE_JOIN_HIDDEN"
-        : "OWN_RECORDING_AVAILABLE";
-  }
-  return { allowed: false, code: refusal };
+        : "OWN_RECORDING_AVAILABLE",
+  };
 }
 
 /**

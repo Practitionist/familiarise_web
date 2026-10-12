@@ -6,11 +6,12 @@ import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
 
-/** Tells a booking's learners that the expert deleted one of its recordings. */
+/** Tells a booking's learners that one of its recordings was removed, and by whom. */
 export async function notifyAttendeesOfRemovedRecording(args: {
   appointmentId: string;
   recordingTitle: string;
-  consultantName: string;
+  /** The actor's name, or "Familiarise support" for a support removal. */
+  removedBy: string;
 }): Promise<void> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: args.appointmentId },
@@ -46,7 +47,7 @@ export async function notifyAttendeesOfRemovedRecording(args: {
       {
         ...notificationScope(appointment.organizationId),
         recordingTitle: args.recordingTitle,
-        consultantName: args.consultantName,
+        consultantName: args.removedBy,
         dashboardUrl: `${getAppUrl()}${path}`,
       },
       { deferAttempt: true },

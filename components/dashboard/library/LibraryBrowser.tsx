@@ -37,6 +37,7 @@ import {
   LIBRARY_KINDS,
   compareLibraryThreads,
   flattenLibrary,
+  libraryQueryString,
   type DocumentSource,
   type LibraryDocument,
   type LibraryGroup,
@@ -268,21 +269,7 @@ export function LibraryBrowser({
   const flat = filters.view === "flat";
   const docs = artifact === "documents";
 
-  const search = new URLSearchParams(fixedParams);
-  if (q) search.set("q", q);
-  if (page > 1) search.set("page", String(page));
-  for (const key of [
-    "kind",
-    "from",
-    "to",
-    "source",
-    "person",
-    "status",
-  ] as const) {
-    const value = filters[key];
-    if (value) search.set(key, value);
-  }
-  const qs = search.toString();
+  const qs = libraryQueryString(fixedParams, { q, page, filters });
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: [...queryKey, qs],

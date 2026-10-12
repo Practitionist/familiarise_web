@@ -12,6 +12,7 @@ import {
 } from "@/components/dashboard/PageScaffold";
 import { UrlTabs } from "@/components/dashboard/UrlTabs";
 import { LibraryBrowser } from "@/components/dashboard/library/LibraryBrowser";
+import { libraryKeys } from "@/lib/documents/query-keys";
 import {
   documentSourcesFor,
   type LibraryScope,
@@ -55,7 +56,7 @@ export function OrgLibraryPage({
       artifact={artifact}
       endpoint={`/api/organizations/${orgId}/${artifact}`}
       fixedParams={{ scope }}
-      queryKey={["org-library", orgId, artifact, scope]}
+      queryKey={libraryKeys.org(orgId, artifact, scope)}
       sessionHref={(id) =>
         scope === "everyone"
           ? `/dashboard/organization/${orgId}/appointments/${id}`

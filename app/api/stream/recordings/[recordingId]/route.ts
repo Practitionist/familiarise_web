@@ -441,15 +441,23 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         recordingUrl: "",
         listingStatus: RecordingListingStatus.UNPUBLISHED,
         removedAt: new Date(),
-        removalReason: "EXPERT_DELETED",
+        removalReason: viaOperatorGrant ? "SUPPORT_ACTION" : "EXPERT_DELETED",
       },
       select: { id: true, storagePath: true },
     });
     if (!expired) return fileApiError("RECORDING_CHANGED");
+    // The row is already removed, so a failed notice must not fail the delete.
     await notifyAttendeesOfRemovedRecording({
       appointmentId: recording.meeting.occurrence.appointmentId,
       recordingTitle: recording.title,
-      consultantName: session.user.name ?? "Your expert",
+      removedBy: viaOperatorGrant
+        ? "Familiarise support"
+        : (session.user.name ?? "Your expert"),
+    }).catch((error: unknown) => {
+      streamLogger.warn("Recording removal notice not sent", {
+        recordingId,
+        error: error instanceof Error ? error.message : "unknown error",
+      });
     });
     const purged = await purgeExpiredRecordingAssets(expired);
     if (!purged.success) {

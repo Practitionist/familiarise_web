@@ -37,10 +37,13 @@ export function slotStateText(slot: RecordingSlot, day: DayFormat): string {
     switch (slot.missingReason) {
       case "declined":
         return "No recording: a participant chose not to be recorded.";
-      case "removed":
+      case "removed": {
+        const by =
+          slot.removedBy === "support" ? "Familiarise support" : "the expert";
         return slot.removedAt
-          ? `Removed by the expert on ${day(slot.removedAt)}.`
-          : "Removed by the expert.";
+          ? `Removed by ${by} on ${day(slot.removedAt)}.`
+          : `Removed by ${by}.`;
+      }
       case "expired":
         return "The recording's retention period has ended.";
       default:

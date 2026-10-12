@@ -83,7 +83,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
 
     let supportThreadId: string | null = null;
-    let failure: unknown = null;
+    let failure: string | null = null;
     try {
       supportThreadId = await raiseDocumentRemovalRequest({
         appointmentId,
@@ -92,7 +92,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         note: note ?? null,
       });
     } catch (error) {
-      failure = error;
+      failure = error instanceof Error ? error.message : "unknown error";
     }
 
     if (!supportThreadId) {
@@ -109,12 +109,7 @@ export async function POST(request: Request, { params }: RouteContext) {
         extra: {
           appointmentId,
           rootId,
-          error:
-            failure instanceof Error
-              ? failure.message
-              : failure
-                ? String(failure)
-                : "no thread",
+          error: failure ?? "no thread",
         },
       });
       return fileApiError("SUPPORT_UNAVAILABLE");

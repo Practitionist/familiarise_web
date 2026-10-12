@@ -6,6 +6,7 @@ import prisma from "@/lib/prisma";
 import {
   documentBookingSelect,
   documentPartyWhere,
+  type DocumentBookingRow,
   documentWriteRefusal,
   partyRoleOf,
   toDocumentBooking,
@@ -143,12 +144,8 @@ function sessionsWhere(
   owner: LibraryOwner,
   query: LibraryQuery,
   role: DocumentPartyRole,
+  plans: ReadablePlans | null,
 ): Prisma.AppointmentWhereInput {
-  const everyone = owner.kind === "org" && owner.everyone;
-  const withMaterials =
-    !everyone &&
-    query.status === null &&
-    (query.source === null || query.source === "materials");
   const documentFilter: Prisma.AppointmentDocumentWhereInput = {
     deletedAt: null,
     ...(query.status ? STATUS_PREFILTER[query.status](role) : {}),
@@ -158,14 +155,10 @@ function sessionsWhere(
   if (query.source !== "materials") {
     hasFiles.push({ documents: { some: documentFilter } });
   }
-  if (withMaterials) {
-    const material = {
-      ...materialReaderWhere(userId),
-      ...(query.q ? { originalName: contains(query.q) } : {}),
-    };
+  if (plans) {
     hasFiles.push(
-      { consultation: { consultationPlan: { materials: { some: material } } } },
-      { subscription: { subscriptionPlan: { materials: { some: material } } } },
+      { consultation: { consultationPlanId: { in: plans.consultation } } },
+      { subscription: { subscriptionPlanId: { in: plans.subscription } } },
     );
   }
 
@@ -197,37 +190,271 @@ function firstStart(
   return fallback?.toISOString() ?? null;
 }
 
+interface ReadablePlans {
+  consultation: string[];
+  subscription: string[];
+}
+
+/** Plans with a material the viewer may open (and matching `q`), resolved once so later filters are id lists. */
+async function readablePlans(
+  userId: string,
+  q: string,
+): Promise<ReadablePlans> {
+  const rows = await prisma.planMaterial.findMany({
+    where: {
+      AND: [
+        materialReaderWhere(userId),
+        {
+          OR: [
+            { consultationPlanId: { not: null } },
+            { subscriptionPlanId: { not: null } },
+          ],
+        },
+        ...(q ? [{ originalName: contains(q) }] : []),
+      ],
+    },
+    distinct: ["consultationPlanId", "subscriptionPlanId"],
+    select: { consultationPlanId: true, subscriptionPlanId: true },
+  });
+  return {
+    consultation: [...new Set(rows.flatMap((r) => r.consultationPlanId ?? []))],
+    subscription: [...new Set(rows.flatMap((r) => r.subscriptionPlanId ?? []))],
+  };
+}
+
+/** Users on the other side of a set of bookings, as the expert or the learner. */
+function counterpartWhere(
+  side: "expert" | "learner",
+  bookings: Prisma.AppointmentWhereInput,
+): Prisma.UserWhereInput {
+  const on = { appointment: { is: bookings } };
+  return side === "expert"
+    ? {
+        consultantProfile: {
+          OR: [
+            { consultationPlans: { some: { consultations: { some: on } } } },
+            { subscriptionPlans: { some: { subscriptions: { some: on } } } },
+            { trials: { some: on } },
+          ],
+        },
+      }
+    : {
+        consulteeProfile: {
+          OR: [
+            { consultationRequests: { some: on } },
+            { subscriptionRequests: { some: on } },
+            { trials: { some: on } },
+          ],
+        },
+      };
+}
+
 /** People on the other side of the viewer's bookings in scope, for the person filter. */
 async function peopleFacet(
   userId: string,
   owner: LibraryOwner,
 ): Promise<{ id: string; name: string }[]> {
-  const rows = await prisma.appointment.findMany({
-    where: { ...scopeWhere(userId, owner), documents: { some: {} } },
-    select: documentBookingSelect,
-    take: 500,
+  const withFiles = { documents: { some: {} } };
+  const arms: Prisma.UserWhereInput[] =
+    owner.kind === "personal"
+      ? [
+          counterpartWhere(owner.side === "learner" ? "expert" : "learner", {
+            ...scopeWhere(userId, owner),
+            ...withFiles,
+          }),
+        ]
+      : (["expert", "learner"] as const).map((side) =>
+          counterpartWhere(side, {
+            organizationId: owner.orgId,
+            deletedAt: null,
+            ...withFiles,
+            OR: side === "expert" ? learnerArms(userId) : expertArms(userId),
+          }),
+        );
+  const users = await prisma.user.findMany({
+    where: { OR: arms },
+    orderBy: { name: "asc" },
+    take: PEOPLE_FACET_CAP,
+    select: { id: true, name: true },
   });
-  const people = new Map<string, string>();
-  for (const row of rows) {
-    const booking = toDocumentBooking(row);
-    if (!booking) continue;
-    const role = partyRoleOf(booking, userId);
-    const other =
-      role === "learner"
-        ? booking.expert
-        : role === "expert"
-          ? booking.learner
-          : null;
-    if (other) people.set(other.userId, other.name);
-    if (!role) {
-      people.set(booking.learner.userId, booking.learner.name);
-      people.set(booking.expert.userId, booking.expert.name);
+  return users.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** The page's rows: booking facts by profile id, so names are one read for the page. */
+const libraryBookingSelect = {
+  id: true,
+  appointmentType: true,
+  organizationId: true,
+  organization: { select: { name: true } },
+  consultation: {
+    select: {
+      status: true,
+      cancelledAt: true,
+      updatedAt: true,
+      requestedById: true,
+      consultationPlanId: true,
+      consultationPlan: { select: { title: true, consultantProfileId: true } },
+    },
+  },
+  subscription: {
+    select: {
+      status: true,
+      cancelledAt: true,
+      updatedAt: true,
+      schedulingPeriodStartsAt: true,
+      schedulingPeriodEndsAt: true,
+      requestedById: true,
+      subscriptionPlanId: true,
+      subscriptionPlan: { select: { title: true, consultantProfileId: true } },
+    },
+  },
+  trial: {
+    select: {
+      status: true,
+      updatedAt: true,
+      consulteeProfileId: true,
+      consultantProfileId: true,
+      subscriptionPlan: { select: { title: true } },
+    },
+  },
+  occurrences: documentBookingSelect.occurrences,
+  statusHistory: documentBookingSelect.statusHistory,
+  // Writes cap a booking's threads and versions, so every live version is read.
+  documents: {
+    where: { deletedAt: null },
+    orderBy: { versionNo: "asc" },
+    select: threadRowSelect,
+  },
+} satisfies Prisma.AppointmentSelect;
+
+type LibraryBookingRow = Prisma.AppointmentGetPayload<{
+  select: typeof libraryBookingSelect;
+}>;
+
+type ProfileRow = { id: string; userId: string; user: { name: string } };
+
+/** Names and user ids of the page's parties, keyed by profile id. */
+async function partiesOf(
+  rows: LibraryBookingRow[],
+): Promise<Map<string, ProfileRow>> {
+  const experts = rows
+    .flatMap((r) => [
+      r.consultation?.consultationPlan.consultantProfileId ?? [],
+      r.subscription?.subscriptionPlan.consultantProfileId ?? [],
+      r.trial?.consultantProfileId ?? [],
+    ])
+    .flat();
+  const learners = rows
+    .flatMap((r) => [
+      r.consultation?.requestedById ?? [],
+      r.subscription?.requestedById ?? [],
+      r.trial?.consulteeProfileId ?? [],
+    ])
+    .flat();
+  const parties = new Map<string, ProfileRow>();
+  if (experts.length + learners.length === 0) return parties;
+  const users = await prisma.user.findMany({
+    where: {
+      OR: [
+        { consultantProfile: { id: { in: experts } } },
+        { consulteeProfile: { id: { in: learners } } },
+      ],
+    },
+    select: {
+      id: true,
+      name: true,
+      consultantProfile: { select: { id: true } },
+      consulteeProfile: { select: { id: true } },
+    },
+  });
+  for (const user of users) {
+    for (const profile of [user.consultantProfile, user.consulteeProfile]) {
+      if (profile) {
+        parties.set(profile.id, {
+          id: profile.id,
+          userId: user.id,
+          user: { name: user.name },
+        });
+      }
     }
   }
-  return [...people.entries()]
-    .map(([id, name]) => ({ id, name }))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, PEOPLE_FACET_CAP);
+  return parties;
+}
+
+/** The shared booking row for `toDocumentBooking`, or null when a party is missing. */
+function toBookingRow(
+  row: LibraryBookingRow,
+  parties: Map<string, ProfileRow>,
+): DocumentBookingRow | null {
+  const party = (id: string | null | undefined) =>
+    id ? (parties.get(id) ?? null) : null;
+  const { consultation: c, subscription: s, trial: t } = row;
+  const base = {
+    id: row.id,
+    organizationId: row.organizationId,
+    organization: row.organization,
+    occurrences: row.occurrences,
+    statusHistory: row.statusHistory,
+  };
+  if (c) {
+    const requestedBy = party(c.requestedById);
+    const expert = party(c.consultationPlan.consultantProfileId);
+    if (!requestedBy || !expert) return null;
+    return {
+      ...base,
+      subscription: null,
+      trial: null,
+      consultation: {
+        status: c.status,
+        cancelledAt: c.cancelledAt,
+        updatedAt: c.updatedAt,
+        requestedBy,
+        consultationPlan: {
+          title: c.consultationPlan.title,
+          consultantProfile: expert,
+        },
+      },
+    };
+  }
+  if (s) {
+    const requestedBy = party(s.requestedById);
+    const expert = party(s.subscriptionPlan.consultantProfileId);
+    if (!requestedBy || !expert) return null;
+    return {
+      ...base,
+      consultation: null,
+      trial: null,
+      subscription: {
+        status: s.status,
+        cancelledAt: s.cancelledAt,
+        updatedAt: s.updatedAt,
+        schedulingPeriodEndsAt: s.schedulingPeriodEndsAt,
+        requestedBy,
+        subscriptionPlan: {
+          title: s.subscriptionPlan.title,
+          consultantProfile: expert,
+        },
+      },
+    };
+  }
+  if (t) {
+    const consulteeProfile = party(t.consulteeProfileId);
+    const consultantProfile = party(t.consultantProfileId);
+    if (!consulteeProfile || !consultantProfile) return null;
+    return {
+      ...base,
+      consultation: null,
+      subscription: null,
+      trial: {
+        status: t.status,
+        updatedAt: t.updatedAt,
+        consulteeProfile,
+        consultantProfile,
+        subscriptionPlan: t.subscriptionPlan,
+      },
+    };
+  }
+  return null;
 }
 
 export async function readDocumentLibrary(args: {
@@ -239,82 +466,66 @@ export async function readDocumentLibrary(args: {
   const everyone = owner.kind === "org" && owner.everyone;
   const pageRole: DocumentPartyRole =
     owner.kind === "personal" ? owner.side : "learner";
-  const where = sessionsWhere(userId, owner, query, pageRole);
+  const withMaterials =
+    !everyone &&
+    query.status === null &&
+    (query.source === null || query.source === "materials");
+  const plans = withMaterials ? await readablePlans(userId, query.q) : null;
+  const where = sessionsWhere(userId, owner, query, pageRole, plans);
 
   const [total, rows, people] = await Promise.all([
     prisma.appointment.count({ where }),
     prisma.appointment.findMany({
       where,
-      select: {
-        ...documentBookingSelect,
-        appointmentType: true,
-        createdAt: true,
-        documents: {
-          where: { deletedAt: null },
-          orderBy: { versionNo: "asc" },
-          take: FILES_PER_SESSION * 4,
-          select: threadRowSelect,
-        },
-        consultation: {
-          select: {
-            ...documentBookingSelect.consultation.select,
-            consultationPlanId: true,
-          },
-        },
-        subscription: {
-          select: {
-            ...documentBookingSelect.subscription.select,
-            subscriptionPlanId: true,
-            schedulingPeriodStartsAt: true,
-          },
-        },
-      },
+      select: libraryBookingSelect,
       orderBy: { createdAt: "desc" },
       take: LIBRARY_PAGE_SIZE,
       skip: (query.page - 1) * LIBRARY_PAGE_SIZE,
     }),
     everyone ? Promise.resolve([]) : peopleFacet(userId, owner),
   ]);
+  const parties = await partiesOf(rows);
 
-  const planIds = {
-    consultation: rows
-      .map((r) => r.consultation?.consultationPlanId)
-      .filter((id): id is string => Boolean(id)),
-    subscription: rows
-      .map((r) => r.subscription?.subscriptionPlanId)
-      .filter((id): id is string => Boolean(id)),
+  const pagePlans = {
+    consultation: rows.flatMap((r) => r.consultation?.consultationPlanId ?? []),
+    subscription: rows.flatMap((r) => r.subscription?.subscriptionPlanId ?? []),
   };
-  const materials =
-    everyone ||
-    query.status !== null ||
-    (query.source && query.source !== "materials")
-      ? []
-      : await prisma.planMaterial.findMany({
-          where: {
-            AND: [
-              materialReaderWhere(userId),
-              {
-                OR: [
-                  { consultationPlanId: { in: planIds.consultation } },
-                  { subscriptionPlanId: { in: planIds.subscription } },
-                ],
+  const materials = plans
+    ? await prisma.planMaterial.findMany({
+        where: {
+          OR: [
+            {
+              consultationPlanId: {
+                in: pagePlans.consultation.filter((id) =>
+                  plans.consultation.includes(id),
+                ),
               },
-              ...(query.q ? [{ originalName: contains(query.q) }] : []),
-            ],
-          },
-          orderBy: [{ order: "asc" }, { uploadedAt: "asc" }],
-          select: {
-            id: true,
-            originalName: true,
-            mimeType: true,
-            fileSize: true,
-            consultationPlanId: true,
-            subscriptionPlanId: true,
-          },
-        });
+            },
+            {
+              subscriptionPlanId: {
+                in: pagePlans.subscription.filter((id) =>
+                  plans.subscription.includes(id),
+                ),
+              },
+            },
+          ],
+          ...(query.q ? { originalName: contains(query.q) } : {}),
+        },
+        orderBy: [{ order: "asc" }, { uploadedAt: "asc" }],
+        select: {
+          id: true,
+          originalName: true,
+          mimeType: true,
+          fileSize: true,
+          consultationPlanId: true,
+          subscriptionPlanId: true,
+        },
+      })
+    : [];
 
   const groups = rows.flatMap((row): LibraryGroup<LibraryDocument>[] => {
-    const booking = toDocumentBooking(row);
+    const bookingRow = toBookingRow(row, parties);
+    const booking = bookingRow ? toDocumentBooking(bookingRow) : null;
     if (!booking) return [];
     const role = partyRoleOf(booking, userId) ?? pageRole;
     const session: LibrarySession = {

@@ -383,6 +383,7 @@ export function ThreadCard({
               setReviewing(false);
               onChanged();
             }}
+            onFailed={onChanged}
           />
         )}
       </div>

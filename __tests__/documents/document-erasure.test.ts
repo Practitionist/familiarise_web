@@ -57,6 +57,8 @@ describe("erasure covers session documents", () => {
     expect(tombstone.where.OR).toContainEqual(
       expect.objectContaining({ uploadedByRole: "CONSULTANT" }),
     );
+    const purgeScope = db.appointmentDocument.findMany.mock.calls[0][0].where;
+    expect(purgeScope.AND[0]).not.toHaveProperty("removalReason");
     expect(db.appointmentDocument.deleteMany).toHaveBeenCalledTimes(1);
     expect(failures).toHaveLength(1);
     expect(reportSentryError).toHaveBeenCalledTimes(1);

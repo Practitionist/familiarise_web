@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { documentKeys, recordingKeys } from "@/lib/documents/query-keys";
+import { libraryKeys, recordingKeys } from "@/lib/documents/query-keys";
 import { LibraryBrowser } from "./LibraryBrowser";
 
 const SyncResultSchema = z.object({ synced: z.number().optional() });
@@ -78,13 +78,7 @@ export function PersonalLibrary({
     <LibraryBrowser
       artifact={artifact}
       endpoint={`/api/dashboard/${tree}/${profileId}/${artifact}`}
-      queryKey={[
-        ...(artifact === "documents"
-          ? documentKeys.library()
-          : recordingKeys.library()),
-        tree,
-        profileId,
-      ]}
+      queryKey={libraryKeys.personal(artifact, tree, profileId)}
       sessionHref={(id) => `${base}/appointments/${id}/${artifact}`}
       sources={
         artifact === "documents"

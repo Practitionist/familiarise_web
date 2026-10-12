@@ -4,8 +4,9 @@ import { purgeTombstonedDocuments } from "./document-purge";
 
 /**
  * Erasure covers session documents: every thread on bookings where the user
- * is the learner, and every file the user shared as the expert. Rows are
- * tombstoned with ACCOUNT_ERASURE and purged at once, objects before rows.
+ * is the learner, and every file the user shared as the expert. Live rows are
+ * tombstoned with ACCOUNT_ERASURE, then every tombstone in scope is purged
+ * whatever its earlier reason, objects before rows.
  * Returns failure lines for the erasure request; reports once per run.
  */
 export async function eraseUserSessionDocuments(
@@ -38,10 +39,7 @@ export async function eraseUserSessionDocuments(
       where: { ...scope, deletedAt: null },
       data: { deletedAt: now, removalReason: "ACCOUNT_ERASURE" },
     });
-    const counts = await purgeTombstonedDocuments(
-      { ...scope, removalReason: "ACCOUNT_ERASURE" },
-      db,
-    );
+    const counts = await purgeTombstonedDocuments(scope, db);
     const left = counts.failedStorage + counts.failedRows;
     if (left === 0) return [];
     reportSentryError(new Error("Session document erasure incomplete"), {

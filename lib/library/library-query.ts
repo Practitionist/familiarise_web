@@ -85,6 +85,37 @@ function oneOf<T extends string>(list: readonly T[], raw: string | null) {
   return list.includes(raw as T) ? (raw as T) : null;
 }
 
+/** URL filters that change which Library page is read (`view` and `scope` do not). */
+export const LIBRARY_READ_FILTERS = [
+  "kind",
+  "from",
+  "to",
+  "source",
+  "person",
+  "status",
+] as const;
+
+/** The read's query string; the client's query key ends with it, so a server seed builds it here too. */
+export function libraryQueryString(
+  fixedParams: Record<string, string> | undefined,
+  state: {
+    q: string;
+    page: number;
+    filters: Partial<
+      Record<(typeof LIBRARY_READ_FILTERS)[number], string | null>
+    >;
+  },
+): string {
+  const search = new URLSearchParams(fixedParams);
+  if (state.q) search.set("q", state.q);
+  if (state.page > 1) search.set("page", String(state.page));
+  for (const key of LIBRARY_READ_FILTERS) {
+    const value = state.filters[key];
+    if (value) search.set(key, value);
+  }
+  return search.toString();
+}
+
 /** Lenient parse: an unknown value is dropped, never a 400. */
 export function parseLibraryQuery(
   get: (key: string) => string | null,

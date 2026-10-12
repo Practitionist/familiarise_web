@@ -146,9 +146,9 @@ const candidateSelect = {
           endsAt: true,
           appointment: {
             select: {
-              consultation: { select: { id: true } },
-              webinar: { select: { id: true } },
-              class: { select: { id: true } },
+              consultationId: true,
+              webinarId: true,
+              classId: true,
               subscription: { select: subscriptionEndSelect },
               trial: {
                 select: {
@@ -192,8 +192,8 @@ async function resolveSession(
   const occurrence = candidate.meeting.occurrence;
   const appointment = occurrence.appointment;
   const sessionEndedAt = candidate.meeting.endedAt ?? occurrence.endsAt;
-  if (appointment.webinar) return { kind: "WEBINAR", sessionEndedAt };
-  if (appointment.class) {
+  if (appointment.webinarId) return { kind: "WEBINAR", sessionEndedAt };
+  if (appointment.classId) {
     return {
       kind: "CLASS",
       lastSessionEndsAt: appointment.occurrences[0]?.endsAt ?? sessionEndedAt,
@@ -217,7 +217,7 @@ async function resolveSession(
         : sessionEndedAt,
     };
   }
-  if (appointment.consultation) {
+  if (appointment.consultationId) {
     return { kind: "CONSULTATION", sessionEndedAt };
   }
   return null;

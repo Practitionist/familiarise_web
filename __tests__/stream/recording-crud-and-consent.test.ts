@@ -60,7 +60,7 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-const mockNotifyRemoved = jest.fn();
+const mockNotifyRemoved = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock("../../lib/stream/recording-removal-notice", () => ({
   notifyAttendeesOfRemovedRecording: (...args: unknown[]) =>
     mockNotifyRemoved(...args),

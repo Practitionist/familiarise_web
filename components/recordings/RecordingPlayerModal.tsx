@@ -88,6 +88,11 @@ const removedDay = new Intl.DateTimeFormat("en-GB", {
   year: "numeric",
 });
 
+const REMOVED_BY_COPY: Partial<Record<string, string>> = {
+  EXPERT_DELETED: "the expert",
+  SUPPORT_ACTION: "Familiarise support",
+};
+
 /** Fixed copy for a playback refusal; server text is never shown. */
 function playbackErrorCopy(
   status: number,
@@ -95,8 +100,11 @@ function playbackErrorCopy(
 ): string {
   const code = resolveFileErrorCode(status, payload.code);
   if (code === "GONE") {
-    if (payload.removalReason === "EXPERT_DELETED" && payload.removedAt) {
-      return `Removed by the expert on ${removedDay.format(new Date(payload.removedAt))}.`;
+    const by = payload.removalReason
+      ? REMOVED_BY_COPY[payload.removalReason]
+      : undefined;
+    if (by && payload.removedAt) {
+      return `Removed by ${by} on ${removedDay.format(new Date(payload.removedAt))}.`;
     }
     return "This recording is no longer available.";
   }

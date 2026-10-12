@@ -227,10 +227,15 @@ describe("the batched loader and library pages", () => {
       payment: [],
       occurrences: [session(1, 5), session(2, 3, [{ id: `${id}-rec` }])],
     }));
-    (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce(bookings);
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([{ appointmentType: "CLASS" }])
+      .mockResolvedValueOnce(bookings);
     const loaded = await loadRecordingViews(["b1", "b2", "b3"], "learner", NOW);
     expect(loaded.size).toBe(3);
-    expect(prisma.appointment.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.appointment.findMany).toHaveBeenCalledTimes(2);
+    const { select } = (prisma.appointment.findMany as jest.Mock).mock
+      .calls[1][0];
+    expect(select).not.toHaveProperty("consultation");
     expect(lateJoinRecordingAccess).toHaveBeenCalledTimes(1);
     expect(prisma.appointmentOccurrence.findMany).toHaveBeenCalledTimes(1);
     expect(recordingRetentionLabels).toHaveBeenCalledTimes(1);
