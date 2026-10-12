@@ -23,7 +23,7 @@ import {
  * playback both call it.
  */
 
-const PLAYABLE: ReadonlySet<RecordingStatus> = new Set([
+export const PLAYABLE: ReadonlySet<RecordingStatus> = new Set([
   RecordingStatus.READY,
   RecordingStatus.TRANSFERRING,
   RecordingStatus.AVAILABLE,
@@ -137,37 +137,36 @@ const sessionSelect = {
   },
 } satisfies Prisma.AppointmentOccurrenceSelect;
 
-type SessionRow = Prisma.AppointmentOccurrenceGetPayload<{
+export type SessionRow = Prisma.AppointmentOccurrenceGetPayload<{
   select: typeof sessionSelect;
 }>;
 type RecordingRow = Prisma.RecordingGetPayload<{
   select: typeof recordingSelect;
 }>;
 
-const ownerSelect = { select: { userId: true } } as const;
 const presenters = {
   where: { status: "ACCEPTED" as const, tier: "PRESENTER" as const },
-  select: { consultantProfile: ownerSelect },
+  select: { consultantProfileId: true },
 } as const;
 
+/** Parties are compared by profile id, so the read stops at the plan. */
 const bookingSelect = {
   id: true,
   appointmentType: true,
   consultation: {
     select: {
-      requestedBy: ownerSelect,
-      consultationPlan: {
-        select: { title: true, consultantProfile: ownerSelect },
-      },
+      requestedById: true,
+      consultationPlan: { select: { title: true, consultantProfileId: true } },
     },
   },
   subscription: {
     select: {
-      requestedBy: ownerSelect,
+      requestedById: true,
+      schedulingPeriodStartsAt: true,
       subscriptionPlan: {
         select: {
           title: true,
-          consultantProfile: ownerSelect,
+          consultantProfileId: true,
           subscriptionContents: { select: { order: true, title: true } },
         },
       },
@@ -175,8 +174,8 @@ const bookingSelect = {
   },
   trial: {
     select: {
-      consulteeProfile: ownerSelect,
-      consultantProfile: ownerSelect,
+      consulteeProfileId: true,
+      consultantProfileId: true,
       subscriptionPlan: { select: { title: true } },
     },
   },
@@ -188,7 +187,7 @@ const bookingSelect = {
           id: true,
           title: true,
           shareRecordingsWithAllAttendees: true,
-          consultantProfile: ownerSelect,
+          consultantProfileId: true,
           collaborators: presenters,
         },
       },
@@ -203,7 +202,7 @@ const bookingSelect = {
           id: true,
           title: true,
           lateJoinersGetPastRecordings: true,
-          consultantProfile: ownerSelect,
+          consultantProfileId: true,
           collaborators: presenters,
           classContents: { select: { order: true, title: true } },
         },
@@ -212,11 +211,11 @@ const bookingSelect = {
   },
 } satisfies Prisma.AppointmentSelect;
 
-type BookingRow = Prisma.AppointmentGetPayload<{
+export type BookingRow = Prisma.AppointmentGetPayload<{
   select: typeof bookingSelect;
 }>;
 
-interface GroupPlan {
+export interface GroupPlan {
   kind: "WEBINAR" | "CLASS";
   planId: string;
   /** Catch-up across runs is allowed for this plan. */
@@ -256,15 +255,26 @@ function titleOf(row: BookingRow): string {
   );
 }
 
-function hostUserIds(row: BookingRow): string[] {
+/** The booking's host-side consultant profiles: owner and accepted presenters. */
+function hostProfileIds(row: BookingRow): string[] {
   const plan = row.webinar?.webinarPlan ?? row.class?.classPlan;
   return [
-    row.consultation?.consultationPlan.consultantProfile.userId,
-    row.subscription?.subscriptionPlan.consultantProfile.userId,
-    row.trial?.consultantProfile.userId,
-    plan?.consultantProfile?.userId,
-    ...(plan?.collaborators ?? []).map((c) => c.consultantProfile.userId),
+    row.consultation?.consultationPlan.consultantProfileId,
+    row.subscription?.subscriptionPlan.consultantProfileId,
+    row.trial?.consultantProfileId,
+    plan?.consultantProfileId,
+    ...(plan?.collaborators ?? []).map((c) => c.consultantProfileId),
   ].filter((id): id is string => Boolean(id));
+}
+
+/** The booking's 1:1 learner profile, if any. */
+export function learnerProfileId(row: BookingRow): string | null {
+  return (
+    row.consultation?.requestedById ??
+    row.subscription?.requestedById ??
+    row.trial?.consulteeProfileId ??
+    null
+  );
 }
 
 /** Entitled seat holders of a group run: a confirmed seat or a payment not fully refunded. */
@@ -289,61 +299,36 @@ function entitledSeatWhere(userId: string): Prisma.AppointmentWhereInput {
   };
 }
 
-async function holdsEntitledSeat(
-  appointmentId: string,
-  userId: string,
-): Promise<boolean> {
-  const [seat, payments] = await Promise.all([
-    prisma.appointmentParticipant.count({
-      where: {
-        appointmentId,
-        userId,
-        role: "CONSULTEE",
-        status: { in: [...ENTITLED_SEAT] },
-      },
-    }),
-    prisma.payment.findMany({
-      where: {
-        appointmentId,
-        userId,
-        paymentStatus: "SUCCEEDED",
-        deletedAt: null,
-      },
-      select: {
-        amount: true,
-        refunds: { select: { amountPaise: true, status: true } },
-      },
-    }),
-  ]);
-  return seat > 0 || payments.some(isPaymentEntitled);
-}
-
 export interface RecordingViewer {
   role: RecordingViewerRole;
   booking: BookingRow;
   groupPlan: GroupPlan | null;
 }
 
-/** The caller's side of a booking's recordings, or null when they are neither host nor entitled learner. */
-export async function resolveRecordingViewer(
-  appointmentId: string,
-  userId: string,
-): Promise<RecordingViewer | null> {
-  const booking = await prisma.appointment.findFirst({
-    where: { id: appointmentId, deletedAt: null },
-    select: bookingSelect,
-  });
-  if (!booking) return null;
+/** The viewer's profiles, which parties are matched on. */
+export interface RecordingIdentity {
+  consultantProfileId: string | null;
+  consulteeProfileId: string | null;
+}
+
+/** The caller's side of a booking, or null when they are neither host nor entitled learner. */
+export function recordingViewerOf(
+  booking: BookingRow,
+  identity: RecordingIdentity,
+  holdsSeat: boolean,
+): RecordingViewer | null {
   const groupPlan = groupPlanOf(booking);
-  if (hostUserIds(booking).includes(userId)) {
+  const { consultantProfileId, consulteeProfileId } = identity;
+  if (
+    consultantProfileId &&
+    hostProfileIds(booking).includes(consultantProfileId)
+  ) {
     return { role: "host", booking, groupPlan };
   }
   const oneToOneLearner =
-    booking.consultation?.requestedBy.userId === userId ||
-    booking.subscription?.requestedBy.userId === userId ||
-    booking.trial?.consulteeProfile.userId === userId;
-  if (oneToOneLearner) return { role: "learner", booking, groupPlan };
-  if (groupPlan && (await holdsEntitledSeat(appointmentId, userId))) {
+    consulteeProfileId !== null &&
+    learnerProfileId(booking) === consulteeProfileId;
+  if (oneToOneLearner || (groupPlan && holdsSeat)) {
     return { role: "learner", booking, groupPlan };
   }
   return null;
@@ -468,63 +453,62 @@ function missingReasonOf(
   return { reason: "not_recorded", removedAt: null };
 }
 
-interface CatchUpSource {
+export interface CatchUpSource {
   appointmentId: string;
   batchLabel: string;
   startsAt: Date;
   sessions: SessionRow[];
 }
 
+const catchUpRowSelect = {
+  ...sessionSelect,
+  appointmentId: true,
+  appointment: {
+    select: {
+      webinar: { select: { webinarPlanId: true } },
+      class: { select: { classPlanId: true, schedulingPeriodStartsAt: true } },
+      occurrences: {
+        where: { deletedAt: null },
+        orderBy: { startsAt: "asc" },
+        take: 1,
+        select: { startsAt: true },
+      },
+    },
+  },
+} satisfies Prisma.AppointmentOccurrenceSelect;
+
+export type CatchUpRow = Prisma.AppointmentOccurrenceGetPayload<{
+  select: typeof catchUpRowSelect;
+}>;
+
+function samePlanWhere(groupPlan: GroupPlan): Prisma.AppointmentWhereInput {
+  return groupPlan.kind === "WEBINAR"
+    ? { webinar: { webinarPlanId: groupPlan.planId } }
+    : { class: { classPlanId: groupPlan.planId } };
+}
+
 /**
  * For each ordinal, the most recently ended same-ordinal session on another
  * run of the plan that has something playable; ties break on the run's id.
+ * `rows` must be ordered by `endsAt` desc, then `appointmentId` asc.
  */
-async function catchUpSources(
+export function pickCatchUpSources(
   groupPlan: GroupPlan,
   ownAppointmentId: string,
   ordinals: number[],
-  now: Date,
-): Promise<Map<number, CatchUpSource>> {
+  rows: CatchUpRow[],
+): Map<number, CatchUpSource> {
   const sources = new Map<number, CatchUpSource>();
   if (ordinals.length === 0 || !groupPlan.sharesAcrossRuns) return sources;
-  const samePlan: Prisma.AppointmentWhereInput =
-    groupPlan.kind === "WEBINAR"
-      ? { webinar: { webinarPlanId: groupPlan.planId } }
-      : { class: { classPlanId: groupPlan.planId } };
-  const rows = await prisma.appointmentOccurrence.findMany({
-    where: {
-      ordinal: { in: ordinals },
-      deletedAt: null,
-      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-      endsAt: { lt: now },
-      appointment: {
-        id: { not: ownAppointmentId },
-        deletedAt: null,
-        ...samePlan,
-      },
-      meeting: {
-        recordings: { some: { status: { in: [...PLAYABLE] } } },
-      },
-    },
-    orderBy: [{ endsAt: "desc" }, { appointmentId: "asc" }],
-    select: {
-      ...sessionSelect,
-      appointmentId: true,
-      appointment: {
-        select: {
-          class: { select: { schedulingPeriodStartsAt: true } },
-          occurrences: {
-            where: { deletedAt: null },
-            orderBy: { startsAt: "asc" },
-            take: 1,
-            select: { startsAt: true },
-          },
-        },
-      },
-    },
-  });
+  const wanted = new Set(ordinals);
   for (const row of rows) {
-    if (sources.has(row.ordinal)) continue;
+    const planId =
+      groupPlan.kind === "WEBINAR"
+        ? row.appointment.webinar?.webinarPlanId
+        : row.appointment.class?.classPlanId;
+    if (planId !== groupPlan.planId || row.appointmentId === ownAppointmentId)
+      continue;
+    if (!wanted.has(row.ordinal) || sources.has(row.ordinal)) continue;
     const startedAt =
       row.appointment.class?.schedulingPeriodStartsAt ??
       row.appointment.occurrences[0]?.startsAt ??
@@ -541,116 +525,122 @@ async function catchUpSources(
   return sources;
 }
 
-/** The viewer's seat floor on this batch when the plan hides earlier sessions from late joiners. */
-async function lateJoinFloor(
-  viewer: RecordingViewer,
-  userId: string,
-): Promise<Date | null> {
-  if (
-    viewer.role !== "learner" ||
-    viewer.groupPlan?.kind !== "CLASS" ||
-    viewer.groupPlan.lateJoinersGetPastRecordings
-  ) {
-    return null;
-  }
-  const access = await lateJoinRecordingAccess(userId);
-  return access.floors.get(viewer.booking.class?.id ?? "") ?? null;
+function hidesEarlierSessions(viewer: RecordingViewer): boolean {
+  return (
+    viewer.role === "learner" &&
+    viewer.groupPlan?.kind === "CLASS" &&
+    !viewer.groupPlan.lateJoinersGetPastRecordings
+  );
 }
 
-/** The booking's recordings grouped into the viewer's session slots. */
-export async function readRecordingSlots(
+/** The viewer's seat floor on this batch when the plan hides earlier sessions from late joiners. */
+function lateJoinFloor(
   viewer: RecordingViewer,
-  userId: string,
-  now: Date = new Date(),
-): Promise<RecordingBookingView> {
-  const { booking } = viewer;
-  const sessions = await prisma.appointmentOccurrence.findMany({
-    where: { appointmentId: booking.id, deletedAt: null },
-    orderBy: [{ ordinal: "asc" }, { startsAt: "asc" }],
-    select: sessionSelect,
-  });
+  floors: ReadonlyMap<string, Date>,
+): Date | null {
+  if (!hidesEarlierSessions(viewer)) return null;
+  return floors.get(viewer.booking.class?.id ?? "") ?? null;
+}
+
+interface Draft {
+  ordinal: number;
+  rep: SessionRow;
+  parts: { recording: RecordingRow; makeUp: boolean }[];
+  state: SlotState;
+  missing: { reason: SlotMissingReason; removedAt: Date | null } | null;
+}
+
+function draftSlots(
+  viewer: RecordingViewer,
+  sessions: SessionRow[],
+  floor: Date | null,
+  labels: Map<string, RecordingRetentionLabel>,
+  now: Date,
+): Draft[] {
   const byOrdinal = new Map<number, SessionRow[]>();
   for (const session of sessions) {
     const list = byOrdinal.get(session.ordinal) ?? [];
     list.push(session);
     byOrdinal.set(session.ordinal, list);
   }
-
-  const floor = await lateJoinFloor(viewer, userId);
   const isLearner = viewer.role === "learner";
-  const removedLabels = await recordingRetentionLabels(
-    sessions.flatMap((s) =>
-      (s.meeting?.recordings ?? [])
-        .filter((r) => r.removalReason === "EXPERT_DELETED")
-        .map((r) => r.id),
-    ),
-    now,
-  );
+  return [...byOrdinal.entries()].map(([ordinal, slotSessions]) => {
+    const live = slotSessions.filter(
+      (s) => !DEAD_SESSION.has(s.completionStatus),
+    );
+    const rep = (live.length > 0 ? live : slotSessions).at(-1)!;
+    const parts = playableParts(slotSessions);
+    if (isLearner && floor !== null && rep.startsAt < floor) {
+      return {
+        ordinal,
+        rep,
+        parts: [],
+        state: "before_you_joined",
+        missing: null,
+      };
+    }
+    if (parts.length > 0) {
+      return { ordinal, rep, parts, state: "recorded", missing: null };
+    }
+    if (!sessionEnded(rep, now)) {
+      return { ordinal, rep, parts, state: "upcoming", missing: null };
+    }
+    const inFlight = slotSessions.some((s) =>
+      (s.meeting?.recordings ?? []).some((r) => IN_FLIGHT.has(r.status)),
+    );
+    if (inFlight) {
+      return { ordinal, rep, parts, state: "processing", missing: null };
+    }
+    const missing = missingReasonOf(
+      slotSessions,
+      now,
+      !viewer.groupPlan,
+      labels,
+    );
+    return { ordinal, rep, parts, state: missing.reason, missing };
+  });
+}
 
-  interface Draft {
-    ordinal: number;
-    rep: SessionRow;
-    parts: { recording: RecordingRow; makeUp: boolean }[];
-    state: SlotState;
-    missing: { reason: SlotMissingReason; removedAt: Date | null } | null;
+/** The ordinals a learner's own run ended with nothing playable, so may fill from another run. */
+export function catchUpOrdinals(
+  viewer: RecordingViewer,
+  sessions: SessionRow[],
+  floor: Date | null,
+  now: Date,
+): number[] {
+  if (viewer.role !== "learner" || !viewer.groupPlan?.sharesAcrossRuns) {
+    return [];
   }
-  const drafts: Draft[] = [...byOrdinal.entries()].map(
-    ([ordinal, slotSessions]) => {
-      const live = slotSessions.filter(
-        (s) => !DEAD_SESSION.has(s.completionStatus),
-      );
-      const rep = (live.length > 0 ? live : slotSessions).at(-1)!;
-      const parts = playableParts(slotSessions);
-      const beforeFloor = floor !== null && rep.startsAt < floor;
-      if (isLearner && beforeFloor) {
-        return {
-          ordinal,
-          rep,
-          parts: [],
-          state: "before_you_joined",
-          missing: null,
-        };
-      }
-      if (parts.length > 0) {
-        return { ordinal, rep, parts, state: "recorded", missing: null };
-      }
-      if (!sessionEnded(rep, now)) {
-        return { ordinal, rep, parts, state: "upcoming", missing: null };
-      }
-      const inFlight = slotSessions.some((s) =>
-        (s.meeting?.recordings ?? []).some((r) => IN_FLIGHT.has(r.status)),
-      );
-      if (inFlight) {
-        return { ordinal, rep, parts, state: "processing", missing: null };
-      }
-      const missing = missingReasonOf(
-        slotSessions,
-        now,
-        !viewer.groupPlan,
-        removedLabels,
-      );
-      return { ordinal, rep, parts, state: missing.reason, missing };
-    },
-  );
+  return draftSlots(viewer, sessions, floor, new Map(), now)
+    .filter((d) => d.missing !== null)
+    .map((d) => d.ordinal);
+}
 
-  const catchUpOrdinals =
-    isLearner && viewer.groupPlan
-      ? drafts.filter((d) => d.missing !== null).map((d) => d.ordinal)
-      : [];
-  const sources = viewer.groupPlan
-    ? await catchUpSources(viewer.groupPlan, booking.id, catchUpOrdinals, now)
-    : new Map<number, CatchUpSource>();
+/** Everything the slot rule reads beyond the booking, preloaded by the caller. */
+export interface SlotInputs {
+  /** The booking's live occurrences, by ordinal then start. */
+  sessions: SessionRow[];
+  floor: Date | null;
+  sources: Map<number, CatchUpSource>;
+  /** Retention labels for own recordings and catch-up parts. */
+  labels: Map<string, RecordingRetentionLabel>;
+}
 
-  const recordingIds = [
-    ...drafts.flatMap((d) => d.parts.map((p) => p.recording.id)),
-    ...[...sources.values()].flatMap((s) =>
-      playableParts(s.sessions).map((p) => p.recording.id),
-    ),
-  ];
-  const labels = await recordingRetentionLabels(recordingIds, now);
-
-  const slots: RecordingSlot[] = drafts.map((d) => {
-    const source = sources.get(d.ordinal);
+/** The booking's recordings grouped into the viewer's session slots. */
+export function buildRecordingView(
+  viewer: RecordingViewer,
+  { sessions, floor, sources, labels }: SlotInputs,
+  now: Date,
+): RecordingBookingView {
+  const { booking } = viewer;
+  const slots: RecordingSlot[] = draftSlots(
+    viewer,
+    sessions,
+    floor,
+    labels,
+    now,
+  ).map((d) => {
+    const source = d.missing ? sources.get(d.ordinal) : undefined;
     const base = {
       ordinal: d.ordinal,
       title: slotTitle(booking, d.ordinal),
@@ -658,7 +648,7 @@ export async function readRecordingSlots(
       missingReason: d.missing?.reason ?? null,
       removedAt: d.missing?.removedAt?.toISOString() ?? null,
     };
-    if (source) {
+    if (source && viewer.role === "learner") {
       return {
         ...base,
         state: "catch_up",
@@ -704,6 +694,188 @@ export async function readRecordingSlots(
   };
 }
 
+function viewerBookingSelect(userId: string) {
+  return {
+    ...bookingSelect,
+    participants: {
+      where: {
+        userId,
+        role: "CONSULTEE" as const,
+        status: { in: [...ENTITLED_SEAT] },
+      },
+      select: { id: true },
+      take: 1,
+    },
+    payment: {
+      where: { userId, paymentStatus: "SUCCEEDED" as const, deletedAt: null },
+      select: {
+        amount: true,
+        refunds: { select: { amountPaise: true, status: true } },
+      },
+    },
+    occurrences: {
+      where: { deletedAt: null },
+      orderBy: [{ ordinal: "asc" as const }, { startsAt: "asc" as const }],
+      select: sessionSelect,
+    },
+  } satisfies Prisma.AppointmentSelect;
+}
+
+/** One read for the catch-up candidates of every (plan, ordinal) the page needs. */
+async function readCatchUpRows(
+  needs: { groupPlan: GroupPlan; ordinals: number[] }[],
+  now: Date,
+): Promise<CatchUpRow[]> {
+  const byPlan = new Map<
+    string,
+    { groupPlan: GroupPlan; ordinals: Set<number> }
+  >();
+  for (const { groupPlan, ordinals } of needs) {
+    if (ordinals.length === 0) continue;
+    const key = `${groupPlan.kind}:${groupPlan.planId}`;
+    const entry = byPlan.get(key) ?? { groupPlan, ordinals: new Set() };
+    for (const ordinal of ordinals) entry.ordinals.add(ordinal);
+    byPlan.set(key, entry);
+  }
+  if (byPlan.size === 0) return [];
+  return prisma.appointmentOccurrence.findMany({
+    where: {
+      OR: [...byPlan.values()].map(({ groupPlan, ordinals }) => ({
+        ordinal: { in: [...ordinals] },
+        appointment: { deletedAt: null, ...samePlanWhere(groupPlan) },
+      })),
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+      endsAt: { lt: now },
+      meeting: {
+        recordings: { some: { status: { in: [...PLAYABLE] } } },
+      },
+    },
+    orderBy: [{ endsAt: "desc" }, { appointmentId: "asc" }],
+    select: catchUpRowSelect,
+  });
+}
+
+/** Recordings whose retention label the view shows or needs to decide a tombstone. */
+function labelledRecordingIds(
+  sessions: SessionRow[],
+  sources: Map<number, CatchUpSource>,
+): string[] {
+  return [
+    ...sessions.flatMap((s) =>
+      (s.meeting?.recordings ?? [])
+        .filter(
+          (r) => PLAYABLE.has(r.status) || r.removalReason === "EXPERT_DELETED",
+        )
+        .map((r) => r.id),
+    ),
+    ...[...sources.values()].flatMap((s) =>
+      playableParts(s.sessions).map((p) => p.recording.id),
+    ),
+  ];
+}
+
+async function readIdentity(userId: string): Promise<RecordingIdentity> {
+  const [consultant, consultee] = await Promise.all([
+    prisma.consultantProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    }),
+    prisma.consulteeProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    }),
+  ]);
+  return {
+    consultantProfileId: consultant?.id ?? null,
+    consulteeProfileId: consultee?.id ?? null,
+  };
+}
+
+export interface LoadedRecordingView {
+  view: RecordingBookingView;
+  booking: BookingRow;
+  /** The booking's earliest live occurrence. */
+  firstStartsAt: Date | null;
+}
+
+/**
+ * Slot views for every booking the viewer is party to, in a fixed number of
+ * reads whatever the count: identity, bookings with sessions, late-join
+ * floors, catch-up candidates and retention labels.
+ */
+export async function loadRecordingViews(
+  appointmentIds: string[],
+  userId: string,
+  now: Date = new Date(),
+): Promise<Map<string, LoadedRecordingView>> {
+  const loaded = new Map<string, LoadedRecordingView>();
+  if (appointmentIds.length === 0) return loaded;
+  const identity = await readIdentity(userId);
+  const rows = await prisma.appointment.findMany({
+    where: { id: { in: appointmentIds }, deletedAt: null },
+    select: viewerBookingSelect(userId),
+  });
+  const viewers = rows.flatMap((row) => {
+    const holdsSeat =
+      row.participants.length > 0 || row.payment.some(isPaymentEntitled);
+    const viewer = recordingViewerOf(row, identity, holdsSeat);
+    return viewer ? [{ viewer, sessions: row.occurrences }] : [];
+  });
+  const floors = viewers.some(({ viewer }) => hidesEarlierSessions(viewer))
+    ? (await lateJoinRecordingAccess(userId)).floors
+    : new Map<string, Date>();
+  const drafts = viewers.map(({ viewer, sessions }) => {
+    const floor = lateJoinFloor(viewer, floors);
+    return {
+      viewer,
+      sessions,
+      floor,
+      ordinals: catchUpOrdinals(viewer, sessions, floor, now),
+    };
+  });
+  const catchUpRows = await readCatchUpRows(
+    drafts.flatMap(({ viewer, ordinals }) =>
+      viewer.groupPlan ? [{ groupPlan: viewer.groupPlan, ordinals }] : [],
+    ),
+    now,
+  );
+  const withSources = drafts.map((d) => ({
+    ...d,
+    sources: d.viewer.groupPlan
+      ? pickCatchUpSources(
+          d.viewer.groupPlan,
+          d.viewer.booking.id,
+          d.ordinals,
+          catchUpRows,
+        )
+      : new Map<number, CatchUpSource>(),
+  }));
+  const labels = await recordingRetentionLabels(
+    withSources.flatMap((d) => labelledRecordingIds(d.sessions, d.sources)),
+    now,
+  );
+  for (const d of withSources) {
+    const starts = d.sessions.map((s) => s.startsAt.getTime());
+    loaded.set(d.viewer.booking.id, {
+      view: buildRecordingView(d.viewer, { ...d, labels }, now),
+      booking: d.viewer.booking,
+      firstStartsAt: starts.length > 0 ? new Date(Math.min(...starts)) : null,
+    });
+  }
+  return loaded;
+}
+
+/** One booking's slot view, or null when the viewer is neither host nor entitled learner. */
+export async function loadRecordingView(
+  appointmentId: string,
+  userId: string,
+  now: Date = new Date(),
+): Promise<RecordingBookingView | null> {
+  const loaded = await loadRecordingViews([appointmentId], userId, now);
+  return loaded.get(appointmentId)?.view ?? null;
+}
+
 export type CatchUpRefusal =
   "FORBIDDEN" | "OWN_RECORDING_AVAILABLE" | "LATE_JOIN_HIDDEN";
 
@@ -726,25 +898,25 @@ export async function catchUpPlaybackAccess(
   if (!groupPlan?.sharesAcrossRuns)
     return { allowed: false, code: "FORBIDDEN" };
 
-  const samePlan: Prisma.AppointmentWhereInput =
-    groupPlan.kind === "WEBINAR"
-      ? { webinar: { webinarPlanId: groupPlan.planId } }
-      : { class: { classPlanId: groupPlan.planId } };
   const ownRuns = await prisma.appointment.findMany({
     where: {
       id: { not: recordingAppointmentId },
       deletedAt: null,
-      ...samePlan,
+      ...samePlanWhere(groupPlan),
       ...entitledSeatWhere(userId),
     },
     select: { id: true },
   });
+  const views = await loadRecordingViews(
+    ownRuns.map((run) => run.id),
+    userId,
+    now,
+  );
 
   let refusal: CatchUpRefusal = "FORBIDDEN";
   for (const run of ownRuns) {
-    const viewer = await resolveRecordingViewer(run.id, userId);
-    if (viewer?.role !== "learner") continue;
-    const view = await readRecordingSlots(viewer, userId, now);
+    const view = views.get(run.id)?.view;
+    if (view?.viewerRole !== "learner") continue;
     const slot = view.slots.find((s) => s.ordinal === ordinal);
     if (!slot) continue;
     if (slot.state === "catch_up") {
@@ -778,11 +950,10 @@ export async function viewerPlaybackAccess(
     expired: boolean;
   },
 ): Promise<{ allowed: true } | { allowed: false; code: CatchUpRefusal }> {
-  const viewer = await resolveRecordingViewer(recording.appointmentId, userId);
-  if (viewer?.role === "host") return { allowed: true };
-  if (viewer?.role === "learner") {
+  const view = await loadRecordingView(recording.appointmentId, userId);
+  if (view?.viewerRole === "host") return { allowed: true };
+  if (view?.viewerRole === "learner") {
     if (recording.expired) return { allowed: true };
-    const view = await readRecordingSlots(viewer, userId);
     if (
       view.slots.some((s) =>
         s.parts.some((p) => p.recordingId === recording.id),

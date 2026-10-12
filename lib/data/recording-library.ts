@@ -13,21 +13,25 @@ import {
 } from "@/lib/library/library-query";
 import { partLabel, slotStateText } from "@/lib/stream/recording-copy";
 import {
-  readRecordingSlots,
-  resolveRecordingViewer,
+  PLAYABLE,
+  learnerProfileId,
+  loadRecordingViews,
+  type LoadedRecordingView,
   type RecordingBookingView,
   type RecordingSlot,
 } from "@/lib/stream/recording-slots";
 import type { LibraryOwner } from "./document-library";
 
 /**
- * The Recordings library read. Each booking on the page is read with the same
- * slot rule as its Recording details page, so a row here always plays there:
- * the viewer's own sessions, parts and catch-up, never another run as a group.
+ * The Recordings library read. Each booking is read with the same slot rule
+ * as its Recording details page, so a row here always plays there: the
+ * viewer's own sessions, parts and catch-up, never another run as a group.
  * The org Everyone view returns counts only.
  */
 
 const ENTITLED_SEAT = ["CONFIRMED", "ATTENDED"] as const;
+/** Whether a booking renders is decided in memory over at most this many newest candidates. */
+const CANDIDATE_CAP = 200;
 const contains = (q: string) => ({ contains: q, mode: "insensitive" as const });
 const dayFormat = new Intl.DateTimeFormat("en-GB", {
   day: "numeric",
@@ -110,11 +114,39 @@ function sessionsWhere(
   const hasMedia: Prisma.AppointmentWhereInput[] = [
     { occurrences: { some: { meeting: { recordings: { some: recording } } } } },
   ];
-  // A learner's run with no recording of its own may still offer catch-up.
+  // A learner's ended run may catch up when its plan shares and some run has something playable.
   if (learnerView || (owner.kind === "org" && !owner.everyone)) {
+    const now = new Date();
+    const playableRun = {
+      appointment: {
+        deletedAt: null,
+        occurrences: {
+          some: {
+            deletedAt: null,
+            endsAt: { lt: now },
+            completionStatus: {
+              notIn: ["CANCELLED" as const, "RESCHEDULED" as const],
+            },
+            meeting: {
+              recordings: { some: { status: { in: [...PLAYABLE] } } },
+            },
+          },
+        },
+      },
+    };
     hasMedia.push({
-      appointmentType: { in: ["WEBINAR", "CLASS"] },
-      occurrences: { some: { deletedAt: null, endsAt: { lt: new Date() } } },
+      occurrences: { some: { deletedAt: null, endsAt: { lt: now } } },
+      OR: [
+        { class: { classPlan: { classes: { some: playableRun } } } },
+        {
+          webinar: {
+            webinarPlan: {
+              shareRecordingsWithAllAttendees: true,
+              webinars: { some: playableRun },
+            },
+          },
+        },
+      ],
     });
   }
   const and: Prisma.AppointmentWhereInput[] = [
@@ -220,18 +252,28 @@ function toSession(row: SessionRow, learnerSide: boolean): LibrarySession {
   };
 }
 
-async function everyoneSummary(
-  appointmentId: string,
-): Promise<{ count: number; minutes: number }> {
-  const agg = await prisma.recording.aggregate({
+async function everyoneSummaries(
+  appointmentIds: string[],
+): Promise<Map<string, { count: number; minutes: number }>> {
+  const rows = await prisma.recording.findMany({
     where: {
       status: { notIn: ["FAILED", "EXPIRED"] },
-      meeting: { occurrence: { appointmentId } },
+      meeting: { occurrence: { appointmentId: { in: appointmentIds } } },
     },
-    _count: { _all: true },
-    _sum: { durationInMinutes: true },
+    select: {
+      durationInMinutes: true,
+      meeting: { select: { occurrence: { select: { appointmentId: true } } } },
+    },
   });
-  return { count: agg._count._all, minutes: agg._sum.durationInMinutes ?? 0 };
+  const summaries = new Map<string, { count: number; minutes: number }>();
+  for (const row of rows) {
+    const id = row.meeting.occurrence.appointmentId;
+    const sum = summaries.get(id) ?? { count: 0, minutes: 0 };
+    sum.count += 1;
+    sum.minutes += row.durationInMinutes;
+    summaries.set(id, sum);
+  }
+  return summaries;
 }
 
 async function purchasedReplays(userId: string): Promise<LibraryRecording[]> {
@@ -322,62 +364,159 @@ export function slotToLibraryRow(
   };
 }
 
-export async function readRecordingLibrary(args: {
-  userId: string;
-  owner: LibraryOwner;
-  query: LibraryQuery;
-}): Promise<LibraryPage<LibraryRecording>> {
-  const { userId, owner, query } = args;
-  const everyone = owner.kind === "org" && owner.everyone;
-  const learnerSide = owner.kind === "personal" && owner.side === "learner";
-  const where = sessionsWhere(userId, owner, query);
-  const [total, rows] = await Promise.all([
-    prisma.appointment.count({ where }),
-    prisma.appointment.findMany({
-      where,
-      select: sessionSelect,
-      orderBy: { createdAt: "desc" },
-      take: LIBRARY_PAGE_SIZE,
-      skip: (query.page - 1) * LIBRARY_PAGE_SIZE,
-    }),
-  ]);
-
-  const groups = [];
-  for (const row of rows) {
-    const session = toSession(row, learnerSide);
-    if (everyone) {
-      groups.push({
-        session: { ...session, counterpartName: null },
-        files: [],
-        summary: { recordings: await everyoneSummary(row.id) },
-      });
-      continue;
-    }
-    const viewer = await resolveRecordingViewer(row.id, userId);
-    if (!viewer) continue;
-    const view = await readRecordingSlots(viewer, userId);
+/** The candidates that render at least one row under `q`, in candidate order. */
+export function renderedGroups(
+  candidateIds: string[],
+  views: Map<string, RecordingBookingView>,
+  q: string,
+): { appointmentId: string; files: LibraryRecording[] }[] {
+  const needle = q.toLowerCase();
+  return candidateIds.flatMap((appointmentId) => {
+    const view = views.get(appointmentId);
+    if (!view) return [];
     const files = view.slots
-      .map((slot) => slotToLibraryRow(row.id, view, slot))
+      .map((slot) => slotToLibraryRow(appointmentId, view, slot))
       .filter((f): f is LibraryRecording => f !== null);
-    if (query.q) {
-      const needle = query.q.toLowerCase();
-      const titleHit = session.title.toLowerCase().includes(needle);
-      const kept = titleHit
+    const kept =
+      !needle || view.title.toLowerCase().includes(needle)
         ? files
         : files.filter(
             (f) =>
               f.title.toLowerCase().includes(needle) ||
               f.parts.some((p) => p.title.toLowerCase().includes(needle)),
           );
-      if (kept.length > 0) groups.push({ session, files: kept });
-      continue;
-    }
-    if (files.length > 0) groups.push({ session, files });
+    return kept.length > 0 ? [{ appointmentId, files: kept }] : [];
+  });
+}
+
+function expertProfileId(
+  booking: LoadedRecordingView["booking"],
+): string | null {
+  return (
+    booking.consultation?.consultationPlan.consultantProfileId ??
+    booking.subscription?.subscriptionPlan.consultantProfileId ??
+    booking.trial?.consultantProfileId ??
+    booking.webinar?.webinarPlan.consultantProfileId ??
+    booking.class?.classPlan.consultantProfileId ??
+    null
+  );
+}
+
+/** Names of the page's experts and learners, keyed by profile id. */
+async function profileNames(
+  loaded: LoadedRecordingView[],
+): Promise<Map<string, string>> {
+  const experts = loaded.flatMap(
+    ({ booking }) => expertProfileId(booking) ?? [],
+  );
+  const learners = loaded.flatMap(
+    ({ booking }) => learnerProfileId(booking) ?? [],
+  );
+  if (experts.length + learners.length === 0) return new Map();
+  const users = await prisma.user.findMany({
+    where: {
+      OR: [
+        { consultantProfile: { id: { in: experts } } },
+        { consulteeProfile: { id: { in: learners } } },
+      ],
+    },
+    select: {
+      name: true,
+      consultantProfile: { select: { id: true } },
+      consulteeProfile: { select: { id: true } },
+    },
+  });
+  const names = new Map<string, string>();
+  for (const user of users) {
+    if (user.consultantProfile) names.set(user.consultantProfile.id, user.name);
+    if (user.consulteeProfile) names.set(user.consulteeProfile.id, user.name);
+  }
+  return names;
+}
+
+function librarySession(
+  { view, booking, firstStartsAt }: LoadedRecordingView,
+  names: Map<string, string>,
+  learnerSide: boolean,
+): LibrarySession {
+  const nameOf = (id: string | null) => (id ? (names.get(id) ?? null) : null);
+  const expertName = nameOf(expertProfileId(booking));
+  return {
+    appointmentId: booking.id,
+    kind: booking.appointmentType as LibraryKind,
+    title: view.title,
+    startsAt:
+      (
+        firstStartsAt ?? booking.subscription?.schedulingPeriodStartsAt
+      )?.toISOString() ?? null,
+    sessionCount: null,
+    expertName,
+    counterpartName: learnerSide
+      ? expertName
+      : nameOf(learnerProfileId(booking)),
+  };
+}
+
+export async function readRecordingLibrary(args: {
+  userId: string;
+  owner: LibraryOwner;
+  query: LibraryQuery;
+}): Promise<LibraryPage<LibraryRecording>> {
+  const { userId, owner, query } = args;
+  const learnerSide = owner.kind === "personal" && owner.side === "learner";
+  const where = sessionsWhere(userId, owner, query);
+  const skip = (query.page - 1) * LIBRARY_PAGE_SIZE;
+
+  if (owner.kind === "org" && owner.everyone) {
+    const [total, rows] = await Promise.all([
+      prisma.appointment.count({ where }),
+      prisma.appointment.findMany({
+        where,
+        select: sessionSelect,
+        orderBy: { createdAt: "desc" },
+        take: LIBRARY_PAGE_SIZE,
+        skip,
+      }),
+    ]);
+    const summaries = await everyoneSummaries(rows.map((row) => row.id));
+    return {
+      groups: rows.map((row) => ({
+        session: { ...toSession(row, false), counterpartName: null },
+        files: [],
+        summary: {
+          recordings: summaries.get(row.id) ?? { count: 0, minutes: 0 },
+        },
+      })),
+      total,
+      page: query.page,
+      pageSize: LIBRARY_PAGE_SIZE,
+    };
   }
 
+  const candidates = await prisma.appointment.findMany({
+    where,
+    select: { id: true },
+    orderBy: { createdAt: "desc" },
+    take: CANDIDATE_CAP,
+  });
+  const ids = candidates.map((c) => c.id);
+  const loaded = await loadRecordingViews(ids, userId);
+  const views = new Map([...loaded].map(([id, l]) => [id, l.view]));
+  const rendered = renderedGroups(ids, views, query.q);
+  const page = rendered
+    .slice(skip, skip + LIBRARY_PAGE_SIZE)
+    .flatMap(({ appointmentId, files }) => {
+      const hit = loaded.get(appointmentId);
+      return hit ? [{ loaded: hit, files }] : [];
+    });
+  const names = await profileNames(page.map((g) => g.loaded));
+
   return {
-    groups,
-    total,
+    groups: page.map((g) => ({
+      session: librarySession(g.loaded, names, learnerSide),
+      files: g.files,
+    })),
+    total: rendered.length,
     page: query.page,
     pageSize: LIBRARY_PAGE_SIZE,
     ...(learnerSide && query.page === 1 && !query.kind && !query.person

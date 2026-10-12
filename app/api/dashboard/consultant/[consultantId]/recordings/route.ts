@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { readRecordingLibrary } from "@/lib/data/recording-library";
+import { timedLibraryRead } from "@/lib/library/timed-read";
 import { answerFileRoute } from "@/lib/documents/api-error";
 import { personalLibraryRequest } from "@/lib/library/personal-library-route";
 
@@ -17,11 +18,13 @@ export async function GET(
       consultantId,
     );
     if (!library.ok) return library.response;
-    const page = await readRecordingLibrary({
-      userId: library.userId,
-      owner: { kind: "personal", side: "expert" },
-      query: library.query,
-    });
+    const page = await timedLibraryRead("recordings:expert", () =>
+      readRecordingLibrary({
+        userId: library.userId,
+        owner: { kind: "personal", side: "expert" },
+        query: library.query,
+      }),
+    );
     return NextResponse.json(page, {
       headers: { "Cache-Control": "private, no-store" },
     });

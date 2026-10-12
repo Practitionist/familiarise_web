@@ -12,71 +12,69 @@ jest.mock("../../lib/stream/late-join-recordings", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    appointment: { findFirst: jest.fn(), findMany: jest.fn() },
-    appointmentOccurrence: { findMany: jest.fn() },
-    appointmentParticipant: { count: jest.fn() },
-    payment: { findMany: jest.fn(async () => []) },
-    recording: { count: jest.fn() },
-    recordingPurchase: { count: jest.fn(async () => 0) },
+    appointment: { findMany: jest.fn() },
+    consultantProfile: { findUnique: jest.fn(async () => null) },
+    consulteeProfile: { findUnique: jest.fn(async () => ({ id: "cp-l" })) },
+    appointmentOccurrence: { findMany: jest.fn(async () => []) },
   },
 }));
 
+import type { RecordingStatus } from "@prisma/client";
+
 import prisma from "@/lib/prisma";
+import { renderedGroups } from "@/lib/data/recording-library";
 import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
+import type { RecordingRetentionLabel } from "@/lib/stream/recording-retention";
 import { recordingRetentionLabels } from "@/lib/stream/recording-retention";
 import {
-  readRecordingSlots,
-  resolveRecordingViewer,
+  buildRecordingView,
+  catchUpOrdinals,
+  loadRecordingViews,
+  pickCatchUpSources,
+  recordingViewerOf,
+  type BookingRow,
+  type CatchUpRow,
+  type RecordingBookingView,
+  type SessionRow,
 } from "@/lib/stream/recording-slots";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = new Date("2026-10-12T12:00:00Z");
 const ago = (days: number) => new Date(NOW.getTime() - days * DAY);
+const LEARNER = {
+  consultantProfileId: null,
+  consulteeProfileId: "cp-l",
+};
 
-function classBooking(id: string, share = true) {
-  const plan = {
-    id: "plan-1",
-    title: "Beginner Class",
-    consultantProfile: { userId: "host" },
-    collaborators: [],
-  };
+function classBooking(id: string, planId = "plan-1"): BookingRow {
   return {
     id,
     appointmentType: "CLASS",
     consultation: null,
     subscription: null,
     trial: null,
-    webinar: share
-      ? null
-      : {
-          id: "w",
-          webinarPlan: { ...plan, shareRecordingsWithAllAttendees: false },
-        },
-    class: share
-      ? {
-          id: `class-${id}`,
-          schedulingPeriodStartsAt: ago(30),
-          classPlan: {
-            ...plan,
-            lateJoinersGetPastRecordings: false,
-            classContents: [{ order: 2, title: "Conditions" }],
-          },
-        }
-      : null,
+    webinar: null,
+    class: {
+      id: `class-${id}`,
+      schedulingPeriodStartsAt: ago(30),
+      classPlan: {
+        id: planId,
+        title: "Beginner Class",
+        lateJoinersGetPastRecordings: false,
+        consultantProfileId: "host",
+        collaborators: [],
+        classContents: [{ order: 2, title: "Conditions" }],
+      },
+    },
   };
 }
 
 function session(
   ordinal: number,
   endedDaysAgo: number,
-  recordings: {
-    id: string;
-    minute?: number;
-    status?: string;
-    reason?: string;
-  }[] = [],
-  extra: Record<string, unknown> = {},
-) {
+  recordings: { id: string; minute?: number; status?: RecordingStatus }[] = [],
+  voided = false,
+): SessionRow {
   const endsAt = ago(endedDaysAgo);
   const startsAt = new Date(endsAt.getTime() - 3600_000);
   return {
@@ -85,7 +83,7 @@ function session(
     startsAt,
     endsAt,
     completionStatus: endedDaysAgo > 0 ? "COMPLETED" : "SCHEDULED",
-    voidedAt: null,
+    voidedAt: voided ? endsAt : null,
     meeting: {
       endedAt: null,
       recordingConsents: [],
@@ -95,168 +93,162 @@ function session(
         status: r.status ?? "AVAILABLE",
         durationInMinutes: 30,
         recordedAt: new Date(startsAt.getTime() + (r.minute ?? 0) * 60_000),
-        removedAt: r.reason ? ago(1) : null,
-        removalReason: r.reason ?? null,
+        removedAt: r.status === "EXPIRED" ? ago(1) : null,
+        removalReason: r.status === "EXPIRED" ? "EXPERT_DELETED" : null,
         listingStatus: "DRAFT",
         purchases: [],
       })),
     },
-    ...extra,
   };
 }
 
-async function learnerView(ownSessions: unknown[], catchUp: unknown[] = []) {
-  const viewer = await resolveRecordingViewer("b2", "learner");
-  (prisma.appointmentOccurrence.findMany as jest.Mock)
-    .mockResolvedValueOnce(ownSessions)
-    .mockResolvedValueOnce(catchUp);
-  return readRecordingSlots(viewer!, "learner", NOW);
+function otherRun(
+  appointmentId: string,
+  base: SessionRow,
+  planId = "plan-1",
+): CatchUpRow {
+  return {
+    ...base,
+    appointmentId,
+    appointment: {
+      webinar: null,
+      class: { classPlanId: planId, schedulingPeriodStartsAt: ago(60) },
+      occurrences: [],
+    },
+  };
 }
 
-beforeEach(() => {
-  jest.clearAllMocks();
-  (prisma.appointmentOccurrence.findMany as jest.Mock).mockReset();
-  (lateJoinRecordingAccess as jest.Mock).mockResolvedValue({
-    floors: new Map(),
-  });
-  (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-    classBooking("b2"),
-  );
-  (prisma.appointmentParticipant.count as jest.Mock).mockResolvedValue(1);
-});
+function view(
+  sessions: SessionRow[],
+  opts: {
+    floor?: Date | null;
+    rows?: CatchUpRow[];
+    labels?: Map<string, RecordingRetentionLabel>;
+  } = {},
+): RecordingBookingView {
+  const viewer = recordingViewerOf(classBooking("b2"), LEARNER, true)!;
+  const floor = opts.floor ?? null;
+  const ordinals = catchUpOrdinals(viewer, sessions, floor, NOW);
+  const sources = viewer.groupPlan
+    ? pickCatchUpSources(viewer.groupPlan, "b2", ordinals, opts.rows ?? [])
+    : new Map();
+  const labels = opts.labels ?? new Map();
+  return buildRecordingView(viewer, { sessions, floor, sources, labels }, NOW);
+}
 
-describe("one slot rule for a learner's own batch", () => {
-  it("shows own recordings as ordered parts and offers no catch-up", async () => {
-    const view = await learnerView([
+describe("the slot rule", () => {
+  it("matches hosts by consultant profile and group learners by an entitled seat", () => {
+    const host = { ...LEARNER, consultantProfileId: "host" };
+    expect(recordingViewerOf(classBooking("b2"), host, false)?.role).toBe(
+      "host",
+    );
+    expect(recordingViewerOf(classBooking("b2"), LEARNER, false)).toBeNull();
+  });
+
+  it("shows the own batch's recordings as ordered parts", () => {
+    const { slots } = view([
       session(1, 5, [
         { id: "late", minute: 30 },
         { id: "early", minute: 0 },
       ]),
     ]);
-    expect(view.slots[0]).toMatchObject({
+    expect(slots[0]).toMatchObject({
       state: "recorded",
       source: { kind: "own" },
     });
-    expect(view.slots[0]!.parts.map((p) => [p.recordingId, p.partNo])).toEqual([
+    expect(slots[0]!.parts.map((p) => [p.recordingId, p.partNo])).toEqual([
       ["early", 1],
       ["late", 2],
     ]);
-    expect(prisma.appointmentOccurrence.findMany).toHaveBeenCalledTimes(1);
   });
 
-  it("fills a session that ended with nothing playable from the most recent other batch", async () => {
-    const other = {
-      ...session(2, 20, [{ id: "b1-rec" }]),
-      appointmentId: "b1",
-      appointment: {
-        class: { schedulingPeriodStartsAt: ago(60) },
-        occurrences: [],
-      },
-    };
-    const view = await learnerView(
-      [session(1, 5, [{ id: "own-1" }]), session(2, 3), session(3, -2)],
-      [other],
-    );
-    const [one, two, three] = view.slots;
-    expect(one!.state).toBe("recorded");
-    expect(two).toMatchObject({
-      title: "Conditions",
-      state: "catch_up",
-      missingReason: "not_recorded",
-      source: { kind: "catch_up" },
-    });
-    expect(two!.parts.map((p) => p.recordingId)).toEqual(["b1-rec"]);
-    expect(three!.state).toBe("upcoming");
-    const where = (prisma.appointmentOccurrence.findMany as jest.Mock).mock
-      .calls[1][0].where;
-    expect(where.ordinal).toEqual({ in: [2] });
-    expect(where.appointment).toMatchObject({ id: { not: "b2" } });
-  });
-
-  it("never offers catch-up for sessions before a late joiner's seat", async () => {
-    (lateJoinRecordingAccess as jest.Mock).mockResolvedValue({
-      floors: new Map([["class-b2", ago(4)]]),
-    });
-    const view = await learnerView([session(1, 5), session(2, 1)]);
-    expect(view.slots.map((s) => s.state)).toEqual([
-      "before_you_joined",
-      "not_recorded",
-    ]);
-    const where = (prisma.appointmentOccurrence.findMany as jest.Mock).mock
-      .calls[1][0].where;
-    expect(where.ordinal).toEqual({ in: [2] });
-  });
-
-  it("gives a webinar run without shared recordings no catch-up", async () => {
-    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue(
-      classBooking("b2", false),
-    );
-    const viewer = await resolveRecordingViewer("b2", "learner");
-    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValueOnce([
-      session(1, 5),
-    ]);
-    const view = await readRecordingSlots(viewer!, "learner", NOW);
-    expect(view.slots[0]!.state).toBe("not_recorded");
-    expect(prisma.appointmentOccurrence.findMany).toHaveBeenCalledTimes(1);
-  });
-
-  it("groups a voided session and its make-up under one slot and marks the make-up", async () => {
-    const view = await learnerView([
-      session(1, 6, [{ id: "voided-part" }], { voidedAt: ago(6) }),
+  it("groups a voided session and its make-up as parts of one slot", () => {
+    const { slots } = view([
+      session(1, 6, [{ id: "voided-part" }], true),
       session(1, 2, [{ id: "makeup-part" }]),
     ]);
-    expect(view.slots).toHaveLength(1);
-    expect(view.slots[0]!.parts.map((p) => [p.recordingId, p.makeUp])).toEqual([
+    expect(slots).toHaveLength(1);
+    expect(slots[0]!.parts.map((p) => [p.recordingId, p.makeUp])).toEqual([
       ["voided-part", false],
       ["makeup-part", true],
     ]);
   });
 
-  it("tells attendees when the expert removed a session's recording", async () => {
-    (prisma.appointment.findFirst as jest.Mock).mockResolvedValue({
-      ...classBooking("b2"),
-      class: null,
-      consultation: {
-        requestedBy: { userId: "learner" },
-        consultationPlan: {
-          title: "1:1",
-          consultantProfile: { userId: "host" },
-        },
-      },
-    });
-    const viewer = await resolveRecordingViewer("b2", "learner");
-    (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValueOnce([
-      session(1, 3, [
-        { id: "gone", status: "EXPIRED", reason: "EXPERT_DELETED" },
-      ]),
+  it("catches up from the most recent other batch of the same plan only", () => {
+    const rows = [
+      otherRun("b9", session(2, 1, [{ id: "other-plan" }]), "plan-2"),
+      otherRun("b2", session(2, 2, [{ id: "own-run" }])),
+      otherRun("b1", session(2, 20, [{ id: "b1-rec" }])),
+      otherRun("b0", session(2, 40, [{ id: "older" }])),
+    ];
+    const { slots } = view(
+      [session(1, 5, [{ id: "own-1" }]), session(2, 3), session(3, -2)],
+      { rows },
+    );
+    expect(slots.map((s) => s.state)).toEqual([
+      "recorded",
+      "catch_up",
+      "upcoming",
     ]);
-    const view = await readRecordingSlots(viewer!, "learner", NOW);
-    expect(view.slots[0]).toMatchObject({ state: "removed", parts: [] });
+    expect(slots[1]).toMatchObject({
+      title: "Conditions",
+      missingReason: "not_recorded",
+      source: { kind: "catch_up" },
+    });
+    expect(slots[1]!.parts.map((p) => p.recordingId)).toEqual(["b1-rec"]);
+  });
+
+  it("hides sessions before a late joiner's seat and offers them no catch-up", () => {
+    const viewer = recordingViewerOf(classBooking("b2"), LEARNER, true)!;
+    const sessions = [session(1, 5), session(2, 1)];
+    expect(catchUpOrdinals(viewer, sessions, ago(4), NOW)).toEqual([2]);
+    expect(view(sessions, { floor: ago(4) }).slots.map((s) => s.state)).toEqual(
+      ["before_you_joined", "not_recorded"],
+    );
+  });
+
+  it("reads an expert-removed recording as Removed until its retention date, then expired", () => {
+    const gone = [session(1, 60, [{ id: "gone", status: "EXPIRED" }])];
+    const at = (label: RecordingRetentionLabel) =>
+      view(gone, { labels: new Map([["gone", label]]) }).slots[0]!;
+    expect(
+      at({ kind: "DATE", until: new Date(NOW.getTime() + DAY) }),
+    ).toMatchObject({ state: "removed", missingReason: "removed" });
+    expect(at({ kind: "WHILE_ACTIVE" }).state).toBe("removed");
+    expect(at({ kind: "DATE", until: ago(1) }).missingReason).toBe("expired");
   });
 });
 
-describe("expert-removed recordings", () => {
-  async function removedSlot(label: unknown) {
-    (recordingRetentionLabels as jest.Mock).mockResolvedValueOnce(
-      new Map([["gone", label]]),
-    );
-    const view = await learnerView([
-      session(1, 60, [
-        { id: "gone", status: "EXPIRED", reason: "EXPERT_DELETED" },
-      ]),
-    ]);
-    return view.slots[0]!;
-  }
+describe("the batched loader and library pages", () => {
+  it("reads a page of bookings in a fixed number of queries", async () => {
+    const bookings = ["b1", "b2", "b3"].map((id) => ({
+      ...classBooking(id),
+      participants: [{ id: `seat-${id}` }],
+      payment: [],
+      occurrences: [session(1, 5), session(2, 3, [{ id: `${id}-rec` }])],
+    }));
+    (prisma.appointment.findMany as jest.Mock).mockResolvedValueOnce(bookings);
+    const loaded = await loadRecordingViews(["b1", "b2", "b3"], "learner", NOW);
+    expect(loaded.size).toBe(3);
+    expect(prisma.appointment.findMany).toHaveBeenCalledTimes(1);
+    expect(lateJoinRecordingAccess).toHaveBeenCalledTimes(1);
+    expect(prisma.appointmentOccurrence.findMany).toHaveBeenCalledTimes(1);
+    expect(recordingRetentionLabels).toHaveBeenCalledTimes(1);
+  });
 
-  it("reads Removed until the retention date, then expired, never Not recorded", async () => {
+  it("counts and pages only the bookings that render a row", () => {
+    const empty = view([session(1, -1)]);
+    const recorded = view([session(1, 5, [{ id: "rec" }])]);
+    const views = new Map([
+      ["a", recorded],
+      ["b", empty],
+      ["c", recorded],
+    ]);
     expect(
-      await removedSlot({ kind: "DATE", until: new Date(NOW.getTime() + DAY) }),
-    ).toMatchObject({ state: "removed", missingReason: "removed" });
-    expect(await removedSlot({ kind: "WHILE_ACTIVE" })).toMatchObject({
-      state: "removed",
-    });
-    expect(await removedSlot({ kind: "DATE", until: ago(1) })).toMatchObject({
-      missingReason: "expired",
-    });
+      renderedGroups(["a", "b", "c", "x"], views, "").map(
+        (g) => g.appointmentId,
+      ),
+    ).toEqual(["a", "c"]);
+    expect(renderedGroups(["a", "c"], views, "nothing")).toEqual([]);
   });
 });

@@ -10,6 +10,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { readRecordingLibrary } from "@/lib/data/recording-library";
+import { timedLibraryRead } from "@/lib/library/timed-read";
 import { libraryRequest } from "@/lib/library/library-route";
 
 export async function GET(
@@ -27,11 +28,13 @@ export async function GET(
   if (!request.ok) return request.response;
   const { userId, scope, query } = request.args;
   return NextResponse.json(
-    await readRecordingLibrary({
-      userId,
-      owner: { kind: "org", orgId, everyone: scope === "everyone" },
-      query,
-    }),
+    await timedLibraryRead("recordings:org", () =>
+      readRecordingLibrary({
+        userId,
+        owner: { kind: "org", orgId, everyone: scope === "everyone" },
+        query,
+      }),
+    ),
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }

@@ -173,8 +173,21 @@ type Candidate = Prisma.RecordingGetPayload<{
   select: typeof candidateSelect;
 }>;
 
+/** Recordings of one subscription share its renewal chain, so a page walks each chain once. */
+function cachedChainEnd(
+  start: SubscriptionEnd,
+  cache: Map<string, Promise<Date>>,
+): Promise<Date> {
+  const hit = cache.get(start.id);
+  if (hit) return hit;
+  const end = subscriptionChainEnd(start);
+  cache.set(start.id, end);
+  return end;
+}
+
 async function resolveSession(
   candidate: Candidate,
+  chainEnds = new Map<string, Promise<Date>>(),
 ): Promise<RetentionSession | null> {
   const occurrence = candidate.meeting.occurrence;
   const appointment = occurrence.appointment;
@@ -189,7 +202,10 @@ async function resolveSession(
   if (appointment.subscription) {
     return {
       kind: "SUBSCRIPTION",
-      subscriptionEndsAt: await subscriptionChainEnd(appointment.subscription),
+      subscriptionEndsAt: await cachedChainEnd(
+        appointment.subscription,
+        chainEnds,
+      ),
     };
   }
   if (appointment.trial) {
@@ -197,7 +213,7 @@ async function resolveSession(
     return {
       kind: "SUBSCRIPTION",
       subscriptionEndsAt: converted
-        ? await subscriptionChainEnd(converted)
+        ? await cachedChainEnd(converted, chainEnds)
         : sessionEndedAt,
     };
   }
@@ -230,6 +246,7 @@ export async function recordingRetentionLabels(
       },
     },
   });
+  const chainEnds = new Map<string, Promise<Date>>();
   for (const row of rows) {
     const published = row.listingStatus === RecordingListingStatus.PUBLISHED;
     const hasLivePurchase = row.purchases.length > 0;
@@ -240,7 +257,7 @@ export async function recordingRetentionLabels(
     const until = recordingRetentionDeadline({
       now,
       recordedAt: row.recordedAt,
-      session: await resolveSession(row),
+      session: await resolveSession(row, chainEnds),
       published,
       hasLivePurchase,
       orgRetentionDays: row.organizationId

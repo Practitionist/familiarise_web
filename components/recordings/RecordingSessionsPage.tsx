@@ -9,8 +9,7 @@ import {
 
 import { recordingKeys } from "@/lib/documents/query-keys";
 import {
-  readRecordingSlots,
-  resolveRecordingViewer,
+  loadRecordingView,
   type RecordingViewerRole,
 } from "@/lib/stream/recording-slots";
 import { getViewerZone } from "@/lib/time/viewer-zone-server";
@@ -32,15 +31,14 @@ export async function RecordingSessionsPage({
   /** What to do for a caller who is neither host nor entitled learner. */
   onNotParty?: () => never;
 }>) {
-  const viewer = await resolveRecordingViewer(appointmentId, userId);
-  if (!viewer || (role && viewer.role !== role)) {
+  const [view, viewerZone] = await Promise.all([
+    loadRecordingView(appointmentId, userId),
+    getViewerZone(),
+  ]);
+  if (!view || (role && view.viewerRole !== role)) {
     if (onNotParty) onNotParty();
     notFound();
   }
-  const [view, viewerZone] = await Promise.all([
-    readRecordingSlots(viewer, userId),
-    getViewerZone(),
-  ]);
   const queryClient = new QueryClient();
   queryClient.setQueryData(recordingKeys.appointment(appointmentId), view);
   return (
