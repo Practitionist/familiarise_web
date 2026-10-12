@@ -254,7 +254,8 @@ strategy documents to the individual slow-query investigations.
 - [02-dashboard-prefetching.md](./performance/02-dashboard-prefetching.md) - Hover-based route prefetching strategy
 - [03-dashboard-appointments-perf.md](./performance/03-dashboard-appointments-perf.md) - Investigation: slow `/api/appointments` query
 - [04-availability-allocation-perf.md](./performance/04-availability-allocation-perf.md) - Investigation: slow wide-window availability-with-allocation query
-- [05-allocation-500-investigation.md](./performance/05-allocation-500-investigation.md) - Investigation: auto-allocate HTTP 500 and transaction-start timeout
+- [05-lighthouse-audit-and-cwv-playbook.md](./performance/05-lighthouse-audit-and-cwv-playbook.md) - Lighthouse audits and the Core Web Vitals playbook
+- [06-database-round-trips-and-join-loading.md](./performance/06-database-round-trips-and-join-loading.md) - Why statement count dominates dashboard latency, and when readers use join loading
 
 ---
 
