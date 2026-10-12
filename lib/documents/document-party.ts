@@ -109,7 +109,7 @@ export const documentBookingSelect = {
   },
   occurrences: {
     where: liveDocumentSessionWhere,
-    select: { endsAt: true },
+    select: { startsAt: true, endsAt: true },
   },
   statusHistory: {
     where: { toStatus: { in: [...TERMINAL_REQUEST_STATUSES] } },

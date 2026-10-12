@@ -1,80 +1,26 @@
-"use client";
-
-import { use } from "react";
 import {
-  DashboardHeader,
   DashboardContent,
+  DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
-import { UrlTabs } from "@/components/dashboard/UrlTabs";
-import { RecordingsList } from "./components/RecordingsList";
+import { PersonalLibrary } from "@/components/dashboard/library/PersonalLibrary";
+import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 
-interface RecordingsPageProps {
-  params: Promise<{
-    consultantId: string;
-  }>;
-}
-
-export default function RecordingsPage({
+export default async function ConsultantRecordingsRoute({
   params,
-}: Readonly<RecordingsPageProps>) {
-  const { consultantId } = use(params);
-
+}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
+  const { consultantId } = await params;
+  await requirePersonalProfileAccess("consultant", consultantId);
   return (
     <>
       <DashboardHeader
         title="Recordings"
-        subtitle="Manage your session recordings and replay listings"
+        description="Recordings of the sessions you host, by booking. Open a booking to manage a recording."
       />
       <DashboardContent>
-        <UrlTabs
-          tabs={[
-            {
-              value: "all",
-              label: "All",
-              content: <RecordingsList consultantId={consultantId} />,
-            },
-            {
-              value: "webinar",
-              label: "Webinars",
-              content: (
-                <RecordingsList consultantId={consultantId} type="webinar" />
-              ),
-            },
-            {
-              value: "class",
-              label: "Classes",
-              content: (
-                <RecordingsList consultantId={consultantId} type="class" />
-              ),
-            },
-            {
-              value: "consultation",
-              label: "Consultations",
-              content: (
-                <RecordingsList
-                  consultantId={consultantId}
-                  type="consultation"
-                />
-              ),
-            },
-            {
-              value: "subscription",
-              label: "Subscriptions",
-              content: (
-                <RecordingsList
-                  consultantId={consultantId}
-                  type="subscription"
-                />
-              ),
-            },
-            {
-              value: "trial",
-              label: "Trials",
-              content: (
-                <RecordingsList consultantId={consultantId} type="trial" />
-              ),
-            },
-          ]}
+        <PersonalLibrary
+          tree="consultant"
+          profileId={consultantId}
+          artifact="recordings"
         />
       </DashboardContent>
     </>

@@ -25,6 +25,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/tailwind";
+import { z } from "zod";
+import {
+  friendlyFileError,
+  resolveFileErrorCode,
+} from "@/lib/documents/file-errors";
 import { buildCaptionTrackDataUri } from "./caption-track";
 
 export const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
@@ -56,6 +61,47 @@ export interface RecordingPlayerModalProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly recording: RecordingPlayerItem | null;
+  /** "Part 2 of 3" and similar, shown under the title. */
+  readonly partLabel?: string | null;
+  /** Plays the session's next part. */
+  readonly onNextPart?: (() => void) | null;
+}
+
+const PlaybackPayloadSchema = z.object({
+  code: z.string().optional(),
+  removedAt: z.string().nullish(),
+  removalReason: z.string().nullish(),
+  recording: z
+    .object({
+      playbackUrl: z.string().nullish(),
+      previewTranscript: z.string().nullish(),
+    })
+    .optional(),
+  access: z
+    .object({ level: z.string().optional(), reason: z.string().optional() })
+    .optional(),
+});
+
+const removedDay = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+/** Fixed copy for a playback refusal; server text is never shown. */
+function playbackErrorCopy(
+  status: number,
+  payload: z.infer<typeof PlaybackPayloadSchema>,
+): string {
+  const code = resolveFileErrorCode(status, payload.code);
+  if (code === "GONE") {
+    if (payload.removalReason === "EXPERT_DELETED" && payload.removedAt) {
+      return `Removed by the expert on ${removedDay.format(new Date(payload.removedAt))}.`;
+    }
+    return "This recording is no longer available.";
+  }
+  if (code === "NOT_FOUND") return "This recording is no longer available.";
+  return friendlyFileError(code).description;
 }
 
 export function resolveActivePlaybackUrl(
@@ -89,6 +135,7 @@ function computeStorageBadge(
 }
 
 interface PlayerViewportProps {
+  readonly lastUrl: string | null;
   readonly isLoadingUrl: boolean;
   readonly fetchError: string | null;
   readonly activePlaybackUrl: string | null;
@@ -102,6 +149,7 @@ interface PlayerViewportProps {
 }
 
 function PlayerViewport({
+  lastUrl,
   isLoadingUrl,
   fetchError,
   activePlaybackUrl,
@@ -118,13 +166,23 @@ function PlayerViewport({
       <div className="flex aspect-video w-full flex-col items-center justify-center gap-2.5 rounded-lg border border-border bg-muted/40 p-6 text-center">
         <AlertCircle className="h-8 w-8 text-muted-foreground" />
         <p className="text-sm font-medium text-foreground">
-          Recording unavailable right now
+          This recording can&apos;t be played
         </p>
         <p className="max-w-sm text-xs text-muted-foreground">{fetchError}</p>
-        <Button variant="outline" size="sm" className="mt-1" onClick={onRetry}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-          Retry
-        </Button>
+        <div className="mt-1 flex flex-wrap justify-center gap-2">
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Retry
+          </Button>
+          {lastUrl && (
+            <Button variant="ghost" size="sm" asChild>
+              <a href={lastUrl} target="_blank" rel="noopener noreferrer">
+                Open in new tab
+                <ExternalLink className="ml-1.5 h-3.5 w-3.5" aria-hidden />
+              </a>
+            </Button>
+          )}
+        </div>
       </div>
     );
   }
@@ -187,6 +245,8 @@ export function RecordingPlayerModal({
   open,
   onOpenChange,
   recording,
+  partLabel = null,
+  onNextPart = null,
 }: Readonly<RecordingPlayerModalProps>) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const savedTimeRef = useRef<number>(0);
@@ -213,31 +273,21 @@ export function RecordingPlayerModal({
       const response = await fetch(`/api/stream/recordings/${id}`, {
         signal: controller.signal,
       });
-      const payload = (await response.json().catch(() => ({}))) as {
-        recording?: {
-          playbackUrl?: string | null;
-          previewTranscript?: string | null;
-        };
-        access?: {
-          level?: string;
-          reason?: string;
-        };
-        error?: string;
-      };
+      const parsed = PlaybackPayloadSchema.safeParse(
+        await response.json().catch(() => ({})),
+      );
+      const payload = parsed.success ? parsed.data : {};
       if (controller.signal.aborted) return;
 
       if (!response.ok) {
-        throw new Error(payload.error || "Unable to load recording playback");
+        throw new Error(playbackErrorCopy(response.status, payload));
       }
       const nextUrl = payload.recording?.playbackUrl ?? null;
       if (!nextUrl) {
-        const operatorReason =
-          payload.access?.level === "METADATA_ONLY"
-            ? payload.access.reason
-            : null;
         throw new Error(
-          operatorReason ||
-            "Playback URL is not available for this recording yet.",
+          payload.access?.level === "METADATA_ONLY"
+            ? "Organisation and staff roles can see this recording's details but not play it."
+            : "This recording is still processing. Try again in a few minutes.",
         );
       }
       setResolvedPlayback({
@@ -249,7 +299,9 @@ export function RecordingPlayerModal({
       if (controller.signal.aborted) return;
       if (err instanceof DOMException && err.name === "AbortError") return;
       setFetchError(
-        err instanceof Error ? err.message : "Failed to load recording",
+        err instanceof Error && !(err instanceof TypeError)
+          ? err.message
+          : friendlyFileError("NETWORK").description,
       );
     } finally {
       if (abortControllerRef.current === controller) {
@@ -346,6 +398,7 @@ export function RecordingPlayerModal({
           </DialogTitle>
           <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {recording.planTitle && <span>{recording.planTitle}</span>}
+            {partLabel && <span>{partLabel}</span>}
             {recording.recordedAt && (
               <span className="inline-flex items-center gap-1">
                 <Calendar className="h-3.5 w-3.5" />
@@ -363,6 +416,7 @@ export function RecordingPlayerModal({
 
         <div className="space-y-4">
           <PlayerViewport
+            lastUrl={activePlaybackUrl}
             isLoadingUrl={isLoadingUrl}
             fetchError={fetchError}
             activePlaybackUrl={activePlaybackUrl}
@@ -384,7 +438,7 @@ export function RecordingPlayerModal({
                 void fetchPresignedUrl(recording.id);
               } else {
                 setFetchError(
-                  "Playback stream interrupted and could not be automatically refreshed.",
+                  "The video couldn't load. Try again, or open it in a new tab.",
                 );
               }
             }}
@@ -414,6 +468,16 @@ export function RecordingPlayerModal({
             </fieldset>
 
             <div className="flex flex-wrap items-center gap-2">
+              {onNextPart && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={onNextPart}
+                >
+                  Next part
+                </Button>
+              )}
               {recording.appointmentHref && (
                 <Button
                   variant="ghost"
@@ -422,7 +486,7 @@ export function RecordingPlayerModal({
                   asChild
                 >
                   <Link href={recording.appointmentHref}>
-                    Session details &rarr;
+                    Session details <span aria-hidden>&rarr;</span>
                   </Link>
                 </Button>
               )}
