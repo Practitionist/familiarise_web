@@ -30,18 +30,19 @@ Before opting a reader in, snapshot its payload with the query strategy and comp
 
 ### Readers that use join loading
 
-| Reader                                                                | File                                                                                    | Statements before             | Statements after                  |
-| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------- |
-| Consultant Home appointments, pending lists, active book, next cycles | `lib/data/consultant-dashboard.ts`                                                      | 94 for the whole Home payload | 33 for the whole Home payload     |
-| Learner events (Home and Appointments)                                | `lib/data/consultee-events-read.ts`                                                     | 51                            | 6                                 |
-| Appointment detail                                                    | `lib/data/appointment-detail.ts`                                                        | 53                            | 1                                 |
-| Consultant appointments list                                          | `lib/data/consultant-appointments.ts`                                                   | 29                            | 1                                 |
-| Earnings history rows and attribution                                 | `lib/payments/payouts/earnings-service.ts`, `lib/data/consultant-earnings-analytics.ts` | part of the Earnings page     | part of the Earnings page         |
-| Dashboard layout user seed                                            | `lib/data/user-details.ts`                                                              | 8                             | 1                                 |
-| Organisation details (layout seed and API)                            | `lib/data/org-details-server.ts`, `app/api/organizations/[orgId]/route.ts`              | 5                             | 1                                 |
-| Organisation access check                                             | `lib/auth-helpers.ts` (`requireOrgAccess`)                                              | 2 per call                    | 1 per render for the organisation |
+| Reader                                                                           | File                                                                                    | Statements before             | Statements after                  |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------- | --------------------------------- |
+| Session enrichment (`customSession` memberships), on every authenticated request | `lib/auth.ts`                                                                           | 6 for the whole session read  | 3 for the whole session read      |
+| Consultant Home appointments, pending lists, active book, next cycles            | `lib/data/consultant-dashboard.ts`                                                      | 94 for the whole Home payload | 33 for the whole Home payload     |
+| Learner events (Home and Appointments)                                           | `lib/data/consultee-events-read.ts`                                                     | 51                            | 6                                 |
+| Appointment detail                                                               | `lib/data/appointment-detail.ts`                                                        | 53                            | 1                                 |
+| Consultant appointments list                                                     | `lib/data/consultant-appointments.ts`                                                   | 29                            | 1                                 |
+| Earnings history rows and attribution                                            | `lib/payments/payouts/earnings-service.ts`, `lib/data/consultant-earnings-analytics.ts` | part of the Earnings page     | part of the Earnings page         |
+| Dashboard layout user seed                                                       | `lib/data/user-details.ts`                                                              | 8                             | 1                                 |
+| Organisation details (layout seed and API)                                       | `lib/data/org-details-server.ts`, `app/api/organizations/[orgId]/route.ts`              | 5                             | 1                                 |
+| Organisation access check                                                        | `lib/auth-helpers.ts` (`requireOrgAccess`)                                              | 2 per call                    | 1 per render for the organisation |
 
-The Earnings page as a whole dropped from 104 statements to 27.
+The Earnings page as a whole dropped from 104 statements to 27. The three statements left in the session read are Better Auth's own session and user lookups and the joined membership read. Better Auth's `experimental.joins` option did not merge the first two through the Prisma adapter when tried, so they stay separate.
 
 ## Companion conventions
 
