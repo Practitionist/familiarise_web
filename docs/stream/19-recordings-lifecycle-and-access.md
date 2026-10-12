@@ -405,7 +405,7 @@ The recording playback, manage, publish, preview, start, stop and sync routes, t
 ### Performance
 
 - **Statement budget.** A library page costs a fixed number of statements, independent of how many bookings it shows, because the loader batches every relation arm. It skips arms for booking kinds that are not on the page, and retention labels walk each subscription renewal chain once per call.
-- **Round-trip cost.** With `PG_POOL_MAX=1` every statement is serial, and one round trip costs about 95 ms from the function to the database, so cost tracks statement count rather than query speed. The per-booking loop this loader replaced issued about 495 statements for one learner's page (about 20 s locally, and a gateway timeout on the deploy preview), while the batched loader issues about 56.
+- **Round-trip cost.** With `PG_POOL_MAX=1` every statement is serial, and one round trip costs about 95 ms from the function to the database, so cost tracks statement count rather than query speed. The per-booking loop this loader replaced issued about 495 statements for one learner's page (about 20 s locally, and a gateway timeout on the deploy preview), while the batched loader issues about 40.
 - **Late-join floor.** The loader reads a learner's late-join floor from the seat row it already loads, takes the booking kinds from the library's candidates, and skips host-only and catch-up relations the viewer cannot use.
 - **Pattern.** Do not call a per-booking resolver in a loop. Load every input for the page in one batched read, then run the pure core over the rows in memory. Catch-up playback access likewise checks the chosen source in one grouped read.
 
