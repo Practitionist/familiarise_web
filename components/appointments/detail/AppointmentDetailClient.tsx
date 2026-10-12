@@ -25,7 +25,10 @@ import { throwSupportError } from "@/lib/support/error-copy";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
-import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
+import {
+  mapAppointmentDetail,
+  recordingSessionLabel,
+} from "@/lib/appointments/map-detail";
 import {
   presentationNames,
   toPresentationInput,
@@ -1128,7 +1131,7 @@ export function AppointmentDetailClient({
                             href={`${backHref.replace(/\/appointments$/, "")}/documents`}
                             className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
                           >
-                            All documents &rarr;
+                            All documents <span aria-hidden>&rarr;</span>
                           </Link>
                         </div>
                       )}
@@ -1159,11 +1162,13 @@ export function AppointmentDetailClient({
                               {rec.title}
                             </p>
                             <p className="text-[11px] text-muted-foreground">
-                              {rec.totalSessions > 1
-                                ? `Session ${rec.sessionNumber} · `
-                                : ""}
-                              {format(rec.recordedAt, "d MMM yyyy")} ·{" "}
-                              {rec.durationInMinutes} min
+                              {[
+                                recordingSessionLabel(rec),
+                                format(rec.recordedAt, "d MMM yyyy"),
+                                `${rec.durationInMinutes} min`,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ")}
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
@@ -1191,7 +1196,7 @@ export function AppointmentDetailClient({
                         href={`${backHref.replace(/\/appointments$/, "")}/recordings`}
                         className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
                       >
-                        Recordings library &rarr;
+                        Recordings library <span aria-hidden>&rarr;</span>
                       </Link>
                     </div>
                   )}

@@ -22,6 +22,7 @@ const mockDb = {
   class: { findMany: jest.fn() },
   trial: { findMany: jest.fn() },
   recordingPurchase: { findMany: jest.fn() },
+  appointmentParticipant: { findMany: jest.fn() },
   webinarPlan: { findUnique: jest.fn() },
   classPlan: { findUnique: jest.fn() },
   appointment: { count: jest.fn(), findMany: jest.fn() },
@@ -243,5 +244,68 @@ describe("recording list payloads carry no playback media", () => {
 
     expect(res.status).toBe(200);
     expectNoPlaybackMedia(await res.json(), "rec-c");
+  });
+});
+
+describe("shared-run rows link only to the viewer's own run", () => {
+  it("gives another batch's class card no appointmentId and marks it fromOtherRun", async () => {
+    mockRequireApiAuth.mockResolvedValue({
+      session: {
+        user: { id: "u-1", role: "CONSULTEE", consulteeProfileId: "ce-1" },
+      },
+    });
+    mockDb.consulteeProfile.findUnique.mockResolvedValue({ userId: "u-1" });
+    mockService.getPaidPlanIds.mockResolvedValue({
+      webinarScope: { sharedPlanIds: [], appointmentIds: [] },
+      classPlanIds: ["plan-1"],
+    });
+    for (const model of ["consultation", "subscription", "webinar", "trial"]) {
+      mockDb[model as "consultation"].findMany.mockResolvedValue([]);
+    }
+    mockDb.recordingPurchase.findMany.mockResolvedValue([]);
+    const batch = (id: string) => ({
+      id,
+      classPlanId: "plan-1",
+      status: "COMPLETED",
+      createdAt: recordedAt,
+      schedulingPeriodStartsAt: recordedAt,
+      classPlan: {
+        title: "Python",
+        materials: [],
+        consultantProfile: { user: { id: "u-x", name: "Expert", image: null } },
+      },
+      appointment: { id: `apt-${id}`, ...withRecordings(`rec-${id}`) },
+    });
+    mockDb.class.findMany.mockResolvedValue([batch("own"), batch("other")]);
+    mockDb.appointmentParticipant.findMany.mockResolvedValue([
+      { appointmentId: "apt-own" },
+    ]);
+
+    const res = await getConsulteeResources(
+      new Request("http://localhost/api/dashboard/consultee/ce-1/resources"),
+      { params: Promise.resolve({ consulteeId: "ce-1" }) },
+    );
+
+    const { data } = await res.json();
+    expect(
+      data.classes.map(
+        (c: {
+          id: string;
+          appointmentId: string | null;
+          fromOtherRun: boolean;
+        }) => [c.id, c.appointmentId, c.fromOtherRun],
+      ),
+    ).toEqual([
+      ["own", "apt-own", false],
+      ["other", null, true],
+    ]);
+    expect(mockDb.appointmentParticipant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          appointmentId: { in: ["apt-own", "apt-other"] },
+          userId: "u-1",
+        }),
+      }),
+    );
   });
 });

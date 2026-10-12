@@ -26,7 +26,6 @@ export interface RecordingData {
   planId: string | null;
   planTitle: string | null;
   appointmentId?: string | null;
-  occurrenceId?: string | null;
   participantNames: string[];
   participantCount: number;
   appointmentDate: string | null;

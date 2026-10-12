@@ -396,6 +396,29 @@ export async function GET(
       take: 50,
     });
 
+    // Shared-run arms list runs the viewer never attended; only their own runs get a link.
+    const groupAppointmentIds = [...webinars, ...classes].flatMap((e) =>
+      e.appointment ? [e.appointment.id] : [],
+    );
+    const ownSeats =
+      groupAppointmentIds.length > 0
+        ? await prisma.appointmentParticipant.findMany({
+            where: {
+              appointmentId: { in: groupAppointmentIds },
+              ...liveParticipant(userId),
+            },
+            select: { appointmentId: true },
+          })
+        : [];
+    const ownGroupAppointmentIds = new Set(
+      ownSeats.map((seat) => seat.appointmentId),
+    );
+    const runLink = (appointmentId: string | null | undefined) => {
+      if (!appointmentId) return { appointmentId: null, fromOtherRun: false };
+      const own = ownGroupAppointmentIds.has(appointmentId);
+      return { appointmentId: own ? appointmentId : null, fromOtherRun: !own };
+    };
+
     const extractAndRedact = (
       ...args: Parameters<typeof extractRecordings>
     ) => {
@@ -446,7 +469,7 @@ export async function GET(
       webinars: webinars
         .map((w: WebinarWithResources) => ({
           id: w.id,
-          appointmentId: w.appointment?.id ?? null,
+          ...runLink(w.appointment?.id),
           planTitle: w.webinarPlan.title,
           consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
           consultantImage: w.webinarPlan.consultantProfile?.user.image ?? null,
@@ -459,7 +482,7 @@ export async function GET(
       classes: classes
         .map((cl: ClassWithResources) => ({
           id: cl.id,
-          appointmentId: cl.appointment?.id ?? null,
+          ...runLink(cl.appointment?.id),
           planTitle: cl.classPlan.title,
           consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
           consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,

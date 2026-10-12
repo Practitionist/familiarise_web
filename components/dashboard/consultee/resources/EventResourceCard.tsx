@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
+  ExternalLink,
   FileText,
   Play,
   Video,
@@ -16,12 +17,16 @@ import { cn } from "@/utils/tailwind";
 import { eventUnionStatusBadge } from "@/lib/appointments/status-guards";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerModal";
-import { useToast } from "@/hooks/use-toast";
-import { openPlanMaterial } from "@/lib/documents/client-download";
+import { FileOpenLink } from "@/components/documents/FileOpenLink";
+import { getMaterialViewerUrl } from "@/lib/documents/urls";
+import { useFileDownload } from "@/lib/documents/use-file-download";
 
 export interface EventResource {
   id: string;
+  /** Set only when the viewer is a party to this run. */
   appointmentId?: string | null;
+  /** A shared recording from a run or batch the viewer did not attend. */
+  fromOtherRun?: boolean;
   planTitle: string;
   contextTitle?: string | null;
   consultantName: string;
@@ -116,7 +121,7 @@ export function EventResourceCard({
   event: EventResource;
   artifact?: ResourceArtifact;
 }) {
-  const { toast } = useToast();
+  const { downloadMaterial } = useFileDownload();
   const showMaterials = artifact === "materials" || artifact === "both";
   const showRecordings = artifact === "recordings" || artifact === "both";
   const totalItems =
@@ -132,85 +137,89 @@ export function EventResourceCard({
       ? `/dashboard/consultee/${consulteeId}/appointments/${event.appointmentId}`
       : null;
 
-  const triggerMaterialOpen = (
-    materialId: string,
-    mode: "inline" | "attachment",
-    fallbackName: string,
-  ) => {
-    void openPlanMaterial(
-      materialId,
-      mode,
-      (err) =>
-        toast({
-          title: err.title,
-          description: err.description,
-          variant: "destructive",
-        }),
-      fallbackName,
-    );
-  };
+  const otherRunLabel = event.fromOtherRun
+    ? event.classId || event.offeringType === "CLASS"
+      ? "From another batch"
+      : "From another run"
+    : null;
 
   return (
     <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden">
-      {/* Header */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-4 p-4 hover:bg-muted transition-colors text-left"
-      >
-        <Avatar className="h-10 w-10 shrink-0">
-          <AvatarImage
-            src={event.consultantImage || undefined}
-            alt={event.consultantName || "Expert"}
-          />
-          <AvatarFallback className="bg-muted text-muted-foreground text-sm">
-            {event.consultantName?.charAt(0) || "?"}
-          </AvatarFallback>
-        </Avatar>
+      {/* Header: the toggle and the session link are siblings, never nested. */}
+      <div className="flex items-center gap-3 p-4 transition-colors hover:bg-muted">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-4 text-left"
+        >
+          <Avatar className="h-10 w-10 shrink-0">
+            <AvatarImage
+              src={event.consultantImage || undefined}
+              alt={event.consultantName || "Expert"}
+            />
+            <AvatarFallback className="bg-muted text-muted-foreground text-sm">
+              {event.consultantName?.charAt(0) || "?"}
+            </AvatarFallback>
+          </Avatar>
 
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-foreground truncate">
-            {event.planTitle}
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {event.consultantName || "Unknown"} &middot;{" "}
-            {formatDate(event.date)}
-          </p>
-        </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-foreground truncate">
+              {event.planTitle}
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              {event.consultantName || "Unknown"} &middot;{" "}
+              {formatDate(event.date)}
+            </p>
+          </div>
 
-        <div className="flex items-center gap-3 shrink-0">
-          {appointmentHref && (
-            <Link
-              href={appointmentHref}
-              onClick={(e) => e.stopPropagation()}
-              className="text-xs font-medium text-primary hover:underline"
-            >
-              Session details &rarr;
-            </Link>
-          )}
-          <StatusBadge {...eventUnionStatusBadge(event.status)} size="sm" />
-          {totalItems > 0 && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {showMaterials && event.materials.length > 0 && (
-                <span className="flex items-center gap-1">
-                  <FileText className="w-3.5 h-3.5" />
-                  {event.materials.length}
-                </span>
-              )}
-              {showRecordings && event.recordings.length > 0 && (
-                <span className="flex items-center gap-1">
-                  <Video className="w-3.5 h-3.5" />
-                  {event.recordings.length}
-                </span>
-              )}
-            </div>
-          )}
-          {expanded ? (
-            <ChevronUp className="w-4 h-4 text-muted-foreground/70" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-muted-foreground/70" />
-          )}
-        </div>
-      </button>
+          <div className="flex items-center gap-3 shrink-0">
+            <StatusBadge {...eventUnionStatusBadge(event.status)} size="sm" />
+            {totalItems > 0 && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                {showMaterials && event.materials.length > 0 && (
+                  <span className="flex items-center gap-1">
+                    <FileText className="w-3.5 h-3.5" aria-hidden />
+                    {event.materials.length}
+                  </span>
+                )}
+                {showRecordings && event.recordings.length > 0 && (
+                  <span className="flex items-center gap-1">
+                    <Video className="w-3.5 h-3.5" aria-hidden />
+                    {event.recordings.length}
+                  </span>
+                )}
+              </div>
+            )}
+            {expanded ? (
+              <ChevronUp
+                className="w-4 h-4 text-muted-foreground/70"
+                aria-hidden
+              />
+            ) : (
+              <ChevronDown
+                className="w-4 h-4 text-muted-foreground/70"
+                aria-hidden
+              />
+            )}
+          </div>
+        </button>
+
+        {appointmentHref ? (
+          <Link
+            href={appointmentHref}
+            className="shrink-0 text-xs font-medium text-primary hover:underline"
+          >
+            Session details <span aria-hidden>&rarr;</span>
+          </Link>
+        ) : (
+          otherRunLabel && (
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {otherRunLabel}
+            </span>
+          )
+        )}
+      </div>
 
       {/* Content */}
       {expanded && (
@@ -237,20 +246,18 @@ export function EventResourceCard({
                       <FileText className="w-4 h-4" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          triggerMaterialOpen(
-                            mat.id,
-                            "inline",
-                            mat.originalName || mat.fileName,
-                          );
-                        }}
-                        className="text-sm font-medium text-foreground truncate block text-left hover:underline underline-offset-4"
+                      <FileOpenLink
+                        href={getMaterialViewerUrl(mat.id)}
+                        className="inline-flex max-w-full items-center gap-1 text-sm font-medium text-foreground hover:underline underline-offset-4"
                       >
-                        {mat.originalName || mat.fileName}
-                      </button>
+                        <span className="truncate">
+                          {mat.originalName || mat.fileName}
+                        </span>
+                        <ExternalLink
+                          className="h-3 w-3 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                      </FileOpenLink>
                       <p className="text-xs text-muted-foreground">
                         {formatFileSize(mat.fileSize)}
                         {mat.description && ` \u00B7 ${mat.description}`}
@@ -261,14 +268,7 @@ export function EventResourceCard({
                       variant="ghost"
                       size="sm"
                       className="h-8 px-2.5 text-xs"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        triggerMaterialOpen(
-                          mat.id,
-                          "attachment",
-                          mat.originalName || mat.fileName,
-                        );
-                      }}
+                      onClick={() => void downloadMaterial(mat.id)}
                     >
                       <Download className="w-3.5 h-3.5 mr-1" />
                       Download
