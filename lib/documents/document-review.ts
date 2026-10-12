@@ -228,7 +228,7 @@ export function versionAuthorLabel(
   return viewerRole === "consultee" ? "Your version" : "Learner version";
 }
 
-export type LearnerRevisionGate =
+type LearnerRevisionGate =
   | { allowed: true }
   | {
       allowed: false;
@@ -283,7 +283,7 @@ export type ThreadSlotErrorCode =
   | "THREAD_IN_REVIEW"
   | "VERSION_LIMIT_REACHED";
 
-export type ThreadSlotOutcome =
+type ThreadSlotOutcome =
   | { ok: true; rootDocumentId: string | null; versionNo: number }
   | { ok: false; code: ThreadSlotErrorCode };
 

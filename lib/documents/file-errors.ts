@@ -7,7 +7,7 @@ import {
 } from "./document-review";
 
 /** Error body every document/material route returns; extra fields are ignored. */
-export const FileApiErrorBodySchema = z.object({
+const FileApiErrorBodySchema = z.object({
   code: z.string().optional(),
 });
 
@@ -64,7 +64,7 @@ function codeFromStatus(status: number): FileErrorCode {
 }
 
 /** The `code` wins; the HTTP status only fills in when the body carries no known code. */
-export function resolveFileErrorCode(
+function resolveFileErrorCode(
   status: number,
   rawCode?: string | null,
 ): FileErrorCode {

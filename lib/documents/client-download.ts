@@ -17,7 +17,7 @@ const SignedDownloadSchema = z.object({
  * Download preflight: fetches a fresh signed attachment link as JSON and saves
  * it through a detached anchor, so errors come back as copy and the tab stays put.
  */
-export async function downloadSignedFile(
+async function downloadSignedFile(
   endpointUrl: string,
   viewer?: FileErrorViewer,
 ): Promise<FriendlyFileError | null> {
