@@ -62,6 +62,9 @@ export function OrgLibraryPage({
           ? `/dashboard/organization/${orgId}/appointments/${id}`
           : `/dashboard/organization/${orgId}/appointments/${id}/${artifact}`
       }
+      bookingHref={(id) =>
+        `/dashboard/organization/${orgId}/appointments/${id}`
+      }
       sources={artifact === "documents" ? documentSourcesFor(scope) : undefined}
       personLabel="Person"
       emptyDescription={copy.empty[scope]}

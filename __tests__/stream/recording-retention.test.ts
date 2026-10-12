@@ -66,7 +66,17 @@ describe("recordingRetentionDeadline", () => {
     );
   });
 
-  it("keeps subscription and trial recordings until 90 days after the subscription ends", () => {
+  it("keeps a trial for 90 days after its session, like a 1:1", () => {
+    expect(
+      recordingRetentionDeadline(
+        input({
+          session: { kind: "TRIAL", sessionEndedAt: day("2027-01-10") },
+        }),
+      ),
+    ).toEqual(plusDays("2027-01-10", 90));
+  });
+
+  it("keeps subscription recordings until 90 days after the subscription ends", () => {
     expect(
       recordingRetentionDeadline(
         input({

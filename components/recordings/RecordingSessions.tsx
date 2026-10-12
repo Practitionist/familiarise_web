@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Play, Video } from "lucide-react";
+import { ArrowLeft, Video } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,20 +18,22 @@ import { recordingKeys } from "@/lib/documents/query-keys";
 import {
   keptUntilText,
   partLabel,
-  removedPartText,
-  slotStateText,
   whoCanWatchText,
 } from "@/lib/stream/recording-copy";
 import type {
   RecordingBookingView,
   RecordingSlot,
-  RemovedPart,
   SlotPart,
 } from "@/lib/stream/recording-slots";
+import {
+  timelineOf,
+  timelineRows,
+  truncateUpcoming,
+} from "@/lib/stream/recording-timeline";
 import { useZonedFormat } from "@/lib/time/zoned-format";
-import { cn } from "@/utils/tailwind";
 import { RecordingManageSheet } from "./RecordingManageSheet";
 import { RecordingPlayerModal } from "./RecordingPlayerModal";
+import { RecordingTimelineCard } from "./RecordingTimeline";
 
 async function fetchSlots(
   appointmentId: string,
@@ -46,26 +48,6 @@ async function fetchSlots(
   }
   if (!res.ok) throw new FileActionError(await friendlyErrorFromResponse(res));
   return res.json();
-}
-
-type SlotRow =
-  | { kind: "part"; partNo: number; part: SlotPart }
-  | { kind: "removed"; partNo: number; removed: RemovedPart };
-
-/** A slot's playable and removed parts in part order. */
-function slotRows(slot: RecordingSlot): SlotRow[] {
-  return [
-    ...slot.parts.map((part): SlotRow => ({
-      kind: "part",
-      partNo: part.partNo,
-      part,
-    })),
-    ...slot.removedParts.map((removed): SlotRow => ({
-      kind: "removed",
-      partNo: removed.partNo,
-      removed,
-    })),
-  ].sort((a, b) => a.partNo - b.partNo);
 }
 
 /** The per-booking Recording details list: the viewer's sessions, parts, catch-up and the player. */
@@ -158,6 +140,25 @@ export function RecordingSessions({
       queryKey: recordingKeys.appointment(appointmentId),
     });
 
+  const allRows = timelineRows(data);
+  const { rows, moreUpcoming } = truncateUpcoming(allRows);
+  const timeline = { ...timelineOf(data, allRows), moreUpcoming };
+  const partOf = (id: string) =>
+    flatParts.find((p) => p.part.recordingId === id);
+  const manageButton = (part: SlotPart) =>
+    host && part.listing ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="h-7"
+        aria-label={`Manage ${part.title}`}
+        onClick={() => setManaging(part)}
+      >
+        Manage
+      </Button>
+    ) : null;
+
   return (
     <div className="space-y-5">
       <div className="space-y-2">
@@ -167,13 +168,9 @@ export function RecordingSessions({
         >
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden /> Back to session
         </Link>
-        <h1 className="text-xl font-semibold text-foreground">
-          Recordings · {data.title}
-          {data.batchLabel ? ` (${data.batchLabel})` : ""}
-        </h1>
+        <h1 className="text-xl font-semibold text-foreground">Recordings</h1>
         <p className="text-xs text-muted-foreground">
-          {whoCanWatchText(data.audience)}. Each recording shows how long it is
-          kept.
+          {whoCanWatchText(data.audience)}.
         </p>
       </div>
 
@@ -184,96 +181,31 @@ export function RecordingSessions({
           description="Recorded sessions appear here after processing."
         />
       ) : (
-        <ol className="divide-y divide-border rounded-xl border border-border bg-card">
-          {data.slots.map((slot) => (
-            <li
-              key={slot.ordinal}
-              id={`slot-${slot.ordinal}`}
-              className={cn(
-                "space-y-2 px-4 py-3",
-                String(slot.ordinal) === focusSlot && "bg-primary/5",
-              )}
-            >
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="text-sm font-medium text-foreground">
-                  Session {slot.ordinal}
-                  {slot.title !== `Session ${slot.ordinal}`
-                    ? ` · ${slot.title}`
-                    : ""}
-                </p>
-                <span className="text-xs text-muted-foreground">
-                  {day(slot.startsAt)}
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {slotStateText(slot, day)}
-              </p>
-              {slot.parts.length > 0 && (
-                <ul className="space-y-1.5">
-                  {slotRows(slot).map((row) => {
-                    if (row.kind === "removed") {
-                      return (
-                        <li
-                          key={`removed-${row.removed.partNo}`}
-                          className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
-                        >
-                          {removedPartText(row.removed, day)}
-                        </li>
-                      );
-                    }
-                    const { part } = row;
-                    return (
-                      <li
-                        key={part.recordingId}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs"
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="font-medium text-foreground">
-                            {part.title}
-                          </span>
-                          <span className="text-muted-foreground">
-                            {[
-                              partLabel(part),
-                              `${part.durationInMinutes} min`,
-                              part.makeUp ? "Make-up" : null,
-                              keptUntilText(part.keptUntil, day),
-                            ]
-                              .filter(Boolean)
-                              .map((t) => ` · ${t}`)
-                              .join("")}
-                          </span>
-                        </span>
-                        <span className="flex items-center gap-1.5">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-7"
-                            onClick={() => select(slot, part)}
-                          >
-                            <Play className="mr-1 h-3.5 w-3.5" aria-hidden />
-                            Watch
-                          </Button>
-                          {host && part.listing && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              className="h-7"
-                              onClick={() => setManaging(part)}
-                            >
-                              Manage
-                            </Button>
-                          )}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ol>
+        <RecordingTimelineCard
+          title={data.title}
+          expertName={data.expertName}
+          kind={data.kind}
+          timeline={timeline}
+          bookingHref={backHref}
+          rows={rows}
+          anchorRows
+          manage={(row) =>
+            row.parts.length === 1 && row.removedParts.length === 0
+              ? (() => {
+                  const hit = partOf(row.parts[0]!.id);
+                  return hit ? manageButton(hit.part) : null;
+                })()
+              : null
+          }
+          managePart={(part) => {
+            const hit = partOf(part.id);
+            return hit ? manageButton(hit.part) : null;
+          }}
+          onPlay={(part) => {
+            const hit = partOf(part.id);
+            if (hit) select(hit.slot, hit.part);
+          }}
+        />
       )}
 
       <RecordingPlayerModal

@@ -50,7 +50,10 @@ import {
 import { cn } from "@/utils/tailwind";
 import { MaterialsTable, ThreadTable } from "./DocumentTables";
 import { formatLibraryDate, type LibraryColumn } from "./LibraryTable";
-import { RecordingTable } from "./RecordingTable";
+import {
+  RecordingTimelineCard,
+  RecordingTimelineTable,
+} from "@/components/recordings/RecordingTimeline";
 
 type Artifact = "documents" | "recordings";
 type LibraryFile = LibraryDocument | LibraryRecording;
@@ -82,6 +85,10 @@ export interface LibraryBrowserProps {
   queryKey: readonly unknown[];
   /** The booking's Documents or Recordings page. */
   sessionHref: (appointmentId: string) => string;
+  /** The booking itself, for a recordings card's "Open booking". */
+  bookingHref: (appointmentId: string) => string;
+  /** Recordings the viewer hosts get a Manage link to the booking's Recordings page. */
+  hostActions?: boolean;
   /** Documents only: the "Started by" filter's options. */
   sources?: DocumentSource[];
   /** The person filter's label ("Learner", "Expert" or "Person"). */
@@ -132,16 +139,15 @@ function summaryText(group: LibraryGroup<LibraryFile>): string | null {
   return null;
 }
 
+/** A documents booking, or an Everyone view's counts-only booking. */
 function SessionGroup({
   group,
   artifact,
   href,
-  onPlay,
 }: Readonly<{
   group: LibraryGroup<LibraryFile>;
   artifact: Artifact;
   href: string;
-  onPlay: (part: LibraryRecordingPart, session: LibrarySession) => void;
 }>) {
   const [open, setOpen] = useState(true);
   const { session } = group;
@@ -194,7 +200,7 @@ function SessionGroup({
       </div>
       {hasRows && (
         <CollapsibleContent className="space-y-3 border-t border-border px-2 pb-3 pt-2">
-          {artifact === "documents" ? (
+          {artifact === "documents" && (
             <>
               {group.files.length > 0 && (
                 <section aria-label="Documents">
@@ -213,11 +219,6 @@ function SessionGroup({
                 </section>
               )}
             </>
-          ) : (
-            <RecordingTable
-              rows={group.files as LibraryRecording[]}
-              onPlay={(part) => onPlay(part, session)}
-            />
           )}
         </CollapsibleContent>
       )}
@@ -257,6 +258,8 @@ export function LibraryBrowser({
   fixedParams,
   queryKey,
   sessionHref,
+  bookingHref,
+  hostActions = false,
   sources,
   personLabel,
   emptyDescription,
@@ -302,6 +305,22 @@ export function LibraryBrowser({
       ),
     };
   }
+
+  const manageLink =
+    (sessionOf: ReadonlyMap<string, LibrarySession>) =>
+    (row: LibraryRecording) => {
+      const session = sessionOf.get(row.id);
+      if (!session || row.parts.length === 0) return null;
+      return (
+        <Link
+          href={`${sessionHref(session.appointmentId)}?slot=${row.slotOrdinal ?? ""}`}
+          className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+          aria-label={`Manage ${row.title}`}
+        >
+          Manage
+        </Link>
+      );
+    };
 
   const play = (
     part: LibraryRecordingPart,
@@ -375,17 +394,35 @@ export function LibraryBrowser({
         </div>
       );
   } else if (flat) {
-    const rows = flattenLibrary(groups as LibraryGroup<LibraryRecording>[]);
+    const rows = flattenLibrary(groups as LibraryGroup<LibraryRecording>[]).map(
+      (row) => ({ ...row, expertName: row.session.expertName }),
+    );
+    const sessionOf = new Map(rows.map((r) => [r.id, r.session]));
     body =
       rows.length === 0 ? (
         empty
       ) : (
         <div className="rounded-xl border border-border bg-card p-2">
-          <RecordingTable
+          <RecordingTimelineTable
+            caption="Recordings"
             rows={rows}
-            bookingColumn={bookingColumn<LibraryRecording>()}
+            retention={null}
+            expertName={null}
+            booking={{
+              header: "Booking",
+              cell: (row) => {
+                const session = sessionOf.get(row.id);
+                return session
+                  ? bookingColumn<LibraryRecording>().cell({
+                      ...row,
+                      session,
+                    })
+                  : null;
+              },
+            }}
+            manage={hostActions ? manageLink(sessionOf) : undefined}
             onPlay={(part, row) =>
-              play(part, row.session ?? null, row.slotOrdinal)
+              play(part, sessionOf.get(row.id) ?? null, row.slotOrdinal)
             }
           />
         </div>
@@ -395,20 +432,39 @@ export function LibraryBrowser({
   } else {
     body = (
       <div className="space-y-3">
-        {groups.map((group) => (
-          <SessionGroup
-            key={group.session.appointmentId}
-            group={group}
-            artifact={artifact}
-            href={sessionHref(group.session.appointmentId)}
-            onPlay={(part, session) => {
-              const row = (group.files as LibraryRecording[]).find((f) =>
-                f.parts.some((p) => p.id === part.id),
-              );
-              play(part, session, row?.slotOrdinal ?? null);
-            }}
-          />
-        ))}
+        {groups.map((group) =>
+          !docs && group.timeline ? (
+            <RecordingTimelineCard
+              key={group.session.appointmentId}
+              title={group.session.title}
+              expertName={group.session.expertName}
+              kind={group.session.kind}
+              timeline={group.timeline}
+              bookingHref={bookingHref(group.session.appointmentId)}
+              rows={group.files as LibraryRecording[]}
+              manage={
+                hostActions
+                  ? manageLink(
+                      new Map(
+                        (group.files as LibraryRecording[]).map((f) => [
+                          f.id,
+                          group.session,
+                        ]),
+                      ),
+                    )
+                  : undefined
+              }
+              onPlay={(part, row) => play(part, group.session, row.slotOrdinal)}
+            />
+          ) : (
+            <SessionGroup
+              key={group.session.appointmentId}
+              group={group}
+              artifact={artifact}
+              href={sessionHref(group.session.appointmentId)}
+            />
+          ),
+        )}
       </div>
     );
   }
@@ -569,10 +625,16 @@ export function LibraryBrowser({
 
       {!docs && data?.purchased && data.purchased.length > 0 && (
         <section className="space-y-2" aria-label="Purchased replays">
-          <h2 className="text-sm font-semibold text-foreground">Purchased</h2>
+          <h2 className="text-sm font-semibold text-foreground">
+            Purchased replays
+          </h2>
+          <p className="text-xs text-muted-foreground">Never expires</p>
           <div className="rounded-xl border border-border bg-card p-2">
-            <RecordingTable
+            <RecordingTimelineTable
+              caption="Purchased replays"
               rows={data.purchased as LibraryRecording[]}
+              retention={{ kind: "NEVER" }}
+              expertName={null}
               onPlay={(part) => play(part, null, null)}
             />
           </div>

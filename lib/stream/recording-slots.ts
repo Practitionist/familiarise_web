@@ -89,8 +89,15 @@ export interface RecordingSlot {
   removedBy: RemovedBy | null;
   source:
     | { kind: "own" }
-    | { kind: "catch_up"; batchLabel: string; startsAt: string }
+    | {
+        kind: "catch_up";
+        batchLabel: string;
+        /** When the source session was recorded, not when its batch began. */
+        recordedAt: string;
+      }
     | null;
+  /** 1:1 only: the name of whoever declined recording, when known. */
+  declinedBy: string | null;
   parts: SlotPart[];
   /** Removed parts of a session that still has others, numbered with them. */
   removedParts: RemovedPart[];
@@ -118,6 +125,9 @@ export interface RecordingBookingView {
   audience: "one_to_one" | "run" | "batch";
   /** Webinars: whether other runs' attendees may catch up from these recordings. */
   sharedAcrossRuns: boolean | null;
+  /** The plan owner, and the learner on a 1:1 booking. */
+  expertName: string | null;
+  learnerName: string | null;
   slots: RecordingSlot[];
 }
 
@@ -150,7 +160,7 @@ const sessionSelect = {
       recordings: { select: recordingSelect, orderBy: { recordedAt: "asc" } },
       recordingConsents: {
         where: { decision: "DECLINED" },
-        select: { id: true },
+        select: { id: true, userId: true },
         take: 1,
       },
     },
@@ -287,6 +297,18 @@ function hostProfileIds(row: BookingRow): string[] {
   ].filter((id): id is string => Boolean(id));
 }
 
+/** The plan owner's consultant profile. */
+function ownerProfileId(row: BookingRow): string | null {
+  return (
+    row.consultation?.consultationPlan.consultantProfileId ??
+    row.subscription?.subscriptionPlan.consultantProfileId ??
+    row.trial?.consultantProfileId ??
+    row.webinar?.webinarPlan.consultantProfileId ??
+    row.class?.classPlan.consultantProfileId ??
+    null
+  );
+}
+
 /** The booking's 1:1 learner profile, if any. */
 export function learnerProfileId(row: BookingRow): string | null {
   return (
@@ -370,7 +392,7 @@ const dayLabel = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Kolkata",
 });
 
-export function batchLabelFor(startsAt: Date | null): string | null {
+function batchLabelFor(startsAt: Date | null): string | null {
   return startsAt
     ? `the batch that started ${dayLabel.format(startsAt)}`
     : null;
@@ -443,7 +465,7 @@ function toParts(
 }
 
 /** A removed recording reads "Removed" until the date it would have been deleted anyway. */
-export function tombstoneVisible(
+function tombstoneVisible(
   label: RecordingRetentionLabel | undefined,
   now: Date,
 ): boolean {
@@ -454,6 +476,7 @@ interface MissingSlot {
   reason: SlotMissingReason;
   removedAt: Date | null;
   removedBy: RemovedBy | null;
+  declinedByUserId: string | null;
 }
 
 function missingReasonOf(
@@ -474,14 +497,20 @@ function missingReasonOf(
       reason: "removed",
       removedAt: removed.removedAt,
       removedBy: removedByOf(removed.removalReason),
+      declinedByUserId: null,
     };
   }
   // Only 1:1 sessions discard a recording when someone declines.
-  const declined =
-    oneToOne &&
-    sessions.some((s) => (s.meeting?.recordingConsents.length ?? 0) > 0);
-  if (declined || recordings.some((r) => r.removalReason === "DECLINED")) {
-    return { reason: "declined", removedAt: null, removedBy: null };
+  const decliner = oneToOne
+    ? sessions.flatMap((s) => s.meeting?.recordingConsents ?? [])[0]
+    : undefined;
+  if (decliner || recordings.some((r) => r.removalReason === "DECLINED")) {
+    return {
+      reason: "declined",
+      removedAt: null,
+      removedBy: null,
+      declinedByUserId: decliner?.userId ?? null,
+    };
   }
   // A session that was recorded never reads "Not recorded".
   const expired = recordings.some(
@@ -491,15 +520,27 @@ function missingReasonOf(
       r.removalReason === "COPY_LAPSED",
   );
   if (expired || deleted.length > 0) {
-    return { reason: "expired", removedAt: null, removedBy: null };
+    return {
+      reason: "expired",
+      removedAt: null,
+      removedBy: null,
+      declinedByUserId: null,
+    };
   }
-  return { reason: "not_recorded", removedAt: null, removedBy: null };
+  return {
+    reason: "not_recorded",
+    removedAt: null,
+    removedBy: null,
+    declinedByUserId: null,
+  };
 }
 
 export interface CatchUpSource {
   appointmentId: string;
   batchLabel: string;
   startsAt: Date;
+  /** The source session's first playable recording. */
+  recordedAt: Date;
   sessions: SessionRow[];
 }
 
@@ -562,6 +603,7 @@ export function pickCatchUpSources(
         batchLabelFor(startedAt) ??
         (groupPlan.kind === "CLASS" ? "another batch" : "another run"),
       startsAt: startedAt,
+      recordedAt: playableParts([row])[0]?.recording.recordedAt ?? row.startsAt,
       sessions: [row],
     });
   }
@@ -689,15 +731,21 @@ export interface SlotInputs {
   sources: Map<number, CatchUpSource>;
   /** Retention labels for own recordings and catch-up parts. */
   labels: Map<string, RecordingRetentionLabel>;
+  /** User id to display name: the parties and anyone who declined recording. */
+  names?: ReadonlyMap<string, string>;
+  /** The plan owner and the 1:1 learner, as user ids. */
+  parties?: { expert: string | null; learner: string | null };
 }
 
 /** The booking's recordings grouped into the viewer's session slots. */
 export function buildRecordingView(
   viewer: RecordingViewer,
-  { sessions, floor, sources, labels }: SlotInputs,
+  { sessions, floor, sources, labels, names, parties }: SlotInputs,
   now: Date,
 ): RecordingBookingView {
   const { booking } = viewer;
+  const nameOf = (userId: string | null | undefined) =>
+    userId ? (names?.get(userId) ?? null) : null;
   const slots: RecordingSlot[] = draftSlots(
     viewer,
     sessions,
@@ -713,6 +761,7 @@ export function buildRecordingView(
       missingReason: d.missing?.reason ?? null,
       removedAt: d.missing?.removedAt?.toISOString() ?? null,
       removedBy: d.missing?.removedBy ?? null,
+      declinedBy: nameOf(d.missing?.declinedByUserId),
     };
     if (source && viewer.role === "learner") {
       return {
@@ -721,7 +770,7 @@ export function buildRecordingView(
         source: {
           kind: "catch_up",
           batchLabel: source.batchLabel,
-          startsAt: source.startsAt.toISOString(),
+          recordedAt: source.recordedAt.toISOString(),
         },
         parts: toParts(playableParts(source.sessions), labels, false),
         removedParts: [],
@@ -768,6 +817,8 @@ export function buildRecordingView(
       viewer.groupPlan?.kind === "WEBINAR"
         ? viewer.groupPlan.sharesAcrossRuns
         : null,
+    expertName: nameOf(parties?.expert),
+    learnerName: nameOf(parties?.learner),
     slots,
   };
 }
@@ -946,6 +997,46 @@ async function readIdentity(userId: string): Promise<RecordingIdentity> {
   };
 }
 
+interface People {
+  names: Map<string, string>;
+  userByProfile: Map<string, string>;
+}
+
+/** One read for the names a page shows: plan owners, 1:1 learners and anyone who declined recording. */
+async function readPeople(
+  bookings: BookingRow[],
+  declinerIds: string[],
+): Promise<People> {
+  const experts = bookings.flatMap((b) => ownerProfileId(b) ?? []);
+  const learners = bookings.flatMap((b) => learnerProfileId(b) ?? []);
+  const people: People = { names: new Map(), userByProfile: new Map() };
+  if (experts.length + learners.length + declinerIds.length === 0) {
+    return people;
+  }
+  const users = await prisma.user.findMany({
+    where: {
+      OR: [
+        { id: { in: declinerIds } },
+        { consultantProfile: { id: { in: experts } } },
+        { consulteeProfile: { id: { in: learners } } },
+      ],
+    },
+    select: {
+      id: true,
+      name: true,
+      consultantProfile: { select: { id: true } },
+      consulteeProfile: { select: { id: true } },
+    },
+  });
+  for (const user of users) {
+    people.names.set(user.id, user.name);
+    for (const profile of [user.consultantProfile, user.consulteeProfile]) {
+      if (profile) people.userByProfile.set(profile.id, user.id);
+    }
+  }
+  return people;
+}
+
 export interface LoadedRecordingView {
   view: RecordingBookingView;
   booking: BookingRow;
@@ -1035,10 +1126,28 @@ export async function loadRecordingViews(
     withSources.flatMap((d) => labelledRecordingIds(d.sessions, d.sources)),
     now,
   );
+  const people = await readPeople(
+    withSources.map((d) => d.viewer.booking),
+    withSources.flatMap((d) =>
+      d.sessions.flatMap((s) =>
+        (s.meeting?.recordingConsents ?? []).map((c) => c.userId),
+      ),
+    ),
+  );
+  const userOf = (profileId: string | null) =>
+    profileId ? (people.userByProfile.get(profileId) ?? null) : null;
   for (const d of withSources) {
     const starts = d.sessions.map((s) => s.startsAt.getTime());
+    const parties = {
+      expert: userOf(ownerProfileId(d.viewer.booking)),
+      learner: userOf(learnerProfileId(d.viewer.booking)),
+    };
     loaded.set(d.viewer.booking.id, {
-      view: buildRecordingView(d.viewer, { ...d, labels }, now),
+      view: buildRecordingView(
+        d.viewer,
+        { ...d, labels, names: people.names, parties },
+        now,
+      ),
       booking: d.viewer.booking,
       firstStartsAt: starts.length > 0 ? new Date(Math.min(...starts)) : null,
     });

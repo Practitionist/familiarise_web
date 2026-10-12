@@ -552,8 +552,8 @@ function RecordingRetentionCard({
           <p className="font-medium text-foreground">Platform schedule</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-4">
             <li>
-              1:1 sessions: {RECORDING_RETENTION_SCHEDULE.oneToOneDays} days
-              after the session
+              1:1 sessions and trials:{" "}
+              {RECORDING_RETENTION_SCHEDULE.oneToOneDays} days after the session
             </li>
             <li>
               Subscriptions: {RECORDING_RETENTION_SCHEDULE.subscriptionDays}{" "}

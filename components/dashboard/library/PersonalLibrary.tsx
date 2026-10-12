@@ -80,6 +80,8 @@ export function PersonalLibrary({
       endpoint={`/api/dashboard/${tree}/${profileId}/${artifact}`}
       queryKey={libraryKeys.personal(artifact, tree, profileId)}
       sessionHref={(id) => `${base}/appointments/${id}/${artifact}`}
+      bookingHref={(id) => `${base}/appointments/${id}`}
+      hostActions={!learner}
       sources={
         artifact === "documents"
           ? learner

@@ -240,22 +240,59 @@ export interface LibraryRecordingPart {
   keptUntil: RetentionLabelDTO | null;
 }
 
-/** One session of a booking: its recordings as parts, a catch-up, or a notice. */
+/** What a session row says; `recorded` carries no badge. */
+export type RecordingRowState =
+  | "recorded"
+  | "catch_up"
+  | "removed"
+  | "declined"
+  | "not_recorded"
+  | "preparing"
+  | "expired"
+  | "upcoming"
+  | "before_you_joined";
+
+export interface LibraryRemovedPart {
+  partNo: number;
+  partCount: number;
+  removedAt: string | null;
+  removedBy: "expert" | "support" | null;
+}
+
+/** One session of the viewer's own booking, in order, whatever its state. */
 export interface LibraryRecording {
   /** `<appointmentId>:slot-<ordinal>`, or the recording id for a purchased replay. */
   id: string;
   title: string;
-  /** "Session 3" on multi-session bookings. */
-  sessionLabel: string | null;
-  recordedAt: string;
-  durationInMinutes: number;
-  /** "From another batch · 16 Sept 2026" for a catch-up. */
-  catchUpFrom: string | null;
-  keptUntil: RetentionLabelDTO | null;
+  /** The session number on the viewer's booking; null for a purchased replay. */
   slotOrdinal: number | null;
-  /** Why a session has nothing to play ("Removed by the expert on 5 Oct"). */
-  notice: string | null;
+  /** The viewer's own session (a replay's recording date). */
+  sessionAt: string;
+  state: RecordingRowState;
+  durationInMinutes: number;
+  /** A catch-up's source: another batch (class) or run (webinar), and when it was recorded. */
+  catchUp: { from: "batch" | "run"; recordedAt: string } | null;
+  removed: { at: string | null; by: "expert" | "support" | null } | null;
+  /** A 1:1 session someone declined to record: their name, when known. */
+  declinedBy: string | null;
+  keptUntil: RetentionLabelDTO | null;
   parts: LibraryRecordingPart[];
+  removedParts: LibraryRemovedPart[];
+}
+
+/** How long a booking's recordings are kept, said once in its header. */
+export type LibraryRetention =
+  | RetentionLabelDTO
+  | { kind: "SUBSCRIPTION_ACTIVE" }
+  | { kind: "CLASS_RUNNING" };
+
+/** A recordings card's header facts and the upcoming sessions it leaves out. */
+export interface LibraryTimeline {
+  sessionCount: number;
+  firstSessionAt: string | null;
+  lastSessionAt: string | null;
+  retention: LibraryRetention | null;
+  moreUpcoming: number;
 }
 
 /** The Everyone view: what happened, never what was shared. */
@@ -269,6 +306,8 @@ export interface LibraryGroup<F> {
   files: F[];
   /** Documents only: the plan's materials, apart from the threads. */
   materials?: LibraryMaterial[];
+  /** Recordings only: the card header and the upcoming sessions left out. */
+  timeline?: LibraryTimeline;
   summary?: LibrarySummary;
 }
 

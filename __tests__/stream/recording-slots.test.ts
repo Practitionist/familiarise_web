@@ -13,6 +13,16 @@ jest.mock("../../lib/prisma", () => ({
     consultantProfile: { findUnique: jest.fn(async () => null) },
     consulteeProfile: { findUnique: jest.fn(async () => ({ id: "cp-l" })) },
     appointmentOccurrence: { findMany: jest.fn(async () => []) },
+    user: {
+      findMany: jest.fn(async () => [
+        {
+          id: "u-host",
+          name: "Ananya Anderson",
+          consultantProfile: { id: "host" },
+          consulteeProfile: null,
+        },
+      ]),
+    },
   },
 }));
 
@@ -192,6 +202,11 @@ describe("the slot rule", () => {
       source: { kind: "catch_up" },
     });
     expect(slots[1]!.parts.map((p) => p.recordingId)).toEqual(["b1-rec"]);
+    // The label dates the source session, not the start of its batch.
+    expect(slots[1]!.source).toMatchObject({
+      recordedAt: slots[1]!.parts[0]!.recordedAt,
+    });
+    expect(slots[1]!.parts[0]!.recordedAt).not.toBe(ago(60).toISOString());
   });
 
   it("hides sessions before a late joiner's seat and offers them no catch-up", () => {
@@ -261,6 +276,8 @@ describe("the batched loader and library pages", () => {
     expect(loaded.get("b2")!.view.slots[0]!.state).toBe("not_recorded");
     expect(prisma.appointmentOccurrence.findMany).toHaveBeenCalledTimes(1);
     expect(recordingRetentionLabels).toHaveBeenCalledTimes(1);
+    expect(prisma.user.findMany).toHaveBeenCalledTimes(1);
+    expect(loaded.get("b2")!.view.expertName).toBe("Ananya Anderson");
   });
 
   it("counts and pages only the bookings that render a row", () => {

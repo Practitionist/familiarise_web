@@ -10,20 +10,20 @@ import {
   type LibraryQuery,
   type LibraryRecording,
   type LibrarySession,
+  type LibraryTimeline,
 } from "@/lib/library/library-query";
 import {
-  partLabel,
-  removedPartText,
-  slotStateText,
-} from "@/lib/stream/recording-copy";
-import {
   PLAYABLE,
-  learnerProfileId,
   loadRecordingViews,
   type LoadedRecordingView,
   type RecordingBookingView,
-  type RecordingSlot,
 } from "@/lib/stream/recording-slots";
+import {
+  slotHasMedia,
+  timelineOf,
+  timelineRows,
+  truncateUpcoming,
+} from "@/lib/stream/recording-timeline";
 import type { LibraryOwner } from "./document-library";
 
 /**
@@ -37,13 +37,6 @@ const ENTITLED_SEAT = ["CONFIRMED", "ATTENDED"] as const;
 /** Whether a booking renders is decided in memory over at most this many newest candidates. */
 const CANDIDATE_CAP = 200;
 const contains = (q: string) => ({ contains: q, mode: "insensitive" as const });
-const dayFormat = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  timeZone: "Asia/Kolkata",
-});
-const day = (iso: string) => dayFormat.format(new Date(iso));
 
 function learnerArms(userId: string): Prisma.AppointmentWhereInput[] {
   return [
@@ -308,13 +301,14 @@ async function purchasedReplays(userId: string): Promise<LibraryRecording[]> {
     return {
       id: r.id,
       title,
-      sessionLabel: null,
-      recordedAt,
-      durationInMinutes: r.durationInMinutes,
-      catchUpFrom: null,
-      keptUntil: { kind: "NEVER" },
       slotOrdinal: null,
-      notice: null,
+      sessionAt: recordedAt,
+      state: "recorded",
+      durationInMinutes: r.durationInMinutes,
+      catchUp: null,
+      removed: null,
+      declinedBy: null,
+      keptUntil: { kind: "NEVER" },
       parts: [
         {
           id: r.id,
@@ -325,130 +319,50 @@ async function purchasedReplays(userId: string): Promise<LibraryRecording[]> {
           keptUntil: { kind: "NEVER" },
         },
       ],
+      removedParts: [],
     };
   });
 }
 
-/** One library row per session slot: its parts, a catch-up, or a removal or decline notice. */
-export function slotToLibraryRow(
-  appointmentId: string,
-  view: Pick<RecordingBookingView, "kind" | "slots">,
-  slot: RecordingSlot,
-): LibraryRecording | null {
-  if (
-    slot.parts.length === 0 &&
-    slot.state !== "removed" &&
-    slot.state !== "declined"
-  ) {
-    return null;
-  }
-  const sessionLabel = view.slots.length > 1 ? `Session ${slot.ordinal}` : null;
-  const catchUpFrom =
-    slot.source?.kind === "catch_up"
-      ? `From another ${view.kind === "CLASS" ? "batch" : "run"} · ${day(slot.source.startsAt)}`
-      : null;
-  return {
-    id: `${appointmentId}:slot-${slot.ordinal}`,
-    title: slot.title,
-    sessionLabel,
-    recordedAt: slot.parts[0]?.recordedAt ?? slot.startsAt,
-    durationInMinutes: slot.parts.reduce((t, p) => t + p.durationInMinutes, 0),
-    catchUpFrom,
-    keptUntil: slot.parts[0]?.keptUntil ?? null,
-    slotOrdinal: slot.ordinal,
-    notice:
-      slot.parts.length === 0
-        ? slotStateText(slot, day)
-        : slot.removedParts.map((p) => removedPartText(p, day)).join(" ") ||
-          null,
-    parts: slot.parts.map((part) => ({
-      id: part.recordingId,
-      title: part.title,
-      partLabel: partLabel(part),
-      recordedAt: part.recordedAt,
-      durationInMinutes: part.durationInMinutes,
-      keptUntil: part.keptUntil,
-    })),
-  };
-}
-
-/** The candidates that render at least one row under `q`, in candidate order. */
+/**
+ * Bookings with something recorded, removed or declined, as full timelines;
+ * under `q`, a booking whose title misses keeps only the sessions that match.
+ */
 export function renderedGroups(
   candidateIds: string[],
   views: Map<string, RecordingBookingView>,
   q: string,
-): { appointmentId: string; files: LibraryRecording[] }[] {
+): {
+  appointmentId: string;
+  files: LibraryRecording[];
+  timeline: LibraryTimeline;
+}[] {
   const needle = q.toLowerCase();
   return candidateIds.flatMap((appointmentId) => {
     const view = views.get(appointmentId);
-    if (!view) return [];
-    const files = view.slots
-      .map((slot) => slotToLibraryRow(appointmentId, view, slot))
-      .filter((f): f is LibraryRecording => f !== null);
-    const kept =
+    if (!view?.slots.some(slotHasMedia)) return [];
+    const all = timelineRows(view);
+    const header = timelineOf(view, all);
+    const matching =
       !needle || view.title.toLowerCase().includes(needle)
-        ? files
-        : files.filter(
+        ? all
+        : all.filter(
             (f) =>
               f.title.toLowerCase().includes(needle) ||
               f.parts.some((p) => p.title.toLowerCase().includes(needle)),
           );
-    return kept.length > 0 ? [{ appointmentId, files: kept }] : [];
+    if (!matching.some((f) => f.state !== "upcoming")) return [];
+    const { rows, moreUpcoming } = truncateUpcoming(matching);
+    return [
+      { appointmentId, files: rows, timeline: { ...header, moreUpcoming } },
+    ];
   });
-}
-
-function expertProfileId(
-  booking: LoadedRecordingView["booking"],
-): string | null {
-  return (
-    booking.consultation?.consultationPlan.consultantProfileId ??
-    booking.subscription?.subscriptionPlan.consultantProfileId ??
-    booking.trial?.consultantProfileId ??
-    booking.webinar?.webinarPlan.consultantProfileId ??
-    booking.class?.classPlan.consultantProfileId ??
-    null
-  );
-}
-
-/** Names of the page's experts and learners, keyed by profile id. */
-async function profileNames(
-  loaded: LoadedRecordingView[],
-): Promise<Map<string, string>> {
-  const experts = loaded.flatMap(
-    ({ booking }) => expertProfileId(booking) ?? [],
-  );
-  const learners = loaded.flatMap(
-    ({ booking }) => learnerProfileId(booking) ?? [],
-  );
-  if (experts.length + learners.length === 0) return new Map();
-  const users = await prisma.user.findMany({
-    where: {
-      OR: [
-        { consultantProfile: { id: { in: experts } } },
-        { consulteeProfile: { id: { in: learners } } },
-      ],
-    },
-    select: {
-      name: true,
-      consultantProfile: { select: { id: true } },
-      consulteeProfile: { select: { id: true } },
-    },
-  });
-  const names = new Map<string, string>();
-  for (const user of users) {
-    if (user.consultantProfile) names.set(user.consultantProfile.id, user.name);
-    if (user.consulteeProfile) names.set(user.consulteeProfile.id, user.name);
-  }
-  return names;
 }
 
 function librarySession(
   { view, booking, firstStartsAt }: LoadedRecordingView,
-  names: Map<string, string>,
   learnerSide: boolean,
 ): LibrarySession {
-  const nameOf = (id: string | null) => (id ? (names.get(id) ?? null) : null);
-  const expertName = nameOf(expertProfileId(booking));
   return {
     appointmentId: booking.id,
     kind: booking.appointmentType as LibraryKind,
@@ -457,11 +371,9 @@ function librarySession(
       (
         firstStartsAt ?? booking.subscription?.schedulingPeriodStartsAt
       )?.toISOString() ?? null,
-    sessionCount: null,
-    expertName,
-    counterpartName: learnerSide
-      ? expertName
-      : nameOf(learnerProfileId(booking)),
+    sessionCount: view.slots.length,
+    expertName: view.expertName,
+    counterpartName: learnerSide ? view.expertName : view.learnerName,
   };
 }
 
@@ -518,16 +430,16 @@ export async function readRecordingLibrary(args: {
   const rendered = renderedGroups(ids, views, query.q);
   const page = rendered
     .slice(skip, skip + LIBRARY_PAGE_SIZE)
-    .flatMap(({ appointmentId, files }) => {
+    .flatMap(({ appointmentId, files, timeline }) => {
       const hit = loaded.get(appointmentId);
-      return hit ? [{ loaded: hit, files }] : [];
+      return hit ? [{ loaded: hit, files, timeline }] : [];
     });
-  const names = await profileNames(page.map((g) => g.loaded));
 
   return {
     groups: page.map((g) => ({
-      session: librarySession(g.loaded, names, learnerSide),
+      session: librarySession(g.loaded, learnerSide),
       files: g.files,
+      timeline: g.timeline,
     })),
     total: rendered.length,
     page: query.page,

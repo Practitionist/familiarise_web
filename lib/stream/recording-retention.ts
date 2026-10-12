@@ -46,6 +46,7 @@ const retainableWhere = {
 /** What the recording's session was; end dates in the future mean "still running". */
 type RetentionSession =
   | { kind: "CONSULTATION"; sessionEndedAt: Date }
+  | { kind: "TRIAL"; sessionEndedAt: Date }
   | { kind: "SUBSCRIPTION"; subscriptionEndsAt: Date }
   | { kind: "WEBINAR"; sessionEndedAt: Date }
   | { kind: "CLASS"; lastSessionEndsAt: Date };
@@ -70,6 +71,7 @@ function platformDeadline(input: RetentionInput): Date | null {
   if (!session) return addDays(input.recordedAt, ONE_TO_ONE_RETENTION_DAYS);
   switch (session.kind) {
     case "CONSULTATION":
+    case "TRIAL":
       return addDays(session.sessionEndedAt, ONE_TO_ONE_RETENTION_DAYS);
     case "SUBSCRIPTION":
       return session.subscriptionEndsAt > now
@@ -150,11 +152,7 @@ const candidateSelect = {
               webinarId: true,
               classId: true,
               subscription: { select: subscriptionEndSelect },
-              trial: {
-                select: {
-                  convertedToSubscription: { select: subscriptionEndSelect },
-                },
-              },
+              trial: { select: { id: true } },
               occurrences: {
                 where: liveOccurrenceWhere,
                 orderBy: { endsAt: "desc" },
@@ -208,15 +206,8 @@ async function resolveSession(
       ),
     };
   }
-  if (appointment.trial) {
-    const converted = appointment.trial.convertedToSubscription;
-    return {
-      kind: "SUBSCRIPTION",
-      subscriptionEndsAt: converted
-        ? await cachedChainEnd(converted, chainEnds)
-        : sessionEndedAt,
-    };
-  }
+  // A trial is a single 1:1 session, whatever it converted into.
+  if (appointment.trial) return { kind: "TRIAL", sessionEndedAt };
   if (appointment.consultationId) {
     return { kind: "CONSULTATION", sessionEndedAt };
   }
