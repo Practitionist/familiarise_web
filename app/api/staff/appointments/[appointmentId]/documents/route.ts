@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
+import { fileApiError } from "@/lib/documents/api-error";
 
 const Params = z.object({ appointmentId: z.string().min(1) });
 
@@ -14,12 +15,7 @@ export async function GET(
   const auth = await requireBackofficeSurface("appointments.manage");
   if (auth.error) return auth.error;
   const parsed = Params.safeParse(await params);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid appointment id" },
-      { status: 400 },
-    );
-  }
+  if (!parsed.success) return fileApiError("INVALID_INPUT");
   const roots = await prisma.appointmentDocument.findMany({
     where: {
       appointmentId: parsed.data.appointmentId,

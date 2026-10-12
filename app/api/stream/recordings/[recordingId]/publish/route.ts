@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -15,6 +16,12 @@ import {
   resolvePreviewTranscript,
 } from "@/lib/stream/recording-listing-access";
 import { isDurablyOurs } from "@/lib/stream/recording-storage";
+import {
+  FileRouteError,
+  answerFileRoute,
+  fileApiError,
+  parseJsonBody,
+} from "@/lib/documents/api-error";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
@@ -80,42 +87,16 @@ function buildSlug(title: string, id: string): string {
   return `${base || "recording"}-${id.slice(-6).toLowerCase()}`;
 }
 
-async function parsePublishBody(
-  request: NextRequest,
-): Promise<z.infer<typeof PublishSchema> | NextResponse> {
-  let rawBody: unknown;
-  try {
-    rawBody = await request.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid JSON body", code: "INVALID_INPUT" },
-      { status: 400 },
-    );
-  }
-  const parsed = PublishSchema.safeParse(rawBody);
-  if (!parsed.success) {
-    return NextResponse.json(
-      {
-        error: "Invalid input",
-        details: parsed.error.issues,
-        code: "INVALID_INPUT",
-      },
-      { status: 400 },
-    );
-  }
-  return parsed.data;
-}
-
 type LoadedListing = Extract<
   Awaited<ReturnType<typeof guardOwnedListingRecording>>,
   { ok: true }
 >["loaded"];
 
-/** Durability, plan visibility and preview-transcript gates; the refusal response, or the transcript to store. */
+/** Durability, plan visibility and preview-transcript gates; throws the refusal, or returns the transcript to store. */
 function checkPublishGates(
   loaded: LoadedListing,
   previewTranscript: string | undefined,
-): NextResponse | { transcript: string | null } {
+): { transcript: string | null } {
   // A sold replay must outlive any single session: Stream URLs die ≤14d.
   if (
     !isDurablyOurs({
@@ -123,66 +104,32 @@ function checkPublishGates(
       storageType: loaded.storageType,
     })
   ) {
-    return NextResponse.json(
-      {
-        error:
-          "This recording can be published once it has been copied to our storage.",
-        code: "STORAGE_POLICY",
-      },
-      { status: 400 },
-    );
+    throw new FileRouteError("STORAGE_POLICY");
   }
-
-  // Org visibility + live-plan gate — same predicate the purchase route
-  // enforces before minting an order.
+  // The purchase route enforces the same live-plan and visibility predicate.
   if (!isDiscoverablePlanPlan(loaded.plan.plan)) {
-    return NextResponse.json(
-      {
-        error:
-          "This recording's plan is archived or its organization limits visibility.",
-        code: loaded.plan.plan.archivedAt ? "PLAN_ARCHIVED" : "ORG_VISIBILITY",
-      },
-      { status: 403 },
+    throw new FileRouteError(
+      loaded.plan.plan.archivedAt ? "PLAN_ARCHIVED" : "ORG_VISIBILITY",
     );
   }
-
-  // #1244 review — a preview clip cannot go public without a text
-  // alternative. Checked here rather than in the Zod schema because only the
-  // loaded recording knows whether a clip exists. An already-stored
-  // transcript satisfies the gate on re-publish.
+  // Only the loaded recording knows whether a clip exists; a stored transcript satisfies re-publish.
   const transcriptGate = resolvePreviewTranscript({
     previewClipUrl: loaded.previewClipUrl,
     storedTranscript: loaded.previewTranscript,
     submittedTranscript: previewTranscript,
   });
   if (!transcriptGate.ok) {
-    return NextResponse.json(
-      {
-        error:
-          "Add a transcript of the preview clip before publishing — the clip is inaccessible to anyone who relies on text.",
-        code: "PREVIEW_TRANSCRIPT_REQUIRED",
-      },
-      { status: 422 },
-    );
+    throw new FileRouteError("PREVIEW_TRANSCRIPT_REQUIRED");
   }
   return { transcript: transcriptGate.transcript };
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  try {
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (!session.user.consultantProfileId) {
-      return NextResponse.json(
-        { error: "Only consultants can publish recordings" },
-        { status: 403 },
-      );
-    }
+    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
+    if (!session.user.consultantProfileId) return fileApiError("FORBIDDEN");
 
-    const parsed = await parsePublishBody(request);
-    if (parsed instanceof NextResponse) return parsed;
     const {
       listingTitle,
       listingDescription,
@@ -190,15 +137,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       tags,
       slug,
       previewTranscript,
-    } = parsed;
+    } = await parseJsonBody(request, PublishSchema);
 
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
-    if (!guard.ok) return guard.response;
+    if (!guard.ok) return fileApiError(guard.code);
     const loaded = guard.loaded;
 
     const gate = checkPublishGates(loaded, previewTranscript);
-    if (gate instanceof NextResponse) return gate;
 
     const finalSlug = slug ?? buildSlug(listingTitle, loaded.recordingId);
     const slugClash = await prisma.recording.findUnique({
@@ -206,10 +152,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       select: { id: true },
     });
     if (slugClash && slugClash.id !== loaded.recordingId) {
-      return NextResponse.json(
-        { error: "That link is taken — pick another.", code: "SLUG_TAKEN" },
-        { status: 409 },
-      );
+      return fileApiError("SLUG_TAKEN");
     }
 
     let updated;
@@ -237,46 +180,31 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         },
       });
     } catch (updateError) {
-      // Two concurrent publishes can pass the pre-check above; the @unique
-      // constraint is the real gate. Surface it as a 409, not a 500.
+      // Concurrent publishes can both pass the pre-check; the unique slug is the real gate.
       if (
-        typeof updateError === "object" &&
-        updateError !== null &&
-        (updateError as { code?: string }).code === "P2002"
+        updateError instanceof Prisma.PrismaClientKnownRequestError &&
+        updateError.code === "P2002"
       ) {
-        return NextResponse.json(
-          { error: "That link is taken — pick another.", code: "SLUG_TAKEN" },
-          { status: 409 },
-        );
+        return fileApiError("SLUG_TAKEN");
       }
       throw updateError;
     }
 
-    // ISR hygiene (#1244 review): stale explore cards must not outlive an
-    // unpublish elsewhere; revalidate both surfaces at the write site.
     revalidatePath("/explore/recordings");
     if (updated.slug) revalidatePath(`/explore/recordings/${updated.slug}`);
 
     return NextResponse.json({ data: updated }, { status: 201 });
-  } catch (error) {
-    console.error("Error publishing recording:", error);
-    return NextResponse.json(
-      { error: "Failed to publish recording" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
-  try {
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
 
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
-    if (!guard.ok) return guard.response;
+    if (!guard.ok) return fileApiError(guard.code);
 
     const updated = await prisma.recording.update({
       where: { id: recordingId },
@@ -287,16 +215,10 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
       select: { id: true, listingStatus: true, slug: true },
     });
 
-    // Take the replay off the public library immediately (ISR hygiene).
+    // Take the replay off the public library immediately.
     revalidatePath("/explore/recordings");
     if (updated.slug) revalidatePath(`/explore/recordings/${updated.slug}`);
 
     return NextResponse.json({ data: updated });
-  } catch (error) {
-    console.error("Error unpublishing recording:", error);
-    return NextResponse.json(
-      { error: "Failed to unpublish recording" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }

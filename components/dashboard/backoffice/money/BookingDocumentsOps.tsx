@@ -5,6 +5,10 @@ import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import {
+  FileActionError,
+  friendlyErrorFromResponse,
+} from "@/lib/documents/file-errors";
 
 const ThreadsSchema = z.object({
   threads: z.array(
@@ -58,7 +62,9 @@ export function BookingDocumentsOps({
           body: JSON.stringify(args.body),
         },
       );
-      if (!res.ok) throw new Error("The document changed; refresh and retry.");
+      if (!res.ok) {
+        throw new FileActionError(await friendlyErrorFromResponse(res));
+      }
     },
     onSuccess: (_data, args) => {
       toast({
@@ -71,7 +77,8 @@ export function BookingDocumentsOps({
     },
     onError: (error) =>
       toast({
-        title: "That didn't work",
+        title:
+          error instanceof FileActionError ? error.title : "That didn't work",
         description: error instanceof Error ? error.message : undefined,
         variant: "destructive",
       }),

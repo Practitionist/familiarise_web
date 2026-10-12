@@ -185,43 +185,24 @@ export async function loadOwnedListingRecording(
 // shared this 24-line preamble verbatim (Sonar duplication block).
 // ---------------------------------------------------------------------------
 
-import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 
 export type OwnedRecordingGuard =
   | { ok: true; loaded: Extract<OwnedRecordingLoad, { status: "ok" }> }
-  | { ok: false; response: NextResponse };
+  | { ok: false; code: "UNAUTHORIZED" | "NOT_FOUND" | "FORBIDDEN" };
 
 export async function guardOwnedListingRecording(
   recordingId: string,
 ): Promise<OwnedRecordingGuard> {
   const session = await getSession();
-  if (!session?.user?.id) {
-    return {
-      ok: false,
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  if (!session?.user?.id) return { ok: false, code: "UNAUTHORIZED" };
 
   const loaded = await loadOwnedListingRecording(
     recordingId,
     session.user.consultantProfileId,
   );
-  if (loaded.status === "not_found") {
-    return {
-      ok: false,
-      response: NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 },
-      ),
-    };
-  }
-  if (loaded.status === "forbidden") {
-    return {
-      ok: false,
-      response: NextResponse.json({ error: "Not authorized" }, { status: 403 }),
-    };
-  }
+  if (loaded.status === "not_found") return { ok: false, code: "NOT_FOUND" };
+  if (loaded.status === "forbidden") return { ok: false, code: "FORBIDDEN" };
   return { ok: true, loaded };
 }
 

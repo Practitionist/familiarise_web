@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { listPublicRecordings } from "@/lib/data/recordings-explore";
+import { answerFileRoute, fileApiError } from "@/lib/documents/api-error";
 
 const QuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -19,24 +20,13 @@ const QuerySchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
-  try {
+  return answerFileRoute(async () => {
     const parsed = QuerySchema.safeParse(
       Object.fromEntries(request.nextUrl.searchParams),
     );
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid query", code: "INVALID_INPUT" },
-        { status: 400 },
-      );
-    }
+    if (!parsed.success) return fileApiError("INVALID_INPUT");
 
     // Uncached: an unpublish must disappear from this list at once.
     return NextResponse.json(await listPublicRecordings(parsed.data));
-  } catch (error) {
-    console.error("Error listing public recordings:", error);
-    return NextResponse.json(
-      { error: "Failed to load recordings" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }

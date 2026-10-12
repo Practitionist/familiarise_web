@@ -83,6 +83,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     );
 
     let supportThreadId: string | null = null;
+    let failure: unknown = null;
     try {
       supportThreadId = await raiseDocumentRemovalRequest({
         appointmentId,
@@ -91,6 +92,15 @@ export async function POST(request: Request, { params }: RouteContext) {
         note: note ?? null,
       });
     } catch (error) {
+      failure = error;
+    }
+
+    if (!supportThreadId) {
+      // Without a support thread nobody would act on the flag, so it is withdrawn.
+      await prisma.appointmentDocument.updateMany({
+        where: { id: rootId, removalRequestedAt: requestedAt },
+        data: { removalRequestedAt: null },
+      });
       reportSentryMessage("Document removal request not raised in support", {
         subsystem: "documents",
         op: "removal-request",
@@ -99,15 +109,24 @@ export async function POST(request: Request, { params }: RouteContext) {
         extra: {
           appointmentId,
           rootId,
-          error: error instanceof Error ? error.message : String(error),
+          error:
+            failure instanceof Error
+              ? failure.message
+              : failure
+                ? String(failure)
+                : "no thread",
         },
       });
+      return fileApiError("SUPPORT_UNAVAILABLE");
     }
 
     return NextResponse.json(
       {
-        removal: { rootId, requestedAt: requestedAt.toISOString() },
-        supportThreadId,
+        removal: {
+          rootId,
+          requestedAt: requestedAt.toISOString(),
+          supportThreadId,
+        },
       },
       { headers: { "Cache-Control": "private, no-store" } },
     );

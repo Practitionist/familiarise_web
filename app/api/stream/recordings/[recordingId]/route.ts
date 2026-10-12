@@ -28,7 +28,11 @@ import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
 
 import { getSession } from "@/lib/auth-server";
 import { notifyAttendeesOfRemovedRecording } from "@/lib/stream/recording-removal-notice";
-import * as Sentry from "@sentry/nextjs";
+import {
+  answerFileRoute,
+  fileApiError,
+  parseJsonBody,
+} from "@/lib/documents/api-error";
 
 type RouteParams = {
   params: Promise<{
@@ -40,15 +44,12 @@ function recordingGoneResponse(recording: {
   removedAt: Date | null;
   removalReason: string | null;
 }) {
-  return NextResponse.json(
-    {
-      code: "GONE",
-      message: "This recording is no longer available.",
+  return fileApiError("GONE", {
+    fields: {
       removedAt: recording.removedAt?.toISOString() ?? null,
       removalReason: recording.removalReason,
     },
-    { status: 410 },
-  );
+  });
 }
 
 /**
@@ -129,31 +130,16 @@ async function resolvePlaybackGrant(
 }
 
 export async function GET(_req: NextRequest, { params }: RouteParams) {
-  try {
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json(
-        { code: "UNAUTHORIZED", message: "Sign in required." },
-        { status: 401 },
-      );
-    }
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
 
     const { recordingId } = await params;
     const recording = await RecordingService.getRecordingById(recordingId);
-    if (!recording) {
-      return NextResponse.json(
-        { code: "NOT_FOUND", message: "Recording not found." },
-        { status: 404 },
-      );
-    }
+    if (!recording) return fileApiError("NOT_FOUND");
 
     const grant = await resolvePlaybackGrant(session.user, recording);
-    if (grant.kind === "refused") {
-      return NextResponse.json(
-        { code: grant.code, message: "No access to this recording." },
-        { status: 403 },
-      );
-    }
+    if (grant.kind === "refused") return fileApiError(grant.code);
 
     const viaOperatorGrant =
       grant.kind === "metadata" || grant.viaOperatorGrant;
@@ -226,17 +212,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       },
       { headers: { "Cache-Control": "private, no-store" } },
     );
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Error getting recording", error);
-    return NextResponse.json(
-      { code: "SERVER_ERROR", message: "Failed to get recording." },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }
 
 const patchRecordingSchema = z.object({
@@ -357,49 +333,21 @@ async function resolveRecordingWriteAccess(
 }
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
-  try {
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
 
     const { recordingId } = await params;
     const recording = await RecordingService.getRecordingById(recordingId);
-    if (!recording) {
-      return NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 },
-      );
-    }
+    if (!recording) return fileApiError("NOT_FOUND");
 
     const { allowed, viaOperatorGrant } = await resolveRecordingWriteAccess(
       session.user,
       recording,
     );
-    if (!allowed) {
-      return NextResponse.json(
-        {
-          error:
-            "Forbidden: only the host consultant or an admin may update this recording",
-        },
-        { status: 403 },
-      );
-    }
+    if (!allowed) return fileApiError("FORBIDDEN");
 
-    let rawBody: unknown;
-    try {
-      rawBody = await req.json();
-    } catch {
-      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-    }
-
-    const parsed = patchRecordingSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request body", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
+    const body = await parseJsonBody(req, patchRecordingSchema);
 
     if (viaOperatorGrant) {
       await auditOperatorRecordingAccess({
@@ -417,57 +365,30 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const updated = await prisma.recording.update({
       where: { id: recordingId },
       data: {
-        ...(parsed.data.title !== undefined
-          ? { title: parsed.data.title }
-          : {}),
+        ...(body.title !== undefined ? { title: body.title } : {}),
       },
     });
 
     return NextResponse.json({
       recording: sanitizeRecordingMutationResponse(updated),
     });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Error updating recording", error);
-    return NextResponse.json(
-      { error: "Failed to update recording" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }
 
 export async function DELETE(_req: NextRequest, { params }: RouteParams) {
-  try {
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
 
     const { recordingId } = await params;
     const recording = await RecordingService.getRecordingById(recordingId);
-    if (!recording) {
-      return NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 },
-      );
-    }
+    if (!recording) return fileApiError("NOT_FOUND");
 
     const { allowed, viaOperatorGrant } = await resolveRecordingWriteAccess(
       session.user,
       recording,
     );
-    if (!allowed) {
-      return NextResponse.json(
-        {
-          error:
-            "Forbidden: only the host consultant or an admin may delete this recording",
-        },
-        { status: 403 },
-      );
-    }
+    if (!allowed) return fileApiError("FORBIDDEN");
 
     // Always block deletion when any PENDING or SUCCEEDED purchase exists,
     // regardless of current listingStatus (prevents unpublish-then-delete bypass).
@@ -481,14 +402,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       });
 
     const activePurchase = await findActivePurchase();
-    if (activePurchase) {
-      return NextResponse.json(
-        {
-          error: "Cannot delete a recording that has active or pending buyers",
-        },
-        { status: 409 },
-      );
-    }
+    if (activePurchase) return fileApiError("RECORDING_HAS_BUYERS");
 
     if (viaOperatorGrant) {
       await auditOperatorRecordingAccess({
@@ -515,15 +429,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         },
       });
       const racedPurchase = await findActivePurchase();
-      if (racedPurchase) {
-        return NextResponse.json(
-          {
-            error:
-              "Cannot delete a recording that has active or pending buyers",
-          },
-          { status: 409 },
-        );
-      }
+      if (racedPurchase) return fileApiError("RECORDING_HAS_BUYERS");
     }
 
     // Expire before deleting: a status change that raced this request leaves
@@ -539,12 +445,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       },
       select: { id: true, storagePath: true },
     });
-    if (!expired) {
-      return NextResponse.json(
-        { error: "Recording changed while deleting; refresh and try again" },
-        { status: 409 },
-      );
-    }
+    if (!expired) return fileApiError("RECORDING_CHANGED");
     await notifyAttendeesOfRemovedRecording({
       appointmentId: recording.meeting.occurrence.appointmentId,
       recordingTitle: recording.title,
@@ -565,15 +466,5 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
       success: true,
       recording: sanitizeRecordingMutationResponse(updated),
     });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Error deleting recording", error);
-    return NextResponse.json(
-      { error: "Failed to delete recording" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }

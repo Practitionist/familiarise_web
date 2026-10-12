@@ -16,10 +16,16 @@ type ServerFileErrorCode = Exclude<FileErrorCode, "NETWORK">;
 /** The one failure response for file routes: `{ code, message }`, never vendor text. */
 export function fileApiError(
   code: ServerFileErrorCode,
-  extra: { closedAt?: Date | null; headers?: HeadersInit } = {},
+  extra: {
+    closedAt?: Date | null;
+    headers?: HeadersInit;
+    /** Extra fields a client may read beside the code. */
+    fields?: Record<string, unknown>;
+  } = {},
 ): NextResponse<FileApiError> {
   return NextResponse.json(
     {
+      ...extra.fields,
       code,
       message: FILE_ERROR_MESSAGE[code],
       ...(extra.closedAt ? { closedAt: extra.closedAt.toISOString() } : {}),

@@ -34,9 +34,25 @@ export const FileErrorCode = z.enum([
   "MATERIAL_LIMIT_REACHED",
   "DOCUMENT_NOT_DELETABLE",
   "REMOVAL_ALREADY_REQUESTED",
+  "REMOVAL_NOT_REQUESTED",
+  "SUPPORT_UNAVAILABLE",
   "FILE_MISSING",
   "FILE_TOO_LARGE",
   "UNSUPPORTED_FILE_TYPE",
+  "SLUG_TAKEN",
+  "STORAGE_POLICY",
+  "PLAN_ARCHIVED",
+  "ORG_VISIBILITY",
+  "PREVIEW_TRANSCRIPT_REQUIRED",
+  "RECORDING_HAS_BUYERS",
+  "RECORDING_CHANGED",
+  "RECORDING_NOT_ENABLED",
+  "RECORDING_DECLINED",
+  "RECORDING_IN_PROGRESS",
+  "RECORDING_NOT_IN_PROGRESS",
+  "VENDOR_UNAVAILABLE",
+  "PREVIEW_UPLOAD_FAILED",
+  "PARTIAL_UPLOAD",
   "OWN_RECORDING_AVAILABLE",
   "LATE_JOIN_HIDDEN",
   "RATE_LIMITED",
@@ -77,9 +93,25 @@ export const FILE_ERROR_STATUS: Record<
   MATERIAL_LIMIT_REACHED: 409,
   DOCUMENT_NOT_DELETABLE: 409,
   REMOVAL_ALREADY_REQUESTED: 409,
+  REMOVAL_NOT_REQUESTED: 409,
+  SUPPORT_UNAVAILABLE: 503,
   FILE_MISSING: 400,
   FILE_TOO_LARGE: 413,
   UNSUPPORTED_FILE_TYPE: 415,
+  SLUG_TAKEN: 409,
+  STORAGE_POLICY: 400,
+  PLAN_ARCHIVED: 403,
+  ORG_VISIBILITY: 403,
+  PREVIEW_TRANSCRIPT_REQUIRED: 422,
+  RECORDING_HAS_BUYERS: 409,
+  RECORDING_CHANGED: 409,
+  RECORDING_NOT_ENABLED: 400,
+  RECORDING_DECLINED: 409,
+  RECORDING_IN_PROGRESS: 409,
+  RECORDING_NOT_IN_PROGRESS: 409,
+  VENDOR_UNAVAILABLE: 502,
+  PREVIEW_UPLOAD_FAILED: 400,
+  PARTIAL_UPLOAD: 400,
   OWN_RECORDING_AVAILABLE: 403,
   LATE_JOIN_HIDDEN: 403,
   RATE_LIMITED: 429,
@@ -246,6 +278,16 @@ export function friendlyFileError(
         "Removal already requested",
         "You already asked for this to be removed. Support will reply in your session's support chat.",
       );
+    case "REMOVAL_NOT_REQUESTED":
+      return copy(
+        "No open request",
+        "There's no open removal request on this document. Refresh to see it.",
+      );
+    case "SUPPORT_UNAVAILABLE":
+      return copy(
+        "Couldn't reach support",
+        "Your removal request wasn't sent. Try again in a moment.",
+      );
     case "FILE_MISSING":
       return copy("No file chosen", "Choose a file to upload.");
     case "FILE_TOO_LARGE":
@@ -254,6 +296,73 @@ export function friendlyFileError(
       return copy(
         "Unsupported file type",
         `Upload a ${ALLOWED_FILE_TYPES_LABEL} file.`,
+      );
+    case "SLUG_TAKEN":
+      return copy(
+        "That link is taken",
+        "That link is already used by another replay. Pick another.",
+      );
+    case "STORAGE_POLICY":
+      return copy(
+        "Not ready to publish",
+        "This recording can be published once it has been copied to our storage.",
+      );
+    case "PLAN_ARCHIVED":
+      return copy(
+        "Plan archived",
+        "This recording's plan is archived, so it can't be published.",
+      );
+    case "ORG_VISIBILITY":
+      return copy(
+        "Not visible",
+        "This organization limits who can see its plans, so the recording can't be published.",
+      );
+    case "PREVIEW_TRANSCRIPT_REQUIRED":
+      return copy(
+        "Transcript needed",
+        "Add a transcript of the preview clip before publishing.",
+      );
+    case "RECORDING_HAS_BUYERS":
+      return copy(
+        "Replay has buyers",
+        "Someone bought this replay, so it can't be deleted.",
+      );
+    case "RECORDING_CHANGED":
+      return copy(
+        "Recording changed",
+        "This recording changed while you were working. Refresh and try again.",
+      );
+    case "RECORDING_NOT_ENABLED":
+      return copy("Recording off", "Recording isn't turned on for this plan.");
+    case "RECORDING_DECLINED":
+      return copy(
+        "Recording declined",
+        "A participant asked not to be recorded, so this session can't be recorded.",
+      );
+    case "RECORDING_IN_PROGRESS":
+      return copy(
+        "Already recording",
+        "This session is already being recorded.",
+      );
+    case "RECORDING_NOT_IN_PROGRESS":
+      return copy(
+        "Not recording",
+        "This session isn't being recorded right now.",
+      );
+    case "VENDOR_UNAVAILABLE":
+      return copy(
+        "Video service unavailable",
+        "The video service didn't respond. Try again in a moment.",
+      );
+    case "PREVIEW_UPLOAD_FAILED":
+      return copy(
+        "Preview not uploaded",
+        "The preview couldn't be uploaded. Check the file type and size and try again.",
+      );
+    case "PARTIAL_UPLOAD":
+      return copy(
+        "Some previews not uploaded",
+        "Some previews were saved; upload the one that failed again.",
       );
     case "OWN_RECORDING_AVAILABLE":
       return copy(
@@ -330,9 +439,25 @@ export const FILE_ERROR_MESSAGE: Record<
   MATERIAL_LIMIT_REACHED: "The material limit is reached.",
   DOCUMENT_NOT_DELETABLE: "The document cannot be removed.",
   REMOVAL_ALREADY_REQUESTED: "Removal was already requested.",
+  REMOVAL_NOT_REQUESTED: "No removal request is open.",
+  SUPPORT_UNAVAILABLE: "The support thread could not be reached.",
   FILE_MISSING: "No file was provided.",
   FILE_TOO_LARGE: "The file is too large.",
   UNSUPPORTED_FILE_TYPE: "The file type is not supported.",
+  SLUG_TAKEN: "The slug is taken.",
+  STORAGE_POLICY: "The recording is not in durable storage yet.",
+  PLAN_ARCHIVED: "The plan is archived.",
+  ORG_VISIBILITY: "The organization limits visibility.",
+  PREVIEW_TRANSCRIPT_REQUIRED: "A preview transcript is required.",
+  RECORDING_HAS_BUYERS: "The recording has active or pending buyers.",
+  RECORDING_CHANGED: "The recording changed concurrently.",
+  RECORDING_NOT_ENABLED: "Recording is not enabled for this plan.",
+  RECORDING_DECLINED: "A participant declined recording.",
+  RECORDING_IN_PROGRESS: "A recording is already in progress.",
+  RECORDING_NOT_IN_PROGRESS: "No recording is in progress.",
+  VENDOR_UNAVAILABLE: "The video service is unavailable.",
+  PREVIEW_UPLOAD_FAILED: "The preview upload failed.",
+  PARTIAL_UPLOAD: "Some preview assets were saved; retry the failed one.",
   OWN_RECORDING_AVAILABLE: "The viewer's own recording is available.",
   LATE_JOIN_HIDDEN: "The session predates the viewer's seat.",
   RATE_LIMITED: "Too many requests.",
