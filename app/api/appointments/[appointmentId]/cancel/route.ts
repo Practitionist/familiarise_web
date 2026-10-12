@@ -273,7 +273,11 @@ export async function POST(
             consultationPlan: {
               include: {
                 consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
+                  select: {
+                    id: true,
+                    userId: true,
+                    user: { select: { id: true, name: true } },
+                  },
                 },
               },
             },
@@ -287,7 +291,11 @@ export async function POST(
             subscriptionPlan: {
               include: {
                 consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
+                  select: {
+                    id: true,
+                    userId: true,
+                    user: { select: { id: true, name: true } },
+                  },
                 },
               },
             },
@@ -301,7 +309,11 @@ export async function POST(
             webinarPlan: {
               include: {
                 consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
+                  select: {
+                    id: true,
+                    userId: true,
+                    user: { select: { id: true, name: true } },
+                  },
                 },
               },
             },
@@ -312,7 +324,11 @@ export async function POST(
             classPlan: {
               include: {
                 consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
+                  select: {
+                    id: true,
+                    userId: true,
+                    user: { select: { id: true, name: true } },
+                  },
                 },
               },
             },

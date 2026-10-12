@@ -241,7 +241,7 @@ export async function POST(request: NextRequest) {
             : undefined,
       },
       include: {
-        consultantProfile: true,
+        consultantProfile: { select: { id: true, userId: true } },
         topics: true,
         faqs: { orderBy: { order: "asc" } },
         subscriptionContents: {

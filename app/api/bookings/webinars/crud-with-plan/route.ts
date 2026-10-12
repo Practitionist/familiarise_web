@@ -300,7 +300,7 @@ export async function POST(request: NextRequest) {
                   : undefined,
             },
             include: {
-              consultantProfile: true,
+              consultantProfile: { select: { id: true, userId: true } },
               topics: true,
               faqs: { orderBy: { order: "asc" } },
             },
@@ -367,7 +367,7 @@ export async function POST(request: NextRequest) {
             include: {
               webinarPlan: {
                 include: {
-                  consultantProfile: true,
+                  consultantProfile: { select: { id: true, userId: true } },
                   topics: true,
                 },
               },
@@ -554,7 +554,7 @@ export async function PATCH(request: NextRequest) {
     const existingPlan = await prisma.webinarPlan.findUnique({
       where: { id },
       include: {
-        consultantProfile: true,
+        consultantProfile: { select: { id: true, userId: true } },
         topics: true,
         webinars: {
           include: {
@@ -766,7 +766,7 @@ export async function PATCH(request: NextRequest) {
               where: { id },
               data: updateData,
               include: {
-                consultantProfile: true,
+                consultantProfile: { select: { id: true, userId: true } },
                 topics: true,
                 webinars: {
                   // Ensure webinars relation is included
@@ -845,7 +845,7 @@ export async function PATCH(request: NextRequest) {
                 include: {
                   webinarPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: { select: { id: true, userId: true } },
                       topics: true,
                     },
                   },
@@ -863,7 +863,7 @@ export async function PATCH(request: NextRequest) {
                 include: {
                   webinarPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: { select: { id: true, userId: true } },
                       topics: true,
                     },
                   },
@@ -1082,7 +1082,7 @@ export async function PATCH(request: NextRequest) {
               include: {
                 webinarPlan: {
                   include: {
-                    consultantProfile: true,
+                    consultantProfile: { select: { id: true, userId: true } },
                     topics: true,
                   },
                 },

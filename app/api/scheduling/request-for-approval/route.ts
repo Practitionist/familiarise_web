@@ -24,6 +24,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 import { appendCreationHistory } from "@/lib/booking/transitions";
 import { recordParticipants } from "@/lib/booking/participants";
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import {
   buildOccurrenceForWindow,
   intervalStartsOf,
@@ -152,8 +153,11 @@ export async function POST(req: NextRequest) {
       },
       include: {
         consultantProfile: {
-          include: {
-            user: true,
+          select: {
+            id: true,
+            acceptingRequests: true,
+            maxOpenRequests: true,
+            user: { select: { id: true } },
           },
         },
       },
@@ -430,11 +434,7 @@ export async function POST(req: NextRequest) {
               include: {
                 consultationPlan: {
                   include: {
-                    consultantProfile: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    consultantProfile: PROFILE_WITH_USER_SELECT,
                   },
                 },
                 requestedBy: {

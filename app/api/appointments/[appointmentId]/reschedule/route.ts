@@ -257,7 +257,7 @@ export async function POST(
                 include: {
                   consultationPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: { select: { id: true, userId: true } },
                     },
                   },
                   requestedBy: true,
@@ -267,7 +267,7 @@ export async function POST(
                 include: {
                   subscriptionPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: { select: { id: true, userId: true } },
                     },
                   },
                   requestedBy: true,

@@ -65,7 +65,9 @@ export async function GET(
         subscriptionPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     id: true,
@@ -164,7 +166,7 @@ export async function PUT(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: true,
+            consultantProfile: { select: { id: true } },
           },
         },
         // bookingOrgId's fallback when the plan carries no org.
@@ -226,7 +228,9 @@ export async function PUT(
         subscriptionPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     id: true,
@@ -335,7 +339,9 @@ export async function PATCH(
         subscriptionPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: PARTY_USER_SELECT,
               },
             },
@@ -444,7 +450,9 @@ export async function PATCH(
                 subscriptionPlan: {
                   include: {
                     consultantProfile: {
-                      include: {
+                      select: {
+                        id: true,
+                        userId: true,
                         user: PARTY_USER_SELECT,
                       },
                     },
@@ -515,7 +523,9 @@ export async function PATCH(
                 subscriptionPlan: {
                   include: {
                     consultantProfile: {
-                      include: {
+                      select: {
+                        id: true,
+                        userId: true,
                         user: PARTY_USER_SELECT,
                       },
                     },

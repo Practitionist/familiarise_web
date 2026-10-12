@@ -18,7 +18,7 @@ import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 const webinarInclude = {
   webinarPlan: {
     include: {
-      consultantProfile: true,
+      consultantProfile: { select: { id: true, userId: true } },
       topics: true,
     },
   },
@@ -68,7 +68,7 @@ const classInclude = (now: Date) =>
   ({
     classPlan: {
       include: {
-        consultantProfile: true,
+        consultantProfile: { select: { id: true, userId: true } },
         topics: true,
         classContents: {
           orderBy: {

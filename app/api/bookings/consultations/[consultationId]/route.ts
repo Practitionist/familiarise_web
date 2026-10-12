@@ -58,7 +58,9 @@ export async function GET(
         consultationPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     id: true,
@@ -152,7 +154,7 @@ export async function PUT(
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: true,
+            consultantProfile: { select: { id: true } },
           },
         },
         // bookingOrgId's fallback when the plan carries no org.
@@ -243,7 +245,9 @@ export async function PUT(
         consultationPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     id: true,
@@ -369,7 +373,9 @@ export async function PATCH(
         consultationPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: PARTY_USER_SELECT,
               },
             },
@@ -474,7 +480,9 @@ export async function PATCH(
                 consultationPlan: {
                   include: {
                     consultantProfile: {
-                      include: {
+                      select: {
+                        id: true,
+                        userId: true,
                         user: PARTY_USER_SELECT,
                       },
                     },
@@ -537,7 +545,9 @@ export async function PATCH(
                     consultationPlan: {
                       include: {
                         consultantProfile: {
-                          include: {
+                          select: {
+                            id: true,
+                            userId: true,
                             user: PARTY_USER_SELECT,
                           },
                         },
@@ -596,7 +606,9 @@ export async function PATCH(
                       consultationPlan: {
                         include: {
                           consultantProfile: {
-                            include: {
+                            select: {
+                              id: true,
+                              userId: true,
                               user: PARTY_USER_SELECT,
                             },
                           },
@@ -650,7 +662,9 @@ export async function PATCH(
                 consultationPlan: {
                   include: {
                     consultantProfile: {
-                      include: {
+                      select: {
+                        id: true,
+                        userId: true,
                         user: PARTY_USER_SELECT,
                       },
                     },

@@ -39,7 +39,9 @@ export async function GET() {
             consultationPlan: {
               include: {
                 consultantProfile: {
-                  include: {
+                  select: {
+                    id: true,
+                    userId: true,
                     user: {
                       select: {
                         name: true,
@@ -91,7 +93,9 @@ export async function GET() {
             subscriptionPlan: {
               include: {
                 consultantProfile: {
-                  include: {
+                  select: {
+                    id: true,
+                    userId: true,
                     user: {
                       select: {
                         name: true,
@@ -143,7 +147,11 @@ export async function GET() {
             subscriptionPlan: {
               include: {
                 consultantProfile: {
-                  include: { user: { select: { name: true, email: true } } },
+                  select: {
+                    id: true,
+                    userId: true,
+                    user: { select: { name: true, email: true } },
+                  },
                 },
               },
             },

@@ -13,7 +13,7 @@ const { GET, POST } = createPlanCollaborationHandlers({
   findPlan: (planId) =>
     prisma.webinarPlan.findUnique({
       where: { id: planId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: { select: { id: true, userId: true } } },
     }),
   findExisting: (planId, consultantProfileId) =>
     prisma.collaborator.findFirst({

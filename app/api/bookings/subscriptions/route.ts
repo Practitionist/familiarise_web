@@ -249,7 +249,9 @@ export async function PATCH(request: NextRequest) {
         subscriptionPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     id: true,
@@ -352,7 +354,9 @@ export async function PATCH(request: NextRequest) {
           subscriptionPlan: {
             include: {
               consultantProfile: {
-                include: {
+                select: {
+                  id: true,
+                  userId: true,
                   user: {
                     select: {
                       id: true,

@@ -96,7 +96,7 @@ export async function PATCH(
 
     const existingPlan = await prisma.classPlan.findUnique({
       where: { id: classPlanId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: { select: { id: true, userId: true } } },
     });
 
     if (!existingPlan) {

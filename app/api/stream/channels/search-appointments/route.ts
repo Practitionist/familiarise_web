@@ -165,7 +165,9 @@ export async function GET(request: NextRequest) {
         consultationPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     id: true,
@@ -261,7 +263,9 @@ export async function GET(request: NextRequest) {
         subscriptionPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     id: true,
@@ -346,7 +350,9 @@ export async function GET(request: NextRequest) {
         webinarPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     name: true,
@@ -417,7 +423,9 @@ export async function GET(request: NextRequest) {
         classPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     name: true,

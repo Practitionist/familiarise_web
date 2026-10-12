@@ -326,9 +326,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           },
         },
         consultantProfile: {
-          include: {
-            user: true,
-          },
+          select: { id: true, user: { select: { id: true, name: true } } },
         },
         subscriptionPlan: true,
         appointment: true,
@@ -1145,7 +1143,11 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       },
       include: {
         consultantProfile: {
-          include: { user: { select: { id: true, name: true } } },
+          select: {
+            id: true,
+            userId: true,
+            user: { select: { id: true, name: true } },
+          },
         },
         consulteeProfile: {
           include: { user: { select: { id: true, name: true } } },

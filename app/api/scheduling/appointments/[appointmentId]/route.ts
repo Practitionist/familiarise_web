@@ -3,7 +3,10 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { liveParticipant } from "@/lib/booking/participants";
-import { PUBLIC_USER_SELECT } from "@/lib/booking/list-selects";
+import {
+  PARTY_USER_SELECT,
+  PUBLIC_USER_SELECT,
+} from "@/lib/booking/list-selects";
 
 /** What a caller may read of an appointment: every attendee's rows, only their own, or nothing. */
 type AppointmentAccess = "every-seat" | "own-seat";
@@ -139,16 +142,7 @@ export async function GET(
             consultationPlan: {
               include: {
                 consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
+                  select: { id: true, user: PARTY_USER_SELECT },
                 },
               },
             },
@@ -171,16 +165,7 @@ export async function GET(
             subscriptionPlan: {
               include: {
                 consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
+                  select: { id: true, user: PARTY_USER_SELECT },
                 },
               },
             },
@@ -203,16 +188,7 @@ export async function GET(
             webinarPlan: {
               include: {
                 consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
+                  select: { id: true, user: PARTY_USER_SELECT },
                 },
               },
             },
@@ -223,16 +199,7 @@ export async function GET(
             classPlan: {
               include: {
                 consultantProfile: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        image: true,
-                      },
-                    },
-                  },
+                  select: { id: true, user: PARTY_USER_SELECT },
                 },
               },
             },

@@ -91,7 +91,7 @@ export async function PUT(
     // Verify ownership - user must own this consultation plan
     const existingPlan = await prisma.consultationPlan.findUnique({
       where: { id: consultationPlanId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: { select: { id: true, userId: true } } },
     });
 
     if (!existingPlan) {
@@ -159,7 +159,9 @@ export async function PUT(
       },
       include: {
         consultantProfile: {
-          include: {
+          select: {
+            id: true,
+            userId: true,
             user: {
               select: {
                 id: true,
@@ -236,7 +238,7 @@ export async function PATCH(
 
     const existingPlan = await prisma.consultationPlan.findUnique({
       where: { id: consultationPlanId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: { select: { id: true, userId: true } } },
     });
 
     if (!existingPlan) {
@@ -319,7 +321,7 @@ export async function DELETE(
     // Verify ownership - user must own this consultation plan
     const existingPlan = await prisma.consultationPlan.findUnique({
       where: { id: consultationPlanId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: { select: { id: true, userId: true } } },
     });
 
     if (!existingPlan) {
@@ -353,7 +355,9 @@ export async function DELETE(
           where: ownedPlan,
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: { id: true, name: true, email: true, image: true },
                 },

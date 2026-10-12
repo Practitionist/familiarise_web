@@ -313,7 +313,7 @@ export async function POST(request: NextRequest) {
               classContents: curriculumCreateNested(classContents),
             },
             include: {
-              consultantProfile: true,
+              consultantProfile: { select: { id: true, userId: true } },
               topics: true,
               classContents: true,
               faqs: { orderBy: { order: "asc" } },
@@ -387,7 +387,7 @@ export async function POST(request: NextRequest) {
             include: {
               classPlan: {
                 include: {
-                  consultantProfile: true,
+                  consultantProfile: { select: { id: true, userId: true } },
                   topics: true,
                   classContents: true,
                 },
@@ -590,7 +590,7 @@ export async function PATCH(request: NextRequest) {
     const existingPlan = await prisma.classPlan.findUnique({
       where: { id },
       include: {
-        consultantProfile: true,
+        consultantProfile: { select: { id: true, userId: true } },
         topics: true,
         classContents: true,
         classes: true,
@@ -798,7 +798,7 @@ export async function PATCH(request: NextRequest) {
               where: { id }, // Use validated id
               data: updateData,
               include: {
-                consultantProfile: true,
+                consultantProfile: { select: { id: true, userId: true } },
                 topics: true,
                 classContents: true,
                 classes: true, // Keep included to match existingPlan type
@@ -1031,7 +1031,7 @@ export async function PATCH(request: NextRequest) {
                 include: {
                   classPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: { select: { id: true, userId: true } },
                       topics: true,
                       classContents: true,
                     },
@@ -1051,7 +1051,7 @@ export async function PATCH(request: NextRequest) {
                 include: {
                   classPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: { select: { id: true, userId: true } },
                       topics: true,
                       classContents: true,
                     },

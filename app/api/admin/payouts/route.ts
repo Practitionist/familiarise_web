@@ -104,7 +104,9 @@ export async function POST(req: NextRequest) {
       where: { batchId },
       include: {
         consultantProfile: {
-          include: {
+          select: {
+            id: true,
+            userId: true,
             user: { select: { name: true, email: true } },
           },
         },

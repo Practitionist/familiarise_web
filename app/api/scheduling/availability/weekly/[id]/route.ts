@@ -560,7 +560,7 @@ export async function DELETE(
     const deletedSlot = await prisma.availabilityWindowWeekly.delete({
       where: { id: id },
       include: {
-        consultantProfile: true,
+        consultantProfile: { select: { id: true, userId: true } },
       },
     });
     // Shrink notice + completion recompute (allowed, reported — see contract doc).

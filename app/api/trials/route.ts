@@ -294,9 +294,7 @@ export async function POST(request: NextRequest) {
       where: { id: subscriptionPlanId },
       include: {
         consultantProfile: {
-          include: {
-            user: true,
-          },
+          select: { id: true, user: { select: { id: true } } },
         },
       },
     });

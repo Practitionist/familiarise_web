@@ -128,7 +128,9 @@ export async function GET(req: NextRequest) {
                     subscriptionPlan: {
                       include: {
                         consultantProfile: {
-                          include: {
+                          select: {
+                            id: true,
+                            userId: true,
                             user: {
                               select: { id: true, name: true, email: true },
                             },

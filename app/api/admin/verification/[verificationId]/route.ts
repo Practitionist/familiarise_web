@@ -8,6 +8,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import {
   handleReviewPatch,
   withDownloadUrls,
@@ -32,7 +33,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       where: { id: verificationId },
       include: {
         consultantProfile: {
-          include: {
+          select: {
+            ...consultantPublicScalars,
             user: {
               select: {
                 id: true,

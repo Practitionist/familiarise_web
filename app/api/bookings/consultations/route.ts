@@ -246,7 +246,7 @@ export async function PATCH(request: NextRequest) {
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: true,
+            consultantProfile: { select: { id: true } },
           },
         },
       },
@@ -314,7 +314,9 @@ export async function PATCH(request: NextRequest) {
         consultationPlan: {
           include: {
             consultantProfile: {
-              include: {
+              select: {
+                id: true,
+                userId: true,
                 user: {
                   select: {
                     id: true,
