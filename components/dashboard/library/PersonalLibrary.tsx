@@ -82,6 +82,7 @@ export function PersonalLibrary({
       sessionHref={(id) => `${base}/appointments/${id}/${artifact}`}
       bookingHref={(id) => `${base}/appointments/${id}`}
       hostActions={!learner}
+      side={learner ? "learner" : "expert"}
       sources={
         artifact === "documents"
           ? learner

@@ -1,5 +1,8 @@
 import type { Tone } from "@/lib/ui/tone";
-import type { LibraryVersionStatus } from "@/lib/library/library-query";
+import type {
+  LibraryDocStatus,
+  LibraryVersionStatus,
+} from "@/lib/library/library-query";
 import type { ThreadBannerKind, ThreadStatus } from "./thread-view";
 import {
   DOCUMENT_RETENTION_DAYS,
@@ -148,4 +151,29 @@ export function windowNotice(args: {
       ? `Files are kept until ${args.day(args.keptUntil)} (${DOCUMENT_RETENTION_DAYS} days after the booking ends).`
       : `Files are kept until ${DOCUMENT_RETENTION_DAYS} days after the booking ends.`,
   ];
+}
+
+/** Whose Library a status filter labels: one side's chips, or neutral words for a mixed view. */
+export type LibrarySide = "learner" | "expert" | "mixed";
+
+/** The status filter's options in the same words as the row chips for that side. */
+export function libraryStatusLabel(
+  status: LibraryDocStatus,
+  side: LibrarySide,
+): string {
+  switch (status) {
+    case "your-turn":
+      return side === "expert"
+        ? THREAD_STATUS_CHIP.WAITING_FOR_EXPERT.expert
+        : THREAD_STATUS_CHIP.NEEDS_REVISION.learner;
+    case "waiting":
+      if (side === "learner")
+        return THREAD_STATUS_CHIP.WAITING_FOR_EXPERT.learner;
+      if (side === "expert") return THREAD_STATUS_CHIP.NEEDS_REVISION.expert;
+      return `${THREAD_STATUS_NEUTRAL.WAITING_FOR_EXPERT} / ${THREAD_STATUS_NEUTRAL.NEEDS_REVISION}`;
+    case "done":
+      return `${THREAD_STATUS_NEUTRAL.APPROVED} / ${THREAD_STATUS_NEUTRAL.NOT_ACCEPTED}`;
+    case "shared":
+      return THREAD_STATUS_NEUTRAL.SHARED;
+  }
 }

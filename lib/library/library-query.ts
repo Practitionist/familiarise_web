@@ -42,13 +42,6 @@ export const LIBRARY_DOC_STATUSES = [
 ] as const;
 export type LibraryDocStatus = (typeof LIBRARY_DOC_STATUSES)[number];
 
-export const LIBRARY_DOC_STATUS_LABEL: Record<LibraryDocStatus, string> = {
-  "your-turn": "Your turn",
-  waiting: "Waiting for the other side",
-  done: "Done",
-  shared: "Shared files",
-};
-
 /** Who started a thread, relative to the viewer; "materials" selects plan materials instead. */
 export const DOCUMENT_SOURCES = [
   "materials",

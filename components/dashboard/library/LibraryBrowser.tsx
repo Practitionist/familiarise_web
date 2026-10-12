@@ -31,8 +31,11 @@ import {
 } from "@/components/recordings/RecordingPlayerModal";
 import { useListParams } from "@/hooks/useListParams";
 import {
+  libraryStatusLabel,
+  type LibrarySide,
+} from "@/lib/documents/thread-copy";
+import {
   LIBRARY_DOC_STATUSES,
-  LIBRARY_DOC_STATUS_LABEL,
   LIBRARY_KIND_LABEL,
   LIBRARY_KINDS,
   compareLibraryThreads,
@@ -89,6 +92,8 @@ export interface LibraryBrowserProps {
   bookingHref: (appointmentId: string) => string;
   /** Recordings the viewer hosts get a Manage link to the booking's Recordings page. */
   hostActions?: boolean;
+  /** Whose words the status filter uses; org views mix both sides. */
+  side: LibrarySide;
   /** Documents only: the "Started by" filter's options. */
   sources?: DocumentSource[];
   /** The person filter's label ("Learner", "Expert" or "Person"). */
@@ -265,6 +270,7 @@ export function LibraryBrowser({
   sessionHref,
   bookingHref,
   hostActions = false,
+  side,
   sources,
   personLabel,
   emptyDescription,
@@ -505,7 +511,7 @@ export function LibraryBrowser({
               { value: "all", label: "Any status" },
               ...LIBRARY_DOC_STATUSES.map((s) => ({
                 value: s,
-                label: LIBRARY_DOC_STATUS_LABEL[s],
+                label: libraryStatusLabel(s, side),
               })),
             ],
             onChange: (v: string) =>
