@@ -48,6 +48,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Join-loading parity (rolled back)
+        run: npx tsx tests/typescript/join-loading-parity.ts
+        timeout-minutes: 3
+
       - name: Run Race Condition Tests
         run: npm run test:race
         timeout-minutes: 20
