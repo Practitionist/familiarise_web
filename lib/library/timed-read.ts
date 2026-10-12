@@ -2,7 +2,7 @@ import "server-only";
 
 import * as Sentry from "@sentry/nextjs";
 
-const SLOW_MS = 5_000;
+const SLOW_MS = 10_000;
 /** Below the platform's ~26 s cut-off, so a request killed mid-read still leaves a line. */
 const STALLED_MS = 20_000;
 
