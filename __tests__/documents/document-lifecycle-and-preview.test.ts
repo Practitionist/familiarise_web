@@ -24,6 +24,8 @@ jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: jest.fn().mockResolvedValue(null),
   documentReviewLimiter: {},
   documentUploadLimiter: {},
+  documentUploadUrlLimiter: {},
+  documentCommitLimiter: {},
 }));
 jest.mock("../../lib/documents/document-notify", () => ({
   __esModule: true,

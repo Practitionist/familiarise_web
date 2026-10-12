@@ -1,6 +1,8 @@
 import type {
   RecordingBookingView,
   RecordingSlot,
+  RemovedBy,
+  RemovedPart,
   RetentionLabelDTO,
   SlotPart,
 } from "./recording-slots";
@@ -31,19 +33,33 @@ export function partLabel(part: Pick<SlotPart, "partNo" | "partCount">) {
   return part.partCount > 1 ? `Part ${part.partNo} of ${part.partCount}` : null;
 }
 
+function remover(by: RemovedBy | null): string {
+  return by === "support" ? "Familiarise support" : "the expert";
+}
+
+/** "Removed by the expert on 11 Oct 2026." */
+export function removedText(
+  removed: { removedAt: string | null; removedBy: RemovedBy | null },
+  day: DayFormat,
+): string {
+  return removed.removedAt
+    ? `Removed by ${remover(removed.removedBy)} on ${day(removed.removedAt)}.`
+    : `Removed by ${remover(removed.removedBy)}.`;
+}
+
+/** "Part 2 of 2 · Removed by the expert on 11 Oct 2026." */
+export function removedPartText(part: RemovedPart, day: DayFormat): string {
+  return `Part ${part.partNo} of ${part.partCount} · ${removedText(part, day)}`;
+}
+
 /** The one-line state of a slot, from the viewer's side. */
 export function slotStateText(slot: RecordingSlot, day: DayFormat): string {
   const missing = (): string => {
     switch (slot.missingReason) {
       case "declined":
         return "No recording: a participant chose not to be recorded.";
-      case "removed": {
-        const by =
-          slot.removedBy === "support" ? "Familiarise support" : "the expert";
-        return slot.removedAt
-          ? `Removed by ${by} on ${day(slot.removedAt)}.`
-          : `Removed by ${by}.`;
-      }
+      case "removed":
+        return removedText(slot, day);
       case "expired":
         return "The recording's retention period has ended.";
       default:

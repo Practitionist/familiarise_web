@@ -549,16 +549,24 @@ export async function purgeExpiredRecordingAssets(row: {
 }): Promise<{ success: boolean; error?: string }> {
   const deleted = await deleteRecordingAssets(row);
   if (!deleted.success) return deleted;
-  await prisma.recording.updateMany({
-    where: { id: row.id, status: RecordingStatus.EXPIRED },
-    data: {
-      storagePath: null,
-      previewClipUrl: null,
-      previewClipStoragePath: null,
-      previewClipDuration: null,
-      thumbnailUrl: null,
-    },
-  });
+  try {
+    await prisma.recording.updateMany({
+      where: { id: row.id, status: RecordingStatus.EXPIRED },
+      data: {
+        storagePath: null,
+        previewClipUrl: null,
+        previewClipStoragePath: null,
+        previewClipDuration: null,
+        thumbnailUrl: null,
+      },
+    });
+  } catch (error) {
+    // The objects are gone; a pointer the database refuses to clear is retried by the sweep.
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "pointer clear failed",
+    };
+  }
   return { success: true };
 }
 

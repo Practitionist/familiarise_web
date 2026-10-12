@@ -57,7 +57,14 @@ export function RecordingTable<T extends Row>({
       header: "Recording",
       cell: (r) =>
         r.parts.length === 1 ? (
-          <PlayButton label={r.title} onPlay={() => onPlay(r.parts[0]!, r)} />
+          <div className="min-w-0 max-w-[22rem]">
+            <PlayButton label={r.title} onPlay={() => onPlay(r.parts[0]!, r)} />
+            {r.notice && (
+              <span className="block text-xs text-muted-foreground">
+                {r.notice}
+              </span>
+            )}
+          </div>
         ) : (
           <div className="min-w-0 max-w-[22rem]">
             <span className="block truncate font-medium text-foreground">

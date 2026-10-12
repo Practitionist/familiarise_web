@@ -459,16 +459,22 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
         error: error instanceof Error ? error.message : "unknown error",
       });
     });
-    const purged = await purgeExpiredRecordingAssets(expired);
+    // The row is removed from here on: asset and pointer clean-up is best-effort.
+    const purged = await purgeExpiredRecordingAssets(expired).catch(
+      (error: unknown) => ({
+        success: false,
+        error: error instanceof Error ? error.message : "unknown error",
+      }),
+    );
     if (!purged.success) {
       streamLogger.warn("Deleted recording assets left for the expiry sweep", {
         recordingId,
         error: purged.error,
       });
     }
-    const updated = await prisma.recording.findUnique({
-      where: { id: recordingId },
-    });
+    const updated = await prisma.recording
+      .findUnique({ where: { id: recordingId } })
+      .catch(() => null);
 
     return NextResponse.json({
       success: true,

@@ -7,11 +7,12 @@ import type { z } from "zod";
 import {
   FILE_ERROR_MESSAGE,
   FILE_ERROR_STATUS,
+  type ClientFileErrorCode,
   type FileApiError,
   type FileErrorCode,
 } from "./file-errors";
 
-type ServerFileErrorCode = Exclude<FileErrorCode, "NETWORK">;
+type ServerFileErrorCode = Exclude<FileErrorCode, ClientFileErrorCode>;
 
 /** The one failure response for file routes: `{ code, message }`, never vendor text. */
 export function fileApiError(
@@ -61,6 +62,11 @@ export async function answerFileRoute(
     if (error instanceof FileRouteError) {
       return fileApiError(error.code, { closedAt: error.closedAt });
     }
+    // Previews sample Sentry at 10%, so the function log always gets one line.
+    console.error(
+      `[file-route:${subsystem}] unhandled`,
+      error instanceof Error ? error.message.split("\n")[0] : "non-error throw",
+    );
     Sentry.captureException(error, { tags: { subsystem } });
     return fileApiError("SERVER_ERROR");
   }

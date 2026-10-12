@@ -21,7 +21,7 @@ describe("file error model", () => {
       const copy = friendlyFileError(code);
       expect(copy.title.length).toBeGreaterThan(0);
       expect(copy.description.length).toBeGreaterThan(0);
-      if (code === "NETWORK") continue;
+      if (code === "NETWORK" || code === "MEDIA_UNPLAYABLE") continue;
       expect(FILE_ERROR_STATUS[code]).toBeGreaterThanOrEqual(400);
       expect(FILE_ERROR_MESSAGE[code].length).toBeGreaterThan(0);
     }

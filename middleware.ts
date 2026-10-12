@@ -354,9 +354,17 @@ async function routeRequest(
   const isAuthenticated = !!getSessionCookie(req);
 
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.AUTHENTICATED_API_PREFIXES)) {
+    // `code`/`message` is the coded shape file routes answer with; `error` stays for older clients.
     return isAuthenticated
       ? next()
-      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      : NextResponse.json(
+          {
+            code: "UNAUTHORIZED",
+            message: "Sign in required.",
+            error: "Unauthorized",
+          },
+          { status: 401 },
+        );
   }
 
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {

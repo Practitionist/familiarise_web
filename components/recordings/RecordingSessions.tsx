@@ -18,12 +18,14 @@ import { recordingKeys } from "@/lib/documents/query-keys";
 import {
   keptUntilText,
   partLabel,
+  removedPartText,
   slotStateText,
   whoCanWatchText,
 } from "@/lib/stream/recording-copy";
 import type {
   RecordingBookingView,
   RecordingSlot,
+  RemovedPart,
   SlotPart,
 } from "@/lib/stream/recording-slots";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -44,6 +46,26 @@ async function fetchSlots(
   }
   if (!res.ok) throw new FileActionError(await friendlyErrorFromResponse(res));
   return res.json();
+}
+
+type SlotRow =
+  | { kind: "part"; partNo: number; part: SlotPart }
+  | { kind: "removed"; partNo: number; removed: RemovedPart };
+
+/** A slot's playable and removed parts in part order. */
+function slotRows(slot: RecordingSlot): SlotRow[] {
+  return [
+    ...slot.parts.map((part): SlotRow => ({
+      kind: "part",
+      partNo: part.partNo,
+      part,
+    })),
+    ...slot.removedParts.map((removed): SlotRow => ({
+      kind: "removed",
+      partNo: removed.partNo,
+      removed,
+    })),
+  ].sort((a, b) => a.partNo - b.partNo);
 }
 
 /** The per-booking Recording details list: the viewer's sessions, parts, catch-up and the player. */
@@ -77,7 +99,11 @@ export function RecordingSessions({
   );
   const selected = flatParts.find((p) => p.part.recordingId === selectedId);
   const nextInSlot = selected
-    ? selected.slot.parts.find((p) => p.partNo === selected.part.partNo + 1)
+    ? selected.slot.parts[
+        selected.slot.parts.findIndex(
+          (p) => p.recordingId === selected.part.recordingId,
+        ) + 1
+      ]
     : undefined;
 
   useEffect(() => {
@@ -184,52 +210,65 @@ export function RecordingSessions({
               </p>
               {slot.parts.length > 0 && (
                 <ul className="space-y-1.5">
-                  {slot.parts.map((part) => (
-                    <li
-                      key={part.recordingId}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="font-medium text-foreground">
-                          {part.title}
-                        </span>
-                        <span className="text-muted-foreground">
-                          {[
-                            partLabel(part),
-                            `${part.durationInMinutes} min`,
-                            part.makeUp ? "Make-up" : null,
-                            keptUntilText(part.keptUntil, day),
-                          ]
-                            .filter(Boolean)
-                            .map((t) => ` · ${t}`)
-                            .join("")}
-                        </span>
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-7"
-                          onClick={() => select(slot, part)}
+                  {slotRows(slot).map((row) => {
+                    if (row.kind === "removed") {
+                      return (
+                        <li
+                          key={`removed-${row.removed.partNo}`}
+                          className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
                         >
-                          <Play className="mr-1 h-3.5 w-3.5" aria-hidden />
-                          Watch
-                        </Button>
-                        {host && part.listing && (
+                          {removedPartText(row.removed, day)}
+                        </li>
+                      );
+                    }
+                    const { part } = row;
+                    return (
+                      <li
+                        key={part.recordingId}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium text-foreground">
+                            {part.title}
+                          </span>
+                          <span className="text-muted-foreground">
+                            {[
+                              partLabel(part),
+                              `${part.durationInMinutes} min`,
+                              part.makeUp ? "Make-up" : null,
+                              keptUntilText(part.keptUntil, day),
+                            ]
+                              .filter(Boolean)
+                              .map((t) => ` · ${t}`)
+                              .join("")}
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-1.5">
                           <Button
                             type="button"
                             size="sm"
-                            variant="ghost"
+                            variant="outline"
                             className="h-7"
-                            onClick={() => setManaging(part)}
+                            onClick={() => select(slot, part)}
                           >
-                            Manage
+                            <Play className="mr-1 h-3.5 w-3.5" aria-hidden />
+                            Watch
                           </Button>
-                        )}
-                      </span>
-                    </li>
-                  ))}
+                          {host && part.listing && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-7"
+                              onClick={() => setManaging(part)}
+                            >
+                              Manage
+                            </Button>
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </li>

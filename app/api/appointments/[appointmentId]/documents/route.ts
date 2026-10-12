@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getSession } from "@/lib/auth-server";
-import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
+import { applyRateLimit, documentCommitLimiter } from "@/lib/rate-limit";
 import {
   FileRouteError,
   answerFileRoute,
@@ -12,6 +12,7 @@ import { notifyDocumentAdded } from "@/lib/documents/document-notify";
 import {
   DocumentCommitSchema,
   commitDocumentUpload,
+  discardRefusedUpload,
 } from "@/lib/documents/upload-pipeline";
 import { readDocumentWorkspace } from "@/lib/documents/workspace";
 
@@ -39,13 +40,26 @@ export async function POST(request: Request, { params }: RouteContext) {
   return answerFileRoute(async () => {
     const session = await getSession();
     if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
+    const { appointmentId } = await params;
     const limited = await applyRateLimit(
-      documentUploadLimiter,
+      documentCommitLimiter,
       session.user.id,
     );
-    if (limited) return limited;
+    if (limited) {
+      // The object is already uploaded; without a row it would be orphaned.
+      const refused = DocumentCommitSchema.safeParse(
+        await request.json().catch(() => null),
+      );
+      if (refused.success) {
+        await discardRefusedUpload({
+          appointmentId,
+          userId: session.user.id,
+          storagePath: refused.data.storagePath,
+        });
+      }
+      return limited;
+    }
 
-    const { appointmentId } = await params;
     const input = await parseJsonBody(request, DocumentCommitSchema);
     const { document, party } = await commitDocumentUpload({
       appointmentId,

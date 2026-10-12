@@ -11,7 +11,11 @@ import {
   type LibraryRecording,
   type LibrarySession,
 } from "@/lib/library/library-query";
-import { partLabel, slotStateText } from "@/lib/stream/recording-copy";
+import {
+  partLabel,
+  removedPartText,
+  slotStateText,
+} from "@/lib/stream/recording-copy";
 import {
   PLAYABLE,
   learnerProfileId,
@@ -352,7 +356,11 @@ export function slotToLibraryRow(
     catchUpFrom,
     keptUntil: slot.parts[0]?.keptUntil ?? null,
     slotOrdinal: slot.ordinal,
-    notice: slot.parts.length === 0 ? slotStateText(slot, day) : null,
+    notice:
+      slot.parts.length === 0
+        ? slotStateText(slot, day)
+        : slot.removedParts.map((p) => removedPartText(p, day)).join(" ") ||
+          null,
     parts: slot.parts.map((part) => ({
       id: part.recordingId,
       title: part.title,
@@ -495,12 +503,17 @@ export async function readRecordingLibrary(args: {
 
   const candidates = await prisma.appointment.findMany({
     where,
-    select: { id: true },
+    select: { id: true, appointmentType: true },
     orderBy: { createdAt: "desc" },
     take: CANDIDATE_CAP,
   });
   const ids = candidates.map((c) => c.id);
-  const loaded = await loadRecordingViews(ids, userId);
+  const loaded = await loadRecordingViews(
+    ids,
+    userId,
+    new Date(),
+    new Set(candidates.map((c) => c.appointmentType)),
+  );
   const views = new Map([...loaded].map(([id, l]) => [id, l.view]));
   const rendered = renderedGroups(ids, views, query.q);
   const page = rendered

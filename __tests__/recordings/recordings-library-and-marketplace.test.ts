@@ -18,7 +18,6 @@ const mockTrialFindMany = jest.fn();
 const mockGetBestRecordingUrl = jest.fn();
 const mockRecordingFindUnique = jest.fn();
 const mockGetPublicRecordingBySlug = jest.fn();
-const mockLateJoinRecordingAccess = jest.fn();
 const mockAuditOperatorRecordingAccess = jest.fn();
 
 jest.mock("../../lib/auth-client", () => ({
@@ -127,16 +126,6 @@ jest.mock("../../lib/stream/recording-storage", () => {
   };
 });
 
-jest.mock("../../lib/stream/late-join-recordings", () => {
-  const actual = jest.requireActual("../../lib/stream/late-join-recordings");
-  return {
-    __esModule: true,
-    ...actual,
-    lateJoinRecordingAccess: (...args: unknown[]) =>
-      mockLateJoinRecordingAccess(...args),
-  };
-});
-
 jest.mock("../../lib/stream/recording-operator-access", () => {
   const actual = jest.requireActual(
     "../../lib/stream/recording-operator-access",
@@ -173,7 +162,6 @@ describe("Recordings Library, Marketplace Unlock & Contextual Appointment Chat",
     mockGetBestRecordingUrl.mockReturnValue(
       "https://signed.example.com/rec.mp4",
     );
-    mockLateJoinRecordingAccess.mockResolvedValue({ floors: new Map() });
     mockAuditOperatorRecordingAccess.mockResolvedValue(undefined);
   });
 

@@ -75,9 +75,20 @@ function extensionOf(name: string | undefined): string | null {
   return dot === -1 ? null : name.slice(dot).toLowerCase();
 }
 
+function resolveMimeType(type: string, ext: string | null): string | undefined {
+  if (ALLOWED_MIME_SET.has(type)) return type;
+  const generic = type === "" || type === "application/octet-stream";
+  return generic && ext ? MIME_BY_EXTENSION.get(ext) : undefined;
+}
+
+const EXTENSIONS_BY_MIME: ReadonlyMap<string, readonly string[]> = new Map(
+  ALLOWED_FILE_TYPES.map((t) => [t.mime, t.extensions] as const),
+);
+
 /**
  * Checks size and type; browsers that report no type (or a generic one) for
- * Office or CSV files are resolved from the extension.
+ * Office or CSV files are resolved from the extension. A name's extension must
+ * be one the resolved type allows, so a file reads as what it is.
  */
 export function validateUploadFile(file: {
   size: number;
@@ -86,15 +97,13 @@ export function validateUploadFile(file: {
 }): FilePolicyResult {
   if (file.size <= 0) return { ok: false, code: "FILE_MISSING" };
   if (file.size > MAX_FILE_BYTES) return { ok: false, code: "FILE_TOO_LARGE" };
-  if (ALLOWED_MIME_SET.has(file.type)) {
-    return { ok: true, mimeType: file.type };
-  }
-  const generic = file.type === "" || file.type === "application/octet-stream";
   const ext = extensionOf(file.name);
-  const inferred = generic && ext ? MIME_BY_EXTENSION.get(ext) : undefined;
-  return inferred
-    ? { ok: true, mimeType: inferred }
-    : { ok: false, code: "UNSUPPORTED_FILE_TYPE" };
+  const mimeType = resolveMimeType(file.type, ext);
+  if (!mimeType) return { ok: false, code: "UNSUPPORTED_FILE_TYPE" };
+  if (ext && !EXTENSIONS_BY_MIME.get(mimeType)?.includes(ext)) {
+    return { ok: false, code: "UNSUPPORTED_FILE_TYPE" };
+  }
+  return { ok: true, mimeType };
 }
 
 /** A short type label ("PDF", "DOCX") from the file name, else the MIME subtype. */

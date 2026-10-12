@@ -8,7 +8,10 @@
 import type { MemberRole, MemberStatus } from "@prisma/client";
 
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import type { ThreadStatus } from "@/lib/documents/thread-view";
+import {
+  compareThreadOrder,
+  type ThreadStatus,
+} from "@/lib/documents/thread-view";
 import type { RetentionLabelDTO } from "@/lib/stream/recording-slots";
 
 export type LibraryScope = "mine" | "everyone";
@@ -289,14 +292,15 @@ export function flattenLibrary<F extends { id: string }>(
   );
 }
 
-/** Threads that need the viewer first, then the latest update, then id for a stable order. */
+/** The shared thread order, read off a Library row. */
 export function compareLibraryThreads(
   a: Pick<LibraryDocument, "id" | "needsYou" | "latest">,
   b: Pick<LibraryDocument, "id" | "needsYou" | "latest">,
 ): number {
-  if (a.needsYou !== b.needsYou) return a.needsYou ? -1 : 1;
-  const at = a.latest.uploadedAt;
-  const bt = b.latest.uploadedAt;
-  if (at !== bt) return at > bt ? -1 : 1;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  const key = (t: typeof a) => ({
+    needsYou: t.needsYou,
+    updatedAt: t.latest.uploadedAt,
+    id: t.id,
+  });
+  return compareThreadOrder(key(a), key(b));
 }

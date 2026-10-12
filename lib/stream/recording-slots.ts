@@ -8,7 +8,6 @@ import {
 
 import prisma from "@/lib/prisma";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
-import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
 import {
   recordingRetentionLabels,
   type RecordingRetentionLabel,
@@ -70,6 +69,14 @@ export interface SlotPart {
   listing: { status: string; hasBuyers: boolean } | null;
 }
 
+export interface RemovedPart {
+  partNo: number;
+  partCount: number;
+  title: string;
+  removedAt: string | null;
+  removedBy: RemovedBy | null;
+}
+
 export interface RecordingSlot {
   ordinal: number;
   title: string;
@@ -85,6 +92,8 @@ export interface RecordingSlot {
     | { kind: "catch_up"; batchLabel: string; startsAt: string }
     | null;
   parts: SlotPart[];
+  /** Removed parts of a session that still has others, numbered with them. */
+  removedParts: RemovedPart[];
 }
 
 export type RemovedBy = "expert" | "support";
@@ -392,18 +401,29 @@ function playableParts(
   );
 }
 
+/** Part numbers over the session's playable and removed recordings, in recording order. */
+function partNumbers(recordings: RecordingRow[]): Map<string, number> {
+  const ordered = [...recordings].sort(
+    (a, b) =>
+      a.recordedAt.getTime() - b.recordedAt.getTime() || (a.id < b.id ? -1 : 1),
+  );
+  return new Map(ordered.map((r, index) => [r.id, index + 1]));
+}
+
 function toParts(
   parts: { recording: RecordingRow; makeUp: boolean }[],
   labels: Map<string, RecordingRetentionLabel>,
   host: boolean,
+  removed: RecordingRow[] = [],
 ): SlotPart[] {
+  const numbers = partNumbers([...parts.map((p) => p.recording), ...removed]);
   return parts.map(({ recording, makeUp }, index) => {
     const label = labels.get(recording.id);
     return {
       recordingId: recording.id,
       title: recording.title,
-      partNo: index + 1,
-      partCount: parts.length,
+      partNo: numbers.get(recording.id) ?? index + 1,
+      partCount: parts.length + removed.length,
       recordedAt: recording.recordedAt.toISOString(),
       durationInMinutes: recording.durationInMinutes,
       makeUp,
@@ -556,19 +576,12 @@ function hidesEarlierSessions(viewer: RecordingViewer): boolean {
   );
 }
 
-/** The viewer's seat floor on this batch when the plan hides earlier sessions from late joiners. */
-function lateJoinFloor(
-  viewer: RecordingViewer,
-  floors: ReadonlyMap<string, Date>,
-): Date | null {
-  if (!hidesEarlierSessions(viewer)) return null;
-  return floors.get(viewer.booking.class?.id ?? "") ?? null;
-}
-
 interface Draft {
   ordinal: number;
   rep: SessionRow;
   parts: { recording: RecordingRow; makeUp: boolean }[];
+  /** Removed recordings shown beside the remaining parts. */
+  removed: RecordingRow[];
   state: SlotState;
   missing: MissingSlot | null;
 }
@@ -598,21 +611,43 @@ function draftSlots(
         ordinal,
         rep,
         parts: [],
+        removed: [],
         state: "before_you_joined",
         missing: null,
       };
     }
     if (parts.length > 0) {
-      return { ordinal, rep, parts, state: "recorded", missing: null };
+      const removed = slotSessions
+        .flatMap((s) => s.meeting?.recordings ?? [])
+        .filter(
+          (r) =>
+            removedByOf(r.removalReason) !== null &&
+            tombstoneVisible(labels.get(r.id), now),
+        );
+      return { ordinal, rep, parts, removed, state: "recorded", missing: null };
     }
     if (!sessionEnded(rep, now)) {
-      return { ordinal, rep, parts, state: "upcoming", missing: null };
+      return {
+        ordinal,
+        rep,
+        parts,
+        removed: [],
+        state: "upcoming",
+        missing: null,
+      };
     }
     const inFlight = slotSessions.some((s) =>
       (s.meeting?.recordings ?? []).some((r) => IN_FLIGHT.has(r.status)),
     );
     if (inFlight) {
-      return { ordinal, rep, parts, state: "processing", missing: null };
+      return {
+        ordinal,
+        rep,
+        parts,
+        removed: [],
+        state: "processing",
+        missing: null,
+      };
     }
     const missing = missingReasonOf(
       slotSessions,
@@ -620,7 +655,14 @@ function draftSlots(
       !viewer.groupPlan,
       labels,
     );
-    return { ordinal, rep, parts, state: missing.reason, missing };
+    return {
+      ordinal,
+      rep,
+      parts,
+      removed: [],
+      state: missing.reason,
+      missing,
+    };
   });
 }
 
@@ -682,13 +724,25 @@ export function buildRecordingView(
           startsAt: source.startsAt.toISOString(),
         },
         parts: toParts(playableParts(source.sessions), labels, false),
+        removedParts: [],
       };
     }
+    const numbers = partNumbers([
+      ...d.parts.map((p) => p.recording),
+      ...d.removed,
+    ]);
     return {
       ...base,
       state: d.state,
       source: d.parts.length > 0 ? { kind: "own" } : null,
-      parts: toParts(d.parts, labels, viewer.role === "host"),
+      parts: toParts(d.parts, labels, viewer.role === "host", d.removed),
+      removedParts: d.removed.map((r) => ({
+        partNo: numbers.get(r.id) ?? 0,
+        partCount: d.parts.length + d.removed.length,
+        title: r.title,
+        removedAt: r.removedAt?.toISOString() ?? null,
+        removedBy: removedByOf(r.removalReason),
+      })),
     };
   });
 
@@ -721,14 +775,14 @@ export function buildRecordingView(
 function viewerBookingSelect(userId: string) {
   return {
     ...bookingSelect,
+    // One seat per booking and user; it decides entitlement and the late-join floor.
     participants: {
-      where: {
-        userId,
-        role: "CONSULTEE" as const,
-        status: { in: [...ENTITLED_SEAT] },
+      where: { userId, role: "CONSULTEE" as const },
+      select: {
+        status: true,
+        createdAt: true,
+        payment: { select: { createdAt: true } },
       },
-      select: { id: true },
-      take: 1,
     },
     payment: {
       where: { userId, paymentStatus: "SUCCEEDED" as const, deletedAt: null },
@@ -745,6 +799,30 @@ function viewerBookingSelect(userId: string) {
   } satisfies Prisma.AppointmentSelect;
 }
 
+/**
+ * A copy of a select without the relations at `paths`: Prisma sends each
+ * relation as its own round trip even when no row needs it. Dropped ones read as undefined.
+ */
+function withoutRelations<S extends object>(
+  select: S,
+  paths: readonly (readonly string[])[],
+): S {
+  const copy = structuredClone(select);
+  for (const path of paths) {
+    let node: unknown = copy;
+    for (const key of path.slice(0, -1)) {
+      node =
+        node !== null && typeof node === "object"
+          ? Reflect.get(node, key)
+          : undefined;
+    }
+    if (node !== null && typeof node === "object") {
+      Reflect.deleteProperty(node, path.at(-1) ?? "");
+    }
+  }
+  return copy;
+}
+
 const KIND_RELATION = {
   CONSULTATION: "consultation",
   SUBSCRIPTION: "subscription",
@@ -753,23 +831,43 @@ const KIND_RELATION = {
   CLASS: "class",
 } as const;
 
-/**
- * Drops the relations no booking on the page uses: Prisma sends each one as
- * its own round trip even when every key is null. Dropped ones read as undefined.
- */
-function onlyPresentKinds<S extends ReturnType<typeof viewerBookingSelect>>(
-  select: S,
+/** Relations no booking on the page or this viewer can use. */
+function unusedRelations(
   kinds: ReadonlySet<string>,
-): S {
-  const pruned = { ...select };
-  for (const [kind, relation] of Object.entries(KIND_RELATION)) {
-    if (!kinds.has(kind)) Reflect.deleteProperty(pruned, relation);
-  }
+  canHost: boolean,
+): string[][] {
+  const paths: string[][] = Object.entries(KIND_RELATION)
+    .filter(([kind]) => !kinds.has(kind))
+    .map(([, relation]) => [relation]);
   if (!kinds.has("WEBINAR") && !kinds.has("CLASS")) {
-    Reflect.deleteProperty(pruned, "participants");
-    Reflect.deleteProperty(pruned, "payment");
+    paths.push(["participants"], ["payment"]);
   }
-  return pruned;
+  if (!canHost) {
+    // Co-hosts and replay buyers only matter on the host side.
+    paths.push(
+      ["webinar", "select", "webinarPlan", "select", "collaborators"],
+      ["class", "select", "classPlan", "select", "collaborators"],
+      [
+        "occurrences",
+        "select",
+        "meeting",
+        "select",
+        "recordings",
+        "select",
+        "purchases",
+      ],
+    );
+  }
+  return paths;
+}
+
+/** A late joiner's floor: the later of the seat and its payment, since a re-bought seat reuses its row. */
+function seatFloor(
+  seat: { createdAt: Date; payment: { createdAt: Date } | null } | undefined,
+): Date | null {
+  if (!seat) return null;
+  const paidAt = seat.payment?.createdAt;
+  return paidAt && paidAt > seat.createdAt ? paidAt : seat.createdAt;
 }
 
 /** One read for the catch-up candidates of every (plan, ordinal) the page needs. */
@@ -803,7 +901,11 @@ async function readCatchUpRows(
       },
     },
     orderBy: [{ endsAt: "desc" }, { appointmentId: "asc" }],
-    select: catchUpRowSelect,
+    // Catch-up parts are learner-side and never 1:1: no buyers or consents needed.
+    select: withoutRelations(catchUpRowSelect, [
+      ["meeting", "select", "recordingConsents"],
+      ["meeting", "select", "recordings", "select", "purchases"],
+    ]),
   });
 }
 
@@ -860,26 +962,35 @@ export async function loadRecordingViews(
   appointmentIds: string[],
   userId: string,
   now: Date = new Date(),
+  /** The bookings' kinds when the caller already read them. */
+  knownKinds?: ReadonlySet<string>,
 ): Promise<Map<string, LoadedRecordingView>> {
   const loaded = new Map<string, LoadedRecordingView>();
   if (appointmentIds.length === 0) return loaded;
   const identity = await readIdentity(userId);
   const live = { id: { in: appointmentIds }, deletedAt: null };
-  const kinds = await prisma.appointment.findMany({
-    where: live,
-    select: { appointmentType: true },
-    distinct: ["appointmentType"],
-  });
+  const kinds =
+    knownKinds ??
+    new Set(
+      (
+        await prisma.appointment.findMany({
+          where: live,
+          select: { appointmentType: true },
+          distinct: ["appointmentType"],
+        })
+      ).map((k) => k.appointmentType),
+    );
   const rows = await prisma.appointment.findMany({
     where: live,
-    select: onlyPresentKinds(
+    select: withoutRelations(
       viewerBookingSelect(userId),
-      new Set(kinds.map((k) => k.appointmentType)),
+      unusedRelations(kinds, identity.consultantProfileId !== null),
     ),
   });
-  const viewers = rows.flatMap((row) => {
+  const drafts = rows.flatMap((row) => {
+    const seat = row.participants?.[0];
     const holdsSeat =
-      (row.participants?.length ?? 0) > 0 ||
+      ENTITLED_SEAT.some((status) => status === seat?.status) ||
       (row.payment ?? []).some(isPaymentEntitled);
     const booking: BookingRow = {
       id: row.id,
@@ -891,19 +1002,17 @@ export async function loadRecordingViews(
       class: row.class ?? null,
     };
     const viewer = recordingViewerOf(booking, identity, holdsSeat);
-    return viewer ? [{ viewer, sessions: row.occurrences }] : [];
-  });
-  const floors = viewers.some(({ viewer }) => hidesEarlierSessions(viewer))
-    ? (await lateJoinRecordingAccess(userId)).floors
-    : new Map<string, Date>();
-  const drafts = viewers.map(({ viewer, sessions }) => {
-    const floor = lateJoinFloor(viewer, floors);
-    return {
-      viewer,
-      sessions,
-      floor,
-      ordinals: catchUpOrdinals(viewer, sessions, floor, now),
-    };
+    if (!viewer) return [];
+    const sessions = row.occurrences;
+    const floor = hidesEarlierSessions(viewer) ? seatFloor(seat) : null;
+    return [
+      {
+        viewer,
+        sessions,
+        floor,
+        ordinals: catchUpOrdinals(viewer, sessions, floor, now),
+      },
+    ];
   });
   const catchUpRows = await readCatchUpRows(
     drafts.flatMap(({ viewer, ordinals }) =>

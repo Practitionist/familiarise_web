@@ -57,9 +57,12 @@ export const FileErrorCode = z.enum([
   "LATE_JOIN_HIDDEN",
   "RATE_LIMITED",
   "NETWORK",
+  "MEDIA_UNPLAYABLE",
   "SERVER_ERROR",
 ]);
 export type FileErrorCode = z.infer<typeof FileErrorCode>;
+/** Codes only the browser raises; no route answers with them. */
+export type ClientFileErrorCode = "NETWORK" | "MEDIA_UNPLAYABLE";
 
 /** The body every file route returns on failure. */
 export const FileApiErrorSchema = z.object({
@@ -70,7 +73,7 @@ export const FileApiErrorSchema = z.object({
 export type FileApiError = z.infer<typeof FileApiErrorSchema>;
 
 export const FILE_ERROR_STATUS: Record<
-  Exclude<FileErrorCode, "NETWORK">,
+  Exclude<FileErrorCode, ClientFileErrorCode>,
   number
 > = {
   UNAUTHORIZED: 401,
@@ -381,6 +384,11 @@ export function friendlyFileError(
       );
     case "NETWORK":
       return copy("Connection problem", "Check your connection and try again.");
+    case "MEDIA_UNPLAYABLE":
+      return copy(
+        "This recording can't be played",
+        "The video couldn't load. Try again, or open it in a new tab.",
+      );
     case "SERVER_ERROR":
       return copy("Something went wrong", "Something went wrong. Try again.");
   }
@@ -416,7 +424,7 @@ export class FileActionError extends Error {
 
 /** Fixed, neutral server text per code; logs and other clients read it, the UI never does. */
 export const FILE_ERROR_MESSAGE: Record<
-  Exclude<FileErrorCode, "NETWORK">,
+  Exclude<FileErrorCode, ClientFileErrorCode>,
   string
 > = {
   UNAUTHORIZED: "Sign in required.",

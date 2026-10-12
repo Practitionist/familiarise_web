@@ -163,6 +163,31 @@ export async function discardUpload(storagePath: string): Promise<void> {
   await deleteAppointmentDocument(storagePath).catch(() => false);
 }
 
+/** Best-effort delete of a refused commit's object: only the caller's own folder, never a committed file. */
+export async function discardRefusedUpload(args: {
+  appointmentId: string;
+  userId: string;
+  storagePath: string;
+}): Promise<void> {
+  try {
+    const party = await resolveDocumentParty(
+      prisma,
+      args.appointmentId,
+      args.userId,
+    );
+    if (!party) return;
+    const path = args.storagePath;
+    if (!path.startsWith(`${documentFolder(party)}/`) || path.includes(".."))
+      return;
+    const committed = await prisma.appointmentDocument.count({
+      where: { storagePath: path },
+    });
+    if (committed === 0) await discardUpload(path);
+  } catch {
+    // Best-effort: an orphan left here only costs storage.
+  }
+}
+
 /**
  * Writes a learner document or version, or an expert's shared file. Expert
  * replies go through the review route so status and reply land together.

@@ -226,7 +226,18 @@ function buildThread(
   };
 }
 
-/** Groups live rows by `COALESCE(rootDocumentId, id)`, newest thread first. */
+/** The one thread order for the workspace and the Library: needs-you first, then newest, then id. */
+export function compareThreadOrder(
+  a: { needsYou: boolean; updatedAt: string; id: string },
+  b: { needsYou: boolean; updatedAt: string; id: string },
+): number {
+  if (a.needsYou !== b.needsYou) return a.needsYou ? -1 : 1;
+  if (a.updatedAt !== b.updatedAt) return a.updatedAt > b.updatedAt ? -1 : 1;
+  if (a.id === b.id) return 0;
+  return a.id < b.id ? -1 : 1;
+}
+
+/** Groups live rows by `COALESCE(rootDocumentId, id)` in the shared thread order for the viewer. */
 export function buildThreadViews(
   rows: readonly ThreadRow[],
   ctx: ThreadViewContext,
@@ -238,9 +249,14 @@ export function buildThreadViews(
     if (list) list.push(row);
     else byRoot.set(rootId, [row]);
   }
+  const key = (t: ThreadView) => ({
+    needsYou: threadNeedsViewer(t, ctx.viewerRole),
+    updatedAt: t.updatedAt,
+    id: t.rootId,
+  });
   return [...byRoot.entries()]
     .map(([rootId, list]) => buildThread(rootId, list, ctx))
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    .sort((a, b) => compareThreadOrder(key(a), key(b)));
 }
 
 /** Whose move it is, from the viewer's side; drives the "Your turn" filter and counts. */

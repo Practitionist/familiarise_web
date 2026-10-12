@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
+import { applyRateLimit, documentUploadUrlLimiter } from "@/lib/rate-limit";
 import {
   generateStorageFileName,
   supabaseAdmin,
@@ -30,7 +30,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     const session = await getSession();
     if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
     const limited = await applyRateLimit(
-      documentUploadLimiter,
+      documentUploadUrlLimiter,
       session.user.id,
     );
     if (limited) return limited;

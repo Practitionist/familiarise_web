@@ -88,6 +88,8 @@ const removedDay = new Intl.DateTimeFormat("en-GB", {
   year: "numeric",
 });
 
+const PLAYBACK_STALL_MS = 20_000;
+
 const REMOVED_BY_COPY: Partial<Record<string, string>> = {
   EXPERT_DELETED: "the expert",
   SUPPORT_ACTION: "Familiarise support",
@@ -154,6 +156,7 @@ interface PlayerViewportProps {
   readonly onRetry: () => void;
   readonly onVideoError: () => void;
   readonly onVideoCanPlay: () => void;
+  readonly onVideoLoaded: () => void;
 }
 
 function PlayerViewport({
@@ -168,6 +171,7 @@ function PlayerViewport({
   onRetry,
   onVideoError,
   onVideoCanPlay,
+  onVideoLoaded,
 }: Readonly<PlayerViewportProps>) {
   if (fetchError) {
     return (
@@ -211,6 +215,7 @@ function PlayerViewport({
           }
         }}
         onLoadedMetadata={() => {
+          onVideoLoaded();
           if (videoRef.current) {
             if (savedTimeRef.current > 0) {
               videoRef.current.currentTime = savedTimeRef.current;
@@ -266,6 +271,8 @@ export function RecordingPlayerModal({
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [retriedOnError, setRetriedOnError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [loadedAttempt, setLoadedAttempt] = useState<number | null>(null);
 
   const recordingId = recording?.id ?? null;
   const initialPlaybackUrl = recording?.playbackUrl ?? null;
@@ -332,6 +339,7 @@ export function RecordingPlayerModal({
     setPlaybackSpeed(1);
     setTranscriptOpen(false);
     setRetriedOnError(false);
+    setLoadedAttempt(null);
 
     if (!open || !recordingId) {
       setIsLoadingUrl(false);
@@ -354,12 +362,46 @@ export function RecordingPlayerModal({
     }
   };
 
-  if (!recording) return null;
-
   const activePlaybackUrl = resolveActivePlaybackUrl(
     recording,
     resolvedPlayback,
   );
+
+  /** One fresh URL and reload per failure; a second failure shows the error state. */
+  const failPlayback = useCallback(() => {
+    if (!recordingId) return;
+    savedTimeRef.current = videoRef.current?.currentTime ?? 0;
+    if (retriedOnError) {
+      setFetchError(friendlyFileError("MEDIA_UNPLAYABLE").description);
+      return;
+    }
+    setRetriedOnError(true);
+    void fetchPresignedUrl(recordingId).then(() => setAttempt((a) => a + 1));
+  }, [recordingId, retriedOnError, fetchPresignedUrl]);
+
+  // Reload per attempt: a retried URL may be identical, so the src alone would not reload.
+  useEffect(() => {
+    if (attempt > 0) videoRef.current?.load();
+  }, [attempt]);
+
+  // A source that never reaches its metadata (stalled or unreachable) counts as a failure.
+  useEffect(() => {
+    if (!open || !activePlaybackUrl || fetchError || isLoadingUrl) return;
+    if (loadedAttempt === attempt) return;
+    const timer = setTimeout(failPlayback, PLAYBACK_STALL_MS);
+    return () => clearTimeout(timer);
+  }, [
+    open,
+    activePlaybackUrl,
+    fetchError,
+    isLoadingUrl,
+    loadedAttempt,
+    attempt,
+    failPlayback,
+  ]);
+
+  if (!recording) return null;
+
   const durationMins =
     recording.durationMinutes ?? recording.durationInMinutes ?? null;
   const formattedDuration = formatDuration(durationMins);
@@ -434,22 +476,15 @@ export function RecordingPlayerModal({
             playbackSpeed={playbackSpeed}
             onRetry={() => {
               setRetriedOnError(false);
-              void fetchPresignedUrl(recording.id);
+              void fetchPresignedUrl(recording.id).then(() =>
+                setAttempt((a) => a + 1),
+              );
             }}
             onVideoCanPlay={() => {
               setRetriedOnError(false);
             }}
-            onVideoError={() => {
-              savedTimeRef.current = videoRef.current?.currentTime ?? 0;
-              if (!retriedOnError) {
-                setRetriedOnError(true);
-                void fetchPresignedUrl(recording.id);
-              } else {
-                setFetchError(
-                  "The video couldn't load. Try again, or open it in a new tab.",
-                );
-              }
-            }}
+            onVideoLoaded={() => setLoadedAttempt(attempt)}
+            onVideoError={failPlayback}
           />
 
           <div className="flex flex-wrap items-center justify-between gap-3">

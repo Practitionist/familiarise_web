@@ -6,9 +6,6 @@ jest.mock("server-only", () => ({}));
 jest.mock("../../lib/stream/recording-retention", () => ({
   recordingRetentionLabels: jest.fn(async () => new Map()),
 }));
-jest.mock("../../lib/stream/late-join-recordings", () => ({
-  lateJoinRecordingAccess: jest.fn(async () => ({ floors: new Map() })),
-}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -23,7 +20,6 @@ import type { RecordingStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import { renderedGroups } from "@/lib/data/recording-library";
-import { lateJoinRecordingAccess } from "@/lib/stream/late-join-recordings";
 import type { RecordingRetentionLabel } from "@/lib/stream/recording-retention";
 import { recordingRetentionLabels } from "@/lib/stream/recording-retention";
 import {
@@ -207,6 +203,24 @@ describe("the slot rule", () => {
     );
   });
 
+  it("keeps a removed part beside the remaining ones, numbered with them", () => {
+    const { slots } = view(
+      [
+        session(1, 5, [
+          { id: "kept", minute: 0 },
+          { id: "gone", minute: 30, status: "EXPIRED" },
+        ]),
+      ],
+      { labels: new Map([["gone", { kind: "WHILE_ACTIVE" }]]) },
+    );
+    expect(slots[0]!.parts.map((p) => [p.partNo, p.partCount])).toEqual([
+      [1, 2],
+    ]);
+    expect(slots[0]!.removedParts).toMatchObject([
+      { partNo: 2, partCount: 2, removedBy: "expert" },
+    ]);
+  });
+
   it("reads an expert-removed recording as Removed until its retention date, then expired", () => {
     const gone = [session(1, 60, [{ id: "gone", status: "EXPIRED" }])];
     const at = (label: RecordingRetentionLabel) =>
@@ -223,7 +237,13 @@ describe("the batched loader and library pages", () => {
   it("reads a page of bookings in a fixed number of queries", async () => {
     const bookings = ["b1", "b2", "b3"].map((id) => ({
       ...classBooking(id),
-      participants: [{ id: `seat-${id}` }],
+      participants: [
+        {
+          status: "CONFIRMED",
+          createdAt: ago(id === "b1" ? 4 : 30),
+          payment: null,
+        },
+      ],
       payment: [],
       occurrences: [session(1, 5), session(2, 3, [{ id: `${id}-rec` }])],
     }));
@@ -236,7 +256,9 @@ describe("the batched loader and library pages", () => {
     const { select } = (prisma.appointment.findMany as jest.Mock).mock
       .calls[1][0];
     expect(select).not.toHaveProperty("consultation");
-    expect(lateJoinRecordingAccess).toHaveBeenCalledTimes(1);
+    // b1's seat came after its session 1, which it then does not see.
+    expect(loaded.get("b1")!.view.slots[0]!.state).toBe("before_you_joined");
+    expect(loaded.get("b2")!.view.slots[0]!.state).toBe("not_recorded");
     expect(prisma.appointmentOccurrence.findMany).toHaveBeenCalledTimes(1);
     expect(recordingRetentionLabels).toHaveBeenCalledTimes(1);
   });

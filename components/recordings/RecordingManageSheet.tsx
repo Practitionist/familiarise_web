@@ -100,6 +100,8 @@ export function RecordingManageSheet({
       if (kind === "delete") onOpenChange(false);
       await onUpdated?.();
     } catch (error) {
+      // A failed call may still have changed the row, so the list re-reads it.
+      void onUpdated?.();
       toast({
         title: "That didn't work",
         description:
