@@ -202,7 +202,7 @@ One policy, `lib/documents/file-policy.ts`, covers session documents and plan ma
 A plan material is a handout an expert attaches to an offering; every buyer of the offering can open it.
 
 - **Managing.** The offering editor's materials manager (`components/offerings/editor/MaterialsManager.tsx`) lets the expert upload, rename, describe, replace, reorder and delete files, up to 25 per offering. Organisation operators with `materials.manage.orgPlan` can do the same on an organisation's plans, and the plan's consultant sees those changes.
-- **Reading.** The booking's Materials card reads `GET /api/appointments/:id/materials`, which returns only the materials the viewer may open: the host, or a learner whose booking is paid. Organisation roles that are not a party see metadata only. Files open in the viewer tab (`/files/materials/[materialId]`).
+- **Reading.** The booking's Materials card reads `GET /api/appointments/:id/materials`, which returns only the materials the viewer may open: the host, or a learner whose booking is paid. Organisation roles that are not a party see metadata only. The hub card opens with "Files included with this offering." and gives every file an Open and a Download action, plus "+ n more" when the list is longer than the preview. Files open in the viewer tab (`/files/materials/[materialId]`).
 - **Files included.** Public plan pages for webinars and classes list the names and types of the attached files in a "Files included" card, without links, so a buyer knows what to expect.
 - **Who writes the rows.** Materials are never written through the booking: the upload-url route mints a single-use slot under the plan's folder and the commit route adds the next material.
 
@@ -230,7 +230,7 @@ Files are always reached through an access-checked route that signs a fresh link
 
 ## Pages and routes per role
 
-The appointment details page is the **hub**. It shows a snapshot card for each of Documents, Materials and Recordings and links to dedicated per-appointment pages. The cross-session libraries stay, grouped by appointment.
+The appointment details page is the **hub**. It shows a snapshot card for each of Documents, Materials and Recordings and links to dedicated per-appointment pages for Documents and Recordings. The Materials card is self-contained and there is no separate Materials page. The cross-session libraries stay, grouped by appointment.
 
 | Page                         | Consultant (owner, collaborator)                                    | Consultee                                                         | Organisation (participant)                                     |
 | ---------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------- |
@@ -291,7 +291,7 @@ The hub is three independent reads, not one summary. `ResourceSnapshot` queries 
 |   cover-letter.docx . done                                                        |
 |   photo.heic ........ not supported (HEIC)                     [Remove]           |
 +----------------------------------------------------------------------------------+
-| Filter: [All] [Your turn] [Waiting for expert] [Done]           Sort: [Recent v]  |
+| Filter: [All] [Your turn] [Waiting for review] [Done]           Sort: [Recent v]  |
 |                                                                                    |
 | ┌ Resume ─────────────────────────────────────────────── v3 · Waiting for Angela ┐|
 | │ ⓘ Waiting for Angela Anderson to review your latest version (since 2 Oct).      │|
@@ -318,7 +318,7 @@ The hub is three independent reads, not one summary. `ResourceSnapshot` queries 
 | <- Back to session   Documents · Career Coaching with Rahul Mehta                 |
 | Uploads open until 9 Nov 2026 · Kept until 7 Feb 2027        [Share a file]       |
 +----------------------------------------------------------------------------------+
-| Filter: [Needs you (1)] [Waiting for learner] [Done] [Shared by you]              |
+| Filter: [Your turn (1)] [Waiting for learner] [Done] [Shared by you]              |
 | ┌ Resume ───────────────────────────────────────────── v3 · Your turn ───────────┐|
 | │ ⓘ Rahul uploaded v3 on 2 Oct. Waiting for you to review.                        │|
 | │ timeline (as learner view)                                                      │|
@@ -424,6 +424,10 @@ All pages are per-user and dynamic, so there is no `revalidatePath` or tag to ma
 | File viewer         | none                                                                                                                        | Signs on every render; `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`                                         |
 
 Every API response carrying file metadata sends `Cache-Control: private, no-store`. URL state: the libraries use `useListParams` with `kind`, `from`, `to`, `source`, `person`, `status`, `q`, `view` (grouped or flat) and `page`; the workspace uses `?thread=<rootId>` and `?filter=your-turn|waiting|done|shared`; Recording details uses `?slot=<ordinal>&r=<recordingId>`.
+
+**Display zone.** All six library pages format times and dates in the same display zone as the booking pages (`useLibraryDay`, built on `useZonedFormat`), and date-only values such as retention dates are computed in that zone.
+
+**Status filter labels.** `libraryStatusLabel` (`lib/documents/thread-copy.ts`) takes its words from the same copy as the row chips for the viewer's side. A learner sees "Waiting for review" and "Your turn", an expert sees "Waiting for learner" and "Your turn", and a mixed or organisation view uses neutral labels.
 
 **Page-1 seeding.** All six library pages (documents and recordings for consultant, consultee and organisation) prefetch page 1 on the server through `seedLibraryPage` (`lib/library/library-seed.ts`) when the URL has no filters, so the list renders without a client round trip. A URL with `q`, `page` or any filter, and an operator inspecting another profile, fetch on the client.
 

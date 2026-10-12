@@ -88,7 +88,7 @@ All six library routes run inside `timedLibraryRead` (`lib/library/timed-read.ts
 
 - **Personal libraries**: `GET /api/dashboard/{consultant,consultee}/[profileId]/documents`, resolved by `lib/library/personal-library-route.ts`.
 - **Organisation library**: `GET /api/organizations/[orgId]/documents?scope=mine|everyone`; the `everyone` scope returns counts only.
-- **UI**: `LibraryBrowser` renders `ThreadTable` and `MaterialsTable` (`components/dashboard/library/DocumentTables.tsx`); expanding a thread lists its versions with "Superseded" and "Expert reply" labels.
+- **UI**: `LibraryBrowser` renders `ThreadTable` and `MaterialsTable` (`components/dashboard/library/DocumentTables.tsx`); expanding a thread lists its versions with "Superseded" and "Expert reply" labels. The status filter options come from `libraryStatusLabel` in the viewer's side words (learner: "Waiting for review", "Your turn"; expert: "Waiting for learner", "Your turn"; mixed or organisation views: neutral labels), and every date renders in the booking pages' display zone through `useLibraryDay`.
 
 ## 4. Error Model
 
@@ -107,3 +107,4 @@ Document, material, recording, explore-recording, organisation-material and admi
 4. **Root-Thread Pagination Helpers**: `buildRootThreadStatusWhere` and `readConsulteeDocuments` paged root threads for each dashboard separately. They are replaced by the session-paged `readDocumentLibrary`.
 5. **Flat Root-Only Library Rows**: Library `files` once held one row per thread root with the latest version's status, which hid version history. They are replaced by `LibraryDocument` threads with `versions[]`.
 6. **`lib/stream/late-join-recordings.ts` and `RecordingTable`**: The late-join helper and the flat recordings table. The late-join rule now lives in the recordings loader, and `RecordingTimeline` renders both the library and the booking page.
+7. **`LIBRARY_DOC_STATUS_LABEL` and `formatLibraryDate`**: A fixed status-label map and a fixed-zone date formatter. Status filter options now come from `libraryStatusLabel`, and dates from `useLibraryDay`; delete any import of the old names.

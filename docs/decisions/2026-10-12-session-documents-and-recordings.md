@@ -133,7 +133,7 @@ This record holds nineteen decisions about the files attached to a booking: how 
 - **Status:** Accepted (decision 8).
 - **Context:** Review work did not fit the details page's narrow aside. Three roles each rendered documents differently, and the libraries duplicated actions.
 - **Decision:**
-  - The details page shows snapshot cards for Documents, Materials and Recordings, each reading its own route (`/documents`, `/materials`, `/recordings` under the appointment).
+  - The details page shows snapshot cards for Documents, Materials and Recordings. Documents and Recordings link to their own routes (`/documents`, `/recordings` under the appointment); the Materials card opens with "Files included with this offering.", gives every file Open and Download plus "+ n more", and has no page of its own.
   - Organisation roles that are not a party to the booking are redirected to the session page.
   - `…/appointments/[id]/documents` holds threads, bulk upload and review.
   - `…/appointments/[id]/recordings` holds sessions, parts and the player.
@@ -168,7 +168,8 @@ This record holds nineteen decisions about the files attached to a booking: how 
   - Document `files` are threads, not file rows. Each carries `versions[]` (newest first) and `latest`, and the UI shows one expandable row per thread: title, "Latest: <name>", a "vN · N versions" chip, Started by, status, Updated and Open latest. The expanded panel marks earlier learner versions "Superseded" and expert files "Expert reply".
   - Plan materials are a separate per-group `materials` array shown in their own table, and recording `files` are sessions with `parts[]`.
   - Threads sort needs-you first, then newest, then id. The kind chips are All, Consultation, Subscription and Trial, and the source filter reads "Started by anyone", "you" or "the expert", plus "Plan materials only".
-  - Filters are the other person, kind, status (including "Your turn"), date and search, all in the URL.
+  - Filters are the other person, kind, status (including "Your turn"), date and search, all in the URL. Status labels use the row chips' words for the viewer's side, and neutral labels for mixed or organisation views.
+  - All six library pages format times and dates in the booking pages' display zone, and cards are ordered by latest session.
   - Collaborators and co-hosts see only appointments they are a party to.
 - **Alternatives considered:**
   - Flat file lists.
@@ -187,6 +188,7 @@ This record holds nineteen decisions about the files attached to a booking: how 
   - Never for upcoming sessions, and never before a late joiner's floor unless the plan allows it.
   - One server rule decides both the list and playback, and links always point at the viewer's own appointment.
   - The Library and the booking's Recordings page render one session timeline for every booking type: one row per session of the viewer's own booking with a state badge, and a catch-up is dated by the source session's recording, not its batch's start. Every past session shows, then the next upcoming one, then a count of the rest.
+  - Playback follows the list: catch-up playback takes precedence over the late-join refusal, which applies only when no catch-up covers the session.
   - Retention is said once in the card header, phrased by type; a trial is kept 90 days after the session, like a 1:1.
   - The rule is a pure core (`recordingViewerOf`, `catchUpOrdinals`, `pickCatchUpSources`, `buildRecordingView`) fed by one batched loader, `loadRecordingViews`; the library, the per-appointment route and page, and playback all share it. The library decides rendering in memory over a booking's newest 200 candidates and paginates only groups that render.
 - **Alternatives considered:**
@@ -286,8 +288,9 @@ This record holds nineteen decisions about the files attached to a booking: how 
 - **Status:** Accepted.
 - **Context:** An expert delete, retention, a 1:1 decline and a lapsed Stream copy all left the same empty slot, so a learner could not tell whether a session was never recorded or had been removed.
 - **Decision:**
-  - Add nullable `Recording.removedAt` and `Recording.removalReason` (`RecordingRemovalReason`: `EXPERT_DELETED`, `SUPPORT_ACTION`, `RETENTION`, `DECLINED`, `COPY_LAPSED`), written together with the `EXPIRED` status by whichever path removed the file.
+  - Add nullable `Recording.removedAt` and `Recording.removalReason` (`RecordingRemovalReason`: `EXPERT_DELETED`, `RETENTION`, `DECLINED`, `COPY_LAPSED`, `SUPPORT_ACTION`, `ORG_ACTION`), written together with the `EXPIRED` status by whichever path removed the file.
   - The slot resolver reads the tombstone: an expert delete reads "Removed by the expert on <date>" until the recording's retention date and then as expired; the other reasons read as declined or as the end of retention. A session that was recorded never reads "Not recorded".
+  - Rename and delete follow the session-content rule: the session host or an accepted co-host; an organisation's catalog managers only on a webinar or class plan the organisation owns, never a 1:1, subscription or trial, recorded as `ORG_ACTION` and named in the Removed row and the attendee notice; operators through their own grant.
   - An expert delete also notifies the booking's learners. A support or admin removal writes `SUPPORT_ACTION` and reads "Removed by Familiarise support on <date>". The notice is best-effort, names the actual remover, and its failure never fails the delete.
 - **Alternatives considered:**
   - Infer the reason from `status` and consent rows: it cannot separate an expert delete from retention.
