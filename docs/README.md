@@ -251,7 +251,7 @@ Session documents, plan materials and their relationship to recordings: the thre
 
 - [documents/README.md](./documents/README.md) - Session documents and plan materials architecture
 - [01-architecture.md](./documents/01-architecture.md) - Threading model, CAS transitions, 2-phase direct upload
-- [2026-10-12-session-documents-and-recordings.md](./decisions/2026-10-12-session-documents-and-recordings.md) - ADR-01 to ADR-18
+- [2026-10-12-session-documents-and-recordings.md](./decisions/2026-10-12-session-documents-and-recordings.md) - ADR-01 to ADR-19
 
 ---
 

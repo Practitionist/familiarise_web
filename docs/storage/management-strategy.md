@@ -15,13 +15,13 @@ This document includes comprehensive visual diagrams to illustrate the document 
 3. **[Document Upload Sequence Flow](#document-upload-sequence-flow)** - Detailed upload process interactions
 4. **[Document Review Sequence Flow](#document-review-sequence-flow)** - Consultant review workflow
 5. **[Automated Cleanup Process Flow](#automated-cleanup-process-flow)** - Maintenance and cleanup procedures
-6. **[Error Handling & Development Mode Scenarios](#error-handling--development-mode-scenarios)** - Error handling and testing scenarios
+6. **[Error Handling Scenarios](#error-handling-scenarios)** - Error handling scenarios
 
 ### 🎯 **Quick Navigation**
 
 - **For Developers**: See upload/review sequence diagrams for API integration
 - **For DevOps**: See cleanup process flow for maintenance understanding
-- **For Testing**: See error handling scenarios for development mode features
+- **For Testing**: See the error handling scenarios for failure and cleanup behaviour
 - **For Architecture**: See storage organization for infrastructure planning
 
 ## System Architecture Overview
@@ -79,12 +79,6 @@ graph TD
     J --> NN[Redirect to Login]
     S --> OO[Retry Upload Option]
     W --> PP[Show Database Error]
-
-    %% Development Mode
-    I --> QQ{Development Mode?}
-    QQ -->|Yes| RR[Bypass Access Control]
-    RR --> K
-    QQ -->|No| K
 
     style A fill:#e1f5fe
     style X fill:#c8e6c9
@@ -237,59 +231,32 @@ const ensureFolderExists = async (
 
 ```mermaid
 sequenceDiagram
-    participant U as User (Consultee)
+    participant U as User
     participant UI as React Component
     participant API as Next.js API
     participant DB as Prisma/Database
     participant SB as Supabase Storage
-    participant BG as Background Jobs
 
-    Note over U,BG: Document Upload Process
-
-    U->>UI: Select file and add description
-    UI->>UI: Validate file (size, type)
-
-    alt File Invalid
+    U->>UI: Select file
+    UI->>UI: Validate with the shared file policy
+    alt File invalid
         UI->>U: Show validation error
-    else File Valid
-        UI->>API: POST /api/appointments/{id}/documents
-
-        API->>API: Authenticate user
-        API->>API: Check appointment access
-
-        alt Development Mode
-            API->>API: Bypass access control
-            Note right of API: [DEV MODE] Allow any user
-        end
-
-        API->>SB: Check if documents bucket exists
-
-        alt Bucket Missing
-            API->>SB: Create documents bucket
-            SB->>API: Bucket created with permissions
-        end
-
-        API->>API: Generate unique filename
-        API->>SB: Upload file to folder structure
-        Note right of SB: appointments/{appointmentId}/<br/>consultee-{consulteeId}/
-
-        alt Upload Success
-            SB->>API: Return file URL and metadata
-            API->>DB: Save document record
-
-            alt Database Save Success
-                DB->>API: Document saved
-                API->>UI: Upload successful
-                UI->>U: Show success message
-            else Database Save Failed
-                API->>SB: Delete uploaded file (cleanup)
-                API->>UI: Database error
-                UI->>U: Show error with retry option
-            end
-        else Upload Failed
-            SB->>API: Upload error
-            API->>UI: Upload failed
-            UI->>U: Show network/storage error
+    else File valid
+        UI->>API: POST /api/appointments/{id}/documents/upload-url
+        API->>DB: Resolve party, confirmed booking, window and thread slot
+        API->>SB: createSignedUploadUrl (documents bucket, party folder)
+        API-->>UI: uploadUrl and storagePath
+        UI->>SB: PUT file straight to the signed URL
+        UI->>API: POST /api/appointments/{id}/documents (commit)
+        API->>SB: Verify the object (magic bytes, declared type)
+        API->>DB: Lock appointment, repeat the checks, insert the row
+        alt Commit fails
+            API->>SB: Delete the uploaded object
+            API-->>UI: Typed error
+            UI->>U: Show the fixed copy for the code
+        else Commit succeeds
+            API-->>UI: 201 document id, root id, version
+            UI->>U: Show the new version
         end
     end
 ```
@@ -297,15 +264,12 @@ sequenceDiagram
 #### Upload Implementation
 
 ```typescript
-// Complete upload process with hierarchy management
-const uploadAppointmentDocument = async (options: DocumentUploadOptions) => {
-  1. Validate file (size, type)
-  2. Ensure bucket exists
-  3. Generate unique filename
-  4. Create folder path
-  5. Ensure folder structure
-  6. Upload file
-  7. Return public URL
+// lib/documents/direct-upload.ts and lib/documents/upload-pipeline.ts
+const uploadBookingDocument = async (params) => {
+  1. validateUploadFile (shared file policy)
+  2. POST upload-url        -> { uploadUrl, storagePath }
+  3. PUT the file to uploadUrl, reporting progress
+  4. POST commit            -> verified object, row written under the booking lock
 }
 ```
 
@@ -328,16 +292,11 @@ sequenceDiagram
 
     API->>API: Authenticate consultant
 
-    alt Development Mode
-        API->>API: Bypass consultant access control
-        Note right of API: [DEV MODE] Allow any user
-    else Production Mode
-        API->>DB: Verify consultant ownership
-        alt Not Authorized
-            DB->>API: Access denied
-            API->>UI: 403 Forbidden
-            UI->>C: Show access denied message
-        end
+    API->>DB: Verify consultant ownership
+    alt Not Authorized
+        DB->>API: Access denied
+        API->>UI: 403 Forbidden
+        UI->>C: Show access denied message
     end
 
     API->>DB: Fetch documents for review
@@ -347,15 +306,15 @@ sequenceDiagram
 
     Note over C,SB: Document Review Action
 
-    C->>UI: Click review button
-    UI->>C: Show review dialog
+    C->>UI: Open the booking's Documents workspace
+    UI->>C: Show the review composer in the workspace
     C->>UI: Set status (APPROVED/REJECTED/NEEDS_REVISION)
-    C->>UI: Add review notes
+    C->>UI: Add review notes and an optional reply file
     C->>UI: Submit review
 
-    UI->>API: PATCH /api/appointments/{appointmentId}/documents/{docId}
+    UI->>API: POST /api/appointments/{appointmentId}/documents/{docId}/review
     API->>API: Validate review data
-    API->>DB: Update document review status
+    API->>DB: Compare-and-set the review status (no newer learner version)
 
     alt Update Success
         DB->>API: Review updated
@@ -395,7 +354,7 @@ See [support attachments](../support/08-intake-callbacks-attachments-and-limits.
 
 Session documents and plan materials live in the private Supabase `documents` bucket: small files (up to 10 MB), opened rarely, uploaded straight from the browser and signed on demand. Recordings live in the private Cloudflare R2 recordings bucket: hundreds of MB to several GB, streamed repeatedly, pulled in server-side by `transfer-recordings`. The split follows object size and read pattern. R2 charges no egress and has no per-plan upload cap, while Supabase Storage caps a single upload by plan. Each store has one signing helper. Public preview clips stay in the Supabase `recordings-previews` bucket. See [session documents](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [recordings](../stream/19-recordings-lifecycle-and-access.md).
 
-> Status: document retention (tombstone 90 days after the booking ends, purge 7 days later by the registered `purge-deleted-documents` job) lands with the documents & recordings mega-fix PR; see [session documents](../documents/README.md#retention-and-the-purge).
+Session documents are tombstoned 90 days after the booking ends (or is cancelled) and purged 7 days later by the registered `purge-deleted-documents` job (`lib/documents/document-purge.ts`). A tombstoned row keeps its object until the purge, and `reconcile-document-storage` imports the same `DOCUMENT_DELETE_GRACE_DAYS` constant so it never sweeps an object the purge still owns. The 10 MB limit and the allowed types come from one policy, `lib/documents/file-policy.ts`. See [session documents](../documents/README.md#retention-and-the-purge).
 
 ## Cleanup Strategy
 
@@ -476,28 +435,7 @@ interface CleanupStats {
 - Have successful upload status
 ```
 
-## Development Mode Enhancements
-
-### Access Control Bypass
-
-```typescript
-const isDevelopment = process.env.NODE_ENV === 'development';
-
-// In development mode:
-- Allow access to any appointment's documents
-- Bypass consultee/consultant access restrictions
-- Enable upload/review by any authenticated user
-- Log all access control bypasses
-```
-
-**Benefits:**
-
-- **Testing Flexibility**: Easy testing across different user roles
-- **Data Visibility**: View all documents for debugging
-- **Development Speed**: No need to switch between different user accounts
-- **Clear Marking**: All responses marked with `[DEV MODE]` for clarity
-
-### Error Handling & Development Mode Scenarios
+## Error Handling Scenarios
 
 ```mermaid
 sequenceDiagram
@@ -507,7 +445,7 @@ sequenceDiagram
     participant DB as Database
     participant SB as Supabase Storage
 
-    Note over U,SB: Error Handling & Development Mode
+    Note over U,SB: Error Handling
 
     rect rgb(255, 245, 245)
         Note over U,SB: Scenario 1: Bucket Not Found Error
@@ -523,22 +461,8 @@ sequenceDiagram
         UI->>U: Document uploaded successfully
     end
 
-    rect rgb(245, 255, 245)
-        Note over U,SB: Scenario 2: Development Mode Access
-        Note right of API: NODE_ENV=development
-        U->>UI: Access any appointment documents
-        UI->>API: GET documents (different user's appointment)
-        API->>API: Check isDevelopment = true
-        API->>API: Bypass access control
-        Note right of API: Log: [DEV MODE] Bypassing access control
-        API->>DB: Fetch documents (no user restriction)
-        DB->>API: Return all documents
-        API->>UI: Documents with [DEV MODE] label
-        UI->>U: Show documents with dev indicator
-    end
-
     rect rgb(255, 248, 225)
-        Note over U,SB: Scenario 3: Database Error with Graceful Handling
+        Note over U,SB: Scenario 2: Database Error with Graceful Handling
         U->>UI: View consultant documents
         UI->>API: GET consultant documents
         API->>DB: Query appointment documents
@@ -556,7 +480,7 @@ sequenceDiagram
     end
 
     rect rgb(248, 225, 255)
-        Note over U,SB: Scenario 4: Upload with Cleanup on Database Failure
+        Note over U,SB: Scenario 3: Upload with Cleanup on Database Failure
         U->>UI: Upload large document
         UI->>API: POST document
         API->>SB: Upload to storage

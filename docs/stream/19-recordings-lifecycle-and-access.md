@@ -2,8 +2,6 @@
 
 > How a session recording moves from Stream to our private R2 bucket, how long it lives, and who may watch which recording when a plan has several runs or batches. [13. Recording Webhooks](./13-recording-webhooks.md) covers the webhook handlers, transfer internals and API routes; this document covers the lifecycle as a whole, the retention rules and the shared-run access model. Decisions are in [the ADR](../decisions/2026-10-12-session-documents-and-recordings.md). Session documents are in [documents/README](../documents/README.md).
 
-> Status: parts of this architecture land with the documents & recordings mega-fix PR. They are marked inline; everything else describes code that exists today.
-
 ## Lifecycle
 
 A recording is a `Recording` row hanging off a `Meeting`, which hangs off one `AppointmentOccurrence`. The host starts it by hand after the consent gate. Stream stores the file for 14 days and the platform copies it into R2 before that copy lapses.
@@ -27,6 +25,19 @@ stateDiagram-v2
 ```
 
 A failed copy never lands in `FAILED`; every transfer failure returns the row to `READY` so the next run retries it. `FAILED` is reached only through `call.recording_failed`.
+
+### The removal tombstone
+
+Every path that makes a recording unplayable writes `EXPIRED` together with two nullable `Recording` columns, `removedAt` and `removalReason` (`RecordingRemovalReason`), so attendees can tell why a session has nothing to play. The migration is additive and nullable.
+
+| `removalReason`  | Written by                                                                                                      | What the slot shows                                                 |
+| ---------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `EXPERT_DELETED` | `DELETE /api/stream/recordings/:id`, which also notifies the booking's learners (`recording-removal-notice.ts`) | "Removed by the expert on 5 Oct." for 30 days, then "Not recorded." |
+| `RETENTION`      | `expire-recordings` when the platform or organisation deadline passes                                           | "The recording's retention period has ended."                       |
+| `DECLINED`       | The 1:1 decline discard (`recording-decline.ts`)                                                                | "No recording: a participant chose not to be recorded."             |
+| `COPY_LAPSED`    | `expire-recordings` for a `READY` row whose Stream link lapsed before the R2 copy                               | "The recording's retention period has ended."                       |
+
+The tombstone row keeps no media: the object, preview clip and thumbnail are deleted by the same flow that wrote it (or retried by `expire-recordings`).
 
 ## Webhook, R2 copy and playback
 
@@ -74,10 +85,8 @@ One platform schedule applies, evaluated by the daily `expire-recordings` job (`
 - An organisation can shorten retention for org-scoped recordings (`Organization.streamRecordingRetentionDays`); the effective deadline is the earlier of the two, and sold replays are exempt.
 - Expiry deletes the R2 object, the preview clip and the thumbnail, marks the row `EXPIRED`, and (org-scoped) writes an audit row.
 - A `READY` row whose Stream link lapsed without a copy is also expired; its holders get `410`.
-- **Cancelled bookings.** A cancelled, rejected or expired booking keeps its recordings watchable by the parties until their retention date, exactly like its documents. Released or refunded seats lose access. The UI shows "Kept until <date>" on every recording surface.
-- **Hard delete.** Only untouched offerings can be hard-deleted. The database cascade removes the `Meeting` and `Recording` rows, so the delete route selects each recording's `storagePath` with `tx` before the guarded delete and, after the transaction commits, calls `deleteRecordingAssets` best effort, reporting failures once per request. No sweeper is added.
-
-> Status: the cancelled-booking rule and the post-commit asset deletion on hard delete land with the documents & recordings mega-fix PR.
+- **Cancelled bookings.** A cancelled, rejected or expired booking keeps its recordings watchable by the parties until their retention date, exactly like its documents. Released or refunded seats lose access, because playback checks the seat on every request. Recording surfaces show "Available until <date>", "Kept while the booking is active" or "Kept permanently" (`keptUntilText` in `lib/stream/recording-copy.ts`).
+- **Hard delete.** Only untouched offerings can be hard-deleted. The database cascade removes the `Meeting` and `Recording` rows, so `lib/booking/offering-delete.ts` selects each recording's `storagePath` with `tx` before the guarded delete and, after the transaction commits, calls `deleteRecordingAssets` best effort, reporting failures once per request. No sweeper is added.
 
 ## Plans, runs, batches and sessions
 
@@ -120,6 +129,8 @@ erDiagram
     datetime recordedAt
     int durationInMinutes
     enum status
+    datetime removedAt "nullable tombstone"
+    enum removalReason "EXPERT_DELETED, RETENTION, DECLINED, COPY_LAPSED"
   }
 ```
 
@@ -140,9 +151,7 @@ A class plan runs batches B1, B2 and B3, each with sessions 1 to N, and any sess
 4. **One server rule** decides both what the list shows and what playback signs, so the list can never show a recording that playback refuses.
 5. **"Session details" always opens the learner's own booking**, focused on the slot (`.../appointments/<ownAppointmentId>/recordings?slot=<k>`). A purchased replay with no own appointment links to the public listing when published, otherwise has no link. Hosts and co-hosts open their batch's appointment.
 
-> Status: the slot-aware rule, catch-up, parts and the Recording details page land with the documents & recordings mega-fix PR. Until then the playback route applies the plan-wide arm described under Deprecated & Superseded Approaches.
-
-Each slot is in exactly one state: `recorded`, `catch_up`, `upcoming`, `processing`, `not_recorded`, `declined`, `removed`, `expired` or `before_you_joined`.
+The resolver is `lib/stream/recording-slots.ts` (`resolveRecordingViewer`, `readRecordingSlots`, `catchUpPlaybackAccess`, `viewerPlaybackAccess`). Each slot is in exactly one state: `recorded`, `catch_up`, `upcoming`, `processing`, `not_recorded`, `declined`, `removed`, `expired` or `before_you_joined`. A slot that is `not_recorded`, `declined`, `removed` or `expired` also carries a `missingReason`, and a `catch_up` slot keeps the reason its own session has nothing to play.
 
 ### The access check
 
@@ -210,30 +219,24 @@ The owner and accepted co-presenters always have access, a platform `ADMIN` has 
 
 One route per appointment serves 1:1, multi-session and catch-up cases: `.../appointments/[appointmentId]/recordings`, with `?slot=<ordinal>&r=<recordingId>` selecting a slot and part. Routes exist in the consultant, consultee and organisation trees. The appointment hub shows a snapshot card (sessions recorded of total, latest, "Kept until") that links here. Playback links are minted by each Watch click and never cached.
 
-> Status: lands with the documents & recordings mega-fix PR.
-
 ```
 +----------------------------------------------------------------------------------+
 | <- Back to session   Recordings · Beginner Class (batch that started 1 Oct)       |
-| Private to this batch's attendees · kept until 365 days after the final session   |
-+----------------------------------------------------------------------------------+
-| ┌ Player ──────────────────────────────────────────────┐  Session 3 · Loops        |
-| │                                                      │  Part 2 of 2 · 18 min     |
-| │                      ▶                               │  [Next part] [Download?]  |
-| └──────────────────────────────────────────────────────┘                          |
+| Private to this batch's members · Available until 5 Oct 2027                      |
 +----------------------------------------------------------------------------------+
 | Session 1 · Variables      3 Oct   1 part · 52 min                      [Watch]   |
 | Session 2 · Conditions     5 Oct   Not recorded. Catch-up from the batch that     |
 |                                    started 1 Sep · 49 min                [Watch]   |
 | Session 3 · Loops          8 Oct   Part 1 of 2 · 31 min                  [Watch]   |
 |                                    Part 2 of 2 · 18 min                  [Watch]   |
-| Session 4 · Functions     10 Oct   A participant chose not to be recorded.        |
-|                                    Catch-up from the batch that started 1 Sep      |
+| Session 4 · Functions     10 Oct   No recording: a participant chose not to be   |
+|                                    recorded. Catch-up from the batch that started  |
+|                                    1 Sep                                          |
 | Session 5 · Lists         15 Oct   Upcoming                                       |
 +----------------------------------------------------------------------------------+
 ```
 
-For a host the list has no catch-up rows (a host sees their own batch), plus a "Manage" action per part that opens the existing `RecordingManageSheet`. The **recordings library** is the same grouped list, one group per own appointment with the same slot rows, plus a "Purchased" group; other batches never appear as groups.
+"Watch" opens the player modal (`RecordingPlayerModal`), which mints the playback link on open and offers "Next part" within a session; there is no download action. For a host the list has no catch-up rows (a host sees their own batch), plus a "Manage" action per part that opens the existing `RecordingManageSheet`. The **recordings library** is the same grouped list, one group per own appointment with the same slot rows, plus a "Purchased" group; other batches never appear as groups.
 
 ```ts
 type Slot = {
@@ -250,30 +253,45 @@ type Slot = {
     | "removed"
     | "expired"
     | "before_you_joined";
+  missingReason: "not_recorded" | "declined" | "removed" | "expired" | null;
+  removedAt: string | null; // when an expert removed the session's recording
   source:
     | { kind: "own" }
     | { kind: "catch_up"; batchLabel: string; startsAt: string }
     | null;
   parts: {
     recordingId: string;
+    title: string;
     partNo: number;
-    partCount: number;
+    partCount: number; // "Part k of n" only when partCount > 1
     recordedAt: string;
     durationInMinutes: number;
     makeUp: boolean;
-    keptUntil: string | null;
+    keptUntil:
+      | { kind: "DATE"; until: string }
+      | { kind: "WHILE_ACTIVE" }
+      | { kind: "NEVER" }
+      | null;
+    listing: { status: string; hasBuyers: boolean } | null; // hosts only
   }[];
 };
 ```
 
-| Method and path                                                   | Response                                                                                         |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GET /api/appointments/:id/recordings`                            | `{ booking: { kind, title, batchLabel, viewerRole, keptUntil }, slots: Slot[] }`                 |
-| `GET /api/stream/recordings/:recordingId` (exists)                | Playback URL minted per request; the slot rule above is added                                    |
-| `PATCH`, `DELETE /api/stream/recordings/:recordingId` (exist)     | Host manage actions, unchanged                                                                   |
-| `GET /api/dashboard/{consultant,consultee}/:profileId/recordings` | `{ groups: { appointment, slots: Slot[] }[], purchased: Part[], total, page, pageSize, facets }` |
+| Method and path                                                   | Response                                                                                                                                           |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/appointments/:id/recordings`                            | `{ appointmentId, kind, title, batchLabel, viewerRole, audience, sharedAcrossRuns, slots: Slot[] }`; `audience` is `one_to_one`, `run` or `batch`  |
+| `GET /api/stream/recordings/:recordingId`                         | Playback URL minted per request under the slot rule; metadata also carries `removedAt` and `removalReason`                                         |
+| `PATCH`, `DELETE /api/stream/recordings/:recordingId`             | Host manage actions; `DELETE` writes the `EXPERT_DELETED` tombstone                                                                                |
+| `GET /api/dashboard/{consultant,consultee}/:profileId/recordings` | `LibraryPage`: `{ groups: { session, files, summary? }[], purchased?, total, page, pageSize, facets? }`, each file one part with its session label |
+| `GET /api/organizations/:orgId/recordings?scope=mine\|everyone`   | The same `LibraryPage`; `everyone` needs `operations.read` and returns counts only                                                                 |
+
+The library reads each booking with the same slot rule as its Recording details page, so a row there always plays there. The earlier plan-level and per-profile recording list routes no longer exist.
 
 Player failures use the shared typed error codes (`OWN_RECORDING_AVAILABLE`, `LATE_JOIN_HIDDEN`, `GONE`, `RATE_LIMITED`, `SERVER_ERROR`) described in [documents/README](../documents/README.md#typed-error-model-and-copy).
+
+## Replay sales
+
+A host can publish a recording as a replay, but purchase is not open yet. The public replay page (`/explore/recordings/[slug]`) shows "Coming soon" with "Replays can't be bought yet. Attendees of the session can watch it from their dashboard." to anyone without access, and "You can watch the full recording." to anyone with it. The purchase route and the `RecordingPurchase` model exist, and a pending or succeeded purchase exempts a recording from retention, but the storefront does not offer checkout.
 
 ## Storage
 
@@ -293,4 +311,5 @@ Recordings live in the private R2 bucket and are served by per-request presigned
 - **Three different cross-run rules.** The list, the consultee API (pinned to the own batch) and playback disagreed. Superseded by one rule shared by all three.
 - **"Session N" labels from the still-joinable list.** Past recordings never matched a session, so labels were wrong or missing. Superseded by `AppointmentOccurrence.ordinal` and "Part k of n".
 - **Per-plan storage tiers and the manual transfer route, and Supabase as a recording destination.** Replaced by automatic R2 transfer and one platform retention schedule (see [13](./13-recording-webhooks.md)).
+- **Plan-level and per-profile recording lists.** `/api/consultants/:id/recordings`, `/api/consultees/:id/recordings` and `/api/plans/{classes,webinars}/:id/recordings` each applied their own cross-run rule. They are deleted along with `lib/stream/session-recordings.ts` and `lib/stream/recording-attendee-scope.ts`.
 - **Recording objects surviving a hard delete.** The cascade removed rows but not R2 objects. Superseded by post-commit asset deletion.

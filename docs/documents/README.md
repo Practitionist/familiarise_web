@@ -2,8 +2,6 @@
 
 > Canonical architecture for the files attached to a booking: **session documents** (`AppointmentDocument`, the files a learner and an expert exchange with review rounds), **plan materials** (`PlanMaterial`, handouts an expert attaches to an offering) and how they relate to **recordings** ([stream/19](../stream/19-recordings-lifecycle-and-access.md)). The accepted decisions are recorded in [the ADR](../decisions/2026-10-12-session-documents-and-recordings.md).
 
-> Status: parts of this architecture land with the documents & recordings mega-fix PR. They are marked inline; everything else describes code that exists today.
-
 ## Index
 
 | #   | Document                                        | Scope                                                                                                         |
@@ -17,7 +15,7 @@ This README is the product and system overview. `01-architecture.md` holds the u
 | Kind             | Row                         | Who writes                                        | Who reads                       | Store                           |
 | ---------------- | --------------------------- | ------------------------------------------------- | ------------------------------- | ------------------------------- |
 | Session document | `AppointmentDocument`       | Learner (submission), expert (reply, shared file) | The two parties of that booking | Supabase `documents` bucket     |
-| Plan material    | `PlanMaterial`              | Expert, once per offering                         | Every buyer of the offering     | Supabase `documents` bucket     |
+| Plan material    | `PlanMaterial`              | Expert, or an org operator for an org plan        | Every buyer of the offering     | Supabase `documents` bucket     |
 | Recording        | `Recording` (see stream/19) | The call host, through Stream                     | Parties, by the slot rule       | Cloudflare R2 recordings bucket |
 
 Documents are offered for consultations, subscriptions and trials (`supportsDocuments` in `lib/appointments/kind-capabilities.ts`). Group kinds (webinars, classes) have materials and recordings but no documents.
@@ -25,16 +23,14 @@ Documents are offered for consultations, subscriptions and trials (`supportsDocu
 ## Data model
 
 - Each file is one `AppointmentDocument` row. A **thread** is `COALESCE(rootDocumentId, id)`, and `versionNo` is the 1-based sequence inside it. Live versions are unique per thread (sidecar index `appointment_doc_thread_version_unique` in `prisma/sql/check-constraints.sql`), and a live `storagePath` is unique (`AppointmentDocument_active_storagePath_key`). Application code never re-checks either rule.
-- A learner row has `uploadedByRole = CONSULTEE` and a stored `reviewStatus` (`PENDING`, `IN_REVIEW`, `NEEDS_REVISION`, `APPROVED`, `NOT_ACCEPTED`). An expert row has `uploadedByRole = CONSULTANT` and `responseToDocumentId` set when it answers a learner version. Its stored status is ignored by every reader.
+- A learner row has `uploadedByRole = CONSULTEE` and a stored `reviewStatus` (`PENDING`, `IN_REVIEW`, `NEEDS_REVISION`, `APPROVED`, `REJECTED`). The stored value is `REJECTED`; the thread status and the UI call it "Not accepted". An expert row has `uploadedByRole = CONSULTANT` and `responseToDocumentId` set when it answers a learner version. Its stored status is ignored by every reader.
 - Deletion is a tombstone: `deletedAt`, `deletedById` and a `removalReason`. The purge removes the object and then the row.
-- Two nullable columns on the thread's root record the removal flow (see below). Both are additive, so the launch schema freeze is respected.
+- Two nullable columns on `AppointmentDocument` record the removal flow. Both are additive, so the launch schema freeze is respected.
 
-> Status: lands with the documents & recordings mega-fix PR.
-
-| Column               | Type                                                                            | Meaning                                                               |
-| -------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `removalRequestedAt` | `DateTime? @db.Timestamptz`                                                     | The learner asked support to remove the thread. Set on the root only. |
-| `removalReason`      | `DocumentRemovalReason?` (`USER_REQUEST`, `RETENTION_EXPIRY`, `SUPPORT_ACTION`) | Why a row was tombstoned. Survives until the purge.                   |
+| Column               | Type                                                                                               | Meaning                                                               |
+| -------------------- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `removalRequestedAt` | `DateTime? @db.Timestamptz`                                                                        | The learner asked support to remove the thread. Set on the root only. |
+| `removalReason`      | `DocumentRemovalReason?` (`USER_REQUEST`, `RETENTION_EXPIRY`, `SUPPORT_ACTION`, `ACCOUNT_ERASURE`) | Why a row was tombstoned. Survives until the purge.                   |
 
 Run `npx prisma generate` after editing the schema, and check drift read-only with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`. Never `db push`: it would drop the `prisma/sql` sidecar indexes.
 
@@ -44,13 +40,11 @@ The window and the retention date are computed from occurrences and `BookingStat
 
 - A learner **submission** is a root with `versionNo = 1`. Every later learner upload or expert reply is the next version of the same thread.
 - **An expert reply is a version.** It is labelled "Expert reply", can carry notes and a file, and never shows a review status. The thread's status is derived only from the latest live learner version.
-- **The learner may add a version only while the latest live learner version is `PENDING` or `NEEDS_REVISION`.** While the expert is reviewing (`IN_REVIEW`) and after a final decision (`APPROVED`, `NOT_ACCEPTED`) the upload control is hidden, and the server refuses with a typed error. An expert's shared file is never revised by a learner.
+- **The learner may add a version only while the latest live learner version is `PENDING` or `NEEDS_REVISION`.** While the expert is reviewing (`IN_REVIEW`) and after a final decision (`APPROVED`, `REJECTED`) the upload control is hidden, and the server refuses with a typed error. An expert's shared file is never revised by a learner.
 - **The cap is 10 learner versions per document.** Expert replies do not count. `versionNo` keeps counting every row, so it can exceed 10. At the cap the card reads "All 10 versions used" instead of showing a button that fails.
 - A booking holds at most 20 live threads.
-- The server builds the thread view in one place (`lib/documents/thread-view.ts`). It returns the derived status, the banner, the removal flag, the learner-version counter, `allowedActions` and the versions without URLs. The UI renders `allowedActions` and never decides on its own.
+- The server builds the thread view in one place (`lib/documents/thread-view.ts`). It returns the derived status, a banner descriptor (`kind`, `since`, `versionNo`; the client writes the sentence), the removal flag, the learner-version counter, `allowedActions` and the versions without URLs. The UI renders `allowedActions` and never decides on its own.
 - "Superseded" is derived, never stored: a review whose target has a newer live learner version fails with `SUPERSEDED`.
-
-> Status: the version rules, the 10-learner-version cap, `thread-view.ts` and `allowedActions` land with the documents & recordings mega-fix PR.
 
 ### Thread state machine
 
@@ -99,36 +93,33 @@ stateDiagram-v2
     end note
 ```
 
-"Removal requested" is an orthogonal flag on the thread, drawn as a state for clarity. When support declines, the thread returns to whichever state it had.
+"Removal requested" is an orthogonal flag on the thread, drawn as a state for clarity. When support declines, the thread returns to whichever state it had. The stored enum value for a rejected version is `REJECTED`; the derived thread status and the label are "Not accepted" (`NOT_ACCEPTED`). Account erasure removes a thread from any state and purges it at once.
 
 ### Guards
 
 Every transition is a conditional write whose `WHERE` carries the expected prior state, inside the existing transaction where one exists. Inside `prisma.$transaction`, every helper receives `tx`, never the global client (`PG_POOL_MAX=1`). No status sweep exists.
 
-| Transition                                              | Where                                                  | Guard (inside the transaction)                                                                                                                                                                            | Refusal                                                                              |
-| ------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Learner adds a document                                 | Commit route via `persistAppointmentDocumentWithRetry` | `SELECT ... FOR UPDATE` on the appointment; party is the learner; booking not terminal; window open; live roots below 20                                                                                  | `APPOINTMENT_TERMINAL`, `UPLOAD_WINDOW_CLOSED`, `DOCUMENT_LIMIT_REACHED`             |
-| Learner uploads a newer version                         | Same, `resolveDocumentThreadSlot`                      | Learner root; latest live learner row is `PENDING` or `NEEDS_REVISION`; live learner rows below 10; window open                                                                                           | `THREAD_IN_REVIEW`, `THREAD_CLOSED`, `VERSION_LIMIT_REACHED`, `UPLOAD_WINDOW_CLOSED` |
-| Expert review (start, release, revise, approve, reject) | `POST .../:docId/review`                               | Party is the expert; `updateMany` where the row is live, learner-authored, has the expected `reviewStatus` and **no newer live learner version**; transition allowed by `REVIEW_TRANSITIONS`; window open | `SUPERSEDED`, `INVALID_REVIEW_TRANSITION`, `UPLOAD_WINDOW_CLOSED`                    |
-| Expert reply file                                       | Same request, same transaction as the status write     | Thread live, window open; the reply row is inserted after the compare-and-set succeeds; a failed transaction deletes the presigned object                                                                 | `UPLOAD_WINDOW_CLOSED`                                                               |
-| Learner withdraws the latest pending version            | `DELETE .../:docId`                                    | `updateMany` where learner-authored, `PENDING`, live, and no higher live version; sets the tombstone with `USER_REQUEST`                                                                                  | `DOCUMENT_NOT_DELETABLE`                                                             |
-| Expert deletes an own shared file                       | `DELETE .../:docId`                                    | `updateMany` where expert-authored, root, live; tombstones the root and its versions                                                                                                                      | `DOCUMENT_NOT_DELETABLE`                                                             |
-| Learner requests removal                                | `POST .../:docId/removal-request`                      | `updateMany` on the root where `removalRequestedAt` is null, live, and the latest learner status is not `PENDING`                                                                                         | `REMOVAL_ALREADY_REQUESTED`, `THREAD_CLOSED`                                         |
-| Support removes or declines                             | Back-office route                                      | Remove: `updateMany` on live thread rows, sets tombstone and reason. Decline: clears `removalRequestedAt` on the root                                                                                     | 409 on a lost race                                                                   |
-| Retention tombstone                                     | Purge arm 1                                            | `updateMany` where live and the booking's retention date has passed                                                                                                                                       | n/a                                                                                  |
-
-> Status: the review route, removal-request route and back-office removal route land with the documents & recordings mega-fix PR.
+| Transition                                              | Where                                              | Guard (inside the transaction)                                                                                                                                                                                                  | Refusal                                                                                                       |
+| ------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Learner adds a document                                 | Commit route via `commitDocumentUpload`            | `SELECT ... FOR UPDATE` on the appointment; party is the learner; booking not terminal, confirmed, window open; live roots below 20                                                                                             | `APPOINTMENT_TERMINAL`, `BOOKING_NOT_CONFIRMED`, `UPLOAD_WINDOW_CLOSED`, `DOCUMENT_LIMIT_REACHED`             |
+| Learner uploads a newer version                         | Same, `resolveDocumentThreadSlot`                  | Learner root; latest live learner row is `PENDING` or `NEEDS_REVISION`; live learner rows below 10; booking confirmed and window open                                                                                           | `THREAD_IN_REVIEW`, `THREAD_CLOSED`, `VERSION_LIMIT_REACHED`, `BOOKING_NOT_CONFIRMED`, `UPLOAD_WINDOW_CLOSED` |
+| Expert review (start, release, revise, approve, reject) | `POST .../:docId/review`                           | Party is the expert; `updateMany` where the row is live, learner-authored, has the expected `reviewStatus` and **no newer live learner version**; transition allowed by `REVIEW_TRANSITIONS`; booking confirmed and window open | `SUPERSEDED`, `INVALID_REVIEW_TRANSITION`, `THREAD_CLOSED`, `BOOKING_NOT_CONFIRMED`, `UPLOAD_WINDOW_CLOSED`   |
+| Expert reply file                                       | Same request, same transaction as the status write | Thread live, window open; the reply row is inserted after the compare-and-set succeeds; a failed transaction deletes the presigned object                                                                                       | `UPLOAD_WINDOW_CLOSED`                                                                                        |
+| Learner withdraws the latest pending version            | `DELETE .../:docId`                                | `updateMany` where learner-authored, `PENDING`, live, and no higher live version; sets the tombstone with `USER_REQUEST`                                                                                                        | `DOCUMENT_NOT_DELETABLE`                                                                                      |
+| Expert deletes an own shared file                       | `DELETE .../:docId`                                | `updateMany` where expert-authored, root, live; tombstones the root and its versions                                                                                                                                            | `DOCUMENT_NOT_DELETABLE`                                                                                      |
+| Learner requests removal                                | `POST .../:docId/removal-request`                  | `updateMany` on the root where `removalRequestedAt` is null, live, and the latest learner status is not `PENDING`                                                                                                               | `REMOVAL_ALREADY_REQUESTED`, `THREAD_CLOSED`                                                                  |
+| Support removes or declines                             | Back-office route                                  | Remove: `updateMany` on live thread rows, sets tombstone and reason. Decline: clears `removalRequestedAt` on the root                                                                                                           | 409 on a lost race                                                                                            |
+| Retention tombstone                                     | Purge arm 1                                        | `updateMany` where live and the booking's retention date has passed                                                                                                                                                             | n/a                                                                                                           |
 
 ### One party resolver
 
 Every document route, the viewer page and the workspace page resolve the caller through one function, so party logic exists once and trials work.
 
-- `resolveDocumentParty(db, appointmentId, userId)` in `lib/documents/document-party.ts` returns the caller's role (`learner` or `expert`) and the booking facts: kind, terminal state and time, the last live session's end, whether a session is upcoming, and the display names.
+- `resolveDocumentParty(db, appointmentId, userId)` in `lib/documents/document-party.ts` returns the caller's role (`learner` or `expert`) and the booking facts: kind, terminal state and time, whether the booking is confirmed, the last live session's end, the window and retention dates, and the display names. A caller who is not a party gets nothing, which the routes answer as not found.
 - Arms: consultation requester or plan owner; subscription requester or plan owner; trial learner or trial consultant.
-- `terminal` extends `isBookingTerminal` with a trial arm. `terminalAt` comes from the cancelling `BookingStatusHistory` row.
+- `terminal` covers cancelled, rejected and expired requests and cancelled or rejected trials. `terminalAt` comes from the cancelling `BookingStatusHistory` row. `confirmed` means the request is approved, scheduled or completed, or the trial is scheduled, completed or converted.
+- `documentWriteRefusal(booking)` gives the single reason a write is refused: `APPOINTMENT_TERMINAL`, `BOOKING_NOT_CONFIRMED` or `UPLOAD_WINDOW_CLOSED`.
 - It takes `db`, so it runs on `tx` inside a transaction.
-
-> Status: lands with the documents & recordings mega-fix PR.
 
 ## The 30-day upload window
 
@@ -137,22 +128,18 @@ Every document route, the viewer page and the workspace page resolve the caller 
 - The window is computed, not stored. It is checked inside the commit and review transactions, and returned by the workspace read and the hub summary.
 - When it closes, the thread is read-only for **both** sides: no uploads, reviews or replies, including a review that was started before. Opening and downloading continue until the retention date, and a removal request stays available.
 - The UI always states the reason and the date: "Uploads closed on 9 Nov, 30 days after the last session."
-
-> Status: lands with the documents & recordings mega-fix PR.
+- **Uploads need a confirmed booking.** A booking that is paid and accepted accepts writes; before that, uploads, reviews and replies are refused with `BOOKING_NOT_CONFIRMED`. `documentWriteRefusal` in `document-party.ts` orders the reasons: cancelled, then not confirmed, then window closed.
 
 ## Removal requests and the status banner
 
 A reviewed document cannot be deleted by the learner, because the expert's review refers to it. The learner asks support instead.
 
-1. The learner chooses "Request removal" on a reviewed thread. The route sets `removalRequestedAt` on the root with a conditional write.
-2. In the same request it opens or reuses the booking's `AppointmentSupportThread` in category `DOCUMENTS` through the support service, posts a message naming the document, and escalates to a human with reason `documents_removal`. The scripted documents flow gains the option "Remove a document I shared".
+1. The learner chooses "Request removal" on a reviewed thread. The route sets `removalRequestedAt` on the root with a conditional write. The option is available while the thread is in review or decided, not while it is waiting for a first review, and it stays available after the upload window closes.
+2. After that commit, the route opens or reuses the booking's `AppointmentSupportThread` in category `DOCUMENTS` through the support service (`lib/documents/removal-support.ts`), posts a message naming the document, and escalates to a human with reason `documents_removal`. If opening the support thread fails, the flag stays set, the response carries `supportThreadId: null` and one warning goes to Sentry. The scripted documents flow gains the option "Remove a document I shared".
 3. The thread banner reads "Removal requested on 5 Oct. Support will respond." The expert sees "Rahul asked support to remove this."
-4. A support agent opens the case. The back-office route `POST /api/staff/appointments/:appointmentId/documents/:documentId/removal`, gated by `requireBackofficeSurface("appointments.manage")`, offers **Remove** or **Decline**.
-   - Remove tombstones every version of the thread with `removalReason = USER_REQUEST` and the agent as `deletedById`. The purge removes the objects 7 days later.
+4. A support agent opens the case. `GET /api/staff/appointments/:appointmentId/documents` lists the booking's threads with open requests first, and `POST .../documents/:documentId/removal`, gated by `requireBackofficeSurface("appointments.manage")`, offers **Remove** or **Decline**.
+   - Remove tombstones every version of the thread with `removalReason` set to `USER_REQUEST` (the learner asked) or `SUPPORT_ACTION` (support's own initiative), and the agent as `deletedById`. The purge removes the objects 7 days later.
    - Decline clears `removalRequestedAt`, and the agent's reply in the support thread explains why.
-   - Support may also remove a document on its own initiative with `removalReason = SUPPORT_ACTION`.
-
-> Status: lands with the documents & recordings mega-fix PR.
 
 **Banner per state.** Every thread shows who acts next and since when, from the viewer's side. For an organisation booking, the banner names the consultancy as well as the person when the deliverer acts for an org ("Waiting for Angela Anderson (Acme Consulting) to review").
 
@@ -195,21 +182,34 @@ flowchart TD
   K --> L
 ```
 
-- **Arm 1 (retention tombstone).** Select appointments with live documents whose live occurrences all ended before `now - 90 days`, or which became terminal before the cutoff. Tombstone their rows with one conditional `updateMany` per appointment, setting `removalReason = RETENTION_EXPIRY`. Batches are bounded.
+- **Arm 1 (retention tombstone).** Select appointments with live documents whose live occurrences all ended before `now - 90 days`, or which became terminal before the cutoff. Tombstone their rows with one conditional `updateMany` per appointment, setting `removalReason = RETENTION_EXPIRY`. Batches are bounded: 50 bookings per batch and at most 20 batches per run.
 - **Arm 2 (purge).** Process versions before roots, so a root is purged only when no live or tombstoned child remains. Otherwise the `onDelete: SetNull` relation would turn surviving versions into separate one-version documents. The storage object is deleted before its row; rows flagged `isStorageMissing` skip the storage call.
 - **One grace constant** is shared by the purge and `reconcile-document-storage`, so the orphan sweep never treats an object as unreferenced while the purge still owns it.
 - **Reporting.** One `reportSentryMessage` per run on failures, never per row. The summary counts rows by reason: `{ tombstoned, purged, failedStorage, failedRows, byReason }`.
 
-> Status: arm 1, the registry entry, versions-before-roots ordering, `removalReason` and the shared grace constant land with the documents & recordings mega-fix PR.
+**Account erasure.** Erasing a user (`eraseUserSessionDocuments` in `lib/documents/document-erasure.ts`, called from the erasure scrub) tombstones every thread on bookings where the user is the learner and every file the user shared as the expert, with `removalReason = ACCOUNT_ERASURE`. It then purges those rows at once, objects before rows, instead of waiting for the grace window. An incomplete purge is reported on the erasure request and re-run.
 
 **Cancelled bookings are read-only until retention.** A cancelled, rejected or expired booking keeps its documents readable for **both** parties until the `keptUntil` date. Uploads, reviews and replies are refused with `APPOINTMENT_TERMINAL`, and both sides see one message: "This booking was cancelled on 4 Oct. Its files are read-only and kept until 2 Jan." Recordings follow the same rule, so the two halves of one booking never differ.
+
+## File policy
+
+One policy, `lib/documents/file-policy.ts`, covers session documents and plan materials: PDF, Word (`.doc`, `.docx`), Excel (`.xls`, `.xlsx`), PowerPoint (`.ppt`, `.pptx`), images (JPG, PNG, GIF, WebP), plain text and CSV, at most 10 MB each (`MAX_FILE_BYTES`). The same module builds the picker `accept` attribute and the copy shown to users, so the hint text cannot drift from the check. When a browser reports no type or a generic one, the type is resolved from the extension. The server repeats the check against the declared metadata (`checkDeclaredFile`) and then verifies the stored object's first bytes (`lib/documents/storage-verify.ts`), refusing executables and files whose header does not match the declared type.
+
+## Plan materials
+
+A plan material is a handout an expert attaches to an offering; every buyer of the offering can open it.
+
+- **Managing.** The offering editor's materials manager (`components/offerings/editor/MaterialsManager.tsx`) lets the expert upload, rename, describe, replace, reorder and delete files, up to 25 per offering. Organisation operators with `materials.manage.orgPlan` can do the same on an organisation's plans, and the plan's consultant sees those changes.
+- **Reading.** The booking's Materials card reads `GET /api/appointments/:id/materials`, which returns only the materials the viewer may open: the host, or a learner whose booking is paid. Organisation roles that are not a party see metadata only. Files open in the viewer tab (`/files/materials/[materialId]`).
+- **Files included.** Public plan pages for webinars and classes list the names and types of the attached files in a "Files included" card, without links, so a buyer knows what to expect.
+- **Who writes the rows.** Materials are never written through the booking: the upload-url route mints a single-use slot under the plan's folder and the commit route adds the next material.
 
 ## Storage: Supabase for documents, R2 for recordings
 
 |              | Session documents and plan materials                                                                                             | Recordings                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | Store        | Supabase Storage, private bucket `documents`                                                                                     | Cloudflare R2 private recordings bucket, with preview clips in the public Supabase `recordings-previews` bucket |
-| Object size  | Up to 10 MB each (`MAX_DOCUMENT_BYTES`)                                                                                          | Hundreds of MB to several GB                                                                                    |
+| Object size  | Up to 10 MB each (`MAX_FILE_BYTES`)                                                                                              | Hundreds of MB to several GB                                                                                    |
 | Write path   | Browser uploads straight to a presigned URL; the server verifies the object (magic bytes) and commits the row in one transaction | Server-side pull from Stream into R2 by `transfer-recordings`, with retries                                     |
 | Read path    | On-demand link: 60 seconds for a download, 5 minutes for the viewer page embed                                                   | On-demand presigned link, 4 to 24 hours by recording length                                                     |
 | Read pattern | Opened a few times, small                                                                                                        | Streamed with range requests, rewatched, sometimes sold                                                         |
@@ -224,8 +224,7 @@ Files are always reached through an access-checked route that signs a fresh link
 - **Open** is a plain link that opens a new tab on a same-origin viewer route: `/files/documents/[documentId]` or `/files/materials/[materialId]`. The route authorises, signs a fresh link on every load, embeds the file and renders friendly HTML on any error. Middle-click and copy-link work, and a reload re-signs.
 - **Download** keeps the JSON preflight (`?format=json`) so a failure returns to the page as a toast.
 - There is no in-drawer preview and no byte proxying through a function.
-
-> Status: the viewer routes land with the documents & recordings mega-fix PR.
+- A signed-out visitor sees a sign-in prompt that returns to the same file.
 
 ## Pages and routes per role
 
@@ -240,14 +239,12 @@ The appointment details page is the **hub**. It shows a snapshot card for each o
 | Recordings library (grouped) | `/dashboard/consultant/[consultantId]/recordings`                   | `/dashboard/consultee/[consulteeId]/recordings`                   | `/dashboard/organization/[orgId]/recordings`                   |
 | File viewer (new tab only)   | `/files/documents/[documentId]`, `/files/materials/[materialId]`    | same                                                              | same                                                           |
 
-> Status: the Documents workspace, Recording details and file viewer pages land with the documents & recordings mega-fix PR.
-
 | Role                                                         | Hub cards                        | Documents workspace                                                                                                                         | Recording details                                      |
 | ------------------------------------------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | Learner (requester, trial learner, seat holder; org learner) | Documents, Materials, Recordings | Own threads; new document, bulk upload, new version (while waiting or needs revision), withdraw the latest pending version, request removal | Own batch by slot, parts, catch-up; Watch              |
 | Expert (plan owner, trial consultant; org deliverer)         | Same, with a "needs you" count   | Review queue; review, reply, share a file, delete an own shared file                                                                        | All parts of the appointment; manage sheet             |
 | Co-host (accepted collaborator)                              | Materials, Recordings            | Not applicable (group kinds have no documents)                                                                                              | Host view for the batches of plans they collaborate on |
-| Org owner or manager who is not a party                      | Session summary only             | No page (redirect to the hub with a notice)                                                                                                 | No page (redirect to the hub with a notice)            |
+| Org owner or manager who is not a party                      | Session summary only             | No page (redirect to the session page)                                                                                                      | No page (redirect to the session page)                 |
 | Platform staff                                               | Back-office tools                | Reached from the support case; can tombstone a document with a reason                                                                       | Unchanged                                              |
 
 ### Wireframes
@@ -277,7 +274,7 @@ The appointment details page is the **hub**. It shows a snapshot card for each o
 +-----------------------------------------------+----------------------------------+
 ```
 
-The hub adds no request. `readAppointmentDetail` returns a `resources` summary (documents: thread count, threads needing the viewer, latest activity, window close and `keptUntil`; materials: count and the first few; recordings: sessions recorded and total, parts, latest recording, `keptUntil`) computed in the same read.
+The hub is three independent reads, not one summary. `ResourceSnapshot` queries the Documents workspace route (thread count, threads needing the viewer, window close and `keptUntil`), `GET /api/appointments/:id/materials` (count and the first few files) and `GET /api/appointments/:id/recordings` (sessions recorded and total, parts, latest recording, `keptUntil`). The appointment detail read carries no `resources` field, so one slow store never blocks the page and each card shows its own loading and error state.
 
 **Documents workspace, learner.**
 
@@ -287,7 +284,7 @@ The hub adds no request. `readAppointmentDetail` returns a `resources` summary (
 | Uploads open until 9 Nov 2026 (30 days after your last session).                  |
 | Files are kept until 7 Feb 2027 (90 days after the booking ends).                 |
 +----------------------------------------------------------------------------------+
-| [ Drop files here or Browse ]  PDF, Word, images, text · 10 MB each · 3/20 used   |
+| [ Drop files here or Browse ]  PDF, Office, images, text · 10 MB each · 3/20 used  |
 |   resume.pdf ........ uploading 62%                                               |
 |   cover-letter.docx . done                                                        |
 |   photo.heic ........ not supported (HEIC)                     [Remove]           |
@@ -354,7 +351,7 @@ When the upload window has closed, both variants replace the dropzone and compos
 +----------------------------------------------------------------------------------+
 ```
 
-In the learner's view the person filter is "Expert". Library rows never act on a file except "Open"; every action happens in the workspace. Collaborators and co-hosts see only appointments they are a party to. The status filter reads the **latest** learner version in SQL.
+In the learner's view the person filter is "Expert". Library rows never act on a file except "Open"; every action happens in the workspace. Collaborators and co-hosts see only appointments they are a party to. The status filter reads the **latest** learner version in SQL. The documents library also lists the plan materials of each session, filterable with `source = materials`.
 
 **File viewer (new tab).**
 
@@ -378,30 +375,37 @@ The Recording details and recordings-library wireframes are in [stream/19](../st
 
 All pages are per-user and dynamic, so there is no `revalidatePath` or tag to manage; freshness comes from TanStack Query invalidation. The server component authorises, resolves the party and prefetches; the client component renders and mutates.
 
-| Page                | Query keys                                                                      | Freshness                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Hub                 | `["appointment-detail", id]`                                                    | Invalidated by every document or recording mutation                                                                               |
-| Documents workspace | `documentKeys.workspace(id)`                                                    | `staleTime` 30 s, refetch on focus; every mutation invalidates workspace, hub and library keys through one `documentKeys` factory |
-| Recording details   | `recordingKeys.appointment(id)`                                                 | Playback URLs are never cached: each Watch calls `GET /api/stream/recordings/:id`                                                 |
-| Libraries           | `documentKeys.library(scope, filters)`, `recordingKeys.library(scope, filters)` | `keepPreviousData` paging                                                                                                         |
-| File viewer         | none                                                                            | Signs on every render; `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`                                         |
+| Page                | Query keys                                                                                                                  | Freshness                                                                                                                         |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Hub                 | `["appointment-detail", id]`, `documentKeys.workspace(id)`, `materialKeys.appointment(id)`, `recordingKeys.appointment(id)` | Each card reads its own route; every document or recording mutation invalidates the matching keys                                 |
+| Documents workspace | `documentKeys.workspace(id)`                                                                                                | `staleTime` 30 s, refetch on focus; every mutation invalidates workspace, hub and library keys through one `documentKeys` factory |
+| Recording details   | `recordingKeys.appointment(id)`                                                                                             | Playback URLs are never cached: each Watch calls `GET /api/stream/recordings/:id`                                                 |
+| Libraries           | `documentKeys.library()`, `recordingKeys.library()`                                                                         | `keepPreviousData` paging                                                                                                         |
+| File viewer         | none                                                                                                                        | Signs on every render; `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`                                         |
 
-Every API response carrying file metadata sends `Cache-Control: private, no-store`. URL state: libraries use `useListParams` with `person`, `kind`, `status`, `from`, `to`, `q`, `view` and `page`; the workspace uses `?thread=<rootId>` and `?filter=your-turn|waiting|done|shared`; Recording details uses `?slot=<ordinal>&r=<recordingId>`.
+Every API response carrying file metadata sends `Cache-Control: private, no-store`. URL state: the libraries use `useListParams` with `kind`, `from`, `to`, `source`, `person`, `status`, `q`, `view` (grouped or flat) and `page`; the workspace uses `?thread=<rootId>` and `?filter=your-turn|waiting|done|shared`; Recording details uses `?slot=<ordinal>&r=<recordingId>`.
 
 Empty, loading and error states are explicit per page: card skeletons on the hub, a `loading.tsx` skeleton on the workspace, "No documents yet. Share files with your expert from the documents page." when empty, and for a cancelled booking the single read-only message above for both roles (never a Retry that cannot succeed).
 
 ## API contract
 
-| Method and path                                                         | Body / query                                                                                      | Response                                                                                                                                                                    | Errors                                                                                                                                                    |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/appointments/:id/documents`                                   | none                                                                                              | `{ booking: { kind, title, counterpart, viewerRole, terminal, uploadWindow: { closesAt, open }, keptUntil }, limits: { documents: { used, max: 20 } }, threads: Thread[] }` | 401, 404                                                                                                                                                  |
-| `POST /api/appointments/:id/documents/upload-url`                       | `{ fileName, mimeType, size, parentDocumentId? }`                                                 | `{ uploadUrl, storagePath }`                                                                                                                                                | `FILE_TOO_LARGE`, `UNSUPPORTED_FILE_TYPE`, `UPLOAD_WINDOW_CLOSED`, `THREAD_IN_REVIEW`, `THREAD_CLOSED`, `VERSION_LIMIT_REACHED`, `DOCUMENT_LIMIT_REACHED` |
-| `POST /api/appointments/:id/documents` (commit)                         | `{ storagePath, originalName, description?, parentDocumentId? }`                                  | `{ thread: Thread }`                                                                                                                                                        | Same as above, rechecked inside the transaction                                                                                                           |
-| `POST /api/appointments/:id/documents/:docId/review` (expert)           | `{ reviewStatus?, reviewNotes?, expectedLatestVersionNo, reply?: { storagePath, originalName } }` | `{ thread: Thread }`                                                                                                                                                        | `SUPERSEDED`, `INVALID_REVIEW_TRANSITION`, `UPLOAD_WINDOW_CLOSED`, `THREAD_CLOSED`                                                                        |
-| `DELETE /api/appointments/:id/documents/:docId`                         | none                                                                                              | `{ thread: Thread \| null }`                                                                                                                                                | `DOCUMENT_NOT_DELETABLE`                                                                                                                                  |
-| `POST /api/appointments/:id/documents/:docId/removal-request` (learner) | `{ note?: string }` (max 500 characters)                                                          | `{ removal: { requestedAt, supportThreadId } }`                                                                                                                             | `THREAD_CLOSED`, `REMOVAL_ALREADY_REQUESTED`                                                                                                              |
-| `GET /api/appointments/:id/documents/:docId/download?format=json`       | `disposition=attachment`                                                                          | `{ signedUrl, originalName, mimeType }`                                                                                                                                     | Typed errors                                                                                                                                              |
-| `GET /api/dashboard/{consultant,consultee}/:profileId/documents`        | `person`, `kind`, `status`, `from`, `to`, `q`, `page`                                             | `{ groups: { appointment, threads: ThreadSummary[] }[], total, page, pageSize, facets }`                                                                                    | 401, 403                                                                                                                                                  |
+| Method and path                                                         | Body / query                                                                                  | Response                                                                                                                                                                                                                                             | Errors                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/appointments/:id/documents`                                   | none                                                                                          | `{ booking: { id, kind, title, viewerRole, learnerName, expertName, organizationName, terminal, terminalAt, confirmed, readOnlyReason, uploadWindow: { open, closesAt }, keptUntil }, limits: { documents: { used, max: 20 } }, threads: Thread[] }` | 401, 404                                                                                                                                                                                                                                            |
+| `POST /api/appointments/:id/documents/upload-url`                       | `{ originalName, mimeType, fileSize, parentDocumentId? }`                                     | `{ uploadUrl, storagePath, mimeType }`                                                                                                                                                                                                               | `FILE_MISSING`, `FILE_TOO_LARGE`, `UNSUPPORTED_FILE_TYPE`, `BOOKING_NOT_CONFIRMED`, `APPOINTMENT_TERMINAL`, `UPLOAD_WINDOW_CLOSED`, `THREAD_IN_REVIEW`, `THREAD_CLOSED`, `VERSION_LIMIT_REACHED`, `DOCUMENT_LIMIT_REACHED`, `INVALID_THREAD_PARENT` |
+| `POST /api/appointments/:id/documents` (commit)                         | `{ storagePath, originalName, mimeType, fileSize, description?, parentDocumentId? }`          | `201 { document: { id, rootId, versionNo } }`                                                                                                                                                                                                        | The same checks, repeated inside `commitDocumentUpload`'s transaction; an expert may not pass `parentDocumentId` (`INVALID_INPUT`)                                                                                                                  |
+| `POST /api/appointments/:id/documents/:docId/review` (expert)           | `{ reviewStatus?, reviewNotes?, reply?: { storagePath, originalName, mimeType, fileSize } }`  | `{ document: { id, reviewStatus }, reply: { id, versionNo } \| null }`                                                                                                                                                                               | `SUPERSEDED`, `INVALID_REVIEW_TRANSITION`, `THREAD_CLOSED`, `BOOKING_NOT_CONFIRMED`, `APPOINTMENT_TERMINAL`, `UPLOAD_WINDOW_CLOSED`                                                                                                                 |
+| `DELETE /api/appointments/:id/documents/:docId`                         | none                                                                                          | `{ removed: true }`                                                                                                                                                                                                                                  | `DOCUMENT_NOT_DELETABLE`                                                                                                                                                                                                                            |
+| `POST /api/appointments/:id/documents/:docId/removal-request` (learner) | `{ note?: string }` (max 500 characters)                                                      | `{ removal: { rootId, requestedAt }, supportThreadId }` (`supportThreadId` is null when the support thread could not be opened; the flag is still set)                                                                                               | `THREAD_CLOSED`, `REMOVAL_ALREADY_REQUESTED`                                                                                                                                                                                                        |
+| `GET /api/appointments/:id/documents/:docId/download?format=json`       | `disposition=attachment`                                                                      | `{ signedUrl, originalName, mimeType }`; without `format=json` it answers a 302 to the same link                                                                                                                                                     | Typed errors                                                                                                                                                                                                                                        |
+| `GET /api/appointments/:id/materials`                                   | none                                                                                          | `{ materials: { id, name, mimeType, fileSize, description }[] }` in display order                                                                                                                                                                    | 401, 404                                                                                                                                                                                                                                            |
+| `GET /api/appointments/:id/recordings`                                  | none                                                                                          | `{ appointmentId, kind, title, batchLabel, viewerRole, audience, sharedAcrossRuns, slots: Slot[] }` (see stream/19)                                                                                                                                  | 401, 404                                                                                                                                                                                                                                            |
+| `GET /api/staff/appointments/:id/documents`                             | none                                                                                          | `{ threads: { rootId, title, uploadedBy, uploadedAt, versions, removalRequestedAt }[] }`                                                                                                                                                             | back-office `appointments.manage`                                                                                                                                                                                                                   |
+| `POST /api/staff/appointments/:id/documents/:docId/removal`             | `{ action: "remove", reason: "USER_REQUEST" \| "SUPPORT_ACTION" }` or `{ action: "decline" }` | `{ removed: <rows> }` or `{ declined: true }`                                                                                                                                                                                                        | 404, 409 on a lost race                                                                                                                                                                                                                             |
+
+**Libraries.** `GET /api/dashboard/{consultant,consultee}/:profileId/{documents,recordings}` and `GET /api/organizations/:orgId/{documents,recordings}?scope=mine|everyone` return one `LibraryPage`: `{ groups: { session, files, summary? }[], total, page, pageSize, facets?, purchased? }`. A page is ten sessions (appointments), each carrying its own files, so the grouped and flat views page the same way. `total` counts sessions, not files. Document `files` carry the thread `status`, `versionNo`, a `needsYou` flag and a `removalRequested` flag, and plan materials appear as rows with `source = materials`. The query accepts `q`, `kind`, `from`, `to`, `source` (`materials`, `mine`, `expert`, `learner`), `person`, `status` (`your-turn`, `waiting`, `done`, `shared`) and `page`; an unknown value is dropped rather than rejected. The organisation `everyone` scope needs `operations.read` and returns counts in `summary` instead of files.
+
+**Plan-material management.** For each offering type there are `GET` and `POST` on `/api/plans/{consultations,subscriptions,webinars,classes}/:planId/materials`, `POST .../materials/upload-url` and `PUT .../materials/order`. Single files are handled by `PATCH`, `PUT` (replace the file) and `DELETE` on `/api/plans/materials/:materialId` and opened through `/api/plans/materials/:materialId/download`. The handlers are shared in `app/api/plans/shared/materials-handler.ts`, and an offering holds at most 25 materials (`MATERIAL_LIMIT_REACHED`).
 
 Bulk upload is N independent presign-and-commit pairs run by the client with a concurrency of 3. Each commit is its own transaction against the 20-document cap, and each file reports its own result. No batch endpoint exists.
 
@@ -415,24 +419,26 @@ type Thread = {
     | "IN_REVIEW"
     | "NEEDS_REVISION"
     | "APPROVED"
-    | "NOT_ACCEPTED"
+    | "NOT_ACCEPTED" // derived from the stored REJECTED
     | "SHARED";
+  // The client builds the sentence from the kind, the version number and the booking's two names.
   banner: {
-    kind: BannerKind;
-    actorName: string;
+    kind: ThreadStatus | "REMOVAL_REQUESTED";
     since: string;
-    until?: string;
+    versionNo: number;
   };
-  removal: { requestedAt: string; supportThreadId: string } | null;
+  removal: { requestedAt: string } | null;
   learnerVersions: { used: number; max: 10 };
   allowedActions: (
     | "upload_version"
     | "withdraw_latest"
-    | "review"
-    | "reply"
+    | "review" // covers start, release, revise, approve, reject and the reply file
     | "delete_shared"
     | "request_removal"
   )[];
+  reviewTargetId: string | null; // the latest live learner version
+  latestVersionNo: number;
+  updatedAt: string;
   versions: {
     id: string;
     versionNo: number;
@@ -444,74 +450,56 @@ type Thread = {
     uploadedAt: string;
     note: string | null;
     feedback: string | null;
-    reviewStatus: string | null; // null on expert rows
+    reviewStatus: string | null; // the stored value; null on expert rows
+    reviewedAt: string | null;
     superseded: boolean;
     storageMissing: boolean;
   }[]; // no URLs: Open and Download are built from ids
 };
 ```
 
-> Status: the workspace read, review and removal-request routes and the `Thread` shape land with the documents & recordings mega-fix PR.
-
 ## Typed error model and copy
 
-Every document, material and recording route returns one error shape, parsed with Zod at the client boundary (`lib/files/error-copy.ts` maps code to copy for toasts and the viewer page).
+Every document, material and recording route returns one error body, `{ code, message, closedAt? }`, parsed with Zod at the client boundary. The vocabulary, the HTTP status per code and the fixed copy live in `lib/documents/file-errors.ts`; `lib/documents/api-error.ts` turns a thrown `FileRouteError` into the response. The body has no retry hint, and the server `message` is a fixed neutral string that the UI never shows.
 
 ```ts
-export const FileApiErrorCode = z.enum([
-  "UNAUTHORIZED",
-  "FORBIDDEN",
-  "NOT_FOUND",
-  "APPOINTMENT_TERMINAL",
-  "STORAGE_MISSING",
-  "STORAGE_UNAVAILABLE",
-  "SUPERSEDED",
-  "THREAD_CLOSED",
-  "THREAD_IN_REVIEW",
-  "UPLOAD_WINDOW_CLOSED",
-  "VERSION_LIMIT_REACHED",
-  "DOCUMENT_LIMIT_REACHED",
-  "FILE_TOO_LARGE",
-  "UNSUPPORTED_FILE_TYPE",
-  "REMOVAL_ALREADY_REQUESTED",
-  "OWN_RECORDING_AVAILABLE",
-  "LATE_JOIN_HIDDEN",
-  "RATE_LIMITED",
-  "GONE",
-  "SERVER_ERROR",
-]);
 export const FileApiErrorSchema = z.object({
-  code: FileApiErrorCode,
+  code: FileErrorCode, // the enum below
   message: z.string(),
-  retryable: z.boolean().optional(),
-  closedAt: z.string().datetime().optional(),
+  closedAt: z.string().datetime().optional(), // UPLOAD_WINDOW_CLOSED only
 });
-export type FileApiError = z.infer<typeof FileApiErrorSchema>;
 ```
 
-Copy is keyed on `code` and on who is looking, never on the HTTP status alone, and server `message` text is never shown for 5xx.
+The full code set is `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `GONE`, `INVALID_INPUT`, `APPOINTMENT_TERMINAL`, `BOOKING_NOT_CONFIRMED`, `UPLOAD_WINDOW_CLOSED`, `STORAGE_MISSING`, `STORAGE_UNAVAILABLE`, `SUPERSEDED`, `INVALID_REVIEW_TRANSITION`, `THREAD_CLOSED`, `THREAD_IN_REVIEW`, `INVALID_THREAD_PARENT`, `VERSION_LIMIT_REACHED`, `DOCUMENT_LIMIT_REACHED`, `MATERIAL_LIMIT_REACHED`, `DOCUMENT_NOT_DELETABLE`, `REMOVAL_ALREADY_REQUESTED`, `FILE_MISSING`, `FILE_TOO_LARGE`, `UNSUPPORTED_FILE_TYPE`, `OWN_RECORDING_AVAILABLE`, `LATE_JOIN_HIDDEN`, `RATE_LIMITED`, `NETWORK` (client only) and `SERVER_ERROR`. When a body carries no known code, the client falls back to the HTTP status.
 
-| Code (HTTP)                                            | Learner copy                                                                                                                 | Expert copy                                                      | Action                          |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------- |
-| `UNAUTHORIZED` (401)                                   | "You were signed out. Sign in again to open this file."                                                                      | same                                                             | Sign-in link with `callbackUrl` |
-| `FORBIDDEN` (403)                                      | "You don't have access to this file."                                                                                        | same                                                             | none                            |
-| `APPOINTMENT_TERMINAL` (403)                           | "This booking was cancelled, so its files are read-only."                                                                    | same                                                             | Link to the session             |
-| `NOT_FOUND` (404) / `GONE` (410)                       | "This file was removed."                                                                                                     | same                                                             | Refresh                         |
-| `STORAGE_MISSING` (404)                                | Own file: "This file didn't finish saving. Upload it again." Expert's file: "Ask your expert to upload it again."            | Mirror                                                           | Upload only for the uploader    |
-| `STORAGE_UNAVAILABLE` (503)                            | "Files are temporarily unavailable. Try again in a moment."                                                                  | same                                                             | Retry                           |
-| `SUPERSEDED` (409)                                     | "A newer version was uploaded. Refresh to see it."                                                                           | "The learner uploaded a newer version. Review that one instead." | Refresh                         |
-| `THREAD_IN_REVIEW` (409)                               | "Your expert is reviewing this version. You can upload again once they respond."                                             | n/a                                                              | none                            |
-| `THREAD_CLOSED` (409)                                  | "This document is closed: it was approved or not accepted."                                                                  | same                                                             | Request removal (learner)       |
-| `UPLOAD_WINDOW_CLOSED` (409)                           | "Uploads closed on 9 Nov, 30 days after the last session."                                                                   | same                                                             | none                            |
-| `VERSION_LIMIT_REACHED` (409)                          | "You've used all 10 versions for this document. Start a new document instead."                                               | n/a                                                              | New document                    |
-| `DOCUMENT_LIMIT_REACHED` (409)                         | "This booking already has 20 documents."                                                                                     | same                                                             | none                            |
-| `FILE_TOO_LARGE` (413) / `UNSUPPORTED_FILE_TYPE` (415) | "Files can be up to 10 MB." / "Upload a PDF, Word document, image (JPG, PNG, GIF) or text file." (never the raw MIME string) | same                                                             | Pick another file               |
-| `REMOVAL_ALREADY_REQUESTED` (409)                      | "You already asked for this to be removed. Support will reply in your session's support chat."                               | n/a                                                              | Link to support                 |
-| `OWN_RECORDING_AVAILABLE` / `LATE_JOIN_HIDDEN` (403)   | "Watch your own batch's recording of this session." / "This session took place before you joined."                           | n/a                                                              | Link to the slot                |
-| `RATE_LIMITED` (429)                                   | "Too many requests. Try again in a minute."                                                                                  | same                                                             | Retry after                     |
-| `SERVER_ERROR` (5xx), non-JSON, network                | "Something went wrong. Try again." / "Check your connection."                                                                | same                                                             | Retry                           |
+Copy is keyed on `code` and on who is looking, never on the HTTP status alone.
 
-> Status: the shared `FileApiErrorSchema` and the viewer-page copy land with the documents & recordings mega-fix PR.
+| Code (HTTP)                                           | Learner copy                                                                                                            | Expert copy                                                      |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `UNAUTHORIZED` (401)                                  | "You were signed out. Sign in again to open this file." (the viewer page adds a sign-in link that returns to the file)  | same                                                             |
+| `FORBIDDEN` (403)                                     | "You don't have access to this file."                                                                                   | same                                                             |
+| `NOT_FOUND` (404), `GONE` (410)                       | "This file was removed."                                                                                                | same                                                             |
+| `INVALID_INPUT` (400)                                 | "Check the details and try again."                                                                                      | same                                                             |
+| `APPOINTMENT_TERMINAL` (403)                          | "This booking was cancelled, so its files are read-only."                                                               | same                                                             |
+| `BOOKING_NOT_CONFIRMED` (409)                         | "You can share files once the booking is confirmed."                                                                    | same                                                             |
+| `UPLOAD_WINDOW_CLOSED` (409)                          | "Uploads closed on 9 Nov, 30 days after the last session."                                                              | same                                                             |
+| `STORAGE_MISSING` (404)                               | Own file: "This file didn't finish saving. Upload it again." Expert's file: "Ask your expert to upload it again."       | Mirror, naming the learner                                       |
+| `STORAGE_UNAVAILABLE` (503)                           | "Files are temporarily unavailable. Try again in a moment."                                                             | same                                                             |
+| `SUPERSEDED` (409)                                    | "A newer version was uploaded. Refresh to see it."                                                                      | "The learner uploaded a newer version. Review that one instead." |
+| `INVALID_REVIEW_TRANSITION` (409)                     | "This document's review has already finished. Refresh to see it."                                                       | same                                                             |
+| `THREAD_IN_REVIEW` (409)                              | "Your expert is reviewing this version. You can upload again once they respond."                                        | n/a                                                              |
+| `THREAD_CLOSED` (409)                                 | "This document is closed: it was approved or not accepted."                                                             | same                                                             |
+| `INVALID_THREAD_PARENT` (404)                         | "The version you're responding to was removed. Refresh and try again."                                                  | same                                                             |
+| `VERSION_LIMIT_REACHED` (409)                         | "You've used all 10 versions for this document. Start a new document instead."                                          | n/a                                                              |
+| `DOCUMENT_LIMIT_REACHED` (409)                        | "This booking already has 20 documents."                                                                                | same                                                             |
+| `MATERIAL_LIMIT_REACHED` (409)                        | "This offering already has the most files it can hold. Remove one first."                                               | same                                                             |
+| `DOCUMENT_NOT_DELETABLE` (409)                        | "Only the latest version that is still waiting for review can be withdrawn."                                            | same                                                             |
+| `REMOVAL_ALREADY_REQUESTED` (409)                     | "You already asked for this to be removed. Support will reply in your session's support chat."                          | n/a                                                              |
+| `FILE_MISSING` (400)                                  | "Choose a file to upload."                                                                                              | same                                                             |
+| `FILE_TOO_LARGE` (413), `UNSUPPORTED_FILE_TYPE` (415) | "Files can be up to 10 MB." and "Upload a PDF, Word, Excel, PowerPoint, image (JPG, PNG, GIF, WebP), text or CSV file." | same                                                             |
+| `OWN_RECORDING_AVAILABLE`, `LATE_JOIN_HIDDEN` (403)   | "Watch your own batch's recording of this session." and "This session took place before you joined."                    | n/a                                                              |
+| `RATE_LIMITED` (429)                                  | "Too many requests. Try again in a minute."                                                                             | same                                                             |
+| `SERVER_ERROR` (500), `NETWORK`                       | "Something went wrong. Try again." and "Check your connection and try again."                                           | same                                                             |
 
 ## Sequence diagrams
 
@@ -548,7 +536,7 @@ sequenceDiagram
     L->>API: commit v3 as a reply to v2
     API->>DB: tx lock, latest learner status NEEDS_REVISION, learner versions below 10, insert v3 PENDING
     Note over W: Banner shows Waiting for expert to review v3
-    E->>API: POST review v3 approve (expected latest version 3)
+    E->>API: POST review v3 approve
     API->>DB: CAS v3 PENDING to APPROVED, no newer learner version
     Note over W: Banner shows Approved, upload hidden, Request removal offered
 ```
@@ -610,39 +598,54 @@ sequenceDiagram
 
 ## What happens on each lifecycle event
 
-| Event                                               | Documents                                                                                                          | Recordings                                                                                                                                                             | Storage                                                                                                         |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Learner withdraws the latest pending version        | Tombstoned (`USER_REQUEST`); the thread steps back to the previous version                                         | n/a                                                                                                                                                                    | Object purged 7 days later                                                                                      |
-| Booking cancelled, rejected or expired              | Read-only immediately for both parties; uploads, reviews and replies refused; `keptUntil` = cancellation + 90 days | Stay watchable by the parties until their own retention date; released or refunded seats lose access; retention schedule unchanged                                     | Objects kept until the purge                                                                                    |
-| Partial refund                                      | No change                                                                                                          | The refunded seat loses access (existing rule)                                                                                                                         | Kept                                                                                                            |
-| Reschedule                                          | No change: documents hang off the appointment; the window and retention dates move with the last live session      | The recording stays on the original occurrence; the replacement inherits the ordinal, so both group under one slot                                                     | Kept                                                                                                            |
-| Session voided and made up                          | No change                                                                                                          | Voided and make-up parts share the slot; make-up parts are labelled                                                                                                    | Kept                                                                                                            |
-| Completion (last session ends)                      | Open for 30 more days, then read-only; tombstoned at end + 90 days                                                 | Retention 90 days (1:1, after a subscription ends) or 365 days (webinar, after the final class session); never while published or bought                               | Documents purged at +97 days; recordings by `expire-recordings`                                                 |
-| Removal request fulfilled                           | Thread tombstoned (`USER_REQUEST`) by support                                                                      | n/a                                                                                                                                                                    | Purged 7 days later                                                                                             |
-| Support-initiated removal                           | Thread tombstoned (`SUPPORT_ACTION`)                                                                               | n/a                                                                                                                                                                    | Purged 7 days later                                                                                             |
-| Appointment hard-deleted (untouched offerings only) | Cascade deletes the rows                                                                                           | Cascade deletes `Meeting` and `Recording` rows                                                                                                                         | Document objects swept by `reconcile-document-storage`; recording objects deleted after the transaction commits |
-| User erasure                                        | The erasure scrub tombstones the user's session documents and the purge removes the files                          | 1:1 recordings the user is a party to are deleted and expired unless sold; the user's published group replays are unpublished (`lib/compliance/erasure/scrub-user.ts`) | Recording objects and previews deleted by the scrub                                                             |
-| Retention reached                                   | Arm 1 tombstones (`RETENTION_EXPIRY`), arm 2 purges after the grace window                                         | `expire-recordings` deletes the object, preview and thumbnail and marks the row `EXPIRED`                                                                              | Both stores cleaned by their own job                                                                            |
-| Plan archived                                       | No change                                                                                                          | No change                                                                                                                                                              | Kept                                                                                                            |
-| Organisation wound down                             | `Appointment.organizationId` set to null; documents unchanged                                                      | `Recording.organizationId` set to null                                                                                                                                 | Kept                                                                                                            |
-
-> Status: the cancelled-booking read-only rule for recordings, the retention arm for documents and the post-commit recording deletion on hard delete land with the documents & recordings mega-fix PR.
+| Event                                               | Documents                                                                                                                     | Recordings                                                                                                                                                                  | Storage                                                                                                         |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Learner withdraws the latest pending version        | Tombstoned (`USER_REQUEST`); the thread steps back to the previous version                                                    | n/a                                                                                                                                                                         | Object purged 7 days later                                                                                      |
+| Booking cancelled, rejected or expired              | Read-only immediately for both parties; uploads, reviews and replies refused; `keptUntil` = cancellation + 90 days            | Stay watchable by the parties until their own retention date; released or refunded seats lose access; retention schedule unchanged                                          | Objects kept until the purge                                                                                    |
+| Partial refund                                      | No change                                                                                                                     | The refunded seat loses access (existing rule)                                                                                                                              | Kept                                                                                                            |
+| Reschedule                                          | No change: documents hang off the appointment; the window and retention dates move with the last live session                 | The recording stays on the original occurrence; the replacement inherits the ordinal, so both group under one slot                                                          | Kept                                                                                                            |
+| Session voided and made up                          | No change                                                                                                                     | Voided and make-up parts share the slot; make-up parts are labelled                                                                                                         | Kept                                                                                                            |
+| Completion (last session ends)                      | Open for 30 more days, then read-only; tombstoned at end + 90 days                                                            | Retention 90 days (1:1, after a subscription ends) or 365 days (webinar, after the final class session); never while published or bought                                    | Documents purged at +97 days; recordings by `expire-recordings`                                                 |
+| Removal request fulfilled                           | Thread tombstoned (`USER_REQUEST`) by support                                                                                 | n/a                                                                                                                                                                         | Purged 7 days later                                                                                             |
+| Support-initiated removal                           | Thread tombstoned (`SUPPORT_ACTION`)                                                                                          | n/a                                                                                                                                                                         | Purged 7 days later                                                                                             |
+| Appointment hard-deleted (untouched offerings only) | Cascade deletes the rows                                                                                                      | Cascade deletes `Meeting` and `Recording` rows                                                                                                                              | Document objects swept by `reconcile-document-storage`; recording objects deleted after the transaction commits |
+| User erasure                                        | The erasure scrub tombstones the user's session documents with `ACCOUNT_ERASURE` and purges them at once, objects before rows | 1:1 recordings the user is a party to are deleted and expired unless sold; the user's published group replays are unpublished (`lib/compliance/erasure/scrub-user.ts`)      | Recording objects and previews deleted by the scrub                                                             |
+| Retention reached                                   | Arm 1 tombstones (`RETENTION_EXPIRY`), arm 2 purges after the grace window                                                    | `expire-recordings` deletes the object, preview and thumbnail and marks the row `EXPIRED` with `removedAt` and `removalReason = RETENTION` (see the tombstone in stream/19) | Both stores cleaned by their own job                                                                            |
+| Plan archived                                       | No change                                                                                                                     | No change                                                                                                                                                                   | Kept                                                                                                            |
+| Organisation wound down                             | `Appointment.organizationId` set to null; documents unchanged                                                                 | `Recording.organizationId` set to null                                                                                                                                      | Kept                                                                                                            |
 
 ## Key code locations
 
-| Module                                                            | Responsibility                                                                                |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `lib/documents/document-review.ts`                                | Review transitions, SQL root-thread filter, version slot helper (`resolveDocumentThreadSlot`) |
-| `lib/documents/upload-pipeline.ts`                                | Shared request parser, preflight limit check, serialized `FOR UPDATE` inserter                |
-| `lib/documents/storage-verify.ts`                                 | Magic-byte header rules, direct upload object verification, signed URL issuance               |
-| `lib/documents/direct-upload.ts`                                  | Browser client helper (`uploadAppointmentDocumentWithProgress`) with multipart fallback       |
-| `lib/documents/document-purge.ts`                                 | Tombstone purge (arm 2) and, with the mega-fix, the retention arm                             |
-| `lib/documents/document-party.ts`, `lib/documents/thread-view.ts` | One party resolver and the server-built thread view (land with the mega-fix PR)               |
-| `lib/data/consultee-documents.ts`                                 | SQL-paginated consultee root-thread reader and plan material reader                           |
-| `app/api/appointments/[appointmentId]/documents/`                 | Upload, commit, review, delete, removal request, download                                     |
-| `app/api/dashboard/consultant/[consultantId]/documents/route.ts`  | SQL-paginated consultant document feed with organization scope enforcement                    |
-| `lib/cron/cleanup-registry.ts`                                    | Registers `purge-deleted-documents` and `reconcile-document-storage`                          |
-| `scripts/cleanup/reconcile-document-storage.ts`                   | Daily bucket reconciliation (`isStorageMissing` detection and orphan cleanup)                 |
+| Module                                                                                          | Responsibility                                                                                                    |
+| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `lib/documents/document-review.ts`                                                              | Caps, `REVIEW_TRANSITIONS`, the learner version gate and `resolveDocumentThreadSlot`                              |
+| `lib/documents/upload-pipeline.ts`                                                              | Request schemas, `checkDeclaredFile`, `lockAppointment`, `requireWritableParty` and `commitDocumentUpload`        |
+| `lib/documents/file-policy.ts`                                                                  | The one upload policy for documents and materials: types, 10 MB limit, `accept` attribute and copy                |
+| `lib/documents/file-errors.ts`, `lib/documents/api-error.ts`                                    | The shared error vocabulary, status map and fixed copy; `answerFileRoute` and `FileRouteError` for route handlers |
+| `lib/documents/storage-verify.ts`, `lib/documents/direct-upload.ts`                             | Magic-byte header rules, signed-URL issuance; the browser upload helpers (`uploadBookingDocument`)                |
+| `lib/documents/document-dates.ts`                                                               | The window, retention and purge-grace constants and the pure date rule                                            |
+| `lib/documents/document-party.ts`, `lib/documents/thread-view.ts`, `lib/documents/workspace.ts` | One party resolver, the server-built thread view and the workspace read                                           |
+| `lib/documents/document-purge.ts`, `lib/documents/document-erasure.ts`                          | Retention tombstone and purge (the registered job); erasure of a user's session documents                         |
+| `lib/documents/removal-support.ts`                                                              | Opens the support thread for a removal request                                                                    |
+| `lib/documents/file-access.ts`, `lib/documents/file-download.ts`, `lib/documents/urls.ts`       | Access checks and per-request signing for documents and materials; canonical route builders                       |
+| `lib/library/library-query.ts`, `lib/data/document-library.ts`, `lib/data/recording-library.ts` | The shared library contract and the two grouped reads                                                             |
+| `lib/plans/booking-materials.ts`, `lib/plans/material-access.ts`                                | The materials a viewer may open on a booking                                                                      |
+| `app/api/plans/shared/materials-handler.ts`                                                     | The plan-materials management handlers shared by the four offering types                                          |
+| `app/api/appointments/[appointmentId]/{documents,materials,recordings}/`                        | Workspace read, upload, commit, review, delete, removal request, download; the materials and recordings reads     |
+| `app/api/staff/appointments/[appointmentId]/documents/`                                         | Support list of threads and the remove or decline action                                                          |
+| `app/files/{documents,materials}/[id]/page.tsx`                                                 | The same-origin file viewer                                                                                       |
+| `components/documents/workspace/`, `components/appointments/detail/ResourceSnapshot.tsx`        | The Documents workspace and the hub cards                                                                         |
+| `components/offerings/editor/MaterialsManager.tsx`                                              | The expert's materials manager in the offering editor                                                             |
+| `lib/cron/cleanup-registry.ts`                                                                  | Registers `purge-deleted-documents` and `reconcile-document-storage`                                              |
+| `scripts/cleanup/reconcile-document-storage.ts`                                                 | Daily bucket reconciliation (`isStorageMissing` detection and orphan cleanup)                                     |
+
+## Not built
+
+These items appear in the design discussion but do not exist in code.
+
+- "Copy from another offering" when attaching materials. An expert uploads files to each offering separately.
+- A separate "Plan materials" library page. Materials appear in the booking's Materials card and as `Materials` rows in the Documents library.
+- Removing the "Materials provided" text field from the offering form. It is deferred by the schema freeze and still renders.
 
 ## References
 
@@ -657,21 +660,26 @@ sequenceDiagram
 > [!WARNING]
 > **Do NOT re-introduce these patterns.** Residual code is listed so it can be deleted.
 
-| Superseded approach                                                       | Why it was superseded                                                                                                           | What to do with residue                                                                                     |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Public storage URLs and placeholder seed URLs in `fileUrl`                | Documents now live in a private bucket and resolve through authenticated routes                                                 | Write the canonical route path; stop returning a stored link in payloads                                    |
-| Stored time-limited links                                                 | They went stale after an hour, giving a dead link the next day                                                                  | Sign on demand                                                                                              |
-| Byte proxying through route handlers (`arrayBuffer()`)                    | Exhausted function memory on large files                                                                                        | Signed redirect or `?format=json`                                                                           |
-| Client-side thread grouping with notes from "the latest row that has one" | Showed stale feedback under newer versions and let the UI's rules drift from the server's                                       | Server-built thread view                                                                                    |
-| Expert rows displayed with their stored `APPROVED` status                 | Experts do not approve their own files                                                                                          | Readers ignore the stored status of expert rows; do not migrate the enum value                              |
-| Version cap over all rows                                                 | Expert replies used up the learner's budget                                                                                     | Count live learner rows only                                                                                |
-| Preflight, then `window.open` on the signed link                          | `window.open` with `noopener` returns `null`, so the fallback navigated the current tab away, and a reload broke after a minute | Delete `openAppointmentDocument`, `openPlanMaterial`, `resolveAndOpenSignedFile`; use the viewer route      |
-| In-drawer preview pane                                                    | Duplicated the viewer and had its own error paths                                                                               | Delete with `DocumentReviewDrawer`; `ThreadTimeline` and `ReviewComposer` replace it                        |
-| The Resources aside as the place for document work                        | Review rounds, bulk upload and history do not fit a narrow aside; three renderers drifted                                       | `ResourceSnapshot` cards; delete `ConsulteeDocuments`, `AppointmentDocumentsList`, the thread-list renderer |
-| Legacy upload modal `DocumentUpload`                                      | A second upload and list implementation outside the thread model                                                                | Point its caller at the workspace and delete it                                                             |
-| Three library list shells                                                 | Different filters, empty states and date definitions for one concept                                                            | `LibraryBrowser` grouped by appointment                                                                     |
-| Regex-derived library links from `backHref`                               | Fragile and unscoped to the booking                                                                                             | Explicit `hrefs` from each role's page                                                                      |
-| Purge as a `GITHUB_OUTPUT` wrapper outside the registry                   | One registered implementation per job                                                                                           | Register the job and delete `jobs/cleanup/purge-deleted-documents.ts`                                       |
-| Purge by tombstone age only                                               | Purging a root first re-rooted its surviving versions into separate documents                                                   | Versions before roots                                                                                       |
-| Separate grace windows (7 days purge, 30 days reconcile)                  | Two jobs disagreed about when an object is orphaned                                                                             | One shared constant                                                                                         |
-| Full-table in-memory grouping before pagination                           | Truncated multi-version threads and exhausted serverless memory                                                                 | SQL `skip`/`take` on `rootDocumentId: null`                                                                 |
+| Superseded approach                                                                                                                                              | Why it was superseded                                                                                                           | What to do with residue                                                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Public storage URLs and placeholder seed URLs in `fileUrl`                                                                                                       | Documents now live in a private bucket and resolve through authenticated routes                                                 | Write the canonical route path; stop returning a stored link in payloads                                      |
+| Stored time-limited links                                                                                                                                        | They went stale after an hour, giving a dead link the next day                                                                  | Sign on demand                                                                                                |
+| Byte proxying through route handlers (`arrayBuffer()`)                                                                                                           | Exhausted function memory on large files                                                                                        | Signed redirect or `?format=json`                                                                             |
+| Client-side thread grouping with notes from "the latest row that has one"                                                                                        | Showed stale feedback under newer versions and let the UI's rules drift from the server's                                       | Server-built thread view                                                                                      |
+| Expert rows displayed with their stored `APPROVED` status                                                                                                        | Experts do not approve their own files                                                                                          | Readers ignore the stored status of expert rows; do not migrate the enum value                                |
+| Version cap over all rows                                                                                                                                        | Expert replies used up the learner's budget                                                                                     | Count live learner rows only                                                                                  |
+| Preflight, then `window.open` on the signed link                                                                                                                 | `window.open` with `noopener` returns `null`, so the fallback navigated the current tab away, and a reload broke after a minute | Delete `openAppointmentDocument`, `openPlanMaterial`, `resolveAndOpenSignedFile`; use the viewer route        |
+| In-drawer preview pane                                                                                                                                           | Duplicated the viewer and had its own error paths                                                                               | Delete with `DocumentReviewDrawer`; `ThreadTimeline` and `ReviewComposer` replace it                          |
+| The Resources aside as the place for document work                                                                                                               | Review rounds, bulk upload and history do not fit a narrow aside; three renderers drifted                                       | `ResourceSnapshot` cards; delete `ConsulteeDocuments`, `AppointmentDocumentsList`, the thread-list renderer   |
+| Legacy upload modal `DocumentUpload`                                                                                                                             | A second upload and list implementation outside the thread model                                                                | Point its caller at the workspace and delete it                                                               |
+| Three library list shells                                                                                                                                        | Different filters, empty states and date definitions for one concept                                                            | `LibraryBrowser` grouped by appointment                                                                       |
+| Regex-derived library links from `backHref`                                                                                                                      | Fragile and unscoped to the booking                                                                                             | Explicit `hrefs` from each role's page                                                                        |
+| Purge as a `GITHUB_OUTPUT` wrapper outside the registry                                                                                                          | One registered implementation per job                                                                                           | Register the job and delete `jobs/cleanup/purge-deleted-documents.ts`                                         |
+| Purge by tombstone age only                                                                                                                                      | Purging a root first re-rooted its surviving versions into separate documents                                                   | Versions before roots                                                                                         |
+| Separate grace windows (7 days purge, 30 days reconcile)                                                                                                         | Two jobs disagreed about when an object is orphaned                                                                             | One shared constant                                                                                           |
+| Full-table in-memory grouping before pagination                                                                                                                  | Truncated multi-version threads and exhausted serverless memory                                                                 | SQL `skip`/`take` on `rootDocumentId: null`                                                                   |
+| `POST /api/documents/bulk-review`, `GET /api/appointments/:id/documents/consultant`, `GET /api/dashboard/consultee/:id/resources`                                | Each duplicated the single-review, upload and library paths and returned its own response shapes                                | Deleted. Review is `POST .../:docId/review`; the workspace read and the two libraries replace the lists       |
+| Plan-level and per-profile recording lists (`/api/consultants/:id/recordings`, `/api/consultees/:id/recordings`, `/api/plans/{classes,webinars}/:id/recordings`) | Each applied its own cross-run rule, so the lists and playback disagreed                                                        | Deleted. `GET /api/appointments/:id/recordings` and the two profile libraries share the slot rule             |
+| A `resources` summary inside the appointment detail read                                                                                                         | Coupled the hub to every file store and made one slow read block the page                                                       | Deleted. The hub cards read the documents, materials and recordings routes separately                         |
+| `lib/files/error-copy.ts`, `retryable` on the error body, and `NOT_ACCEPTED` as a stored review status                                                           | The error vocabulary lives in `lib/documents/file-errors.ts` with no retry hint; the stored enum value is `REJECTED`            | Use `FileApiErrorSchema`; map `REJECTED` to the derived `NOT_ACCEPTED` thread status only in `thread-view.ts` |
+| `persistAppointmentDocumentWithRetry`, `uploadAppointmentDocumentWithProgress` and `lib/data/consultee-documents.ts`                                             | Replaced by `commitDocumentUpload`, `uploadBookingDocument` and `readDocumentLibrary`                                           | Delete any remaining caller                                                                                   |

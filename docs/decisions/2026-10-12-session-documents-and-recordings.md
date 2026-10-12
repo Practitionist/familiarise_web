@@ -4,7 +4,7 @@
 - **Date**: 2026-10-12
 - **Related**: [Session documents architecture](../documents/README.md), [Recordings lifecycle and access](../stream/19-recordings-lifecycle-and-access.md), [Recording storage, retention and visibility](2026-10-09-recording-storage-retention-visibility.md) (partly superseded by ADR-11 and ADR-17 below)
 
-This record holds eighteen decisions about the files attached to a booking: how a review thread behaves, when uploads close, how long files live, how they are opened, which pages own which actions, and which recordings a learner of a multi-batch plan may watch. Each decision has its own Status, Context, Decision, Alternatives and Consequences. The 2026-10-09 record stays authoritative for where recordings are stored (pulled into R2), the consent-based discard of declined 1:1 recordings and the platform retention schedule; its visibility rules for webinar and class recordings are superseded by ADR-11, and its treatment of cancelled bookings is refined by ADR-17.
+This record holds nineteen decisions about the files attached to a booking: how a review thread behaves, when uploads close, how long files live, how they are opened, which pages own which actions, which recordings a learner of a multi-batch plan may watch, and how a removed recording is recorded. Each decision has its own Status, Context, Decision, Alternatives and Consequences. The 2026-10-09 record stays authoritative for where recordings are stored (pulled into R2), the consent-based discard of declined 1:1 recordings and the platform retention schedule; its visibility rules for webinar and class recordings are superseded by ADR-11, and its treatment of cancelled bookings is refined by ADR-17.
 
 ## Decisions
 
@@ -129,7 +129,8 @@ This record holds eighteen decisions about the files attached to a booking: how 
 - **Status:** Accepted (decision 8).
 - **Context:** Review work did not fit the details page's narrow aside. Three roles each rendered documents differently, and the libraries duplicated actions.
 - **Decision:**
-  - The details page shows snapshot cards for Documents, Materials and Recordings.
+  - The details page shows snapshot cards for Documents, Materials and Recordings, each reading its own route (`/documents`, `/materials`, `/recordings` under the appointment).
+  - Organisation roles that are not a party to the booking are redirected to the session page.
   - `…/appointments/[id]/documents` holds threads, bulk upload and review.
   - `…/appointments/[id]/recordings` holds sessions, parts and the player.
   - Libraries are read-only indexes that link to these pages.
@@ -159,7 +160,7 @@ This record holds eighteen decisions about the files attached to a booking: how 
 - **Status:** Accepted (decision 10).
 - **Context:** Three list implementations used different filters and date definitions, and the expert could not see whose turn it was.
 - **Decision:**
-  - The consultant, consultee and org libraries use `LibraryBrowser`, grouped by appointment.
+  - The consultant, consultee and org libraries use `LibraryBrowser` over one `LibraryPage` contract (`groups[].files`, ten sessions per page), grouped by appointment.
   - Filters are the other person, kind, status (including "Your turn"), date and search, all in the URL.
   - Collaborators and co-hosts see only appointments they are a party to.
 - **Alternatives considered:**
@@ -203,7 +204,7 @@ This record holds eighteen decisions about the files attached to a booking: how 
 - **Status:** Accepted.
 - **Context:** Session labels were computed from a list filtered to future sessions, so past recordings read "Session 1" or nothing. Catch-up needs a position that is comparable across batches.
 - **Decision:**
-  - Use `ordinal`. It is 1-based, inherited by reschedule replacements, and unique among live rows (`schema.prisma:5266-5268`, `check-constraints.sql:25-27`).
+  - Use `ordinal`. It is 1-based, inherited by reschedule replacements, and unique among live rows (`AppointmentOccurrence.ordinal` in `prisma/schema.prisma` and the partial unique index in `prisma/sql/check-constraints.sql`).
   - Titles come from `ClassContent.order` or `SubscriptionContent.order`, falling back to "Session k".
 - **Alternatives considered:** A new curriculum-position column on occurrences or recordings.
 - **Consequences:**
@@ -228,7 +229,8 @@ This record holds eighteen decisions about the files attached to a booking: how 
 - **Status:** Accepted.
 - **Context:** Threads were grouped on the client. That showed stale feedback under newer versions and let the UI's rules drift from the server's.
 - **Decision:**
-  - `GET /api/appointments/:id/documents` returns threads with `status`, `banner`, `removal`, `learnerVersions`, `allowedActions` and versions without URLs, built in `lib/documents/thread-view.ts`.
+  - `GET /api/appointments/:id/documents` returns threads with `status`, a `banner` descriptor (`kind`, `since`, `versionNo`), `removal`, `learnerVersions`, `allowedActions` and versions without URLs, built in `lib/documents/thread-view.ts`. The client writes the banner sentence.
+  - A stored `REJECTED` review status reads as the derived "Not accepted" status.
   - "Superseded" is derived, not stored.
 - **Alternatives considered:**
   - Keep client grouping.
@@ -242,7 +244,7 @@ This record holds eighteen decisions about the files attached to a booking: how 
 
 - **Status:** Accepted (accepted decision D-C).
 - **Context:** The removal banner and the recorded removal reason need a visible "removal requested" state and a recorded reason, under the launch schema freeze.
-- **Decision:** Add `AppointmentDocument.removalRequestedAt DateTime?` and `removalReason DocumentRemovalReason?` (`USER_REQUEST`, `RETENTION_EXPIRY`, `SUPPORT_ACTION`).
+- **Decision:** Add `AppointmentDocument.removalRequestedAt DateTime?` and `removalReason DocumentRemovalReason?` (`USER_REQUEST`, `RETENTION_EXPIRY`, `SUPPORT_ACTION`, `ACCOUNT_ERASURE`). Support picks `USER_REQUEST` or `SUPPORT_ACTION` when removing; the purge job writes `RETENTION_EXPIRY`; the erasure scrub writes `ACCOUNT_ERASURE` and purges at once.
 - **Alternatives considered:**
   - Derive the request from support threads.
   - A free-text reason.
@@ -259,7 +261,7 @@ This record holds eighteen decisions about the files attached to a booking: how 
 - **Alternatives considered:**
   - Hide both.
   - Keep the split.
-- **Consequences:** The documents list and download routes stop refusing terminal bookings for reads. Writes still refuse.
+- **Consequences:** The workspace and download routes stop refusing terminal bookings for reads, and the removal request stays available. Writes refuse with `APPOINTMENT_TERMINAL`; a booking that is not yet confirmed refuses them with `BOOKING_NOT_CONFIRMED`.
 
 ### ADR-18. The upload window also closes expert reviews and replies
 
@@ -269,32 +271,47 @@ This record holds eighteen decisions about the files attached to a booking: how 
 - **Alternatives considered:** Let the expert finish a started review.
 - **Consequences:** One rule, stated on the thread banner with its date.
 
+### ADR-19. A removed recording keeps a tombstone with a reason
+
+- **Status:** Accepted.
+- **Context:** An expert delete, retention, a 1:1 decline and a lapsed Stream copy all left the same empty slot, so a learner could not tell whether a session was never recorded or had been removed.
+- **Decision:**
+  - Add nullable `Recording.removedAt` and `Recording.removalReason` (`RecordingRemovalReason`: `EXPERT_DELETED`, `RETENTION`, `DECLINED`, `COPY_LAPSED`), written together with the `EXPIRED` status by whichever path removed the file.
+  - The slot resolver reads the tombstone: an expert delete reads "Removed by the expert on <date>" for 30 days and then as not recorded; the other reasons read as declined or as the end of retention.
+  - An expert delete also notifies the booking's learners.
+- **Alternatives considered:**
+  - Infer the reason from `status` and consent rows: it cannot separate an expert delete from retention.
+  - Keep the row forever with its media: contradicts deleting the object.
+- **Consequences:**
+  - Additive nullable columns; `prisma generate` and a read-only drift check, never `db push`.
+  - The slot states `declined`, `removed` and `expired` are real, and catch-up applies only when the viewer's own session has nothing to play.
+
 ## References
 
 - Design: [#2111](https://github.com/Practitionist/familiarise_web/issues/2111). Retention and cleanup: [#2112](https://github.com/Practitionist/familiarise_web/issues/2112).
 - Follow-ups: [#2083](https://github.com/Practitionist/familiarise_web/issues/2083), [#2084](https://github.com/Practitionist/familiarise_web/issues/2084), [#2085](https://github.com/Practitionist/familiarise_web/issues/2085), [#2086](https://github.com/Practitionist/familiarise_web/issues/2086).
 
-> Status: the behaviour in ADR-01 to ADR-11 and ADR-15 to ADR-18 lands with the documents & recordings mega-fix PR; ADR-12 to ADR-14 describe process and existing design.
-
 ## Deprecated & Superseded Approaches
 
-| Superseded approach                                        | Why it was superseded                                                                        | What to do with residue                                                        |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Standalone consultant replies with a separate reply dialog | A reply appeared as its own "Approved" document, detached from the draft it answered         | Nothing left; the remaining "Approved" display on expert rows goes with ADR-01 |
-| Expert rows displayed with their stored `APPROVED` status  | Experts do not approve their own files                                                       | Readers ignore it; do not migrate the enum value                               |
-| Preflight, then `window.open` on the signed link           | `window.open` with `noopener` returns `null`, so the fallback navigated the current tab away | Delete the helpers; "Open" is a plain link (ADR-07)                            |
-| In-drawer preview pane                                     | Duplicated the viewer and had its own error paths                                            | Delete with the drawer                                                         |
-| Stored time-limited links in `fileUrl`                     | Went stale an hour after upload                                                              | Write the canonical route path and stop returning the field                    |
-| The Resources aside as the place for document work         | Review rounds and bulk upload do not fit a narrow aside                                      | `ResourceSnapshot` cards (ADR-08)                                              |
-| "The Session page owns every action"                       | The owner preferred a hub with dedicated pages                                               | None in code                                                                   |
-| Legacy upload modal `DocumentUpload`                       | A second upload and list implementation                                                      | Point its caller at the workspace and delete it                                |
-| Three list shells for libraries                            | Different filters and date definitions for one concept                                       | `LibraryBrowser` (ADR-10)                                                      |
-| Regex-derived library links from `backHref`                | Fragile and unscoped to the booking                                                          | Explicit `hrefs`                                                               |
-| "Session N" from the still-joinable list                   | Past recordings never matched a session                                                      | Use `ordinal` (ADR-13)                                                         |
-| Each other run as its own library card                     | Tripled lists and links to pages the learner cannot open                                     | Catch-up slots (ADR-11)                                                        |
-| Three different cross-run recording rules                  | The list, the API and playback disagreed                                                     | One slot-aware rule (ADR-11)                                                   |
-| Version cap over all rows                                  | Expert replies used up the learner's budget                                                  | Count live learner rows only (ADR-03)                                          |
-| Client-side thread grouping                                | Stale feedback and drifted rules                                                             | Server-built thread view (ADR-15)                                              |
-| Purge as a `GITHUB_OUTPUT` wrapper outside the registry    | One registered implementation per job                                                        | Register it and delete the wrapper (ADR-06)                                    |
-| Purge by tombstone age only                                | Purging a root first re-rooted surviving versions                                            | Versions before roots (ADR-06)                                                 |
-| Separate 7-day and 30-day grace windows                    | Two jobs disagreed about when an object is orphaned                                          | One shared constant                                                            |
+| Superseded approach                                                                        | Why it was superseded                                                                        | What to do with residue                                                                  |
+| ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `POST /api/documents/bulk-review` and the plan-level and per-profile recording list routes | Each duplicated a path that now has one implementation                                       | Deleted; review is `POST .../:docId/review` and recordings follow the slot rule (ADR-11) |
+| A `resources` summary in the appointment detail read                                       | Coupled the hub to every store                                                               | Deleted; the hub cards read their own routes (ADR-08)                                    |
+| Standalone consultant replies with a separate reply dialog                                 | A reply appeared as its own "Approved" document, detached from the draft it answered         | Nothing left; the remaining "Approved" display on expert rows goes with ADR-01           |
+| Expert rows displayed with their stored `APPROVED` status                                  | Experts do not approve their own files                                                       | Readers ignore it; do not migrate the enum value                                         |
+| Preflight, then `window.open` on the signed link                                           | `window.open` with `noopener` returns `null`, so the fallback navigated the current tab away | Delete the helpers; "Open" is a plain link (ADR-07)                                      |
+| In-drawer preview pane                                                                     | Duplicated the viewer and had its own error paths                                            | Delete with the drawer                                                                   |
+| Stored time-limited links in `fileUrl`                                                     | Went stale an hour after upload                                                              | Write the canonical route path and stop returning the field                              |
+| The Resources aside as the place for document work                                         | Review rounds and bulk upload do not fit a narrow aside                                      | `ResourceSnapshot` cards (ADR-08)                                                        |
+| "The Session page owns every action"                                                       | The owner preferred a hub with dedicated pages                                               | None in code                                                                             |
+| Legacy upload modal `DocumentUpload`                                                       | A second upload and list implementation                                                      | Point its caller at the workspace and delete it                                          |
+| Three list shells for libraries                                                            | Different filters and date definitions for one concept                                       | `LibraryBrowser` (ADR-10)                                                                |
+| Regex-derived library links from `backHref`                                                | Fragile and unscoped to the booking                                                          | Explicit `hrefs`                                                                         |
+| "Session N" from the still-joinable list                                                   | Past recordings never matched a session                                                      | Use `ordinal` (ADR-13)                                                                   |
+| Each other run as its own library card                                                     | Tripled lists and links to pages the learner cannot open                                     | Catch-up slots (ADR-11)                                                                  |
+| Three different cross-run recording rules                                                  | The list, the API and playback disagreed                                                     | One slot-aware rule (ADR-11)                                                             |
+| Version cap over all rows                                                                  | Expert replies used up the learner's budget                                                  | Count live learner rows only (ADR-03)                                                    |
+| Client-side thread grouping                                                                | Stale feedback and drifted rules                                                             | Server-built thread view (ADR-15)                                                        |
+| Purge as a `GITHUB_OUTPUT` wrapper outside the registry                                    | One registered implementation per job                                                        | Register it and delete the wrapper (ADR-06)                                              |
+| Purge by tombstone age only                                                                | Purging a root first re-rooted surviving versions                                            | Versions before roots (ADR-06)                                                           |
+| Separate 7-day and 30-day grace windows                                                    | Two jobs disagreed about when an object is orphaned                                          | One shared constant                                                                      |

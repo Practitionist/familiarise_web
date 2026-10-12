@@ -23,7 +23,7 @@ The mobile tab strip carries four tabs plus **Menu**: Home, Requests, Appointmen
 
 ## Documents and Recordings pages
 
-The Library group's Documents and Recordings entries are cross-session indexes, grouped by appointment, with filters for the learner, kind and status (Documents also has "Your turn"). Rows link out; the work happens on two dedicated per-appointment pages reached from the appointment details page, which acts as a hub with snapshot cards for Documents, Materials and Recordings.
+The Library group's Documents and Recordings entries are cross-session indexes, grouped by appointment (`LibraryBrowser`, ten sessions per page), with filters for the learner, kind, date and search, and for documents a source and the status filters "Your turn", "Waiting", "Done" and "Shared". Rows link out; the work happens on two dedicated per-appointment pages reached from the appointment details page, which acts as a hub with snapshot cards for Documents, Materials and Recordings, each reading its own route.
 
 | Page                  | Route                                                                          | Purpose                                                     |
 | --------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
@@ -32,8 +32,6 @@ The Library group's Documents and Recordings entries are cross-session indexes, 
 | File viewer (new tab) | `/files/documents/[documentId]`, `/files/materials/[materialId]`               | Same-origin viewer that signs on every load                 |
 
 Collaborators and co-hosts see only appointments they are a party to. See [session documents](../documents/README.md#pages-and-routes-per-role) and [recordings](../stream/19-recordings-lifecycle-and-access.md#the-recording-details-page).
-
-> Status: the two per-appointment pages and the viewer land with the documents & recordings mega-fix PR.
 
 ## The Availability page
 
