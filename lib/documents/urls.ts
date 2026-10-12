@@ -72,15 +72,6 @@ export function sanitizeContentDispositionFilename(
   return cleaned || "document";
 }
 
-/** Builds an RFC 6266 UTF-8 safe `Content-Disposition` header with ASCII fallback. */
-export function formatContentDisposition(
-  disposition: "inline" | "attachment",
-  originalName: string,
-): string {
-  const asciiFallback = sanitizeContentDispositionFilename(originalName);
-  return `${disposition}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(originalName)}`;
-}
-
 /** The per-booking Documents workspace in the viewer's own dashboard tree. */
 export function documentsWorkspacePath(args: {
   appointmentId: string;

@@ -82,7 +82,7 @@ export function buildOrganizationNav(
   const library: NavGroup = {
     label: "Library",
     items: [
-      { name: "Documents", icon: FileText, path: "documents" },
+      { name: "Session documents", icon: FileText, path: "documents" },
       { name: "Recordings", icon: Video, path: "recordings" },
     ],
   };
@@ -289,7 +289,7 @@ export const ORGANIZATION_PAGE_LABELS: Record<string, string> = {
   materials: "Materials",
   programs: "Programs",
   contracts: "Contracts",
-  documents: "Documents",
+  documents: "Session documents",
   recordings: "Recordings",
   support: "Support",
   billing: "Billing",

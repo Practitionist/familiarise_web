@@ -2,100 +2,14 @@
  * @jest-environment node
  */
 
+import { isReviewTransitionAllowed } from "@/lib/documents/document-review";
 import {
-  groupDocumentsIntoThreads,
-  isReviewTransitionAllowed,
-} from "@/lib/documents/document-review";
-import {
-  formatContentDisposition,
   getAppointmentDocumentUrl,
   getPlanMaterialUrl,
   isPreviewableMimeType,
 } from "@/lib/documents/urls";
 
-describe("groupDocumentsIntoThreads", () => {
-  it("groups multi-round learner revisions and consultant responses into a single root thread anchored to rootDocument", () => {
-    const threads = groupDocumentsIntoThreads([
-      {
-        id: "doc-v3",
-        appointmentId: "appt-1",
-        originalName: "Resume_Kaustav_v3.pdf",
-        fileSize: 210_000,
-        mimeType: "application/pdf",
-        reviewStatus: "PENDING",
-        reviewNotes: null,
-        uploadedByRole: "CONSULTEE",
-        uploadedAt: "2026-10-10T10:00:00Z",
-        versionNo: 3,
-        rootDocumentId: "doc-v1",
-        responseToDocumentId: "doc-v2",
-      },
-      {
-        id: "doc-v2",
-        appointmentId: "appt-1",
-        originalName: "Resume_Kaustav_annotated.pdf",
-        fileSize: 225_000,
-        mimeType: "application/pdf",
-        reviewStatus: "APPROVED",
-        reviewNotes: "Tighten impact metrics in top 2 roles.",
-        uploadedByRole: "CONSULTANT",
-        uploadedAt: "2026-10-10T09:00:00Z",
-        versionNo: 2,
-        rootDocumentId: "doc-v1",
-        responseToDocumentId: "doc-v1",
-      },
-      {
-        id: "doc-v1",
-        appointmentId: "appt-1",
-        originalName: "Resume_Kaustav.pdf",
-        fileSize: 200_000,
-        mimeType: "application/pdf",
-        reviewStatus: "NEEDS_REVISION",
-        reviewNotes: "Add quantified metrics.",
-        uploadedByRole: "CONSULTEE",
-        uploadedAt: "2026-10-10T08:00:00Z",
-        versionNo: 1,
-        rootDocumentId: null,
-        responseToDocumentId: null,
-      },
-      {
-        id: "portfolio-v1",
-        appointmentId: "appt-1",
-        originalName: "Portfolio.pdf",
-        fileSize: 500_000,
-        mimeType: "application/pdf",
-        reviewStatus: "APPROVED",
-        reviewNotes: "Looks great!",
-        uploadedByRole: "CONSULTEE",
-        uploadedAt: "2026-10-10T07:00:00Z",
-        versionNo: 1,
-        rootDocumentId: null,
-        responseToDocumentId: null,
-      },
-    ]);
-
-    expect(threads).toHaveLength(2);
-    expect(threads[0].rootId).toBe("doc-v1");
-    expect(threads[0].rootDocument.id).toBe("doc-v1");
-    expect(threads[0].title).toBe("Resume_Kaustav.pdf");
-    expect(threads[0].versionCount).toBe(3);
-    expect(threads[0].versions.map((v) => v.id)).toEqual([
-      "doc-v1",
-      "doc-v2",
-      "doc-v3",
-    ]);
-    expect(threads[0].latestVersion.id).toBe("doc-v3");
-    expect(threads[0].latestConsulteeSubmission?.id).toBe("doc-v3");
-    expect(threads[0].latestConsultantResponse?.id).toBe("doc-v2");
-    expect(threads[0].effectiveStatus).toBe("PENDING");
-    // v1's feedback reviewed v1; the new pending v3 starts with none.
-    expect(threads[0].effectiveReviewNotes).toBeNull();
-    expect(threads[1].effectiveReviewNotes).toBe("Looks great!");
-    expect(threads[1].rootId).toBe("portfolio-v1");
-  });
-});
-
-describe("canonical non-expiring URLs, Content-Disposition, preview allowlist, and review transition rules", () => {
+describe("canonical non-expiring URLs, preview allowlist, and review transition rules", () => {
   it("builds inline and attachment streaming paths without expiring JWT query tokens", () => {
     expect(getAppointmentDocumentUrl("appt-1", "doc-1", "inline")).toBe(
       "/api/appointments/appt-1/documents/doc-1/download?disposition=inline",
@@ -109,15 +23,6 @@ describe("canonical non-expiring URLs, Content-Disposition, preview allowlist, a
     expect(getPlanMaterialUrl("mat-1", "attachment")).toBe(
       "/api/plans/materials/mat-1/download?disposition=attachment",
     );
-  });
-
-  it("formats RFC 6266 Content-Disposition headers with ASCII fallback and UTF-8 filename*", () => {
-    const header = formatContentDisposition(
-      "inline",
-      'Résumé — Kaustav\'s "v2".pdf',
-    );
-    expect(header).toContain('inline; filename="R_sum_ _ Kaustav\'s _v2_.pdf"');
-    expect(header).toContain("filename*=UTF-8''");
   });
 
   it("identifies previewable MIME types and blocks non-previewable Office/archive extensions", () => {

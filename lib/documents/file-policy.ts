@@ -54,7 +54,7 @@ const MIME_BY_EXTENSION: ReadonlyMap<string, string> = new Map(
 export const FILE_ACCEPT_ATTR = [...MIME_BY_EXTENSION.keys()].join(",");
 
 export const ALLOWED_FILE_TYPES_LABEL =
-  "PDF, Word, Excel, PowerPoint, images (JPG, PNG, GIF, WebP), text or CSV";
+  "PDF, Word, Excel, PowerPoint, image (JPG, PNG, GIF, WebP), text or CSV";
 
 export const FILE_POLICY_HINT = `${ALLOWED_FILE_TYPES_LABEL} · up to ${MAX_FILE_MB} MB each`;
 

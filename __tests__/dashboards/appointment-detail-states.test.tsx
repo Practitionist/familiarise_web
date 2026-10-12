@@ -44,6 +44,10 @@ jest.mock("../../components/support/AppointmentSupportStatusCard", () => ({
   AppointmentSupportStatusCard: () => null,
 }));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+// The resource cards read their own APIs; this suite pins the booking states.
+jest.mock("../../components/appointments/detail/ResourceSnapshot", () => ({
+  ResourceSnapshot: () => null,
+}));
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -144,6 +148,10 @@ function render(role: "consultee" | "consultant") {
       role={role}
       adapter={adapter(role)}
       backHref="/back"
+      resourceHrefs={{
+        documents: "/back/appt-1/documents",
+        recordings: "/back/appt-1/recordings",
+      }}
       supportRequestsBase="/support/requests"
       consultantId="cp-1"
     />,

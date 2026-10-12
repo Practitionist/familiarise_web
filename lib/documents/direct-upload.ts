@@ -33,7 +33,8 @@ class StorageUploadError extends Error {
   }
 }
 
-function putFileWithProgress(
+/** PUTs a file to a signed upload URL, reporting progress. */
+export function putFileWithProgress(
   uploadUrl: string,
   file: File,
   mimeType: string,
@@ -61,7 +62,8 @@ function putFileWithProgress(
   });
 }
 
-function asFileActionError(error: unknown): FileActionError {
+/** Any upload failure as fixed copy. */
+export function asFileActionError(error: unknown): FileActionError {
   if (error instanceof FileActionError) return error;
   if (error instanceof StorageUploadError) {
     return new FileActionError(
@@ -75,9 +77,14 @@ function asFileActionError(error: unknown): FileActionError {
   );
 }
 
-async function postJson(url: string, body: unknown): Promise<Response> {
+/** POSTs JSON; a failure is thrown as fixed copy. */
+export async function postJson(
+  url: string,
+  body: unknown,
+  method: "POST" | "PUT" = "POST",
+): Promise<Response> {
   const res = await fetch(url, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

@@ -4,22 +4,7 @@ import {
   TSubscription,
 } from "@/types/appointment";
 import { TConsultantProfile } from "@/types/consultant";
-import { ApiResponse, DocumentsPage, IActivity, IApproval } from "../types";
-
-export interface FetchDocumentsParams {
-  limit?: number;
-  offset?: number;
-  status?: string;
-  appointmentType?: string;
-  uploadedByRole?: "CONSULTEE" | "CONSULTANT";
-  orgScope?: string | null;
-}
-
-export interface DocumentFetchError extends Error {
-  technicalMessage?: string;
-  status?: number;
-  originalError?: Error;
-}
+import { ApiResponse, IActivity, IApproval } from "../types";
 
 export async function fetchConsultantData(
   consultantId: string,
@@ -131,102 +116,5 @@ export async function fetchActivities(
   } catch (error) {
     console.error("Error fetching activities:", error);
     throw error;
-  }
-}
-
-export async function fetchDocuments(
-  consultantId: string,
-  params: FetchDocumentsParams = {},
-): Promise<DocumentsPage> {
-  try {
-    const qs = new URLSearchParams();
-    if (params.limit !== undefined) qs.set("limit", String(params.limit));
-    if (params.offset !== undefined) qs.set("offset", String(params.offset));
-    if (params.status) qs.set("status", params.status);
-    if (params.appointmentType)
-      qs.set("appointmentType", params.appointmentType);
-    if (params.uploadedByRole) qs.set("uploadedByRole", params.uploadedByRole);
-    if (params.orgScope && params.orgScope !== "personal")
-      qs.set("orgScope", params.orgScope);
-
-    const query = qs.toString();
-    const url = `/api/dashboard/consultant/${consultantId}/documents${query ? `?${query}` : ""}`;
-
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      let errorMessage = "Failed to load documents";
-      let userFriendlyMessage =
-        "Unable to load documents for review. Please try again.";
-
-      try {
-        const errorData = await response.json();
-        if (errorData.message) {
-          userFriendlyMessage = errorData.message;
-        }
-        errorMessage =
-          errorData.error || `HTTP ${response.status}: ${response.statusText}`;
-      } catch {
-        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
-      }
-
-      const enhancedError = new Error(
-        userFriendlyMessage,
-      ) as DocumentFetchError;
-      enhancedError.name = "DocumentFetchError";
-      enhancedError.technicalMessage = errorMessage;
-      enhancedError.status = response.status;
-
-      throw enhancedError;
-    }
-
-    const data = (await response.json()) as Partial<DocumentsPage>;
-
-    const fallbackPagination = {
-      limit: params.limit ?? 10,
-      offset: params.offset ?? 0,
-      totalCount: 0,
-      totalPages: 1,
-      currentPage: 1,
-      hasNextPage: false,
-      hasPrevPage: false,
-    };
-    const fallbackMetadata = {
-      pendingCount: 0,
-      reviewingCount: 0,
-      needsRevisionCount: 0,
-      completedCount: 0,
-    };
-
-    return {
-      data: data.data ?? [],
-      pagination: data.pagination ?? fallbackPagination,
-      metadata: data.metadata ?? fallbackMetadata,
-      count: data.count,
-      message: data.message,
-      consultant: data.consultant,
-      filters: data.filters,
-    };
-  } catch (error) {
-    if (error instanceof Error) {
-      if (error.name === "DocumentFetchError") {
-        throw error;
-      }
-
-      const enhancedError = new Error(
-        "Unable to connect to the document system. Please try again.",
-      ) as DocumentFetchError;
-      enhancedError.name = "DocumentFetchError";
-      enhancedError.technicalMessage = error.message;
-      enhancedError.originalError = error;
-      throw enhancedError;
-    }
-
-    const fallbackError = new Error(
-      "An unknown error occurred while loading documents. Please try again.",
-    ) as DocumentFetchError;
-    fallbackError.name = "DocumentFetchError";
-    fallbackError.technicalMessage = String(error);
-    throw fallbackError;
   }
 }

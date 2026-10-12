@@ -15,6 +15,11 @@
  * `vendorFailures` rather than passing silently.
  */
 
+// Session-document erasure has its own suite; this one pins the vendors.
+jest.mock("../../lib/documents/document-erasure", () => ({
+  eraseUserSessionDocuments: jest.fn(async () => []),
+}));
+
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(),
 }));

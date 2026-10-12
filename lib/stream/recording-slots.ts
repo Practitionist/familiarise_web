@@ -391,6 +391,7 @@ function playableParts(
   return ordered.flatMap((session) =>
     (session.meeting?.recordings ?? [])
       .filter((r) => PLAYABLE.has(r.status))
+      .sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime())
       .map((recording) => ({
         recording,
         makeUp: hasVoided && session.voidedAt === null,

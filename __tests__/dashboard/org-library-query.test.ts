@@ -25,7 +25,7 @@ describe("org Library query", () => {
 
   it("parses leniently and flattens groups with their session", () => {
     const sp = new URLSearchParams(
-      "kind=TRIAL&from=2026-02-30x&source=mine&page=0&q=%20cv%20",
+      "kind=WORKSHOP&from=2026-02-30x&source=mine&page=0&q=%20cv%20",
     );
     expect(parseLibraryQuery((k) => sp.get(k))).toEqual({
       q: "cv",
@@ -33,6 +33,8 @@ describe("org Library query", () => {
       from: null,
       to: null,
       source: "mine",
+      person: null,
+      status: null,
       page: 1,
     });
     const session = {
@@ -41,6 +43,7 @@ describe("org Library query", () => {
       title: "T",
       startsAt: null,
       expertName: null,
+      counterpartName: null,
     } as const;
     expect(flattenLibrary([{ session, files: [{ id: "f" }] }])).toEqual([
       { id: "f", session },

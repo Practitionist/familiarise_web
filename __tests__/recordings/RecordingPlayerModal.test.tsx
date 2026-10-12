@@ -134,7 +134,7 @@ describe("RecordingPlayerModal mid-stream presigned URL recovery", () => {
       video.dispatchEvent(new Event("error"));
     });
     expect(document.body.textContent).toContain(
-      "Playback stream interrupted and could not be automatically refreshed.",
+      "The video couldn't load. Try again, or open it in a new tab.",
     );
     expect(document.body.textContent).toContain("Retry");
   });

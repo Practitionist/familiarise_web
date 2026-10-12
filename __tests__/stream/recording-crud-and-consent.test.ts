@@ -60,6 +60,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+const mockNotifyRemoved = jest.fn();
+jest.mock("../../lib/stream/recording-removal-notice", () => ({
+  notifyAttendeesOfRemovedRecording: (...args: unknown[]) =>
+    mockNotifyRemoved(...args),
+}));
+
 jest.mock("../../lib/stream/recording-storage", () => ({
   getBestRecordingUrl: jest.fn(),
   deleteRecordingAssets: (...args: unknown[]) =>
@@ -291,9 +297,11 @@ describe("Recording CRUD & Mid-Call DPDP Consent Withdrawal", () => {
             status: "EXPIRED",
             recordingUrl: "",
             listingStatus: "UNPUBLISHED",
+            removalReason: "EXPERT_DELETED",
           }),
         }),
       );
+      expect(mockNotifyRemoved).toHaveBeenCalledTimes(1);
       expect(
         mockRecordingUpdateManyAndReturn.mock.invocationCallOrder[0],
       ).toBeLessThan(mockDeleteRecordingAssets.mock.invocationCallOrder[0]);
