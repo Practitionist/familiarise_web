@@ -88,6 +88,8 @@ export interface RecordingSlot {
   /** When the session's recording was removed, and by whom. */
   removedAt: string | null;
   removedBy: RemovedBy | null;
+  /** Every distinct remover of the session's recordings, first remover first. */
+  removers: RemovedBy[];
   source:
     | { kind: "own" }
     | {
@@ -482,6 +484,7 @@ interface MissingSlot {
   reason: SlotMissingReason;
   removedAt: Date | null;
   removedBy: RemovedBy | null;
+  removers: RemovedBy[];
   declinedByUserId: string | null;
 }
 
@@ -503,6 +506,13 @@ function missingReasonOf(
       reason: "removed",
       removedAt: removed.removedAt,
       removedBy: removedByOf(removed.removalReason),
+      removers: [
+        ...new Set(
+          deleted
+            .filter((r) => tombstoneVisible(removedLabels.get(r.id), now))
+            .flatMap((r) => removedByOf(r.removalReason) ?? []),
+        ),
+      ],
       declinedByUserId: null,
     };
   }
@@ -515,6 +525,7 @@ function missingReasonOf(
       reason: "declined",
       removedAt: null,
       removedBy: null,
+      removers: [],
       declinedByUserId: decliner?.userId ?? null,
     };
   }
@@ -530,6 +541,7 @@ function missingReasonOf(
       reason: "expired",
       removedAt: null,
       removedBy: null,
+      removers: [],
       declinedByUserId: null,
     };
   }
@@ -537,6 +549,7 @@ function missingReasonOf(
     reason: "not_recorded",
     removedAt: null,
     removedBy: null,
+    removers: [],
     declinedByUserId: null,
   };
 }
@@ -776,6 +789,7 @@ export function buildRecordingView(
       missingReason: d.missing?.reason ?? null,
       removedAt: d.missing?.removedAt?.toISOString() ?? null,
       removedBy: d.missing?.removedBy ?? null,
+      removers: d.missing?.removers ?? [],
       declinedBy: nameOf(d.missing?.declinedByUserId),
     };
     if (source && viewer.role === "learner") {

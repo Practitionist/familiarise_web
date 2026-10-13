@@ -9,6 +9,7 @@ import {
   threadNeedsViewer,
   type ThreadView,
 } from "@/lib/documents/thread-view";
+import { libraryChip } from "@/lib/documents/thread-copy";
 import { getDocumentViewerUrl } from "@/lib/documents/urls";
 import type {
   LibraryDocument,
@@ -77,13 +78,18 @@ export function toLibraryThread(
       url: getDocumentViewerUrl(v.id),
     }));
   const latest = versions[0]!;
+  const needsYou = threadNeedsViewer(thread, ctx.viewerRole);
   return {
     id: thread.rootId,
     title: thread.title,
     source: starter === ctx.viewerRole ? "mine" : starter,
     startedBy: nameOf(starter),
     status: thread.status,
-    needsYou: threadNeedsViewer(thread, ctx.viewerRole),
+    needsYou,
+    chip: libraryChip(
+      { shared: thread.kind === "shared", status: thread.status, needsYou },
+      ctx.viewerRole,
+    ),
     removalRequested: thread.removal !== null,
     latest: {
       id: latest.id,

@@ -153,8 +153,26 @@ export function windowNotice(args: {
   ];
 }
 
-/** Whose Library a status filter labels: one side's chips, or neutral words for a mixed view. */
+/** Whose Library a status filter labels: one side's chips, or both for a mixed view. */
 export type LibrarySide = "learner" | "expert" | "mixed";
+
+/** The Library status a thread falls under; its filter and its row chip both read this. */
+export function libraryBucket(thread: {
+  shared: boolean;
+  status: ThreadStatus;
+  needsYou: boolean;
+}): LibraryDocStatus {
+  if (thread.shared) return "shared";
+  if (thread.status === "APPROVED" || thread.status === "NOT_ACCEPTED") {
+    return "done";
+  }
+  return thread.needsYou ? "your-turn" : "waiting";
+}
+
+const WAITING_LABEL = {
+  learner: THREAD_STATUS_CHIP.WAITING_FOR_EXPERT.learner,
+  expert: THREAD_STATUS_CHIP.NEEDS_REVISION.expert,
+};
 
 /** The status filter's options in the same words as the row chips for that side. */
 export function libraryStatusLabel(
@@ -167,13 +185,30 @@ export function libraryStatusLabel(
         ? THREAD_STATUS_CHIP.WAITING_FOR_EXPERT.expert
         : THREAD_STATUS_CHIP.NEEDS_REVISION.learner;
     case "waiting":
-      if (side === "learner")
-        return THREAD_STATUS_CHIP.WAITING_FOR_EXPERT.learner;
-      if (side === "expert") return THREAD_STATUS_CHIP.NEEDS_REVISION.expert;
-      return `${THREAD_STATUS_NEUTRAL.WAITING_FOR_EXPERT} / ${THREAD_STATUS_NEUTRAL.NEEDS_REVISION}`;
+      return side === "mixed"
+        ? `${WAITING_LABEL.learner} / ${WAITING_LABEL.expert}`
+        : WAITING_LABEL[side];
     case "done":
       return `${THREAD_STATUS_NEUTRAL.APPROVED} / ${THREAD_STATUS_NEUTRAL.NOT_ACCEPTED}`;
     case "shared":
       return THREAD_STATUS_NEUTRAL.SHARED;
   }
+}
+
+/** A Library row's chip: the filter's own words while open, the outcome once done. */
+export function libraryChip(
+  thread: { shared: boolean; status: ThreadStatus; needsYou: boolean },
+  side: "learner" | "expert",
+): { label: string; tone: Tone } {
+  const bucket = libraryBucket(thread);
+  if (bucket === "your-turn") {
+    return { label: libraryStatusLabel(bucket, side), tone: "caution" };
+  }
+  if (bucket === "waiting") {
+    return { label: libraryStatusLabel(bucket, side), tone: "info" };
+  }
+  return {
+    label: THREAD_STATUS_NEUTRAL[thread.status],
+    tone: THREAD_STATUS_CHIP[thread.status].tone,
+  };
 }

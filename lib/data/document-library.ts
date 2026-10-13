@@ -21,6 +21,7 @@ import {
 import { fileTypeLabel } from "@/lib/documents/file-policy";
 import { getMaterialViewerUrl } from "@/lib/documents/urls";
 import { materialReaderWhere } from "@/lib/plans/material-access";
+import { libraryBucket } from "@/lib/documents/thread-copy";
 import { toLibraryThread } from "@/lib/library/document-threads";
 import {
   LIBRARY_PAGE_SIZE,
@@ -131,12 +132,13 @@ function threadMatches(
   status: LibraryDocStatus,
   role: DocumentPartyRole,
 ): boolean {
-  if (status === "shared") return thread.kind === "shared";
-  if (thread.kind === "shared") return false;
-  const done = thread.status === "APPROVED" || thread.status === "NOT_ACCEPTED";
-  if (status === "done") return done;
-  const mine = threadNeedsViewer(thread, role);
-  return status === "your-turn" ? mine : !done && !mine;
+  return (
+    libraryBucket({
+      shared: thread.kind === "shared",
+      status: thread.status,
+      needsYou: threadNeedsViewer(thread, role),
+    }) === status
+  );
 }
 
 function sessionsWhere(

@@ -13,6 +13,7 @@ import {
   type ThreadStatus,
 } from "@/lib/documents/thread-view";
 import type { RetentionLabelDTO } from "@/lib/stream/recording-slots";
+import type { Tone } from "@/lib/ui/tone";
 
 export type LibraryScope = "mine" | "everyone";
 
@@ -201,6 +202,8 @@ export interface LibraryDocument {
   startedBy: string;
   status: ThreadStatus;
   needsYou: boolean;
+  /** Worded like the status filter that returns this row. */
+  chip: { label: string; tone: Tone };
   removalRequested: boolean;
   latest: {
     id: string;
@@ -250,9 +253,8 @@ export interface LibraryRemovedPart {
   partNo: number;
   partCount: number;
   removedAt: string | null;
-  removedBy: "expert" | "support" | "org" | null;
-  /** The expert's or organisation's name; null for support. */
-  removedByName: string | null;
+  /** Who removed it: the expert, the organisation or Familiarise support, by name. */
+  removedBy: string;
 }
 
 /** One session of the viewer's own booking, in order, whatever its state. */
@@ -268,12 +270,8 @@ export interface LibraryRecording {
   durationInMinutes: number;
   /** A catch-up's source: another batch (class) or run (webinar), and when it was recorded. */
   catchUp: { from: "batch" | "run"; recordedAt: string } | null;
-  removed: {
-    at: string | null;
-    by: "expert" | "support" | "org" | null;
-    /** The expert's or organisation's name; null for support. */
-    byName: string | null;
-  } | null;
+  /** When it was first removed, and every distinct remover by name. */
+  removed: { at: string | null; by: string[] } | null;
   /** A 1:1 session someone declined to record: their name, when known. */
   declinedBy: string | null;
   keptUntil: RetentionLabelDTO | null;

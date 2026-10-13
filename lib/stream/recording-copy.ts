@@ -101,12 +101,10 @@ export function catchUpExplainer(from: "batch" | "run"): string {
   return `Your session wasn't recorded, so you get the same session from another ${from}.`;
 }
 
-function removerName(
-  by: "expert" | "support" | "org" | null,
-  name: string | null,
-): string {
-  if (by === "support") return "Familiarise support";
-  return name ?? (by === "org" ? "the organisation" : "the expert");
+/** "A", "A and B", "A, B and C". */
+function listNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "the expert";
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
 /** The second line under a row's title; null for a plain recorded session. */
@@ -119,13 +117,11 @@ export function rowBadge(row: LibraryRecording, day: DayFormat): string | null {
         ? `Catch-up · recorded ${day(row.catchUp.recordedAt)} with another ${row.catchUp.from}`
         : "Catch-up";
     case "removed": {
-      const by = removerName(
-        row.removed?.by ?? null,
-        row.removed?.byName ?? null,
-      );
-      return row.removed?.at
-        ? `Removed by ${by} on ${day(row.removed.at)}`
-        : `Removed by ${by}`;
+      const names = row.removed?.by ?? [];
+      // One remover reads with the date; several are listed, each part keeping its own.
+      return names.length === 1 && row.removed?.at
+        ? `Removed by ${names[0]} on ${day(row.removed.at)}`
+        : `Removed by ${listNames(names)}`;
     }
     case "declined":
       return row.declinedBy
@@ -151,7 +147,7 @@ export function removedPartBadge(
   part: LibraryRemovedPart,
   day: DayFormat,
 ): string {
-  const by = removerName(part.removedBy, part.removedByName);
+  const by = part.removedBy;
   const when = part.removedAt ? ` on ${day(part.removedAt)}` : "";
   return `Part ${part.partNo} of ${part.partCount} · Removed by ${by}${when}`;
 }

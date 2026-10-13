@@ -4,11 +4,7 @@ import type { ReactNode } from "react";
 
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { formatFileSize } from "@/lib/documents/document-utils";
-import {
-  THREAD_STATUS_CHIP,
-  THREAD_STATUS_NEUTRAL,
-  VERSION_STATUS_CHIP,
-} from "@/lib/documents/thread-copy";
+import { VERSION_STATUS_CHIP } from "@/lib/documents/thread-copy";
 import type {
   LibraryDocument,
   LibraryMaterial,
@@ -51,12 +47,8 @@ function ThreadStatusCell({ thread }: Readonly<{ thread: LibraryDocument }>) {
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
       <StatusBadge
-        label={
-          thread.needsYou ? "Your turn" : THREAD_STATUS_NEUTRAL[thread.status]
-        }
-        tone={
-          thread.needsYou ? "caution" : THREAD_STATUS_CHIP[thread.status].tone
-        }
+        label={thread.chip.label}
+        tone={thread.chip.tone}
         size="sm"
       />
       {thread.removalRequested && (

@@ -33,6 +33,7 @@ function slot(
     missingReason: null,
     removedAt: null,
     removedBy: null,
+    removers: [],
     source: null,
     declinedBy: null,
     parts: recorded
@@ -88,10 +89,17 @@ describe("recordings timeline", () => {
         slot(3, "removed", {
           removedAt: "2026-10-11T00:00:00.000Z",
           removedBy: "support",
+          removers: ["support"],
         }),
         slot(8, "removed", {
           removedAt: "2026-10-11T00:00:00.000Z",
           removedBy: "org",
+          removers: ["org"],
+        }),
+        slot(10, "removed", {
+          removedAt: "2026-10-11T00:00:00.000Z",
+          removedBy: "org",
+          removers: ["org", "expert"],
         }),
         slot(9, "cancelled"),
         slot(4, "processing"),
@@ -110,6 +118,7 @@ describe("recordings timeline", () => {
       "Upcoming",
       "Removed by LearnPro on 2026-10-11",
       "Cancelled",
+      "Removed by LearnPro and Ananya Anderson",
     ]);
     const [decline] = timelineRows(
       view("CONSULTATION", [

@@ -50,12 +50,14 @@ type TimelineView = Pick<
   "appointmentId" | "kind" | "expertName" | "organizationName"
 >;
 
+/** A remover by name: the expert, the organisation, or Familiarise support. */
 function removerName(
   view: TimelineView,
   by: RecordingSlot["removedBy"],
-): string | null {
-  if (by === "org") return view.organizationName;
-  return by === "expert" ? view.expertName : null;
+): string {
+  if (by === "support") return "Familiarise support";
+  if (by === "org") return view.organizationName ?? "the organisation";
+  return view.expertName ?? "the expert";
 }
 
 function slotRow(view: TimelineView, slot: RecordingSlot): LibraryRecording {
@@ -85,8 +87,7 @@ function slotRow(view: TimelineView, slot: RecordingSlot): LibraryRecording {
       slot.state === "removed"
         ? {
             at: slot.removedAt,
-            by: slot.removedBy,
-            byName: removerName(view, slot.removedBy),
+            by: slot.removers.map((by) => removerName(view, by)),
           }
         : null,
     declinedBy: slot.state === "declined" ? slot.declinedBy : null,
@@ -96,8 +97,7 @@ function slotRow(view: TimelineView, slot: RecordingSlot): LibraryRecording {
       partNo: p.partNo,
       partCount: p.partCount,
       removedAt: p.removedAt,
-      removedBy: p.removedBy,
-      removedByName: removerName(view, p.removedBy),
+      removedBy: removerName(view, p.removedBy),
     })),
   };
 }

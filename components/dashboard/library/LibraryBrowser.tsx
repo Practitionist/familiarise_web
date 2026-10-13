@@ -321,8 +321,7 @@ export function LibraryBrowser({
     (sessionOf: ReadonlyMap<string, LibrarySession>) =>
     (row: LibraryRecording) => {
       const session = sessionOf.get(row.id);
-      const managed = row.parts.length > 0 || row.state === "removed";
-      if (!session || !managed) return null;
+      if (!session || row.parts.length === 0) return null;
       return (
         <Link
           href={`${sessionHref(session.appointmentId)}?slot=${row.slotOrdinal ?? ""}`}
