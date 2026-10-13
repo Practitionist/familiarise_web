@@ -1,102 +1,35 @@
 import Image from "next/image";
 import { notFound } from "next/navigation";
-import { CheckCircle2, Clock, PlayCircle, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Clock, PlayCircle } from "lucide-react";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import {
-  getPublicRecordingBySlug,
-  type RecordingListing,
-} from "@/lib/data/recordings-explore";
-import { RecordingService } from "@/lib/stream/recording-service";
-import {
-  hiddenFromLateJoiner,
-  lateJoinRecordingAccess,
-} from "@/lib/stream/late-join-recordings";
+import { getPublicRecordingBySlug } from "@/lib/data/recordings-explore";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
-import { webinarRecordingVisible } from "@/lib/stream/recording-attendee-scope";
-import { formatCurrencyAmount } from "@/utils/formatting";
-import { deriveReplayAmount } from "@/lib/payments/pricing/replay-price";
-import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
+import { viewerPlaybackAccess } from "@/lib/stream/recording-slots";
 import { Badge } from "@/components/ui/badge";
 import { buildCaptionTrackDataUri } from "@/components/recordings/caption-track";
-import { RecordingBuyButton } from "./RecordingBuyButton";
 
 type RecordingAccessRow = {
   status: string;
   storagePath: string | null;
   recordingUrl: string | null;
-  meeting?: {
-    occurrence?: {
-      startsAt: Date;
-      appointment?: {
-        id: string;
-        classId: string | null;
-        class?: { classPlanId: string } | null;
-      } | null;
-    } | null;
-  } | null;
+  meeting: { occurrence: { appointmentId: string; ordinal: number } };
 };
 
+/** The same rule playback applies, so "unlocked" here always plays. */
 async function canUserWatchRecording(
   userId: string,
-  consultantProfileId: string | null | undefined,
-  listing: RecordingListing,
+  listingId: string,
   recording: RecordingAccessRow | null,
 ): Promise<boolean> {
-  if (
-    consultantProfileId &&
-    listing.consultant.profileId === consultantProfileId
-  ) {
-    return true;
-  }
-
-  const purchase = await prisma.recordingPurchase.findFirst({
-    where: {
-      recordingId: listing.id,
-      buyerId: userId,
-      status: "SUCCEEDED",
-    },
-    select: { id: true },
+  if (!recording) return false;
+  const access = await viewerPlaybackAccess(userId, {
+    id: listingId,
+    appointmentId: recording.meeting.occurrence.appointmentId,
+    ordinal: recording.meeting.occurrence.ordinal,
+    expired: recording.status === "EXPIRED",
   });
-  if (purchase) {
-    return true;
-  }
-
-  const { webinarScope, classPlanIds } =
-    await RecordingService.getPaidPlanIds(userId);
-  const appointmentId = recording?.meeting?.occurrence?.appointment?.id;
-  if (
-    listing.planType === "WEBINAR" &&
-    appointmentId &&
-    webinarRecordingVisible(
-      { appointmentId, webinarPlanId: listing.planId },
-      webinarScope,
-    )
-  ) {
-    return true;
-  }
-  if (listing.planType === "CLASS" && classPlanIds.includes(listing.planId)) {
-    const lateJoin = await lateJoinRecordingAccess(userId);
-    return !hiddenFromLateJoiner(recording ?? {}, lateJoin);
-  }
-
-  return false;
-}
-
-export async function generateMetadata({
-  params,
-}: {
-  readonly params: Promise<{ slug: string }>;
-}) {
-  const { slug } = await params;
-  const listing = await getPublicRecordingBySlug(slug);
-  if (!listing) return { title: "Recording not found" };
-  return {
-    title: `${listing.listingTitle} | Familiarise Recordings`,
-    description:
-      listing.listingDescription ??
-      `Recorded ${listing.planType.toLowerCase()} by ${listing.consultant.name ?? "a consultant"}.`,
-  };
+  return access.allowed;
 }
 
 function renderMedia(
@@ -172,18 +105,7 @@ export default async function RecordingDetailPage({
           recordingUrl: true,
           meeting: {
             select: {
-              occurrence: {
-                select: {
-                  startsAt: true,
-                  appointment: {
-                    select: {
-                      id: true,
-                      classId: true,
-                      class: { select: { classPlanId: true } },
-                    },
-                  },
-                },
-              },
+              occurrence: { select: { appointmentId: true, ordinal: true } },
             },
           },
         },
@@ -191,28 +113,11 @@ export default async function RecordingDetailPage({
     : null;
 
   const alreadyAccess = session?.user?.id
-    ? await canUserWatchRecording(
-        session.user.id,
-        session.user.consultantProfileId,
-        listing,
-        rawRecording,
-      )
+    ? await canUserWatchRecording(session.user.id, listing.id, rawRecording)
     : false;
 
   const fullPlaybackUrl =
     alreadyAccess && rawRecording ? getBestRecordingUrl(rawRecording) : null;
-
-  // Same inputs as the order mint, so the total shown is the total charged.
-  const viewer = session?.user?.id
-    ? await prisma.user.findUnique({
-        where: { id: session.user.id },
-        select: { country: true },
-      })
-    : null;
-  const charge = await deriveReplayAmount({
-    listPricePaise: listing.listPricePaise,
-    buyerCountry: detectBuyerCountry({ userCountry: viewer?.country }),
-  });
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
@@ -267,37 +172,20 @@ export default async function RecordingDetailPage({
       </div>
 
       <aside className="space-y-4 h-fit rounded-xl border bg-card p-6 lg:sticky lg:top-24">
-        <p className="text-3xl font-bold">
-          {formatCurrencyAmount(charge.amount, "INR")}
-        </p>
-        {charge.taxAmount > 0 && (
-          <p className="text-xs text-muted-foreground">
-            {formatCurrencyAmount(charge.originalAmount, "INR")} +{" "}
-            {formatCurrencyAmount(charge.taxAmount, "INR")} GST
-          </p>
-        )}
         {alreadyAccess ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 shrink-0" />
-            <span>Full Recording Unlocked — you already own this replay.</span>
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+            <span>You can watch the full recording.</span>
           </div>
         ) : (
-          <RecordingBuyButton
-            recordingId={listing.id}
-            listPricePaise={listing.listPricePaise}
-            formattedPrice={formatCurrencyAmount(charge.amount, "INR")}
-          />
+          <div className="space-y-1 rounded-lg border bg-muted/40 p-3">
+            <p className="text-sm font-semibold">Coming soon</p>
+            <p className="text-xs text-muted-foreground">
+              Replays can&apos;t be bought yet. Attendees of the session can
+              watch it from their dashboard.
+            </p>
+          </div>
         )}
-        <ul className="space-y-2 pt-2 text-xs text-muted-foreground">
-          <li className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4" /> Lifetime access via your
-            dashboard
-          </li>
-          <li className="flex items-center gap-2">
-            <PlayCircle className="h-4 w-4" /> Secure streaming — links expire
-            hourly
-          </li>
-        </ul>
       </aside>
     </div>
   );

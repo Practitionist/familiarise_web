@@ -22,7 +22,6 @@ import type {
   PlannerWebinarEvent,
   PlannerClassEvent,
 } from "@/types/planner-events";
-import type { RecordingData } from "@/types/recording";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 
 // =============================================================================
@@ -33,19 +32,6 @@ interface PlannerData {
   webinars: PlannerWebinarEvent[];
   classes: PlannerClassEvent[];
   participantCounts: Record<string, number>;
-}
-
-export interface ConsultantRecordingsParams {
-  type?: "webinar" | "class" | null;
-  page?: number;
-  limit?: number;
-  search?: string;
-}
-
-interface ConsultantRecordingsResponse {
-  recordings: RecordingData[];
-  totalPages?: number;
-  total?: number;
 }
 
 // =============================================================================
@@ -104,29 +90,6 @@ export const consultantFetchers = {
         : `/api/dashboard/consultant/${consultantId}/planner`,
       "Planner fetch failed",
     ),
-
-  documents: (consultantId: string, orgScope?: string | null) =>
-    fetchWithErrorHandling<TAppointment[]>(
-      orgScope && orgScope !== "personal"
-        ? `/api/dashboard/consultant/${consultantId}/documents?orgScope=${encodeURIComponent(orgScope)}`
-        : `/api/dashboard/consultant/${consultantId}/documents`,
-      "Documents fetch failed",
-    ),
-
-  recordings: (
-    consultantId: string,
-    { type, page = 1, limit = 12, search }: ConsultantRecordingsParams = {},
-  ) => {
-    const params = new URLSearchParams();
-    if (type) params.set("type", type);
-    params.set("page", String(page));
-    params.set("limit", String(limit));
-    if (search) params.set("search", search);
-    return fetchWithErrorHandling<ConsultantRecordingsResponse>(
-      `/api/consultants/${consultantId}/recordings?${params.toString()}`,
-      "Recordings fetch failed",
-    );
-  },
 };
 
 // Consultee fetchers
@@ -255,34 +218,6 @@ export function createConsultantQueries(
       retry: 2,
       refetchOnWindowFocus: true,
     },
-
-    // Documents for review
-    documents: {
-      queryKey: ["consultant-documents", consultantId, scopeKey] as const,
-      queryFn: () => consultantFetchers.documents(consultantId, orgScope),
-      staleTime: STALE_TIMES.MEDIUM,
-      gcTime: GC_TIME,
-      retry: 2,
-    },
-
-    // Recordings (server-paginated). Unlike its static siblings this entry
-    // is a function: page/type/search come from component state, and each
-    // combination must be its own cache entry. The recordings endpoint is
-    // personal-pinned server-side (#1166 ORG-6), so the key never varies by
-    // scope and scopeKey is deliberately absent from it.
-    recordings: (params: ConsultantRecordingsParams = {}) => ({
-      queryKey: [
-        "consultant-recordings",
-        consultantId,
-        params.type ?? "all",
-        params.page ?? 1,
-        params.search ?? "",
-      ] as const,
-      queryFn: () => consultantFetchers.recordings(consultantId, params),
-      staleTime: STALE_TIMES.SHORT,
-      gcTime: GC_TIME,
-      retry: 2,
-    }),
   };
 }
 

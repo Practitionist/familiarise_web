@@ -283,6 +283,7 @@ async function readAttributionAndRepeatStats(
         },
       },
     },
+    relationLoadStrategy: "join",
   });
 
   let ownLinkPaise = 0;
@@ -393,10 +394,133 @@ async function getConsultantBucketTotals(
   return { ...sums, paidOut };
 }
 
+const noAttribution = () => ({
+  attributionBreakdown: {
+    ownLinkPaise: 0,
+    marketplacePaise: 0,
+    ownLinkCount: 0,
+    marketplaceCount: 0,
+  },
+  repeatLearnerStats: {
+    repeatLearners: 0,
+    totalLearners: 0,
+    repeatLearnerRate: null,
+  },
+});
+
+interface EarningsReadPlan {
+  status?: EarningStatus;
+  limit: number;
+  offset: number;
+  organizationId: string | null | undefined;
+  monthly: boolean;
+  feeSchedule: boolean;
+  accountExtras: boolean;
+}
+
+/** Every read the earnings payload can need, each run once. */
+async function readEarningsParts(
+  consultantProfileId: string,
+  plan: EarningsReadPlan,
+) {
+  const { status, limit, offset, organizationId } = plan;
+  const [summary, eligibility, history, monthlyEarnings, totals] =
+    await Promise.all([
+      getConsultantEarningsSummary(consultantProfileId, organizationId),
+      // #org-appts (#1024) — VIEW splits by org-ness; payout eligibility
+      // stays whole (shared instrument).
+      checkPayoutEligibility(consultantProfileId),
+      getConsultantEarnings(consultantProfileId, {
+        status,
+        limit,
+        offset,
+        organizationId,
+      }),
+      plan.monthly
+        ? getConsultantMonthlyEarnings(consultantProfileId, 6, organizationId)
+        : Promise.resolve(undefined),
+      getConsultantBucketTotals(consultantProfileId, organizationId),
+    ]);
+
+  // #1675 PR-Y — the Paid-out bucket. A plain read after the fan-out, not
+  // inside it: PG_POOL_MAX=1 makes one more parallel read a wait, not a win.
+  const payouts = await getConsultantPayouts(consultantProfileId);
+  const recovered = await clawbackRecoveredByPayout(
+    prisma,
+    payouts.map((p) => p.id),
+  );
+  const feeSchedule = plan.feeSchedule
+    ? await readActiveFeeSchedule(prisma)
+    : undefined;
+  const feeWaiver = plan.accountExtras
+    ? await readActiveFeeWaiver(consultantProfileId)
+    : null;
+  const tdsRecords = plan.accountExtras
+    ? await readConsultantTdsRecords(consultantProfileId)
+    : [];
+  const attribution = plan.monthly
+    ? await readAttributionAndRepeatStats(consultantProfileId, organizationId)
+    : noAttribution();
+
+  return {
+    summary,
+    eligibility,
+    history,
+    monthlyEarnings,
+    totals,
+    payouts: payouts.map((p) => toPayoutRow(p, recovered.get(p.id) ?? 0)),
+    feeSchedule,
+    feeWaiver,
+    tdsRecords,
+    ...attribution,
+  };
+}
+
+type EarningsParts = Awaited<ReturnType<typeof readEarningsParts>>;
+
+/** One response body from the parts: `monthly` and `accountExtras` pick its view. */
+function shapeEarningsPayload(
+  parts: EarningsParts,
+  view: {
+    limit: number;
+    offset: number;
+    monthly: boolean;
+    accountExtras: boolean;
+  },
+) {
+  const rows = parts.history.earnings.slice(0, view.limit);
+  const attribution = view.monthly
+    ? {
+        attributionBreakdown: parts.attributionBreakdown,
+        repeatLearnerStats: parts.repeatLearnerStats,
+      }
+    : noAttribution();
+  return {
+    summary: parts.summary,
+    eligibility: parts.eligibility,
+    earnings: rows.map(toEarningRow),
+    payouts: parts.payouts,
+    totals: parts.totals,
+    feeSchedule: parts.feeSchedule,
+    feeWaiver: view.accountExtras ? parts.feeWaiver : null,
+    tdsRecords: view.accountExtras ? parts.tdsRecords : [],
+    ...attribution,
+    pagination: {
+      total: parts.history.total,
+      limit: view.limit,
+      offset: view.offset,
+      hasMore: view.offset + view.limit < parts.history.total,
+    },
+    ...(view.monthly && parts.monthlyEarnings
+      ? { monthlyEarnings: parts.monthlyEarnings }
+      : {}),
+  };
+}
+
 /**
  * Single assembler for the GET /api/consultant/earnings response body,
- * shared by the route handler and the analytics page's SSR prefetch so the
- * dehydrated cache and the client refetch can never drift apart.
+ * shared by the route handler so the client refetch and the page seed below
+ * can never drift apart.
  */
 export async function buildConsultantEarningsPayload(
   consultantProfileId: string,
@@ -411,78 +535,54 @@ export async function buildConsultantEarningsPayload(
   // whole (shared instrument), so it's never scoped below.
   const organizationId: string | null | undefined =
     "organizationId" in options ? options.organizationId : null;
-
-  const [summary, eligibility, history, monthlyEarnings, totals] =
-    await Promise.all([
-      getConsultantEarningsSummary(consultantProfileId, organizationId),
-      // #org-appts (#1024) — VIEW splits by org-ness; payout eligibility
-      // stays whole (shared instrument).
-      checkPayoutEligibility(consultantProfileId),
-      getConsultantEarnings(consultantProfileId, {
-        status,
-        limit,
-        offset,
-        organizationId,
-      }),
-      includeMonthly
-        ? getConsultantMonthlyEarnings(consultantProfileId, 6, organizationId)
-        : Promise.resolve(undefined),
-      getConsultantBucketTotals(consultantProfileId, organizationId),
-    ]);
-
-  // #1675 PR-Y — the Paid-out bucket. A plain read after the fan-out, not
-  // inside it: PG_POOL_MAX=1 makes one more parallel read a wait, not a win.
-  const payouts = await getConsultantPayouts(consultantProfileId);
-  const recovered = await clawbackRecoveredByPayout(
-    prisma,
-    payouts.map((p) => p.id),
-  );
   const hasExplicitScope = "organizationId" in options;
-  const feeSchedule =
-    hasExplicitScope || includeMonthly
-      ? await readActiveFeeSchedule(prisma)
-      : undefined;
-  const feeWaiver =
-    !includeMonthly && hasExplicitScope
-      ? await readActiveFeeWaiver(consultantProfileId)
-      : null;
-  const tdsRecords =
-    !includeMonthly && hasExplicitScope
-      ? await readConsultantTdsRecords(consultantProfileId)
-      : [];
-  const { attributionBreakdown, repeatLearnerStats } = includeMonthly
-    ? await readAttributionAndRepeatStats(consultantProfileId, organizationId)
-    : {
-        attributionBreakdown: {
-          ownLinkPaise: 0,
-          marketplacePaise: 0,
-          ownLinkCount: 0,
-          marketplaceCount: 0,
-        },
-        repeatLearnerStats: {
-          repeatLearners: 0,
-          totalLearners: 0,
-          repeatLearnerRate: null,
-        },
-      };
+  const accountExtras = !includeMonthly && hasExplicitScope;
+  const parts = await readEarningsParts(consultantProfileId, {
+    status,
+    limit,
+    offset,
+    organizationId,
+    monthly: includeMonthly,
+    feeSchedule: hasExplicitScope || includeMonthly,
+    accountExtras,
+  });
+  return shapeEarningsPayload(parts, {
+    limit,
+    offset,
+    monthly: includeMonthly,
+    accountExtras,
+  });
+}
 
+/**
+ * The Earnings page's two personal seeds from one pass: the Summary body
+ * (`limit` rows) and the Analytics body (one row plus the monthly series),
+ * exactly as the route answers each.
+ */
+export async function buildConsultantEarningsPagePayloads(
+  consultantProfileId: string,
+  { limit }: { limit: number },
+) {
+  const parts = await readEarningsParts(consultantProfileId, {
+    limit,
+    offset: 0,
+    organizationId: null,
+    monthly: true,
+    feeSchedule: true,
+    accountExtras: true,
+  });
   return {
-    summary,
-    eligibility,
-    earnings: history.earnings.map(toEarningRow),
-    payouts: payouts.map((p) => toPayoutRow(p, recovered.get(p.id) ?? 0)),
-    totals,
-    feeSchedule,
-    feeWaiver,
-    tdsRecords,
-    attributionBreakdown,
-    repeatLearnerStats,
-    pagination: {
-      total: history.total,
+    summary: shapeEarningsPayload(parts, {
       limit,
-      offset,
-      hasMore: history.hasMore,
-    },
-    ...(monthlyEarnings ? { monthlyEarnings } : {}),
+      offset: 0,
+      monthly: false,
+      accountExtras: true,
+    }),
+    analytics: shapeEarningsPayload(parts, {
+      limit: 1,
+      offset: 0,
+      monthly: true,
+      accountExtras: false,
+    }),
   };
 }

@@ -32,15 +32,8 @@ import { useConsultantEventActions } from "./components/useConsultantEventAction
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { chatAffordancesForVm } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
 import { UnscheduleConfirmationDialog } from "@/components/appointments/UnscheduleConfirmationDialog";
-import {
-  ResponsiveModal,
-  ResponsiveModalContent,
-  ResponsiveModalHeader,
-  ResponsiveModalTitle,
-} from "@/components/ui/responsive-modal";
-import { DeliverableThreadList } from "@/components/documents/DeliverableThreadList";
 
-type DialogKind = "cancel" | "unschedule" | "documents";
+type DialogKind = "cancel" | "unschedule";
 
 const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   CONSULTATION: "Consultation",
@@ -383,7 +376,10 @@ export function useConsultantAppointmentsAdapter(
       items.push({
         key: "documents",
         label: "Session documents",
-        onClick: () => openDialog(vm, "documents"),
+        onClick: () =>
+          router.push(
+            `/dashboard/consultant/${consultantId}/appointments/${vm.appointmentId}/documents`,
+          ),
       });
     }
 
@@ -435,26 +431,6 @@ export function useConsultantAppointmentsAdapter(
             appointmentType={typeLabel}
             isLoading={actions.isLoading}
           />
-
-          {activeVm.appointmentId && dialog === "documents" && (
-            <ResponsiveModal
-              open
-              onOpenChange={(open) => !open && closeDialog()}
-            >
-              <ResponsiveModalContent className="max-w-2xl">
-                <ResponsiveModalHeader>
-                  <ResponsiveModalTitle>
-                    Session Deliverables & Handouts
-                  </ResponsiveModalTitle>
-                </ResponsiveModalHeader>
-                <DeliverableThreadList
-                  appointmentId={activeVm.appointmentId}
-                  viewerRole="consultant"
-                  canUpload
-                />
-              </ResponsiveModalContent>
-            </ResponsiveModal>
-          )}
         </>
       )}
     </>

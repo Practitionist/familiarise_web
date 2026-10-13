@@ -62,6 +62,7 @@ import {
   type PayoutInput,
   type PayoutPayload,
   type RecordingFailedPayload,
+  type RecordingRemovedPayload,
   type RecordingPayload,
   type RefereeWelcomeBonusInput,
   type RefereeWelcomeBonusPayload,
@@ -815,6 +816,8 @@ export const notifyRecordingAvailable = defineMultiNotifier<
 }));
 export const notifyRecordingFailed =
   defineSingleNotifier<RecordingFailedPayload>(W.RECORDING_FAILED);
+export const notifyRecordingRemoved =
+  defineMultiNotifier<RecordingRemovedPayload>(W.RECORDING_REMOVED);
 
 // Document Review
 export const notifyDocumentUploaded =

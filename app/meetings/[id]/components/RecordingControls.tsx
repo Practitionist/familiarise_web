@@ -5,6 +5,11 @@ import { useCall } from "@stream-io/video-react-sdk";
 import { Circle, Square, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
+import {
+  FileActionError,
+  friendlyErrorFromResponse,
+  friendlyFileError,
+} from "@/lib/documents/file-errors";
 import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
 import { useSessionInfo } from "../session-info";
 import DeclineRecordingButton from "./DeclineRecordingButton";
@@ -147,18 +152,18 @@ const RecordingControls = ({
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || "Failed to start recording");
+        throw new FileActionError(await friendlyErrorFromResponse(response));
       }
     } catch (error) {
-      console.error("Error starting recording:", error);
       setIsLoading(false);
+      const friendly =
+        error instanceof FileActionError
+          ? { title: error.title, description: error.message }
+          : friendlyFileError("NETWORK");
       toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to start recording",
+        title: friendly.title,
+        description: friendly.description,
         variant: "destructive",
       });
     }
@@ -180,18 +185,18 @@ const RecordingControls = ({
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || "Failed to stop recording");
+        throw new FileActionError(await friendlyErrorFromResponse(response));
       }
     } catch (error) {
-      console.error("Error stopping recording:", error);
       setIsLoading(false);
+      const friendly =
+        error instanceof FileActionError
+          ? { title: error.title, description: error.message }
+          : friendlyFileError("NETWORK");
       toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to stop recording",
+        title: friendly.title,
+        description: friendly.description,
         variant: "destructive",
       });
     }

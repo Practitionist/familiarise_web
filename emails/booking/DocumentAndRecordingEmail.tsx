@@ -12,7 +12,8 @@ export type DocumentAndRecordingEmailKind =
   | "DOCUMENT_UPLOADED"
   | "DOCUMENT_REVIEWED"
   | "RECORDING_READY"
-  | "RECORDING_FAILED";
+  | "RECORDING_FAILED"
+  | "RECORDING_REMOVED";
 
 export interface DocumentAndRecordingEmailProps {
   kind: DocumentAndRecordingEmailKind;
@@ -42,6 +43,8 @@ export function documentAndRecordingSubject(
       return `Recording ready for your ${args.appointmentType ?? "session"}`;
     case "RECORDING_FAILED":
       return "Session recording could not be saved";
+    case "RECORDING_REMOVED":
+      return `Recording removed: ${args.fileName ?? "Session recording"}`;
   }
 }
 
@@ -114,6 +117,13 @@ export function DocumentAndRecordingEmail({
         <Text style={paragraph}>
           We could not finalize the video recording for your recent session. The
           session itself was unaffected.
+        </Text>
+      ) : null}
+
+      {kind === "RECORDING_REMOVED" ? (
+        <Text style={paragraph}>
+          <strong>{actorName ?? "Your consultant"}</strong> removed the
+          recording <strong>{fileName}</strong> from your session.
         </Text>
       ) : null}
 

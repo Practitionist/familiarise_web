@@ -21,6 +21,18 @@ Settings is no longer a sidebar row. It is one entry in the header's avatar menu
 
 The mobile tab strip carries four tabs plus **Menu**: Home, Requests, Appointments, Messages. Menu opens a sheet with the switcher, the full nav, Settings and Sign out — Availability, Earnings and everything else not in the four tabs is reached from there, replacing the old five-tab strip that left Messages, the planner and Availability unreachable on a phone.
 
+## Documents and Recordings pages
+
+The Library group's Documents and Recordings entries are cross-session indexes, grouped by appointment (`LibraryBrowser`, ten sessions per page), with filters for the learner, kind (All, Consultation, Subscription, Trial and the group kinds), date and search, and for documents "Started by anyone / you / the learner" (plus "Plan materials only") and the status filters "Your turn", a waiting status, "Done" and "Shared" (one rule, `libraryBucket` in `lib/documents/thread-copy.ts`, places a thread under a filter and `libraryChip` gives its row the same words for the viewer's side: "Waiting for review" for a learner, "Waiting for learner" for an expert, both words in mixed or organisation views). Subscription headers read "Started <date> · <n> sessions" and class headers "Your batch <start> – <end> · <n> sessions" ("Batch …" for a host), with cards ordered by latest session and every date in the booking pages' display zone. Documents list one expandable row per document thread (title, "Latest: <name>", a "vN · N versions" chip, Started by, status, Updated and Open latest), sorted needs-you first; expanding it lists the versions newest first, and plan materials sit in their own table. Recordings render one session timeline per booking: a header with the plan, expert, "Open booking" and one retention line, then one row per session (Session, Recording with a state badge, Length, Play) that expands into its parts. The per-row Manage is a link to the booking's Recordings page and appears only on a session that still has a part. When different people removed parts of one session, the line names each of them, for example "Removed by LearnPro Academy and Angela Anderson", without a date. Rows link out; the work happens on two dedicated per-appointment pages reached from the appointment details page, which acts as a hub with snapshot cards for Documents, Materials and Recordings; the Materials card ("Files included with this offering.") lists every file with Open and Download and has no page of its own.
+
+| Page                  | Route                                                                          | Purpose                                                     |
+| --------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Documents workspace   | `/dashboard/consultant/[consultantId]/appointments/[appointmentId]/documents`  | Review queue, reply, share a file, status banner per thread |
+| Recording details     | `/dashboard/consultant/[consultantId]/appointments/[appointmentId]/recordings` | Sessions, parts, player, manage sheet                       |
+| File viewer (new tab) | `/files/documents/[documentId]`, `/files/materials/[materialId]`               | Same-origin viewer that signs on every load                 |
+
+Collaborators and co-hosts see only appointments they are a party to. See [session documents](../documents/README.md#pages-and-routes-per-role) and [recordings](../stream/19-recordings-lifecycle-and-access.md#the-recording-details-page).
+
 ## The Availability page
 
 `/dashboard/consultant/[consultantId]/availability` renders `AvailabilitySection` and `AvailabilityGrid` over the same data, and the save contract is the strict whole-profile `PUT /api/user/consultants/[id]`. That logic lives once, in `settings/use-consultant-settings-form.ts`, shared with the Profile and Booking requests settings sections. The retired `settings?tab=availability` deep link still answers a 308 to this page.
@@ -60,3 +72,7 @@ The consultee (Learner) Settings hub also uses `SettingsLayout`: its sections ar
 | Hub nav                                    | `components/dashboard/SettingsLayout.tsx`, `app/dashboard/consultant/[consultantId]/(features)/settings/layout.tsx` |
 | Shared form state and the combined PUT     | `app/dashboard/consultant/[consultantId]/(features)/settings/use-consultant-settings-form.ts`                       |
 | Pins                                       | `__tests__/dashboards/settings-hub.test.tsx`, `__tests__/dashboard/nav-targets-resolve.test.ts`                     |
+
+## Deprecated & Superseded Approaches
+
+- **Flat root-only library rows.** The Documents index listed one row per thread root and hid its versions. Superseded by expandable thread rows with version history (`components/dashboard/library/DocumentTables.tsx`).

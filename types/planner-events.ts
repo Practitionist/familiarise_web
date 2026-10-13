@@ -16,32 +16,6 @@ import {
 import { PlanEmailSupport, PlanLevel } from "@prisma/client";
 import { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 
-/**
- * Uploaded handout attached to a plan. Followed the planner components out of
- * the consultant route folder for the reason in the header above — the only
- * consumers are `components/planner/**`, and a shared component importing a
- * type through `app/dashboard/consultant/[consultantId]/` would invert the
- * dependency the same way.
- */
-export interface IPlanMaterial {
-  id: string;
-  fileName: string;
-  originalName: string;
-  fileSize: number;
-  mimeType: string;
-  fileUrl: string;
-  storagePath: string;
-  description: string | null;
-  order: number;
-  // Plan references (one will be set)
-  consultationPlanId?: string | null;
-  subscriptionPlanId?: string | null;
-  webinarPlanId?: string | null;
-  classPlanId?: string | null;
-  uploadedAt: Date;
-  updatedAt?: Date;
-}
-
 // UI-focused event types with topics as string[] (transformed at service boundary)
 // Services convert Topic[] from Prisma to string[] before passing to components
 
@@ -135,10 +109,7 @@ export type PlannerClassEvent = ClassEvent & {
 
 // Update base Event type to be a union
 export type Event =
-  | WebinarEvent
-  | ClassEvent
-  | ConsultationPlanEvent
-  | SubscriptionPlanEvent;
+  WebinarEvent | ClassEvent | ConsultationPlanEvent | SubscriptionPlanEvent;
 
 export type EventPlannerProps = {
   isOpen: boolean;

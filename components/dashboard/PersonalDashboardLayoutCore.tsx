@@ -254,8 +254,8 @@ export function PersonalDashboardLayoutCore<P>({
   const serverUserId = useServerUserId();
   const userId = session?.user?.id ?? serverUserId;
 
-  // One fetcher for both trees: the key is shared with the server
-  // seed in app/dashboard/layout.tsx, so it must hold one shape everywhere.
+  // One fetcher for both trees. The server seed in app/dashboard/layout.tsx
+  // omits the résumé lists, so readers of this key use scalars and profile ids only.
   const {
     data: userDetails,
     error: userQueryError,

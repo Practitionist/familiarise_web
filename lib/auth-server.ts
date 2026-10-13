@@ -1,6 +1,6 @@
-import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { auth } from "@/lib/auth";
+import { renderMemo } from "@/lib/render-memo";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
 import {
   classifyMissingSession,
@@ -51,17 +51,8 @@ async function resolveSession(): Promise<ResolvedRead | null> {
 /**
  * Render-memoized: nested layouts whose guards run in the same RSC render
  * share one read, and a rejected read is re-thrown to every later guard.
- * `cache` exists only in the React build Next aliases into the RSC layer, so
- * one-shot processes fall back to the plain reader. Built on first call so
- * importing never touches `cache`.
  */
-let memoizedResolve: typeof resolveSession | undefined;
-
-function sessionResolver(): typeof resolveSession {
-  memoizedResolve ??=
-    typeof cache === "function" ? cache(resolveSession) : resolveSession;
-  return memoizedResolve;
-}
+const memoizedResolve = renderMemo(resolveSession);
 
 /**
  * The caller's session, or null when there is none. Throws
@@ -74,7 +65,7 @@ function sessionResolver(): typeof resolveSession {
  * redirect or a 428.
  */
 export async function getSession({ allowUnenrolledOperator = false } = {}) {
-  const session = await sessionResolver()();
+  const session = await memoizedResolve();
   if (allowUnenrolledOperator || !session) return session;
   const unenrolled =
     isOperatorRole(session.user.role) && session.user.twoFactorEnabled !== true;

@@ -106,12 +106,13 @@ describe("org-scope payloads never carry session content", () => {
     }
   });
 
-  it("documents: the participant select still returns the file", () => {
+  it("documents: even the participant select returns no stored link or object path", () => {
     const body = metadataSelectBody(
       read(DOCUMENTS),
       "documentParticipantSelect",
     );
-    expect(body).toContain("fileUrl: true");
+    expect(body).not.toContain("fileUrl: true");
+    expect(body).not.toContain("storagePath: true");
   });
 
   it("recordings: even the participant select never ships playable media", () => {

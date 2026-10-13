@@ -1,12 +1,11 @@
 /**
  * Detail-payload mapper: readAppointmentDetail's { appointment }
- * → one AppointmentVM (plus flattened recordings) so the detail page reuses
+ * → one AppointmentVM so the detail page reuses
  * the shared timeline/badge/action machinery. Role decides the counterpart:
  * consultees see the consultant; consultants see the consultee (or the plan
  * host for group events).
  */
 
-import { RecordingStatus } from "@prisma/client";
 import type {
   TAppointmentDetail,
   TDetailAppointment,
@@ -35,19 +34,6 @@ import {
 } from "./view-model";
 
 type Role = "consultee" | "consultant";
-
-const PLAYABLE_RECORDING_STATUSES: ReadonlySet<RecordingStatus> =
-  new Set<RecordingStatus>([RecordingStatus.READY, RecordingStatus.AVAILABLE]);
-
-interface DetailRecordingVM {
-  id: string;
-  title: string;
-  thumbnailUrl: string | null;
-  status: string;
-  durationInMinutes: number;
-  recordedAt: Date;
-  sessionStartsAt: Date;
-}
 
 function person(
   user: { name?: string | null; image?: string | null } | null | undefined,
@@ -138,7 +124,7 @@ export function mapAppointmentDetail(
   role: Role,
   now: Date = new Date(),
   viewerConsultantId?: string,
-): { vm: AppointmentVM; recordings: DetailRecordingVM[] } {
+): { vm: AppointmentVM } {
   const { appointment } = detail;
   const facts = eventOf(appointment);
   // #1554 — one wrapper per purchase: the programme IS its occurrence rows.
@@ -232,25 +218,5 @@ export function mapAppointmentDetail(
     },
   };
 
-  // Playback is minted per request by GET /api/stream/recordings/[id]; only playable rows are listed.
-  const recordings: DetailRecordingVM[] = all.flatMap((a) =>
-    a.occurrences.flatMap((slot) =>
-      (slot.meeting?.recordings ?? [])
-        .filter((rec) => PLAYABLE_RECORDING_STATUSES.has(rec.status))
-        .map((rec) => ({
-          id: rec.id,
-          title: rec.title,
-          thumbnailUrl: rec.thumbnailUrl ?? null,
-          status: rec.status,
-          durationInMinutes: rec.durationInMinutes,
-          recordedAt: toDate(rec.recordedAt),
-          sessionStartsAt: toDate(slot.startsAt),
-        })),
-    ),
-  );
-  recordings.sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime());
-
-  return { vm, recordings };
+  return { vm };
 }
-
-export type { DetailRecordingVM };

@@ -151,6 +151,7 @@ Stream.io integration for messaging and video calls. This is the implemented mes
 - [11-hooks-utilities.md](./stream/11-hooks-utilities.md) - Hooks and utilities
 - [12-error-handling.md](./stream/12-error-handling.md) - Error handling
 - [13-recording-webhooks.md](./stream/13-recording-webhooks.md) - Recording webhooks
+- [19-recordings-lifecycle-and-access.md](./stream/19-recordings-lifecycle-and-access.md) - Recording lifecycle, retention and shared-run access
 - [troubleshooting.md](./stream/troubleshooting.md) - Troubleshooting
 
 ---
@@ -244,6 +245,16 @@ Storage management and document review system.
 
 ---
 
+### Session documents
+
+Session documents, plan materials and their relationship to recordings: the thread and version model, the 30-day upload window, removal requests, 90-day retention, the per-role pages and the typed error model.
+
+- [documents/README.md](./documents/README.md) - Session documents and plan materials architecture
+- [01-architecture.md](./documents/01-architecture.md) - Threading model, CAS transitions, 2-phase direct upload
+- [2026-10-12-session-documents-and-recordings.md](./decisions/2026-10-12-session-documents-and-recordings.md) - ADR-01 to ADR-19
+
+---
+
 ### Performance
 
 Implemented performance optimizations. The numbering runs from the broad
@@ -254,7 +265,8 @@ strategy documents to the individual slow-query investigations.
 - [02-dashboard-prefetching.md](./performance/02-dashboard-prefetching.md) - Hover-based route prefetching strategy
 - [03-dashboard-appointments-perf.md](./performance/03-dashboard-appointments-perf.md) - Investigation: slow `/api/appointments` query
 - [04-availability-allocation-perf.md](./performance/04-availability-allocation-perf.md) - Investigation: slow wide-window availability-with-allocation query
-- [05-allocation-500-investigation.md](./performance/05-allocation-500-investigation.md) - Investigation: auto-allocate HTTP 500 and transaction-start timeout
+- [05-lighthouse-audit-and-cwv-playbook.md](./performance/05-lighthouse-audit-and-cwv-playbook.md) - Lighthouse audits and the Core Web Vitals playbook
+- [06-database-round-trips-and-join-loading.md](./performance/06-database-round-trips-and-join-loading.md) - Why statement count dominates dashboard latency, and when readers use join loading
 
 ---
 

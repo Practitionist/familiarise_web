@@ -298,7 +298,7 @@ export function deriveConsulteeActionItems({
       title: "Your expert asked for a revised document",
       body: doc.name,
       ctaLabel: "Upload",
-      ctaHref: `${basePath}/appointments/${doc.appointmentId}`,
+      ctaHref: `${basePath}/appointments/${doc.appointmentId}/documents?thread=${encodeURIComponent(doc.id)}`,
     });
   }
 
