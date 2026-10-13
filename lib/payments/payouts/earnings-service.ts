@@ -2436,6 +2436,7 @@ export async function getConsultantEarnings(
       orderBy: { createdAt: "desc" },
       take: limit,
       skip: offset,
+      relationLoadStrategy: "join",
     }),
     prisma.consultantEarnings.count({
       where: {

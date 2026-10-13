@@ -192,6 +192,7 @@ export async function getNeedsYouSummary(
           organizationId: true,
           organization: { select: { name: true } },
         },
+        relationLoadStrategy: "join",
       }),
       prisma.consultation.count({
         where: pendingConsultationWhere(consultantProfileId, {
