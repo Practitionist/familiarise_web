@@ -68,16 +68,21 @@ function sentryCspReportUrl() {
     return undefined;
   }
 }
-const CSP_REPORT_URL = sentryCspReportUrl();
+const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE === "true";
+
+// Browsers post violations straight to Sentry, bypassing every SDK hook, and
+// each report is a billable event on a 5,000/month error quota. A report-only
+// policy would spend it on noise, so reports are sent only once enforced.
+const CSP_REPORT_URL = CSP_ENFORCE ? sentryCspReportUrl() : undefined;
 const CSP_REPORT_GROUP = "csp-endpoint";
 
 /**
  * Content Security Policy.
  *
  * Report-only at launch: a drifted allow-list entry would otherwise break
- * Razorpay checkout or Stream calls for everyone at once. Violations land in
- * Sentry; once they are triaged, set `ENABLE_CSP_ENFORCE=true` and redeploy
- * (the value is read at build time).
+ * Razorpay checkout or Stream calls for everyone at once. Report-only builds
+ * send no reports (see CSP_REPORT_URL); watch the browser console on a deploy
+ * preview, then set `ENABLE_CSP_ENFORCE=true` and redeploy (read at build time).
  *
  * Allow-list rationale
  * --------------------
@@ -173,8 +178,6 @@ const CSP_DIRECTIVES = [
     ? [`report-uri ${CSP_REPORT_URL}`, `report-to ${CSP_REPORT_GROUP}`]
     : []),
 ].join("; ");
-
-const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE === "true";
 
 const CSP_HEADER_KEY = CSP_ENFORCE
   ? "Content-Security-Policy"
