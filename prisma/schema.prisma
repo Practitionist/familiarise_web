@@ -4,7 +4,9 @@
 // BigInt paise; enums are declared below the model(s) that use them.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Opt-in per query via relationLoadStrategy: "join"; lib/prisma.ts pins the default to "query".
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -7541,6 +7543,8 @@ model NotificationOutbox {
   @@index([status, nextRetryAt])
   @@index([status, updatedAt])
   @@index([entityRef])
+  // The support SLA sweep reads one workflow's recent rows, newest first.
+  @@index([workflowId, createdAt])
 }
 
 enum NotificationOutboxKind {

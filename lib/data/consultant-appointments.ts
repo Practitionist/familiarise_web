@@ -410,6 +410,7 @@ export async function getConsultantAppointments(
         },
       },
     },
+    relationLoadStrategy: "join",
   });
 
   // Sort appointments by slot start time

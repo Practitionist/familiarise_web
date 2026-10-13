@@ -5,8 +5,7 @@ import {
 } from "@tanstack/react-query";
 
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
-import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
+import { buildConsultantEarningsPagePayloads } from "@/lib/data/consultant-earnings-analytics";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { readConsultantPayoutSetup } from "@/lib/data/consultant-payout-setup";
@@ -37,47 +36,32 @@ export default async function EarningsPage({ params }: Readonly<PageProps>) {
   await requirePersonalProfileAccess("consultant", consultantId);
   const queryClient = new QueryClient();
 
-  // Keys MUST match AnalyticsPanel's useQuery keys exactly or hydration
-  // won't apply. allSettled so a failed read degrades to a client-side fetch
-  // rather than crashing the whole page.
-  await Promise.allSettled([
-    queryClient.prefetchQuery({
-      // Mirrors EarningsSummaryPanel's fetch: the same cap, personal scope,
-      // and the server-only flag the client cannot read.
-      queryKey: ["consultant-earnings", consultantId],
-      queryFn: async () => ({
-        ...(await buildConsultantEarningsPayload(consultantId, {
-          limit: EARNINGS_FETCH_CAP,
-          organizationId: null,
-        })),
-        livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
-      }),
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["consultant-earnings-analytics", consultantId],
-      queryFn: () =>
-        // #org-appts (#1024) — personal dashboard = B2C-only VIEW.
-        // Explicit to match the client's default (unset orgScope).
-        buildConsultantEarningsPayload(consultantId, {
-          limit: 1,
-          includeMonthly: true,
-          organizationId: null,
-        }),
-    }),
-    // #1527 — the header's payout-status chip reads the Get-paid seed.
-    queryClient.prefetchQuery({
+  // Keys MUST match the panels' useQuery keys exactly or hydration won't
+  // apply. Both earnings seeds come from one pass over the reads they share.
+  // A failed read degrades to a client-side fetch rather than crashing the page.
+  const earnings = await buildConsultantEarningsPagePayloads(consultantId, {
+    limit: EARNINGS_FETCH_CAP,
+  }).catch(() => null);
+  if (earnings) {
+    // Mirrors EarningsSummaryPanel's fetch: the same cap, personal scope, and
+    // the server-only flag the client cannot read.
+    queryClient.setQueryData(["consultant-earnings", consultantId], {
+      ...earnings.summary,
+      livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+    });
+    queryClient.setQueryData(
+      ["consultant-earnings-analytics", consultantId],
+      earnings.analytics,
+    );
+  }
+  // #1527 — the header's payout-status chip reads the Get-paid seed. The
+  // Analytics tab fetches its session list itself when opened.
+  await queryClient
+    .prefetchQuery({
       queryKey: payoutSetupQueryKey(consultantId),
       queryFn: () => readConsultantPayoutSetup(consultantId),
-    }),
-    queryClient.prefetchQuery({
-      queryKey: ["consultant-appointments", consultantId, "personal"],
-      queryFn: () =>
-        getConsultantAppointments({
-          consultantProfileId: consultantId,
-          scope: { kind: "personal" },
-        }),
-    }),
-  ]);
+    })
+    .catch(() => undefined);
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
