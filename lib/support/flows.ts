@@ -566,6 +566,11 @@ const documentsFlow: FlowDefinition = {
           label: "The file is wrong or won't open",
           next: "wrong",
         },
+        {
+          id: "remove",
+          label: "Remove a document I shared",
+          next: "remove",
+        },
       ],
     },
     missing: {
@@ -600,6 +605,13 @@ const documentsFlow: FlowDefinition = {
       body: "Thanks — tell us which file below and our team will get the right one to you.",
       escalate: true,
       reason: "documents_wrong",
+    },
+    remove: {
+      id: "remove",
+      kind: "TERMINAL",
+      body: "Thanks — our team will review the removal and reply here.",
+      escalate: true,
+      reason: "documents_removal",
     },
   },
 };

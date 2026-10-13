@@ -16,6 +16,7 @@
  * which is squarely staff's remit. Mirrors the money-surface reads.
  */
 
+import { fileApiError } from "@/lib/documents/api-error";
 import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
@@ -38,12 +39,7 @@ export async function GET(req: NextRequest) {
   const filters = QuerySchema.safeParse({
     reviewStatus: url.searchParams.get("reviewStatus") ?? undefined,
   });
-  if (!filters.success) {
-    return NextResponse.json(
-      { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
-    );
-  }
+  if (!filters.success) return fileApiError("INVALID_INPUT");
 
   const pagination = parsePagination(url);
 
@@ -64,9 +60,6 @@ export async function GET(req: NextRequest) {
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "admin" } },
     );
-    return NextResponse.json(
-      { error: "Failed to load documents" },
-      { status: 500 },
-    );
+    return fileApiError("SERVER_ERROR");
   }
 }

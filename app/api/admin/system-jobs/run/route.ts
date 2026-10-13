@@ -50,6 +50,7 @@ import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status
 import { cleanupAuthTokens } from "@/lib/auth/cleanup-auth-tokens";
 import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
+import { purgeDeletedDocuments } from "@/lib/documents/document-purge";
 
 // Alerts
 import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
@@ -291,6 +292,16 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       doubleBookingsDetected: result.doubleBookingsDetected,
       reconciledCount: result.tentativeFlagsCleared,
       errorCount: result.errors.length,
+    };
+  },
+  "purge-deleted-documents": async () => {
+    const result = await purgeDeletedDocuments();
+    return {
+      success: result.success,
+      tombstoned: result.tombstoned,
+      purged: result.purged,
+      cleanedCount: result.purged,
+      errorCount: result.failedStorage + result.failedRows,
     };
   },
   "reconcile-document-storage": async () => {

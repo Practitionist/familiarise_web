@@ -48,9 +48,22 @@ jest.mock("../../lib/stream/recording-storage", () => ({
   durablyOursWhere: jest.fn(() => ({})),
 }));
 
+// The viewer rule (host, own slot, purchase, catch-up) has its own suite; here
+// only a replay purchase stands in for it.
+jest.mock("../../lib/stream/recording-slots", () => ({
+  __esModule: true,
+  viewerPlaybackAccess: jest.fn(async () => {
+    const { default: db } = jest.requireMock("../../lib/prisma");
+    return (await db.recordingPurchase.findFirst())
+      ? { allowed: true }
+      : { allowed: false, code: "FORBIDDEN" };
+  }),
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    membership: { findFirst: jest.fn(async () => null) },
     recordingPurchase: { findFirst: jest.fn(async () => null) },
     payment: { findMany: jest.fn(async () => []) },
     collaborator: { findFirst: jest.fn(async () => null) },

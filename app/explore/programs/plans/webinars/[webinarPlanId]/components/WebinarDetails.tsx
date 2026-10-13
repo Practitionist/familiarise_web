@@ -198,6 +198,7 @@ export function WebinarDetails({
               whatsIncluded={plan.whatsIncluded}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
+              filesIncluded={plan.materials}
               faqs={plan.faqs}
               topics={plan.topics}
             />

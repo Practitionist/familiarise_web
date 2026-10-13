@@ -16,6 +16,19 @@ import { consultantPublicScalars } from "@/lib/data/consultant-public";
 // Webinar plan detail
 // ---------------------------------------------------------------------------
 
+/** Public plan pages list each material's name and type, never its storage path or a link. */
+const publicMaterialsInclude = {
+  orderBy: { order: "asc" as const },
+  select: {
+    id: true,
+    originalName: true,
+    description: true,
+    mimeType: true,
+    fileSize: true,
+    order: true,
+  },
+};
+
 /** Raw function — importable by API routes (no React.cache). */
 export async function fetchWebinarPlanDetail(webinarPlanId: string) {
   const plan = await prisma.webinarPlan.findUnique({
@@ -29,6 +42,7 @@ export async function fetchWebinarPlanDetail(webinarPlanId: string) {
       ],
     },
     include: {
+      materials: publicMaterialsInclude,
       consultantProfile: {
         select: {
           ...consultantPublicScalars,
@@ -114,6 +128,7 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       ],
     },
     include: {
+      materials: publicMaterialsInclude,
       consultantProfile: {
         select: {
           ...consultantPublicScalars,
@@ -243,7 +258,7 @@ export async function fetchSubscriptionPlanDetail(subscriptionPlanId: string) {
       topics: true,
       faqs: { orderBy: { order: "asc" } },
       subscriptionContents: { orderBy: { order: "asc" } },
-      materials: { orderBy: { order: "asc" } },
+      materials: publicMaterialsInclude,
     },
   });
   // toPlain — extended plan rows carry an inspect symbol (see serialize.ts)
@@ -268,7 +283,7 @@ export async function fetchConsultationPlanDetail(consultationPlanId: string) {
       consultantProfile: planOwnerSelect,
       topics: true,
       faqs: { orderBy: { order: "asc" } },
-      materials: { orderBy: { order: "asc" } },
+      materials: publicMaterialsInclude,
     },
   });
   return toPlain(plan);

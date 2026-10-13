@@ -5,7 +5,6 @@
 
 import { Prisma, type Recording } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
-import { liveParticipant } from "@/lib/booking/participants";
 
 // #780 — payload types derive from the extended client (Prisma.Result), not
 // Prisma.RecordingGetPayload, so BigInt columns (fileSize, plan.price) type
@@ -15,58 +14,6 @@ export type RecordingRow = Omit<Recording, "fileSize" | "listPricePaise"> & {
   fileSize: number | null;
   listPricePaise: number | null;
 };
-
-// ============================================================================
-// Consultant Recordings Include Structure
-// Used by: RecordingService.getConsultantRecordings()
-// ============================================================================
-
-export const consultantRecordingInclude =
-  Prisma.validator<Prisma.RecordingInclude>()({
-    meeting: {
-      include: {
-        occurrence: {
-          include: {
-            appointment: {
-              include: {
-                // #1554 — the roster is the appointment's live participants.
-                participants: {
-                  where: liveParticipant(),
-                  select: { user: { select: { name: true } } },
-                },
-                webinar: {
-                  include: {
-                    webinarPlan: {
-                      select: {
-                        id: true,
-                        title: true,
-                      },
-                    },
-                  },
-                },
-                class: {
-                  include: {
-                    classPlan: {
-                      select: {
-                        id: true,
-                        title: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-export type ConsultantRecordingWithDetails = Prisma.Result<
-  Db["recording"],
-  { include: typeof consultantRecordingInclude },
-  "findFirstOrThrow"
->;
 
 // ============================================================================
 // Recording with Access Control Include Structure
@@ -102,124 +49,5 @@ export const recordingWithAccessControlInclude =
 export type RecordingWithAccessControl = Prisma.Result<
   Db["recording"],
   { include: typeof recordingWithAccessControlInclude },
-  "findFirstOrThrow"
->;
-
-// ============================================================================
-// Webinar Plan Recordings Include Structure
-// Used by: RecordingService.getWebinarPlanRecordings()
-// ============================================================================
-
-export const webinarPlanRecordingInclude =
-  Prisma.validator<Prisma.RecordingInclude>()({
-    meeting: {
-      include: {
-        occurrence: {
-          include: {
-            appointment: {
-              include: {
-                webinar: {
-                  include: {
-                    webinarPlan: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-export type WebinarPlanRecordingWithDetails = Prisma.Result<
-  Db["recording"],
-  { include: typeof webinarPlanRecordingInclude },
-  "findFirstOrThrow"
->;
-
-// ============================================================================
-// Class Plan Recordings Include Structure
-// Used by: RecordingService.getClassPlanRecordings()
-// ============================================================================
-
-export const classPlanRecordingInclude =
-  Prisma.validator<Prisma.RecordingInclude>()({
-    meeting: {
-      include: {
-        occurrence: {
-          include: {
-            appointment: {
-              include: {
-                class: {
-                  include: {
-                    classPlan: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-export type ClassPlanRecordingWithDetails = Prisma.Result<
-  Db["recording"],
-  { include: typeof classPlanRecordingInclude },
-  "findFirstOrThrow"
->;
-
-// ============================================================================
-// Consultee Recordings Include Structure
-// Used by: RecordingService.getConsulteeRecordings()
-// ============================================================================
-
-const recordingHostSelect = {
-  select: { user: { select: { name: true, image: true } } },
-} as const;
-
-export const consulteeRecordingInclude =
-  Prisma.validator<Prisma.RecordingInclude>()({
-    meeting: {
-      include: {
-        occurrence: {
-          include: {
-            appointment: {
-              include: {
-                // #1527 — the host rides along so the Recordings page can
-                // name who ran the session.
-                webinar: {
-                  include: {
-                    webinarPlan: {
-                      select: {
-                        id: true,
-                        title: true,
-                        consultantProfile: recordingHostSelect,
-                      },
-                    },
-                  },
-                },
-                class: {
-                  include: {
-                    classPlan: {
-                      select: {
-                        id: true,
-                        title: true,
-                        consultantProfile: recordingHostSelect,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  });
-
-export type ConsulteeRecordingWithDetails = Prisma.Result<
-  Db["recording"],
-  { include: typeof consulteeRecordingInclude },
   "findFirstOrThrow"
 >;

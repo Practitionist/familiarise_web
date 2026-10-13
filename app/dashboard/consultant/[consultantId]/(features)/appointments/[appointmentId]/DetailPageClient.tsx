@@ -1,9 +1,6 @@
 "use client";
 
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
-import { DeliverableThreadList } from "@/components/documents/DeliverableThreadList";
-import { isConfirmedStatus } from "@/lib/appointments/status";
-import { supportsDocuments } from "@/lib/appointments/kind-capabilities";
 import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import type { TAppointment } from "@/types/appointment";
 import { useConsultantAppointmentsAdapter } from "../ConsultantAppointmentsAdapter";
@@ -27,17 +24,9 @@ export default function DetailPageClient({
       supportRequestsBase={`/dashboard/consultant/${consultantId}/support/requests`}
       joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
       consultantId={consultantId}
-      renderDocuments={(vm) => {
-        if (!supportsDocuments(vm.kind)) return null;
-        const canUpload = isConfirmedStatus(vm.status);
-
-        return (
-          <DeliverableThreadList
-            appointmentId={appointmentId}
-            viewerRole="consultant"
-            canUpload={canUpload}
-          />
-        );
+      resourceHrefs={{
+        documents: `/dashboard/consultant/${consultantId}/appointments/${appointmentId}/documents`,
+        recordings: `/dashboard/consultant/${consultantId}/appointments/${appointmentId}/recordings`,
       }}
       participantsHref={(detail) => {
         const appointment = detail.appointment as unknown as TAppointment;

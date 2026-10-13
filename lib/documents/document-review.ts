@@ -2,9 +2,8 @@ import { DocumentReviewStatus } from "@prisma/client";
 import type { PrismaLike } from "@/lib/prisma";
 
 /**
- * Server-side document review invariants: per-appointment root thread count caps,
- * the learner revision gate, upload gates, review status transitions, and thread
- * aggregation helpers.
+ * Document thread invariants: the per-booking document cap, the learner
+ * version gate, review status transitions and version-slot allocation.
  */
 
 /** Hard ceiling on live (non-deleted) root deliverable threads per appointment. */
@@ -12,62 +11,6 @@ export const MAX_DOCS_PER_APPOINTMENT = 20;
 
 /** Live learner versions per thread; expert replies do not count. */
 export const MAX_LEARNER_VERSIONS_PER_THREAD = 10;
-
-/** Grace window before the nightly cleanup job purges soft-deleted rows. */
-export const DOCUMENT_DELETE_GRACE_DAYS = 7;
-
-/** Shared upload gates — one definition so both roles cannot drift apart. */
-export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024; // 10MB
-
-const ALLOWED_DOCUMENT_MIME_TYPES = [
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/gif",
-  "text/plain",
-] as const;
-
-export const ALLOWED_DOCUMENT_ACCEPT_ATTR =
-  ".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.txt";
-
-export type DocumentUploadValidation =
-  | { ok: true }
-  | {
-      ok: false;
-      code: "FILE_TOO_LARGE" | "UNSUPPORTED_FILE_TYPE";
-      message: string;
-    };
-
-const ALLOWED_DOCUMENT_MIME_TYPE_SET: ReadonlySet<string> = new Set(
-  ALLOWED_DOCUMENT_MIME_TYPES,
-);
-
-export function validateDocumentUpload(file: {
-  size: number;
-  type: string;
-}): DocumentUploadValidation {
-  if (file.size === 0 || file.size > MAX_DOCUMENT_BYTES) {
-    return {
-      ok: false,
-      code: "FILE_TOO_LARGE",
-      message: `Please select a file larger than 0 bytes and smaller than ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)}MB.`,
-    };
-  }
-  if (!ALLOWED_DOCUMENT_MIME_TYPE_SET.has(file.type)) {
-    return {
-      ok: false,
-      code: "UNSUPPORTED_FILE_TYPE",
-      message:
-        'The file type "' +
-        file.type +
-        '" is not supported. Please upload a PDF, Word document, image (JPG, PNG, GIF), or text file.',
-    };
-  }
-  return { ok: true };
-}
 
 export type ReviewStatus = keyof typeof DocumentReviewStatus;
 
@@ -107,125 +50,6 @@ export async function withVersionConflictRetry<T>(
       throw error;
     }
   }
-}
-
-export interface ThreadableDocument {
-  id: string;
-  appointmentId: string;
-  originalName: string;
-  fileSize: number;
-  mimeType: string;
-  fileUrl?: string;
-  description?: string | null;
-  reviewStatus: string;
-  reviewNotes?: string | null;
-  reviewedAt?: Date | string | null;
-  uploadedByRole: string;
-  uploadedAt: Date | string;
-  versionNo?: number | null;
-  rootDocumentId?: string | null;
-  responseToDocumentId?: string | null;
-}
-
-export interface DocumentThread<
-  T extends ThreadableDocument = ThreadableDocument,
-> {
-  rootId: string;
-  rootDocument: T;
-  appointmentId: string;
-  title: string;
-  latestVersion: T;
-  latestConsulteeSubmission: T | null;
-  latestConsultantResponse: T | null;
-  effectiveStatus: string;
-  effectiveReviewNotes: string | null;
-  versions: T[];
-  versionCount: number;
-  updatedAt: Date | string;
-}
-
-/**
- * Groups flat `AppointmentDocument` rows by `COALESCE(rootDocumentId, id)` so
- * multi-round revisions (`v1 -> consultant reply v2 -> learner v3`) render as a
- * single deliverable thread instead of exploding into separate top-level rows.
- */
-export function groupDocumentsIntoThreads<T extends ThreadableDocument>(
-  documents: readonly T[],
-): DocumentThread<T>[] {
-  const byRoot = new Map<string, T[]>();
-
-  for (const doc of documents) {
-    const rootId = doc.rootDocumentId ?? doc.id;
-    const list = byRoot.get(rootId);
-    if (list) {
-      list.push(doc);
-    } else {
-      byRoot.set(rootId, [doc]);
-    }
-  }
-
-  const threads: DocumentThread<T>[] = [];
-
-  for (const [rootId, items] of byRoot.entries()) {
-    const versions = [...items].sort((a, b) => {
-      const va = a.versionNo ?? 1;
-      const vb = b.versionNo ?? 1;
-      if (va !== vb) return va - vb;
-      return (
-        new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime()
-      );
-    });
-
-    const rootDocument = versions[0]!;
-    const latestVersion = versions.at(-1)!;
-    let latestConsulteeSubmission: T | null = null;
-    let latestConsultantResponse: T | null = null;
-
-    for (const v of versions) {
-      if (v.uploadedByRole === "CONSULTEE") {
-        latestConsulteeSubmission = v;
-      } else {
-        latestConsultantResponse = v;
-      }
-    }
-    // Feedback belongs to the version it reviewed, so a newer learner version starts clean.
-    const latestNotes =
-      (latestConsulteeSubmission ?? latestVersion).reviewNotes?.trim() || null;
-
-    const effectiveStatus =
-      latestConsulteeSubmission?.reviewStatus ?? latestVersion.reviewStatus;
-
-    threads.push({
-      rootId,
-      rootDocument,
-      appointmentId: latestVersion.appointmentId,
-      title: rootDocument.originalName,
-      latestVersion,
-      latestConsulteeSubmission,
-      latestConsultantResponse,
-      effectiveStatus,
-      effectiveReviewNotes: latestNotes,
-      versions,
-      versionCount: versions.length,
-      updatedAt: latestVersion.uploadedAt,
-    });
-  }
-
-  return threads.sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  );
-}
-
-/** Expert rows are replies (or the expert's own shared file), never a reviewed status. */
-export function versionAuthorLabel(
-  version: Pick<ThreadableDocument, "id" | "uploadedByRole">,
-  rootId: string,
-  viewerRole: "consultee" | "consultant",
-): string {
-  if (version.uploadedByRole === "CONSULTANT") {
-    return version.id === rootId ? "Shared by expert" : "Expert reply";
-  }
-  return viewerRole === "consultee" ? "Your version" : "Learner version";
 }
 
 type LearnerRevisionGate =
@@ -357,54 +181,19 @@ export class ThreadSlotError extends Error {
   }
 }
 
-/** Serialises slot allocation per appointment (`FOR UPDATE`); call inside the commit transaction. */
+/** Slot allocation for the commit; call inside a transaction holding the booking's `FOR UPDATE` lock. */
 export async function resolveDocumentThreadSlot(
-  tx: ThreadSlotDb & Pick<PrismaLike, "$executeRaw">,
+  tx: ThreadSlotDb,
   params: {
     appointmentId: string;
     parentDocumentId: string | null | undefined;
     uploadedByRole: "CONSULTEE" | "CONSULTANT";
   },
 ): Promise<{ rootDocumentId: string | null; versionNo: number }> {
-  await tx.$executeRaw`SELECT 1 FROM "Appointment" WHERE id = ${params.appointmentId} FOR UPDATE`;
   const outcome = await checkDocumentThreadSlot(tx, params);
   if (!outcome.ok) throw new ThreadSlotError(outcome.code);
   return {
     rootDocumentId: outcome.rootDocumentId,
     versionNo: outcome.versionNo,
-  };
-}
-
-/**
- * SQL-pushed `effectiveStatus` filter on root document threads (`rootDocumentId: null`):
- * matches threads whose highest-version live `CONSULTEE` upload has `reviewStatus = status`.
- */
-export function buildRootThreadStatusWhere(
-  baseRootWhere: Record<string, unknown>,
-  status: DocumentReviewStatus | null | undefined,
-): Record<string, unknown> {
-  if (!status) return baseRootWhere;
-  return {
-    ...baseRootWhere,
-    OR: [
-      {
-        threadVersions: {
-          some: {
-            deletedAt: null,
-            uploadedByRole: "CONSULTEE",
-            reviewStatus: status,
-          },
-        },
-      },
-      {
-        reviewStatus: status,
-        threadVersions: {
-          none: {
-            deletedAt: null,
-            uploadedByRole: "CONSULTEE",
-          },
-        },
-      },
-    ],
   };
 }

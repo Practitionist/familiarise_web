@@ -22,20 +22,16 @@ describe("file error copy is keyed on the code, never the server message", () =>
     [
       403,
       { code: "APPOINTMENT_TERMINAL" },
-      "This booking was cancelled or closed, so its files are no longer available.",
+      "This booking was cancelled, so its files are read-only.",
     ],
     [403, { code: "FORBIDDEN" }, "You don't have access to this file."],
-    [
-      404,
-      { code: "NOT_FOUND" },
-      "This file was removed or is no longer shared with you.",
-    ],
-    [410, {}, "This file was removed or is no longer shared with you."],
+    [404, { code: "NOT_FOUND" }, "This file was removed."],
+    [410, {}, "This file was removed."],
     [413, null, "Files can be up to 10 MB."],
     [
       415,
       {},
-      "Upload a PDF, Word document, image (JPG, PNG, GIF) or text file.",
+      "Upload a PDF, Word, Excel, PowerPoint, image (JPG, PNG, GIF, WebP), text or CSV file.",
     ],
     [
       429,
@@ -43,10 +39,16 @@ describe("file error copy is keyed on the code, never the server message", () =>
       "Too many requests. Try again in a minute.",
     ],
     [
-      500,
-      { code: "STORAGE_CONFIG_ERROR" },
+      503,
+      { code: "STORAGE_UNAVAILABLE" },
       "Files are temporarily unavailable. Try again in a moment.",
     ],
+    [
+      409,
+      { code: "UPLOAD_WINDOW_CLOSED", closedAt: "2026-11-09T00:00:00.000Z" },
+      "Uploads closed on 9 Nov 2026, 30 days after the last session.",
+    ],
+    [500, { code: "NOT_A_KNOWN_CODE" }, "Something went wrong. Try again."],
     [500, { code: "SERVER_ERROR" }, "Something went wrong. Try again."],
     [
       409,
@@ -82,12 +84,13 @@ describe("file error copy is keyed on the code, never the server message", () =>
     });
     const theirs = await friendlyErrorFromResponse(jsonResponse(404, body), {
       isUploader: false,
+      role: "consultee",
     });
     expect(own.description).toBe(
       "This file didn't finish saving. Upload it again.",
     );
     expect(theirs.description).toBe(
-      "This file didn't finish saving. Ask the person who shared it to upload it again.",
+      "This file didn't finish saving. Ask your expert to upload it again.",
     );
   });
 });

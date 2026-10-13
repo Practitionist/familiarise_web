@@ -69,6 +69,7 @@ import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import { liveParticipant } from "@/lib/booking/participants";
+import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
 
 export interface ScrubResult {
   /// True iff this call performed the scrub. False means the user was
@@ -521,6 +522,9 @@ async function retryErasedUserVendorCleanup(
     now,
   );
   vendorFailures.push(...recordingFailures);
+  vendorFailures.push(
+    ...(await eraseUserSessionDocuments(prisma, userId, now)),
+  );
   return vendorFailures;
 }
 
@@ -1055,10 +1059,13 @@ export async function scrubUser(
     );
   }
 
+  const documentFailures = await eraseUserSessionDocuments(prisma, userId, now);
+
   const vendorFailures = [
     ...paymentFailures,
     ...principalFailures,
     ...recordingFailures,
+    ...documentFailures,
   ];
 
   const notificationFailures = await offboardNotificationVendor(userId);

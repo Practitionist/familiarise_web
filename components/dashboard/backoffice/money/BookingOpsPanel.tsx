@@ -13,6 +13,7 @@ import {
 } from "@/lib/labels/session-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { BookingDocumentsOps } from "./BookingDocumentsOps";
 import { ClassSeriesDoors } from "./ClassSeriesDoors";
 import { DoorDialog, type Door } from "./DoorDialog";
 import { SetOutcomeDialog } from "./SetOutcomeDialog";
@@ -149,6 +150,10 @@ export function BookingOpsPanel({
 
       {v.type === "CLASS" && v.classId && (
         <ClassSeriesDoors classId={v.classId} />
+      )}
+
+      {can("appointments.manage") && (
+        <BookingDocumentsOps appointmentId={appointmentId} />
       )}
 
       {target && (

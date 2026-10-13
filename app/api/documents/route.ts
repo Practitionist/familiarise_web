@@ -16,6 +16,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import { fileApiError } from "@/lib/documents/api-error";
 import { listDocumentsScoped } from "@/lib/api/scope/list-documents";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { parsePagination } from "@/lib/enterprise/validators";
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
   });
   if (!scopeResolution.ok) {
     return NextResponse.json(
-      { error: scopeResolution.message, code: scopeResolution.code },
+      { code: scopeResolution.code, message: scopeResolution.message },
       { status: scopeResolution.status },
     );
   }
@@ -58,12 +59,7 @@ export async function GET(req: NextRequest) {
   const filters = QuerySchema.safeParse({
     reviewStatus: url.searchParams.get("reviewStatus") ?? undefined,
   });
-  if (!filters.success) {
-    return NextResponse.json(
-      { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
-    );
-  }
+  if (!filters.success) return fileApiError("INVALID_INPUT");
   const pagination = parsePagination(url);
 
   const result = await listDocumentsScoped({

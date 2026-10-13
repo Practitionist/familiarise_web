@@ -5,6 +5,7 @@ import type {
   AppointmentOccurrence as PrismaAppointmentOccurrence,
 } from "@prisma/client";
 import type { ICollaboratorInfo } from "../../types";
+import type { PlanFileIncluded } from "../../components/PlanDetailBody";
 import type { ConsultantPublicScalars } from "@/lib/data/consultant-public";
 
 type TClassSessionWithSchedule = PrismaClass & {
@@ -42,4 +43,6 @@ export type TClassPlanDetailsData = Omit<
   type: "class";
   imageUrl: string;
   collaborators?: ICollaboratorInfo[];
+  /** Names and types only, for the "Files included" card. */
+  materials?: PlanFileIncluded[];
 };
