@@ -56,7 +56,7 @@ const createCheckoutInput = (userId: string): CheckoutInput => ({
   startsAt: TEST_CONFIG.SLOT_START,
   endsAt: TEST_CONFIG.SLOT_END,
   notes: `Test checkout for user ${userId}`,
-  paymentGateway: "STRIPE",
+  paymentGateway: "RAZORPAY",
 });
 
 // ============================================================================

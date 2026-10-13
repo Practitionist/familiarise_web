@@ -11,11 +11,7 @@ import { FAQSection } from "@/components/home/FAQSection";
 import { EnterpriseSection } from "@/components/home/EnterpriseSection";
 import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
 import { LandingMotionProvider } from "@/components/home/LandingMotionProvider";
-import {
-  getHomeExperts,
-  getHomeReviews,
-  getHomeStats,
-} from "@/lib/data/home";
+import { getHomeExperts, getHomeReviews, getHomeStats } from "@/lib/data/home";
 import { buildExpertHeroStats } from "@/lib/data/public-stats";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
@@ -85,30 +81,46 @@ export default async function Home() {
         <TrustedBySection />
 
         {/* 3. Browse by Domain — Crisp light grid with real consultant counts */}
-        <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
+        <div className="cv-auto">
+          <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
+        </div>
 
         {/* 4. Session Formats & Built-in Platform Capabilities — Dark bento */}
-        <FeaturesSection />
+        <div className="cv-auto">
+          <FeaturesSection />
+        </div>
 
         {/* 5. Featured Experts — Static 4-column bento grid */}
-        <Suspense fallback={<FeaturedExpertsSkeleton />}>
-          <FeaturedExpertsLoader />
-        </Suspense>
+        <div className="cv-auto">
+          <Suspense fallback={<FeaturedExpertsSkeleton />}>
+            <FeaturedExpertsLoader />
+          </Suspense>
+        </div>
 
         {/* 6. How It Works — 3-step horizontal flow on bg-muted */}
-        <HowItWorksSection />
+        <div className="cv-auto">
+          <HowItWorksSection />
+        </div>
 
         {/* 7. Verified Reviews & Trust Guarantees — Static 3-column grid on dark */}
-        <Suspense fallback={<TestimonialsSkeleton />}>
-          <ReviewsLoader />
-        </Suspense>
+        <div className="cv-auto">
+          <Suspense fallback={<TestimonialsSkeleton />}>
+            <ReviewsLoader />
+          </Suspense>
+        </div>
 
         {/* 8. FAQ — Single-container editorial accordion */}
-        <FAQSection />
+        <div className="cv-auto">
+          <FAQSection />
+        </div>
 
         {/* 9. Closing Audience Paths — Enterprise (bg-muted) + Become an Expert (bg-zinc-950) */}
-        <EnterpriseSection />
-        <BecomeExpertSection />
+        <div className="cv-auto">
+          <EnterpriseSection />
+        </div>
+        <div className="cv-auto">
+          <BecomeExpertSection />
+        </div>
       </main>
     </LandingMotionProvider>
   );

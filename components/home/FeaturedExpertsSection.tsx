@@ -65,9 +65,9 @@ function ExpertCard({
               <span className="inline-flex items-center gap-1 font-medium text-foreground">
                 <Star className="w-3.5 h-3.5 fill-foreground text-foreground" />
                 {expert.rating.toFixed(1)}
-                {expert.reviewCount ? (
+                {(expert.reviewCount ?? expert.reviews?.length ?? 0) > 0 ? (
                   <span className="text-muted-foreground font-normal">
-                    ({expert.reviewCount})
+                    ({expert.reviewCount ?? expert.reviews?.length ?? 0})
                   </span>
                 ) : null}
               </span>

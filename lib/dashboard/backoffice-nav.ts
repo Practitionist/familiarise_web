@@ -9,6 +9,7 @@ import {
   Coins,
   CreditCard,
   FileWarning,
+  Gift,
   Home,
   Inbox,
   Landmark,
@@ -196,6 +197,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: RefreshCw,
           path: "subscriptions",
           surface: "subscriptions.read",
+        },
+        {
+          name: "Referral credits",
+          icon: Gift,
+          path: "referral-credits",
+          surface: "referrals.read",
         },
         {
           name: "TDS",

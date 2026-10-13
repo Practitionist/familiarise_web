@@ -1,72 +1,41 @@
-import { randomUUID } from "node:crypto";
 import type { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import {
   cleanupRoute,
   parseLimitParam,
+  parseLimitParamOrDefault,
   statusFor,
 } from "@/lib/cron/cleanup-route";
-import { goHref } from "@/lib/dashboard/go";
-import { notifyRecordingExpiring } from "@/lib/novu/service";
 import { reportSentryError } from "@/lib/observability/report";
-import { getAppUrl } from "@/lib/url";
-import type { ReconcileRunSnapshot } from "@/scripts/reconcile/reconcile-ledgers";
 
 export type CleanupRouteHandlers = {
   GET: (req: NextRequest) => Promise<NextResponse>;
   POST: (req: NextRequest) => Promise<NextResponse>;
 };
 
-const ReconcileLedgersQuerySchema = z.object({
-  runId: z.string().uuid().optional(),
-  triggeredById: z.string().min(1).max(64).optional(),
-  abandon: z.string().min(1).max(500).optional(),
-  resume: z.enum(["1", "true"]).optional(),
-});
-
-type ReconcileLedgersTwinResult =
-  | ({ success: true } & ReconcileRunSnapshot)
-  | {
-      success: true;
-      status: "IDLE";
-      runId: null;
-      progress: null;
-      report: null;
-    };
-
-type ExpiringStreamOnly = {
-  recordingId: string;
-  title: string;
-  consultantUserId: string;
-  expiresAt: Date;
-};
-
-async function notifyConsultantsOfExpiringRecordings(
-  expiring: ExpiringStreamOnly[],
-): Promise<void> {
-  const byConsultant = new Map<string, ExpiringStreamOnly[]>();
-  for (const rec of expiring) {
-    if (!rec.consultantUserId) continue;
-    const list = byConsultant.get(rec.consultantUserId) ?? [];
-    list.push(rec);
-    byConsultant.set(rec.consultantUserId, list);
-  }
-
-  const dashboardUrl = `${getAppUrl()}${goHref("expert", "recordings")}`;
-  await Promise.allSettled(
-    Array.from(byConsultant.entries()).map(([consultantUserId, recs]) => {
-      const soonest = recs.reduce(
-        (min, r) => (r.expiresAt < min ? r.expiresAt : min),
-        recs[0].expiresAt,
-      );
-      return notifyRecordingExpiring(consultantUserId, {
-        recordingCount: recs.length,
-        expiresAt: soonest.toISOString(),
-        dashboardUrl,
-      });
-    }),
-  );
-}
+// Per-run defaults for the per-row booking sweeps the ticker drives. `?limit=`
+// overrides them (clamped to LIMIT_CAP); no caller gets an unbounded cohort.
+/** Sessions per reminder window; each costs a claim, a bell and an email. */
+const MAX_REMINDER_SESSIONS_PER_WINDOW = 25;
+/** Parents per pass and slot outcomes per pass; one Stream report each. */
+const MAX_AUTO_COMPLETE_PER_PASS = 25;
+/** Candidates per run; each is checked against a Stream call report. */
+const MAX_NO_SHOW_CANDIDATES = 10;
+/** Rows per stale-request arm; the refund arm calls the gateway per row. */
+const MAX_STALE_REQUESTS_PER_ARM = 20;
+/** Slot rows the stale-RESCHEDULED arm may release; a pure row-lock pass. */
+const MAX_STALE_SLOT_RELEASES = 200;
+/** Unpaid trials per run; the unanswered arm refunds per payment. */
+const MAX_UNPAID_TRIALS = 25;
+/** Lapsed proposals per run; each takes the appointment lock and a restore. */
+const MAX_RESCHEDULE_PROPOSALS = 25;
+/** Tentative slots per run; a cheap soft cancel behind an expensive read. */
+const MAX_TENTATIVE_SLOTS = 200;
+/** QUALIFYING referrals per run; one Serializable transaction each. */
+const MAX_REFERRAL_VESTS = 50;
+/** Expired credits per breakage run; one Serializable transaction each. */
+const MAX_REFERRAL_BREAKAGE = 500;
+/** Abandoned onboarding drafts are deleted after this many idle days. */
+const ONBOARDING_DRAFT_TTL_DAYS = 90;
 
 /**
  * Registry of `/api/cleanup/[job]` HTTP twins.
@@ -84,9 +53,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "cleanup-abandoned-org-top-ups",
         run: async () => {
-          const { cleanupAbandonedOrgTopUps } = await import(
-            "@/scripts/cleanup/cleanup-abandoned-org-top-ups"
-          );
+          const { cleanupAbandonedOrgTopUps } =
+            await import("@/scripts/cleanup/cleanup-abandoned-org-top-ups");
           return cleanupAbandonedOrgTopUps();
         },
         summarize: (r) => ({
@@ -159,45 +127,38 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           paymentSuccess: r.paymentCleanup.success,
           consultationSuccess: r.consultationCleanup.success,
           reminderSuccess: r.paymentReminders.success,
+          errorCount:
+            r.paymentCleanup.errors.length +
+            r.consultationCleanup.errors.length +
+            r.paymentReminders.errors.length,
         }),
-        status: (r) => statusFor({ success: r.overallSuccess }),
+        status: (r) =>
+          statusFor(
+            { success: r.overallSuccess },
+            r.paymentCleanup.errors.length +
+              r.consultationCleanup.errors.length +
+              r.paymentReminders.errors.length >
+              0,
+          ),
         unauthorizedMessage:
           "Please provide a valid authorization header with the CRON_SECRET",
         failureMessage: "Cleanup job failed",
-      }),
-
-    // @cleanup-twin alert-dispute-deadlines
-    "alert-dispute-deadlines": () =>
-      cleanupRoute({
-        job: "alert-dispute-deadlines",
-        run: async () => {
-          const { alertDisputeDeadlines } = await import(
-            "@/scripts/disputes/alert-dispute-deadlines"
-          );
-          return alertDisputeDeadlines();
-        },
-        summarize: (r) => ({
-          urgentCount: r.urgentCount,
-          criticalCount: r.criticalCount,
-        }),
-        status: (r) => (r.criticalCount > 0 ? 207 : 200),
-        failureMessage: "Failed to check dispute deadlines",
       }),
 
     // @cleanup-twin alert-orphaned-payments
     "alert-orphaned-payments": () =>
       cleanupRoute({
         job: "alert-orphaned-payments",
-        run: async () => {
-          const { alertOrphanedPayments } = await import(
-            "@/scripts/alerts/alert-orphaned-payments"
-          );
-          return alertOrphanedPayments();
+        run: async (req) => {
+          const { alertOrphanedPayments } =
+            await import("@/scripts/alerts/alert-orphaned-payments");
+          return alertOrphanedPayments({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
           totalOrphaned: r.totalOrphaned,
           criticalCount: r.criticalCount,
           totalAmount: r.totalAmount,
+          sideChargeCount: r.sideChargeCount,
         }),
         status: (r) => (r.totalOrphaned > 0 ? 500 : 200),
         failureMessage: "Failed to check for orphaned payments",
@@ -207,11 +168,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "appointment-reminders": () =>
       cleanupRoute({
         job: "appointment-reminders",
-        run: async () => {
-          const { sendAppointmentReminders } = await import(
-            "@/scripts/appointments/send-appointment-reminders"
-          );
-          return sendAppointmentReminders();
+        run: async (req) => {
+          const { sendAppointmentReminders } =
+            await import("@/scripts/appointments/send-appointment-reminders");
+          return sendAppointmentReminders({
+            maxPerWindow: parseLimitParamOrDefault(
+              req,
+              MAX_REMINDER_SESSIONS_PER_WINDOW,
+            ),
+          });
         },
         summarize: (r) => ({
           reminders24h: r.reminders24h,
@@ -225,14 +190,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "archive-webhook-events",
         run: async () => {
-          const { archiveWebhookEvents } = await import(
-            "@/scripts/cleanup/archive-webhook-events"
-          );
+          const { archiveWebhookEvents } =
+            await import("@/scripts/cleanup/archive-webhook-events");
           return archiveWebhookEvents();
         },
         summarize: (r) => ({
           processedEventsDeleted: r.processedEventsDeleted,
+          terminalUnprocessedDeleted: r.terminalUnprocessedDeleted,
           failedEventsDeleted: r.failedEventsDeleted,
+          outboundDeliveriesDeleted: r.outboundDeliveriesDeleted,
           totalDeleted: r.totalDeleted,
         }),
         failureMessage: "Failed to archive webhook events",
@@ -243,15 +209,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "cleanup-auth-tokens",
         run: async () => {
-          const { cleanupAuthTokens } = await import(
-            "@/scripts/cleanup/cleanup-auth-tokens"
-          );
+          const { cleanupAuthTokens } =
+            await import("@/lib/auth/cleanup-auth-tokens");
           return cleanupAuthTokens();
         },
         summarize: (r) => ({
           verificationTokensDeleted: r.verificationTokensDeleted,
           sessionsDeleted: r.sessionsDeleted,
-          passwordResetTokensCleared: r.passwordResetTokensCleared,
+          idempotencyRecordsDeleted: r.idempotencyRecordsDeleted,
+          staleInvitationsExpired: r.staleInvitationsExpired,
           totalCleaned: r.totalCleaned,
         }),
         failureMessage: "Failed to cleanup auth tokens",
@@ -261,11 +227,17 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "auto-complete-appointments": () =>
       cleanupRoute({
         job: "auto-complete-appointments",
-        run: async () => {
-          const { autoCompleteAppointments } = await import(
-            "@/scripts/appointments/auto-complete-appointments"
+        run: async (req) => {
+          const { autoCompleteAppointments } =
+            await import("@/scripts/appointments/auto-complete-appointments");
+          const limit = parseLimitParamOrDefault(
+            req,
+            MAX_AUTO_COMPLETE_PER_PASS,
           );
-          return autoCompleteAppointments();
+          return autoCompleteAppointments({
+            maxParents: limit,
+            maxSlotOutcomes: limit,
+          });
         },
         summarize: (r) => ({
           webinarsCompleted: r.webinarsCompleted,
@@ -292,11 +264,15 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "detect-consultant-no-shows": () =>
       cleanupRoute({
         job: "detect-consultant-no-shows",
-        run: async () => {
-          const { detectConsultantNoShows } = await import(
-            "@/scripts/appointments/detect-consultant-no-shows"
-          );
-          return detectConsultantNoShows();
+        run: async (req) => {
+          const { detectConsultantNoShows } =
+            await import("@/scripts/appointments/detect-consultant-no-shows");
+          return detectConsultantNoShows({
+            maxCandidates: parseLimitParamOrDefault(
+              req,
+              MAX_NO_SHOW_CANDIDATES,
+            ),
+          });
         },
         summarize: (r) => ({
           detected: r.detected,
@@ -312,9 +288,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "dispatch-outbound-webhooks",
         run: async (req) => {
-          const { dispatchOutboundWebhooks } = await import(
-            "@/scripts/cleanup/dispatch-outbound-webhooks"
-          );
+          const { dispatchOutboundWebhooks } =
+            await import("@/scripts/cleanup/dispatch-outbound-webhooks");
           return dispatchOutboundWebhooks({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -332,9 +307,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "drain-notification-outbox",
         run: async (req) => {
-          const { drainNotificationOutbox } = await import(
-            "@/jobs/notifications/drain-notification-outbox"
-          );
+          const { drainNotificationOutbox } =
+            await import("@/jobs/notifications/drain-notification-outbox");
           return drainNotificationOutbox({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -349,15 +323,84 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Notification outbox drain failed",
       }),
 
+    // @cleanup-twin expire-recordings
+    "expire-recordings": () =>
+      cleanupRoute({
+        job: "expire-recordings",
+        run: async (req) => {
+          const { expireRecordings } =
+            await import("@/lib/stream/recording-retention");
+          return expireRecordings({ limit: parseLimitParam(req) });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          expired: r.expired,
+          failed: r.failed,
+        }),
+        status: (r) => statusFor(r),
+        failureMessage: "Recording retention sweep failed",
+      }),
+
+    // @cleanup-twin expire-onboarding-drafts
+    "expire-onboarding-drafts": () =>
+      cleanupRoute({
+        job: "expire-onboarding-drafts",
+        run: async () => {
+          const { default: prisma } = await import("@/lib/prisma");
+          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
+          return withCronLock(
+            "expire-onboarding-drafts",
+            { failMode: "open" },
+            async () => {
+              const cutoff = new Date(
+                Date.now() - ONBOARDING_DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000,
+              );
+              const { count } = await prisma.onboardingDraft.deleteMany({
+                where: { updatedAt: { lt: cutoff } },
+              });
+              return { success: true, deleted: count };
+            },
+          );
+        },
+        summarize: (r) => ({ deleted: r.deleted }),
+        failureMessage: "Failed to expire onboarding drafts",
+      }),
+
+    // @cleanup-twin expire-referral-credits
+    "expire-referral-credits": () =>
+      cleanupRoute({
+        job: "expire-referral-credits",
+        run: async (req) => {
+          const { runExpireReferralCredits } =
+            await import("@/lib/referrals/vesting");
+          return runExpireReferralCredits({
+            limit: parseLimitParamOrDefault(req, MAX_REFERRAL_BREAKAGE),
+          });
+        },
+        summarize: (r) => ({
+          expired: r.expired,
+          breakagePaise: r.breakagePaise,
+          failed: r.failed,
+        }),
+        failureMessage: "Failed to expire referral credits",
+      }),
+
     // @cleanup-twin expire-stale-requests
     "expire-stale-requests": () =>
       cleanupRoute({
         job: "expire-stale-requests",
-        run: async () => {
-          const { expireStaleRequests } = await import(
-            "@/scripts/appointments/expire-stale-requests"
-          );
-          return expireStaleRequests();
+        run: async (req) => {
+          const { expireStaleRequests } =
+            await import("@/scripts/appointments/expire-stale-requests");
+          return expireStaleRequests({
+            limits: {
+              maxRequests: parseLimitParamOrDefault(
+                req,
+                MAX_STALE_REQUESTS_PER_ARM,
+              ),
+              maxSlotReleases: MAX_STALE_SLOT_RELEASES,
+            },
+          });
         },
         summarize: (r) => ({
           consultationsExpired: r.consultationsExpired,
@@ -372,14 +415,30 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "expire-unpaid-trials": () =>
       cleanupRoute({
         job: "expire-unpaid-trials",
-        run: async () => {
-          const { expireUnpaidTrials } = await import(
-            "@/scripts/trials/expire-unpaid-trials"
-          );
-          return expireUnpaidTrials();
+        run: async (req) => {
+          const { expireUnpaidTrials } =
+            await import("@/scripts/trials/expire-unpaid-trials");
+          return expireUnpaidTrials({
+            maxTrials: parseLimitParamOrDefault(req, MAX_UNPAID_TRIALS),
+          });
         },
         summarize: (r) => ({ trialsExpired: r.trialsExpired }),
         failureMessage: "Failed to expire unpaid trial sessions",
+      }),
+
+    // @cleanup-twin expire-stale-collaborator-invites
+    "expire-stale-collaborator-invites": () =>
+      cleanupRoute({
+        job: "expire-stale-collaborator-invites",
+        run: async (req) => {
+          const { expireStaleCollaboratorInvites } =
+            await import("@/lib/collaborators/cleanup");
+          return expireStaleCollaboratorInvites(
+            parseLimitParamOrDefault(req, 50),
+          );
+        },
+        summarize: (r) => ({ expired: r.expired, scanned: r.scanned }),
+        failureMessage: "Failed to expire stale collaborator invites",
       }),
 
     // @cleanup-twin gst-outward-register-export
@@ -387,9 +446,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "gst-outward-register-export",
         run: async () => {
-          const { runGstOutwardRegisterExport } = await import(
-            "@/jobs/compliance/gst-outward-register-export"
-          );
+          const { runGstOutwardRegisterExport } =
+            await import("@/jobs/compliance/gst-outward-register-export");
           return runGstOutwardRegisterExport({ writeCsv: false });
         },
         summarize: (r) => ({
@@ -407,9 +465,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "handle-stuck-payouts",
         run: async () => {
-          const { handleStuckPayouts } = await import(
-            "@/scripts/payouts/handle-stuck-payouts"
-          );
+          const { handleStuckPayouts } =
+            await import("@/scripts/payouts/handle-stuck-payouts");
           return handleStuckPayouts();
         },
         summarize: (r) => ({
@@ -421,48 +478,13 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to handle stuck payouts",
       }),
 
-    // @cleanup-twin mark-expired-recordings
-    "mark-expired-recordings": () =>
-      cleanupRoute({
-        job: "mark-expired-recordings",
-        run: async () => {
-          const { RecordingTransferService } = await import(
-            "@/lib/stream/recording-transfer-service"
-          );
-          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
-          const expiredCount = await withCronLock(
-            "mark-expired-recordings",
-            { failMode: "open" },
-            () => RecordingTransferService.markExpiredRecordings(),
-          );
-          return { success: true, expiredCount };
-        },
-        summarize: (r) => ({ expiredCount: r.expiredCount }),
-        failureMessage: "Cron job failed",
-      }),
-
-    // @cleanup-twin old-stream-recordings
-    "old-stream-recordings": () =>
-      cleanupRoute({
-        job: "cleanup-old-stream-recordings",
-        run: async () => {
-          const { cleanupOldStreamRecordings } = await import(
-            "@/scripts/cleanup/cleanup-old-stream-recordings"
-          );
-          return cleanupOldStreamRecordings();
-        },
-        summarize: (r) => ({ success: r.success }),
-        failureMessage: "Stream retention sweep failed",
-      }),
-
     // @cleanup-twin process-data-exports
     "process-data-exports": () =>
       cleanupRoute({
         job: "process-data-exports",
         run: async () => {
-          const { processDataExports } = await import(
-            "@/scripts/cleanup/process-data-exports"
-          );
+          const { processDataExports } =
+            await import("@/scripts/cleanup/process-data-exports");
           return processDataExports();
         },
         summarize: (r) => ({
@@ -506,9 +528,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "prune-audit-logs",
         run: async () => {
-          const { pruneAuditLogs } = await import(
-            "@/scripts/cleanup/prune-audit-logs"
-          );
+          const { pruneAuditLogs } =
+            await import("@/scripts/cleanup/prune-audit-logs");
           return pruneAuditLogs();
         },
         failureMessage: "Audit prune failed",
@@ -519,13 +540,41 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "prune-system-job-executions",
         run: async () => {
-          const { pruneSystemJobExecutions } = await import(
-            "@/scripts/cleanup/prune-system-job-executions"
-          );
+          const { pruneSystemJobExecutions } =
+            await import("@/scripts/cleanup/prune-system-job-executions");
           return pruneSystemJobExecutions();
         },
+        summarize: (r) => ({
+          pruned: r.pruned,
+          stranded: r.stranded,
+          failedEmailsBodyScrubbed: r.failedEmailsBodyScrubbed ?? 0,
+          failedEmailBatchesScrubbed: r.failedEmailBatchesScrubbed ?? 0,
+          failedEmailsPruned: r.failedEmailsPruned ?? 0,
+          failedEmailBatchesPruned: r.failedEmailBatchesPruned ?? 0,
+          notificationOutboxPruned: r.notificationOutboxPruned ?? 0,
+          emailEventsPruned: r.emailEventsPruned ?? 0,
+        }),
         status: () => 200,
         failureMessage: "System job execution prune failed",
+      }),
+
+    // @cleanup-twin purge-unverified-users
+    "purge-unverified-users": () =>
+      cleanupRoute({
+        job: "purge-unverified-users",
+        run: async (req) => {
+          const { purgeUnverifiedUsers, DEFAULT_PURGE_LIMIT } =
+            await import("@/lib/auth/purge-unverified-users");
+          return purgeUnverifiedUsers({
+            limit: parseLimitParamOrDefault(req, DEFAULT_PURGE_LIMIT),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          purged: r.purged,
+          failed: r.failed,
+        }),
+        failureMessage: "Failed to purge unverified users",
       }),
 
     // @cleanup-twin reconcile-disputes
@@ -533,9 +582,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-disputes",
         run: async () => {
-          const { reconcileDisputes } = await import(
-            "@/scripts/disputes/reconcile-disputes"
-          );
+          const { reconcileDisputes } =
+            await import("@/scripts/disputes/reconcile-disputes");
           const result = await reconcileDisputes();
           if (result.urgentCount > 0) {
             console.warn(
@@ -549,9 +597,28 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           reconciledCount: r.reconciledCount,
           urgentCount: r.urgentCount,
           razorpayManualReviewCount: r.razorpayManualReviewCount,
-          skippedFenced: r.skippedFenced,
         }),
         failureMessage: "Failed to reconcile disputes",
+      }),
+
+    // @cleanup-twin purge-deleted-documents
+    "purge-deleted-documents": () =>
+      cleanupRoute({
+        job: "purge-deleted-documents",
+        run: async () => {
+          const { purgeDeletedDocuments } =
+            await import("@/lib/documents/document-purge");
+          return purgeDeletedDocuments();
+        },
+        summarize: (r) => ({
+          tombstoned: r.tombstoned,
+          purged: r.purged,
+          failedStorage: r.failedStorage,
+          failedRows: r.failedRows,
+          byReason: r.byReason,
+        }),
+        status: (r) => statusFor(r),
+        failureMessage: "Document purge failed",
       }),
 
     // @cleanup-twin reconcile-document-storage
@@ -559,9 +626,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-document-storage",
         run: async () => {
-          const { reconcileDocumentStorage } = await import(
-            "@/scripts/cleanup/reconcile-document-storage"
-          );
+          const { reconcileDocumentStorage } =
+            await import("@/scripts/cleanup/reconcile-document-storage");
           return reconcileDocumentStorage();
         },
         summarize: (r) => ({
@@ -577,65 +643,31 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reconcile-ledgers": () =>
       cleanupRoute({
         job: "reconcile-ledgers",
-        run: async (req): Promise<ReconcileLedgersTwinResult> => {
-          const {
-            advanceReconcileRun,
-            findInFlightReconcileRun,
-            markReconcileRunFailed,
-          } = await import("@/scripts/reconcile/reconcile-ledgers");
-          const limit = parseLimitParam(req);
-          const q = ReconcileLedgersQuerySchema.parse({
-            runId: req.nextUrl.searchParams.get("runId") ?? undefined,
-            triggeredById:
-              req.nextUrl.searchParams.get("triggeredById") ?? undefined,
-            abandon: req.nextUrl.searchParams.get("abandon") ?? undefined,
-            resume: req.nextUrl.searchParams.get("resume") ?? undefined,
+        run: async (req) => {
+          const { runReconcileLedgers } =
+            await import("@/scripts/reconcile/reconcile-ledgers");
+          const triggeredById =
+            req.nextUrl.searchParams.get("triggeredById") ?? undefined;
+          const report = await runReconcileLedgers({
+            scope: "full",
+            triggeredById,
           });
-          if (q.abandon && q.runId) {
-            await markReconcileRunFailed(q.runId, q.abandon);
-            return {
-              success: true,
-              runId: q.runId,
-              scope: "full",
-              status: "FAILED",
-              progress: null,
-              report: null,
-              error: q.abandon,
-            };
-          }
-          if (q.resume && !q.runId) {
-            const inFlight = await findInFlightReconcileRun();
-            if (!inFlight) {
-              return {
-                success: true,
-                status: "IDLE",
-                runId: null,
-                progress: null,
-                report: null,
-              };
-            }
-            const snap = await advanceReconcileRun({
-              runId: inFlight,
-              ...(limit === undefined ? {} : { limit }),
-            });
-            return { success: true, ...snap };
-          }
-          const snap = await advanceReconcileRun({
-            runId: q.runId ?? randomUUID(),
-            ...(limit === undefined ? {} : { limit }),
-            createIfMissing: { scope: "full", triggeredById: q.triggeredById },
-          });
-          return { success: true, ...snap };
+          return {
+            success: true,
+            runId: report.id,
+            scope: report.scope,
+            status: "OK" as const,
+            report,
+          };
         },
         summarize: (r) => ({
           runId: r.runId,
           status: r.status,
-          step: r.progress?.step ?? null,
-          calls: r.progress?.calls ?? r.report?.summary.calls ?? null,
-          ok: r.report?.ok ?? null,
+          ok: r.report.ok,
+          discrepanciesCount: r.report.summary?.discrepanciesCount ?? 0,
         }),
-        status: (r) => statusFor(r, r.report !== null && !r.report.ok),
-        failureMessage: "Failed to advance ledger reconciliation",
+        status: (r) => statusFor(r, !r.report.ok),
+        failureMessage: "Failed to run ledger reconciliation",
       }),
 
     // @cleanup-twin reconcile-occurrence-availability
@@ -643,9 +675,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-occurrence-availability",
         run: async () => {
-          const { reconcileOccurrenceAvailability } = await import(
-            "@/scripts/appointments/reconcile-occurrence-availability"
-          );
+          const { reconcileOccurrenceAvailability } =
+            await import("@/scripts/appointments/reconcile-occurrence-availability");
           return reconcileOccurrenceAvailability();
         },
         summarize: (r) => ({
@@ -663,9 +694,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-orphaned-confirmations",
         run: async (req) => {
-          const { reconcileOrphanedConfirmations } = await import(
-            "@/scripts/payments/reconcile-orphaned-confirmations"
-          );
+          const { reconcileOrphanedConfirmations } =
+            await import("@/scripts/payments/reconcile-orphaned-confirmations");
           const limit = parseLimitParam(req);
           return reconcileOrphanedConfirmations(
             limit === undefined ? {} : { limit },
@@ -685,14 +715,64 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to reconcile orphaned confirmations",
       }),
 
+    // @cleanup-twin reconcile-orphaned-payments
+    "reconcile-orphaned-payments": () =>
+      cleanupRoute({
+        job: "reconcile-orphaned-payments",
+        run: async (req) => {
+          const { reconcileOrphanedPayments } =
+            await import("@/scripts/payments/reconcile-orphaned-confirmations");
+          const limit = parseLimitParam(req);
+          return reconcileOrphanedPayments(
+            limit === undefined ? {} : { limit },
+          );
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          linked: r.linked,
+          refunded: r.refunded,
+          escrowed: r.escrowed,
+          nonGatewaySkipped: r.nonGatewaySkipped,
+          topupSkipped: r.topupSkipped,
+          stillFailing: r.stillFailing,
+        }),
+        status: (r) => statusFor(r, r.escrowed > 0 || r.stillFailing > 0),
+        failureMessage: "Failed to reconcile orphaned payments",
+      }),
+
+    // @cleanup-twin reconcile-orphaned-recordings
+    "reconcile-orphaned-recordings": () =>
+      cleanupRoute({
+        job: "reconcile-orphaned-recordings",
+        run: async () => {
+          const { reconcileOrphanedRecordings } =
+            await import("@/scripts/stream/reconcile-orphaned-recordings");
+          return reconcileOrphanedRecordings();
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          recovered: r.recovered,
+          stillMissing: r.stillMissing,
+          unrecoverable: r.unrecoverable,
+          partialScanned: r.partialScanned,
+          partialRecovered: r.partialRecovered,
+          errors: r.errors.slice(0, 5),
+        }),
+        status: (r) =>
+          statusFor(
+            r,
+            r.recovered > 0 || r.partialRecovered > 0 || r.unrecoverable > 0,
+          ),
+        failureMessage: "Failed to reconcile orphaned recordings",
+      }),
+
     // @cleanup-twin reconcile-payment-status
     "reconcile-payment-status": () =>
       cleanupRoute({
         job: "reconcile-payment-status",
         run: async (req) => {
-          const { reconcilePaymentStatus } = await import(
-            "@/scripts/payments/reconcile-payment-status"
-          );
+          const { reconcilePaymentStatus } =
+            await import("@/scripts/payments/reconcile-payment-status");
           return reconcilePaymentStatus({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -702,6 +782,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedCount: r.failedCount,
           unresolvableCount: r.unresolvableCount,
           retiredCount: r.retiredCount,
+          errors: r.errors.slice(0, 5),
         }),
         status: (r) =>
           statusFor(
@@ -718,9 +799,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-payout-status",
         run: async () => {
-          const { reconcilePayoutStatus } = await import(
-            "@/scripts/payouts/reconcile-payout-status"
-          );
+          const { reconcilePayoutStatus } =
+            await import("@/scripts/payouts/reconcile-payout-status");
           return reconcilePayoutStatus();
         },
         summarize: (r) => ({
@@ -739,9 +819,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-pending-refunds",
         run: async (req) => {
-          const { reconcilePendingRefunds } = await import(
-            "@/scripts/refunds/reconcile-pending-refunds"
-          );
+          const { reconcilePendingRefunds } =
+            await import("@/scripts/refunds/reconcile-pending-refunds");
           return reconcilePendingRefunds({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -749,10 +828,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           reconciledCount: r.reconciledCount,
           failedCount: r.failedCount,
           skippedCount: r.skippedCount,
-          skippedFenced: r.skippedFenced,
           failedUnknownId: r.failedUnknownId,
+          redrivenCount: r.redrivenCount,
+          redriveFailedCount: r.redriveFailedCount,
+          redriveDeadLettered: r.redriveDeadLettered,
+          errors: r.errors.slice(0, 5),
         }),
-        status: (r) => statusFor(r, r.skippedFenced > 0),
         failureMessage: "Failed to reconcile refunds",
       }),
 
@@ -761,9 +842,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "reconcile-orphaned-sessions",
         run: async () => {
-          const { reconcileOrphanedSessions } = await import(
-            "@/jobs/meetings/reconcile-orphaned-sessions"
-          );
+          const { reconcileOrphanedSessions } =
+            await import("@/jobs/meetings/reconcile-orphaned-sessions");
           return reconcileOrphanedSessions();
         },
         status: () => 200,
@@ -777,9 +857,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "release-earnings",
         run: async (req) => {
-          const { releaseEarningsFromHold } = await import(
-            "@/scripts/earnings/release-earnings"
-          );
+          const { releaseEarningsFromHold } =
+            await import("@/scripts/earnings/release-earnings");
           return releaseEarningsFromHold({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -794,11 +873,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "reschedule-proposals": () =>
       cleanupRoute({
         job: "expire-reschedule-proposals",
-        run: async () => {
-          const { expireRescheduleProposals } = await import(
-            "@/scripts/appointments/expire-reschedule-proposals"
-          );
-          return expireRescheduleProposals();
+        run: async (req) => {
+          const { expireRescheduleProposals } =
+            await import("@/scripts/appointments/expire-reschedule-proposals");
+          return expireRescheduleProposals({
+            maxPerRun: parseLimitParamOrDefault(req, MAX_RESCHEDULE_PROPOSALS),
+          });
         },
         summarize: (r) => ({
           proposalsExpired: r.proposalsExpired,
@@ -812,9 +892,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "retry-auto-refunds",
         run: async (req) => {
-          const { retryAutoRefunds } = await import(
-            "@/scripts/payments/retry-auto-refunds"
-          );
+          const { retryAutoRefunds } =
+            await import("@/scripts/payments/retry-auto-refunds");
           return retryAutoRefunds({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -834,9 +913,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "retry-failed-emails",
         run: async (req) => {
-          const { retryFailedEmails } = await import(
-            "@/jobs/email/retry-failed-emails"
-          );
+          const { retryFailedEmails } =
+            await import("@/jobs/email/retry-failed-emails");
           return retryFailedEmails({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -860,9 +938,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "retry-moderation-enforcement",
         run: async () => {
-          const { retryModerationEnforcement } = await import(
-            "@/scripts/cleanup/retry-moderation-enforcement"
-          );
+          const { retryModerationEnforcement } =
+            await import("@/scripts/cleanup/retry-moderation-enforcement");
           return retryModerationEnforcement();
         },
         summarize: (r) => ({
@@ -889,6 +966,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
             canaryAlertNeeded,
             recordCanaryAlertSent,
           } = await import("@/lib/observability/ingest-alert");
+          const { checkSentryQuota } =
+            await import("@/lib/observability/quota-alert");
           const probe = await probeSentryIngest();
           const healthy = isIngestHealthy(probe);
 
@@ -904,6 +983,9 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
                 })
               : false;
             if (alerted) await recordCanaryAlertSent(probe.verdict);
+            // After the ingest alert: the stats fetch and its email
+            // must not spend the function ceiling ahead of the page.
+            const quota = await checkSentryQuota();
             return {
               healthy,
               verdict: probe.verdict,
@@ -912,15 +994,19 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
               alerted,
               alertSuppressed: !needed,
               detail: describeIngest(probe),
+              quota,
             };
           }
 
+          // 70% quota warning rides the canary; never throws.
+          const quota = await checkSentryQuota();
           return {
             healthy: true,
             verdict: probe.verdict,
             status: probe.status,
             eventId: probe.eventId,
             alerted: false,
+            quota,
           };
         },
         status: (result) => (result.healthy ? 200 : 503),
@@ -933,9 +1019,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "settle-cancelled-sessions",
         run: async (req) => {
-          const { settleCancelledSessions } = await import(
-            "@/scripts/appointments/settle-cancelled-sessions"
-          );
+          const { settleCancelledSessions } =
+            await import("@/scripts/appointments/settle-cancelled-sessions");
           return settleCancelledSessions({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -952,9 +1037,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "settle-invoice-accruals",
         run: async () => {
-          const { runSettleInvoiceAccruals } = await import(
-            "@/jobs/billing/settle-invoice-accruals"
-          );
+          const { runSettleInvoiceAccruals } =
+            await import("@/jobs/billing/settle-invoice-accruals");
           return runSettleInvoiceAccruals();
         },
         summarize: (r) => ({
@@ -970,9 +1054,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "stream-sync",
         run: async (req) => {
-          const { performStreamUserSync } = await import(
-            "@/scripts/stream/stream-sync"
-          );
+          const { performStreamUserSync } =
+            await import("@/scripts/stream/stream-sync");
           const dryRun = req.nextUrl.searchParams.get("dry-run") === "true";
           if (dryRun) {
             console.log("Stream user sync: DRY RUN");
@@ -988,14 +1071,34 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to sync Stream users",
       }),
 
+    // @cleanup-twin support-sla-sweep
+    "support-sla-sweep": () =>
+      cleanupRoute({
+        job: "support-sla-sweep",
+        run: async (req) => {
+          const { runSupportSlaSweep } =
+            await import("@/lib/support/sla-sweep");
+          return runSupportSlaSweep({ limit: parseLimitParam(req) });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          slaNoticesStaged: r.slaNoticesStaged,
+          orgEscalationEmailsSent: r.orgEscalationEmailsSent,
+          autoClosedCount: r.autoClosedCount,
+          disputeNoticesStaged: r.disputeNoticesStaged,
+          errors: r.errors.length,
+        }),
+        status: (r) => statusFor(r, r.errors.length > 0),
+        failureMessage: "Failed to run support SLA sweep",
+      }),
+
     // @cleanup-twin sweep-abandoned-overage-charges
     "sweep-abandoned-overage-charges": () =>
       cleanupRoute({
         job: "sweep-abandoned-overage-charges",
         run: async (req) => {
-          const { sweepAbandonedOverageCharges } = await import(
-            "@/scripts/cleanup/sweep-abandoned-overage-charges"
-          );
+          const { sweepAbandonedOverageCharges } =
+            await import("@/scripts/cleanup/sweep-abandoned-overage-charges");
           return sweepAbandonedOverageCharges({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({ scanned: r.scanned, failed: r.failed }),
@@ -1007,9 +1110,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "sweep-orphaned-topup-captures",
         run: async (req) => {
-          const { sweepOrphanedTopupCaptures } = await import(
-            "@/scripts/cleanup/sweep-orphaned-topup-captures"
-          );
+          const { sweepOrphanedTopupCaptures } =
+            await import("@/scripts/cleanup/sweep-orphaned-topup-captures");
           return sweepOrphanedTopupCaptures({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -1026,9 +1128,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "sweep-stuck-webhook-events",
         run: async (req) => {
-          const { sweepStuckWebhookEvents } = await import(
-            "@/scripts/cleanup/sweep-stuck-webhook-events"
-          );
+          const { sweepStuckWebhookEvents } =
+            await import("@/scripts/cleanup/sweep-stuck-webhook-events");
           return sweepStuckWebhookEvents({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -1045,9 +1146,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "sweep-verification",
         run: async () => {
-          const { sweepVerification } = await import(
-            "@/scripts/cleanup/sweep-verification"
-          );
+          const { sweepVerification } =
+            await import("@/scripts/cleanup/sweep-verification");
           return sweepVerification();
         },
         summarize: (r) => ({
@@ -1065,9 +1165,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "sync-payment-earnings",
         run: async (req) => {
-          const { syncPaymentEarnings } = await import(
-            "@/scripts/earnings/sync-payment-earnings"
-          );
+          const { syncPaymentEarnings } =
+            await import("@/scripts/earnings/sync-payment-earnings");
           return syncPaymentEarnings({ limit: parseLimitParam(req) });
         },
         summarize: (r) => ({
@@ -1084,9 +1183,8 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
       cleanupRoute({
         job: "tds-26q-draft-export",
         run: async () => {
-          const { runTdsReturnDraftExport } = await import(
-            "@/jobs/compliance/tds-26q-draft-export"
-          );
+          const { runTdsReturnDraftExport } =
+            await import("@/jobs/compliance/tds-26q-draft-export");
           return runTdsReturnDraftExport();
         },
         summarize: (r) => ({
@@ -1105,11 +1203,12 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "tentative-occurrences": () =>
       cleanupRoute({
         job: "cleanup-tentative-occurrences",
-        run: async () => {
-          const { cleanupTentativeOccurrences } = await import(
-            "@/scripts/appointments/cleanup-tentative-occurrences"
-          );
-          return cleanupTentativeOccurrences();
+        run: async (req) => {
+          const { cleanupTentativeOccurrences } =
+            await import("@/scripts/appointments/cleanup-tentative-occurrences");
+          return cleanupTentativeOccurrences({
+            maxPerRun: parseLimitParamOrDefault(req, MAX_TENTATIVE_SLOTS),
+          });
         },
         summarize: (r) => ({
           slotsReleased: r.slotsReleased,
@@ -1118,54 +1217,68 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to cleanup tentative slots",
       }),
 
-    // @cleanup-twin transfer-expiring-recordings
-    "transfer-expiring-recordings": () =>
+    // @cleanup-twin transfer-recordings
+    "transfer-recordings": () =>
       cleanupRoute({
-        job: "transfer-expiring-recordings",
-        run: async () => {
-          const { RecordingTransferService } = await import(
-            "@/lib/stream/recording-transfer-service"
-          );
-          const { streamLogger } = await import("@/lib/stream-logger");
-          const { withCronLock } = await import("@/lib/cron/with-cron-lock");
-          const { transferResult, expiringStreamOnly } = await withCronLock(
-            "transfer-expiring-recordings",
-            { failMode: "open" },
-            async () => {
-              const transferResult =
-                await RecordingTransferService.processExpiringRecordings(
-                  14,
-                  10,
-                  "PERMANENT",
-                );
-              const expiringStreamOnly =
-                await RecordingTransferService.getExpiringStreamOnlyRecordings(
-                  3,
-                );
-              if (expiringStreamOnly.length > 0) {
-                streamLogger.info("STREAM_ONLY recordings expiring soon", {
-                  count: expiringStreamOnly.length,
-                });
-                await notifyConsultantsOfExpiringRecordings(expiringStreamOnly);
-              }
-              return { transferResult, expiringStreamOnly };
-            },
-          );
-          return {
-            success: true,
-            transferred: transferResult.succeeded,
-            failed: transferResult.failed,
-            expiringStreamOnly: expiringStreamOnly.length,
-            errors: transferResult.errors,
-          };
+        job: "transfer-recordings",
+        run: async (req) => {
+          const { transferRecordings } =
+            await import("@/lib/stream/recording-transfer-service");
+          const r = await transferRecordings({ limit: parseLimitParam(req) });
+          return { success: r.failed === 0, ...r };
         },
         summarize: (r) => ({
-          transferred: r.transferred,
+          processed: r.processed,
+          succeeded: r.succeeded,
           failed: r.failed,
-          expiringStreamOnly: r.expiringStreamOnly,
+          exhaustedReported: r.exhaustedReported,
         }),
         status: () => 200,
-        failureMessage: "Cron job failed",
+        failureMessage: "Recording copy sweep failed",
+      }),
+
+    // @cleanup-twin vest-referral-credits
+    "vest-referral-credits": () =>
+      cleanupRoute({
+        job: "vest-referral-credits",
+        run: async (req) => {
+          const { runVestReferralCredits } =
+            await import("@/lib/referrals/vesting");
+          return runVestReferralCredits({
+            limit: parseLimitParamOrDefault(req, MAX_REFERRAL_VESTS),
+          });
+        },
+        summarize: (r) => ({
+          scanned: r.scanned,
+          vested: r.vested,
+          voided: r.voided,
+          deferred: r.deferred,
+          budgetExhausted: r.budgetExhausted,
+          failed: r.failed,
+        }),
+        failureMessage: "Failed to vest referral credits",
+      }),
+
+    // @cleanup-twin wind-down-deactivated-orgs
+    "wind-down-deactivated-orgs": () =>
+      cleanupRoute({
+        job: "wind-down-deactivated-orgs",
+        run: async () => {
+          const { windDownDeactivatedOrgs } =
+            await import("@/jobs/stream/wind-down-deactivated-orgs");
+          return windDownDeactivatedOrgs();
+        },
+        summarize: (r) => ({
+          orgsScanned: r.orgsScanned,
+          callsEnded: r.callsEnded,
+          eventChannelsFrozen: r.eventChannelsFrozen,
+          dmChannelsFrozen: r.dmChannelsFrozen,
+          tokensRevoked: r.tokensRevoked,
+          recordingsUnpublished: r.recordingsUnpublished,
+          recordingsPurged: r.recordingsPurged,
+          removedMembersDrained: r.removedMembersDrained,
+        }),
+        failureMessage: "Failed to wind down deactivated organizations",
       }),
   };
 

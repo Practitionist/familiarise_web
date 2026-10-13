@@ -1,29 +1,16 @@
 /**
  * GET /api/auth/sso/domain-check?email=<email>
  *
- * Pre-auth discovery endpoint. The signin/signup pages call this on
- * email blur so an enforce-SSO domain can short-circuit the credentials
- * form and redirect to the IdP via BetterAuth's `signIn.sso()`.
- *
- * Lookup chain (all Arch 4-Modified — no legacy org profile tables):
- *   1. Parse + narrow the email query param (Zod).
- *   2. Match the email's domain against `OrgDomainClaim`.
- *   3. For the owning org, read `OrganizationSSOSettings` + the first
- *      active `SsoProvider`.
- *   4. Return `{ enforceSSO, organizationName?, ssoBody? }`. If the
- *      domain isn't claimed, or the org doesn't enforce SSO, or no
- *      provider is configured, return `{ enforceSSO: false }` so the
- *      client falls through to the normal credentials flow.
- *
- * Intentionally does NOT use `requireApiAuth` — this runs before login.
- * The response payload is shaped to be minimal (no PII, no provider
- * internals) so leaking it to unauthenticated callers is safe.
+ * Pre-auth home-realm discovery for the sign-in and sign-up pages. Returns
+ * `ssoBody` whenever an approved provider covers the email's verified domain,
+ * with `enforceSSO` saying whether password and Google sign-in are off for it.
+ * Unauthenticated, so it returns only the org name and the provider slug.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
+import { lookupDomainSso } from "@/lib/sso/enforce-session";
 
 const QuerySchema = z.object({
   email: z.string().email(),
@@ -43,61 +30,30 @@ export async function GET(req: NextRequest) {
   const domain = parsed.data.email.split("@")[1]?.toLowerCase();
   if (!domain) return NextResponse.json({ enforceSSO: false });
 
-  // Single source of truth for "is this domain enforced + by which org?"
-  // shared with `lib/auth.ts:session.create.before` (#673). Returns null
-  // when any precondition fails: no verified claim, inactive org,
-  // enforceSSO=false.
-  const enforced = await lookupEnforcedOrg(prisma, domain);
-  if (!enforced) {
+  // Shared with session.create.before, so the button and the gate agree.
+  const sso = await lookupDomainSso(prisma, domain);
+  const providerId = sso?.providerIds[0];
+  if (!sso || !providerId) {
     return NextResponse.json({ enforceSSO: false });
   }
 
-  // Provider lookup is scoped to BOTH (domain, organizationId). The
-  // domain-claim is the authoritative "who owns this email domain"
-  // record — a stray SsoProvider row for the same domain under a
-  // different org (misconfigured tenant, stale data) must not route
-  // users to the wrong IdP. (B.4's composite unique now enforces
-  // this at the DB level too.)
-  //
-  // Only `providerId` is selected, so the encrypted config column is never
-  // decrypted on this pre-auth path.
-  //
-  // `domainVerified: true` — an unapproved provider would only send the user
-  // to a sign-in the sso() plugin refuses, so it is treated as absent.
-  const provider = await prisma.ssoProvider.findFirst({
-    where: {
-      domain,
-      organizationId: enforced.organizationId,
-      domainVerified: true,
-    },
-    select: { providerId: true },
-  });
-  if (!provider) {
-    return NextResponse.json({ enforceSSO: false });
-  }
-
-  // The org name is the only extra field this endpoint emits beyond
-  // `lookupEnforcedOrg`'s return shape; fetch it now so the SSO button
-  // label can show "Sign in with Wipro Limited SSO →".
   const org = await prisma.organization.findUnique({
-    where: { id: enforced.organizationId },
+    where: { id: sso.organizationId },
     select: { name: true },
   });
 
-  // An org-scoped SSO login lands the user IN that org's dashboard, not on
-  // their singular-UserRole home. `callbackUrl` is honored by the signin
-  // redirect effect for onboarded users and threaded through onboarding for
-  // first-timers (relative-path XSS-guarded there). The JIT membership is
-  // committed during the SSO callback (`provisionUser` in
-  // lib/sso/plugin-options.ts), so the org layout resolves.
-  const orgHome = `/dashboard/organization/${enforced.organizationId}/home`;
+  // An org SSO login lands in that org's dashboard; the JIT membership is
+  // committed during the callback, so the org layout resolves.
+  const orgHome = `/dashboard/organization/${sso.organizationId}/home`;
   return NextResponse.json({
-    enforceSSO: true,
+    enforceSSO: sso.enforced,
     organizationName: org?.name ?? null,
     ssoBody: {
-      providerId: provider.providerId,
+      providerId,
       domain,
       callbackURL: `${APP_URL}/auth/signin?ssoCallback=1&callbackUrl=${encodeURIComponent(orgHome)}`,
+      // Every refusal in the callback redirects here with `?error=<code>`.
+      errorCallbackURL: `${APP_URL}/auth/signin`,
     },
   });
 }

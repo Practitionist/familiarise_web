@@ -313,6 +313,14 @@ describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
   const readCohort =
     (rows: ReturnType<typeof paidRow>[]) =>
     async ({ where }: { where: CohortWhere }) => {
+      // POSITION, and it must stay that way: the cohort's AND list is
+      // [NO_LIVE_SESSION, noLiveProposal(), paidCapturedBefore, NO_UNPLACED_SLOT].
+      // #1846 appended the rescheduled-slot guard LAST, at [3], precisely so
+      // this index keeps pointing at the capture clock. Insert it anywhere else
+      // and this read silently yields `undefined`, `readCohort` returns [] for
+      // every row, and the whole suite passes while asserting nothing — the
+      // failure mode a positional read invites and the reason the sweep's own
+      // comment says "narrowest guard last".
       const cutoff =
         where.AND?.[2]?.appointment?.payment?.some?.OR?.[0].capturedAt.lt;
       if (where.status !== "PENDING" || !cutoff) return [];

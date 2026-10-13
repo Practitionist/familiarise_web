@@ -23,7 +23,6 @@ import {
   createHandleApiError,
   createHandleCheckoutSuccess,
   createRazorpayCheckoutHandlers,
-  createStripeCheckoutHandlers,
   handleUnifiedCheckout,
   reportPaymentsError,
 } from "../../utils";
@@ -31,6 +30,9 @@ import { calculatePricing } from "../../math";
 import { getWebinarCapacity } from "@/lib/events/capacity";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useReferralPricing } from "../../useReferralPricing";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { formatForViewer } from "@/lib/time/viewer-zone";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import {
@@ -40,6 +42,10 @@ import {
   CheckoutPricingBreakdown,
 } from "@/app/checkout/components/CheckoutSharedSections";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
 import {
   BillingStateSelect,
   useBillingState,
@@ -111,6 +117,11 @@ export default function WebinarCheckoutPage({
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
+  // #1863 — the session line below was `toLocale*String()` with no zone, so it
+  // printed the RUNTIME's zone (a New York laptop) on a page whose own zone
+  // resolution is the viewer's saved one. `formatForViewer` renders that zone
+  // and labels it whenever it had to fall back.
+  const viewer = useViewerZone();
   const { availableCredits, isLoadingCredits, creditsLoadFailed } =
     useReferralCreditsBalance(
       checkoutTaxContext.referralCreditsLoaded,
@@ -134,6 +145,15 @@ export default function WebinarCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
+
+  // #1863 — derived from the buyer's own funding choices rather than passed in,
+  // so the refund-rail promise under the price moves the moment they change how
+  // they are paying (an org payer forces credits off, credits clear the org).
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
 
   const { toast } = useToast();
   const {
@@ -191,6 +211,9 @@ export default function WebinarCheckoutPage({
   });
 
   const planData = checkoutPlanQuery.data ?? null;
+  const referralPricing = useReferralPricing(
+    planData?.data?.consultantProfile?.id,
+  );
   const isLoading = checkoutPlanQuery.isPending;
   const error =
     staleError ??
@@ -260,7 +283,6 @@ export default function WebinarCheckoutPage({
     () => createHandleCheckoutSuccess(toast, "WEBINAR"),
     [toast],
   );
-  const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   const handleCheckout = useCallback(
@@ -412,7 +434,7 @@ export default function WebinarCheckoutPage({
    * Re-check the seat count against the click, not the last render.
    *
    * The gate above lives inside `handleCheckout`, whose only production caller
-   * is the development mock-pay button — the real Razorpay and Stripe controls
+   * is the development mock-pay button — the real Razorpay controls
    * take `checkoutData` and open the gateway themselves. So the soft gate was
    * inert exactly where money moves: a webinar that filled while this tab sat
    * open still let the buyer pay into a rejection.
@@ -511,10 +533,17 @@ export default function WebinarCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount:
+        appliedDiscount || selectedOrganizationId
+          ? null
+          : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
+    referralPricing,
+    selectedOrganizationId,
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
@@ -625,23 +654,19 @@ export default function WebinarCheckoutPage({
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Date</div>
                   <div>
-                    {new Date(nextSession.startsAt).toLocaleDateString(
-                      undefined,
-                      {
-                        weekday: "long",
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      },
+                    {formatForViewer(
+                      nextSession.startsAt,
+                      viewer,
+                      "EEEE, d MMMM yyyy",
                     )}
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Time</div>
                   <div>
-                    {new Date(nextSession.startsAt).toLocaleTimeString()} -{" "}
-                    {new Date(nextSession.endsAt).toLocaleTimeString()} (
-                    {Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    {formatForViewer(nextSession.startsAt, viewer, "h:mm a")}
+                    {" - "}
+                    {formatForViewer(nextSession.endsAt, viewer, "h:mm a zzz")}
                   </div>
                 </div>
               </>
@@ -773,11 +798,21 @@ export default function WebinarCheckoutPage({
           formatPrice={formatPrice}
           selectedOrganizationId={selectedOrganizationId}
           afterTotalNotice={
-            <FreeCancellationLine
-              startsAt={nextSession?.startsAt}
-              windowHours={planDetails?.refundWindowHours}
-              className="text-xs text-muted-foreground"
-            />
+            <>
+              <FreeCancellationLine
+                startsAt={nextSession?.startsAt}
+                windowHours={planDetails?.refundWindowHours}
+                className="text-xs text-muted-foreground"
+              />
+              <CancellationPolicyNote
+                eventKind="webinar"
+                eventWindowHours={planDetails?.refundWindowHours}
+                eventStartsAt={nextSession?.startsAt}
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
+              />
+            </>
           }
         />
         <CheckoutPaymentMethodsCard
@@ -806,8 +841,6 @@ export default function WebinarCheckoutPage({
           }}
           onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
           onRazorpayError={razorpayHandlers.onPaymentError}
-          onStripeSuccess={stripeHandlers.onPaymentSuccess}
-          onStripeError={stripeHandlers.onPaymentError}
           onMockPay={(gateway) => handleCheckout(gateway, true)}
           isCheckoutProcessing={isCheckoutProcessing}
           processingGateway={processingGateway}

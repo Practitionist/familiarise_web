@@ -24,20 +24,20 @@ A previous `india/` subfolder under this directory has been merged into this top
 | # | Doc | Scope | Severity |
 |---|-----|-------|----------|
 | 00 | this file | Overview + index | — |
-| 01 | [TDS — sections, rates, thresholds](./01-tds-overview.md) | B2B (194J / 194C) + B2C (194O) + non-resident (195) | 🔴 Critical |
-| 02 | [GST — TCS Sec 52, invoicing, place of supply, HSN, IRN, LUT](./02-gst-overview.md) | B2B + B2C invoicing, B2C TCS collection, e-invoicing | 🔴 Critical |
-| 03 | [MSME Section 43B(h)](./03-msme-43b-h.md) | B2B-only — payment to MSME-registered consultants in 15 / 45 days | 🟠 High |
-| 04 | [Form 26Q / 27Q / 16A — quarterly TDS returns](./04-tds-quarterly-filings.md) | Both rails | 🟠 High |
-| 05 | [Refund & chargeback tax adjustments](./05-refund-and-chargeback-tax-adjustments.md) | Both rails — TDS reversal + TCS adjustment + GST credit notes | 🔴 Critical |
-| 06 | [Multi-attendee billing](./06-multi-attendee-billing.md) | B2C (and B2B webinar/class) per-attendee fan-out | 🟠 High |
-| 07 | [Cross-border flows](./07-cross-border-flows.md) | Non-resident consumers + non-resident consultants, both rails | 🟠 High |
-| 08 | [DPDP — Act 2023 + Rules 2025](./08-dpdp-and-privacy.md) | Both rails — consent, DSAR, erasure, retention, breach 72h | 🔴 Critical |
-| 09 | [Consumer Protection / E-Commerce Rules 2020](./09-consumer-protection-and-grievance.md) | B2C-primary; B2B inherits Grievance Officer + ODR | 🟠 High |
-| 10 | [RBI Payment Aggregator Directions 2025 + payment architecture](./10-rbi-pa-and-payment-architecture.md) | Both rails — Razorpay PG + RazorpayX + Stripe Connect | 🟡 Medium |
-| 11 | [Removed / deprecated levies](./11-removed-and-deprecated-levies.md) | EL / 206AB / 206C(1H) — cleanup hygiene | 🟢 Low |
-| 12 | [India compliance calendar](./12-india-compliance-calendar.md) | Filing deadlines for both rails | — |
-| 13 | [Implementation roadmap](./13-implementation-roadmap.md) | Consolidated B2B + B2C plan | — |
-| 14 | [References](./14-references.md) | Authoritative source URLs (CBDT, CBIC, RBI, MeitY, PIB) | — |
+| 01 | [TDS — sections, rates, thresholds](./02-tds-overview.md) | B2B (194J / 194C) + B2C (194O) + non-resident (195) | 🔴 Critical |
+| 02 | [GST — TCS Sec 52, invoicing, place of supply, HSN, IRN, LUT](./03-gst-overview.md) | B2B + B2C invoicing, B2C TCS collection, e-invoicing | 🔴 Critical |
+| 03 | [MSME Section 43B(h)](./04-msme-43b-h.md) | B2B-only — payment to MSME-registered consultants in 15 / 45 days | 🟠 High |
+| 04 | [Form 26Q / 27Q / 16A — quarterly TDS returns](./05-tds-quarterly-filings.md) | Both rails | 🟠 High |
+| 05 | [Refund & chargeback tax adjustments](./06-refund-and-chargeback-tax-adjustments.md) | Both rails — TDS reversal + TCS adjustment + GST credit notes | 🔴 Critical |
+| 06 | [Multi-attendee billing](./07-multi-attendee-billing.md) | B2C (and B2B webinar/class) per-attendee fan-out | 🟠 High |
+| 07 | [Cross-border flows](./08-cross-border-flows.md) | Non-resident consumers + non-resident consultants, both rails | 🟠 High |
+| 08 | [DPDP — Act 2023 + Rules 2025](./09-dpdp-and-privacy.md) | Both rails — consent, DSAR, erasure, retention, breach 72h | 🔴 Critical |
+| 09 | [Consumer Protection / E-Commerce Rules 2020](./10-consumer-protection-and-grievance.md) | B2C-primary; B2B inherits Grievance Officer + ODR | 🟠 High |
+| 10 | [RBI Payment Aggregator Directions 2025 + payment architecture](./11-rbi-pa-and-payment-architecture.md) | Both rails — Razorpay PG + RazorpayX + Stripe Connect | 🟡 Medium |
+| 11 | [Removed / deprecated levies](./13-removed-and-deprecated-levies.md) | EL / 206AB / 206C(1H) — cleanup hygiene | 🟢 Low |
+| 12 | [India compliance calendar](./14-india-compliance-calendar.md) | Filing deadlines for both rails | — |
+| 13 | [Implementation roadmap](./15-implementation-roadmap.md) | Consolidated B2B + B2C plan | — |
+| 14 | [References](./16-references.md) | Authoritative source URLs (CBDT, CBIC, RBI, MeitY, PIB) | — |
 
 ## Doc shape
 
@@ -115,8 +115,8 @@ When a regulation changes (Finance Act, CBIC notification, RBI direction, MeitY 
 1. Update the doc that owns the regulation.
 2. Bump "Last reviewed" at the top of that doc.
 3. If the change makes existing code wrong, file a `bug` issue with `priority: high` + `production` labels and link from the doc.
-4. Update [`12-india-compliance-calendar.md`](./12-india-compliance-calendar.md) if a new deadline appears.
-5. Update [`14-references.md`](./14-references.md) if the source URL moves.
+4. Update [`14-india-compliance-calendar.md`](./14-india-compliance-calendar.md) if a new deadline appears.
+5. Update [`16-references.md`](./16-references.md) if the source URL moves.
 
 ## Glossary
 

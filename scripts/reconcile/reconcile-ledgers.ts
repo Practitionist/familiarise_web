@@ -3,11 +3,10 @@
  *
  * Walks the double-entry journal + derived balances to flag drift across:
  *   1. LedgerTransaction/Entry       ← the authoritative double-entry journal
- *   2. LedgerAccountBalance          ← maintained running-balance snapshot
- *   3. BillingAccount.walletBalance  ← derived cache of the WALLET account
- *   4. ProgramAssignment             ← per-(member, cycle) meters & overage counts
- *   5. BillingSubscription           ← activeSeatCount cache
- *   6. ConsultantEarnings / OrganizationEarnings / Payouts ← settlement & split parity
+ *   2. BillingAccount.walletBalance  ← derived cache of the WALLET account
+ *   3. ProgramAssignment             ← per-(member, cycle) meters & overage counts
+ *   4. BillingSubscription           ← activeSeatCount cache
+ *   5. ConsultantEarnings / OrganizationEarnings / Payouts ← settlement & split parity
  *
  * Checks that are 100% enforced by active Postgres CHECK constraints, exclusion
  * constraints, or DEFERRABLE constraint triggers (per-txn Dr=Cr balance,
@@ -20,6 +19,11 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { ledgerAccountId } from "@/lib/payments/ledger/post";
+import {
+  orgInvoiceGstFindings,
+  staleClawbackFindings,
+} from "./tax-and-clawback-steps";
 
 export type ReconcileScope = {
   /** Human-readable scope tag, e.g. "full" or "org:<orgId>". */
@@ -40,14 +44,24 @@ export type Finding = {
     | "CREDIT_POOL_CONSUMED_DRIFT"
     | "OVERAGE_COUNT_DRIFT"
     | "OVERAGE_CHARGESTATUS_INTEGRITY"
-    | "LEDGER_BALANCE_SNAPSHOT_DRIFT"
     | "REFUND_BOOKING_COHERENCE"
     | "REVERSED_EARNING_WITHOUT_REFUND_TXN"
     | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
     | "LEDGER_DUAL_WRITE_GAP"
     | "EARNINGS_WITHOUT_BOOKING_TXN"
     | "SPLIT_SUM_MISMATCH"
-    | "OVERAGE_SETTLEMENT_MISMATCH";
+    | "OVERAGE_SETTLEMENT_MISMATCH"
+    // An anti-invoice-fraud park older than 24h. Detect-only: age never
+    // releases a park.
+    | "PENDING_TRUST_PARK_STALE"
+    // The referral-credit liability disagrees with the vested, unredeemed credit balance.
+    | "REFERRAL_CREDIT_LIABILITY_DRIFT"
+    // A settled refund of a parked capture left UNAPPLIED_RECEIPTS non-zero.
+    | "UNAPPLIED_RECEIPTS_RESIDUE"
+    // An org invoice's output tax differs from the GST_PAYABLE its bookings posted.
+    | "ORG_INVOICE_GST_MISMATCH"
+    // One per run: clawbacks still unrecovered after the 90-day window.
+    | "CLAWBACK_RECEIVABLE_STALE";
   organizationId?: string;
   billingAccountId?: string;
   billingSubscriptionId?: string;
@@ -85,20 +99,6 @@ export type ReconcileReport = {
     calls?: number;
   };
   findings: Finding[];
-};
-
-export type ReconcileRunSnapshot = {
-  runId: string;
-  scope: string;
-  status: ReconcileRunStatus;
-  progress: {
-    step: number;
-    cursor: string | null;
-    calls: number;
-    startedAt: string;
-  } | null;
-  report: ReconcileReport | null;
-  error?: string;
 };
 
 /** A RUNNING row older than this is a stuck run and no longer blocks a new kick. */
@@ -145,22 +145,6 @@ export function clawbackDualWriteGapFindings(
     });
   }
   return out;
-}
-
-const DEFAULT_UNJOURNALED_GRACE_MS = 30 * 60 * 1000;
-const configuredGraceMs = Number(process.env.RECONCILE_UNJOURNALED_GRACE_MS);
-export const RECONCILE_UNJOURNALED_GRACE_MS =
-  Number.isFinite(configuredGraceMs) && configuredGraceMs >= 0
-    ? configuredGraceMs
-    : DEFAULT_UNJOURNALED_GRACE_MS;
-
-/** Q2 — an unjournaled payment is a finding only once the grace has lapsed. */
-export function isPastUnjournaledGrace(
-  paymentUpdatedAt: Date,
-  now: Date = new Date(),
-  graceMs: number = RECONCILE_UNJOURNALED_GRACE_MS,
-): boolean {
-  return now.getTime() - paymentUpdatedAt.getTime() >= graceMs;
 }
 
 type StepCtx = {
@@ -561,53 +545,6 @@ async function stepSeatCounts(ctx: StepCtx): Promise<void> {
   }
 }
 
-// --- (H2) #776 — LedgerAccountBalance snapshot integrity ---
-async function stepLedgerSnapshots(ctx: StepCtx): Promise<void> {
-  const entrySums = await prisma.ledgerEntry.groupBy({
-    by: ["accountId", "direction"],
-    _sum: { amountPaise: true },
-  });
-  const journalByAccount = new Map<string, number>();
-  for (const row of entrySums) {
-    const amt = sumPaise(row._sum.amountPaise);
-    const cur = journalByAccount.get(row.accountId) ?? 0;
-    journalByAccount.set(
-      row.accountId,
-      row.direction === "DEBIT" ? cur + amt : cur - amt,
-    );
-  }
-  const snapshots = await prisma.ledgerAccountBalance.findMany({
-    select: { accountId: true, balancePaise: true },
-  });
-  const snapshotByAccount = new Map<string, number>(
-    snapshots.map((s) => [s.accountId, s.balancePaise]),
-  );
-  const allAccountIds = new Set<string>(
-    Array.from(journalByAccount.keys()).concat(
-      Array.from(snapshotByAccount.keys()),
-    ),
-  );
-  for (const accountId of Array.from(allAccountIds)) {
-    const journal = journalByAccount.get(accountId) ?? 0;
-    const snapshot = snapshotByAccount.get(accountId);
-    const snapshotVal = snapshot ?? 0;
-    if (snapshotVal !== journal) {
-      ctx.findings.push({
-        kind: "LEDGER_BALANCE_SNAPSHOT_DRIFT",
-        expectedPaise: journal,
-        actualPaise: snapshotVal,
-        deltaPaise: snapshotVal - journal,
-        details: {
-          ledgerAccountId: accountId,
-          unit: "paise",
-          snapshotMissing: snapshot === undefined,
-          note: "LedgerAccountBalance snapshot disagrees with the journal-derived balance.",
-        },
-      });
-    }
-  }
-}
-
 // --- (H3) #776 §C — refund ↔ utilization coherence ---
 async function stepRefundCoherence(ctx: StepCtx): Promise<void> {
   const utilizations = await prisma.bookingUtilization.findMany({
@@ -702,7 +639,7 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
   const cacheByPaymentId = new Map<string, number>();
   for (let i = 0; i < paymentIds.length; i += CHUNK) {
     const slice = paymentIds.slice(i, i + CHUNK);
-    const [ceRows, oeRows] = await Promise.all([
+    const [ceRows, oeRows, overageRows] = await Promise.all([
       prisma.consultantEarnings.groupBy({
         by: ["paymentId"],
         where: { paymentId: { in: slice } },
@@ -713,6 +650,20 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
         where: { paymentId: { in: slice } },
         _sum: { orgSharePaise: true },
       }),
+      typeof prisma.overageEvent?.findMany === "function"
+        ? prisma.overageEvent.findMany({
+            where: {
+              overageBehavior: "CHARGE_ORG",
+              surchargePaise: { gt: 0 },
+              chargeStatus: { notIn: ["REVERSED", "BLOCKED", "FAILED"] },
+              bookingUtilization: { paymentId: { in: slice } },
+            },
+            select: {
+              surchargePaise: true,
+              bookingUtilization: { select: { paymentId: true } },
+            },
+          })
+        : Promise.resolve([]),
     ]);
     for (const ce of ceRows) {
       if (!ce.paymentId) continue;
@@ -731,6 +682,13 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
           sumPaise(oe._sum.orgSharePaise),
       );
     }
+    for (const ov of overageRows) {
+      const pid = ov.bookingUtilization.paymentId;
+      cacheByPaymentId.set(
+        pid,
+        (cacheByPaymentId.get(pid) ?? 0) + sumPaise(ov.surchargePaise),
+      );
+    }
   }
 
   for (const txn of bookingTxns) {
@@ -741,9 +699,9 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
       ctx.findings.push({
         kind: "EARNINGS_LEDGER_DRIFT",
         paymentId: txn.paymentId,
-        expectedPaise: cacheEarnings,
-        actualPaise: journalEarnings,
-        deltaPaise: journalEarnings - cacheEarnings,
+        expectedPaise: journalEarnings,
+        actualPaise: cacheEarnings,
+        deltaPaise: cacheEarnings - journalEarnings,
         details: {
           unit: "paise",
           note: "Cached Earnings amounts (ConsultantEarnings.platformFee+consultantShare + OrganizationEarnings.orgShare) do not match the booking journal's PLATFORM_FEE+CONSULTANT_PAYABLE+ORG_PAYABLE credits.",
@@ -755,6 +713,12 @@ async function stepEarningsLedger(ctx: StepCtx): Promise<void> {
 
 // --- #773/#778 §G — earnings-bearing payments with no booking journal txn ---
 async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
+  // Earnings first: a row and its booking journal commit in one transaction, so
+  // any earnings row read here has its journal visible to the read below.
+  const earningsPaymentRows = await prisma.consultantEarnings.findMany({
+    select: { paymentId: true },
+    distinct: ["paymentId"],
+  });
   const bookingTxns = await prisma.ledgerTransaction.findMany({
     where: { kind: "BOOKING", paymentId: { not: null } },
     select: { paymentId: true },
@@ -762,24 +726,9 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
   const coveredPaymentIds = new Set(
     bookingTxns.map((t) => t.paymentId).filter((p): p is string => !!p),
   );
-  const earningsPaymentRows = await prisma.consultantEarnings.findMany({
-    select: { paymentId: true },
-    distinct: ["paymentId"],
-  });
-  const candidates = earningsPaymentRows.filter(
+  const unjournaled = earningsPaymentRows.filter(
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
   );
-  const candidateRows = await prisma.payment.findMany({
-    where: { id: { in: candidates.map((e) => e.paymentId!) } },
-    select: { id: true, updatedAt: true },
-  });
-  const now = new Date();
-  const settledIds = new Set(
-    candidateRows
-      .filter((p) => isPastUnjournaledGrace(p.updatedAt, now))
-      .map((p) => p.id),
-  );
-  const unjournaled = candidates.filter((e) => settledIds.has(e.paymentId!));
   const earningsPaymentsWithoutBookingTxn = unjournaled.length;
   const unjournaledMax = Number(process.env.RECONCILE_UNJOURNALED_MAX ?? 0);
   if (earningsPaymentsWithoutBookingTxn > unjournaledMax) {
@@ -791,7 +740,7 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
       details: {
         unit: "payments",
         samplePaymentIds: unjournaled.slice(0, 10).map((e) => e.paymentId),
-        note: "Earnings-bearing payments older than the post-commit grace window missing a BOOKING ledger transaction exceed the allowed threshold (#773; Q2 grace via RECONCILE_UNJOURNALED_GRACE_MS).",
+        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold.",
       },
     });
   }
@@ -1026,13 +975,151 @@ async function stepSplitSums(ctx: StepCtx): Promise<void> {
   }
 }
 
-// --- (Q) #775/#782 — CHARGE_MEMBER overage settlement coherence ---
+type MemberOverageEventRow = {
+  id: string;
+  chargeStatus: string;
+  basePaise: number;
+  marginalPaise: number;
+  paymentId: string | null;
+  settledAt: Date | null;
+  payment: {
+    paymentStatus: string;
+    amount: number;
+    parentPaymentId: string | null;
+    organizationId: string | null;
+  } | null;
+  creditNote?: { subtotalPaise: number | bigint } | null;
+};
+
+function inspectOverageEventLedgerState(
+  ev: MemberOverageEventRow,
+  txnKeys: Set<string>,
+  recarveReversalAmounts: Map<string, number>,
+  creditNoteByOverageEventId: Map<
+    string,
+    { id: string; subtotalPaise: number | bigint }
+  >,
+  findings: StepCtx["findings"],
+): void {
+  const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
+  const flag = (
+    note: string,
+    expected = ev.marginalPaise,
+    actual = ev.payment?.amount ?? 0,
+  ) =>
+    findings.push({
+      kind: "OVERAGE_SETTLEMENT_MISMATCH",
+      paymentId: ev.paymentId ?? undefined,
+      organizationId: ev.payment?.organizationId ?? undefined,
+      expectedPaise: expected,
+      actualPaise: actual,
+      deltaPaise: actual - expected,
+      details: {
+        overageEventId: ev.id,
+        chargeStatus: ev.chargeStatus,
+        unit: "paise",
+        note,
+      },
+    });
+
+  if (ev.chargeStatus === "CHARGED") {
+    if (ev.payment?.paymentStatus !== "SUCCEEDED") {
+      flag("CHARGED member overage without a SUCCEEDED side-payment.");
+    } else if (!hasTxn) {
+      flag(
+        "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
+      );
+    } else if (ev.payment.amount !== ev.marginalPaise) {
+      flag("Side-payment amount diverges from the event's marginalPaise.");
+    } else if (!ev.settledAt) {
+      flag("CHARGED member overage missing settledAt.");
+    }
+  } else if (
+    (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
+    hasTxn
+  ) {
+    flag(
+      "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
+    );
+  }
+
+  if (
+    !ev.paymentId ||
+    !recarveReversalAmounts.has(`overage-recarve-invoice:${ev.paymentId}`)
+  ) {
+    return;
+  }
+
+  const reversalPaise = recarveReversalAmounts.get(
+    `overage-recarve-invoice:${ev.paymentId}`,
+  );
+  const creditNote =
+    ev.creditNote ?? creditNoteByOverageEventId.get(ev.id) ?? null;
+  if (reversalPaise === undefined || reversalPaise <= 0) {
+    flag(
+      "overage-recarve-invoice ledger reversal has non-positive DEBIT sum.",
+      ev.basePaise,
+      reversalPaise ?? 0,
+    );
+  } else if (!creditNote) {
+    flag(
+      "overage-recarve-invoice ledger reversal exists without a corresponding CreditNote on the OverageEvent.",
+      reversalPaise,
+      0,
+    );
+  } else if (Number(creditNote.subtotalPaise) !== reversalPaise) {
+    flag(
+      `CreditNote subtotalPaise (${Number(creditNote.subtotalPaise)}) does not match overage-recarve-invoice ledger reversal (${reversalPaise}).`,
+      reversalPaise,
+      Number(creditNote.subtotalPaise),
+    );
+  }
+}
+
+async function loadRecarveCreditNotes(
+  memberEvents: MemberOverageEventRow[],
+  recarveReversalAmounts: Map<string, number>,
+): Promise<Map<string, { id: string; subtotalPaise: number | bigint }>> {
+  const creditNoteByOverageEventId = new Map<
+    string,
+    { id: string; subtotalPaise: number | bigint }
+  >();
+  if (
+    recarveReversalAmounts.size === 0 ||
+    typeof (prisma as unknown as { creditNote?: { findMany?: unknown } })
+      .creditNote?.findMany !== "function"
+  ) {
+    return creditNoteByOverageEventId;
+  }
+  const recarveEventIds = memberEvents
+    .filter(
+      (e) =>
+        !!e.paymentId &&
+        recarveReversalAmounts.has(`overage-recarve-invoice:${e.paymentId}`),
+    )
+    .map((e) => e.id);
+  if (recarveEventIds.length === 0) return creditNoteByOverageEventId;
+
+  const notes = await prisma.creditNote.findMany({
+    where: { overageEventId: { in: recarveEventIds } },
+    select: { id: true, overageEventId: true, subtotalPaise: true },
+  });
+  for (const cn of notes) {
+    if (cn.overageEventId) {
+      creditNoteByOverageEventId.set(cn.overageEventId, cn);
+    }
+  }
+  return creditNoteByOverageEventId;
+}
+
+// --- (Q) #775/#782/#1900 — CHARGE_MEMBER overage settlement coherence ---
 async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
   const memberEvents = await prisma.overageEvent.findMany({
     where: { overageBehavior: "CHARGE_MEMBER" },
     select: {
       id: true,
       chargeStatus: true,
+      basePaise: true,
       marginalPaise: true,
       paymentId: true,
       settledAt: true,
@@ -1050,54 +1137,299 @@ async function stepOverageSettlement(ctx: StepCtx): Promise<void> {
     .map((e) => e.paymentId)
     .filter((p): p is string => !!p);
   const txnKeys = new Set<string>();
+  const recarveReversalAmounts = new Map<string, number>();
   for (let i = 0; i < sideIds.length; i += CHUNK) {
+    const slice = sideIds.slice(i, i + CHUNK);
     const overageTxns = await prisma.ledgerTransaction.findMany({
       where: {
         idempotencyKey: {
-          in: sideIds.slice(i, i + CHUNK).map((id) => `overage:${id}`),
+          in: [
+            ...slice.map((id) => `overage:${id}`),
+            ...slice.map((id) => `overage-recarve-invoice:${id}`),
+          ],
         },
       },
-      select: { idempotencyKey: true },
+      select: {
+        idempotencyKey: true,
+        entries: {
+          where: { direction: "DEBIT" },
+          select: { amountPaise: true },
+        },
+      },
     });
-    for (const t of overageTxns) txnKeys.add(t.idempotencyKey);
+    for (const t of overageTxns) {
+      if (t.idempotencyKey.startsWith("overage-recarve-invoice:")) {
+        const debitSum = t.entries.reduce(
+          (s, p) => s + Number(p.amountPaise),
+          0,
+        );
+        recarveReversalAmounts.set(t.idempotencyKey, debitSum);
+      } else {
+        txnKeys.add(t.idempotencyKey);
+      }
+    }
   }
+  const creditNoteByOverageEventId = await loadRecarveCreditNotes(
+    memberEvents,
+    recarveReversalAmounts,
+  );
   for (const ev of memberEvents) {
-    const hasTxn = !!ev.paymentId && txnKeys.has(`overage:${ev.paymentId}`);
-    const flag = (note: string) =>
+    inspectOverageEventLedgerState(
+      ev,
+      txnKeys,
+      recarveReversalAmounts,
+      creditNoteByOverageEventId,
+      ctx.findings,
+    );
+  }
+}
+
+// --- a parked capture's UNAPPLIED_RECEIPTS balance matches what is still owed back ---
+async function stepUnappliedReceipts(ctx: StepCtx): Promise<void> {
+  const parked = await prisma.ledgerTransaction.findMany({
+    where: { kind: "UNAPPLIED_RECEIPT", paymentId: { not: null } },
+    select: { paymentId: true },
+    distinct: ["paymentId"],
+  });
+  const paymentIds = parked
+    .map((t) => t.paymentId)
+    .filter((p): p is string => !!p);
+
+  for (let i = 0; i < paymentIds.length; i += CHUNK) {
+    const slice = paymentIds.slice(i, i + CHUNK);
+    const balances = await unappliedBalances(slice);
+    const settled = await settledRefundTotals(slice);
+    for (const paymentId of slice) {
+      const refundedPaise = settled.get(paymentId);
+      const balance = balances.get(paymentId);
+      if (refundedPaise === undefined || !balance) continue;
+      // A recovered capture released its remainder; otherwise each settled refund returned its share.
+      const expectedPaise =
+        balance.releasedPaise > 0
+          ? 0
+          : Math.max(0, balance.parkedPaise - refundedPaise);
+      if (balance.owedPaise === expectedPaise) continue;
       ctx.findings.push({
-        kind: "OVERAGE_SETTLEMENT_MISMATCH",
-        paymentId: ev.paymentId ?? undefined,
-        organizationId: ev.payment?.organizationId ?? undefined,
-        expectedPaise: ev.marginalPaise,
-        actualPaise: ev.payment?.amount ?? 0,
-        deltaPaise: (ev.payment?.amount ?? 0) - ev.marginalPaise,
+        kind: "UNAPPLIED_RECEIPTS_RESIDUE",
+        paymentId,
+        expectedPaise,
+        actualPaise: balance.owedPaise,
+        deltaPaise: balance.owedPaise - expectedPaise,
         details: {
-          overageEventId: ev.id,
-          chargeStatus: ev.chargeStatus,
           unit: "paise",
-          note,
+          note: "A parked capture's UNAPPLIED_RECEIPTS balance differs from the captured amount less its settled refunds (positive: a settled refund never posted its clearing entry).",
         },
       });
-    if (ev.chargeStatus === "CHARGED") {
-      if (!ev.paymentId || ev.payment?.paymentStatus !== "SUCCEEDED") {
-        flag("CHARGED member overage without a SUCCEEDED side-payment.");
-      } else if (!hasTxn) {
-        flag(
-          "CHARGED member overage but no overage:<sidePaymentId> ledger txn — ORG_PAYABLE was never credited.",
-        );
-      } else if (ev.payment.amount !== ev.marginalPaise) {
-        flag("Side-payment amount diverges from the event's marginalPaise.");
-      } else if (!ev.settledAt) {
-        flag("CHARGED member overage missing settledAt.");
-      }
-    } else if (
-      (ev.chargeStatus === "PENDING" || ev.chargeStatus === "FAILED") &&
-      hasTxn
-    ) {
-      flag(
-        "Un-collected member overage has an overage ledger txn — money posted without a CHARGED event.",
-      );
     }
+  }
+}
+
+type UnappliedBalance = {
+  parkedPaise: number;
+  releasedPaise: number;
+  owedPaise: number;
+};
+
+/** Per payment: paise parked, paise released into a booking, and the net still held. */
+async function unappliedBalances(
+  paymentIds: string[],
+): Promise<Map<string, UnappliedBalance>> {
+  const entries = await prisma.ledgerEntry.findMany({
+    where: {
+      account: { kind: "UNAPPLIED_RECEIPTS" },
+      transaction: { paymentId: { in: paymentIds } },
+    },
+    select: {
+      direction: true,
+      amountPaise: true,
+      transaction: { select: { paymentId: true, kind: true } },
+    },
+  });
+  const balances = new Map<string, UnappliedBalance>();
+  for (const e of entries) {
+    const paymentId = e.transaction.paymentId;
+    if (!paymentId) continue;
+    const paise = sumPaise(e.amountPaise);
+    const b = balances.get(paymentId) ?? {
+      parkedPaise: 0,
+      releasedPaise: 0,
+      owedPaise: 0,
+    };
+    if (e.direction === "CREDIT") {
+      b.parkedPaise += paise;
+      b.owedPaise += paise;
+    } else {
+      if (e.transaction.kind === "UNAPPLIED_RECEIPT") b.releasedPaise += paise;
+      b.owedPaise -= paise;
+    }
+    balances.set(paymentId, b);
+  }
+  return balances;
+}
+
+/** Settled refund paise per payment, only for payments with no refund still in flight. */
+async function settledRefundTotals(
+  paymentIds: string[],
+): Promise<Map<string, number>> {
+  const refunds = await prisma.refund.findMany({
+    where: { paymentId: { in: paymentIds }, deletedAt: null },
+    select: {
+      paymentId: true,
+      status: true,
+      cascadedAt: true,
+      amountPaise: true,
+    },
+  });
+  // Credit restorations (0 paise) settle in place and never cascade.
+  const inFlight = (r: (typeof refunds)[number]) =>
+    r.status === "PENDING" ||
+    (r.status === "SUCCEEDED" &&
+      r.cascadedAt === null &&
+      sumPaise(r.amountPaise) > 0);
+  const open = new Set(refunds.filter(inFlight).map((r) => r.paymentId));
+  const totals = new Map<string, number>();
+  for (const r of refunds) {
+    if (r.status !== "SUCCEEDED" || open.has(r.paymentId)) continue;
+    totals.set(
+      r.paymentId,
+      (totals.get(r.paymentId) ?? 0) + sumPaise(r.amountPaise),
+    );
+  }
+  return totals;
+}
+
+// --- PENDING_TRUST park watchdog ---
+// A park is released only when its sponsor is verified or pays an invoice, so
+// one that does neither withholds earnings forever. Report parks older than
+// 24h per sponsor (graded on the oldest row's createdAt, which is conservative
+// for a row re-parked from HELD). Detect-only: age must never release a park.
+export const PENDING_TRUST_PARK_STALE_MS = 24 * 60 * 60 * 1000;
+
+/** One PENDING_TRUST row, normalised across the two earnings tables. */
+export type PendingTrustParkRow = {
+  earningId: string;
+  /** The org that owes the invoice (the park's key), not the host org. */
+  sponsorOrganizationId: string;
+  amountPaise: number;
+  createdAt: Date;
+};
+
+export type PendingTrustParkGroup = {
+  organizationId: string;
+  earningCount: number;
+  parkedPaise: number;
+  oldestCreatedAt: Date;
+  sampleEarningIds: string[];
+};
+
+/** Group parked rows by sponsor, largest withheld amount first. */
+export function groupPendingTrustParks(
+  rows: PendingTrustParkRow[],
+): PendingTrustParkGroup[] {
+  const byOrg = new Map<string, PendingTrustParkGroup>();
+  for (const row of rows) {
+    let g = byOrg.get(row.sponsorOrganizationId);
+    if (!g) {
+      g = {
+        organizationId: row.sponsorOrganizationId,
+        earningCount: 0,
+        parkedPaise: 0,
+        oldestCreatedAt: row.createdAt,
+        sampleEarningIds: [],
+      };
+      byOrg.set(row.sponsorOrganizationId, g);
+    }
+    g.earningCount += 1;
+    g.parkedPaise += row.amountPaise;
+    if (row.createdAt < g.oldestCreatedAt) g.oldestCreatedAt = row.createdAt;
+    if (g.sampleEarningIds.length < 10) g.sampleEarningIds.push(row.earningId);
+  }
+  return [...byOrg.values()].sort((a, b) => b.parkedPaise - a.parkedPaise);
+}
+
+async function stepPendingTrustParks(ctx: StepCtx): Promise<void> {
+  const cutoff = new Date(ctx.now.getTime() - PENDING_TRUST_PARK_STALE_MS);
+  const [consultantParks, orgParks] = await Promise.all([
+    prisma.consultantEarnings.findMany({
+      where: {
+        status: "PENDING_TRUST",
+        createdAt: { lte: cutoff },
+        ...(ctx.opts.organizationId
+          ? { payment: { organizationId: ctx.opts.organizationId } }
+          : {}),
+      },
+      select: {
+        id: true,
+        consultantSharePaise: true,
+        createdAt: true,
+        payment: { select: { organizationId: true } },
+      },
+    }),
+    prisma.organizationEarnings.findMany({
+      where: {
+        status: "PENDING_TRUST",
+        createdAt: { lte: cutoff },
+        ...(ctx.opts.organizationId
+          ? {
+              OR: [
+                { payment: { organizationId: ctx.opts.organizationId } },
+                {
+                  payment: { organizationId: null },
+                  organizationId: ctx.opts.organizationId,
+                },
+              ],
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        organizationId: true,
+        orgSharePaise: true,
+        createdAt: true,
+        payment: { select: { organizationId: true } },
+      },
+    }),
+  ]);
+
+  const rows: PendingTrustParkRow[] = [];
+  for (const ce of consultantParks) {
+    // No sponsor org means the gate never parked it.
+    if (!ce.payment.organizationId) continue;
+    rows.push({
+      earningId: ce.id,
+      sponsorOrganizationId: ce.payment.organizationId,
+      amountPaise: sumPaise(ce.consultantSharePaise),
+      createdAt: ce.createdAt,
+    });
+  }
+  for (const oe of orgParks) {
+    rows.push({
+      earningId: oe.id,
+      sponsorOrganizationId: oe.payment.organizationId ?? oe.organizationId,
+      amountPaise: sumPaise(oe.orgSharePaise),
+      createdAt: oe.createdAt,
+    });
+  }
+
+  for (const g of groupPendingTrustParks(rows)) {
+    ctx.findings.push({
+      kind: "PENDING_TRUST_PARK_STALE",
+      organizationId: g.organizationId,
+      expectedPaise: g.parkedPaise,
+      actualPaise: 0,
+      deltaPaise: g.parkedPaise,
+      details: {
+        unit: "paise",
+        scope: "pending-trust-park",
+        earningCount: g.earningCount,
+        oldestCreatedAt: g.oldestCreatedAt.toISOString(),
+        ageHours: Math.round(
+          (ctx.now.getTime() - g.oldestCreatedAt.getTime()) / 3_600_000,
+        ),
+        sampleEarningIds: g.sampleEarningIds,
+        note: "PENDING_TRUST earnings parked past 24h. Never auto-released on age. Unblock by verifying the sponsoring org (status=ACTIVE) or having it pay one invoice; otherwise it needs an operator decision.",
+      },
+    });
   }
 }
 
@@ -1117,64 +1449,39 @@ export function isReconcileRunInProgress(row: { summary: unknown }): boolean {
   return s.status === "RUNNING";
 }
 
-/** The newest full-scope run still RUNNING and younger than the stale window, if any. */
-export async function findInFlightReconcileRun(): Promise<string | null> {
-  const recent = await prisma.ledgerReconciliationReport.findMany({
-    where: {
-      scope: "full",
-      runAt: { gte: new Date(Date.now() - RECONCILE_RUN_STALE_MS) },
-    },
-    orderBy: { runAt: "desc" },
-    take: 5,
-    select: { id: true, summary: true },
-  });
-  return recent.find(isReconcileRunInProgress)?.id ?? null;
-}
-
-/** Open a run as `ok=false` + RUNNING. */
-export async function createReconcileRun(
-  opts: ReconcileScope,
-  id?: string,
-): Promise<string> {
-  const summary = {
-    ...EMPTY_COUNTS,
-    status: "RUNNING" as const,
-  };
-  const row = await prisma.ledgerReconciliationReport.create({
-    data: {
-      ...(id ? { id } : {}),
-      scope: opts.scope,
-      ok: false,
-      durationMs: 0,
-      summary: summary as unknown as Prisma.InputJsonValue,
-      findings: [],
-      triggeredById: opts.triggeredById ?? null,
-    },
-    select: { id: true },
-  });
-  return row.id;
-}
-
-/** Close a RUNNING run that can no longer be advanced. */
-export async function markReconcileRunFailed(
-  runId: string,
-  error: string,
-): Promise<void> {
-  const row = await prisma.ledgerReconciliationReport.findUnique({
-    where: { id: runId },
-    select: { summary: true },
-  });
-  if (!row || !isReconcileRunInProgress(row)) return;
-  const summary = {
-    ...EMPTY_COUNTS,
-    ...((row.summary as Record<string, unknown>) ?? {}),
-    status: "FAILED" as const,
-    error,
-  };
-  await prisma.ledgerReconciliationReport.update({
-    where: { id: runId },
-    data: { summary: summary as unknown as Prisma.InputJsonValue },
-  });
+// --- referral-credit liability == Σ remaining of VESTED credits that posted a vest journal ---
+async function stepReferralCreditLiability(ctx: StepCtx): Promise<void> {
+  // One snapshot for both reads, so a vest committing between them is not drift.
+  const { sums, vested } = await prisma.$transaction(
+    async (tx) => ({
+      sums: await tx.ledgerEntry.groupBy({
+        by: ["direction"],
+        where: {
+          accountId: ledgerAccountId({ kind: "REFERRAL_CREDIT_LIABILITY" }),
+        },
+        _sum: { amountPaise: true },
+      }),
+      vested: await tx.referralCredit.aggregate({
+        where: { state: "VESTED", vestedAt: { not: null } },
+        _sum: { remainingAmount: true },
+      }),
+    }),
+    { isolationLevel: "RepeatableRead" },
+  );
+  let ledgerOwed = 0;
+  for (const row of sums) {
+    const amt = sumPaise(row._sum.amountPaise);
+    ledgerOwed += row.direction === "CREDIT" ? amt : -amt;
+  }
+  const expected = sumPaise(vested._sum.remainingAmount);
+  if (expected !== ledgerOwed) {
+    ctx.findings.push({
+      kind: "REFERRAL_CREDIT_LIABILITY_DRIFT",
+      expectedPaise: expected,
+      actualPaise: ledgerOwed,
+      deltaPaise: ledgerOwed - expected,
+    });
+  }
 }
 
 async function executeSteps(opts: ReconcileScope): Promise<{
@@ -1195,7 +1502,6 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   await stepPayoutTotals(ctx);
   await stepSeatCounts(ctx);
   if (!opts.organizationId) {
-    await stepLedgerSnapshots(ctx);
     await stepRefundCoherence(ctx);
   }
   await stepEarningsLedger(ctx);
@@ -1208,15 +1514,36 @@ async function executeSteps(opts: ReconcileScope): Promise<{
   }
   await stepSplitSums(ctx);
   await stepOverageSettlement(ctx);
+  await stepPendingTrustParks(ctx);
+  if (!opts.organizationId) {
+    await stepReferralCreditLiability(ctx);
+    await stepUnappliedReceipts(ctx);
+  }
+  ctx.findings.push(...(await orgInvoiceGstFindings(opts.organizationId)));
+  ctx.findings.push(
+    ...(await staleClawbackFindings(ctx.now, opts.organizationId)),
+  );
 
   return { ctx, durationMs: Date.now() - startedAt };
 }
 
 async function runReconcileLedgersUnlocked(
   opts: ReconcileScope,
-  existingRunId?: string,
 ): Promise<ReconcileReport> {
-  const runId = existingRunId ?? (await createReconcileRun(opts));
+  const row = await prisma.ledgerReconciliationReport.create({
+    data: {
+      scope: opts.scope,
+      ok: false,
+      durationMs: 0,
+      summary: {
+        ...EMPTY_COUNTS,
+        status: "RUNNING" as const,
+      } as unknown as Prisma.InputJsonValue,
+      findings: [],
+      triggeredById: opts.triggeredById ?? null,
+    },
+    select: { id: true },
+  });
   const { ctx, durationMs } = await executeSteps(opts);
   const ok = ctx.findings.length === 0;
   const summary = {
@@ -1227,7 +1554,7 @@ async function runReconcileLedgersUnlocked(
   };
 
   const report = await prisma.ledgerReconciliationReport.update({
-    where: { id: runId },
+    where: { id: row.id },
     data: {
       ok,
       durationMs,
@@ -1245,45 +1572,6 @@ async function runReconcileLedgersUnlocked(
     summary,
     findings: ctx.findings,
   };
-}
-
-/** Single-pass wrapper preserving the HTTP cleanup route signature. */
-export async function advanceReconcileRun(args: {
-  runId: string;
-  limit?: number;
-  budgetMs?: number;
-  createIfMissing?: ReconcileScope;
-}): Promise<ReconcileRunSnapshot> {
-  return withCronLock(
-    "reconcile-ledgers",
-    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
-    async () => {
-      let row = await prisma.ledgerReconciliationReport.findUnique({
-        where: { id: args.runId },
-      });
-      if (!row && args.createIfMissing) {
-        await createReconcileRun(args.createIfMissing, args.runId);
-        row = await prisma.ledgerReconciliationReport.findUnique({
-          where: { id: args.runId },
-        });
-      }
-      if (!row) throw new Error(`reconcile run ${args.runId} not found`);
-      const opts: ReconcileScope = row.scope.startsWith("org:")
-        ? {
-            scope: row.scope,
-            organizationId: row.scope.slice("org:".length),
-          }
-        : { scope: row.scope };
-      const report = await runReconcileLedgersUnlocked(opts, row.id);
-      return {
-        runId: row.id,
-        scope: row.scope,
-        status: "COMPLETED",
-        progress: null,
-        report,
-      };
-    },
-  );
 }
 
 export async function runReconcileLedgers(

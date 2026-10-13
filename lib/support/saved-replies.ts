@@ -10,6 +10,7 @@ export interface SavedReply {
   id: string;
   title: string;
   body: string;
+  thenStatus?: "RESOLVED";
 }
 
 const GENERAL: SavedReply[] = [
@@ -32,6 +33,12 @@ const GENERAL: SavedReply[] = [
     id: "general-resolved",
     title: "Confirm resolved",
     body: "This should now be sorted. If anything still looks wrong, reply here and the conversation will reopen.",
+  },
+  {
+    id: "macro-resolve-closing",
+    title: "Issue resolved — closing note",
+    body: "This has now been sorted on our side. If anything still looks off, reply here anytime and the request will reopen automatically.",
+    thenStatus: "RESOLVED",
   },
   {
     id: "general-closing",
@@ -61,6 +68,12 @@ const BY_TOPIC: Partial<Record<CaseTopic, SavedReply[]>> = {
       id: "pay-refund-timing",
       title: "Refund timing",
       body: "Refunds go only to the original payment method. After approval, allow a review window plus bank processing, typically 7–14 days end to end.",
+    },
+    {
+      id: "macro-refund-processed-resolve",
+      title: "Refund processed & resolve",
+      body: "We've processed your refund back to your original payment method — typically 7–14 days end to end depending on your bank. Reply here if you need anything else.",
+      thenStatus: "RESOLVED",
     },
     {
       id: "pay-reference",

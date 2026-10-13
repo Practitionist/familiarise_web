@@ -1,16 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Plus } from "lucide-react";
 import { z } from "zod";
+import { topUpStatusSchema, type TopUpStatus } from "@/schemas/wallet";
 
 import { useOrgRole } from "../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
 import { useSession } from "@/lib/auth-client";
 import { normalizeRazorpayContact } from "@/lib/payments/razorpay-prefill";
-import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
+import {
+  buildCheckoutOptions,
+  type RazorpayCheckoutResponse,
+} from "@/lib/payments/client/checkout-options";
 import { DashboardGrid } from "@/components/dashboard/PageScaffold";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Button } from "@/components/ui/button";
@@ -45,8 +49,6 @@ const walletResponseSchema = z.object({
     walletBalance: z.number(),
     // #777 §C — balance-alert config.
     minBalancePaise: z.number().nullable(),
-    autoTopUpEnabled: z.boolean(),
-    autoTopUpAmountPaise: z.number().nullable(),
   }),
   ledger: z.array(
     z.object({
@@ -55,6 +57,14 @@ const walletResponseSchema = z.object({
       reason: z.string(),
       balanceAfter: z.number(),
       notes: z.string().nullable(),
+      createdAt: z.string(),
+    }),
+  ),
+  // Recent top-ups the gateway has not confirmed yet, newest first.
+  pendingTopUps: z.array(
+    z.object({
+      topUpId: z.string(),
+      amountPaise: z.number(),
       createdAt: z.string(),
     }),
   ),
@@ -92,18 +102,14 @@ const topUpStatusResponseSchema = z.object({
   topUp: z.object({
     topUpId: z.string(),
     providerPaymentId: z.string().nullable(),
-    // The route maps WalletTopUp.status through three values, not two.
-    // Omitting "failed" meant a rejected top-up threw here instead of being
-    // reported, and the member — who had just been through the gateway — saw a
-    // raw Zod issue dump in the still-open dialog.
-    status: z.enum(["pending", "confirmed", "failed"]),
+    status: topUpStatusSchema,
     amountPaise: z.number(),
     // `balanceAfter` used to be required here and the route does not return it.
     // Nothing read it, so it existed only to reject every response.
     createdAt: z.string(),
   }),
 });
-type TopUpStatus = z.infer<typeof topUpStatusResponseSchema>["topUp"];
+type TopUpSnapshot = z.infer<typeof topUpStatusResponseSchema>["topUp"];
 
 const apiErrorSchema = z.object({
   error: z.string().optional(),
@@ -112,15 +118,34 @@ const apiErrorSchema = z.object({
 
 const TOPUP_POLL_INTERVAL_MS = 1000;
 const TOPUP_POLL_MAX_ATTEMPTS = 20;
+/** How often a top-up still awaiting the gateway is re-checked in the background. */
+const TOPUP_PENDING_REFETCH_MS = 5000;
 
 type TopUpMutationResult =
   | {
       result: TopUpInitiateResponse;
-      outcome: "confirmed";
-      confirmed: TopUpStatus;
+      outcome: "settled";
+      settled: TopUpSnapshot;
     }
-  | { result: TopUpInitiateResponse; outcome: "pending"; confirmed: null }
-  | { result: TopUpInitiateResponse; outcome: "not_paid"; confirmed: null };
+  | { result: TopUpInitiateResponse; outcome: "pending"; settled: null }
+  | { result: TopUpInitiateResponse; outcome: "not_paid"; settled: null };
+
+/** The toast for a top-up the gateway has settled, confirmed or failed. */
+function settledTopUpToast(
+  status: Exclude<TopUpStatus, "pending">,
+  amountPaise: number,
+) {
+  return status === "confirmed"
+    ? {
+        title: "Top-up confirmed",
+        description: `₹${(amountPaise / 100).toLocaleString("en-IN")} credited to your wallet.`,
+      }
+    : {
+        title: "Top-up failed",
+        description: "The payment was not captured. Nothing was credited.",
+        variant: "destructive" as const,
+      };
+}
 
 async function fetchWallet(orgId: string): Promise<WalletFetchResult> {
   const res = await fetch(`/api/organizations/${orgId}/billing-account/wallet`);
@@ -153,8 +178,7 @@ async function initiateTopUp(
 
 // #777 §C — persist the balance-alert config via the billing-account PATCH.
 // NOTIFY-ONLY floor: the toggle drives whether a minimum is set (cron alerts
-// off minBalancePaise alone); autoTopUpEnabled stays false until mandates land
-// — the API rejects enabling it without an autoTopUpAmountPaise anyway.
+// off minBalancePaise alone).
 async function patchBalanceAlerts(
   orgId: string,
   body: {
@@ -181,7 +205,7 @@ async function patchBalanceAlerts(
 async function fetchTopUpStatus(
   orgId: string,
   topUpId: string,
-): Promise<TopUpStatus | null> {
+): Promise<TopUpSnapshot | null> {
   const res = await fetch(
     `/api/organizations/${orgId}/billing-account/wallet/top-ups/${topUpId}`,
   );
@@ -189,16 +213,35 @@ async function fetchTopUpStatus(
   return topUpStatusResponseSchema.parse(await res.json()).topUp;
 }
 
-async function pollTopUpUntilConfirmed(
+/** Drives the server-side confirmation from the Checkout response; the webhook stays the backstop. */
+async function verifyTopUp(
   orgId: string,
   topUpId: string,
-): Promise<TopUpStatus | null> {
+  response: RazorpayCheckoutResponse,
+): Promise<void> {
+  // Best effort: the status poll reads the outcome and the webhook backstops it.
+  await fetch(
+    `/api/organizations/${orgId}/billing-account/wallet/top-ups/${topUpId}/verify`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        razorpay_order_id: response.razorpay_order_id,
+        razorpay_payment_id: response.razorpay_payment_id,
+        razorpay_signature: response.razorpay_signature,
+      }),
+    },
+  );
+}
+
+/** The top-up once confirmed or failed, or null while still pending. */
+async function pollTopUpUntilSettled(
+  orgId: string,
+  topUpId: string,
+): Promise<TopUpSnapshot | null> {
   for (let attempt = 0; attempt < TOPUP_POLL_MAX_ATTEMPTS; attempt++) {
     const status = await fetchTopUpStatus(orgId, topUpId);
-    if (status?.status === "confirmed") return status;
-    // A failed top-up is terminal; polling it to the attempt cap only delays
-    // telling the member their money did not land.
-    if (status?.status === "failed") return status;
+    if (status && status.status !== "pending") return status;
     await new Promise((r) => setTimeout(r, TOPUP_POLL_INTERVAL_MS));
   }
   return null;
@@ -228,6 +271,8 @@ export function WalletTab({
     queryKey: ["org-wallet", orgId],
     queryFn: () => fetchWallet(orgId),
   });
+  const walletResponse = data && isWalletResponse(data) ? data : null;
+  const walletError = data && !isWalletResponse(data) ? data : null;
 
   const [showBuy, setShowBuy] = useState(false);
   const [amountMajor, setAmountMajor] = useState("1000");
@@ -236,6 +281,38 @@ export function WalletTab({
   const [minBalanceMajor, setMinBalanceMajor] = useState("");
   const [alertsEnabled, setAlertsEnabled] = useState(false);
   const { toast } = useToast();
+  // Server-derived, so the pending banner survives a reload.
+  const pendingTopUpId = walletResponse?.pendingTopUps[0]?.topUpId ?? null;
+  // Settled top-ups already toasted, so the checkout flow and the poll never both announce one.
+  const announcedTopUpIds = useRef(new Set<string>());
+
+  const pendingTopUp = useQuery({
+    queryKey: ["org-wallet-top-up", orgId, pendingTopUpId],
+    queryFn: () => fetchTopUpStatus(orgId, pendingTopUpId ?? ""),
+    enabled: pendingTopUpId !== null,
+    refetchInterval: TOPUP_PENDING_REFETCH_MS,
+  });
+  const settledTopUpId = pendingTopUp.data?.topUpId;
+  const pendingTopUpStatus = pendingTopUp.data?.status;
+  const pendingTopUpAmount = pendingTopUp.data?.amountPaise;
+  useEffect(() => {
+    if (
+      !settledTopUpId ||
+      (pendingTopUpStatus !== "confirmed" && pendingTopUpStatus !== "failed")
+    )
+      return;
+    queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
+    if (announcedTopUpIds.current.has(settledTopUpId)) return;
+    announcedTopUpIds.current.add(settledTopUpId);
+    toast(settledTopUpToast(pendingTopUpStatus, pendingTopUpAmount ?? 0));
+  }, [
+    settledTopUpId,
+    pendingTopUpStatus,
+    pendingTopUpAmount,
+    orgId,
+    queryClient,
+    toast,
+  ]);
 
   const topUpMutation = useMutation({
     mutationFn: async (): Promise<TopUpMutationResult> => {
@@ -258,68 +335,68 @@ export function WalletTab({
           "Razorpay checkout failed to load. Please disable ad-blockers and retry.",
         );
       }
-      const paid = await new Promise<boolean>((resolve) => {
-        const rzp = new window.Razorpay(
-          buildCheckoutOptions({
-            keyId: result.keyId,
-            amount: result.amountPaise,
-            currency: result.currency,
-            name: "Familiarise",
-            description: "Wallet top-up",
-            orderId: result.razorpayOrderId,
-            prefill: {
-              ...(session?.user?.name ? { name: session.user.name } : {}),
-              ...(session?.user?.email ? { email: session.user.email } : {}),
-              contact,
-            },
-            handler: () => {
-              resolve(true);
-            },
-            theme: { color: "#2563EB" },
-          }),
-        );
-        rzp.on("payment.failed", () => {
-          toast({
-            title: "Payment failed",
-            description:
-              "Your card was declined or the payment timed out. Please try again.",
-            variant: "destructive",
+      const paid = await new Promise<RazorpayCheckoutResponse | null>(
+        (resolve) => {
+          const rzp = new window.Razorpay(
+            buildCheckoutOptions({
+              keyId: result.keyId,
+              amount: result.amountPaise,
+              currency: result.currency,
+              name: "Familiarise",
+              description: "Wallet top-up",
+              orderId: result.razorpayOrderId,
+              prefill: {
+                ...(session?.user?.name ? { name: session.user.name } : {}),
+                ...(session?.user?.email ? { email: session.user.email } : {}),
+                contact,
+              },
+              handler: (response) => {
+                resolve(response);
+              },
+              theme: { color: "#2563EB" },
+            }),
+          );
+          rzp.on("payment.failed", () => {
+            toast({
+              title: "Payment failed",
+              description:
+                "Your card was declined or the payment timed out. Please try again.",
+              variant: "destructive",
+            });
+            resolve(null);
           });
-          resolve(false);
-        });
-        rzp.open();
-      });
+          rzp.open();
+        },
+      );
 
       if (!paid) {
-        return { result, outcome: "not_paid", confirmed: null };
+        return { result, outcome: "not_paid", settled: null };
       }
 
-      const confirmed = await pollTopUpUntilConfirmed(orgId, result.topUpId);
-      if (confirmed) {
-        return { result, outcome: "confirmed", confirmed };
+      await verifyTopUp(orgId, result.topUpId, paid).catch(() => undefined);
+      const settled = await pollTopUpUntilSettled(orgId, result.topUpId);
+      if (settled) {
+        return { result, outcome: "settled", settled };
       }
-      return { result, outcome: "pending", confirmed: null };
+      return { result, outcome: "pending", settled: null };
     },
     onSuccess: (data) => {
       setShowBuy(false);
       queryClient.invalidateQueries({ queryKey: ["org-wallet", orgId] });
-      if (data.outcome === "confirmed") {
-        toast({
-          title: "Top-up confirmed",
-          description: `₹${(data.confirmed.amountPaise / 100).toLocaleString("en-IN")} credited to your wallet.`,
-        });
+      if (data.outcome === "settled") {
+        announcedTopUpIds.current.add(data.result.topUpId);
+        const { status, amountPaise } = data.settled;
+        if (status !== "pending") toast(settledTopUpToast(status, amountPaise));
       } else if (data.outcome === "pending") {
+        // The pending banner keeps polling and announces the final status.
         toast({
-          title: "Payment received",
+          title: "Top-up pending",
           description:
-            "Awaiting confirmation from Razorpay. Your balance will update automatically once the webhook lands.",
+            "The payment is still being confirmed. Your balance updates once it lands.",
         });
       }
     },
   });
-
-  const walletResponse = data && isWalletResponse(data) ? data : null;
-  const walletError = data && !isWalletResponse(data) ? data : null;
 
   // #777 §C — finance can see + edit balance alerts. billing.read includes
   // MANAGER (read-only); the PATCH gate is billing.manage, so only those
@@ -478,6 +555,13 @@ export function WalletTab({
             )}
           </div>
 
+          {pendingTopUpId && (
+            <output className="mb-4 block rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+              Top-up pending — waiting for Razorpay to confirm a recent payment.
+              Your balance updates here once it does.
+            </output>
+          )}
+
           <DashboardGrid columns={2}>
             <StatCard
               title="Current balance"
@@ -560,11 +644,7 @@ export function WalletTab({
                     {alertsMutation.isPending ? "Saving…" : "Save alerts"}
                   </Button>
                 )}
-                {/* #863 residual — the auto-top-up executor (RBI e-mandate:
-                    ₹15k AFA-free cap + 24h pre-debit notice) is NOT built. The
-                    autoTopUp* columns + settings CRUD exist as config-of-intent;
-                    nothing fires a debit. TODO(#863): build the mandate +
-                    executor when a design partner needs it. Notify-only for now. */}
+                {/* No auto-debit exists: an RBI e-mandate executor is not built. */}
                 <div className="rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">
                     Automatic top-up — coming soon.

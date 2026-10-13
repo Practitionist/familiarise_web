@@ -15,6 +15,7 @@ import {
   linkParticipantsToPayment,
   liveParticipant,
   recordParticipants,
+  releaseParticipant,
   transitionParticipant,
 } from "@/lib/booking/participants";
 import {
@@ -61,6 +62,7 @@ import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
 import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
+  buildConsultantOccupancyWhere,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
@@ -76,13 +78,14 @@ import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import {
   applyCreditsToPayment,
   getUserCredits,
-  processQualifyingAction,
-  processConsultantBookingReferral,
+  reverseCreditsForPayment,
 } from "@/lib/referrals/service";
+import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
 import {
-  notifyCreditsAppliedBestEffort,
-  notifyReferralQualificationBestEffort,
-} from "@/lib/referrals/referral-notify";
+  asWelcomeDiscountConflict,
+  resolveCheckoutAttribution,
+} from "@/lib/referrals/attribution";
+import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
 import {
   deriveCheckoutAmount,
   type CheckoutDiscountInput,
@@ -96,7 +99,6 @@ import {
   isWalletFrozen,
   WalletFrozenError,
 } from "@/lib/payments/wallet-freeze";
-import { recordSystemError } from "@/lib/enterprise/system-events";
 import {
   recordBookingUtilization,
   ProgramAssignmentLimitError,
@@ -107,12 +109,14 @@ import {
   validateDiscountCurrency,
 } from "@/lib/payments/validation/currency-guards";
 import { checkPaymentLegsSumToAmount } from "@/lib/payments/payment-legs";
+import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
 import {
   recordOverageAtCheckout,
   notifyOverageDueAfterCommit,
   type PendingOverageNotification,
 } from "@/lib/payments/billing/overage-settlement";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
+import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
 import {
   getInvoiceCreditLimitPaise,
   assertVerifiedDomainOrThrow,
@@ -134,12 +138,18 @@ import {
   ensurePlatformCancellationPolicy,
   resolveCheckoutCancellationPolicyId,
 } from "@/lib/payments/operations/cancellation-policy-store";
-import { isBusinessErrorCode } from "@/lib/errors/classification/payment-error-classification";
+import {
+  type BusinessErrorCode,
+  isBusinessErrorCode,
+} from "@/lib/errors/classification/payment-error-classification";
 import {
   classEnrolmentFrom,
   type OpenClassEnrolment,
 } from "@/lib/booking/class-enrolment";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  SlotTakenError,
+} from "@/lib/booking/booking-rule-error";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 
 // Re-export for backward compatibility
@@ -214,6 +224,18 @@ const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.SCHEDULED,
 ];
 
+/**
+ * #1743 — only an active or completed subscription may be renewed; a PENDING /
+ * APPROVED_PENDING_PAYMENT / SCHEDULED request has not run yet and cannot
+ * anchor a successor cycle.
+ */
+const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> = new Set(
+  [AppointmentStatus.APPROVED, AppointmentStatus.COMPLETED],
+);
+
+const REFERRAL_CREDITS_DROPPED_NOTICE =
+  "Referral credits can't be used on organisation-funded bookings, so none were spent.";
+
 /** A direct checkout's PENDING window; the slot frees when it lapses (#1319). */
 const DIRECT_CHECKOUT_HOLD_MS = 30 * 60 * 1000;
 
@@ -227,16 +249,21 @@ const SUPERSEDED_HOLD_NOTE =
  * stay out on purpose: they mean a programme is configured in a shape we
  * cannot collect on and must keep paging.
  */
-const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<string> = new Set([
-  "ORG_NOT_OPERATIONAL",
-  "ORG_CANNOT_SPONSOR",
-  "ORG_MEMBERSHIP_REQUIRED",
-  "ORG_CREDIT_LIMIT_REACHED",
-  "CONSULTANT_NOT_ON_PANEL",
-  "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
-  "CREDIT_SHORTFALL",
-  "SUBSCRIPTION_ALREADY_ACTIVE",
-]);
+const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
+  new Set<BusinessErrorCode>([
+    "ORG_NOT_OPERATIONAL",
+    "ORG_CANNOT_SPONSOR",
+    "ORG_MEMBERSHIP_REQUIRED",
+    "ORG_CREDIT_LIMIT_REACHED",
+    "CONSULTANT_NOT_ON_PANEL",
+    "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
+    "CREDIT_SHORTFALL",
+    "DISCOUNT_EXHAUSTED",
+    "SUBSCRIPTION_ALREADY_ACTIVE",
+    "ALREADY_RENEWED",
+    "INVALID_RENEWAL_SOURCE",
+    "WELCOME_DISCOUNT_IN_USE",
+  ]);
 
 /**
  * Build payment metadata for both payment intents and webhook handlers
@@ -472,12 +499,11 @@ export async function findReusablePendingOrderPayment(
   }
   if (!planScope) return { reusable: null, supersede: [] };
 
+  const now = new Date();
   const candidates = await db.payment.findMany({
     where: {
       userId: params.userId,
       paymentStatus: PaymentStatus.PENDING,
-      // Freshness — respect the minted window exactly; never resume a stale hold.
-      expiresAt: { gt: new Date() },
       // Null-safe org equality: personal stays personal, sponsored matches sponsor.
       organizationId: params.organizationId,
       paymentGateway: params.paymentGateway,
@@ -502,6 +528,12 @@ export async function findReusablePendingOrderPayment(
             // single bookable window so a pathological row cannot widen the read.
             take: 48,
           },
+          subscription: {
+            select: {
+              schedulingPeriodStartsAt: true,
+              schedulingPeriodEndsAt: true,
+            },
+          },
         },
       },
     },
@@ -511,8 +543,24 @@ export async function findReusablePendingOrderPayment(
   const supersede: Array<{ id: string; reason: string }> = [];
 
   for (const candidate of candidates) {
+    // #1478 — a PENDING row whose hold window has lapsed is never resumed,
+    // and must be actively superseded so its tentative slot / participant seat
+    // is released before the new booking writes (even if the cleanup cron has
+    // not swept it yet).
+    if (
+      !candidate.expiresAt ||
+      candidate.expiresAt.getTime() <= now.getTime()
+    ) {
+      supersede.push({ id: candidate.id, reason: "hold-expired" });
+      continue;
+    }
+
     const appt = candidate.appointment as {
       occurrences: Array<{ startsAt: Date; endsAt: Date }>;
+      subscription?: {
+        schedulingPeriodStartsAt: Date | null;
+        schedulingPeriodEndsAt: Date | null;
+      } | null;
     } | null;
 
     // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
@@ -533,9 +581,18 @@ export async function findReusablePendingOrderPayment(
     }
     if (params.appointmentType === "SUBSCRIPTION") {
       const reqPeriod = params.schedulingPeriod ?? null;
-      // Subscription windows ride the SAME slot rows as consultations — the
-      // minted placeholder's slot carries the scheduling-period bounds.
-      const rowPeriod = slotRunWindow(appt?.occurrences);
+      // Subscription windows ride the SAME slot rows as consultations when
+      // direct-slot booked, or live on `appointment.subscription` when minted
+      // as a scheduling-period placeholder (which has no occurrences yet).
+      const subRow = appt?.subscription;
+      const rowPeriod =
+        slotRunWindow(appt?.occurrences) ??
+        (subRow?.schedulingPeriodStartsAt && subRow?.schedulingPeriodEndsAt
+          ? {
+              startsAt: subRow.schedulingPeriodStartsAt,
+              endsAt: subRow.schedulingPeriodEndsAt,
+            }
+          : null);
       if (!!reqPeriod !== !!rowPeriod) {
         supersede.push({ id: candidate.id, reason: "period-mismatch" });
         continue;
@@ -585,25 +642,40 @@ export async function findReusablePendingOrderPayment(
  * throws `IllegalTransitionError`, which is caught per appointment so the rest
  * of the release still commits.
  *
- * Group events are deliberately untouched: their slots are shared between
- * attendees, so releasing a seat is a disconnect rather than a status move and
- * belongs to `cancelPendingCheckout`, which owns that shape. No event checkout
- * is blocked by a per-buyer hold, so nothing here depends on it.
+ * Group events mint no per-buyer occurrence: a webinar or class seat is the
+ * buyer's participant row on the event's own appointment. Superseding the
+ * order without giving that row back is a permanent loss, not a temporary wall
+ * — `isAlreadyRegistered` / `isUserEnrolled` read `liveParticipant`, which
+ * counts HELD, so every later attempt by this buyer is refused over a seat
+ * whose payment is EXPIRED. And no sweep reclaims it: the abandoned-payment
+ * sweep cohorts on `paymentStatus: PENDING`, which this row no longer is. So
+ * the event runs one seat short with nothing left to release it. The seat is
+ * released here, in the same transaction that stops the payment being payable,
+ * and only for this buyer's own row — other attendees' seats are not ours.
  */
 async function releaseSupersededHolds(params: {
   paymentIds: string[];
   userId: string;
 }): Promise<void> {
   await prisma.$transaction(async (tx: Tx) => {
+    const claimWhere = {
+      id: { in: params.paymentIds },
+      userId: params.userId,
+      paymentStatus: PaymentStatus.PENDING,
+    };
+    const claimData = {
+      paymentStatus: PaymentStatus.EXPIRED,
+      expiresAt: new Date(),
+    };
     const claimed = await tx.payment.updateManyAndReturn({
-      where: {
-        id: { in: params.paymentIds },
-        userId: params.userId,
-        paymentStatus: PaymentStatus.PENDING,
-      },
-      data: { paymentStatus: PaymentStatus.EXPIRED, expiresAt: new Date() },
+      where: claimWhere,
+      data: claimData,
       select: { id: true, appointmentId: true },
     });
+
+    await Promise.all(
+      claimed.map((row) => reverseCreditsForPayment(row.id, tx)),
+    );
 
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
@@ -622,7 +694,17 @@ async function releaseSupersededHolds(params: {
     });
 
     for (const appointment of appointments) {
-      if (appointment.webinarId || appointment.classId) continue;
+      if (appointment.webinarId || appointment.classId) {
+        // The seat, not an occurrence, is what this buyer gave up. Scoped to
+        // their own row on this event, and a CAS on the live statuses, so a
+        // second pass — or a capture that confirmed the seat first — matches
+        // zero rows and changes nothing.
+        await releaseParticipant(tx, {
+          appointmentId: appointment.id,
+          userId: params.userId,
+        });
+        continue;
+      }
 
       // #1778 — the superseded hold frees its times: tell anyone waiting.
       await stageNoticesForAppointmentHolds(tx, appointment.id);
@@ -753,12 +835,16 @@ export async function calculateAmountAndValidate(
    * actually resume. Null default keeps every non-org caller personal.
    */
   organizationId: string | null = null,
+  /** The signed own-link cookie and whether an org funds this booking; null for neither. */
+  referral: { viaToken: string | null; orgFunded: boolean } | null = null,
 ) {
   return await prisma.$transaction(async (tx) => {
     let amount = 0;
     let plan;
     let priceCurrency: Currency = "INR";
     let classSessionsQuoted: number | null = null;
+    let subscriptionSchedulingPeriod: { startsAt: Date; endsAt: Date } | null =
+      null;
 
     // Lazy-create ConsulteeProfile if this is the user's first
     // consumer action. ORG_WORKSPACE / CONSULTANT users who also book
@@ -791,6 +877,7 @@ export async function calculateAmountAndValidate(
       p: {
         archivedAt: Date | null;
         visibility: string;
+        organizationId?: string | null;
         status?: OfferingPlanStatus | null;
         consultantProfile: { verificationStatus: string } | null;
       },
@@ -818,7 +905,9 @@ export async function calculateAmountAndValidate(
         !MARKETPLACE_VISIBILITY.includes(
           p.visibility as (typeof MARKETPLACE_VISIBILITY)[number],
         ) &&
-        !validatedData.organizationId
+        (!validatedData.organizationId ||
+          (p.organizationId &&
+            p.organizationId !== validatedData.organizationId))
       ) {
         throw new Error(`${label} is not available`);
       }
@@ -854,6 +943,7 @@ export async function calculateAmountAndValidate(
           userId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
           organizationId,
+          plan.consultantProfile.id,
         );
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
@@ -887,7 +977,41 @@ export async function calculateAmountAndValidate(
           userId,
           plan.consultantProfile.user.id, // FIX: Pass consultant user ID to filter by consultant
           organizationId,
+          plan.consultantProfile.id,
         );
+        if (
+          validatedData.schedulingPeriodStartsAt ||
+          validatedData.renewsSubscriptionId
+        ) {
+          const priorEndsAt = await resolvePriorRenewalEndsAt(
+            tx,
+            validatedData.renewsSubscriptionId,
+            user.consulteeProfile.id,
+            plan.id,
+          );
+          const schedulingTimezone = resolveSchedulingTimezone(
+            plan.consultantProfile?.user?.timezone,
+          );
+          const now = new Date();
+          const requestedStart = validatedData.schedulingPeriodStartsAt
+            ? new Date(validatedData.schedulingPeriodStartsAt)
+            : now;
+          const effectiveStart = priorEndsAt
+            ? new Date(
+                Math.max(
+                  priorEndsAt.getTime(),
+                  requestedStart.getTime(),
+                  now.getTime(),
+                ),
+              )
+            : requestedStart;
+          const { start, end } = firstCycleWindow(
+            plan,
+            effectiveStart,
+            schedulingTimezone,
+          );
+          subscriptionSchedulingPeriod = { startsAt: start, endsAt: end };
+        }
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
         break;
@@ -908,7 +1032,7 @@ export async function calculateAmountAndValidate(
               include: {
                 occurrences: true,
                 participants: {
-                  where: liveParticipant(),
+                  where: { ...liveParticipant(), role: "CONSULTEE" },
                   select: { userId: true },
                 },
               },
@@ -964,7 +1088,7 @@ export async function calculateAmountAndValidate(
               include: {
                 occurrences: true,
                 participants: {
-                  where: liveParticipant(),
+                  where: { ...liveParticipant(), role: "CONSULTEE" },
                   select: { userId: true },
                 },
               },
@@ -1043,7 +1167,10 @@ export async function calculateAmountAndValidate(
           discount.maxUses !== null &&
           discount.currentUses >= discount.maxUses
         ) {
-          throw new Error("Discount code has reached maximum uses");
+          throw new DiscountExhaustedError(
+            discount.currentUses,
+            discount.maxUses,
+          );
         }
 
         discountCodeId = discount.id;
@@ -1096,11 +1223,21 @@ export async function calculateAmountAndValidate(
     // The credit balance is still read lazily, only once the order clears the
     // redemption floor, so orders that cannot spend a credit keep it out of the
     // transaction's read set.
+    const attribution = await resolveCheckoutAttribution(tx, {
+      buyerUserId: userId,
+      consultantProfileId: plan.consultantProfile?.id ?? null,
+      consultantUserId: plan.consultantProfile?.userId ?? null,
+      viaToken: referral?.viaToken ?? null,
+      orgFunded: referral?.orgFunded ?? false,
+      hasDiscountCode: appliedDiscount !== null,
+    });
     const derived = await deriveCheckoutAmount({
       basePaise: amount,
       buyerCountry,
       serviceType: appointmentTypeToServiceType(validatedData.appointmentType),
       discount: appliedDiscount,
+      welcomeDiscount: attribution.welcomeDiscount,
+      creditCapBps: attribution.creditCapBps,
       useReferralCredits: validatedData.useReferralCredits === true,
       resolveAvailableCreditsPaise: async () =>
         (await getUserCredits(userId, tx)).totalAvailable,
@@ -1136,6 +1273,11 @@ export async function calculateAmountAndValidate(
       buyerCountry,
       isInternational,
       classSessionsQuoted,
+      subscriptionSchedulingPeriod,
+      attributionSource: attribution.source,
+      attributionReferralId: attribution.referralId,
+      platformFeeBps: attribution.platformFeeBps,
+      welcomeDiscountPaise: derived.welcomeDiscountPaise,
     };
   });
 }
@@ -1252,7 +1394,13 @@ export async function findSelfHoldAppointmentIds(
       deletedAt: null,
       payment: {
         some: {
-          ...buildLiveHoldPaymentFilter(params.buyerUserId, params.now),
+          // #1478 — match any PENDING hold for this buyer/gateway/org on the
+          // exact window (even if expiresAt has just lapsed and the cron has
+          // not swept it yet), because findReusablePendingOrderPayment +
+          // releaseSupersededHolds will supersede and release it before Step 5.
+          userId: params.buyerUserId,
+          paymentStatus: PaymentStatus.PENDING,
+          deletedAt: null,
           // The two terms `findReusablePendingOrderPayment` also requires.
           // Null-safe org equality: personal stays personal.
           paymentGateway: params.paymentGateway,
@@ -1319,6 +1467,7 @@ export async function validateSlotAvailability(
    * request that could never resume it.
    */
   organizationId: string | null = null,
+  consultantProfileId?: string,
 ): Promise<{ selfHoldAppointmentIds: string[] }> {
   if (!data.startsAt || !data.endsAt) return { selfHoldAppointmentIds: [] };
 
@@ -1370,6 +1519,7 @@ export async function validateSlotAvailability(
   // consultant's rows: every 30-minute atom of the window must fall inside
   // some published row. The named id, when present, still proves ownership
   // and catches a soft-deleted profile (B13); it is no longer the boundary.
+  let resolvedProfileId = consultantProfileId;
   if (data.availabilityWindowWeeklyId || data.availabilityWindowCustomId) {
     // Both row kinds are read for the same three facts, so they share one
     // include; a checkout names at most one of them.
@@ -1410,9 +1560,10 @@ export async function validateSlotAvailability(
     }
     const profileId =
       named?.consultantProfile.id ??
+      resolvedProfileId ??
       (consultantUserId
         ? (
-            await tx.consultantProfile.findFirst({
+            await tx.consultantProfile?.findFirst({
               // The named row got its deletedAt check above; this fallback
               // runs when there is no named row, so it carries its own.
               where: { userId: consultantUserId, deletedAt: null },
@@ -1423,6 +1574,7 @@ export async function validateSlotAvailability(
     if (!profileId) {
       throw new Error("Availability slot not found");
     }
+    resolvedProfileId = profileId;
 
     const atoms = windowAtoms(slotStart, slotEnd);
     // ScheduleType is exclusive, so only the consultant's active arm publishes
@@ -1454,6 +1606,13 @@ export async function validateSlotAvailability(
         "Selected slot does not fall within the specified availability window",
       );
     }
+  } else if (!resolvedProfileId && consultantUserId) {
+    resolvedProfileId = (
+      await tx.consultantProfile?.findFirst({
+        where: { userId: consultantUserId, deletedAt: null },
+        select: { id: true },
+      })
+    )?.id;
   }
 
   // #1463 — the buyer's own open order for exactly this booking. Resolved once
@@ -1481,6 +1640,8 @@ export async function validateSlotAvailability(
   // (partial start, partial end, full containment, and exact match)
   // FIX #540: Only check slots belonging to occupied (active) appointments.
   // Cancelled/rejected/expired appointment slots should NOT block new bookings.
+  // #1688: Also include ACCEPTED co-host commitments on webinars and classes
+  // via buildConsultantOccupancyWhere when resolvedProfileId is available.
   const existingBooking = await tx.appointmentOccurrence.findFirst({
     where: {
       AND: [
@@ -1494,29 +1655,43 @@ export async function validateSlotAvailability(
         // live holds and drops released/expired ones by status, and
         // cleanup-tentative-occurrences bounds any stale remainder. Re-adding a
         // confirmed-only predicate here reopens the double-charge.
-        // Filter by consultant — only rows whose booking seats this consultant
-        // (#1554: the roster is the appointment's participant list).
-        ...(consultantUserId
+        ...(resolvedProfileId && consultantUserId
           ? [
               {
-                appointment: {
-                  participants: { some: liveParticipant(consultantUserId) },
-                },
+                appointment: buildConsultantOccupancyWhere(
+                  resolvedProfileId,
+                  consultantUserId,
+                  now,
+                ),
               },
             ]
-          : []),
-        // FIX #540: Only count slots from active/occupied appointments.
-        // #1319 — minus dead holds (lapsed DIRECT_CHECKOUT / pay-link windows),
-        // so a slot frees the moment its payment window passes rather than
-        // when the sweep runs. The JS twin is isOccupiedByLiveAppointment.
-        {
-          appointment: {
-            AND: [
-              { OR: buildOccupiedAppointmentFilter() },
-              { NOT: buildDeadHoldFilter(now) },
-            ],
-          },
-        },
+          : [
+              // Filter by consultant — only rows whose booking seats this consultant
+              // (#1554: the roster is the appointment's participant list).
+              ...(consultantUserId
+                ? [
+                    {
+                      appointment: {
+                        participants: {
+                          some: liveParticipant(consultantUserId),
+                        },
+                      },
+                    },
+                  ]
+                : []),
+              // FIX #540: Only count slots from active/occupied appointments.
+              // #1319 — minus dead holds (lapsed DIRECT_CHECKOUT / pay-link windows),
+              // so a slot frees the moment its payment window passes rather than
+              // when the sweep runs. The JS twin is isOccupiedByLiveAppointment.
+              {
+                appointment: {
+                  AND: [
+                    { OR: buildOccupiedAppointmentFilter() },
+                    { NOT: buildDeadHoldFilter(now) },
+                  ],
+                },
+              },
+            ]),
         // #1463 — the buyer's own live hold on exactly this window and plan is
         // their open order, not another occupant, and the Rec C block below
         // (findReusablePendingOrderPayment) is the path that resumes or
@@ -1527,7 +1702,7 @@ export async function validateSlotAvailability(
   });
 
   if (existingBooking) {
-    throw new Error("Time slot is already booked");
+    throw new SlotTakenError();
   }
 
   // 2. Check for duplicate tentative bookings by the same user FOR THIS CONSULTANT
@@ -1652,7 +1827,7 @@ async function readEventCapacity(
         appointment: {
           include: {
             participants: {
-              where: liveParticipant(),
+              where: { ...liveParticipant(), role: "CONSULTEE" },
               select: { userId: true },
             },
           },
@@ -1675,7 +1850,7 @@ async function readEventCapacity(
       appointment: {
         include: {
           participants: {
-            where: liveParticipant(),
+            where: { ...liveParticipant(), role: "CONSULTEE" },
             select: { userId: true },
           },
         },
@@ -1847,13 +2022,9 @@ async function verifyPlanExistsInsideLock(
   /** ACCEPTED collaborators' profile ids; only webinar and class plans have any. */
   collaboratorProfileIds: string[];
 }> {
-  // ADR 18 — also surface the plan's consultant + org ownership so the
-  // allowlist/exclusivity checks below reuse this lookup.
   const select = { consultantProfileId: true, organizationId: true } as const;
-  // #1580 C-P0-2 — the self-booking guard below also refuses an ACCEPTED
-  // collaborator, who would otherwise be paid back part of their own seat.
   const collaborators = {
-    where: { status: "ACCEPTED" as const },
+    where: { status: { in: ["PENDING" as const, "ACCEPTED" as const] } },
     select: { consultantProfileId: true },
   };
   let plan: {
@@ -1904,15 +2075,113 @@ async function verifyPlanExistsInsideLock(
 }
 
 /**
+ * The invariant: one consultee, one live session per moment of their calendar.
+ *
+ * The contention key is the consulee's User id plus the requested window, and
+ * nothing in the database enforces it. `occurrence_no_confirmed_overlap` is
+ * keyed on `consultantProfileId`, so a learner who books two DIFFERENT
+ * consultants for the same hour is invisible to the only DB-level backstop in
+ * the system. This predicate is therefore load-bearing, and it holds only for
+ * as long as it is read inside a transaction that WRITES the window: read in a
+ * different, already-committed transaction it closes no race, because the rows
+ * it refused on are not the rows the next transaction locks.
+ *
+ * Occupancy is defined by buildOccupiedAppointmentFilter so the answer matches
+ * validateNoConflicts exactly — TENTATIVE and CONFIRMED both block.
+ */
+async function assertConsulteeHasNoOverlappingSession(
+  tx: Tx,
+  window: {
+    userId: string;
+    startsAt: string | Date;
+    endsAt: string | Date;
+    /** #1463 — the buyer's own open order for exactly this window. */
+    selfHoldAppointmentIds: string[];
+  },
+): Promise<void> {
+  const conflict = await tx.appointment.findFirst({
+    where: {
+      AND: [
+        { OR: buildOccupiedAppointmentFilter() },
+        // #1319 — parity with step 1 of validateSlotAvailability.
+        { NOT: buildDeadHoldFilter(new Date()) },
+        // #1463 — the buyer's own open order for this exact window is the thing
+        // they are trying to finish paying for, not a competing session on their
+        // calendar. Without this the availability fix would only move the wall
+        // one query to the right.
+        ...(window.selfHoldAppointmentIds.length > 0
+          ? [{ NOT: { id: { in: window.selfHoldAppointmentIds } } }]
+          : []),
+        // userId (User.id) is the right scope — the roster keys on User, not
+        // ConsulteeProfile, so this catches conflicts from any org and from
+        // marketplace bookings with no org at all.
+        { participants: { some: liveParticipant(window.userId) } },
+        {
+          occurrences: {
+            some: {
+              AND: [
+                { startsAt: { lt: new Date(window.endsAt) } },
+                { endsAt: { gt: new Date(window.startsAt) } },
+                // Defense-in-depth, and parity with the two twins of this
+                // predicate (ScheduleValidationService.validate and
+                // buildConsultantOccupancyWhere): a tombstoned slot is not a
+                // booking, and this check has to answer exactly what they answer
+                // — the whole point of it is that the buyer's own calendar is
+                // arbitrated by the same rule as the consultant's. No
+                // completionStatus filter, for the reason they give: a RESCHEDULED
+                // row is a pending reschedule's live hold and must still block,
+                // or the buyer books over the session they are moving. CANCELLED
+                // needs no clause of its own — every writer of it stamps
+                // `deletedAt` in the same update.
+                { deletedAt: null },
+              ],
+            },
+          },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  if (conflict) {
+    throw new Error("You already have a session booked during this time.");
+  }
+}
+
+/**
  * Re-validate availability inside the lock
  * Critical for preventing TOCTOU race conditions
  */
-/** What the pre-lock org gate chain resolved; re-asserted under the lock. */
+/**
+ * What the pre-lock org gate chain resolved; re-asserted under the lock.
+ *
+ * `billingAccountId` is here because the lock must pin the account the rail
+ * came FROM, not merely "some account of this org": the wallet debit and the
+ * Payment's `billingAccountId` both address that exact row, and a rail decision
+ * read off a different account than the one charged is the axis collapse this
+ * module is guarded against.
+ */
 interface OrgFundingContext {
   organizationId: string;
   callerMembershipId: string;
   programAssignmentId: string | null;
   appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+  billingAccountId: string | null;
+}
+
+/**
+ * The org money state RE-READ under the lock. Everything rail-dependent is
+ * derived from this, never from the pre-lock value: `PATCH
+ * /api/organizations/[orgId]/billing-account` can flip `fundingSource` and
+ * resize `creditLimit` at any moment behind a FINANCE_MUTATORS permission, with
+ * no coordination with a checkout in flight.
+ */
+interface OrgFundingRead {
+  /** The rail as it stands under the lock; "PERSONAL" when there is no account. */
+  fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE";
+  /** The account actually read — null once the org has none. */
+  billingAccountId: string | null;
+  /** INVOICE credit ceiling folded with the unverified-org governance cap. */
+  creditEffectiveLimit: number | null;
 }
 
 async function revalidateInsideLock(
@@ -1922,10 +2191,10 @@ async function revalidateInsideLock(
   // PERSONAL/marketplace checkouts. Drives the curated-panel check.
   programId: string | null = null,
   orgContext: OrgFundingContext | null = null,
-): Promise<void> {
+): Promise<OrgFundingRead | null> {
   // Re-run the same validation as calculateAmountAndValidate
   // but this time we're inside the lock, so it's safe
-  await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     await ensureConsulteeProfile(tx, userId);
     const user = await tx.user.findUnique({
       where: { id: userId },
@@ -1989,6 +2258,17 @@ async function revalidateInsideLock(
     // withdrawn between the gate and the write still got sponsored. Re-assert
     // the resolved rows by id under the lock; the credit limit is re-checked
     // inside the Serializable booking tx already.
+    //
+    // #1854 — and now the RAIL too. `Organization.status`, `canSponsor` and the
+    // rest are re-read here, but `BillingAccount` used not to be read at all
+    // outside the pre-lock gate, so `fundingSource` stayed whatever it was
+    // seconds earlier. The dangerous direction is LICENSE → WALLET: `isOrgLicensedPayment`
+    // stays true, so the leg is written as a 0-value LICENSE leg while
+    // `Payment.amount` holds the full price — and `payment_legs_sum_to_amount`
+    // explicitly carves that shape out, so the booking commits, earnings accrue
+    // at full value and the org is never charged. Everything below is derived
+    // from what this read returns.
+    let freshOrgFunding: OrgFundingRead | null = null;
     if (orgContext) {
       const now = new Date();
       const org = await tx.organization.findUnique({
@@ -2014,6 +2294,45 @@ async function revalidateInsideLock(
           { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
         );
       }
+      // The rail, re-read. `ownerOrgId` is the canonical 1:1, so this resolves
+      // the account even if one appeared (or vanished) between the two reads.
+      const billingAccount = await tx.billingAccount.findFirst({
+        where: { ownerOrgId: orgContext.organizationId },
+        select: { id: true, fundingSource: true, creditLimit: true },
+      });
+      // An account that was there pre-lock and is gone now (sponsorship turned
+      // off mid-flight) would otherwise leave the caller debiting and stamping
+      // an id no row carries. Refuse, and let the buyer retry against the
+      // configuration as it now stands. `ORG_CANNOT_SPONSOR` rather than a new
+      // code: it is the registered answer for "this org is not set up to
+      // sponsor right now", and its userMessage already points the buyer at the
+      // billing admin or at booking the session themselves.
+      if (orgContext.billingAccountId !== (billingAccount?.id ?? null)) {
+        throw Object.assign(
+          new Error(
+            "This organization's billing account changed while this booking was in progress. Please refresh and try again.",
+          ),
+          { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
+        );
+      }
+      // Same fold as the pre-lock gate (#687): the explicit ceiling, capped by
+      // the governance ceiling while the org is unverified. Recomputed rather
+      // than carried, because `creditLimit` is editable at any moment too — and
+      // the in-transaction re-check compares the org's accrual against exactly
+      // this number, so a stale one is a credit-limit hole, not a cosmetic one.
+      const freshGovernanceLimit =
+        org.status === "ACTIVE" ? null : getInvoiceCreditLimitPaise();
+      const freshExplicitLimit = billingAccount?.creditLimit ?? null;
+      freshOrgFunding = {
+        fundingSource: billingAccount?.fundingSource ?? "PERSONAL",
+        billingAccountId: billingAccount?.id ?? null,
+        creditEffectiveLimit:
+          freshExplicitLimit === null
+            ? freshGovernanceLimit
+            : freshGovernanceLimit === null
+              ? freshExplicitLimit
+              : Math.min(freshExplicitLimit, freshGovernanceLimit),
+      };
       const membership = await tx.membership.findUnique({
         where: { id: orgContext.callerMembershipId },
         select: { status: true },
@@ -2166,6 +2485,7 @@ async function revalidateInsideLock(
             userId,
             consultationPlan.consultantProfile.user.id,
             orgContext?.organizationId ?? null,
+            consultationPlan.consultantProfile.id,
           );
 
           // Consultee-side conflict check.
@@ -2184,47 +2504,19 @@ async function revalidateInsideLock(
           // multi-org membership increases the probability because the learner
           // has multiple "free" billing paths with no payment step to slow them.
           //
-          // We run this query inside the distributed lock and inside the
-          // Serializable transaction (TOCTOU-safe). We reuse
-          // buildOccupiedAppointmentFilter so the occupancy definition matches
-          // validateNoConflicts exactly — TENTATIVE and CONFIRMED both block.
-          const consulteeConflict = await tx.appointment.findFirst({
-            where: {
-              AND: [
-                { OR: buildOccupiedAppointmentFilter() },
-                // #1319 — parity with step 1 of validateSlotAvailability.
-                { NOT: buildDeadHoldFilter(new Date()) },
-                // #1463 — and parity with its self-hold exclusion: the buyer's
-                // own open order for this exact window is not a competing
-                // session on their calendar, it is the thing they are trying to
-                // finish paying for. Without this the availability fix above
-                // would only move the wall one query to the right.
-                ...(selfHoldAppointmentIds.length > 0
-                  ? [{ NOT: { id: { in: selfHoldAppointmentIds } } }]
-                  : []),
-                // userId (User.id) is the right scope — the roster keys on
-                // User, not ConsulteeProfile, so this catches conflicts from
-                // any org and from marketplace bookings with no org at all.
-                { participants: { some: liveParticipant(userId) } },
-                {
-                  occurrences: {
-                    some: {
-                      AND: [
-                        { startsAt: { lt: new Date(data.endsAt!) } },
-                        { endsAt: { gt: new Date(data.startsAt!) } },
-                      ],
-                    },
-                  },
-                },
-              ],
-            },
-            select: { id: true },
+          // This call is the CHEAP EARLY EXIT and nothing more: it runs under
+          // the distributed consultee lock, in a transaction that COMMITS before
+          // the booking is written. The authoritative re-assertion is the same
+          // predicate read again inside the Serializable transaction that
+          // creates the occurrence, where a rw-dependency forms and SSI aborts
+          // one of a racing pair. See the arm in handleCheckout and
+          // assertConsulteeHasNoOverlappingSession.
+          await assertConsulteeHasNoOverlappingSession(tx, {
+            userId,
+            startsAt: data.startsAt!,
+            endsAt: data.endsAt!,
+            selfHoldAppointmentIds,
           });
-          if (consulteeConflict) {
-            throw new Error(
-              "You already have a session booked during this time.",
-            );
-          }
         }
         break;
       }
@@ -2245,43 +2537,21 @@ async function revalidateInsideLock(
             userId,
             subscriptionPlan.consultantProfile.user.id,
             orgContext?.organizationId ?? null,
+            subscriptionPlan.consultantProfile.id,
           );
 
           // Consultee-side conflict check for direct-slot subscriptions.
           // Same reasoning as the CONSULTATION case above — a subscription
           // booked with an explicit slot window must not overlap an existing
           // consultee appointment, regardless of which org or marketplace
-          // context that prior appointment came from.
-          const subscriptionConsulteeConflict = await tx.appointment.findFirst({
-            where: {
-              AND: [
-                { OR: buildOccupiedAppointmentFilter() },
-                // #1319 — parity with step 1 of validateSlotAvailability.
-                { NOT: buildDeadHoldFilter(new Date()) },
-                // #1463 — same self-hold exclusion as the consultation arm.
-                ...(selfHoldAppointmentIds.length > 0
-                  ? [{ NOT: { id: { in: selfHoldAppointmentIds } } }]
-                  : []),
-                { participants: { some: liveParticipant(userId) } },
-                {
-                  occurrences: {
-                    some: {
-                      AND: [
-                        { startsAt: { lt: new Date(data.endsAt!) } },
-                        { endsAt: { gt: new Date(data.startsAt!) } },
-                      ],
-                    },
-                  },
-                },
-              ],
-            },
-            select: { id: true },
+          // context that prior appointment came from. This is the under-lock
+          // early exit only, exactly as above.
+          await assertConsulteeHasNoOverlappingSession(tx, {
+            userId,
+            startsAt: data.startsAt!,
+            endsAt: data.endsAt!,
+            selfHoldAppointmentIds,
           });
-          if (subscriptionConsulteeConflict) {
-            throw new Error(
-              "You already have a session booked during this time.",
-            );
-          }
         }
         break;
       }
@@ -2301,8 +2571,9 @@ async function revalidateInsideLock(
               // `participants` is load-bearing: without it the participant
               // count is silently 0 and this whole recheck is dead.
               include: {
+                occurrences: true,
                 participants: {
-                  where: liveParticipant(),
+                  where: { ...liveParticipant(), role: "CONSULTEE" },
                   select: { userId: true },
                 },
               },
@@ -2328,6 +2599,24 @@ async function revalidateInsideLock(
             code: "EVENT_FULL",
           });
         }
+
+        for (const occ of webinar.appointment?.occurrences ?? []) {
+          if (
+            occ.startsAt &&
+            occ.endsAt &&
+            !occ.deletedAt &&
+            occ.completionStatus !== "CANCELLED"
+          ) {
+            await assertConsulteeHasNoOverlappingSession(tx, {
+              userId,
+              startsAt: occ.startsAt,
+              endsAt: occ.endsAt,
+              selfHoldAppointmentIds: webinar.appointment
+                ? [webinar.appointment.id]
+                : [],
+            });
+          }
+        }
         break;
       }
 
@@ -2344,7 +2633,7 @@ async function revalidateInsideLock(
               include: {
                 occurrences: true,
                 participants: {
-                  where: liveParticipant(),
+                  where: { ...liveParticipant(), role: "CONSULTEE" },
                   select: { userId: true },
                 },
               },
@@ -2369,12 +2658,37 @@ async function revalidateInsideLock(
             code: "EVENT_FULL",
           });
         }
+
+        for (const occ of classInstance.appointment?.occurrences ?? []) {
+          if (
+            occ.startsAt &&
+            occ.endsAt &&
+            !occ.deletedAt &&
+            occ.completionStatus !== "CANCELLED"
+          ) {
+            await assertConsulteeHasNoOverlappingSession(tx, {
+              userId,
+              startsAt: occ.startsAt,
+              endsAt: occ.endsAt,
+              selfHoldAppointmentIds: classInstance.appointment
+                ? [classInstance.appointment.id]
+                : [],
+            });
+          }
+        }
         break;
       }
 
       default:
         throw new Error("Invalid appointment type");
     }
+
+    // The org money state as it stood when the lock was taken. Read fresh at
+    // the point of use rather than hoisted: the caller re-binds its locals to
+    // this, so every rail decision downstream (skip the gateway, debit the
+    // wallet, the PaymentLeg source, whose cancellation ladder binds) reads
+    // the value this transaction saw rather than the one it hoped for.
+    return freshOrgFunding;
   });
 }
 
@@ -2405,6 +2719,7 @@ export async function handleConsultationCheckout(
    * by the caller so every appointment of one checkout cites the same row.
    */
   cancellationPolicyId: string,
+  paymentOrganizationId: string | null = organizationId,
 ) {
   const plan = await tx.consultationPlan.findUnique({
     where: { id: data.planId },
@@ -2431,7 +2746,8 @@ export async function handleConsultationCheckout(
     data,
     consulteeUserId,
     consultantUserId,
-    organizationId,
+    paymentOrganizationId,
+    plan.consultantProfile.id,
   );
 
   // Create consultation
@@ -2495,6 +2811,160 @@ export async function handleConsultationCheckout(
   return { appointment, plan, amount: plan.price };
 }
 
+async function resolvePriorRenewalEndsAt(
+  tx: Tx,
+  renewsSubscriptionId: string | undefined,
+  consulteeProfileId: string,
+  planId: string,
+): Promise<Date | null> {
+  if (
+    !renewsSubscriptionId ||
+    typeof tx.subscription?.findUnique !== "function"
+  ) {
+    return null;
+  }
+  const priorSub = await tx.subscription.findUnique({
+    where: { id: renewsSubscriptionId },
+    select: {
+      schedulingPeriodEndsAt: true,
+      status: true,
+      deletedAt: true,
+      requestedById: true,
+      subscriptionPlanId: true,
+    },
+  });
+  if (
+    !priorSub ||
+    priorSub?.deletedAt !== null ||
+    priorSub.requestedById !== consulteeProfileId ||
+    priorSub.subscriptionPlanId !== planId ||
+    !RENEWABLE_SUBSCRIPTION_STATUSES.has(priorSub.status)
+  ) {
+    return null;
+  }
+  return priorSub.schedulingPeriodEndsAt;
+}
+
+async function resolvePriorSubscriptionForRenewal(
+  tx: Tx,
+  renewsSubscriptionId: string | undefined,
+  consulteeProfileId: string,
+  planId: string,
+) {
+  if (!renewsSubscriptionId) return null;
+
+  const priorSubscription = await tx.subscription.findUnique({
+    where: { id: renewsSubscriptionId },
+    select: {
+      id: true,
+      subscriptionPlanId: true,
+      requestedById: true,
+      status: true,
+      schedulingPeriodEndsAt: true,
+      deletedAt: true,
+      renewal: {
+        select: { id: true, status: true, deletedAt: true },
+      },
+    },
+  });
+
+  if (
+    !priorSubscription ||
+    priorSubscription?.deletedAt !== null ||
+    priorSubscription.requestedById !== consulteeProfileId ||
+    priorSubscription.subscriptionPlanId !== planId ||
+    !RENEWABLE_SUBSCRIPTION_STATUSES.has(priorSubscription.status)
+  ) {
+    throw Object.assign(
+      new Error(
+        "The subscription being renewed was not found or cannot be renewed.",
+      ),
+      { httpStatus: 400, code: "INVALID_RENEWAL_SOURCE" },
+    );
+  }
+
+  if (priorSubscription.renewal) {
+    const child = priorSubscription.renewal;
+    const isChildDead =
+      child?.deletedAt !== null ||
+      child.status === AppointmentStatus.CANCELLED ||
+      child.status === AppointmentStatus.REJECTED ||
+      child.status === AppointmentStatus.EXPIRED;
+    if (!isChildDead) {
+      throw Object.assign(
+        new Error("This subscription has already been renewed."),
+        { httpStatus: 409, code: "ALREADY_RENEWED" },
+      );
+    }
+    // Clear unique FK on a dead/cancelled renewal attempt via CAS so a
+    // concurrent reactivation cannot lose its renewedFromSubscriptionId link.
+    const cleared = await tx.subscription.updateMany({
+      where: {
+        id: child.id,
+        OR: [
+          { deletedAt: { not: null } },
+          {
+            status: {
+              in: [
+                AppointmentStatus.CANCELLED,
+                AppointmentStatus.REJECTED,
+                AppointmentStatus.EXPIRED,
+              ],
+            },
+          },
+        ],
+      },
+      data: { renewedFromSubscriptionId: null },
+    });
+    if (cleared.count !== 1) {
+      throw Object.assign(
+        new PaymentError(
+          "This subscription has already been renewed.",
+          "ALREADY_RENEWED",
+        ),
+        { httpStatus: 409 },
+      );
+    }
+  }
+
+  return priorSubscription;
+}
+
+async function linkCompletedTrialToSubscription(
+  tx: Tx,
+  consulteeProfileId: string,
+  consultantProfileId: string,
+  subscriptionId: string,
+): Promise<void> {
+  const completedTrial = await tx.trial.findFirst({
+    where: {
+      consulteeProfileId,
+      consultantProfileId,
+      status: TrialStatus.COMPLETED,
+      convertedToSubscriptionId: null,
+    },
+  });
+
+  if (!completedTrial) return;
+
+  await transitionTrial(tx, {
+    where: { id: completedTrial.id },
+    to: TrialStatus.CONVERTED,
+    data: { convertedToSubscriptionId: subscriptionId },
+  });
+
+  console.log(
+    JSON.stringify({
+      event: "trial_converted",
+      trialId: completedTrial.id,
+      subscriptionId,
+      consulteeProfileId,
+      consultantProfileId,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
 export async function handleSubscriptionCheckout(
   tx: Tx,
   data: CheckoutInput,
@@ -2504,6 +2974,7 @@ export async function handleSubscriptionCheckout(
   organizationId: string | null,
   /** #1499 — see handleConsultationCheckout. */
   cancellationPolicyId: string,
+  precomputedSchedulingPeriod?: { startsAt: Date; endsAt: Date } | null,
 ): Promise<SubscriptionCheckoutResult> {
   const plan = await tx.subscriptionPlan.findUnique({
     where: { id: data.planId },
@@ -2518,28 +2989,59 @@ export async function handleSubscriptionCheckout(
     throw new Error("Subscription plan not found");
   }
 
-  const isSchedulingPeriodRequest = !!data.schedulingPeriodStartsAt;
+  // #1743 — validate renewal source when renewsSubscriptionId is provided.
+  const priorSubscription = await resolvePriorSubscriptionForRenewal(
+    tx,
+    data.renewsSubscriptionId,
+    consulteeProfileId,
+    plan.id,
+  );
+
+  const isSchedulingPeriodRequest = Boolean(
+    data.schedulingPeriodStartsAt || data.renewsSubscriptionId,
+  );
   // #1766 — window = first cycle; a client end is clamped/ignored, never
   // refused. Start from the client (default now), end derived server-side.
+  // #1743 — when renewing a prior subscription, anchor the new cycle start to
+  // max(prior.schedulingPeriodEndsAt, requestedStart, now) so the renewal
+  // starts seamlessly when the prior cycle ends.
   const schedulingTimezone = resolveSchedulingTimezone(
     plan.consultantProfile?.user?.timezone,
   );
-  const { start: startDate, end: endDate } = firstCycleWindow(
-    plan,
-    data.schedulingPeriodStartsAt
-      ? new Date(data.schedulingPeriodStartsAt)
-      : new Date(),
-    schedulingTimezone,
-  );
+  const now = new Date();
+  const requestedStart = data.schedulingPeriodStartsAt
+    ? new Date(data.schedulingPeriodStartsAt)
+    : now;
+  const effectiveStart = priorSubscription
+    ? new Date(
+        Math.max(
+          priorSubscription.schedulingPeriodEndsAt.getTime(),
+          requestedStart.getTime(),
+          now.getTime(),
+        ),
+      )
+    : requestedStart;
+  const { start: startDate, end: endDate } =
+    precomputedSchedulingPeriod &&
+    (!priorSubscription ||
+      precomputedSchedulingPeriod.startsAt >=
+        priorSubscription.schedulingPeriodEndsAt)
+      ? {
+          start: precomputedSchedulingPeriod.startsAt,
+          end: precomputedSchedulingPeriod.endsAt,
+        }
+      : firstCycleWindow(plan, effectiveStart, schedulingTimezone);
 
   // #1766 — the double-buy guard follows the entitlement, not the window: a
   // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
+  // #1743 — exclude the priorSubscription being explicitly renewed.
   const liveRows = await tx.subscription.findMany({
     where: {
       subscriptionPlanId: plan.id,
       requestedById: consulteeProfileId,
       deletedAt: null,
       status: { in: LIVE_SUBSCRIPTION_STATUSES },
+      ...(priorSubscription ? { id: { not: priorSubscription.id } } : {}),
     },
     select: {
       sessionsTotal: true,
@@ -2592,54 +3094,46 @@ export async function handleSubscriptionCheckout(
   }
 
   // Create subscription - consultant will allocate slots via Requests tab
-  const subscription = await tx.subscription.create({
-    data: {
-      subscriptionPlanId: plan.id,
-      status: AppointmentStatus.PENDING, // Always PENDING until consultant allocates slots
-      requestedById: consulteeProfileId,
-      requestNotes: data.notes,
-      bookingSource: "DIRECT_CHECKOUT",
-      schedulingPeriodStartsAt: startDate,
-      schedulingPeriodEndsAt: endDate,
-      // #1076 — caps bucket on the consultant's days, not the column default.
-      schedulingTimezone,
-      // #1766 — the entitlement is frozen at purchase; plan edits never move it.
-      sessionsTotal: plan.totalSessions,
-    },
-  });
+  let subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
+  try {
+    subscription = await tx.subscription.create({
+      data: {
+        subscriptionPlanId: plan.id,
+        status: AppointmentStatus.PENDING, // Always PENDING until consultant allocates slots
+        requestedById: consulteeProfileId,
+        requestNotes: data.notes,
+        bookingSource: "DIRECT_CHECKOUT",
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
+        // #1076 — caps bucket on the consultant's days, not the column default.
+        schedulingTimezone,
+        // #1766 — the entitlement is frozen at purchase; plan edits never move it.
+        sessionsTotal: plan.totalSessions,
+        ...(priorSubscription
+          ? { renewedFromSubscriptionId: priorSubscription.id }
+          : {}),
+      },
+    });
+  } catch (createErr) {
+    if (
+      isUniqueViolationOn(createErr, "renewedFromSubscriptionId") ||
+      isUniqueViolationOn(createErr, "renewsSubscriptionId")
+    ) {
+      throw Object.assign(
+        new Error("This subscription has already been renewed."),
+        { httpStatus: 409, code: "ALREADY_RENEWED" },
+      );
+    }
+    throw createErr;
+  }
 
   // Link any completed trial to this subscription (trial conversion tracking)
-  // Find a completed trial from the same consultee for this consultant
-  const completedTrial = await tx.trial.findFirst({
-    where: {
-      consulteeProfileId,
-      consultantProfileId: plan.consultantProfileId,
-      status: TrialStatus.COMPLETED, // Only link completed trials, not pending/scheduled
-      convertedToSubscriptionId: null, // Not already linked to another subscription
-    },
-  });
-
-  if (completedTrial) {
-    // Mark the trial as converted and link to this subscription
-    // CAS (#1319): the findFirst above filtered COMPLETED; the WHERE here is
-    // what makes that hold at write time.
-    await transitionTrial(tx, {
-      where: { id: completedTrial.id },
-      to: TrialStatus.CONVERTED,
-      data: { convertedToSubscriptionId: subscription.id },
-    });
-
-    console.log(
-      JSON.stringify({
-        event: "trial_converted",
-        trialId: completedTrial.id,
-        subscriptionId: subscription.id,
-        consulteeProfileId,
-        consultantProfileId: plan.consultantProfileId,
-        timestamp: new Date().toISOString(),
-      }),
-    );
-  }
+  await linkCompletedTrialToSubscription(
+    tx,
+    consulteeProfileId,
+    plan.consultantProfileId,
+    subscription.id,
+  );
 
   // FIX Issue #2: Create placeholder appointment for payment linkage
   // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
@@ -2715,7 +3209,7 @@ export async function handleWebinarCheckout(
         include: {
           occurrences: true,
           participants: {
-            where: liveParticipant(),
+            where: { ...liveParticipant(), role: "CONSULTEE" },
             select: { userId: true },
           },
         },
@@ -2802,7 +3296,7 @@ export async function handleWebinarCheckout(
       include: {
         occurrences: true,
         participants: {
-          where: liveParticipant(),
+          where: { ...liveParticipant(), role: "CONSULTEE" },
           select: { userId: true },
         },
       },
@@ -2882,7 +3376,7 @@ export async function handleClassCheckout(
             orderBy: { startsAt: "asc" },
           },
           participants: {
-            where: liveParticipant(),
+            where: { ...liveParticipant(), role: "CONSULTEE" },
             select: { userId: true },
           },
         },
@@ -3096,7 +3590,14 @@ export async function handleCheckout(
   userId: string,
   isMockPayment: boolean = false,
   buyerCountry: string = "IN",
+  /** The `fam_via` own-link cookie, read by the route. */
+  attribution: { viaToken?: string | null } = {},
 ) {
+  const requestedType = validatedData.appointmentType;
+  // Trials are booked through the trial flow; checkout never prices one.
+  if (requestedType === "TRIAL") {
+    throw new Error(`Unsupported appointment type: ${requestedType}`);
+  }
   let lock: ApprovalLock | ApprovalLock[] | null = null;
   let lockType = "";
   // #898 follow-up — tier-2 consultee lock (acquired alongside the checkout lock
@@ -3118,11 +3619,8 @@ export async function handleCheckout(
   // of truth for "is this booking sponsored?". A missing assignment on a
   // WALLET/INVOICE/LICENSE org fails closed: we refuse rather than
   // silently bill the learner's card.
-  const appointmentType = validatedData.appointmentType as
-    | "CONSULTATION"
-    | "SUBSCRIPTION"
-    | "WEBINAR"
-    | "CLASS";
+  const appointmentType: Exclude<CheckoutInput["appointmentType"], "TRIAL"> =
+    requestedType;
 
   let organizationId: string | null = null;
   let billingAccountId: string | null = null;
@@ -3136,6 +3634,8 @@ export async function handleCheckout(
   // #785 B6 — effective INVOICE credit limit; threaded to the Serializable
   // booking tx for a race-safe re-check (the pre-lock check below is fast-fail only).
   let creditEffectiveLimit: number | null = null;
+  // Set when org funding strips the buyer's referral credits; the UI says so.
+  let referralCreditsDropped = false;
 
   if (validatedData.organizationId) {
     const org = await prisma.organization.findUnique({
@@ -3251,6 +3751,7 @@ export async function handleCheckout(
     // Block personal referral credits on org-funded bookings.
     if (validatedData.useReferralCredits && fundingSource !== "PERSONAL") {
       validatedData = { ...validatedData, useReferralCredits: false };
+      referralCreditsDropped = true;
     }
 
     // INVOICE fundingSource: enforce creditLimit. PR-1d (#687):
@@ -3286,14 +3787,17 @@ export async function handleCheckout(
     // effectiveFrom..effectiveTo window. The Program's
     // `coveredPlanTypes` array filters which appointment types it
     // sponsors (empty array = covers everything).
-    if (fundingSource !== "PERSONAL") {
+    // For PERSONAL funding, an active ProgramAssignment is optional (enables
+    // curated-panel and cap/overage governance when assigned, while allowing
+    // unassigned personal bookings to proceed).
+    if (
+      fundingSource !== "PERSONAL" ||
+      Boolean(prisma.programAssignment?.findFirst)
+    ) {
       const now = new Date();
       const assignment = await prisma.programAssignment.findFirst({
         where: {
           membershipId: callerMembership.id,
-          // #1132 follow-up — only a live assignment may sponsor new spend.
-          // The period window alone matched ROLLED / CLOSED / CANCELLED rows
-          // whose periods a stale PATCH could extend.
           status: "ACTIVE",
           periodStart: { lte: now },
           periodEnd: { gte: now },
@@ -3315,13 +3819,7 @@ export async function handleCheckout(
         select: { id: true, programId: true },
       });
 
-      if (!assignment) {
-        // #1467 — a lapsed contract or a closed programme is a routine refusal
-        // the member's own admin can undo, but the bare Error matched nothing in
-        // BUSINESS_ERROR_PATTERNS and classifyError answered 500 UNKNOWN_ERROR:
-        // the buyer could not tell it from a crash and Sentry logged a false
-        // incident. 409 because the request is well-formed and the org's
-        // entitlement state is what conflicts with it.
+      if (!assignment && fundingSource !== "PERSONAL") {
         throw Object.assign(
           new Error(
             "No active program assignment covers this booking. Ask your organization admin to assign you to a Program that covers " +
@@ -3331,15 +3829,10 @@ export async function handleCheckout(
           { httpStatus: 409, code: "PROGRAM_ASSIGNMENT_INACTIVE" },
         );
       }
-      programAssignmentId = assignment.id;
-
-      // ADR 18 — the Program is resolved HERE, but the authoritative
-      // curated-panel check runs inside revalidateInsideLock, where the
-      // plan's consultant is loaded and the distributed lock closes the
-      // TOCTOU window: allowlist rows exist for the resolved Program ⇒ the
-      // booked plan's consultant must be listed. Absent rows keep the
-      // network open — sponsors fund any marketplace consultant by design.
-      fundingProgramId = assignment.programId;
+      if (assignment) {
+        programAssignmentId = assignment.id;
+        fundingProgramId = assignment.programId;
+      }
     }
   }
 
@@ -3357,6 +3850,11 @@ export async function handleCheckout(
       buyerCountry: detectedBuyerCountry,
       isInternational,
       classSessionsQuoted,
+      subscriptionSchedulingPeriod,
+      attributionSource,
+      attributionReferralId,
+      platformFeeBps,
+      welcomeDiscountPaise,
     } = await calculateAmountAndValidate(
       validatedData,
       userId,
@@ -3364,6 +3862,10 @@ export async function handleCheckout(
       // #1465-triage — resolved and membership-verified above; the slot gate
       // needs it to scope the self-hold exclusion to a resumable hold.
       organizationId,
+      {
+        viaToken: attribution.viaToken ?? null,
+        orgFunded: fundingSource !== null && fundingSource !== "PERSONAL",
+      },
     );
 
     // INVOICE fundingSource: fast-fail on the credit limit before any lock is
@@ -3444,7 +3946,7 @@ export async function handleCheckout(
     );
 
     // STEP 3: RE-VALIDATE INSIDE LOCK (critical for preventing TOCTOU race conditions)
-    await revalidateInsideLock(
+    const freshOrgFunding = await revalidateInsideLock(
       validatedData,
       userId,
       fundingProgramId,
@@ -3454,9 +3956,27 @@ export async function handleCheckout(
             callerMembershipId,
             programAssignmentId,
             appointmentType,
+            billingAccountId,
           }
         : null,
     );
+    // Re-bind the rail from the locked read. This is the only place
+    // fundingSource becomes authoritative, and it sits above every derivation
+    // rather than inside any of them — a rail that moved mid-checkout is read
+    // once, here, instead of being re-asked at each use.
+    if (freshOrgFunding) {
+      if (freshOrgFunding.fundingSource !== fundingSource) {
+        throw Object.assign(
+          new Error(
+            "This organization's funding source changed while this booking was in progress. Please refresh and try again.",
+          ),
+          { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
+        );
+      }
+      fundingSource = freshOrgFunding.fundingSource;
+      billingAccountId = freshOrgFunding.billingAccountId;
+      creditEffectiveLimit = freshOrgFunding.creditEffectiveLimit;
+    }
 
     console.log(
       JSON.stringify({
@@ -3466,10 +3986,19 @@ export async function handleCheckout(
       }),
     );
 
-    // Enterprise funding derived from BillingAccount.fundingSource +
-    // ProgramAssignment (both resolved above). These booleans gate the
-    // "skip the gateway entirely" path — org-funded bookings never go
-    // through Stripe/Razorpay at checkout time.
+    // Enterprise funding derived from BillingAccount.fundingSource (as
+    // RE-READ under the lock above) + ProgramAssignment. These booleans gate
+    // the "skip the gateway entirely" path — org-funded bookings never go
+    // through Stripe/Razorpay at checkout time — and they also decide the
+    // PaymentLeg source, the wallet debit and whose cancellation ladder binds,
+    // all of which are computed further down inside the booking transaction.
+    //
+    // The `!!programAssignmentId` conjunct is the fail-closed half, and it is
+    // why a mid-flight rail change is safe in the direction it is: a fresh rail
+    // of WALLET/INVOICE/LICENSE on a booking resolved under PERSONAL carries no
+    // assignment (the pre-lock gate only resolves one for a non-PERSONAL rail),
+    // so the booking is not treated as sponsored and the buyer is charged
+    // rather than the org being charged for an entitlement nobody verified.
     const isOrgWalletPayment =
       fundingSource === "WALLET" && !!programAssignmentId;
     const isOrgInvoicedPayment =
@@ -3520,7 +4049,8 @@ export async function handleCheckout(
         ...(appointmentType === "SUBSCRIPTION"
           ? {
               schedulingPeriod:
-                validatedData.schedulingPeriodStartsAt &&
+                subscriptionSchedulingPeriod ??
+                (validatedData.schedulingPeriodStartsAt &&
                 validatedData.schedulingPeriodEndsAt
                   ? {
                       startsAt: new Date(
@@ -3528,7 +4058,7 @@ export async function handleCheckout(
                       ),
                       endsAt: new Date(validatedData.schedulingPeriodEndsAt),
                     }
-                  : null,
+                  : null),
             }
           : {}),
       });
@@ -3610,6 +4140,14 @@ export async function handleCheckout(
         throw new Error(
           "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
         );
+      }
+      if (consulteeLock) {
+        const consulteeRenewed = await extendLock(consulteeLock, ttl);
+        if (consulteeRenewed === false) {
+          throw new Error(
+            "Checkout took too long and its hold expired — another checkout for this slot may be already in progress. Please try again.",
+          );
+        }
       }
     };
     await renewOrAbort(perAttemptTtl);
@@ -3742,37 +4280,62 @@ export async function handleCheckout(
             //     debits land in SchedulingService.createAppointments,
             //     1 per allocation batch.
             let engagementsForCap: number | null = null;
-            // #1554 — CLASS meters its occurrence ids, not the one wrapper.
             let classEngagementIds: string[] = [];
+            let bookedPlan: {
+              consultantProfileId?: string | null;
+              organizationId?: string | null;
+            } | null = null;
 
-            // FIX #520: Zero-amount payments (credits cover full cost) skip the
-            // gateway, so slots should be confirmed immediately just like mock payments.
-            // Enterprise: org-sponsored payments also skip the gateway.
             const skipPayment =
               isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment;
 
-            // #1499 — whose ladder governs this sale, resolved once inside the
-            // booking transaction. Org-funded means the ORG'S MONEY moves on a
-            // refund, so the org's published version binds; a personal booking
-            // merely tagged to an org keeps the platform ladder.
             const cancellationPolicyId =
               await resolveCheckoutCancellationPolicyId(tx, {
                 organizationId: isOrgSponsoredPayment ? organizationId : null,
               });
 
+            // A PERSONAL-rail booking is paid by the member's own card, so
+            // Appointment.organizationId stays null (keeps the booking on the
+            // buyer's personal dashboard rather than vanishing from personal
+            // scope while Payment.organizationId retains the reporting tag).
+            const appointmentOrganizationId =
+              fundingSource === "PERSONAL" ? null : organizationId;
+
             // Create appointment based on type (with isTentative flag)
             switch (validatedData.appointmentType) {
               case "CONSULTATION": {
+                if (validatedData.startsAt && validatedData.endsAt) {
+                  await assertConsulteeHasNoOverlappingSession(tx, {
+                    userId,
+                    startsAt: validatedData.startsAt!,
+                    endsAt: validatedData.endsAt!,
+                    selfHoldAppointmentIds: await findSelfHoldAppointmentIds(
+                      tx,
+                      {
+                        buyerUserId: userId,
+                        appointmentType: validatedData.appointmentType,
+                        planId: validatedData.planId,
+                        paymentGateway: validatedData.paymentGateway,
+                        organizationId,
+                        slotStart: new Date(validatedData.startsAt),
+                        slotEnd: new Date(validatedData.endsAt),
+                        now: new Date(),
+                      },
+                    ),
+                  });
+                }
                 const consultationResult = await handleConsultationCheckout(
                   tx,
                   validatedData,
                   consulteeProfileId,
                   userId,
                   skipPayment,
-                  organizationId,
+                  appointmentOrganizationId,
                   cancellationPolicyId,
+                  organizationId,
                 );
                 createdAppointment = consultationResult.appointment;
+                bookedPlan = consultationResult.plan;
                 engagementsForCap = 1;
                 break;
               }
@@ -3783,14 +4346,12 @@ export async function handleCheckout(
                   validatedData,
                   consulteeProfileId,
                   skipPayment,
-                  organizationId,
+                  appointmentOrganizationId,
                   cancellationPolicyId,
+                  subscriptionSchedulingPeriod,
                 );
-                // Use placeholder appointment for payment linkage
-                // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
                 createdAppointment = subscriptionResult.appointment;
-                // engagementsForCap stays null — debit happens at
-                // SchedulingService.createAppointments time.
+                bookedPlan = subscriptionResult.plan;
                 break;
               }
 
@@ -3805,7 +4366,26 @@ export async function handleCheckout(
                     isOrgSponsoredPayment,
                   ),
                 );
+                for (const occ of webinarResult.appointment?.occurrences ??
+                  []) {
+                  if (
+                    occ.startsAt &&
+                    occ.endsAt &&
+                    !occ.deletedAt &&
+                    occ.completionStatus !== "CANCELLED"
+                  ) {
+                    await assertConsulteeHasNoOverlappingSession(tx, {
+                      userId,
+                      startsAt: occ.startsAt,
+                      endsAt: occ.endsAt,
+                      selfHoldAppointmentIds: webinarResult.appointment
+                        ? [webinarResult.appointment.id]
+                        : [],
+                    });
+                  }
+                }
                 createdAppointment = webinarResult.appointment;
+                bookedPlan = webinarResult.plan;
                 engagementsForCap = 1;
                 break;
               }
@@ -3822,8 +4402,25 @@ export async function handleCheckout(
                     isOrgSponsoredPayment,
                   ),
                 );
-                // #1554 — one wrapper per class carries the payment linkage.
+                for (const occ of classResult.appointment?.occurrences ?? []) {
+                  if (
+                    occ.startsAt &&
+                    occ.endsAt &&
+                    !occ.deletedAt &&
+                    occ.completionStatus !== "CANCELLED"
+                  ) {
+                    await assertConsulteeHasNoOverlappingSession(tx, {
+                      userId,
+                      startsAt: occ.startsAt,
+                      endsAt: occ.endsAt,
+                      selfHoldAppointmentIds: classResult.appointment
+                        ? [classResult.appointment.id]
+                        : [],
+                    });
+                  }
+                }
                 createdAppointment = classResult.appointment || null;
+                bookedPlan = classResult.plan;
                 engagementsForCap = classResult.engagementsConsumed;
                 classEngagementIds = classResult.engagementIds;
                 break;
@@ -3835,13 +4432,51 @@ export async function handleCheckout(
                 );
             }
 
+            let hostOrganizationId: string | null = null;
+            if (ENABLE_HOST_ORGS) {
+              const planOwnerOrgId = bookedPlan?.organizationId ?? null;
+              if (
+                bookedPlan?.consultantProfileId &&
+                typeof tx.membership?.findFirst === "function"
+              ) {
+                const ownerMembership = planOwnerOrgId
+                  ? await tx.membership.findFirst({
+                      where: {
+                        consultantProfileId: bookedPlan.consultantProfileId,
+                        role: "EXPERT",
+                        status: "ACTIVE",
+                        organizationId: planOwnerOrgId,
+                        organization: { canHost: true, status: "ACTIVE" },
+                      },
+                      select: { organizationId: true },
+                    })
+                  : null;
+                const hostMembership =
+                  ownerMembership ??
+                  (await tx.membership.findFirst({
+                    where: {
+                      consultantProfileId: bookedPlan.consultantProfileId,
+                      role: "EXPERT",
+                      status: "ACTIVE",
+                      organization: { canHost: true, status: "ACTIVE" },
+                    },
+                    orderBy: { createdAt: "asc" },
+                    select: { organizationId: true },
+                  }));
+                hostOrganizationId = hostMembership?.organizationId ?? null;
+              } else {
+                hostOrganizationId = planOwnerOrgId;
+              }
+            }
+
             // Create payment record linked to appointment (if created)
             // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
             const payment = await tx.payment.create({
               data: {
                 amount,
                 originalAmount,
-                taxAmount,
+                // The licence invoice books the GST; a licensed booking books none.
+                taxAmount: isOrgLicensedPayment ? 0 : taxAmount,
                 currency,
                 paymentMethod: isOrgWalletPayment
                   ? "WALLET"
@@ -3853,12 +4488,10 @@ export async function handleCheckout(
                         ? "CREDITS"
                         : "CARD",
                 paymentIntent: paymentResponse!.id,
-                // #828 — unique; a concurrent duplicate attempt dies on P2002
-                // and the route replays this payment's original response.
                 clientIdempotencyKey:
-                  validatedData.clientIdempotencyKey ?? null,
+                  validatedData.clientIdempotencyKey ??
+                  globalThis.crypto.randomUUID(),
                 paymentGateway: validatedData.paymentGateway,
-                // FIX #520: Zero-amount and mock payments succeed immediately (no webhook)
                 paymentStatus: skipPayment
                   ? PaymentStatus.SUCCEEDED
                   : PaymentStatus.PENDING,
@@ -3872,23 +4505,21 @@ export async function handleCheckout(
                 isInternational,
                 displayCurrencyAtCheckout,
                 exchangeRateAtCheckout,
-                // #1365 — GST place of supply for the tax invoice: what the
-                // buyer declared here, else what their profile already holds,
-                // else null (the s.12(2)(b) supplier-state default).
                 consumerStateCode:
                   validatedData.consumerStateCode ??
                   consulteeBillingStateCode ??
                   null,
-                // Enterprise (Arch 4): org tag for reporting / billing.
                 organizationId,
+                hostOrganizationId,
                 billingAccountId,
+                attributionSource,
+                attributionReferralId,
+                platformFeeBps,
+                welcomeDiscountPaise:
+                  welcomeDiscountPaise > 0 ? welcomeDiscountPaise : null,
               },
             });
 
-            // #1365 — remember a newly declared billing state on the profile so
-            // a repeat buyer is never asked for it twice. Same transaction as
-            // the Payment: the declaration and the supply it applies to are one
-            // fact. updateMany, so a missing profile is a no-op, not a throw.
             if (
               validatedData.consumerStateCode &&
               validatedData.consumerStateCode !== consulteeBillingStateCode
@@ -3899,9 +4530,6 @@ export async function handleCheckout(
               });
             }
 
-            // #1319 A9 — stamp the funding Payment on the participant rows and,
-            // when no gateway leg follows (mock / zero-amount / org-sponsored),
-            // confirm them here since no capture webhook ever will.
             if (createdAppointment) {
               const participantWhere =
                 validatedData.appointmentType === "CLASS" &&
@@ -3914,8 +4542,6 @@ export async function handleCheckout(
                 validatedData.appointmentType === "CLASS" &&
                 validatedData.eventId
               ) {
-                // Cross-appointment scope (every session of the class); the
-                // helper is per-appointment.
                 await tx.appointmentParticipant.updateMany({
                   where: { ...participantWhere, paymentId: null },
                   data: { paymentId: payment.id },
@@ -3935,15 +4561,7 @@ export async function handleCheckout(
               }
             }
 
-            // Enterprise: WALLET fundingSource — debit from BillingAccount
-            // atomically via the wallet helper (raw-SQL conditional UPDATE).
-            // Triggered only when we also have a resolved program assignment,
-            // which guarantees the booking is actually sponsored.
             if (isOrgWalletPayment && billingAccountId) {
-              // #837 — refuse to spend a wallet whose cache drifted from the
-              // journal (frozen by the ledger-reconcile job): the balance can't
-              // be trusted until ops reconciles. Chargeback recovery is NOT gated
-              // (see wallet-freeze.ts).
               if (await isWalletFrozen(tx, billingAccountId)) {
                 throw new WalletFrozenError(billingAccountId);
               }
@@ -3956,23 +4574,6 @@ export async function handleCheckout(
               });
             }
 
-            // Enterprise: write the Program utilization row + a PaymentLeg
-            // that describes where the money (or commitment) actually came
-            // from. This is the runtime source of truth for sponsorship
-            // attribution — analytics / invoicing / cap enforcement all read
-            // these rows rather than back-deriving from `paymentMethod`.
-            //
-            // E2E-audit F-1 fix — the FUNDING LEG is written for every
-            // org-sponsored payment, INCLUDING SUBSCRIPTION. Subscriptions
-            // meter engagements lazily (at allocation), but their money moves
-            // HERE: the wallet debit above journals against the WALLET leg in
-            // the ledger, the invoice rollup only collects INVOICE_ACCRUAL
-            // legs, and refunds credit wallets back leg-proportionally.
-            // Skipping the leg made (SUBSCRIPTION × WALLET) journal real
-            // money as platform CASH (guaranteed WALLET_BALANCE_DRIFT →
-            // auto-frozen wallet), left (SUBSCRIPTION × INVOICE) permanently
-            // unbilled, and gave (SUBSCRIPTION × LICENSE) no fulfillment
-            // proof. Utilization metering stays gated on engagementsForCap.
             if (programAssignmentId && isOrgSponsoredPayment) {
               await tx.paymentLeg.create({
                 data: {
@@ -3982,20 +4583,13 @@ export async function handleCheckout(
                     : isOrgLicensedPayment
                       ? "LICENSE"
                       : "INVOICE_ACCRUAL",
-                  // LICENSE absorbs the cost entirely at the contract level
-                  // — the per-booking leg is zero so totals across all legs
-                  // still reconcile to the Payment amount.
                   amountPaise: isOrgLicensedPayment ? 0 : amount,
                   sourceRef: programAssignmentId,
                 },
               });
             }
 
-            if (
-              programAssignmentId &&
-              isOrgSponsoredPayment &&
-              engagementsForCap !== null
-            ) {
+            if (programAssignmentId && engagementsForCap !== null) {
               let utilizationResult: Awaited<
                 ReturnType<typeof recordBookingUtilization>
               > = {
@@ -4108,12 +4702,14 @@ export async function handleCheckout(
               //     and the gateway webhook transitions it → CHARGED.
               //   - BLOCK behavior: never reaches here (helper already threw).
               //     The circuit-breaker veto is the only BLOCK decision here.
-              if (utilizationResult.wasOverage) {
+              if (utilizationResult.wasOverage && isOrgSponsoredPayment) {
                 // #778 elegance — extracted to recordOverageAtCheckout (resolves
                 // the behaviour via computeOverage, enforces the circuit breaker,
                 // persists the OverageEvent + CHARGE_MEMBER side-Payment /
                 // CHARGE_ORG accrual leg). Throws PROGRAM_CAP_EXHAUSTED (402) on
-                // the breaker veto.
+                // the breaker veto. PERSONAL-funded bookings already charge the
+                // member's gateway directly, so only org-sponsored payments run
+                // checkout overage settlement.
                 overageBell = await recordOverageAtCheckout({
                   tx,
                   programAssignmentId,
@@ -4180,8 +4776,9 @@ export async function handleCheckout(
                 discountForIncrement.maxUses !== null &&
                 discountForIncrement.currentUses >= discountForIncrement.maxUses
               ) {
-                throw new Error(
-                  "Discount code has reached maximum uses — please remove the code and try again.",
+                throw new DiscountExhaustedError(
+                  discountForIncrement.currentUses,
+                  discountForIncrement.maxUses,
                 );
               }
               await tx.discountCode.update({
@@ -4252,8 +4849,15 @@ export async function handleCheckout(
                 where: { paymentId: payment.id },
                 select: { source: true, amountPaise: true },
               });
+              const currentPayment =
+                typeof tx.payment?.findUnique === "function"
+                  ? await tx.payment.findUnique({
+                      where: { id: payment.id },
+                      select: { amount: true },
+                    })
+                  : null;
               const legMismatch = checkPaymentLegsSumToAmount({
-                paymentAmountPaise: payment.amount,
+                paymentAmountPaise: currentPayment?.amount ?? payment.amount,
                 legs: writtenLegs,
               });
               if (legMismatch) {
@@ -4267,6 +4871,28 @@ export async function handleCheckout(
                   }),
                 );
               }
+            }
+
+            // The synchronous rails confirm here, so their earnings and the
+            // booking:<paymentId> journal commit with the payment or not at all.
+            if (skipPayment) {
+              const resolvedEarnings = await resolvePaymentForEarnings(
+                { id: payment.id },
+                validatedData.appointmentType,
+                tx,
+              );
+              if (resolvedEarnings) {
+                await createEarningsFromPayment({
+                  payment: resolvedEarnings.paymentForEarnings,
+                  appointmentType: resolvedEarnings.earningsAppointmentType,
+                  tx,
+                });
+              }
+              await recordReferralCaptureInSavepoint(tx, {
+                paymentId: payment.id,
+                consultantProfileId: () =>
+                  Promise.resolve(resolvedEarnings?.consultantProfileId),
+              });
             }
 
             return {
@@ -4330,92 +4956,22 @@ export async function handleCheckout(
         }),
       );
 
-      // Mock/zero-amount/org-sponsored payment post-processing: referral
-      // qualifying action. Real payments handle this via
-      // handlePaymentSuccess() in the webhook, but these flows bypass
-      // webhooks entirely.
+      // Mock/zero-amount/org-sponsored payments never see a capture webhook,
+      // so their post-commit follow-ups run here.
       if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
-        // Trigger referral reward if this is the user's first paid booking
-        try {
-          await processQualifyingAction(userId, "first_paid_booking");
-          // P3 referral bells, scheduled after the response (scheduleAfter
-          // degrades to a floating promise outside a request scope — jest
-          // and scripts reach this path). Bells, never money truth.
+        // applyCreditsToPayment committed above, so this post-commit bell reads settled state.
+        if (result.creditsApplied > 0) {
           scheduleAfter(
             () =>
-              notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-                console.error("[referral-qualification-bell] failed:", bellErr),
+              notifyCreditsAppliedBestEffort({
+                userId,
+                creditsUsedPaise: result.creditsApplied,
+                remainingPaise: result.creditsRemainingAfter,
+                appointmentType: validatedData.appointmentType,
+              }).catch((bellErr) =>
+                console.error("[credits-applied-bell] failed:", bellErr),
               ),
-            "checkout.referral-qualification-bell",
-          );
-          // P3 credits-applied bell: applyCreditsToPayment ran inside the
-          // committed tx above, so this post-commit read is the correct
-          // boundary (belling inside service.ts would fire in-tx).
-          if (result.creditsApplied > 0) {
-            scheduleAfter(
-              () =>
-                notifyCreditsAppliedBestEffort({
-                  userId,
-                  creditsUsedPaise: result.creditsApplied,
-                  remainingPaise: result.creditsRemainingAfter,
-                  appointmentType: validatedData.appointmentType,
-                }).catch((bellErr) =>
-                  console.error("[credits-applied-bell] failed:", bellErr),
-                ),
-              "checkout.credits-applied-bell",
-            );
-          }
-        } catch (referralError) {
-          console.error(
-            `⚠️ Failed to process referral qualifying action for user ${userId}:`,
-            referralError,
-          );
-          reportSentryError(referralError, {
-            subsystem: "payments",
-            level: "warning",
-          });
-        }
-
-        // Create consultant earnings (mock payments bypass webhooks, so earnings must be created here)
-        try {
-          const resolved = await resolvePaymentForEarnings(
-            { paymentIntent: paymentResponse!.id },
-            validatedData.appointmentType,
-          );
-
-          if (resolved) {
-            await createEarningsFromPayment({
-              payment: resolved.paymentForEarnings,
-              appointmentType: resolved.earningsAppointmentType,
-            });
-
-            console.log(
-              `💰 Mock payment earnings created for consultant ${resolved.consultantProfileId}`,
-            );
-          }
-        } catch (earningsError) {
-          // C-01 #837 — payment + booking are committed but earnings + the
-          // BOOKING journal are not. Real money moved, so we don't roll back
-          // and we don't pretend success with a silent warning: page (ERROR)
-          // and durably record the ledger gap. The healer is the data-state
-          // sync-payment-earnings scan (SUCCEEDED payment + earnings:none),
-          // keyed on row state — not on this marker — so it's guaranteed and
-          // idempotent even if this alert is lost.
-          await recordSystemError({
-            category: "PAYOUT",
-            summary: `Earnings + booking journal not written for committed payment ${paymentResponse!.id} (checkout mock/zero/sponsored path)`,
-            err: earningsError,
-            correlationId: paymentResponse!.id,
-            context: {
-              paymentIntent: paymentResponse!.id,
-              userId,
-              appointmentType: validatedData.appointmentType,
-              path: "checkout",
-            },
-          });
-          console.error(
-            `⚠️ Failed to create earnings for mock payment:`,
-            earningsError,
+            "checkout.credits-applied-bell",
           );
         }
 
@@ -4426,34 +4982,40 @@ export async function handleCheckout(
           paymentIntent: paymentResponse!.id,
         });
 
-        // FIX #437: Consultant qualifying action (receiving first paid booking)
-        try {
-          await processConsultantBookingReferral(
-            { paymentIntent: paymentResponse!.id },
-            userId,
-          );
-        } catch (consultantRefError) {
-          console.error(
-            `⚠️ Failed to process consultant referral qualifying action:`,
-            consultantRefError,
-          );
-          reportSentryError(consultantRefError, {
-            subsystem: "payments",
-            level: "warning",
-          });
+        const appointmentIdForChannels = result.appointmentId;
+        if (appointmentIdForChannels) {
+          scheduleAfter(async () => {
+            try {
+              const { ensureChannelsForAppointment } =
+                await import("@/lib/payments/webhooks/ensure-channels");
+              await ensureChannelsForAppointment(appointmentIdForChannels);
+            } catch (channelErr) {
+              console.error("[checkout.ensure-channels] failed:", channelErr);
+            }
+          }, "checkout.ensure-channels");
+        }
+      }
+
+      let message =
+        "Payment intent created. Complete payment to book appointment.";
+      if (isZeroAmountPayment) {
+        message =
+          "Payment completed via referral credits. Appointment booked successfully.";
+      } else if (isMockPayment) {
+        message = "Mock payment completed and appointment created successfully";
+      } else if (isOrgSponsoredPayment) {
+        message =
+          "Payment completed via organization funding. Appointment booked successfully.";
+        if (referralCreditsDropped) {
+          message += ` ${REFERRAL_CREDITS_DROPPED_NOTICE}`;
         }
       }
 
       return {
         success: true,
         paymentIntent: paymentResponse,
-        message: isZeroAmountPayment
-          ? "Payment completed via referral credits. Appointment booked successfully."
-          : isMockPayment
-            ? "Mock payment completed and appointment created successfully"
-            : isOrgSponsoredPayment
-              ? "Payment completed via organization funding. Appointment booked successfully."
-              : "Payment intent created. Complete payment to book appointment.",
+        message,
+        referralCreditsDropped,
         amount,
         currency,
         isMockPayment: isMockPayment || isZeroAmountPayment,
@@ -4468,7 +5030,8 @@ export async function handleCheckout(
         // #1861 L1 — Checkout's `timeout` is sized to this.
         holdExpiresAt: result.holdExpiresAt?.toISOString() ?? null,
       };
-    } catch (dbError) {
+    } catch (caught) {
+      const dbError = asWelcomeDiscountConflict(caught);
       console.error("Failed to create payment record:", dbError);
       // Classification for Sentry tagging ONLY — deliberately NOT the same
       // list `preservedMessages` below uses for the rethrow decision, so
@@ -4523,7 +5086,7 @@ export async function handleCheckout(
         dbErrorCode === "WALLET_INSUFFICIENT_FUNDS" ||
         // #1582 B-P1-01b — the in-tx org/panel/credit refusals and the
         // CREDIT_SHORTFALL race are answers, not faults.
-        (typeof dbErrorCode === "string" &&
+        (isBusinessErrorCode(dbErrorCode) &&
           IN_TX_MODELLED_REFUSAL_CODES.has(dbErrorCode)) ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>
@@ -4541,10 +5104,7 @@ export async function handleCheckout(
       if (paymentResponse && !isZeroAmountPayment) {
         try {
           const { cancelPaymentIntent } = await import("../index");
-          await cancelPaymentIntent(
-            paymentResponse.id,
-            "Database operation failed - preventing orphaned payment intent",
-          );
+          await cancelPaymentIntent(paymentResponse.id);
         } catch (cancelErr) {
           console.error(
             `Failed to cancel payment intent ${paymentResponse.id}:`,

@@ -20,6 +20,7 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
   rating,
   reviewDescription,
   editedAt,
+  notCounted,
   replyBody,
   repliedAt,
 }) => {
@@ -61,6 +62,11 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
                   switch, since replying to everything would brand every
                   subsequent revision. */}
               {editedAt && <span className="ml-1.5">· Edited</span>}
+              {notCounted && (
+                <span className="ml-1.5 text-muted-foreground">
+                  · Not counted in rating
+                </span>
+              )}
             </p>
           </div>
           <div

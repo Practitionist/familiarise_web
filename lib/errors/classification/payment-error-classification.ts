@@ -73,6 +73,7 @@ export const ErrorTypes = {
   CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
+  DISCOUNT_EXHAUSTED: "DISCOUNT_EXHAUSTED_ERROR",
   // Literal-equality rule as WALLET_FROZEN: the checkout modal hands this
   // string straight to the toast map as `code` when verify answers non-2xx.
   VERIFICATION_FAILED: "VERIFICATION_FAILED",
@@ -89,6 +90,33 @@ export const ErrorTypes = {
   // card not charged" toast instead of UNKNOWN.
   EVENT_CHECKOUT_BUSY: "EVENT_CHECKOUT_BUSY",
   CONSULTEE_BOOKING_BUSY: "CONSULTEE_BOOKING_BUSY",
+  // Same literal-equality rule as the two above, and the same reason it is not
+  // a fall-through: these are `error.code` off a typed Error class
+  // (utils/appointmentlock.ts) that the route forwards verbatim, so the value
+  // here must BE that string or the toast map misses it and the buyer is told
+  // "Something Went Wrong" about an outcome the server already described.
+  //   SERIALIZATION_CONFLICT          — P2034 retries exhausted, 409 + retryAfter
+  //   EVENT_SOLD_OUT                  — EventFullError, 409, terminal
+  //   EVENT_CHECKOUT_LOCK_UNAVAILABLE — Redis unreachable, fail-closed 503
+  //   BOOKING_LOCK_UNAVAILABLE        — same, for every non-flash-sale atom
+  //
+  // SERIALIZATION_CONFLICT and the two BUSY codes are the three the client
+  // auto-retries exactly once (app/checkout/plans/utils.ts `BUSY_ERROR_TYPES`),
+  // so this map is what the SECOND failure reads — the one the buyer actually
+  // sees, because the first one already toasted "someone is one step ahead".
+  SERIALIZATION_CONFLICT: "SERIALIZATION_CONFLICT",
+  EVENT_SOLD_OUT: "EVENT_SOLD_OUT",
+  EVENT_CHECKOUT_LOCK_UNAVAILABLE: "EVENT_CHECKOUT_LOCK_UNAVAILABLE",
+  BOOKING_LOCK_UNAVAILABLE: "BOOKING_LOCK_UNAVAILABLE",
+  // The two client-picked-start refusals (lib/payments/utils/slot-validation.ts,
+  // raised at the Zod edge in schemas/checkout.ts and schemas/slots.ts). They
+  // travel as `code` ALONGSIDE `errorType: "AVAILABILITY_ERROR"`, so
+  // `AVAILABILITY_ERROR` alone titles a lead-time refusal "No Longer Available" —
+  // a fact about the listing, not about the buyer who dawdled on the pay page.
+  // The client passes `code` to `getErrorToast` ahead of `errorType` for
+  // exactly this reason.
+  SLOT_TOO_SOON: "SLOT_TOO_SOON",
+  SLOT_NOT_ON_GRID: "SLOT_NOT_ON_GRID",
 
   // Catch-all
   UNKNOWN: "UNKNOWN_ERROR",
@@ -221,23 +249,19 @@ export const INFRA_ERROR_PATTERNS: ReadonlyArray<{
  * Errors that carry a machine-readable `code` are classified on that code
  * rather than on their prose, so rewording a message can never re-route it.
  *
- * #1351 — a rail this deployment fences off, and a gateway that exists in the
- * enum with nothing behind it, are both the caller asking for a payment method
- * we do not offer. That is a rejection the buyer can act on by choosing another
+ * A gateway that exists in the enum with nothing behind it is the caller
+ * asking for a payment method we do not offer. That is a rejection the buyer can act on by choosing another
  * method, not the 500 the message-only classifier fell through to.
  */
-export const BUSINESS_ERROR_CODES: ReadonlyArray<{
+interface BusinessErrorEntry {
   code: string;
   errorType: ErrorType;
   httpStatus: number;
   /** Replaces the thrown message when that message names ids or internals. */
   userMessage?: string;
-}> = [
-  {
-    code: "GATEWAY_DISABLED",
-    errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
-    httpStatus: 422,
-  },
+}
+
+const BUSINESS_ERROR_ENTRIES = [
   {
     code: "UNSUPPORTED_GATEWAY",
     errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
@@ -452,6 +476,14 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     userMessage:
       "Your available credits changed while this booking was being priced. Please try again — your card was not charged.",
   },
+  // One live welcome-discounted order per buyer; resuming that same order is still allowed.
+  {
+    code: "WELCOME_DISCOUNT_IN_USE",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+    userMessage:
+      "Your welcome discount is already on another open booking. Finish or cancel that booking first — your card was not charged.",
+  },
   // Its old message matched the "discount code" prose pattern and answered
   // AVAILABILITY with "No Longer Available", which is the wrong story.
   {
@@ -460,6 +492,13 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     httpStatus: 400,
     userMessage:
       "This discount code is for a different currency and cannot be applied to this plan.",
+  },
+  {
+    code: "DISCOUNT_EXHAUSTED",
+    errorType: ErrorTypes.DISCOUNT_EXHAUSTED,
+    httpStatus: 409,
+    userMessage:
+      "This discount code has been fully redeemed. Remove it and try again — your card was not charged.",
   },
   // #1775 / #1780 — BookingRuleError codes; the thrown sentence is the copy.
   ...(
@@ -478,12 +517,19 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
       // #1819 — class batch enrolment closed, or re-priced mid-checkout.
       "ENROLMENT_CLOSED",
       "CLASS_PRICE_CHANGED",
+      // #1743 — subscription renewal already linked to an active successor.
+      "ALREADY_RENEWED",
     ] as const
   ).map((code) => ({
     code,
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 409,
   })),
+  {
+    code: "INVALID_RENEWAL_SOURCE",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
   {
     code: "BACKUP_WINDOW_PAST",
     errorType: ErrorTypes.BOOKING_RULE,
@@ -501,7 +547,13 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 502,
   },
-] as const;
+] as const satisfies ReadonlyArray<BusinessErrorEntry>;
+
+export type BusinessErrorCode = (typeof BUSINESS_ERROR_ENTRIES)[number]["code"];
+
+export const BUSINESS_ERROR_CODES: ReadonlyArray<
+  BusinessErrorEntry & { code: BusinessErrorCode }
+> = BUSINESS_ERROR_ENTRIES;
 
 /**
  * True when an error's `code` is one this module already resolves to a status
@@ -512,7 +564,7 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
  * question the classifier answers a moment later, so the two can never disagree
  * about which refusals reach the buyer intact.
  */
-export function isBusinessErrorCode(code: unknown): boolean {
+export function isBusinessErrorCode(code: unknown): code is BusinessErrorCode {
   return (
     typeof code === "string" &&
     BUSINESS_ERROR_CODES.some((entry) => entry.code === code)

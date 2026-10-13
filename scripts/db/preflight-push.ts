@@ -37,6 +37,7 @@ import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 
 const ROOT = path.join(__dirname, "..", "..");
 const SCHEMA = path.join(ROOT, "prisma", "schema.prisma");
@@ -74,12 +75,35 @@ export function droppedIndexName(statement: string): string | null {
   );
 }
 
-type AllowedEntry = {
-  statement: string;
-  reason: string;
-  trackedBy: string;
-  expires: string;
-};
+/** `prisma/sql/known-drift.json`, shared with the live drift check so one entry satisfies both gates. */
+export const KnownDriftSchema = z.object({
+  destructiveStatementsAllowed: z
+    .array(
+      z.object({
+        statement: z.string(),
+        reason: z.string(),
+        trackedBy: z.string(),
+        expires: z.string().date(),
+      }),
+    )
+    .default([]),
+});
+type AllowedEntry = z.infer<
+  typeof KnownDriftSchema
+>["destructiveStatementsAllowed"][number];
+
+/** Parse known-drift.json; a malformed entry throws instead of silently allowing nothing. */
+export function parseKnownDrift(file: string): AllowedEntry[] {
+  const parsed = KnownDriftSchema.safeParse(
+    JSON.parse(fs.readFileSync(file, "utf8")),
+  );
+  if (!parsed.success) {
+    throw new Error(
+      `${path.relative(ROOT, file)}: invalid destructiveStatementsAllowed: ${parsed.error.message}`,
+    );
+  }
+  return parsed.data.destructiveStatementsAllowed;
+}
 
 /**
  * Every pattern here removes or re-points something that already exists.
@@ -167,9 +191,7 @@ export function planStatements(plan: string): string[] {
 
 function allowlist(): AllowedEntry[] {
   if (!fs.existsSync(KNOWN_DRIFT)) return [];
-  const parsed: unknown = JSON.parse(fs.readFileSync(KNOWN_DRIFT, "utf8"));
-  const raw = (parsed as Record<string, unknown>).destructiveStatementsAllowed;
-  return Array.isArray(raw) ? (raw as AllowedEntry[]) : [];
+  return parseKnownDrift(KNOWN_DRIFT);
 }
 
 function main(): void {

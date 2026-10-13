@@ -51,7 +51,14 @@ export interface VolumeConfig {
   // openForAppointmentId without colliding.
   rescheduleProposals: {
     openConsultation: number;
-    counteredSubscription: number;
+    /**
+     * Subscription-originated OPEN proposals. Was `counteredSubscription`, which
+     * seeded `RescheduleRequestStatus.COUNTERED` rows — a state no production
+     * path writes, so the seed was the only producer of a status the UI offered
+     * an Accept for. The cohort is kept (a subscription proposal is worth having
+     * in a dev database) and re-pointed at the only open status.
+     */
+    openSubscription: number;
     resolved: number;
   };
   // Phase 7: Engagement
@@ -116,7 +123,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     draftSessions: { webinar: 3, class: 2 },
     rescheduleProposals: {
       openConsultation: 4,
-      counteredSubscription: 2,
+      openSubscription: 2,
       resolved: 3,
     },
     waitlistSubscribers: 50,
@@ -170,7 +177,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     draftSessions: { webinar: 6, class: 4 },
     rescheduleProposals: {
       openConsultation: 12,
-      counteredSubscription: 5,
+      openSubscription: 5,
       resolved: 8,
     },
     waitlistSubscribers: 150,
@@ -224,7 +231,7 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     draftSessions: { webinar: 12, class: 8 },
     rescheduleProposals: {
       openConsultation: 30,
-      counteredSubscription: 12,
+      openSubscription: 12,
       resolved: 20,
     },
     waitlistSubscribers: 400,
@@ -321,7 +328,7 @@ export function getTotalAppointments(): number {
  *
  * They were also *necessary* to have: STAFF and ADMIN are hard-rejected from
  * self-service onboarding (`utils/onboarding-server.ts:824`), and
- * `POST /api/user/staff` requires an admin to already exist. So deleting the
+ * `POST /api/admin/team/members` requires an admin to already exist. So deleting the
  * rows without adding a front door would have locked every operator out of
  * their own console — which is exactly the trap `scripts/bootstrap-admin.ts`
  * now fills, and why the two changes ship together.
@@ -480,7 +487,7 @@ export function printConfigSummary(): void {
   );
   const proposals = volumes.rescheduleProposals;
   console.log(
-    `  Reschedule proposals: ${proposals.openConsultation} open, ${proposals.counteredSubscription} countered, ${proposals.resolved} resolved`,
+    `  Reschedule proposals: ${proposals.openConsultation} consultation + ${proposals.openSubscription} subscription open, ${proposals.resolved} resolved`,
   );
   console.log(`  Payments: ${volumes.payments}`);
   console.log(`  Topics: ${volumes.topics}`);

@@ -4,7 +4,7 @@ import {
   dehydrate,
 } from "@tanstack/react-query";
 import { requireOnboarded } from "@/lib/auth-guard";
-import { getUserDetails } from "@/lib/data/user-details";
+import { getShellUserDetails } from "@/lib/data/user-details";
 import { toPlain } from "@/lib/data/serialize";
 import { ServerUserIdProvider } from "@/components/dashboard/ServerUserId";
 import { StreamInitialTokensProvider } from "@/components/stream/StreamInitialTokens";
@@ -56,14 +56,15 @@ export default async function DashboardLayout({
     .prefetchQuery({
       queryKey: ["user-details", session.user.id],
       // The route responds `{ data: user }` and the client fetcher unwraps
-      // `.data`, so the cached value is the user row itself.
-      queryFn: async () => toPlain(await getUserDetails(session.user.id)),
+      // `.data`, so the cached value is the user row itself, minus the résumé
+      // lists the shell never reads.
+      queryFn: async () => toPlain(await getShellUserDetails(session.user.id)),
     })
     .catch(() => undefined);
 
   // Every StreamProvider under /dashboard connects with these, so the first
   // connect needs no token round trip to a possibly stalled instance (#1124).
-  const streamTokens = mintInitialStreamTokens(session.user.id, {
+  const streamTokens = await mintInitialStreamTokens(session.user.id, {
     chat: true,
     video: true,
   });

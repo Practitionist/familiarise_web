@@ -1,4 +1,4 @@
-import { withSentryConfig } from "@sentry/nextjs";
+import { withSentryConfig } from "@sentry/nextjs/config";
 /** @type {import('next').NextConfig} */
 const withBundleAnalyzer =
   process.env.ANALYZE === "true"
@@ -36,6 +36,11 @@ const RESOLVED_APP_URL =
  * Opt-in type-check and lint inside Netlify's `next build`. See the `eslint` /
  * `typescript` keys below.
  */
+const PDFKIT_FONT_FILES = [
+  "./node_modules/pdfkit/package.json",
+  "./node_modules/pdfkit/js/standard-fonts/**",
+];
+
 const STRICT_BUILD = process.env.STRICT_BUILD === "true";
 
 /**
@@ -76,14 +81,14 @@ const CSP_REPORT_GROUP = "csp-endpoint";
  *
  * Allow-list rationale
  * --------------------
- *   - `script-src` includes Razorpay's checkout CDN + Stripe.js +
+ *   - `script-src` includes Razorpay's checkout CDN +
  *     Stream.io + Sentry + Supabase + 'unsafe-inline'/'unsafe-eval'
  *     (Next.js still emits inline runtime chunks; Next 15 hashing
  *     lands in 16).
- *   - `connect-src` opens WSS for Stream + HTTPS for the four payment
- *     gateways + Sentry + Resend + Upstash. Anything new must be
+ *   - `connect-src` opens WSS for Stream + HTTPS for the payment
+ *     gateway + Sentry + Resend + Upstash. Anything new must be
  *     added here AND in the matching client.
- *   - `frame-src` allows Razorpay's + Stripe's checkout iframes; Razorpay
+ *   - `frame-src` allows Razorpay's checkout iframes; Razorpay
  *     serves the live checkout iframe from `api.razorpay.com`, not just
  *     `checkout.razorpay.com` (report-only violation on a real checkout).
  *   - `media-src` is the load-bearing entry for Stream call audio /
@@ -132,12 +137,12 @@ const CSP_REPORT_GROUP = "csp-endpoint";
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
-  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://api.stripe.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
+  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.r2.cloudflarestorage.com https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
-  "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com",
+  "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com https://*.supabase.co https://*.r2.cloudflarestorage.com",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://js.stripe.com https://hooks.stripe.com",
+  "frame-src 'self' blob: https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com",
   "font-src 'self' data:",
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
@@ -278,6 +283,26 @@ const nextConfig = {
         }
       : {}),
     webpackMemoryOptimizations: true,
+    // Disables NextNodeServer's cold-start `unstable_preloadEntries()` and
+    // `preloadAppDocument()` loops (`next/dist/server/next-server.js`).
+    //
+    // Why this is critical on Netlify (`___netlify-server-handler`):
+    // - Unlike Vercel (`minimalMode: true`, which skips `unstable_preloadEntries`),
+    //   `@netlify/plugin-nextjs` instantiates `NextNodeServer` with
+    //   `minimalMode: false`.
+    // - With Next 15's default `preloadEntriesOnStart: true`, every cold Lambda
+    //   instance eagerly calls `loadComponents()` across all 606 routes
+    //   (1.67M `webpackRequire` calls) before/during the first request.
+    // - That eager preload caused both the #1124 ~24–32s cold-start event-loop
+    //   stall (even on zero-import `/api/perf/probe-bare`) and — once the
+    //   dependency upgrade in #1948 pushed peak preload heap past Node 22's
+    //   512 MB V8 old-space limit on 1024 MB Lambda containers — fatal V8 GC
+    //   thrashing / OOM (`504 Inactivity Timeout` on 100% of requests).
+    // - With both flags `false`, routes load on demand: cold-start `/api/perf/probe-bare`
+    //   completes in ~690ms at 33 MB heap (123 MB RSS) instead of ~20–34s at
+    //   512+ MB heap (642 MB RSS).
+    preloadEntriesOnStart: false,
+    appDocumentPreloading: false,
     // Only packages Next does NOT already optimize by default. Its built-in
     // list covers lucide-react, recharts and date-fns among others, so listing
     // those was inert config that read as if it were doing something.
@@ -343,6 +368,9 @@ const nextConfig = {
   // bundler (lib/pdf/react-runtime/jsx-runtime.ts), which the tracer cannot
   // see, and the only traced import of `react` is the reconciler's, which
   // reaches the package root rather than that entrypoint. Ship the package.
+  //
+  // pdfkit@0.20.1 loads font metrics via `createRequire()('#standard-fonts/*')`,
+  // a package `imports` subpath the tracer cannot follow; ship those files.
   outputFileTracingIncludes: {
     "/api/plans/**/brochure": [
       "./public/fonts/**/*",
@@ -367,16 +395,20 @@ const nextConfig = {
     "/api/payments/[paymentId]/invoice/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/payments/[paymentId]/credit-note/[creditNoteId]/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf": [
+      "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/organizations/[orgId]/billing-account/credit-notes/[creditNoteId]/pdf":
-      ["./node_modules/react/**"],
+      ["./public/fonts/**", "./node_modules/react/**", ...PDFKIT_FONT_FILES],
   },
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
@@ -391,10 +423,10 @@ const nextConfig = {
     "pg-pool",
     "pg-connection-string",
     "razorpay",
-    "stripe",
     "resend",
     "bcrypt",
     "@stream-io/node-sdk",
+    "@novu/api",
   ],
 
   images: {
@@ -415,6 +447,26 @@ const nextConfig = {
       {
         hostname: "img.logo.dev",
       },
+      {
+        hostname: "cdn.jsdelivr.net",
+      },
+      // Dev/placeholder image hosts are never reachable from a production build.
+      ...(process.env.NODE_ENV === "production"
+        ? []
+        : [
+            {
+              hostname: "picsum.photos",
+            },
+            {
+              hostname: "fastly.picsum.photos",
+            },
+            {
+              hostname: "images.unsplash.com",
+            },
+            {
+              hostname: "plus.unsplash.com",
+            },
+          ]),
     ],
   },
 
@@ -447,10 +499,47 @@ const nextConfig = {
   },
 
   async headers() {
+    const inlinePreviewHeaders = [
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      {
+        key: CSP_HEADER_KEY,
+        value: CSP_DIRECTIVES.replace(
+          "frame-ancestors 'none'",
+          "frame-ancestors 'self'",
+        ).replace("object-src 'none'", "object-src 'self'"),
+      },
+    ];
     return [
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        source:
+          "/api/appointments/:appointmentId/documents/:documentId/download",
+        headers: inlinePreviewHeaders,
+      },
+      {
+        source: "/api/plans/materials/:materialId/download",
+        headers: inlinePreviewHeaders,
+      },
+      {
+        source: "/avif/(.*)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        source: "/fonts/(.*)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
       },
     ];
   },
@@ -495,18 +584,15 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // container RSS — not heap — is the constraint. The widened client upload
   // holds the full client source-map set in memory during the finalize phase;
   // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
+  // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
+  sourcemaps: {
+    disable:
+      process.env.NETLIFY === "true" && process.env.CONTEXT !== "production",
+  },
   widenClientFileUpload: process.env.NETLIFY !== "true",
 
-  // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
-  // tunnelRoute: "/monitoring",
-
   webpack: {
-    // Tree-shaking options for reducing bundle size
     treeshake: {
-      // Automatically tree-shake Sentry logger statements to reduce bundle size
       removeDebugLogging: true,
     },
   },

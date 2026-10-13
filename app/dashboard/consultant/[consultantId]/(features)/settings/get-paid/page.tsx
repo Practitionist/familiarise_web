@@ -7,8 +7,8 @@ import {
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { readConsultantPayoutSetup } from "@/lib/data/consultant-payout-setup";
 
-import { GetPaidClient } from "../payouts/GetPaidClient";
-import { payoutSetupQueryKey } from "../payouts/payout-setup-keys";
+import { GetPaidClient } from "./GetPaidClient";
+import { payoutSetupQueryKey } from "./payout-setup-keys";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;

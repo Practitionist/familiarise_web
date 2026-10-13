@@ -15,7 +15,10 @@ import prisma from "../../lib/prisma";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { getRefund, listRefunds } from "../../lib/payments";
-import { isRazorpayUnknownRefundIdError } from "../../lib/payments/core/razorpay";
+import {
+  isRazorpayUnknownOrderError,
+  isRazorpayUnknownRefundIdError,
+} from "../../lib/payments/core/razorpay";
 import type { RefundResult } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
 import {
@@ -37,7 +40,13 @@ import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import {
+  applyRefundCascade,
+  refundMemberOverageSidePayment,
+  type ApplyRefundCascadeResult,
+} from "../../lib/payments/operations/refund";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 // Threshold: Only reconcile refunds older than 1 hour
 const RECONCILIATION_THRESHOLD_MS = 60 * 60 * 1000;
@@ -52,23 +61,22 @@ export interface RefundReconciliationResult {
   failedCount: number;
   skippedCount: number;
   /**
-   * #1458 — the subset of `skippedCount` that was left alone because its
-   * gateway is fenced off for this deployment. Reported separately so an
-   * operator can tell "nothing to do" from "there is settled money we are not
-   * polling because STRIPE_ENABLED is off".
-   */
-  skippedFenced: number;
-  /**
    * FAMILIARISE_WEB-3V — the subset of `failedCount` whose gateway has no
-   * record of the refund id (unknown id, or a test-mode id read with live
-   * keys). Terminal: the row is moved to FAILED instead of polled forever.
+   * record of the refund id, or of a placeholder's order (unknown id, or a
+   * test-mode id read with live keys). Terminal: moved to FAILED, not polled.
    */
   failedUnknownId: number;
   /**
    * #1757 — the subset of `failedCount` retired because no live client exists
-   * for the row's gateway (fenced or unimplemented) and it was over 24 h old.
+   * for the row's gateway (no implementation) and it was over 24 h old.
    */
   failedGatewayDisabled: number;
+  /** SUCCEEDED refunds whose cascade the backstop pass re-drove. */
+  redrivenCount: number;
+  /** Backstop re-drives that failed this run; they rotate and retry up to the cap. */
+  redriveFailedCount: number;
+  /** Rows that reached the re-drive cap this run and left the cohort for an operator. */
+  redriveDeadLettered: number;
   errors: string[];
   timestamp: string;
 }
@@ -125,30 +133,17 @@ async function reconcilePendingRefundsUnlocked(
   let reconciledCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
-  let skippedFenced = 0;
   let failedUnknownId = 0;
   let failedGatewayDisabled = 0;
   let totalProcessed = 0;
   const retiredNoClient: string[] = [];
+  const failedUnknownOrder: string[] = [];
+  const ambiguousPlaceholders: string[] = [];
+  const failedUnknownRefunds: string[] = [];
 
   /**
-   * #1458 — a PENDING refund on a gateway this deployment has fenced off is not
-   * reconcilable: the gateway client is never constructed, so `listRefunds` /
-   * `getRefund` throw, every fenced row lands in `errors`, and the whole run
-   * reports `success: false` — a 500 from the cleanup route for a condition
-   * that is deliberate configuration. `assertGatewayUsable` cannot be reused
-   * here because it deliberately leaves refund LOOKUPS open, so that a Payment
-   * already written against Stripe stays refundable after the fence goes up.
-   * Skip the row, count it, and let the summary say so.
-   */
-  const isFencedGateway = (gateway: PaymentGateway): boolean =>
-    gateway === PaymentGateway.STRIPE && process.env.STRIPE_ENABLED !== "true";
-
-  /**
-   * #1757 — a row no live client can ever settle (fenced or unimplemented
-   * gateway) was skipped on every tick forever. Past 24 h it is FAILED with
-   * `GATEWAY_DISABLED` through the same CAS the unknown-id path uses, which
-   * re-opens the refundable balance; younger rows keep the skip.
+   * A row on a gateway with no live client is FAILED/`GATEWAY_DISABLED` past
+   * 24 h through the unknown-id CAS (re-opening the refundable balance); younger rows skip.
    */
   const retireIfNoLiveClient = async (refund: {
     id: string;
@@ -207,24 +202,12 @@ async function reconcilePendingRefundsUnlocked(
   for (const refund of stalePlaceholders) {
     try {
       // Skip if payment gateway is not supported
-      if (
-        refund.payment.paymentGateway !== PaymentGateway.STRIPE &&
-        refund.payment.paymentGateway !== PaymentGateway.RAZORPAY
-      ) {
+      if (refund.payment.paymentGateway !== PaymentGateway.RAZORPAY) {
         if (await retireIfNoLiveClient(refund)) continue;
         console.log(
           `⏭️ Skipping refund ${refund.id} - unsupported gateway: ${refund.payment.paymentGateway}`,
         );
         skippedCount++;
-        continue;
-      }
-      if (isFencedGateway(refund.payment.paymentGateway)) {
-        if (await retireIfNoLiveClient(refund)) continue;
-        console.log(
-          `⏭️ Skipping refund ${refund.id} - ${refund.payment.paymentGateway} is fenced off for this deployment`,
-        );
-        skippedCount++;
-        skippedFenced++;
         continue;
       }
 
@@ -257,26 +240,22 @@ async function reconcilePendingRefundsUnlocked(
       const matchingRefund = exactMatch ?? fallbackMatch;
 
       if (matchingRefund) {
+        const paymentId = refund.paymentId ?? refund.payment.id;
         const bound = await bindGatewayRefundToPlaceholder(
           refund.id,
           matchingRefund,
           prismaMetadataObject(refund.metadata),
+          {
+            paymentId,
+            amountPaise: refund.amountPaise,
+            paymentAmountPaise: refund.payment.amount,
+            reason: refund.reason ?? "Gateway refund reconciled",
+            userId: refund.payment.userId,
+            organizationId: refund.payment.organizationId,
+            currency: refund.currency,
+          },
         );
         if (bound === "bound") {
-          if (
-            mapGatewayRefundStatus(matchingRefund.status) ===
-            RefundStatus.SUCCEEDED
-          ) {
-            await prisma.$transaction(async (tx) => {
-              await applyRefundCascade(tx, {
-                paymentId: refund.paymentId ?? refund.payment.id,
-                refundId: refund.id,
-                amountPaise: refund.amountPaise,
-                reason: refund.reason ?? "Gateway refund reconciled",
-                initiatedByUserId: null,
-              });
-            });
-          }
           console.log(
             `✅ Reconciled refund ${refund.id} -> ${matchingRefund.refundId} (${exactMatch ? "reservation-id" : "unambiguous-amount"} match, status: ${matchingRefund.status})`,
           );
@@ -300,10 +279,7 @@ async function reconcilePendingRefundsUnlocked(
         console.warn(
           `⚠️ Refund ${refund.id}: ${candidates.length} amount-matching gateway refunds without reservation ids; leaving PENDING for manual review`,
         );
-        reportSentryMessage(
-          `Ambiguous refund reconciliation: ${candidates.length} candidates for placeholder ${refund.id}`,
-          { subsystem: "payments", tags: { feature: "refund-reconcile" } },
-        );
+        ambiguousPlaceholders.push(refund.id);
         skippedCount++;
         continue;
       }
@@ -344,6 +320,33 @@ async function reconcilePendingRefundsUnlocked(
         skippedCount++;
       }
     } catch (error) {
+      // Order 404: no refund exists under these keys and a retry 404s before
+      // money moves, so past 24h FAILED is safe; younger rows wait.
+      if (isRazorpayUnknownOrderError(error)) {
+        if (
+          Date.now() - refund.createdAt.getTime() <=
+          PLACEHOLDER_FAIL_AFTER_MS
+        ) {
+          skippedCount++;
+          continue;
+        }
+        const claim = await prisma.refund.updateMany({
+          where: { id: refund.id, status: RefundStatus.PENDING },
+          data: {
+            status: RefundStatus.FAILED,
+            failureReason: `Gateway has no record of order ${refund.payment.paymentIntent} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
+            failedAt: new Date(),
+          },
+        });
+        if (claim.count === 1) {
+          failedCount++;
+          failedUnknownId++;
+          failedUnknownOrder.push(refund.id);
+        } else {
+          skippedCount++;
+        }
+        continue;
+      }
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       errors.push(`Refund ${refund.id}: ${errorMessage}`);
@@ -369,6 +372,7 @@ async function reconcilePendingRefundsUnlocked(
       payment: {
         select: {
           id: true,
+          amount: true,
           paymentGateway: true,
           userId: true,
           organizationId: true,
@@ -387,18 +391,9 @@ async function reconcilePendingRefundsUnlocked(
 
   for (const refund of pendingRealId) {
     try {
-      if (
-        refund.payment.paymentGateway !== PaymentGateway.STRIPE &&
-        refund.payment.paymentGateway !== PaymentGateway.RAZORPAY
-      ) {
+      if (refund.payment.paymentGateway !== PaymentGateway.RAZORPAY) {
         if (await retireIfNoLiveClient(refund)) continue;
         skippedCount++;
-        continue;
-      }
-      if (isFencedGateway(refund.payment.paymentGateway)) {
-        if (await retireIfNoLiveClient(refund)) continue;
-        skippedCount++;
-        skippedFenced++;
         continue;
       }
 
@@ -414,41 +409,57 @@ async function reconcilePendingRefundsUnlocked(
         // transactionId (lib/novu/outbox.ts) makes a re-drive safe.
         let bell: StagedTrigger | null = null;
         let emails: StagedRecipientEmail[] = [];
-        const claimed = await prisma.$transaction(async (tx) => {
-          // Claim by status: a re-entrant run or a webhook that settled the
-          // row first matches zero rows and stages nothing.
-          const claim = await tx.refund.updateMany({
-            where: { id: refund.id, status: RefundStatus.PENDING },
-            data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
-          });
-          if (claim.count !== 1) return false;
-          await applyRefundCascade(tx, {
-            paymentId: refund.payment.id,
-            refundId: refund.id,
-            amountPaise: refund.amountPaise,
-            reason: refund.reason ?? "Gateway refund reconciled",
-            initiatedByUserId: null,
-          });
-          const notice = await notifyRefundProcessed(
-            refund.payment.userId,
-            {
-              ...notificationScope(refund.payment.organizationId),
-              amount: refund.amountPaise,
-              currency: refund.currency,
-              // The payer's money view, matching the other money bells.
-              dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+        let overageDue: ApplyRefundCascadeResult["memberOverageRefundDue"] =
+          null;
+        const claimed = await withSerializableRetry(() =>
+          prisma.$transaction(
+            async (tx) => {
+              overageDue = null;
+              // Claim by status: a re-entrant run or a webhook that settled the
+              // row first matches zero rows and stages nothing.
+              const claim = await tx.refund.updateMany({
+                where: { id: refund.id, status: RefundStatus.PENDING },
+                data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
+              });
+              if (claim.count !== 1) return false;
+              const cascade = await applyRefundCascade(tx, {
+                paymentId: refund.payment.id,
+                refundId: refund.id,
+                amountPaise: refund.amountPaise,
+                reason: refund.reason ?? "Gateway refund reconciled",
+                initiatedByUserId: null,
+              });
+              overageDue = cascade.memberOverageRefundDue;
+              await reverseCreditsForPayment(
+                refund.payment.id,
+                tx,
+                refund.amountPaise,
+                refund.payment.amount,
+                refund.id,
+              );
+              const notice = await notifyRefundProcessed(
+                refund.payment.userId,
+                {
+                  ...notificationScope(refund.payment.organizationId),
+                  amount: refund.amountPaise,
+                  currency: refund.currency,
+                  // The payer's money view, matching the other money bells.
+                  dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+                },
+                { tx, entityRef: `payment:${refund.payment.id}` },
+              );
+              bell = notice?.staged ?? null;
+              emails = await stageRefundProcessedEmail(tx, {
+                userId: refund.payment.userId,
+                paymentId: refund.payment.id,
+                amountPaise: refund.amountPaise,
+                currency: refund.currency,
+              });
+              return true;
             },
-            { tx, entityRef: `payment:${refund.payment.id}` },
-          );
-          bell = notice?.staged ?? null;
-          emails = await stageRefundProcessedEmail(tx, {
-            userId: refund.payment.userId,
-            paymentId: refund.payment.id,
-            amountPaise: refund.amountPaise,
-            currency: refund.currency,
-          });
-          return true;
-        });
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
+        );
         if (!claimed) {
           console.log(
             `♻️ Real-id refund ${refund.id} (${refund.refundId}) was settled by another writer; nothing to mark`,
@@ -456,9 +467,14 @@ async function reconcilePendingRefundsUnlocked(
           skippedCount++;
           continue;
         }
+        await refundMemberOverageSidePayment({
+          parentPaymentId: refund.payment.id,
+          due: overageDue,
+          initiatedByUserId: null,
+        });
         await attemptRefundNotice(bell, emails);
         console.log(
-          `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway; backstop cascade will complete it`,
+          `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway and cascaded`,
         );
         reconciledCount++;
       } else if (gatewayRefund.status === RefundStatus.FAILED) {
@@ -498,17 +514,7 @@ async function reconcilePendingRefundsUnlocked(
         if (claim.count === 1) {
           failedCount++;
           failedUnknownId++;
-          reportSentryMessage(
-            `Refund ${refund.id} moved to FAILED: gateway has no record of ${refund.refundId}`,
-            {
-              subsystem: "payments",
-              op: "refund-reconcile.unknown-id",
-              expected: true,
-              level: "warning",
-              tags: { provider: "razorpay" },
-              extra: { refundRowId: refund.id, refundId: refund.refundId },
-            },
-          );
+          failedUnknownRefunds.push(refund.id);
         }
         console.error(
           `❌ Real-id refund ${refund.id} (${refund.refundId}) unknown at gateway; marked FAILED`,
@@ -521,6 +527,10 @@ async function reconcilePendingRefundsUnlocked(
       console.error(`Error polling refund ${refund.id}:`, errorMessage);
     }
   }
+
+  // A poison row is a per-row failure in the summary, never a failed run.
+  const backstop = await redriveStrandedRefunds(opts.limit);
+  totalProcessed += backstop.scanned;
 
   // One expected warning per run listing the ids, never one per row per tick.
   if (retiredNoClient.length > 0) {
@@ -536,6 +546,45 @@ async function reconcilePendingRefundsUnlocked(
     );
   }
 
+  if (failedUnknownOrder.length > 0) {
+    reportSentryMessage(
+      `reconcile-pending-refunds: FAILED ${failedUnknownOrder.length} placeholder refund(s) whose order the gateway does not know`,
+      {
+        subsystem: "payments",
+        op: "refund-reconcile.unknown-order",
+        expected: true,
+        level: "warning",
+        tags: { provider: "razorpay" },
+        extra: { failed: failedUnknownOrder },
+      },
+    );
+  }
+
+  if (failedUnknownRefunds.length > 0) {
+    reportSentryMessage(
+      `reconcile-pending-refunds: FAILED ${failedUnknownRefunds.length} real-id refund(s) unknown at gateway`,
+      {
+        subsystem: "payments",
+        op: "refund-reconcile.unknown-id",
+        expected: true,
+        level: "warning",
+        tags: { provider: "razorpay" },
+        extra: { failed: failedUnknownRefunds },
+      },
+    );
+  }
+
+  if (ambiguousPlaceholders.length > 0) {
+    reportSentryMessage(
+      `Ambiguous placeholder refund(s) skipped in reconcile-pending-refunds (${ambiguousPlaceholders.length})`,
+      {
+        subsystem: "payments",
+        tags: { feature: "refund-reconcile" },
+        extra: { ambiguous: ambiguousPlaceholders },
+      },
+    );
+  }
+
   await notifyFailedRefundsUnlocked();
 
   return {
@@ -544,9 +593,11 @@ async function reconcilePendingRefundsUnlocked(
     reconciledCount,
     failedCount,
     skippedCount,
-    skippedFenced,
     failedUnknownId,
     failedGatewayDisabled,
+    redrivenCount: backstop.redriven,
+    redriveFailedCount: backstop.failed,
+    redriveDeadLettered: backstop.deadLettered.length,
     errors,
     timestamp: new Date().toISOString(),
   };
@@ -566,6 +617,15 @@ async function bindGatewayRefundToPlaceholder(
   placeholderRowId: string,
   gatewayRefund: RefundResult,
   existingMetadata: Record<string, unknown>,
+  cascade: {
+    paymentId: string;
+    amountPaise: number;
+    paymentAmountPaise?: number;
+    reason: string;
+    userId: string;
+    organizationId: string | null;
+    currency: string;
+  },
 ): Promise<"bound" | "superseded"> {
   const nextStatus = mapGatewayRefundStatus(gatewayRefund.status);
   const mergedMetadata = {
@@ -574,34 +634,84 @@ async function bindGatewayRefundToPlaceholder(
     reconciled_at: new Date().toISOString(),
   } as Prisma.InputJsonValue;
 
+  let bell: StagedTrigger | null = null;
+  let emails: StagedRecipientEmail[] = [];
+
   try {
-    await prisma.refund.update({
-      where: { id: placeholderRowId },
-      data: {
-        refundId: gatewayRefund.refundId,
-        status: nextStatus,
-        metadata: mergedMetadata,
-      },
+    const overageDue = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          bell = null;
+          emails = [];
+          const claim = await tx.refund.updateMany({
+            where: { id: placeholderRowId, status: RefundStatus.PENDING },
+            data: {
+              refundId: gatewayRefund.refundId,
+              status: nextStatus,
+              metadata: mergedMetadata,
+            },
+          });
+          if (claim.count === 0) return null;
+          if (nextStatus !== RefundStatus.SUCCEEDED) return null;
+          const result = await applyRefundCascade(tx, {
+            paymentId: cascade.paymentId,
+            refundId: placeholderRowId,
+            amountPaise: cascade.amountPaise,
+            reason: cascade.reason,
+            initiatedByUserId: null,
+          });
+          await reverseCreditsForPayment(
+            cascade.paymentId,
+            tx,
+            cascade.amountPaise,
+            cascade.paymentAmountPaise,
+            placeholderRowId,
+          );
+          const notice = await notifyRefundProcessed(
+            cascade.userId,
+            {
+              ...notificationScope(cascade.organizationId),
+              amount: cascade.amountPaise,
+              currency: cascade.currency,
+              dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+            },
+            { tx, entityRef: `payment:${cascade.paymentId}` },
+          );
+          bell = notice?.staged ?? null;
+          emails = await stageRefundProcessedEmail(tx, {
+            userId: cascade.userId,
+            paymentId: cascade.paymentId,
+            amountPaise: cascade.amountPaise,
+            currency: cascade.currency,
+          });
+          return result.memberOverageRefundDue;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
+    await refundMemberOverageSidePayment({
+      parentPaymentId: cascade.paymentId,
+      due: overageDue,
+      initiatedByUserId: null,
     });
+    await attemptRefundNotice(bell, emails);
     return "bound";
   } catch (error) {
-    if (
-      !(
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      )
-    ) {
+    if (!(
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    )) {
       throw error;
     }
   }
 
   const winner = await prisma.refund.findUnique({
     where: { refundId: gatewayRefund.refundId },
-    select: { id: true, paymentId: true },
+    select: { id: true, paymentId: true, metadata: true },
   });
   const placeholder = await prisma.refund.findUnique({
     where: { id: placeholderRowId },
-    select: { paymentId: true },
+    select: { paymentId: true, dedupeKey: true, metadata: true },
   });
   if (!winner || !placeholder || winner.paymentId !== placeholder.paymentId) {
     // Collision outside the same payment is an integrity fault, not a race.
@@ -609,7 +719,19 @@ async function bindGatewayRefundToPlaceholder(
       `Refund id collision across payments while reconciling ${placeholderRowId} -> ${gatewayRefund.refundId}`,
     );
   }
-  await prisma.refund.delete({ where: { id: placeholderRowId } });
+  await prisma.$transaction([
+    prisma.refund.delete({ where: { id: placeholderRowId } }),
+    prisma.refund.update({
+      where: { id: winner.id },
+      data: {
+        ...(placeholder.dedupeKey ? { dedupeKey: placeholder.dedupeKey } : {}),
+        metadata: {
+          ...prismaMetadataObject(winner.metadata),
+          ...prismaMetadataObject(placeholder.metadata),
+        } as Prisma.InputJsonValue,
+      },
+    }),
+  ]);
   return "superseded";
 }
 
@@ -624,6 +746,167 @@ async function attemptRefundNotice(
     MONEY_EMAIL_TYPES.REFUND_PROCESSED,
     EMAIL_BUDGET_MS.JOB,
   );
+}
+
+// A SUCCEEDED refund still uncascaded this long after its last write is stranded.
+const STRANDED_AFTER_MS = 10 * 60 * 1000;
+const STRANDED_BATCH = 10;
+/** Stops starting new re-drives once the pass has run this long. */
+const STRANDED_BUDGET_MS = 8_000;
+/** Failed re-drives after which a row leaves the cohort for an operator (as retry-auto-refunds). */
+const MAX_CASCADE_REDRIVE_ATTEMPTS = 3;
+/** The metadata key the cohort query below reads by its literal name. */
+const REDRIVE_ATTEMPTS_KEY = "cascadeRedriveAttempts";
+
+type StrandedPass = {
+  scanned: number;
+  redriven: number;
+  failed: number;
+  deadLettered: string[];
+};
+
+/**
+ * Backstop pass: re-drives the cascade of SUCCEEDED refunds whose cascade never
+ * committed. The cascadedAt claim inside applyRefundCascade keeps it idempotent.
+ */
+async function redriveStrandedRefunds(
+  limit: number | undefined,
+): Promise<StrandedPass> {
+  const startedAt = Date.now();
+  // Raw because a missing JSON key must count as zero attempts; credit
+  // restorations (amountPaise 0) settle in place and never cascade.
+  const due = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Refund"
+    WHERE status = 'SUCCEEDED'
+      AND "cascadedAt" IS NULL
+      AND "deletedAt" IS NULL
+      AND "amountPaise" > 0
+      AND "updatedAt" < ${new Date(startedAt - STRANDED_AFTER_MS)}
+      AND COALESCE(
+        CASE jsonb_typeof(metadata -> 'cascadeRedriveAttempts')
+          WHEN 'number' THEN (metadata ->> 'cascadeRedriveAttempts')::numeric
+        END, 0) < ${MAX_CASCADE_REDRIVE_ATTEMPTS}
+    ORDER BY "updatedAt" ASC, id ASC
+    LIMIT ${Math.min(limit ?? STRANDED_BATCH, STRANDED_BATCH)}`;
+  const pass: StrandedPass = {
+    scanned: 0,
+    redriven: 0,
+    failed: 0,
+    deadLettered: [],
+  };
+  if (due.length === 0) return pass;
+
+  const stranded = await prisma.refund.findMany({
+    where: { id: { in: due.map((r) => r.id) } },
+    select: {
+      id: true,
+      paymentId: true,
+      amountPaise: true,
+      reason: true,
+      metadata: true,
+      payment: { select: { amount: true } },
+    },
+    orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+  });
+
+  for (const refund of stranded) {
+    if (Date.now() - startedAt > STRANDED_BUDGET_MS) break;
+    pass.scanned++;
+    try {
+      const cascade = await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            const result = await applyRefundCascade(tx, {
+              paymentId: refund.paymentId,
+              refundId: refund.id,
+              amountPaise: refund.amountPaise,
+              reason: refund.reason ?? "Stranded refund re-driven",
+              initiatedByUserId: null,
+            });
+            await reverseCreditsForPayment(
+              refund.paymentId,
+              tx,
+              refund.amountPaise,
+              refund.payment.amount,
+              refund.id,
+            );
+            return result;
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 10_000,
+            timeout: 15_000,
+          },
+        ),
+      );
+      pass.redriven++;
+      await refundMemberOverageSidePayment({
+        parentPaymentId: refund.paymentId,
+        due: cascade.memberOverageRefundDue,
+        initiatedByUserId: null,
+      });
+    } catch (error) {
+      pass.failed++;
+      console.error(
+        `Error re-driving refund ${refund.id}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+      if (await recordRedriveFailure(refund)) {
+        pass.deadLettered.push(refund.id);
+      }
+    }
+  }
+
+  if (pass.deadLettered.length > 0) {
+    reportSentryMessage(
+      `reconcile-pending-refunds: ${pass.deadLettered.length} SUCCEEDED refund(s) dead-lettered after ${MAX_CASCADE_REDRIVE_ATTEMPTS} failed cascade re-drives`,
+      {
+        subsystem: "payments",
+        op: "refund-reconcile.cascade-dead-letter",
+        level: "error",
+        extra: { refundIds: pass.deadLettered },
+      },
+    );
+  }
+  return pass;
+}
+
+/**
+ * Bumps the attempt counter and updatedAt so a failing row rotates behind the
+ * rest of the cohort; returns whether this failure reached the cap.
+ */
+async function recordRedriveFailure(refund: {
+  id: string;
+  metadata: Prisma.JsonValue;
+}): Promise<boolean> {
+  const metadata: Prisma.JsonObject =
+    refund.metadata !== null &&
+    typeof refund.metadata === "object" &&
+    !Array.isArray(refund.metadata)
+      ? refund.metadata
+      : {};
+  const prior = metadata[REDRIVE_ATTEMPTS_KEY];
+  const attempts = (typeof prior === "number" ? prior : 0) + 1;
+  try {
+    const touched = await prisma.refund.updateMany({
+      where: {
+        id: refund.id,
+        status: RefundStatus.SUCCEEDED,
+        cascadedAt: null,
+      },
+      data: {
+        metadata: { ...metadata, [REDRIVE_ATTEMPTS_KEY]: attempts },
+        updatedAt: new Date(),
+      },
+    });
+    return touched.count === 1 && attempts >= MAX_CASCADE_REDRIVE_ATTEMPTS;
+  } catch (error) {
+    console.error(
+      `Error recording re-drive failure for refund ${refund.id}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
 }
 
 function prismaMetadataObject(metadata: unknown): Record<string, unknown> {

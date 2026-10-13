@@ -20,6 +20,7 @@ import {
   Timer,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSession } from "@/lib/auth-client";
 import { cn } from "@/utils/tailwind";
 import {
   createMicLevelMeter,
@@ -53,6 +54,7 @@ interface MeetingSetupProps {
   setIsSetupComplete: (value: boolean) => void;
   /** Stream call id, so the lobby can fetch this session's recording notice. */
   meetingId: string;
+  role?: "host" | "participant" | null;
 }
 
 const DeviceSelector = () => {
@@ -164,7 +166,11 @@ const DeviceSelector = () => {
   );
 };
 
-const MeetingSetup = ({ setIsSetupComplete, meetingId }: MeetingSetupProps) => {
+const MeetingSetup = ({
+  setIsSetupComplete,
+  meetingId,
+  role,
+}: MeetingSetupProps) => {
   const call = useCall();
   const { useMicrophoneState, useCameraState } = useCallStateHooks();
   const micState = useMicrophoneState();
@@ -188,9 +194,13 @@ const MeetingSetup = ({ setIsSetupComplete, meetingId }: MeetingSetupProps) => {
   // #1134 P1-7 — nobody reaches the call before seeing the recording notice.
   const consent = useRecordingConsent(meetingId);
 
-  const info = useSessionInfo();
+  const info = useSessionInfo(role);
   const clock = useSessionClock(info.startsAt, info.endsAt);
-  const scheduledAt = formatScheduledAt(info.startsAt);
+  const { data: session } = useSession();
+  const scheduledAt = formatScheduledAt(
+    info.startsAt,
+    session?.user?.timezone ?? null,
+  );
   const heading = sessionHeading(info);
   const subheading = sessionSubheading(info);
 

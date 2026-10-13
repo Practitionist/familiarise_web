@@ -50,9 +50,20 @@ jest.mock("../../schemas/checkout", () => ({
 }));
 
 const captureException = jest.fn();
+const metricsCount = jest.fn();
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => captureException(...args),
   captureMessage: jest.fn(),
+  // #1846 — the route now runs the checkout core inside a span and tags the
+  // scope with the gateway order id on the way out. A boundary mock that stops
+  // at captureException is not a smaller mock, it is a different module: the
+  // missing `startSpan` throws inside the handler, the catch answers 500, and
+  // every case below then asserts against an exception instead of the refusal
+  // it set up. Pass no span, as the sibling checkout suites do — the route reads
+  // it defensively (`span?.setAttribute`).
+  startSpan: (_opts: unknown, fn: () => unknown) => fn(),
+  getCurrentScope: () => ({ setTag: jest.fn() }),
+  metrics: { count: (...args: unknown[]) => metricsCount(...args) },
 }));
 
 jest.mock("../../lib/prisma", () => ({
@@ -66,7 +77,10 @@ import { Prisma } from "@prisma/client";
 import { POST } from "../../app/api/checkout/route";
 import { getErrorToast } from "../../lib/errors/mapping/payment-error-toast-map";
 import { replayByIdempotencyKey } from "../../lib/payments/operations/checkout-replay";
-import { BookingRuleError } from "../../lib/booking/booking-rule-error";
+import {
+  BookingRuleError,
+  SlotTakenError,
+} from "../../lib/booking/booking-rule-error";
 
 function checkoutRequest(body: Record<string, unknown> = {}) {
   return new NextRequest("https://x.test/api/checkout", {
@@ -160,6 +174,17 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
       errorType: "BOOKING_RULE_ERROR",
       code: "ENROLMENT_CLOSED",
     });
+  });
+
+  it("counts a taken 1:1 slot as SLOT_TAKEN without adding a code to the body", async () => {
+    handleCheckout.mockRejectedValue(new SlotTakenError());
+
+    const body = await (await POST(checkoutRequest())).json();
+
+    expect(metricsCount).toHaveBeenCalledWith("checkout.conflict", 1, {
+      attributes: { reason: "SLOT_TAKEN" },
+    });
+    expect(body.code).toBeUndefined();
   });
 
   it("still captures an unrecognised failure at Sentry's default level", async () => {

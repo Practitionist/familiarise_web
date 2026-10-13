@@ -365,7 +365,8 @@ export async function recordTdsReversal(
   // place (copy its FY+quarter); a filed original (reportedInForm26Q) is adjusted
   // against the current quarter's liability (IST-aware now), since a correction
   // statement for a filed quarter is a manual CA action, not an automated rewrite.
-  const filed = original.reportedInForm26Q === true;
+  const filed =
+    original.reportedInForm26Q === true || Boolean(original.challanNumber);
   const financialYear = filed
     ? getIndianFinancialYear()
     : original.financialYear;

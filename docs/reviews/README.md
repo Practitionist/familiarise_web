@@ -9,8 +9,8 @@ This folder is the reference: how the subsystem works, what every column means, 
 1. [01-architecture.md](01-architecture.md) — one review per relationship, anonymity, the right of reply, attributed removal, and the public read allowlist.
 2. [02-two-track-scoring.md](02-two-track-scoring.md) — the 1:1 and group tracks, the shrinkage formula, the constants, the snapshot, and the recompute.
 3. [03-edit-trail-and-disclosure.md](03-edit-trail-and-disclosure.md) — the revision trail and the "Edited" mark.
-4. [04-rating-cause-and-aggregate-exclusion.md](04-rating-cause-and-aggregate-exclusion.md) — ratings protection.
-5. [05-moderation-and-reports.md](05-moderation-and-reports.md) — reporting a review, soft-delete, and the staff surfaces.
+4. [04-rating-cause-and-aggregate-exclusion.md](04-rating-cause-and-aggregate-exclusion.md) — ratings protection: how the cause round-trips, the "Not counted in rating" label, and who is told.
+5. [05-moderation-and-reports.md](05-moderation-and-reports.md) — reporting a review, the `RPT-` reference, the admin-only and resolved-report gates, soft-delete, and the staff surfaces.
 6. [06-schema-reference.md](06-schema-reference.md) — every column and index of the four models.
 7. [07-deployment-and-deferred-work.md](07-deployment-and-deferred-work.md) — why the schema is additive-only, the push order, and what is deliberately deferred.
 
@@ -20,7 +20,7 @@ The table below lists the files the reviews subsystem is built from.
 
 | File                                                   | Purpose                                                                                                                                      |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/reviews.ts`                                       | The scoring constants, `heldOccurrence`, `trackForAppointment`, `recomputeConsultantRating`, `computePlatformPriors`, eligibility                  |
+| `lib/reviews.ts`                                       | The scoring constants, `heldOccurrence`, `trackForAppointment`, `recomputeConsultantRating`, `computePlatformPriors`, eligibility            |
 | `lib/reviews-display.ts`                               | `displayedScore` and `displayedScoreCount`, safe to import from a client component                                                           |
 | `lib/data/review-public.ts`                            | `publicReviewSelect`, the one projection every public read uses, and `sanitisePublicReview`                                                  |
 | `lib/data/review-privacy.ts`                           | `stripAnonymousReviewer`                                                                                                                     |

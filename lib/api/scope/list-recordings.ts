@@ -8,8 +8,9 @@
 
 import prisma from "@/lib/prisma";
 import type { Prisma, RecordingStatus } from "@prisma/client";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { Scope } from "./parse";
-import { assertNeverScope } from "./parse";
+import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
 
 export interface ListRecordingsParams {
   scope: Scope;
@@ -58,17 +59,15 @@ const recordingMetadataSelect = {
   organization: { select: { id: true, name: true, slug: true } },
 } satisfies Prisma.RecordingSelect;
 
-/** Participant arms only. Everything here reaches, or resolves to, the media. */
+/**
+ * Participant arms only. Never select `recordingUrl`, `storagePath` or Stream ids:
+ * playback goes through `GET /api/stream/recordings/[id]`, which applies the access rules.
+ */
 const recordingParticipantSelect = {
   ...recordingMetadataSelect,
-  recordingUrl: true,
-  storageUrl: true,
-  storagePath: true,
   thumbnailUrl: true,
   previewClipUrl: true,
   previewClipDuration: true,
-  streamRecordingId: true,
-  streamCallId: true,
   streamUrlExpiresAt: true,
   storageType: true,
   fileSize: true,
@@ -99,9 +98,33 @@ export interface ListRecordingsResult {
   perPage: number;
 }
 
-function buildWhere(
-  params: ListRecordingsParams,
-): Prisma.RecordingWhereInput {
+import { buildUserAppointmentAccessOr } from "./list-documents";
+
+/** Own appointments, plus every run of a shared-recordings webinar plan the caller holds a live seat in. */
+function recordingAppointmentAccessOr(
+  userId: string,
+): Prisma.AppointmentWhereInput[] {
+  return [
+    ...buildUserAppointmentAccessOr(userId),
+    {
+      webinar: {
+        webinarPlan: {
+          shareRecordingsWithAllAttendees: true,
+          webinars: {
+            some: {
+              appointment: {
+                // Same seat predicate as playback: a released (CANCELLED/REFUNDED) seat sees nothing.
+                participants: { some: liveParticipant(userId) },
+              },
+            },
+          },
+        },
+      },
+    },
+  ];
+}
+
+function buildWhere(params: ListRecordingsParams): Prisma.RecordingWhereInput {
   const base: Prisma.RecordingWhereInput = {
     ...(params.status && { status: params.status }),
   };
@@ -112,18 +135,30 @@ function buildWhere(
       meeting: {
         occurrence: {
           appointment: {
-            OR: [
-              { consultation: { requestedBy: { userId: params.userId } } },
-              { subscription: { requestedBy: { userId: params.userId } } },
-              { trial: { consulteeProfile: { userId: params.userId } } },
-            ],
+            OR: recordingAppointmentAccessOr(params.userId),
           },
         },
       },
     };
   }
   if (params.scope.kind === "org") {
-    return { ...base, organizationId: params.scope.orgId };
+    return {
+      ...base,
+      organizationId: params.scope.orgId,
+      // Read-level twin of the DEACTIVATED refusal in `resolveOrgScope`, for
+      // the reason that one is opt-in: this query has no org row in scope to
+      // test, and the synchronous resolver cannot learn the org's status from
+      // the membership rows the caller pre-fetched. An ACTIVE membership
+      // outlives the org the teardown stamps DEACTIVATED, so without this a
+      // torn-down org's recordings — other people's sessions — keep serving
+      // through the personal `?orgScope=` door. SUSPENDED stays readable: its
+      // OWNER has to be able to find whatever got it suspended.
+      //
+      // Rides the denormalized `organizationId` the org arm already filters on,
+      // so the relation can never be NULL here and `is` cannot drop a matching
+      // row — same trade as `list-appointments.ts`.
+      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+    };
   }
   // `orgMember` = ONE member's own rows within an org. It must never fall
   // through to the unfiltered `base` below: that arm is the `all` scope
@@ -134,46 +169,11 @@ function buildWhere(
     return {
       ...base,
       organizationId: params.scope.orgId,
+      organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
       meeting: {
         occurrence: {
           appointment: {
-            OR: [
-              { consultation: { requestedBy: { userId: params.scope.userId } } },
-              { subscription: { requestedBy: { userId: params.scope.userId } } },
-              {
-                trial: {
-                  consulteeProfile: { userId: params.scope.userId },
-                },
-              },
-              {
-                consultation: {
-                  consultationPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                subscription: {
-                  subscriptionPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                webinar: {
-                  webinarPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-              {
-                class: {
-                  classPlan: {
-                    consultantProfile: { userId: params.scope.userId },
-                  },
-                },
-              },
-            ],
+            OR: recordingAppointmentAccessOr(params.scope.userId),
           },
         },
       },

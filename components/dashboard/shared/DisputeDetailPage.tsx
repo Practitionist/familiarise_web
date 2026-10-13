@@ -3,11 +3,9 @@
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { useState } from "react";
 import Link from "next/link";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
@@ -25,7 +23,6 @@ import {
   FileText,
   Lock,
 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import { RazorpayEvidenceForm } from "./RazorpayEvidenceForm";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { DisputeDetails } from "@/types/disputes";
@@ -40,7 +37,13 @@ const getStatusColor = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+    case "CHARGE_REFUNDED":
+      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
     default:
       return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
   }
@@ -49,6 +52,7 @@ const getStatusColor = (status: string) => {
 const getStatusIcon = (status: string) => {
   switch (status.toUpperCase()) {
     case "WON":
+    case "CHARGE_REFUNDED":
       return <CheckCircle className="h-4 w-4" />;
     case "LOST":
       return <XCircle className="h-4 w-4" />;
@@ -56,7 +60,11 @@ const getStatusIcon = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return <AlertTriangle className="h-4 w-4" />;
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return <Clock className="h-4 w-4" />;
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return <AlertCircle className="h-4 w-4" />;
     default:
       return null;
   }
@@ -74,7 +82,7 @@ const formatDate = (dateString: string) => {
 
 /** #1771 K-7 — a Razorpay draft sits in `evidence` with no submission stamp. */
 const isRazorpayDraft = (d: {
-  evidence: unknown;
+  evidence?: unknown;
   evidenceSubmittedAt?: string | null;
 }) =>
   !d.evidenceSubmittedAt &&
@@ -101,24 +109,6 @@ async function fetchDisputeDetails(
   return response.json() as Promise<DisputeDetails>;
 }
 
-async function submitEvidence(data: {
-  disputeId: string;
-  evidence: Record<string, string | undefined>;
-}): Promise<DisputeDetails> {
-  const response = await fetch("/api/payments/disputes", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || "Failed to submit evidence");
-  }
-
-  return response.json() as Promise<DisputeDetails>;
-}
-
 export interface DisputeDetailPageProps {
   /** Dispute ID from URL params */
   disputeId: string;
@@ -136,18 +126,7 @@ export function DisputeDetailPage({
   // #1527 — links stay in the viewer's tree; evidence is `disputes.manage`.
   const { basePath, can } = useBackofficeCapability();
   const allowEvidenceSubmission = can("disputes.manage");
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
 
-  const [customerName, setCustomerName] = useState("");
-  const [customerEmail, setCustomerEmail] = useState("");
-  const [productDescription, setProductDescription] = useState("");
-  const [customerSignature, setCustomerSignature] = useState("");
-  const [refundPolicy, setRefundPolicy] = useState("");
-  const [refundPolicyDisclosure, setRefundPolicyDisclosure] = useState("");
-  const [cancellationPolicy, setCancellationPolicy] = useState("");
-  const [cancellationRebuttal, setCancellationRebuttal] = useState("");
-  const [additionalEvidence, setAdditionalEvidence] = useState("");
   const [showEvidenceForm, setShowEvidenceForm] = useState(false);
 
   const {
@@ -159,48 +138,6 @@ export function DisputeDetailPage({
     queryFn: () => fetchDisputeDetails(apiEndpoint, disputeId),
     staleTime: 30 * 1000,
   });
-
-  const evidenceMutation = useMutation({
-    mutationFn: submitEvidence,
-    onSuccess: () => {
-      toast({
-        title: "Evidence Submitted",
-        description: "Dispute evidence has been submitted successfully.",
-      });
-      queryClient.invalidateQueries({
-        queryKey: [queryKeyPrefix, disputeId],
-      });
-      setShowEvidenceForm(false);
-    },
-    onError: (err: Error) => {
-      toast({
-        title: "Submission Failed",
-        description: err.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleSubmitEvidence = () => {
-    if (!dispute) return;
-
-    const evidence = {
-      customerName: customerName || undefined,
-      customerEmailAddress: customerEmail || undefined,
-      productDescription: productDescription || undefined,
-      customerSignature: customerSignature || undefined,
-      refundPolicy: refundPolicy || undefined,
-      refundPolicyDisclosure: refundPolicyDisclosure || undefined,
-      cancellationPolicy: cancellationPolicy || undefined,
-      cancellationRebuttal: cancellationRebuttal || undefined,
-      uncategorizedText: additionalEvidence || undefined,
-    };
-
-    evidenceMutation.mutate({
-      disputeId: dispute.disputeId,
-      evidence,
-    });
-  };
 
   if (error) {
     return (
@@ -235,11 +172,11 @@ export function DisputeDetailPage({
   const needsResponse =
     dispute.status === "NEEDS_RESPONSE" ||
     dispute.status === "WARNING_NEEDS_RESPONSE";
+  // Only Razorpay disputes awaiting response accept evidence submissions.
   const canSubmitEvidence =
     allowEvidenceSubmission &&
-    ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE", "UNDER_REVIEW"].includes(
-      dispute.status,
-    );
+    dispute.paymentGateway === "RAZORPAY" &&
+    dispute.status === "NEEDS_RESPONSE";
 
   return (
     <div className="space-y-6">
@@ -285,9 +222,9 @@ export function DisputeDetailPage({
           <AlertDescription>
             This dispute is due{" "}
             {daysUntilDue === 0 ? "today" : `in ${daysUntilDue} days`}.
-            {allowEvidenceSubmission
-              ? " Submit evidence as soon as possible."
-              : " Please escalate to an admin immediately for evidence submission."}
+            {canSubmitEvidence && " Submit evidence as soon as possible."}
+            {!allowEvidenceSubmission &&
+              " Please escalate to an admin immediately for evidence submission."}
           </AlertDescription>
         </Alert>
       )}
@@ -449,6 +386,52 @@ export function DisputeDetailPage({
       </div>
 
       {/* Existing Evidence */}
+      {dispute.evidencePack && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <FileText className="h-5 w-5 text-emerald-600" />
+              Evidence Pack (Read-Only Summary)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-zinc-500">Booking</p>
+                <p className="font-medium">
+                  {dispute.evidencePack.booking
+                    ? `${dispute.evidencePack.booking.appointmentType} (${dispute.evidencePack.booking.appointmentId.slice(0, 8)})`
+                    : "No linked booking"}
+                </p>
+              </div>
+              <div>
+                <p className="text-zinc-500">Occurrences</p>
+                <p className="font-medium">
+                  {dispute.evidencePack.occurrences.completedCount} of{" "}
+                  {dispute.evidencePack.occurrences.total} completed
+                </p>
+              </div>
+              <div>
+                <p className="text-zinc-500">Attendance Telemetry</p>
+                <p className="font-medium">
+                  {dispute.evidencePack.attendance.presentCount} record(s)
+                </p>
+              </div>
+              <div>
+                <p className="text-zinc-500">Support History</p>
+                <p className="font-medium">
+                  {dispute.evidencePack.supportHistory.ticketCount} thread(s) (
+                  {dispute.evidencePack.supportHistory.openCount} open)
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-zinc-500">
+              {dispute.evidencePack.attendance.summary}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
@@ -494,6 +477,16 @@ export function DisputeDetailPage({
                 </pre>
               </div>
             </div>
+          ) : dispute.evidenceSubmittedAt ? (
+            // Evidence is withheld from viewers without disputes.manage; its submission is not.
+            <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
+              <FileText className="h-12 w-12 mb-4 text-zinc-300" />
+              <p className="font-medium">
+                Evidence was submitted on{" "}
+                {formatDate(dispute.evidenceSubmittedAt)}. Only admins can view
+                it.
+              </p>
+            </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-8 text-zinc-500">
               <FileText className="h-12 w-12 mb-4 text-zinc-300" />
@@ -509,146 +502,13 @@ export function DisputeDetailPage({
       </Card>
 
       {/* #1771 K-7 — Razorpay evidence goes through its own form. */}
-      {showEvidenceForm &&
-        canSubmitEvidence &&
-        dispute.paymentGateway === "RAZORPAY" && (
-          <RazorpayEvidenceForm
-            disputeId={dispute.id}
-            dueBy={dispute.dueBy}
-            queryKey={[queryKeyPrefix, disputeId]}
-          />
-        )}
-
-      {/* Evidence Submission Form (admin only) */}
-      {showEvidenceForm &&
-        canSubmitEvidence &&
-        dispute.paymentGateway !== "RAZORPAY" && (
-          <Card className="border-blue-200">
-            <CardHeader>
-              <CardTitle className="text-blue-600">Submit Evidence</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="customerName">Customer Name</Label>
-                  <Textarea
-                    id="customerName"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    rows={2}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="customerEmail">Customer Email</Label>
-                  <Textarea
-                    id="customerEmail"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    rows={2}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="productDescription">
-                  Product/Service Description
-                </Label>
-                <Textarea
-                  id="productDescription"
-                  value={productDescription}
-                  onChange={(e) => setProductDescription(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="customerSignature">
-                  Customer Signature/Acknowledgment
-                </Label>
-                <Textarea
-                  id="customerSignature"
-                  value={customerSignature}
-                  onChange={(e) => setCustomerSignature(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="refundPolicy">Refund Policy</Label>
-                <Textarea
-                  id="refundPolicy"
-                  value={refundPolicy}
-                  onChange={(e) => setRefundPolicy(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="refundPolicyDisclosure">
-                  Refund Policy Disclosure
-                </Label>
-                <Textarea
-                  id="refundPolicyDisclosure"
-                  value={refundPolicyDisclosure}
-                  onChange={(e) => setRefundPolicyDisclosure(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="cancellationPolicy">Cancellation Policy</Label>
-                <Textarea
-                  id="cancellationPolicy"
-                  value={cancellationPolicy}
-                  onChange={(e) => setCancellationPolicy(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="cancellationRebuttal">
-                  Cancellation Rebuttal
-                </Label>
-                <Textarea
-                  id="cancellationRebuttal"
-                  value={cancellationRebuttal}
-                  onChange={(e) => setCancellationRebuttal(e.target.value)}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="additionalEvidence">
-                  Additional Evidence/Notes
-                </Label>
-                <Textarea
-                  id="additionalEvidence"
-                  value={additionalEvidence}
-                  onChange={(e) => setAdditionalEvidence(e.target.value)}
-                  rows={4}
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  onClick={handleSubmitEvidence}
-                  disabled={evidenceMutation.isPending}
-                >
-                  {evidenceMutation.isPending
-                    ? "Submitting..."
-                    : "Submit Evidence"}
-                </Button>
-                <Button
-                  onClick={() => setShowEvidenceForm(false)}
-                  variant="outline"
-                  disabled={evidenceMutation.isPending}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+      {showEvidenceForm && canSubmitEvidence && (
+        <RazorpayEvidenceForm
+          disputeId={dispute.id}
+          dueBy={dispute.dueBy}
+          queryKey={[queryKeyPrefix, disputeId]}
+        />
+      )}
 
       {/* Gateway-specific Notes (admin only) */}
       {allowEvidenceSubmission && (
@@ -657,10 +517,6 @@ export function DisputeDetailPage({
             <CardTitle>Important Notes</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-gray-600">
-            <p>
-              • Stripe disputes: You can submit evidence directly through this
-              form.
-            </p>
             <p>
               • Razorpay disputes: upload the documents and save a draft or
               submit it here; Razorpay only takes evidence while a dispute is

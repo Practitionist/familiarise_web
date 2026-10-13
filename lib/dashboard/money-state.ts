@@ -13,10 +13,15 @@
  * `lib/booking/transitions.ts` owns that; this only names what the rows say.
  */
 
-import { format } from "date-fns";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { toneClass, type Tone } from "@/lib/ui/tone";
-import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import {
+  CONSULTEE_JOIN_WINDOW_MS,
+  REJOIN_GRACE_MS,
+  isDeadOccurrence,
+  isDeliberateEnd,
+} from "@/lib/appointments/occurrences";
 import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
 import { paymentDisplayStatus } from "@/lib/appointments/seat-payments";
@@ -33,26 +38,30 @@ export type Viewer = "CONSULTANT" | "CONSULTEE" | "ORG_ADMIN";
 // The tones moved to lib/ui/tone.ts (#1527); re-exported so importers keep working.
 export { TONE_CLASS, type Tone } from "@/lib/ui/tone";
 
-export type BookingStateKind =
-  | "REQUESTED"
-  | "AWAITING_PAYMENT"
-  | "PAYMENT_LAPSED"
-  | "CONFIRMED"
-  | "AWAITING_ALLOCATION"
-  | "COMPLETED"
-  | "CANCELLED"
-  | "DECLINED";
+export const BOOKING_STATE_KINDS = [
+  "REQUESTED",
+  "AWAITING_PAYMENT",
+  "PAYMENT_LAPSED",
+  "CONFIRMED",
+  "AWAITING_ALLOCATION",
+  "COMPLETED",
+  "CANCELLED",
+  "DECLINED",
+] as const;
+export type BookingStateKind = (typeof BOOKING_STATE_KINDS)[number];
 
-export type MoneyStateKind =
-  | "NOT_DUE"
-  | "DUE"
-  | "PAID"
-  | "REFUND_PENDING"
-  | "REFUNDED"
-  | "PARTIALLY_REFUNDED"
-  | "SPONSORED"
-  | "DISPUTED"
-  | "FREE";
+export const MONEY_STATE_KINDS = [
+  "NOT_DUE",
+  "DUE",
+  "PAID",
+  "REFUND_PENDING",
+  "REFUNDED",
+  "PARTIALLY_REFUNDED",
+  "SPONSORED",
+  "DISPUTED",
+  "FREE",
+] as const;
+export type MoneyStateKind = (typeof MONEY_STATE_KINDS)[number];
 
 export type NextActionKind =
   | "APPROVE_OR_DECLINE"
@@ -114,6 +123,10 @@ export type OccurrenceInput = {
   isTentative: boolean;
   completionStatus?: string | null;
   deletedAt?: Date | string | null;
+  meeting?: {
+    endedAt: Date | string | null;
+    endedReason?: string | null;
+  } | null;
 };
 
 export type PaymentInput = PaymentDisplayLike & {
@@ -158,12 +171,22 @@ export interface BookingPresentationInput {
   sponsorOrgName: string | null;
   /** When the held slots or the pay link release; null when nothing is held. */
   holdExpiresAt: Date | string | null;
+  /** Optional explicit IANA timezone when derived outside browser runtime. */
+  viewerZone?: string | null;
   /**
    * #1760 — the EXPIRED history edge tells a lapsed pay link apart from a
    * request nobody answered. Optional: a read without history falls back to
    * "a pay link was minted".
+   *
+   * `reason` is the audit attribution the transition wrote (lib/booking/
+   * transitions.ts `HistoryMeta.reason`), and it is the only thing that
+   * distinguishes the several writers of one terminal status — CANCELLED is
+   * written by the buyer's abandon, by a decline's restore and by the
+   * consultant's withdraw-approval alike. A reader that selects `fromStatus`
+   * and `toStatus` without it cannot tell them apart, which is why the readers
+   * widen their `where` as well as their `select` where a reason matters.
    */
-  history?: { fromStatus: string; toStatus: string }[];
+  history?: { fromStatus: string; toStatus: string; reason?: string | null }[];
   /** Plan price for the not-due arithmetic line; null when the read lacks it. */
   plan?: {
     pricePaise: bigint | number | string;
@@ -207,6 +230,8 @@ export interface DeriveOptions {
   now?: Date;
   /** How early before `startsAt` a session counts as joinable. */
   joinWindowMs?: number;
+  /** Explicit IANA timezone when rendered server-side outside browser runtime. */
+  viewerZone?: string | null;
 }
 
 const toDate = (v: Date | string): Date =>
@@ -306,14 +331,30 @@ export function toneBadge(tone: Tone, label: string): StatusBadgeStyle {
 
 const money = (paise: bigint | number | string, currency: string) =>
   formatCurrencyAmount(Number(paise), currency);
-const day = (d: Date) => format(d, "EEE d MMM");
-const dayTime = (d: Date) => format(d, "EEE d MMM HH:mm");
+const defaultViewerZone = () =>
+  (typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : undefined) ?? "UTC";
+const day = (d: Date, zone?: string | null) =>
+  formatInViewerZone(d, zone ?? defaultViewerZone(), "EEE d MMM");
+const dayTime = (d: Date, zone?: string | null) =>
+  formatInViewerZone(d, zone ?? defaultViewerZone(), "EEE d MMM HH:mm");
 
 function occurrenceEnd(o: OccurrenceInput): number {
   return (
     toDateOrNull(o.endsAt) ??
     new Date(toDate(o.startsAt).getTime() + 60 * 60 * 1000)
   ).getTime();
+}
+
+function isOccurrencePastGrace(o: OccurrenceInput, now: Date): boolean {
+  if (isDeliberateEnd(o.meeting)) return true;
+  const status = normalizeStatus(o.completionStatus);
+  if (status === "COMPLETED" || status === "VOIDED") {
+    return occurrenceEnd(o) < now.getTime();
+  }
+  const graceMs = o.endsAt ? REJOIN_GRACE_MS : 0;
+  return occurrenceEnd(o) + graceMs < now.getTime();
 }
 
 /** Held / Released / Scheduled / Completed / Cancelled — the schedule words. */
@@ -342,7 +383,7 @@ function rowLabel(
       ? `Held · ${Math.floor(hours / 24)}d`
       : `Held · ${Math.max(hours, 1)}h`;
   }
-  return occurrenceEnd(o) < now.getTime() ? "Completed" : "Scheduled";
+  return isOccurrencePastGrace(o, now) ? "Completed" : "Scheduled";
 }
 
 function deriveBooking(
@@ -351,6 +392,7 @@ function deriveBooking(
   paid: boolean,
   holdExpiresAt: Date | null,
   now: Date,
+  zone?: string | null,
 ): { state: BookingStateKind; label?: string; why: string } {
   const status = normalizeStatus(input.request?.status);
   const kind = normalizeStatus(input.request?.kind || input.appointmentType);
@@ -358,8 +400,34 @@ function deriveBooking(
   const p = input.names.payer;
   if (status === "REJECTED")
     return { state: "DECLINED", why: `${c} declined this request.` };
-  if (status === "CANCELLED")
-    return { state: "CANCELLED", why: "This booking was cancelled." };
+  if (status === "CANCELLED") {
+    // #1846 — the consultant's Withdraw approval ends a live, still-payable
+    // approval in CANCELLED (`lib/booking/lapse-approved-request.ts`), where it
+    // used to land on EXPIRED and so arrive here through the lapsed-pay-link
+    // arm below. CANCELLED is the honest word for it, but the generic sentence
+    // — "This booking was cancelled." — then hides WHO ended a booking the buyer
+    // is looking for an explanation of, and reads as though they or the
+    // consultant had cancelled a paid session. So the withdrawal is named.
+    //
+    // Read off the history edge's `reason` rather than inferred from the
+    // status: CANCELLED is also written by the buyer's abandon and by a
+    // decline's restore, and guessing between them would put a false accusation
+    // in front of one of them. `WITHDRAWN_BY_CONSULTANT` is the `LapseReason`
+    // the writer passes; the literal is repeated rather than imported because
+    // importing that module would pull prisma into a client-safe file.
+    const withdrawn = input.history?.some(
+      (h) =>
+        normalizeStatus(h.toStatus) === "CANCELLED" &&
+        h.reason === "WITHDRAWN_BY_CONSULTANT",
+    );
+    return withdrawn
+      ? {
+          state: "CANCELLED",
+          label: "Withdrawn",
+          why: `${c} withdrew this approval before it was paid, so the held times were released. No payment was taken.`,
+        }
+      : { state: "CANCELLED", why: "This booking was cancelled." };
+  }
   if (status === "EXPIRED") {
     const edges =
       input.history?.filter((h) => normalizeStatus(h.toStatus) === "EXPIRED") ??
@@ -390,7 +458,7 @@ function deriveBooking(
     const by = allocateDeadline(input.payments);
     return {
       state: "AWAITING_ALLOCATION",
-      why: `Paid · ${c} has until ${by ? dayTime(by) : "48 h after payment"} to schedule cycle 1.`,
+      why: `Paid · ${c} has until ${by ? dayTime(by, zone) : "48 h after payment"} to schedule cycle 1.`,
     };
   }
   if (wait === "NEXT_CYCLE") {
@@ -442,7 +510,7 @@ function deriveBooking(
             why: "The slots are held until the booking is paid.",
           };
     }
-    if (live.every((o) => occurrenceEnd(o) < now.getTime())) {
+    if (live.every((o) => isOccurrencePastGrace(o, now))) {
       return { state: "COMPLETED", why: "Every session has been held." };
     }
     const noun =
@@ -459,6 +527,7 @@ function deriveMoney(
   booking: BookingStateKind,
   viewer: Viewer,
   holdExpiresAt: Date | null,
+  zone?: string | null,
 ): MoneyState {
   const c = input.names.consultant;
   const p = input.names.payer;
@@ -490,7 +559,11 @@ function deriveMoney(
 
   if (paid) {
     const rail = paymentRailLabel(paid);
-    const when = format(toDate(paid.createdAt), "d MMM yyyy");
+    const when = formatInViewerZone(
+      toDate(paid.createdAt),
+      zone ?? defaultViewerZone(),
+      "d MMM yyyy",
+    );
     if (
       input.disputes.some((d) => OPEN_DISPUTES.has(normalizeStatus(d.status)))
     ) {
@@ -560,7 +633,7 @@ function deriveMoney(
   if (booking === "AWAITING_PAYMENT" && pending) {
     const rail = paymentRailLabel(pending);
     const until = holdExpiresAt
-      ? ` · link valid until ${dayTime(holdExpiresAt)}`
+      ? ` · link valid until ${dayTime(holdExpiresAt, zone)}`
       : "";
     return build(
       "DUE",
@@ -569,7 +642,7 @@ function deriveMoney(
     );
   }
   if (booking === "PAYMENT_LAPSED") {
-    const on = holdExpiresAt ? ` on ${day(holdExpiresAt)}` : "";
+    const on = holdExpiresAt ? ` on ${day(holdExpiresAt, zone)}` : "";
     return build(
       "NOT_DUE",
       "Not charged",
@@ -633,7 +706,7 @@ function deriveNext(
     return (
       !o.isTentative &&
       start - joinWindowMs <= now.getTime() &&
-      now.getTime() <= occurrenceEnd(o)
+      !isOccurrencePastGrace(o, now)
     );
   });
   if (viewer === "CONSULTANT") {
@@ -697,6 +770,7 @@ function deriveTimeline(
   viewer: Viewer,
   paidAt: Date | null,
   holdExpiresAt: Date | null,
+  zone?: string | null,
 ): TimelineEvent[] {
   const c = input.names.consultant;
   const p = input.names.payer;
@@ -737,7 +811,7 @@ function deriveTimeline(
       ? moneyState.state === "SPONSORED"
         ? `Sponsored by ${input.sponsorOrgName ?? "the organisation"}`
         : "Paid"
-      : `${cap(payer)} pay${payer === "you" ? "" : "s"}${booking === "AWAITING_PAYMENT" && holdExpiresAt ? ` (link valid until ${dayTime(holdExpiresAt)})` : " (link valid 24 h)"}`,
+      : `${cap(payer)} pay${payer === "you" ? "" : "s"}${booking === "AWAITING_PAYMENT" && holdExpiresAt ? ` (link valid until ${dayTime(holdExpiresAt, zone)})` : " (link valid 24 h)"}`,
     done: paidDone,
   };
   const single = ["CONSULTATION", "TRIAL", "WEBINAR"].includes(
@@ -862,20 +936,21 @@ export function deriveBookingPresentation(
   options: DeriveOptions = {},
 ): BookingPresentation {
   const now = options.now ?? new Date();
-  const joinWindowMs = options.joinWindowMs ?? 10 * 60 * 1000;
+  const joinWindowMs = options.joinWindowMs ?? CONSULTEE_JOIN_WINDOW_MS;
+  const zone = options.viewerZone ?? input.viewerZone ?? null;
   const live = input.occurrences.filter((o) => !isDeadOccurrence(o));
   const paidRow =
     input.payments.find((x) => x.paymentStatus === "SUCCEEDED") ?? null;
   const holdExpiresAt = toDateOrNull(input.holdExpiresAt);
 
-  const b = deriveBooking(input, live, !!paidRow, holdExpiresAt, now);
+  const b = deriveBooking(input, live, !!paidRow, holdExpiresAt, now, zone);
   const bookingState: BookingState = {
     state: b.state,
     label: b.label ?? BOOKING_LABEL[b.state].label,
     tone: BOOKING_LABEL[b.state].tone,
     why: b.why,
   };
-  const moneyState = deriveMoney(input, b.state, viewer, holdExpiresAt);
+  const moneyState = deriveMoney(input, b.state, viewer, holdExpiresAt, zone);
   const nextAction = deriveNext(
     input,
     b.state,
@@ -893,6 +968,7 @@ export function deriveBookingPresentation(
     viewer,
     paidRow ? toDate(paidRow.createdAt) : null,
     holdExpiresAt,
+    zone,
   );
   // Money in but nothing confirmed: rows still tentative, or a single-sitting
   // kind with no live row at all (a subscription/class allocates lazily).

@@ -91,14 +91,14 @@ export const STRANDED_ERROR = "stranded (no heartbeat)";
 
 export interface MessagingRetentionPruneResult {
   failedEmailsBodyScrubbed: number;
+  failedEmailBatchesScrubbed: number;
   failedEmailsPruned: number;
   failedEmailBatchesPruned: number;
   notificationOutboxPruned: number;
   emailEventsPruned: number;
 }
 
-export interface SystemJobExecutionPruneResult
-  extends Partial<MessagingRetentionPruneResult> {
+export interface SystemJobExecutionPruneResult extends Partial<MessagingRetentionPruneResult> {
   pruned: number;
   stranded: number;
   retentionCutoff: string;
@@ -122,9 +122,8 @@ async function deleteByIdBatches(
 }
 
 /**
- * #1926 §9 / #1876 §2 — bounded retention pruning for messaging outbox and
- * event tables (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`,
- * `EmailEvent`).
+ * Bounded retention pruning for messaging outbox and event tables
+ * (`FailedEmail`, `FailedEmailBatch`, `NotificationOutbox`, `EmailEvent`).
  */
 export async function pruneMessagingRetentionTables(
   now: Date = new Date(),
@@ -156,6 +155,36 @@ export async function pruneMessagingRetentionTables(
     }
   }
 
+  let failedEmailBatchesScrubbed = 0;
+  if (
+    typeof prisma.failedEmailBatch?.findMany === "function" &&
+    typeof prisma.failedEmailBatch?.updateMany === "function"
+  ) {
+    for (;;) {
+      const toScrub = await prisma.failedEmailBatch.findMany({
+        where: {
+          status: "SENT",
+          OR: [
+            { sentAt: { lt: scrubBefore } },
+            { sentAt: null, updatedAt: { lt: scrubBefore } },
+          ],
+          payload: { not: [] },
+        },
+        select: { id: true },
+        take: OUTBOX_BATCH_SIZE,
+      });
+      if (toScrub.length === 0) break;
+      const updated = await prisma.failedEmailBatch.updateMany({
+        where: { id: { in: toScrub.map((r) => r.id) } },
+        data: { payload: [] },
+      });
+      failedEmailBatchesScrubbed += updated.count;
+      if (updated.count === 0 || toScrub.length < OUTBOX_BATCH_SIZE) break;
+    }
+  }
+
+  // Prune SENT rows using `sentAt` (falling back to `updatedAt` when `sentAt` is null)
+  // so 7-day payload scrubbing does not delay 30-day deletion to Day 37.
   const failedEmailsPruned =
     typeof prisma.failedEmail?.findMany === "function"
       ? await deleteByIdBatches(
@@ -163,7 +192,12 @@ export async function pruneMessagingRetentionTables(
             prisma.failedEmail.findMany({
               where: {
                 OR: [
-                  { status: "SENT", updatedAt: { lt: sentBefore } },
+                  { status: "SENT", sentAt: { lt: sentBefore } },
+                  {
+                    status: "SENT",
+                    sentAt: null,
+                    updatedAt: { lt: sentBefore },
+                  },
                   {
                     status: "DEAD_LETTER",
                     updatedAt: { lt: deadLetterBefore },
@@ -187,7 +221,12 @@ export async function pruneMessagingRetentionTables(
             prisma.failedEmailBatch.findMany({
               where: {
                 OR: [
-                  { status: "SENT", updatedAt: { lt: sentBefore } },
+                  { status: "SENT", sentAt: { lt: sentBefore } },
+                  {
+                    status: "SENT",
+                    sentAt: null,
+                    updatedAt: { lt: sentBefore },
+                  },
                   {
                     status: "DEAD_LETTER",
                     updatedAt: { lt: deadLetterBefore },
@@ -246,6 +285,7 @@ export async function pruneMessagingRetentionTables(
 
   return {
     failedEmailsBodyScrubbed,
+    failedEmailBatchesScrubbed,
     failedEmailsPruned,
     failedEmailBatchesPruned,
     notificationOutboxPruned,
@@ -300,7 +340,8 @@ async function pruneSystemJobExecutionsUnlocked(): Promise<SystemJobExecutionPru
 
   console.log(
     `[prune-system-job-executions] stranded=${closed.count} pruned=${pruned} ` +
-      `failedEmailsScrubbed=${messaging.failedEmailsBodyScrubbed} ` +
+      `failedEmailsBodyScrubbed=${messaging.failedEmailsBodyScrubbed} ` +
+      `failedEmailBatchesScrubbed=${messaging.failedEmailBatchesScrubbed} ` +
       `failedEmailsPruned=${messaging.failedEmailsPruned} ` +
       `failedEmailBatchesPruned=${messaging.failedEmailBatchesPruned} ` +
       `notificationOutboxPruned=${messaging.notificationOutboxPruned} ` +

@@ -121,6 +121,7 @@ export function ConsultationDetails({
               brochure={{ planId: plan.id, planType: "consultations" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
+              filesIncluded={plan.materials}
               faqs={plan.faqs}
               topics={plan.topics}
             />

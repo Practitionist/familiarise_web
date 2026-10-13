@@ -40,6 +40,8 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "settle-cancelled-sessions",
   // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
   "retry-auto-refunds",
+  // Orphan auto-heal refunds stranded captures through the refund front door.
+  "reconcile-orphaned-payments",
   // Added by the wave-5 sweep: each of these either moves money directly or
   // mutates the org contract/program state the checkout sponsorship resolver
   // reads, so a partial deployment can bill against a half-written entitlement.
@@ -55,6 +57,9 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // #1370 — its healer mints tax invoices, which burns numbers from a gapless
   // statutory series. A half-deployed run leaves gaps that cannot be filled.
   "gst-outward-register-export",
+  // Referral vest and breakage post to the referral-credit liability ledger.
+  "vest-referral-credits",
+  "expire-referral-credits",
 ]);
 
 /**

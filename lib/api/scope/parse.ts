@@ -6,7 +6,8 @@
  * Three values, three roles:
  *   - `mine` (default)         — the caller's own data only
  *   - `<orgId>`                — data scoped to that org; caller must be
- *                                an active member of the org
+ *                                an active member of an org that still
+ *                                exists (see ORG_SCOPE_READABLE_STATUSES)
  *   - `all`                    — admin-only union across all orgs +
  *                                personal; rejected for non-ADMIN/STAFF
  *
@@ -17,9 +18,10 @@
  * removed the last org-context switcher from the personal dashboards.
  */
 
-import type { Membership } from "@prisma/client";
+import type { Membership, OrgStatus } from "@prisma/client";
 
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
+import { ADDRESSABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 
 export type Scope =
   | { kind: "personal" }
@@ -38,9 +40,42 @@ export type ScopeResolution =
       code:
         | "INVALID_SCOPE"
         | "ORG_MEMBERSHIP_REQUIRED"
-        | "ALL_REQUIRES_PRIVILEGED_ROLE";
+        | "ALL_REQUIRES_PRIVILEGED_ROLE"
+        | "ORG_DEACTIVATED";
       message: string;
     };
+
+/**
+ * The `Organization.status` values a member may still read that org's rows
+ * through `?orgScope=`.
+ *
+ * This is `ADDRESSABLE_ORG_STATUSES` (lib/enterprise/org-status.ts) verbatim —
+ * the same tuple `requireOrgAccess` reads, so the two doors cannot drift:
+ *
+ *   - DEACTIVATED is the only exclusion. It is the terminal teardown status,
+ *     documented as "treated as non-existent for billing + membership flows",
+ *     and the org PATCH stamps it WITHOUT touching Membership rows — so an
+ *     ACTIVE membership outlives the org and used to keep the personal
+ *     `?orgScope=` door open forever after the org was gone.
+ *   - SUSPENDED is deliberately INCLUDED. Its documented posture is
+ *     "members lose access to org-scoped flows; existing bookings keep
+ *     running", and ADDRESSABLE_ORG_STATUSES spells out why the read half
+ *     stays: an OWNER must be able to open the org to find and fix the cause.
+ *     A member who can still see the sessions they are booked into is what
+ *     "existing bookings keep running" means.
+ *   - PENDING_VERIFICATION is a pre-verification grace state, not a sanction;
+ *     its members book and read normally.
+ */
+export const ORG_SCOPE_READABLE_STATUSES: OrgStatus[] = [
+  ...ADDRESSABLE_ORG_STATUSES,
+];
+
+/** True when a member of an org in this status may still read its data. */
+export function isOrgReadableForScope(
+  status: OrgStatus | null | undefined,
+): boolean {
+  return !!status && ORG_SCOPE_READABLE_STATUSES.includes(status);
+}
 
 export interface ResolveScopeContext {
   /** The raw `?orgScope=` value from the URL (or `undefined`). */
@@ -50,7 +85,20 @@ export interface ResolveScopeContext {
    * `org` scope carries NO user filter, so granting it is equivalent to
    * granting `operations.read` and must be gated on the member's role.
    */
-  memberships: Pick<Membership, "organizationId" | "status" | "role">[];
+  memberships: (Pick<Membership, "organizationId" | "status" | "role"> & {
+    orgStatus?: OrgStatus | null;
+    organization?: { status: OrgStatus } | null;
+  })[];
+  /**
+   * `Organization.status` for the org named by `raw`.
+   *
+   * Callers typically supply this via `membership.organization.status` by
+   * selecting `organization: { select: { status: true } }` when pre-fetching
+   * memberships, or directly via `ctx.orgStatus` / `membership.orgStatus`.
+   *
+   * `null` means the org row is gone, and is refused like DEACTIVATED.
+   */
+  orgStatus?: OrgStatus | null;
   /** Top-level UserRole — used to gate `?orgScope=all`. */
   userRole: string | null | undefined;
   /** Caller's user id — needed to build the `orgMember` downgrade below. */
@@ -111,6 +159,35 @@ export function resolveOrgScope(ctx: ResolveScopeContext): ScopeResolution {
       status: 403,
       code: "ORG_MEMBERSHIP_REQUIRED",
       message: `You are not an active member of org ${orgId}.`,
+    };
+  }
+
+  // An ACTIVE membership is not evidence that the ORG still exists. The
+  // deactivate flow (`PATCH /api/organizations/[orgId]`) stamps
+  // `DEACTIVATED` + `deletedAt` and leaves Membership rows untouched.
+  // Refuse rather than downgrade to the caller's own rows: DEACTIVATED is
+  // terminal, so the org is not coming back, and a downgrade would leave a
+  // dead tenant addressable. SUSPENDED is not this branch — see
+  // ORG_SCOPE_READABLE_STATUSES for why it stays readable.
+  const effectiveOrgStatus =
+    ctx.orgStatus !== undefined
+      ? ctx.orgStatus
+      : membership.orgStatus !== undefined
+        ? membership.orgStatus
+        : membership.organization !== undefined
+          ? (membership.organization?.status ?? null)
+          : undefined;
+  if (
+    effectiveOrgStatus !== undefined &&
+    !isOrgReadableForScope(effectiveOrgStatus)
+  ) {
+    return {
+      ok: false,
+      status: 403,
+      code: "ORG_DEACTIVATED",
+      // The same sentence requireOrgAccess answers with, so a client that
+      // already handles the org door does not need a second message.
+      message: "Organization has been deactivated",
     };
   }
 

@@ -277,6 +277,26 @@ describe("Schedule Validation", () => {
       expect(result.isValid).toBe(false);
       expect(result.errorMessage).toBe("Start and end time cannot be the same");
     });
+
+    it("should allow morning slot and evening overnight slot on the same day without false overlap", () => {
+      const existingSlots: SlotType[] = [
+        { startTime: "01:00", endTime: "02:00", isValid: true },
+      ];
+      const result = validateTimeSlot(
+        { startTime: "22:00", endTime: "02:00", isValid: false },
+        existingSlots,
+      );
+      expect(result.isValid).toBe(true);
+    });
+
+    it("should detect cross-day overnight tail overlap in validateAllSlotsDetailed", () => {
+      const result = validateAllSlotsDetailed({
+        monday: [{ startTime: "22:00", endTime: "02:00", isValid: true }],
+        tuesday: [{ startTime: "01:00", endTime: "03:00", isValid: true }],
+      });
+      expect(result.isValid).toBe(false);
+      expect(result.errors[0]).toContain("Overnight tail overlaps");
+    });
   });
 
   // ============================================

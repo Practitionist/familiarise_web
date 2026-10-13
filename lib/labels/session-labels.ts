@@ -41,6 +41,7 @@ import type {
   RefundStatus,
   OccurrenceCompletionStatus,
   OccurrenceOutcome,
+  ParticipantStatus,
   TrialStatus,
   WaitlistStatus,
   WebinarStatus,
@@ -419,6 +420,42 @@ export const paymentStatusDot = (
 ): string =>
   PAYMENT_STATUS_DOT[status as PaymentDisplayStatus] ?? "bg-zinc-400";
 
+// ─────────────────────────── ParticipantStatus ───────────────────────────
+
+/**
+ * The seat's own state, as distinct from the payment's. `liveParticipant()`
+ * already keeps CANCELLED/REFUNDED out of the roster predicate, so a roster
+ * normally shows HELD/CONFIRMED/ATTENDED — but the map is total on purpose:
+ * a released seat is still a real row (history, not deletion), and surfaces
+ * that read it outside the live predicate must not render raw enum text.
+ */
+const PARTICIPANT_STATUS_BADGE: Record<ParticipantStatus, StatusBadgeStyle> = {
+  HELD: {
+    label: "Awaiting payment",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+  },
+  CONFIRMED: {
+    label: "Confirmed",
+    className: "bg-emerald-100 text-emerald-900 border-emerald-200",
+  },
+  ATTENDED: {
+    label: "Attended",
+    className: "bg-green-100 text-green-900 border-green-200",
+  },
+  CANCELLED: {
+    label: "Seat released",
+    className: "bg-zinc-100 text-zinc-600 border-zinc-200",
+  },
+  REFUNDED: {
+    label: "Refunded",
+    className: "bg-purple-100 text-purple-900 border-purple-200",
+  },
+};
+
+export const participantStatusBadge = (
+  status: ParticipantStatus | string | null | undefined,
+): StatusBadgeStyle => resolve(PARTICIPANT_STATUS_BADGE, status);
+
 // ───────────────────────────── RefundStatus ─────────────────────────────
 
 export const REFUND_STATUS_BADGE: Record<RefundStatus, StatusBadgeStyle> = {
@@ -543,6 +580,18 @@ export const REFERRAL_STATUS_BADGE: Record<ReferralStatus, StatusBadgeStyle> = {
   FRAUDULENT: {
     label: "Flagged",
     className: "bg-red-100 text-red-900 border-red-200",
+  },
+  QUALIFYING: {
+    label: "Waiting for first session",
+    className: "bg-amber-100 text-amber-900 border-amber-200",
+  },
+  VESTED: {
+    label: "Credit earned",
+    className: "bg-green-100 text-green-900 border-green-200",
+  },
+  VOID: {
+    label: "Didn't qualify",
+    className: "bg-zinc-100 text-zinc-500 border-zinc-200",
   },
 };
 

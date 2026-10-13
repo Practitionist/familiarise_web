@@ -5,7 +5,7 @@
  * SSR hydration and the client useQuery resolve identical payloads.
  *
  * Includes everything the detail page renders: the polymorphic event with
- * plan + people, ordered slots with meeting sessions AND their recordings,
+ * plan + people, ordered slots with their meeting sessions,
  * payment, sponsoring org — plus sibling appointments of the same
  * subscription/class so the timeline shows the whole program. userId fields
  * on the profile selects exist for the API route's ownership check.
@@ -13,24 +13,12 @@
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type { AppointmentFeedbackRole, RefundStatus } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 
 const userSelect = {
   select: { id: true, name: true, image: true },
-} as const;
-
-const recordingsSelect = {
-  select: {
-    id: true,
-    title: true,
-    recordingUrl: true,
-    storageUrl: true,
-    thumbnailUrl: true,
-    status: true,
-    durationInMinutes: true,
-    recordedAt: true,
-  },
 } as const;
 
 const slotsInclude = {
@@ -41,7 +29,6 @@ const slotsInclude = {
         id: true,
         endedAt: true,
         endedReason: true,
-        recordings: recordingsSelect,
       },
     },
   },
@@ -107,6 +94,7 @@ const collaboratorsInclude = {
   where: { status: "ACCEPTED" as const },
   select: {
     role: true,
+    tier: true,
     consultantProfile: consultantProfileSelect,
   },
 } as const;
@@ -186,7 +174,7 @@ export async function readAppointmentDetail(appointmentId: string) {
       // #1163 — the live proposal, so the detail page can render it and offer
       // accept / decline / withdraw instead of "Awaiting schedule confirmation".
       rescheduleRequests: {
-        where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+        where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
         orderBy: { createdAt: "desc" },
         take: 1,
         select: {
@@ -199,18 +187,23 @@ export async function readAppointmentDetail(appointmentId: string) {
           initiatedById: true,
           proposedTimes: {
             orderBy: { startsAt: "asc" },
-            // round: a COUNTERED request carries both rounds; the card must
-            // show only the current offer.
+            // `round` is selected so the card can filter to the current
+            // offer rather than rendering every round on the request.
             select: { startsAt: true, endsAt: true, round: true },
           },
         },
       },
       occurrences: slotsInclude,
-      // #1675 / #1760 — the EXPIRED edge tells a lapsed pay link apart from
-      // a request nobody answered (lib/dashboard/money-state.ts).
+      // EXPIRED edge: lapsed pay link vs unanswered request. CANCELLED +
+      // WITHDRAWN_BY_CONSULTANT: the withdraw copy (lib/dashboard/money-state.ts).
       statusHistory: {
-        where: { toStatus: "EXPIRED" },
-        select: { fromStatus: true, toStatus: true },
+        where: {
+          OR: [
+            { toStatus: "EXPIRED" },
+            { toStatus: "CANCELLED", reason: "WITHDRAWN_BY_CONSULTANT" },
+          ],
+        },
+        select: { fromStatus: true, toStatus: true, reason: true },
       },
       // #1554 — the roster: every live seat holder, with display fields.
       participants: {
@@ -218,6 +211,8 @@ export async function readAppointmentDetail(appointmentId: string) {
         select: { userId: true, role: true, user: userSelect },
       },
     },
+    // ~28 relation nodes: one joined statement instead of one per node.
+    relationLoadStrategy: "join",
   });
 
   if (!appointment) return null;
@@ -285,27 +280,50 @@ export function canAccessAppointment(
  * group event stays attributed to its payer until the AppointmentParticipant
  * reader flip (#1319 A9), which carries the seat→payment edge.
  */
+function canSeeFullGroupRoster(
+  userId: string,
+  detail: TAppointmentDetail,
+): boolean {
+  const { appointment } = detail;
+  const primaryOwnerUserIds = [
+    appointment.consultation?.consultationPlan?.consultantProfile?.userId,
+    appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
+    appointment.webinar?.webinarPlan?.consultantProfile?.userId,
+    appointment.class?.classPlan?.consultantProfile?.userId,
+    appointment.trial?.subscriptionPlan?.consultantProfile?.userId,
+  ];
+  if (primaryOwnerUserIds.includes(userId)) return true;
+
+  const presenterCollaboratorUserIds = [
+    ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
+    ...(appointment.class?.classPlan?.collaborators ?? []),
+  ]
+    .filter((c) => c.tier === "PRESENTER")
+    .map((c) => c.consultantProfile?.userId);
+
+  return presenterCollaboratorUserIds.includes(userId);
+}
+
 export function scopeAppointmentDetail<T extends TAppointmentDetail>(
   detail: T,
   viewerUserId: string,
   privileged = false,
 ): T {
-  const { webinarId, classId, payment } = detail.appointment;
+  const { webinarId, classId, payment, participants } = detail.appointment;
   const isGroup = !!webinarId || !!classId;
   const everySeat =
-    !isGroup ||
-    privileged ||
-    appointmentRaterRole(viewerUserId, detail) === "PROVIDER";
+    !isGroup || privileged || canSeeFullGroupRoster(viewerUserId, detail);
   const rows = everySeat
     ? payment
     : payment.filter((p) => p.userId === viewerUserId);
+  const scopedParticipants = everySeat
+    ? participants
+    : participants.filter((p) => p.userId === viewerUserId);
   return {
     ...detail,
     appointment: {
       ...detail.appointment,
-      // A receipt is the buyer's document. The host may read a seat's status
-      // and amount; staff may fetch the invoice for a support case; nobody
-      // else carries a pointer to a document they cannot open.
+      participants: scopedParticipants,
       payment: rows.map((p) =>
         privileged || p.userId === viewerUserId ? p : withoutReceipt(p),
       ),
@@ -352,11 +370,3 @@ function participantUserIds(detail: TAppointmentDetail) {
   return { consulteeUserIds, consultantUserIds };
 }
 export type TDetailAppointment = TAppointmentDetail["appointment"];
-export type TDetailRecording =
-  TDetailAppointment["occurrences"][number] extends {
-    meeting: infer M;
-  }
-    ? M extends { recordings: Array<infer R> } | null
-      ? R
-      : never
-    : never;

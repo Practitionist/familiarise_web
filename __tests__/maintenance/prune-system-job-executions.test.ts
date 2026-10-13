@@ -30,6 +30,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     failedEmailBatch: {
       findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     notificationOutbox: {
@@ -135,6 +136,7 @@ describe("pruneMessagingRetentionTables", () => {
     };
     const feb = prisma.failedEmailBatch as unknown as {
       findMany: jest.Mock;
+      updateMany: jest.Mock;
       deleteMany: jest.Mock;
     };
     const outbox = prisma.notificationOutbox as unknown as {
@@ -153,7 +155,10 @@ describe("pruneMessagingRetentionTables", () => {
     fe.updateMany.mockResolvedValueOnce({ count: 1 });
     fe.deleteMany.mockResolvedValueOnce({ count: 1 });
 
-    feb.findMany.mockResolvedValueOnce([{ id: "feb-del-1" }]);
+    feb.findMany
+      .mockResolvedValueOnce([{ id: "feb-scrub-1" }])
+      .mockResolvedValueOnce([{ id: "feb-del-1" }]);
+    feb.updateMany.mockResolvedValueOnce({ count: 1 });
     feb.deleteMany.mockResolvedValueOnce({ count: 1 });
 
     outbox.findMany.mockResolvedValueOnce([{ id: "no-del-1" }]);
@@ -166,6 +171,7 @@ describe("pruneMessagingRetentionTables", () => {
 
     expect(counts).toEqual({
       failedEmailsBodyScrubbed: 1,
+      failedEmailBatchesScrubbed: 1,
       failedEmailsPruned: 1,
       failedEmailBatchesPruned: 1,
       notificationOutboxPruned: 1,

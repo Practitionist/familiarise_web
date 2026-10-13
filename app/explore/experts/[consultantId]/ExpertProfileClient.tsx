@@ -66,8 +66,7 @@ function getCalendarDayClassName(
 ): string {
   return cn(
     "relative flex aspect-square w-full max-w-11 items-center justify-center rounded-full text-sm transition-all duration-200 sm:text-base",
-    isSelected &&
-      "bg-primary font-medium text-primary-foreground shadow-sm",
+    isSelected && "bg-primary font-medium text-primary-foreground shadow-sm",
     isSelected && kind && "ring-2 ring-offset-2 ring-offset-background",
     isSelected && kind === "instant" && "ring-emerald-500",
     isSelected && kind === "request" && "ring-amber-500",
@@ -304,8 +303,24 @@ export function ExpertProfileClient({
   const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
     null,
   );
+  const [_selectedDuration, setSelectedDuration] = useState<number>(() =>
+    consultantDetails.consultationPlans.length > 0
+      ? Math.min(
+          ...consultantDetails.consultationPlans.map((p) => p.durationInHours),
+        )
+      : 1,
+  );
 
   const timezone = browserTimezone || userDetails?.timezone;
+  const consulteeUserId =
+    session?.user?.id && session.user.id !== consultantDetails.userId
+      ? session.user.id
+      : undefined;
+
+  // #1591 J1-P1-04 — the grid answer is `private, max-age=30`, so a return
+  // after a checkout 409 re-read the stale green cell. Entered with
+  // `?conflict=1`, or restored from the back/forward cache, the next fetch
+  // bypasses the browser cache once.
   const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
 
   const todayStart = startOfDay(new Date());
@@ -326,6 +341,7 @@ export function ExpertProfileClient({
     startUtc: selectedDate ? pricingWeekStart : null,
     endUtc: selectedDate ? pricingWeekEnd : null,
     timezone: resolvedTimezone,
+    consulteeUserId,
     bypassRef: bypassCacheOnce,
   });
 
@@ -333,6 +349,7 @@ export function ExpertProfileClient({
     consultantId: consultantDetails?.id,
     monthStart: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
     timezone: resolvedTimezone,
+    consulteeUserId,
   });
 
   const selectedDateKey =
@@ -368,16 +385,10 @@ export function ExpertProfileClient({
   useEffect(() => {
     const action = searchParams.get("action");
     const planParam = searchParams.get("plan");
-    if (
-      planParam &&
-      sortedConsultations.some((p) => p.id === planParam)
-    ) {
+    if (planParam && sortedConsultations.some((p) => p.id === planParam)) {
       setSelectedConsultationPlanId(planParam);
     }
-    if (
-      planParam &&
-      sortedSubscriptions.some((p) => p.id === planParam)
-    ) {
+    if (planParam && sortedSubscriptions.some((p) => p.id === planParam)) {
       setSelectedSubscriptionPlanId(planParam);
     }
     const nextService = resolveInitialService(action);
@@ -632,6 +643,7 @@ export function ExpertProfileClient({
                 slotsLoading={dayQuery.isFetching || isTimezoneLoading}
                 slotsError={dayQuery.isError}
                 onRefreshSlots={refreshSlots}
+                onDurationChange={setSelectedDuration}
               />
             ) : (
               <div className="rounded-2xl border border-border bg-card p-6 shadow-elevation-1 xl:sticky xl:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)]">
@@ -641,8 +653,7 @@ export function ExpertProfileClient({
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   {userDetails.name || "This expert"} is completing profile
                   verification. You can explore their plans, classes, and
-                  webinars now; 1:1 bookings open once verification is
-                  complete.
+                  webinars now; 1:1 bookings open once verification is complete.
                 </p>
               </div>
             )}

@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import { useToast } from "@/hooks/use-toast";
 import { useHydrated } from "@/hooks/use-hydrated";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
   Popover,
   PopoverContent,
@@ -23,9 +24,16 @@ type OrgMembershipLite = {
 export function NotificationInbox() {
   const router = useRouter();
   const { data: session } = useSession();
+  const { data: subscriberSync } = useNovuSubscriberSync();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const hydrated = useHydrated();
+
+  const subscriberHash =
+    typeof (subscriberSync as { subscriberHash?: unknown } | undefined)
+      ?.subscriberHash === "string"
+      ? (subscriberSync as { subscriberHash: string }).subscriberHash
+      : undefined;
 
   const memberships = useMemo(() => {
     const raw = (session?.user as Record<string, unknown> | undefined)
@@ -98,6 +106,7 @@ export function NotificationInbox() {
     <Inbox
       applicationIdentifier={NOVU_APP_ID}
       subscriberId={session.user.id}
+      {...(subscriberHash ? { subscriberHash } : {})}
       tabs={tabs}
       appearance={{
         variables: {
@@ -208,10 +217,7 @@ export function NotificationInbox() {
                 .catch(() => {});
               // Redirect first; the wire copy (`payload.href`) and the
               // event's own field behind it, for a redirect Novu dropped.
-              const data = (notification.data ?? {}) as Record<
-                string,
-                unknown
-              >;
+              const data = (notification.data ?? {}) as Record<string, unknown>;
               const raw =
                 notification.redirect?.url ??
                 (typeof data.href === "string" ? data.href : undefined) ??
@@ -249,8 +255,7 @@ export function NotificationInbox() {
               } catch {
                 toast({
                   title: "Invalid link",
-                  description:
-                    "This notification's link could not be opened.",
+                  description: "This notification's link could not be opened.",
                 });
               }
             }}

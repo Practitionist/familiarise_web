@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
+import { replaceUrl } from "@/lib/navigation/history";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -72,14 +73,14 @@ export function PayoutsBoard() {
   const tabParam = searchParams.get("tab");
   const urlTab = parseTab(tabParam);
 
-  // URL writes go through window.history.replaceState rather than
+  // URL writes go through replaceUrl rather than
   // router.replace: the tab panels are client state (each section fetches
   // client-side) and this page reads no search params server-side, so a
   // router navigation would re-render the tree via useSearchParams
   // reactivity for no benefit (same discipline as
   // components/dashboard/UrlTabs.tsx). Local state flips the panel
-  // immediately since replaceState does not update useSearchParams; an
-  // external URL change wins back over a stale local pick.
+  // immediately and the synced useSearchParams update follows; an external
+  // URL change wins back over a stale local pick.
   const [localTab, setLocalTab] = useState<TabKey | null>(null);
   const activeTab: TabKey = localTab ?? urlTab;
   useEffect(() => {
@@ -89,15 +90,19 @@ export function PayoutsBoard() {
   const handleTabChange = (value: string) => {
     const nextTab = parseTab(value);
     setLocalTab(nextTab);
-    const next = new URLSearchParams(Array.from(searchParams.entries()));
+    const next = new URLSearchParams(window.location.search);
     next.set("tab", nextTab);
     const target = `?${next.toString()}`;
     if (target !== window.location.search) {
-      window.history.replaceState(window.history.state, "", target);
+      replaceUrl(target);
     }
   };
 
-  const { data: trendData, isLoading: trendLoading } = useQuery({
+  const {
+    data: trendData,
+    isLoading: trendLoading,
+    isError: trendError,
+  } = useQuery({
     queryKey: ["admin-payout-trend"],
     queryFn: fetchPayoutTrend,
     staleTime: 60 * 1000,
@@ -117,10 +122,16 @@ export function PayoutsBoard() {
   const hasAnyTrendData = chartData.some((d) => d.total > 0);
   let trendBody = (
     <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">
-      Analytics coming soon
+      No payouts in the last 7 days
     </div>
   );
   if (trendLoading) trendBody = <Skeleton className="h-[200px] w-full" />;
+  else if (trendError)
+    trendBody = (
+      <div className="flex h-[200px] items-center justify-center text-sm text-destructive">
+        Failed to load payout trend data
+      </div>
+    );
   else if (hasAnyTrendData) trendBody = <PayoutsChart data={chartData} />;
 
   return (

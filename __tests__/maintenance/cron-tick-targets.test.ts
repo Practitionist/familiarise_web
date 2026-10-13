@@ -17,33 +17,24 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 
-type TargetRequest = (
-  baseUrl: string,
-  name: string,
-) => { url: string; timeoutMs: number };
+import {
+  applyErrorBudget,
+  resetSentryBudgetState,
+} from "../../sentry.shared.config";
 
-function loadTicker(): {
-  targetRequest: TargetRequest;
-  dueTargets: (now: Date) => string[];
-  statusFor: (failed: { name: string; status: number }[]) => number;
-  reportableToSentry: (name: string) => boolean;
-  bucketFor: (
-    status: number,
-    maintenance?: boolean,
-  ) => "ok" | "held" | "failed";
-  buildFailedTargetsEvent: (failed: { name: string; status: number }[]) => {
-    message: string;
-    level: string;
-    fingerprint: string[];
-    tags: Record<string, string>;
-    contexts: {
-      tick: {
-        failedCount: number;
-        targets: { name: string; status: number; outcome: string }[];
-      };
-    };
-  };
-} {
+type Ticker = Pick<
+  typeof import("../../netlify/functions/cron-tick.mjs"),
+  | "targetRequest"
+  | "dueTargets"
+  | "statusFor"
+  | "reportableToSentry"
+  | "isFirstDueTickOfHour"
+  | "bucketFor"
+  | "buildFailedTargetEvent"
+>;
+type Target = ReturnType<Ticker["dueTargets"]>[number];
+
+function loadTicker(): Ticker {
   const file = path.join(
     __dirname,
     "..",
@@ -58,7 +49,7 @@ function loadTicker(): {
       target: ts.ScriptTarget.ES2022,
     },
   });
-  const mod = { exports: {} as ReturnType<typeof loadTicker> };
+  const mod = { exports: {} as Ticker };
   vm.runInNewContext(outputText, { module: mod, exports: mod.exports });
   return mod.exports;
 }
@@ -78,12 +69,61 @@ describe("cron-tick targetRequest", () => {
     });
   });
 
-  // #1583 E-P0-04 — the two booking sweeps with per-row outbox staging or
-  // gateway refunds get the 20 s tier; the other three keep the default.
-  it("gives the reminders and stale-request sweeps 20 s, the rest 15 s", () => {
+  // Booking sweeps with per-row outbox staging or gateway refunds get the 20 s
+  // tier; the other two keep the 15 s default.
+  it("gives the outbox-staging and refund sweeps 20 s, the rest 15 s", () => {
     expect(targetRequest(base, "appointment-reminders").timeoutMs).toBe(20_000);
     expect(targetRequest(base, "expire-stale-requests").timeoutMs).toBe(20_000);
+    expect(targetRequest(base, "reschedule-proposals").timeoutMs).toBe(20_000);
     expect(targetRequest(base, "expire-unpaid-trials").timeoutMs).toBe(15_000);
+    expect(targetRequest(base, "tentative-occurrences").timeoutMs).toBe(15_000);
+  });
+
+  // #1583 P1 — the five booking sweeps used to be handed `?limit=50` and
+  // discard it, because their `run` callbacks took no request. Every one of
+  // them is now bounded, and the numbers are asserted rather than trusted:
+  // each is far below DEFAULT_LIMIT precisely because the per-row cost is a
+  // transaction (and for two of them a gateway round trip), and
+  // `expire-stale-requests` is a per-ARM figure across seven arms.
+  it("bounds every one of the five booking sweeps with an explicit bite", () => {
+    expect(targetRequest(base, "appointment-reminders")).toEqual({
+      url: "https://site.test/api/cleanup/appointment-reminders?limit=25",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "expire-stale-requests")).toEqual({
+      url: "https://site.test/api/cleanup/expire-stale-requests?limit=20",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "reschedule-proposals")).toEqual({
+      url: "https://site.test/api/cleanup/reschedule-proposals?limit=25",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "tentative-occurrences")).toEqual({
+      url: "https://site.test/api/cleanup/tentative-occurrences?limit=200",
+      timeoutMs: 15_000,
+    });
+    expect(targetRequest(base, "expire-unpaid-trials")).toEqual({
+      url: "https://site.test/api/cleanup/expire-unpaid-trials?limit=25",
+      timeoutMs: 15_000,
+    });
+  });
+
+  // #1775 — the two money-gating session-outcome jobs are ON the ticker. They
+  // were not, and the docs recorded that as deliberate ("not
+  // latency-sensitive"). The code does not support that: one releases an
+  // earnings hold and opens the feedback window an hour after a session ends,
+  // the other issues a 100% refund, and their only other driver is a `cron:`
+  // schedule ADR 22 measured at ~100 minutes. Twenty-five and ten because each
+  // candidate costs a Stream call-report round trip.
+  it("drives the earnings release and the no-show refund from the ticker", () => {
+    expect(targetRequest(base, "auto-complete-appointments")).toEqual({
+      url: "https://site.test/api/cleanup/auto-complete-appointments?limit=25",
+      timeoutMs: 20_000,
+    });
+    expect(targetRequest(base, "detect-consultant-no-shows")).toEqual({
+      url: "https://site.test/api/cleanup/detect-consultant-no-shows?limit=10",
+      timeoutMs: 20_000,
+    });
   });
 
   // #1708 — one Stream round trip per unchanneled row: a bite of ten under a
@@ -91,6 +131,20 @@ describe("cron-tick targetRequest", () => {
   it("gives the orphaned-confirmation reconcile a bite of ten and 20 s", () => {
     expect(targetRequest(base, "reconcile-orphaned-confirmations")).toEqual({
       url: "https://site.test/api/cleanup/reconcile-orphaned-confirmations?limit=10",
+      timeoutMs: 20_000,
+    });
+  });
+
+  it("gives the orphaned-payments alert a bite of ten and 20 s", () => {
+    expect(targetRequest(base, "alert-orphaned-payments")).toEqual({
+      url: "https://site.test/api/cleanup/alert-orphaned-payments?limit=10",
+      timeoutMs: 20_000,
+    });
+  });
+
+  it("gives the orphaned-payments healer a bite of ten and 20 s", () => {
+    expect(targetRequest(base, "reconcile-orphaned-payments")).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-orphaned-payments?limit=10",
       timeoutMs: 20_000,
     });
   });
@@ -122,6 +176,7 @@ describe("cron-tick dueTargets cadence", () => {
       "dispatch-outbound-webhooks",
       "retry-failed-emails",
       "sync-payment-earnings",
+      "alert-orphaned-payments",
     ];
     const offset5Targets = [
       "release-earnings",
@@ -136,7 +191,6 @@ describe("cron-tick dueTargets cadence", () => {
       "appointment-reminders",
       "tentative-occurrences",
       "expire-stale-requests",
-      "settle-cancelled-sessions",
       "retry-auto-refunds",
     ];
 
@@ -158,11 +212,20 @@ describe("cron-tick dueTargets cadence", () => {
     }
   });
 
-  it("caps every 5-minute tick across the hour to 5–7 targets (#1926)", () => {
+  it("caps every 5-minute tick across the hour to 5–8 targets", () => {
     for (const minute of [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55]) {
       const due = dueTargets(at(minute));
       expect(due.length).toBeGreaterThanOrEqual(5);
-      expect(due.length).toBeLessThanOrEqual(7);
+      expect(due.length).toBeLessThanOrEqual(8);
+    }
+  });
+
+  it("fires the orphaned-payments healer only at :10/:40", () => {
+    const name = "reconcile-orphaned-payments";
+    expect(dueTargets(at(10))).toContain(name);
+    expect(dueTargets(at(40))).toContain(name);
+    for (const minute of [0, 5, 15, 25, 30]) {
+      expect(dueTargets(at(minute))).not.toContain(name);
     }
   });
 
@@ -171,6 +234,22 @@ describe("cron-tick dueTargets cadence", () => {
     expect(dueTargets(at(5))).toContain("drain-notification-outbox");
     expect(dueTargets(at(10))).not.toContain("drain-notification-outbox");
     expect(dueTargets(at(15))).toContain("drain-notification-outbox");
+  });
+
+  // #1775 — the two session-outcome jobs are 30-minute, not 15. Both are
+  // latency-relevant but not minute-relevant: auto-complete's own buffer is one
+  // hour after a session ends, and the no-show detector's grace window is
+  // measured in tens of minutes, so a 15-minute slot would buy detection
+  // latency neither deadline is sensitive to while doubling the Stream
+  // call-report volume. The #1792 Upstash budget is the line item.
+  // Their phases keep them off the canary's :00/:30 ticks and off each other.
+  it("fires the earnings release and the no-show refund on staggered 30-minute slots", () => {
+    const firing = (name: Target) =>
+      [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].filter((minute) =>
+        dueTargets(at(minute)).includes(name),
+      );
+    expect(firing("auto-complete-appointments")).toEqual([15, 45]);
+    expect(firing("detect-consultant-no-shows")).toEqual([20, 50]);
   });
 
   it("fires the Sentry ingest canary every 30 minutes, not every tick", () => {
@@ -254,44 +333,66 @@ describe("cron-tick bucketFor", () => {
 });
 
 describe("cron-tick failed-target reporting", () => {
-  const { buildFailedTargetsEvent } = loadTicker();
+  const { buildFailedTargetEvent } = loadTicker();
 
-  // Sentry groups by message text. Naming the failed targets in the message
-  // would mint a separate issue for every distinct combination of failures, so
-  // a sweep that degrades over time fragments into a dozen near-identical
-  // issues and the one that matters gets lost among them.
-  it("uses one fixed message and fingerprint regardless of which targets failed", () => {
-    const a = buildFailedTargetsEvent([
-      { name: "sweep-stuck-webhook-events", status: 0 },
-    ]);
-    const b = buildFailedTargetsEvent([
-      { name: "reconcile-refunds", status: 500 },
-      { name: "release-earnings", status: 503 },
-    ]);
-
-    expect(a.message).toBe(b.message);
-    expect(a.fingerprint).toEqual(b.fingerprint);
-    expect(a.fingerprint).toEqual(["cron-tick-failed-targets"]);
+  beforeEach(() => {
+    resetSentryBudgetState();
+    jest.useFakeTimers().setSystemTime(new Date("2026-10-04T00:00:00Z"));
   });
+  afterEach(() => jest.useRealTimers());
 
-  it("carries the detail as context, not in the message", () => {
-    const ev = buildFailedTargetsEvent([
-      { name: "reconcile-refunds", status: 500 },
-      { name: "sweep-stuck-webhook-events", status: 0 },
-    ]);
-
-    expect(ev.message).not.toContain("reconcile-refunds");
-    expect(ev.contexts.tick.failedCount).toBe(2);
-    expect(ev.contexts.tick.targets).toEqual([
-      { name: "reconcile-refunds", status: 500, outcome: "http" },
-      // 0 is this module's "never got an answer" value, not an HTTP status.
-      { name: "sweep-stuck-webhook-events", status: 0, outcome: "network" },
-    ]);
-  });
-
-  it("reports at error level, so it is not grouped with the expected refusals", () => {
-    expect(buildFailedTargetsEvent([{ name: "x", status: 500 }]).level).toBe(
-      "error",
+  it("names the target in the message and fingerprint", () => {
+    const ev = buildFailedTargetEvent({
+      name: "sweep-stuck-webhook-events",
+      status: 0,
+    });
+    expect(ev.message).toBe(
+      "cron-tick: target sweep-stuck-webhook-events failed",
     );
+    expect(ev.fingerprint).toEqual(["cron-tick", "sweep-stuck-webhook-events"]);
+    expect(ev.level).toBe("error");
+    expect(ev.contexts.tick).toEqual({
+      target: "sweep-stuck-webhook-events",
+      status: 0,
+      outcome: "network",
+    });
+  });
+
+  it("the shared repeat filter throttles per target, not across targets", () => {
+    const a = buildFailedTargetEvent({
+      name: "reconcile-refunds",
+      status: 500,
+    });
+    const b = buildFailedTargetEvent({ name: "release-earnings", status: 503 });
+    expect(applyErrorBudget({ ...a })).not.toBeNull();
+    expect(applyErrorBudget({ ...b })).not.toBeNull();
+    expect(applyErrorBudget({ ...a })).toBeNull();
+  });
+});
+
+describe("cron-tick drain targets and failure reporting", () => {
+  const { dueTargets, isFirstDueTickOfHour } = loadTicker();
+  const at = (m: number) => new Date(Date.UTC(2026, 9, 4, 12, m, 0));
+
+  it("runs process-data-exports every 10 minutes and retry-moderation-enforcement every 30", () => {
+    const exportsMinutes = [
+      0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55,
+    ].filter((m) => dueTargets(at(m)).includes("process-data-exports"));
+    expect(exportsMinutes).toEqual([0, 10, 20, 30, 40, 50]);
+    const moderationMinutes = [
+      0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55,
+    ].filter((m) => dueTargets(at(m)).includes("retry-moderation-enforcement"));
+    expect(moderationMinutes).toEqual([25, 55]);
+  });
+
+  it("lets each target report once an hour, on its own first due tick", () => {
+    const reportMinutes = (name: string) =>
+      [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].filter((m) =>
+        isFirstDueTickOfHour(name, at(m)),
+      );
+    expect(reportMinutes("sweep-stuck-webhook-events")).toEqual([0]);
+    expect(reportMinutes("release-earnings")).toEqual([5]);
+    expect(reportMinutes("retry-moderation-enforcement")).toEqual([25]);
+    expect(reportMinutes("sentry-ingest-canary")).toEqual([0]);
   });
 });

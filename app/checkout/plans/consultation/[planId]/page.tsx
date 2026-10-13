@@ -44,14 +44,20 @@ import { createHandleApiError } from "../../utils";
 import { calculatePricing } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useReferralPricing } from "../../useReferralPricing";
 import {
   createRazorpayCheckoutHandlers,
-  createStripeCheckoutHandlers,
   mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -134,6 +140,14 @@ export default function ConsultationCheckoutPage({
     string | null
   >(null);
   const { data: session } = useSession();
+  // #1863 — the refund rail, derived from the buyer's own funding choice so the
+  // promise under the price moves with it.
+  const viewer = useViewerZone();
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
   const selectedOrgFundingSource = useMemo(() => {
     if (!selectedOrganizationId) return null;
     const memberships = session?.user?.organizationMemberships ?? [];
@@ -142,7 +156,6 @@ export default function ConsultationCheckoutPage({
         ?.fundingSource ?? null
     );
   }, [selectedOrganizationId, session?.user?.organizationMemberships]);
-  const isLicenseCovered = selectedOrgFundingSource === "LICENSE";
 
   const { toast } = useToast();
   const {
@@ -248,6 +261,9 @@ export default function ConsultationCheckoutPage({
   });
 
   const eventData = checkoutPlanQuery.data?.plan ?? null;
+  const referralPricing = useReferralPricing(
+    eventData?.data?.consultantProfile?.id,
+  );
   const isLoading = checkoutPlanQuery.isPending;
   const error =
     slotPassedError ??
@@ -330,7 +346,6 @@ export default function ConsultationCheckoutPage({
   // so a slot taken mid-checkout shows a clear "pick another time" toast.
   // Matches subscription/class/webinar pages (de-dupes the old inline map).
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
-  const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
@@ -340,7 +355,7 @@ export default function ConsultationCheckoutPage({
       _gateway: string,
       isMockPayment: boolean = false,
     ) => {
-      return fetch("/api/checkout", {
+      return fetchWithIdentity("/api/checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -442,7 +457,7 @@ export default function ConsultationCheckoutPage({
         }
 
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
-        // Real payments go through StripeCheckout/RazorpayCheckout components.
+        // Real payments go through the RazorpayCheckout component.
         // FIX #520: Also handle zero-amount payments (credits covered full cost)
         if (
           data.skipPayment ||
@@ -519,10 +534,17 @@ export default function ConsultationCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent, // Don't use percent if we have a fixed amount
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount:
+        appliedDiscount || selectedOrganizationId
+          ? null
+          : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
+    referralPricing,
+    selectedOrganizationId,
     eventData?.data?.price,
     appliedDiscount,
     useReferralCredits,
@@ -740,7 +762,23 @@ export default function ConsultationCheckoutPage({
           pricing={pricing}
           formatPrice={formatPrice}
           selectedOrganizationId={selectedOrganizationId}
-          isLicenseCovered={isLicenseCovered}
+          afterTotalNotice={
+            <>
+              {selectedOrgFundingSource === "LICENSE" && (
+                <p className="text-xs text-emerald-600">
+                  Programme license coverage (if entitled) is verified and
+                  applied at checkout
+                </p>
+              )}
+              <CancellationPolicyNote
+                eventKind="individual"
+                eventStartsAt={validatedSearchParams?.startsAt ?? null}
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
+              />
+            </>
+          }
         />
         <CheckoutPaymentMethodsCard
           buildCheckoutData={(gateway) =>
@@ -767,9 +805,13 @@ export default function ConsultationCheckoutPage({
               : null
           }
           onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
-          onRazorpayError={razorpayHandlers.onPaymentError}
-          onStripeSuccess={stripeHandlers.onPaymentSuccess}
-          onStripeError={stripeHandlers.onPaymentError}
+          onRazorpayError={(error) =>
+            handleApiError({
+              error: error.description ?? error.message ?? error.reason,
+              errorType: error.code,
+              code: error.code,
+            })
+          }
           onMockPay={(gateway) => handleCheckout(gateway, true)}
           isCheckoutProcessing={isCheckoutProcessing}
           processingGateway={processingGateway}

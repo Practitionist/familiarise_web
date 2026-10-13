@@ -56,8 +56,10 @@ Admin ends maintenance
 | File                                                            | Runtime | Purpose                                                                                                                                  |
 | --------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `middleware.ts`                                                 | Edge    | Request interception, maintenance checks, route protection                                                                               |
-| `lib/maintenance-edge.ts`                                       | Edge    | Edge-safe Redis reads via `fetch()`. No SDK imports.                                                                                     |
-| `lib/maintenance.ts`                                            | Node.js | Server-side state management. Redis SDK + Prisma writes.                                                                                 |
+| `lib/maintenance-edge.ts`                                       | Edge    | Edge-safe Redis reads via `fetch()` (180s cache) + Web Crypto HMAC-SHA256 bypass token verification.                                     |
+| `lib/maintenance-cron.ts`                                       | Node.js | Shared cached `readMaintenancePhase()` reader (60s success / 5s failure cache) + `abortIfMaintenance` / `assertNotInMaintenance` guards. |
+| `lib/maintenance.ts`                                            | Node.js | Server-side state management (reuses `readMaintenancePhase()` and invalidates cache on `setMaintenanceState()`).                         |
+| `actions/maintenance/drain-sessions.ts`                         | Node.js | Active Stream video call drain + deterministic DB-derived chat channel freeze/unfreeze (`deriveChannelsToUnfreeze()`).                   |
 | `lib/betterstack.ts`                                            | Node.js | BetterStack incident creation/resolution                                                                                                 |
 | `app/api/admin/maintenance/route.ts`                            | Node.js | Admin CRUD API (GET/POST/PATCH/DELETE)                                                                                                   |
 | `app/api/health/route.ts`                                       | Node.js | Public health check — returns maintenance state + calls BetterStack `/api/v2/monitors` to report `{ configured, reachable, monitors[] }` |
@@ -94,41 +96,155 @@ model MaintenanceWindow {
 }
 ```
 
-## Redis Keys
+## Redis Keys (`lib/maintenance-keys.ts`)
 
 | Key                  | Type        | Value                                                           |
 | -------------------- | ----------- | --------------------------------------------------------------- |
-| `maintenance:phase`  | String      | `"OFF"`, `"DEGRADED"`, or `"OFFLINE"`                           |
+| `maintenance:phase`  | String      | `"OFF"`, `"DEGRADED"`, or `"OFFLINE"` (24h safety TTL)          |
 | `maintenance:config` | JSON String | `{ reason, estimatedEnd, bypassSecret, betterstackIncidentId }` |
 
 `betterstackIncidentId` is set when entering OFFLINE mode (incident creation succeeds) and read when ending maintenance (to auto-resolve the incident). It is `null` if DEGRADED was used or if incident creation failed.
 
-## Edge Read Strategy
+## Edge, Node & Cron Infrastructure Evolution (Old vs. New Double ASCII Diagram)
 
-The middleware reads the maintenance state on every non-static request, so the read must never become a per-request Upstash round-trip. `lib/maintenance-edge.ts` keeps a 180-second in-memory cache (edge isolates share module scope within an instance lifetime; raised from 30 seconds under #1822 Q-6, since the read fails open and the only cost of a longer window is slower enforcement of a newly-set phase; a failed or non-OK read is cached for only 30 seconds, so one Upstash blip cannot lift a DEGRADED write-block for three minutes) and exposes two readers:
+### 1.1 Pre-Hardening Architecture (With All 10 Audited Production Flaws Highlighted)
 
-| Reader                            | Used by                        | Behaviour                                                                                                |
-| --------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| `getMaintenanceState()`           | Full document loads + `/api/*` | Returns the cached value if fresh, otherwise does the live Upstash read (200 ms budget; fails open OFF). |
-| `getMaintenanceStateCachedOnly()` | RSC / prefetch sub-navigations | Never blocks on Upstash. Returns the last-known state and triggers a background refresh when stale.      |
+```text
++===================================================================================================+
+|                        PRODUCERS (API Routes, Webhooks, Server Actions, Jobs)                     |
++===================================================================================================+
+   |                                                |
+   | (~10% Money/Booking paths pass `tx`)           | (~90% Lifecycle/Booking/Org paths omit `tx`)
+   v                                                v
++------------------------------------------------+ +------------------------------------------------+
+| INSIDE `Serializable` $transaction (PG_POOL=1) | | OUTSIDE $transaction (Post-Commit Dual Write)  |
+|  [FLAW #1] Runs 2x React Email SSR (`render` + | |  [FLAW #2] Crash/freeze after DB commit loses  |
+|  `plainText`) + sequential User/Suppression    | |  the email & Novu bell completely.             |
+|  queries while holding Serializable locks!     | +------------------------------------------------+
++------------------------------------------------+                          |
+   |                                                                        |
+   +-----------------------------------+------------------------------------+
+                                       |
+         +-----------------------------+-----------------------------+
+         |                                                           |
+         v (Email Path: `lib/email/deliver.ts`)                      v (In-App Bell Path: `lib/novu/outbox.ts`)
++--------------------------------------------------+       +--------------------------------------------------+
+| Postgres: `FailedEmail` & `FailedEmailBatch`     |       | Postgres: `NotificationOutbox`                   |
+| - Inserts `status: PENDING, nextRetryAt: NOW()`  |       | - Upserts `status: PENDING, nextRetryAt: NOW()`  |
+| - [FLAW #3] NO inline lease grace window!        |       | - [FLAW #3] NO inline lease grace window!        |
+| - [FLAW #4] `headers` (`List-Unsubscribe`) NOT   |       | - [FLAW #6] `deriveTransactionId` misses 5 keys  |
+|   rebuilt on retry -> stripped on relay replay!  |       |   (`invoiceNumber`, `exportId`, `providerId`,    |
+| - [FLAW #5] Never pruned! Full HTML/text bodies  |       |   `feedbackId`, `streamCallId`) & omits fallback |
+|   for every `SENT` email accumulate forever!     |       |   to `row.id` when `transactionId` is null!      |
++--------------------------------------------------+       +--------------------------------------------------+
+         |                           |                               |                           |
+         | Inline Fast-Path (3-5s)   | Relay (Every 15m, limit=20)   | Inline Fast-Path (5s)     | Relay (Every 5m, limit=20)
+         | [RACE CONDITION!]         | [6s timeout in cron-tick!]    | [RACE CONDITION!]         | [6s timeout in cron-tick!]
+         +-------------+-------------+                               +-------------+-------------+
+                       |                                                           |
+                       v                                                           v
++--------------------------------------------------+       +--------------------------------------------------+
+| Resend API (`POST /emails`, `/emails/batch`)     |       | Novu Cloud API (16 Multiplexed Workflow Families)|
+| - [FLAW #7] `idempotencyKeyFor()` hashes         |       | - [FLAW #8] `syncSubscriber` (on dashboard mount)|
+|   `to + subject + html` instead of `row.id`!     |       |   & `updateSubscriberPreferences` overwrite      |
+|   Resend caches keys 24h -> SILENTLY DROPS any   |       |   disjoint keys in `subscriber.data`, wiping out |
+|   2nd identical email sent within 24 hours!      |       |   muted preferences on every dashboard load!     |
+| - [FLAW #9] Exhausting 5 transient attempts ->   |       | - [FLAW #10] All 18 `ORG_*` workflows omit       |
+|   `DEAD_LETTER` emits ZERO Sentry error alerts!  |       |   `NotificationScope` (`organizationId`) -> org  |
+|   `NovuError.body` echoes PII to Sentry!         |       |   alerts NEVER show under Org tab in `<Inbox />`!|
++--------------------------------------------------+       +--------------------------------------------------+
 
-A soft (RSC) navigation must not block on a Redis round-trip, or it sits blank before its `loading.tsx` can stream. So sub-navigations take the cached-only path. Two edge-runtime details make that path correct rather than a maintenance-bypass hole (#927, #929):
++===================================================================================================+
+|                     CRON & MAINTENANCE INFRASTRUCTURE (Post-`c4e85c003` State)                    |
++===================================================================================================+
+  Netlify `cron-tick.mts` (*/5 * * * *)                      GitHub Actions (42 Scheduled Workflows)
+  - Uses `minute % every < 5` (ZERO stagger):                - `c4e85c003` deleted 17 GHA backstop workflows
+    * `:00` & `:30` -> fires ALL 18/19 targets at once!        for ticker jobs without raising ticker timeouts!
+    * `:15` & `:45` -> fires 16/17 targets at once!          - `cron-heartbeat.yml` runs 1x/day at 04:40 UTC:
+    * `:05, :25, :35, :55` -> fires ZERO targets (33% idle!)   ONLY writer of `redis.set("cron:heartbeat:last")`!
+  - `keep-warm.mts` only warms 3 instances -> 15+ cold       - `/api/health` checks `cron:heartbeat:last` with
+    starts stampede PgBouncer & hit 6s abort ceiling!          6h threshold -> `cron.stale: true` 18h/day!
+  - Warm container bug: 1 failed tick loads `@sentry/node`   - `withCronLock` in Postgres (`SystemJobExecution`)
+    and patches global `fetch` for all future warm ticks!      has NO partial unique index on `(jobName) WHERE
+                                                               status = 'RUNNING'` -> P0 TOCTOU lock race!
+```
 
-- **`event.waitUntil`** — an unawaited promise is not guaranteed to run after the middleware response is sent, so `middleware()` passes `event.waitUntil` into `getMaintenanceStateCachedOnly()` to keep the background refresh alive. Without it the cache would never repopulate and a session that only soft-navigates would serve stale state indefinitely.
-- **`isRefreshing` guard** — a single module-level flag collapses concurrent stale sub-navigations into one Upstash read instead of a thundering herd.
+### 1.2 Target Production Architecture (Improvised, Decoupled & Hardened)
 
-When the cache is stale the cached-only reader returns the **last-known** state, so an active window that was already cached stays enforced while the refresh is in flight. If the last-known state is OFF and a window has just been switched on, a soft navigation can still proceed until the background refresh updates the cache. A full document load calls `getMaintenanceState()`, which may return the cached state and reads Redis only after the 180-second edge cache expires, so any window is enforced within one document navigation once that cache window has passed (#1822).
+```text
++===================================================================================================+
+|                     PRODUCERS (API Routes, Webhooks, Server Actions, Jobs)                        |
++===================================================================================================+
+   |
+   | 1. Pre-render React Email OUTSIDE Serializable $transaction (single-pass `render` + `toPlainText(html)`)
+   | 2. Evaluate all User & Org NotificationPreferences in Postgres/App BEFORE staging (Single Source of Truth)
+   | 3. Inside `$transaction(tx)`: insert lightweight Outbox row with:
+   |    - `status: "PENDING"`, `nextRetryAt: NOW() + 60s` (inline lease grace window — prevents relay race!)
+   |    - Reconstructed RFC 8058 `List-Unsubscribe` + `List-Unsubscribe-Post` headers on relay retry
+   |    - `transactionId: derivedKey ?? row.id` (guaranteed idempotency key for every single/org workflow)
+   |    - `NotificationScope` (`scope: "org", organizationId`) on all 18 `ORG_*` workflows
+   v
++---------------------------------------------------------------------------------------------------+
+|                        CONSOLIDATED OUTBOX LAYER (Postgres + Partial Indexes)                     |
+|  1. `FailedEmail` & `FailedEmailBatch` (Resend Email Outbox)                                      |
+|  2. `NotificationOutbox` (Novu In-App Feed Outbox)                                                |
+|  3. `OutboundWebhookDelivery` (Enterprise Customer Webhooks)                                      |
+|  * Bounded concurrency (`CONCURRENCY = 5`) + multi-recipient `resend.batch.send` (up to 100/call) |
+|  * Outbox-row-scoped `Idempotency-Key: <EMAIL_TYPE>/<row.id>` (never drops legitimate repeats)    |
+|  * Automated retention pruning in `prune-system-job-executions`:                                  |
+|    - Null `htmlBody`/`textBody` on `SENT` emails after 7d; delete terminal outbox rows after 30d  |
++---------------------------------------------------------------------------------------------------+
+   |
+   v
++===================================================================================================+
+|                  STAGGERED CRON & LOCKING ENGINE (Netlify Ticker + GitHub Actions)                |
++===================================================================================================+
+  Netlify `cron-tick.mts` (Every 5m, Phase-Staggered):
+  - Slot `:00, :15, :30, :45` (6 targets) | Slot `:05, :20, :35, :50` (6 targets) | Slot `:10, :25, :40, :55` (6 targets)
+  - Max 6–7 concurrent targets per tick (matches warm pool + PgBouncer budget); 0% idle ticks!
+  - Per-target timeout raised from 6s -> 15s; `tracePropagationTargets: []` prevents warm container fetch pollution.
+  - Atomic Postgres lock: `CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key" ON "SystemJobExecution"("jobName") WHERE status = 'RUNNING'`
+  - `/api/health` queries `pickFresherTimestamp(redisHeartbeat, SystemJobExecution.startedAt)` -> 0% false-stale rate!
 
-## Bypass Mechanism
++---------------------------------------------------------------------------------------------------+
+|                        MAINTENANCE STATE & SESSION DRAIN ARCHITECTURE                             |
++---------------------------------------------------------------------------------------------------+
+  [Edge Middleware (`middleware.ts` -> `lib/maintenance-edge.ts`)]
+    - `getMaintenanceState()` (180s cache, 30s failure cache, 200ms Upstash REST fetch timeout)
+    - `getMaintenanceStateCachedOnly()` (0ms non-blocking RSC/prefetch path with `event.waitUntil`)
+    - `verifyMaintenanceBypassToken()` (Web Crypto HMAC-SHA256 `<expiresAtMs>.<hmacHex>` cookie check)
+
+  [Node Runtime (`lib/maintenance.ts` <-> `lib/maintenance-cron.ts`)]
+    - Unified `readMaintenancePhase()` (60s success cache, 5s failure cache; 1 `redis.get` when OFF)
+    - `getMaintenanceState()` fetches fresh `REDIS_KEYS.PHASE` (`{ bypassCache: true }`) + `REDIS_KEYS.CONFIG`
+    - `setMaintenanceState()` immediately calls `invalidateMaintenancePhaseCache()` on transition
+
+  [Session Drain & Unfreeze (`actions/maintenance/drain-sessions.ts`)]
+    - Enter OFFLINE: `drainActiveSessions()` ends active Stream video calls (`endedReason: "maintenance"`)
+      and freezes associated Stream chat channels in batches of 10 (`setChannelsFrozenState(..., true)`)
+    - Exit OFFLINE: `unfreezeChannelsAfterMaintenance()` queries Postgres `deriveChannelsToUnfreeze()`
+      (`MeetingSession.endedReason = "maintenance"` since `MaintenanceWindow.startedAt`) and unfreezes
+      channels directly — no dual-source Redis set ledger required!
+```
+
+The middleware reads the maintenance state on every non-static request, so the read must never become a per-request Upstash round-trip. `lib/maintenance-edge.ts` keeps a 180-second in-memory cache (a failed or non-OK read is cached for 30 seconds) and exposes two readers:
+
+| Reader                            | Used by                                           | Behaviour                                                                                                |
+| --------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `getMaintenanceState()` (Edge)    | Full document loads + `/api/*` in `middleware.ts` | Returns the cached value if fresh, otherwise does the live Upstash read (200 ms budget; fails open OFF). |
+| `getMaintenanceStateCachedOnly()` | RSC / prefetch sub-navigations in `middleware.ts` | Never blocks on Upstash. Returns the last-known state and triggers a background refresh when stale.      |
+| `readMaintenancePhase()` (Node)   | `lib/maintenance.ts` + `lib/maintenance-cron.ts`  | Shared 60s Node-runtime phase cache (5s failure cache), invalidated on `setMaintenanceState()`.          |
+
+## Bypass Mechanism (`#1487`, `#1930`)
 
 Each maintenance window generates a UUID bypass secret (`crypto.randomUUID()`).
 
 **Usage**:
 
-- HTTP Header: `x-maintenance-bypass: <secret>`
-- Cookie: `maintenance_bypass=<secret>`
+- HTTP Header: `x-maintenance-bypass: <secret>` (constant-time compared against the active secret)
+- Query / Cookie: Passing `?bypass=<secret>` mints an `HttpOnly`, `Secure`, `SameSite=Lax` cookie `maintenance_bypass=<expiresAtMs>.<hmacHex>` signed with Web Crypto HMAC-SHA256 (`createMaintenanceBypassCookieValue` / `verifyMaintenanceBypassToken` in `lib/maintenance-edge.ts`, 4-hour TTL) so the raw secret is never stored in browser cookies.
 
-**Fallback**: If the database-stored secret is unavailable, falls back to `MAINTENANCE_BYPASS_SECRET` env var.
+**Fallback**: If the Redis-stored secret is unavailable, falls back to `MAINTENANCE_BYPASS_SECRET` env var.
 
 **Scope**: Bypass allows full access during both DEGRADED and OFFLINE modes. Intended for admin/staff testing during maintenance.
 

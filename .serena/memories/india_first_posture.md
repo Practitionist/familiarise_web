@@ -7,7 +7,7 @@ Settled. Do not re-ask. Default legal frame is DPDP + IT Act/IT Rules + CPA +
 CERT-In + CBDT, not GDPR/CCPA.
 
 Full reference with the staged commencement dates, what is enforceable today,
-the residency position and the open questions: **`docs/compliance/00-india-first-posture.md`**.
+the residency position and the open questions: **`docs/compliance/01-india-first-posture.md`**.
 
 ## The traps
 

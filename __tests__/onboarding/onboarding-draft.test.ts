@@ -14,7 +14,8 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     onboardingDraft: {
-      upsert: jest.fn(),
+      updateMany: jest.fn(),
+      create: jest.fn(),
       findUnique: jest.fn(),
       deleteMany: jest.fn(),
     },
@@ -30,6 +31,7 @@ import {
   loadOnboardingDraftAction,
   saveOnboardingDraftAction,
 } from "../../actions/onboarding-draft.action";
+import { Prisma } from "@prisma/client";
 import { getSession } from "../../lib/auth-server";
 import prisma from "../../lib/prisma";
 import {
@@ -37,8 +39,8 @@ import {
   ONBOARDING_DRAFT_PAYLOAD_VERSION,
   ONBOARDING_DRAFT_VERSION_KEY,
   createDraftSaveQueue,
-  encodeDraftForSave,
   encodeDraftForSaveDetailed,
+  prepareDraftForPersist,
   prepareDraftForPersistDetailed,
   readStoredDraftPayload,
   reviveDraftPayload,
@@ -53,7 +55,9 @@ import {
 import { AchievementCreateInputSchema } from "../../utils/onboarding";
 
 const mockGetSession = getSession as unknown as jest.Mock;
-const mockUpsert = prisma.onboardingDraft.upsert as unknown as jest.Mock;
+const mockUpdateMany = prisma.onboardingDraft
+  .updateMany as unknown as jest.Mock;
+const mockCreate = prisma.onboardingDraft.create as unknown as jest.Mock;
 const mockFindUnique = prisma.onboardingDraft
   .findUnique as unknown as jest.Mock;
 const mockDeleteMany = prisma.onboardingDraft
@@ -137,11 +141,16 @@ describe("reviveDraftPayload", () => {
   });
 });
 
-describe("encodeDraftForSave", () => {
+describe("prepareDraftForPersist", () => {
   it("rejects payloads over the serialized size budget", () => {
     const bloated = { bio: "x".repeat(ONBOARDING_DRAFT_MAX_BYTES + 10) };
     expect(
-      encodeDraftForSave({ role: null, currentStep: 0, payload: bloated }),
+      prepareDraftForPersist({
+        role: null,
+        currentStep: 0,
+        baseVersion: 0,
+        payload: bloated,
+      }),
     ).toBeNull();
   });
 
@@ -157,9 +166,10 @@ describe("encodeDraftForSave", () => {
       })),
     };
     expect(
-      encodeDraftForSave({
+      prepareDraftForPersist({
         role: "CONSULTANT" as never,
         currentStep: 3,
+        baseVersion: 0,
         payload,
       }),
     ).not.toBeNull();
@@ -168,8 +178,12 @@ describe("encodeDraftForSave", () => {
 
 describe("saveOnboardingDraftAction", () => {
   beforeEach(() => {
-    mockGetSession.mockResolvedValue({ user: { id: USER_ID } });
-    mockUpsert.mockResolvedValue({});
+    mockGetSession.mockResolvedValue({
+      user: { id: USER_ID, role: "CONSULTEE", onboardingCompleted: false },
+    });
+    mockUpdateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockCreate.mockReset().mockResolvedValue({});
+    mockFindUnique.mockReset();
   });
 
   it("rejects an unauthenticated caller without touching the database", async () => {
@@ -179,7 +193,7 @@ describe("saveOnboardingDraftAction", () => {
       success: false,
       error: "Unauthorized",
     });
-    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("rejects malformed input at the boundary (strict schema)", async () => {
@@ -198,34 +212,113 @@ describe("saveOnboardingDraftAction", () => {
     await expect(saveOnboardingDraftAction(badRole)).resolves.toMatchObject({
       success: false,
     });
-    expect(mockUpsert).not.toHaveBeenCalled();
+
+    const { baseVersion: _omit, ...noBase } = validInput();
+    await expect(saveOnboardingDraftAction(noBase)).resolves.toMatchObject({
+      success: false,
+    });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("scopes the upsert to the session user and sanitizes before persisting", async () => {
+  it("CAS-updates on the session user and base version, sanitizing first", async () => {
     const input = validInput({
+      baseVersion: 3,
       payload: {
         name: "Ada",
         dateOfBirth: new Date("1990-06-15T00:00:00.000Z"),
         // A known key transiently holding a File mid-upload — the case the
-        // sanitizer exists for. (An UNKNOWN key never gets that far now; the
-        // structural schema strips it first.)
+        // sanitizer exists for.
         image: new File(),
       },
     });
 
     await expect(saveOnboardingDraftAction(input)).resolves.toEqual({
       success: true,
+      version: 4,
     });
 
-    expect(mockUpsert).toHaveBeenCalledTimes(1);
-    const args = mockUpsert.mock.calls[0][0];
-    expect(args.where).toEqual({ userId: USER_ID });
-    expect(args.create.userId).toBe(USER_ID); // session id, never caller-supplied
-    expect(args.create.payload).toEqual({
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    const args = mockUpdateMany.mock.calls[0][0];
+    expect(args.where).toEqual({ userId: USER_ID, version: 3 });
+    expect(args.data.version).toEqual({ increment: 1 });
+    expect(args.data.payload).toEqual({
       name: "Ada",
       dateOfBirth: "1990-06-15T00:00:00.000Z",
       [ONBOARDING_DRAFT_VERSION_KEY]: ONBOARDING_DRAFT_PAYLOAD_VERSION,
     }); // Date stringified, File dropped, generation stamped
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("creates the first row at version 1 when none exists", async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(saveOnboardingDraftAction(validInput())).resolves.toEqual({
+      success: true,
+      version: 1,
+    });
+    expect(mockCreate.mock.calls[0][0].data).toMatchObject({
+      userId: USER_ID,
+      version: 1,
+    });
+  });
+
+  it("returns DRAFT_CONFLICT when another device saved a newer version", async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    mockFindUnique.mockResolvedValue({ version: 5 });
+    await expect(
+      saveOnboardingDraftAction(validInput({ baseVersion: 2 })),
+    ).resolves.toMatchObject({
+      success: false,
+      code: "DRAFT_CONFLICT",
+      currentVersion: 5,
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("treats a lost first-row race (P2002) as a conflict, not an error", async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    mockCreate.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("unique", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+    mockFindUnique.mockResolvedValue({ version: 1 });
+    await expect(
+      saveOnboardingDraftAction(validInput()),
+    ).resolves.toMatchObject({
+      success: false,
+      code: "DRAFT_CONFLICT",
+      currentVersion: 1,
+    });
+  });
+
+  it("refuses writes after onboarding completed, so no draft is resurrected", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: USER_ID,
+        role: "CONSULTANT",
+        onboardingCompleted: true,
+        consultantProfileId: "cp_1",
+      },
+    });
+    await expect(
+      saveOnboardingDraftAction(validInput()),
+    ).resolves.toMatchObject({ success: false, code: "ONBOARDED" });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("still saves for an onboarded learner in add mode", async () => {
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: USER_ID,
+        role: "CONSULTEE",
+        onboardingCompleted: true,
+        consultantProfileId: null,
+      },
+    });
+    await expect(
+      saveOnboardingDraftAction(validInput()),
+    ).resolves.toMatchObject({ success: true });
   });
 
   it("refuses payloads exceeding the size budget", async () => {
@@ -238,7 +331,7 @@ describe("saveOnboardingDraftAction", () => {
       success: false,
       error: "Invalid or oversized draft payload",
     });
-    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -263,10 +356,11 @@ describe("loadOnboardingDraftAction", () => {
     });
   });
 
-  it("revives dates when returning a stored snapshot", async () => {
+  it("revives dates and returns the CAS version with a stored snapshot", async () => {
     mockFindUnique.mockResolvedValue({
       role: "CONSULTANT",
       currentStep: 2,
+      version: 7,
       payload: {
         name: "Ada",
         dateOfBirth: "1990-06-15T00:00:00.000Z",
@@ -278,6 +372,7 @@ describe("loadOnboardingDraftAction", () => {
     expect(result.success).toBe(true);
     if (!result.success || !result.draft) throw new Error("unreachable");
     expect(result.draft.currentStep).toBe(2);
+    expect(result.draft.version).toBe(7);
     expect(result.draft.quarantined).toBe(false);
     expect(result.draft.payload.dateOfBirth).toBeInstanceOf(Date);
   });
@@ -289,6 +384,7 @@ describe("loadOnboardingDraftAction", () => {
     mockFindUnique.mockResolvedValue({
       role: "CONSULTANT",
       currentStep: 3,
+      version: 2,
       payload: { name: "Ada", description: "years of notes" },
     });
 
@@ -298,6 +394,7 @@ describe("loadOnboardingDraftAction", () => {
         role: "CONSULTANT",
         currentStep: 0,
         payload: {},
+        version: 2,
         quarantined: true,
       },
     });
@@ -389,6 +486,7 @@ function validInput(
     role: "CONSULTEE",
     currentStep: 1,
     payload: { name: "Ada", termsAccepted: false },
+    baseVersion: 0,
     ...overrides,
   };
 }
@@ -403,7 +501,12 @@ function validInput(
  */
 describe("byte gate counts UTF-8 bytes, not JS string length", () => {
   const under = (payload: Record<string, unknown>) =>
-    encodeDraftForSave({ role: null, currentStep: 0, payload }) !== null;
+    prepareDraftForPersist({
+      role: null,
+      currentStep: 0,
+      baseVersion: 0,
+      payload,
+    }) !== null;
 
   it("rejects a payload that is under the cap in code units but over it in bytes", () => {
     // "क" is 1 UTF-16 code unit but 3 UTF-8 bytes. 30k of them is ~30k
@@ -434,6 +537,7 @@ describe("prepareDraftForPersistDetailed reports WHY it refused", () => {
     const tooBig = prepareDraftForPersistDetailed({
       role: null,
       currentStep: 0,
+      baseVersion: 0,
       payload: { description: "x".repeat(ONBOARDING_DRAFT_MAX_BYTES + 1) },
     });
     // The byte count rides along so the breadcrumb can show how far over.
@@ -450,6 +554,7 @@ describe("prepareDraftForPersistDetailed reports WHY it refused", () => {
       prepareDraftForPersistDetailed({
         role: "STAFF",
         currentStep: 0,
+        baseVersion: 0,
         payload: {},
       }),
     ).toMatchObject({ ok: false, reason: "INVALID" });
@@ -460,6 +565,7 @@ describe("prepareDraftForPersistDetailed reports WHY it refused", () => {
       encodeDraftForSaveDetailed({
         role: null,
         currentStep: 1,
+        baseVersion: 0,
         payload: { name: "Asha" },
       }),
     ).toMatchObject({ ok: true, value: { payload: { name: "Asha" } } });
@@ -472,6 +578,7 @@ describe("prepareDraftForPersistDetailed reports WHY it refused", () => {
       prepareDraftForPersistDetailed({
         role: null,
         currentStep: 0,
+        baseVersion: 0,
         payload: {
           bio: "x".repeat(100),
           description: "y".repeat(ONBOARDING_DRAFT_MAX_BYTES),
@@ -492,7 +599,12 @@ describe("prepareDraftForPersistDetailed reports WHY it refused", () => {
  */
 describe("structural payload contract", () => {
   const prepare = (payload: Record<string, unknown>) =>
-    prepareDraftForPersistDetailed({ role: null, currentStep: 0, payload });
+    prepareDraftForPersistDetailed({
+      role: null,
+      currentStep: 0,
+      baseVersion: 0,
+      payload,
+    });
 
   const storedPayload = (payload: Record<string, unknown>) => {
     const result = prepare(payload);
@@ -578,6 +690,7 @@ describe("payload generation marker", () => {
       prepareDraftForPersistDetailed({
         role: null,
         currentStep: 0,
+        baseVersion: 0,
         payload: { name: "Ada" },
       }),
     ).toMatchObject({
@@ -597,6 +710,7 @@ describe("payload generation marker", () => {
       prepareDraftForPersistDetailed({
         role: null,
         currentStep: 0,
+        baseVersion: 0,
         payload: {
           name: "Ada",
           [ONBOARDING_DRAFT_VERSION_KEY]: ONBOARDING_DRAFT_PAYLOAD_VERSION + 99,
@@ -616,6 +730,7 @@ describe("payload generation marker", () => {
     const written = prepareDraftForPersistDetailed({
       role: null,
       currentStep: 0,
+      baseVersion: 0,
       payload: {
         name: "Ada",
         dateOfBirth: new Date("1990-06-15T00:00:00.000Z"),

@@ -17,10 +17,7 @@ import { hasOrgPermission } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionProgram } from "@/lib/enterprise/transitions";
 import { getProgramLockState } from "@/lib/enterprise/config-lock";
-import {
-  CHARGE_MEMBER_NEEDS_EARNINGS_HOLD,
-  overageBehaviorUnsupportedReason,
-} from "@/lib/enterprise/reachable-paths";
+import { assertMergedOverageConfigValid } from "@/lib/enterprise/reachable-paths";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
@@ -64,7 +61,7 @@ const PatchBodySchema = z
     priceCapPerEngagementPaise: z.coerce
       .number()
       .int()
-      .min(0)
+      .positive()
       .nullable()
       .optional(),
     maxOveragePerCyclePaise: z.coerce
@@ -102,7 +99,7 @@ export async function GET(
   const { orgId, programId } = await params;
   // Any ACTIVE member may call this: an assignee reads the rules of a program
   // they hold a seat in; any other program needs `programs.read` (#1527 P0-2).
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
     return NextResponse.json(
@@ -161,7 +158,7 @@ async function applyProgramPatch(
   },
 ) {
   const { orgId, programId, actorMembershipId, body } = ctx;
-  // Recomputed here: the handler's own copy gates the pre-tx friendly check.
+  // `name`/`status`/`allowedCategories` stay editable on a program in use.
   const touchesMoney = MONEY_FIELDS.some((f) => body[f] !== undefined);
   const current = await tx.program.findFirst({
     where: { id: programId, contract: { organizationId: orgId } },
@@ -181,10 +178,8 @@ async function applyProgramPatch(
     });
   }
 
-  // Wave-3 TOCTOU closure (#1230) — the pre-transaction lock check above
-  // used the global client and can be defeated by a concurrent
-  // first-assignment stamping `configLockedAt` between check and write.
-  // Money-field writes therefore RE-CHECK against this tx's snapshot.
+  // Checked after the org-scoped read, on this tx's snapshot: a money edit on a
+  // program in use would rewrite bookings settled at the old terms.
   if (touchesMoney) {
     const { locked: lockedNow } = await getProgramLockState(programId, tx);
     if (lockedNow) {
@@ -203,77 +198,29 @@ async function applyProgramPatch(
   // current + patch and re-check the combined state.
   if (touchesMoney) {
     const cfg = current.licensedSeatConfig ?? current.creditPoolConfig;
-    const merged = {
+    const rawMaxOverage =
+      body.maxOveragePerCyclePaise !== undefined
+        ? body.maxOveragePerCyclePaise
+        : (cfg?.maxOveragePerCyclePaise ?? null);
+    assertMergedOverageConfigValid({
+      programType: current.type,
+      fundingSource: current.contract.billingAccount?.fundingSource ?? null,
       overageBehavior: body.overageBehavior ?? cfg?.overageBehavior ?? "BLOCK",
       overageSurchargeBps:
         body.overageSurchargeBps !== undefined
           ? body.overageSurchargeBps
           : (cfg?.overageSurchargeBps ?? null),
       maxOveragePerCyclePaise:
-        body.maxOveragePerCyclePaise !== undefined
-          ? body.maxOveragePerCyclePaise
-          : (cfg?.maxOveragePerCyclePaise ?? null),
+        rawMaxOverage !== null ? Number(rawMaxOverage) : null,
       coveredEngagementsPerCycle:
         body.coveredEngagementsPerCycle !== undefined
           ? body.coveredEngagementsPerCycle
           : (current.licensedSeatConfig?.coveredEngagementsPerCycle ?? null),
-    };
-    const fail = (message: string) => {
-      throw Object.assign(new Error(message), {
-        httpStatus: 400,
-        code: "INVALID_OVERAGE_CONFIG",
-      });
-    };
-    if (
-      current.type === "LICENSED_SEAT" &&
-      (merged.coveredEngagementsPerCycle === null ||
-        merged.coveredEngagementsPerCycle === undefined) &&
-      (merged.overageBehavior !== "BLOCK" ||
-        (merged.overageSurchargeBps ?? 0) > 0 ||
-        (merged.maxOveragePerCyclePaise !== null &&
-          merged.maxOveragePerCyclePaise !== undefined))
-    ) {
-      fail(
-        "Overage settings have no effect while coveredEngagementsPerCycle is unlimited — clear them or set a cap.",
-      );
-    }
-    if (
-      merged.overageBehavior !== "BLOCK" &&
-      ((merged.coveredEngagementsPerCycle !== null &&
-        merged.coveredEngagementsPerCycle !== undefined) ||
-        current.type === "CREDIT_POOL") &&
-      (merged.maxOveragePerCyclePaise === null ||
-        merged.maxOveragePerCyclePaise === undefined ||
-        merged.maxOveragePerCyclePaise < 1)
-    ) {
-      fail(
-        `overageBehavior=${merged.overageBehavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling.`,
-      );
-    }
-    if (
-      merged.overageBehavior === "BLOCK" &&
-      (merged.overageSurchargeBps ?? 0) > 0
-    ) {
-      fail(
-        "overageSurchargeBps has no effect with overageBehavior=BLOCK — remove it or pick CHARGE_MEMBER/CHARGE_ORG.",
-      );
-    }
-    // #1458 — same funding-source rule the create route applies, re-checked on
-    // the merged config so a patch cannot assemble a combination the create
-    // route would have refused.
-    const overageReason = overageBehaviorUnsupportedReason(
-      current.contract.billingAccount?.fundingSource ?? null,
-      merged.overageBehavior,
-      // #1458 — merged, so a patch that adds a surcharge to an already-saved
-      // wallet CHARGE_ORG programme is refused as readily as one that sets both.
-      merged.overageSurchargeBps,
-    );
-    // #1744 — a programme saved with CHARGE_MEMBER before the all-rail guard
-    // may still edit its other money fields; only re-asserting the value fails.
-    const reassertsLegacyMemberCharge =
-      overageReason === CHARGE_MEMBER_NEEDS_EARNINGS_HOLD &&
-      body.overageBehavior === undefined;
-    if (overageReason && !reassertsLegacyMemberCharge) fail(overageReason);
+      touchedOverageFields: {
+        overageBehavior: body.overageBehavior !== undefined,
+        overageSurchargeBps: body.overageSurchargeBps !== undefined,
+      },
+    });
   }
 
   // #777 §B — archiving guard: an archived program is skipped by the cycle
@@ -330,13 +277,24 @@ async function applyProgramPatch(
     // status, not after it.
     let assignmentsCancelled = 0;
     if (body.status === "CANCELLED") {
+      // Only ACTIVE assignments currently occupy a billed seat — PAUSED
+      // assignments already released their seat when paused.
+      const activeSeatsToRelease =
+        typeof tx.programAssignment?.count === "function"
+          ? await tx.programAssignment.count({
+              where: { programId, status: "ACTIVE" },
+            })
+          : undefined;
       const cascaded = await tx.programAssignment.updateMany({
         where: { programId, status: { in: ["ACTIVE", "PAUSED"] } },
         data: { status: "CANCELLED", periodEnd: new Date() },
       });
       assignmentsCancelled = cascaded.count;
-      // #1744 row 3 — each cancelled assignment gives its billed seat back.
-      await releaseSeatsForClosedAssignments(tx, programId, cascaded.count);
+      await releaseSeatsForClosedAssignments(
+        tx,
+        programId,
+        activeSeatsToRelease ?? cascaded.count,
+      );
     }
 
     await tx.orgAuditLog.create({
@@ -414,6 +372,9 @@ async function applyProgramPatch(
       ...(body.overageSurchargeBps !== undefined && {
         overageSurchargeBps: body.overageSurchargeBps,
       }),
+      ...(body.priceCapPerEngagementPaise !== undefined && {
+        priceCapPerEngagementPaise: body.priceCapPerEngagementPaise,
+      }),
       ...(body.maxOveragePerCyclePaise !== undefined && {
         maxOveragePerCyclePaise: body.maxOveragePerCyclePaise,
       }),
@@ -456,6 +417,7 @@ export async function PATCH(
   const access = await requireOrgAccess(orgId, {
     permission: "programs.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -468,24 +430,6 @@ export async function PATCH(
     );
   }
   const body = parsed.data;
-
-  // Reject any money-field edit on a program that's already in use — a
-  // retroactive change would rewrite bookings settled at the old terms.
-  // `name`/`status`/`allowedCategories` stay editable always (#777 §B).
-  const touchesMoney = MONEY_FIELDS.some((f) => body[f] !== undefined);
-  if (touchesMoney) {
-    const { locked } = await getProgramLockState(programId);
-    if (locked) {
-      return NextResponse.json(
-        {
-          error:
-            "Program is in use — money config is locked. Only the name can be changed.",
-          code: "PROGRAM_CONFIG_LOCKED",
-        },
-        { status: 409 },
-      );
-    }
-  }
 
   try {
     // CR #1234 r5 — Serializable gives the configLockedAt re-check a shared
@@ -509,7 +453,9 @@ export async function PATCH(
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
       const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
-      return NextResponse.json({ error: err.message }, { status });
+      const code =
+        "code" in err && typeof err.code === "string" ? err.code : undefined;
+      return NextResponse.json({ error: err.message, code }, { status });
     }
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),
@@ -531,6 +477,7 @@ export async function DELETE(
   const access = await requireOrgAccess(orgId, {
     permission: "programs.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 

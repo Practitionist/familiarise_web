@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,7 +50,13 @@ const getStatusColor = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300";
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300";
+    case "CHARGE_REFUNDED":
+      return "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300";
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
     default:
       return "bg-muted text-muted-foreground";
   }
@@ -59,6 +65,7 @@ const getStatusColor = (status: string) => {
 const getStatusIcon = (status: string) => {
   switch (status.toUpperCase()) {
     case "WON":
+    case "CHARGE_REFUNDED":
       return <CheckCircle className="h-3 w-3" />;
     case "LOST":
       return <XCircle className="h-3 w-3" />;
@@ -66,7 +73,11 @@ const getStatusIcon = (status: string) => {
     case "WARNING_NEEDS_RESPONSE":
       return <AlertTriangle className="h-3 w-3" />;
     case "UNDER_REVIEW":
+    case "WARNING_UNDER_REVIEW":
       return <Clock className="h-3 w-3" />;
+    case "CLOSED":
+    case "WARNING_CLOSED":
+      return <AlertCircle className="h-3 w-3" />;
     default:
       return null;
   }
@@ -91,6 +102,117 @@ const getDaysUntilDue = (dueBy: string | null) => {
   );
   return diffDays;
 };
+
+function getDueCellClassName(isOverdue: boolean, isUrgent: boolean): string {
+  if (isOverdue) return "text-red-600 font-semibold";
+  if (isUrgent) return "text-red-600 font-medium";
+  return "text-muted-foreground";
+}
+
+function DisputeDueCell({
+  dueBy,
+  status,
+}: Readonly<{ dueBy: string | null; status: string }>) {
+  if (!dueBy) return <>-</>;
+  const daysUntilDue = getDaysUntilDue(dueBy);
+  const hoursUntilDue =
+    (new Date(dueBy).getTime() - Date.now()) / (1000 * 60 * 60);
+  const isActionable =
+    status === "NEEDS_RESPONSE" || status === "WARNING_NEEDS_RESPONSE";
+  const isOverdue = isActionable && new Date(dueBy).getTime() < Date.now();
+  const isCritical48h = !isOverdue && hoursUntilDue <= 48 && hoursUntilDue >= 0;
+  const isUrgent =
+    isOverdue ||
+    isCritical48h ||
+    (daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0);
+
+  return (
+    <div className={getDueCellClassName(isOverdue, isUrgent)}>
+      <div className="flex items-center gap-1.5">
+        <span>{formatDate(dueBy)}</span>
+        {isOverdue && (
+          <Badge variant="destructive" className="text-[10px]">
+            Overdue
+          </Badge>
+        )}
+        {!isOverdue && isCritical48h && (
+          <Badge variant="destructive" className="text-[10px]">
+            Due &lt; 48h
+          </Badge>
+        )}
+      </div>
+      {isOverdue && (
+        <p className="text-xs font-semibold text-red-600">
+          {`Overdue by ${Math.max(1, Math.abs(daysUntilDue ?? 1))} day(s)`}
+        </p>
+      )}
+      {!isOverdue && daysUntilDue !== null && daysUntilDue >= 0 && (
+        <p className="text-xs">
+          {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days left`}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const DISPUTE_COLUMNS: ResponsiveColumn<Dispute>[] = [
+  {
+    key: "disputeId",
+    header: "Dispute ID",
+    primary: true,
+    cell: (dispute) => (
+      <div>
+        <p className="font-mono text-sm">
+          {dispute.disputeId?.slice(-12) || dispute.id.slice(-8).toUpperCase()}
+        </p>
+        {dispute.payment && (
+          <p className="text-xs text-muted-foreground/70">
+            Payment: {dispute.payment.paymentIntent.slice(-12)}
+          </p>
+        )}
+      </div>
+    ),
+  },
+  {
+    key: "amount",
+    header: "Amount",
+    className: "font-medium",
+    cell: (dispute) =>
+      formatCurrencyAmount(dispute.amountPaise, dispute.currency),
+  },
+  {
+    key: "gateway",
+    header: "Gateway",
+    className: "text-sm text-muted-foreground",
+    cell: (dispute) => gatewayLabel(dispute.paymentGateway),
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (dispute) => (
+      <Badge
+        className={`${getStatusColor(dispute.status)} gap-1`}
+        variant="secondary"
+      >
+        {getStatusIcon(dispute.status)}
+        {dispute.status.toLowerCase().replace(/_/g, " ")}
+      </Badge>
+    ),
+  },
+  {
+    key: "dueBy",
+    header: "Evidence Due By",
+    cell: (dispute) => (
+      <DisputeDueCell dueBy={dispute.dueBy} status={dispute.status} />
+    ),
+  },
+  {
+    key: "created",
+    header: "Created",
+    className: "text-sm text-muted-foreground",
+    cell: (dispute) => formatDate(dispute.createdAt),
+  },
+];
 
 export interface DisputesPageProps {
   /** API endpoint for fetching disputes */
@@ -144,7 +266,6 @@ export function DisputesPage({
       if (!response.ok) throw new Error("Failed to fetch disputes");
       return response.json();
     },
-    // Keep the current page on screen while the next one loads.
     placeholderData: keepPreviousData,
   });
 
@@ -152,8 +273,6 @@ export function DisputesPage({
   const totalPages = data?.totalPages ?? 1;
   const total = data?.total ?? 0;
   const urgentCount = data?.urgentDisputes ?? 0;
-  // #997 secondary findings — server-computed, dashboard-wide (not the
-  // current page's rows via .filter()).
   const underReviewCount = data?.stats?.underReviewCount ?? 0;
   const wonCount = data?.stats?.wonCount ?? 0;
 
@@ -161,11 +280,6 @@ export function DisputesPage({
     router.push(`${basePath}/disputes/${disputeId}`);
   };
 
-  // NOTE: the row itself still navigates via onRowClick below —
-  // ResponsiveTable renders plain <tr>/<Card> click targets with no href
-  // support, so making the row a prefetching Link would mean editing that
-  // shared component. The eye action IS a real Link (prefetched), and the
-  // table's own cell wrapper keeps its stopPropagation behavior.
   const renderRowActions = (dispute: Dispute) => (
     <Button asChild variant="ghost" size="icon" className="h-8 w-8">
       <Link
@@ -179,86 +293,6 @@ export function DisputesPage({
       </Link>
     </Button>
   );
-
-  const columns: ResponsiveColumn<Dispute>[] = [
-    {
-      key: "disputeId",
-      header: "Dispute ID",
-      primary: true,
-      cell: (dispute) => (
-        <div>
-          <p className="font-mono text-sm">
-            {dispute.disputeId?.slice(-12) ||
-              dispute.id.slice(-8).toUpperCase()}
-          </p>
-          {dispute.payment && (
-            <p className="text-xs text-muted-foreground/70">
-              Payment: {dispute.payment.paymentIntent.slice(-12)}
-            </p>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: "amount",
-      header: "Amount",
-      className: "font-medium",
-      cell: (dispute) =>
-        formatCurrencyAmount(dispute.amountPaise, dispute.currency),
-    },
-    {
-      key: "gateway",
-      header: "Gateway",
-      className: "text-sm text-muted-foreground",
-      cell: (dispute) => gatewayLabel(dispute.paymentGateway),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (dispute) => (
-        <Badge
-          className={`${getStatusColor(dispute.status)} gap-1`}
-          variant="secondary"
-        >
-          {getStatusIcon(dispute.status)}
-          {dispute.status.toLowerCase().replace(/_/g, " ")}
-        </Badge>
-      ),
-    },
-    {
-      key: "dueBy",
-      header: "Due By",
-      cell: (dispute) => {
-        const daysUntilDue = getDaysUntilDue(dispute.dueBy);
-        const isUrgent =
-          daysUntilDue !== null && daysUntilDue <= 3 && daysUntilDue >= 0;
-        return dispute.dueBy ? (
-          <div
-            className={
-              isUrgent ? "text-red-600 font-medium" : "text-muted-foreground"
-            }
-          >
-            {formatDate(dispute.dueBy)}
-            {daysUntilDue !== null && daysUntilDue >= 0 && (
-              <p className="text-xs">
-                {daysUntilDue === 0
-                  ? "Due today!"
-                  : `${daysUntilDue} days left`}
-              </p>
-            )}
-          </div>
-        ) : (
-          "-"
-        );
-      },
-    },
-    {
-      key: "created",
-      header: "Created",
-      className: "text-sm text-muted-foreground",
-      cell: (dispute) => formatDate(dispute.createdAt),
-    },
-  ];
 
   return (
     <div className="space-y-6">
@@ -286,9 +320,9 @@ export function DisputesPage({
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Urgent Attention Required</AlertTitle>
           <AlertDescription>
-            {urgentCount} dispute{urgentCount > 1 ? "s" : ""} require
-            {urgentCount === 1 ? "s" : ""} response within 3 days. Please
-            escalate to admin for evidence submission.
+            {urgentCount} dispute{urgentCount > 1 ? "s are" : " is"} overdue or
+            require{urgentCount === 1 ? "s" : ""} an imminent response (&lt;= 3
+            days). Please escalate to admin for evidence submission.
           </AlertDescription>
         </Alert>
       )}
@@ -318,7 +352,7 @@ export function DisputesPage({
             <div>
               <p className="text-2xl font-bold text-red-600">{urgentCount}</p>
               <p className="text-sm text-muted-foreground">
-                Urgent (Due in 3 days)
+                Urgent / Overdue (Actionable)
               </p>
             </div>
           </CardContent>
@@ -377,8 +411,14 @@ export function DisputesPage({
                   Warning - Needs Response
                 </SelectItem>
                 <SelectItem value="UNDER_REVIEW">Under Review</SelectItem>
+                <SelectItem value="WARNING_UNDER_REVIEW">
+                  Warning - Under Review
+                </SelectItem>
+                <SelectItem value="CHARGE_REFUNDED">Charge Refunded</SelectItem>
                 <SelectItem value="WON">Won</SelectItem>
                 <SelectItem value="LOST">Lost</SelectItem>
+                <SelectItem value="CLOSED">Closed</SelectItem>
+                <SelectItem value="WARNING_CLOSED">Warning - Closed</SelectItem>
               </SelectContent>
             </Select>
             <Select
@@ -403,14 +443,8 @@ export function DisputesPage({
 
       {/* Disputes Table */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-yellow-600" />
-            Disputes ({total})
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0 sm:p-6 sm:pt-0">
-          {isError && !data ? (
+        <CardContent className="p-0 sm:p-6">
+          {isError && !data && (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-center">
               <div className="flex items-center gap-2 text-destructive">
                 <AlertTriangle className="h-5 w-5" />
@@ -426,13 +460,15 @@ export function DisputesPage({
                 Retry
               </Button>
             </div>
-          ) : isPending ? (
+          )}
+          {(!isError || Boolean(data)) && isPending && (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
-          ) : (
+          )}
+          {(!isError || Boolean(data)) && !isPending && (
             <ResponsiveTable<Dispute>
-              columns={columns}
+              columns={DISPUTE_COLUMNS}
               rows={disputes}
               getRowId={(d) => d.id}
               onRowClick={(d) => handleViewDispute(d.id)}

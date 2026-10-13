@@ -17,8 +17,9 @@ updates:
     versioning-strategy: "increase"
     allow:
       - dependency-type: "direct"
-      - dependency-type: "indirect"
     ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "@types/*"
         update-types: ["version-update:semver-patch"]
       # Ignore patch updates for specific dev tools to reduce noise
@@ -46,7 +47,6 @@ updates:
           - "@types/react"
           - "@types/react-dom"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 
@@ -78,11 +78,8 @@ updates:
       # HIGH - Payment Processing
       payment:
         patterns:
-          - "stripe"
-          - "@stripe/*"
           - "razorpay"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 
@@ -92,7 +89,6 @@ updates:
           - "@stream-io/*"
           - "stream-chat*"
         update-types:
-          - "major"
           - "minor"
           - "patch"
 
@@ -257,7 +253,7 @@ updates:
 # - Core Framework (React, Next.js): Foundation dependencies
 # - Auth & Security: Authentication & encryption packages
 # - Database & Storage: Prisma, Supabase, Redis
-# - Payment: Stripe, Razorpay (business critical)
+# - Payment: Razorpay (business critical)
 #
 # HIGH (Weekly, Medium Priority):
 # - Stream & Communication: Video/chat functionality

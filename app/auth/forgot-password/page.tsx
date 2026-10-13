@@ -61,11 +61,8 @@ export default function ForgotPassword() {
       const { error } = await authClient.requestPasswordReset({
         email,
         redirectTo: "/auth/reset-password",
-        // Reads `Retry-After` off the response — see
-        // `components/auth/useRetryAfterCapture.ts`. Reset requests are a
-        // classic enumeration vector, so the limiter is tight here and the
-        // honest wait is the most useful thing the page can say.
-        ...retryAfter.fetchOptions,
+        // Reads `Retry-After` off the 429 (components/auth/useRetryAfterCapture.ts).
+        fetchOptions: retryAfter.fetchOptions,
       });
       if (error) {
         const copy = humanizeAuthError("forgot", error, {

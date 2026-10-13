@@ -60,7 +60,7 @@ export function SlotStatusLegend({
                 cell's, and a hardcoded one here would win or lose by
                 stylesheet order rather than by intent (#1064). */}
             <span
-              aria-hidden
+              aria-hidden="true"
               className={cn(
                 "h-3.5 w-3.5 shrink-0 rounded-sm border",
                 token.swatchClassName,

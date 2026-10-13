@@ -54,7 +54,6 @@ jest.mock("../../lib/payments/payouts", () => ({
 
 // Other utils.ts imports we don't exercise — stub minimally so the
 // module load doesn't blow up.
-jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null }));
 jest.mock("../../lib/payments/core/razorpay", () => ({ razorpayClient: null }));
 jest.mock("../../lib/novu", () => ({
   notifyRefundProcessed: jest.fn(),

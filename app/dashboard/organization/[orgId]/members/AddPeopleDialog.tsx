@@ -35,6 +35,7 @@ import { MEMBER_ROLE_LABEL, getInvitableRoles } from "@/lib/labels/org-labels";
 import { CreateInvitationPayloadSchema } from "@/schemas/organizations";
 
 import { useOrgRole } from "../useOrgRole";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 type InvitableRole = z.infer<typeof CreateInvitationPayloadSchema>["role"];
 
@@ -48,13 +49,16 @@ async function invitePerson(
   orgId: string,
   payload: { email: string; role: InvitableRole },
 ): Promise<void> {
-  const res = await fetch(`/api/organizations/${orgId}/invitations`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(
-      validateOutboundPayload(CreateInvitationPayloadSchema, payload),
-    ),
-  });
+  const res = await fetchWithIdentity(
+    `/api/organizations/${orgId}/invitations`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        validateOutboundPayload(CreateInvitationPayloadSchema, payload),
+      ),
+    },
+  );
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new Error(

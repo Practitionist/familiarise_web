@@ -23,8 +23,9 @@ import {
   Grid3X3,
   Monitor,
   X,
-  Phone,
-  MoreVertical,
+  Radio,
+  MessageCircle,
+  MessageSquareText,
 } from "lucide-react";
 
 import {
@@ -33,9 +34,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import EndCallButton from "./EndCallButton";
+import CallExitButton from "./EndCallButton";
 import CallEnded from "./CallEnded";
 import RecordingControls from "./RecordingControls";
+import { StageControls } from "./StageControls";
+import { StagePinnedBannerOverlay } from "./StagePinnedBannerOverlay";
+import { StageChatDrawer } from "./StageChatDrawer";
+import { StageQaDrawer } from "./StageQaDrawer";
+import { OverrunBanner } from "./OverrunBanner";
 import { ConnectionQualityNotice } from "./ConnectionQualityNotice";
 import { ConnectionStateScreen } from "./ConnectionStateScreen";
 import { IncomingVideoQualityMenu } from "./IncomingVideoQualityMenu";
@@ -50,8 +56,24 @@ import {
   describeCallingState,
 } from "@/lib/stream/connection-state";
 import { leaveCallAndReleaseMedia } from "@/lib/stream/media-teardown";
+import {
+  applyIncomingVideoSetting,
+  type IncomingVideoSetting,
+} from "@/lib/stream/incoming-video";
 import { cn } from "@/utils/tailwind";
 import { StreamVideoErrorBoundary } from "@/components/stream/StreamErrorBoundary";
+
+import {
+  isAwaitingHostGoLive,
+  isInCallChatAllowed,
+  isOneToManyAppointmentType,
+} from "@/lib/meetings/room-ready";
+import { useRoomQaAndChat, type SideDrawerTab } from "./useRoomQaAndChat";
+
+export { isInCallChatAllowed };
+
+const useDefaultTrue = () => true;
+const useDefaultUndefined = () => undefined;
 
 type CallLayoutType = "grid" | "speaker-left" | "speaker-right";
 
@@ -76,14 +98,7 @@ const layoutOptions = [
   { value: "speaker-right", label: "Speaker (Right)", icon: Monitor },
 ];
 
-/**
- * The clock pill, isolated.
- *
- * `useSessionClock` ticks once a second for the whole session. Called from the
- * top of MeetingRoom it re-rendered the entire video layout on every tick,
- * including the many ticks whose output is identical. Only these twenty-odd
- * nodes actually change, so only they subscribe.
- */
+/** Isolated clock pill that subscribes to per-second ticks without re-rendering the video stage. */
 function SessionClockPill({
   startsAt,
   endsAt,
@@ -111,9 +126,6 @@ function SessionClockPill({
             : "animate-pulse bg-white",
         )}
       />
-      {/* What remains leads; the clock since the start is context
-                beneath it and now says which one it is. Two unlabelled
-                durations side by side read as contradicting each other. */}
       <span
         className={cn(
           "text-sm font-medium",
@@ -135,58 +147,93 @@ function SessionClockPill({
 }
 
 interface MeetingRoomProps {
-  /**
-   * Recovery from a terminal connection state. Re-creating the call is the
-   * SDK's documented requirement — see useGetCallById.
-   */
   onRejoin: () => void;
+  role?: "host" | "participant" | null;
 }
 
-const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
+const MeetingRoom = ({ onRejoin, role }: MeetingRoomProps) => {
   const router = useRouter();
   const { data: session } = useSession();
   const [layout, setLayout] = useState<CallLayoutType>("speaker-left");
-  const [showParticipants, setShowParticipants] = useState(false);
-  // How THIS client is on its way out, set before the request that ends or
-  // leaves, so the `call.ended`/LEFT that follow are not screens for them.
+  const [activeSideTab, setActiveSideTab] = useState<SideDrawerTab>(null);
   const [exit, setExit] = useState<"leaving" | "ending" | null>(null);
-  // Stable: it sits in EndCallButton's hold-timer effect deps.
   const handleEnding = useCallback(() => setExit("ending"), []);
   const call = useCall();
+  const callStateHooks = useCallStateHooks();
   const { useCallCallingState, useCallEndedAt, useParticipantCount } =
-    useCallStateHooks();
+    callStateHooks;
+  const useIsCallLive = callStateHooks.useIsCallLive ?? useDefaultTrue;
+  const useCallSettings = callStateHooks.useCallSettings ?? useDefaultUndefined;
+  const useCallCustomData =
+    callStateHooks.useCallCustomData ?? useDefaultUndefined;
 
-  // Get recording info for this meeting
   const { meetingId, recordingEnabled } = useMeetingRecording(call?.id);
 
   const callingState = useCallCallingState();
   const callEndedAt = useCallEndedAt();
   const participantCount = useParticipantCount();
+  const isCallLive = useIsCallLive();
+  const callSettings = useCallSettings();
+  const callCustomData = useCallCustomData();
 
-  // #1134 — Stream's default disconnection timeout is 0, i.e. a participant
-  // whose connection dies stays in the call indefinitely and never emits
-  // `call.session_participant_left`. That is where the 1,417 Meeting
-  // rows that never closed came from, and why attendance cannot be trusted.
   useEffect(() => {
     call?.setDisconnectionTimeout(DISCONNECTION_TIMEOUT_SECONDS);
   }, [call]);
 
-  const { useCallCustomData } = useCallStateHooks();
-  const custom = useCallCustomData();
-
-  const info = useSessionInfo();
-
-  // #org-appts — host/guest by WHICH SIDE of THIS appointment the viewer is
-  // on. `isHost` comes from useSessionInfo, which owns the one definition.
-  const consulteeUserId = custom?.consulteeUserId as string | undefined;
+  const info = useSessionInfo(role);
   const isHost = info.isHost;
-  const isGuest = consulteeUserId
-    ? session?.user?.id === consulteeUserId
-    : session?.user?.role === "CONSULTEE";
+  const inCallChatAllowed = isInCallChatAllowed(info.appointmentType);
+  const isOneToMany = isOneToManyAppointmentType(info.appointmentType);
+  const isBackstageEnabled = Boolean(callSettings?.backstage?.enabled);
+  const awaitingGoLive = isAwaitingHostGoLive({
+    appointmentType: info.appointmentType,
+    isCallLive,
+    isBackstageEnabled,
+  });
+  const defaultIncomingVideoCap: IncomingVideoSetting = isOneToMany
+    ? "720p"
+    : "480p";
 
-  // Get proper dashboard URL based on user role and profile
+  const {
+    questions,
+    chatMessages,
+    unreadChatCount,
+    activeBanner,
+    qaError,
+    isQaSubmitting,
+    isChatSubmitting,
+    handleSendChatMessage,
+    handleToggleChatReaction,
+    handleAskQuestion,
+    handleToggleUpvote,
+    handleAnswerQuestion,
+    handleReopenQuestion,
+    handlePinQuestion,
+    handleUnpinQuestion,
+  } = useRoomQaAndChat({
+    call,
+    callCustomData,
+    inCallChatAllowed,
+    isHost,
+    activeSideTab,
+  });
+
+  useEffect(() => {
+    if (
+      call &&
+      typeof call.setIncomingVideoEnabled === "function" &&
+      typeof call.setPreferredIncomingVideoResolution === "function"
+    ) {
+      applyIncomingVideoSetting(call, defaultIncomingVideoCap);
+    }
+  }, [call, defaultIncomingVideoCap]);
+
   const getDashboardUrl = () => {
     if (!session?.user) return "/";
+
+    if (info.organizationId) {
+      return `/dashboard/organization/${info.organizationId}/appointments`;
+    }
 
     const { role, consultantProfileId, consulteeProfileId, staffProfileId } =
       session.user;
@@ -198,39 +245,27 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
       return `/dashboard/consultee/${consulteeProfileId}/home`;
     }
     if (role === "STAFF" && staffProfileId) {
-      return "/dashboard/staff/support"; // #1527 Q12
+      return "/dashboard/staff/support";
     }
 
     return "/";
   };
 
-  // Release the hardware before navigating. The teardown is shared with the
-  // page unmount and the end-call path so every exit behaves the same way, and
-  // so no single failure can skip the rest of it.
   const cleanupAndNavigate = async (targetUrl: string) => {
-    // A deliberate exit passes through LEFT on its way out. Without this it
-    // would flash "You have left this session — Rejoin?" at someone who just
-    // pressed Leave and is already being navigated away.
     setExit("leaving");
     try {
       await leaveCallAndReleaseMedia(call);
     } catch (error) {
       console.error("Error releasing media while leaving call:", error);
     } finally {
-      // In `finally`: a teardown that rejects must not be the reason the user
-      // is left sitting on the call screen.
       router.push(targetUrl);
     }
   };
 
-  // Handle return to home with proper cleanup
   const handleReturnHome = async () => {
     await cleanupAndNavigate(getDashboardUrl());
   };
 
-  // An ended call is over for EVERYONE here. Exempting the host left a co-host
-  // (#1580), a second tab or an SFU max-duration end on a LEFT call with an
-  // empty stage; the one client on its way out has `exit` set instead.
   if (callEndedAt && !exit) {
     return (
       <CallEnded
@@ -243,10 +278,6 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
     );
   }
 
-  // #1134 — everything that was not JOINED used to collapse into one
-  // unexplained spinner, so a network blip, an SFU migration and a connection
-  // the SDK had permanently given up on all looked identical, and the terminal
-  // one had no way out. `describeCallingState` owns which is which.
   const advice = exit
     ? {
         tone: "loading" as const,
@@ -269,110 +300,214 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
     );
   }
 
+  const openQuestionsCount = questions.filter(
+    (q) => q.status !== "answered",
+  ).length;
+
   return (
     <StreamVideoErrorBoundary>
-      <section className="relative h-screen w-full overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950">
-        {/* Background pattern */}
+      <section
+        data-in-call-chat-blocked={inCallChatAllowed ? "false" : "true"}
+        className="relative h-screen w-full overflow-hidden bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950"
+      >
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMiI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
 
-        {/* Main content area */}
         <div className="relative flex h-full w-full">
-          {/* Video Grid Area - Centered with proper padding for controls */}
           <div className="flex-1 flex items-center justify-center px-6 pt-16 pb-24">
             <div className="w-full h-full max-w-6xl flex items-center justify-center">
-              <CallLayout layout={layout} />
+              {awaitingGoLive && !isHost ? (
+                <div
+                  data-testid="backstage-waiting-room"
+                  className="flex max-w-md flex-col items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/80 px-8 py-10 text-center backdrop-blur-md"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10 text-amber-400">
+                    <Radio className="h-6 w-6 animate-pulse" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-white">
+                    The session will begin shortly
+                  </h2>
+                  <p className="text-sm text-zinc-400">
+                    You are in the waiting room. The stage will appear
+                    automatically as soon as the host goes live.
+                  </p>
+                </div>
+              ) : (
+                <CallLayout layout={layout} />
+              )}
             </div>
           </div>
 
-          {/* Participants Sidebar */}
+          {inCallChatAllowed && (
+            <StagePinnedBannerOverlay
+              banner={activeBanner}
+              isHost={isHost}
+              onUnpin={handleUnpinQuestion}
+              isUpdating={isQaSubmitting}
+              error={qaError}
+            />
+          )}
+
           <div
+            inert={!activeSideTab || undefined}
+            aria-hidden={!activeSideTab}
             className={cn(
-              "fixed right-0 top-0 h-full w-full sm:w-80 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
-              showParticipants ? "translate-x-0" : "translate-x-full",
+              "fixed right-0 top-0 flex h-full w-full flex-col pb-20 sm:w-80 sm:pb-0 bg-zinc-900/95 backdrop-blur-xl border-l border-zinc-800 transform transition-transform duration-300 ease-in-out z-40",
+              activeSideTab ? "translate-x-0" : "translate-x-full",
             )}
           >
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-zinc-400" />
-                <span className="font-semibold text-white">Participants</span>
-                <span className="px-2 py-0.5 bg-zinc-800 rounded-full text-xs text-zinc-400">
-                  {participantCount}
-                </span>
+            <div className="flex shrink-0 items-center justify-between px-3 py-3 border-b border-zinc-800">
+              <div className="flex items-center gap-1 rounded-xl bg-zinc-950/70 p-1">
+                {inCallChatAllowed && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSideTab("chat")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                      activeSideTab === "chat"
+                        ? "bg-zinc-800 text-white"
+                        : "text-zinc-400 hover:text-zinc-200",
+                    )}
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>Chat</span>
+                    {unreadChatCount > 0 && (
+                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
+                        {unreadChatCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+
+                {inCallChatAllowed && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveSideTab("qa")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                      activeSideTab === "qa"
+                        ? "bg-zinc-800 text-white"
+                        : "text-zinc-400 hover:text-zinc-200",
+                    )}
+                  >
+                    <MessageSquareText className="w-3.5 h-3.5" />
+                    <span>Q&amp;A</span>
+                    {openQuestionsCount > 0 && (
+                      <span className="rounded-full bg-amber-500/20 px-1.5 py-0.2 text-[10px] font-semibold text-amber-300">
+                        {openQuestionsCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setActiveSideTab("participants")}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium transition-colors",
+                    activeSideTab === "participants"
+                      ? "bg-zinc-800 text-white"
+                      : "text-zinc-400 hover:text-zinc-200",
+                  )}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>People ({participantCount})</span>
+                </button>
               </div>
               <button
-                onClick={() => setShowParticipants(false)}
+                type="button"
+                aria-label="Close panel"
+                onClick={() => setActiveSideTab(null)}
                 className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5 text-zinc-400" />
               </button>
             </div>
-            <div className="h-[calc(100%-60px)] overflow-y-auto">
-              <CallParticipantsList
-                onClose={() => setShowParticipants(false)}
-              />
-            </div>
+            {(() => {
+              if (activeSideTab === "chat" && inCallChatAllowed) {
+                return (
+                  <StageChatDrawer
+                    messages={chatMessages}
+                    currentUserId={session?.user?.id}
+                    onSendMessage={handleSendChatMessage}
+                    onToggleReaction={handleToggleChatReaction}
+                    isSubmitting={isChatSubmitting}
+                    error={qaError}
+                  />
+                );
+              }
+              if (activeSideTab === "qa" && inCallChatAllowed) {
+                return (
+                  <StageQaDrawer
+                    questions={questions}
+                    activeBanner={activeBanner}
+                    isHost={isHost}
+                    currentUserId={session?.user?.id}
+                    onAskQuestion={handleAskQuestion}
+                    onToggleUpvote={handleToggleUpvote}
+                    onAnswerQuestion={handleAnswerQuestion}
+                    onReopenQuestion={handleReopenQuestion}
+                    onPinQuestion={handlePinQuestion}
+                    onUnpinQuestion={handleUnpinQuestion}
+                    isSubmitting={isQaSubmitting}
+                    error={qaError}
+                  />
+                );
+              }
+              return (
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <CallParticipantsList
+                    onClose={() => setActiveSideTab(null)}
+                  />
+                </div>
+              );
+            })()}
           </div>
 
-          {/* Overlay when sidebar is open on mobile */}
-          {showParticipants && (
+          {activeSideTab && (
             <div
               className="fixed inset-0 bg-black/50 z-30 lg:hidden"
-              onClick={() => setShowParticipants(false)}
+              onClick={() => setActiveSideTab(null)}
             />
           )}
         </div>
 
-        {/* Bottom Control Bar */}
-        <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50">
           <div className="flex items-center justify-center px-4 py-4">
-            <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
-              {/* Custom Call Controls - Replaces default CallControls */}
-              {/* Audio Toggle. The notification came free with the SDK's
-                  `CallControls` and was lost when these buttons were
-                  hand-rolled — so someone talking into a muted mic got no hint
-                  at all, which on a paid consultation is minutes of a session
-                  spent unheard. */}
+            <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-2 px-4 py-3 bg-zinc-900/90 backdrop-blur-xl rounded-2xl border border-zinc-800 shadow-2xl max-w-[calc(100vw-2rem)]">
               <SpeakingWhileMutedNotification>
                 <ToggleAudioPublishingButton />
               </SpeakingWhileMutedNotification>
 
-              {/* Video Toggle */}
               <ToggleVideoPublishingButton />
 
-              {/* Reactions */}
               <ReactionsButton />
 
-              {/* Screen Share */}
               <ScreenShareButton />
 
-              {/* Recording BUTTON for the host - Left of Leave Call (only if recording enabled) */}
               {isHost && recordingEnabled && meetingId && (
                 <RecordingControls
                   meetingId={meetingId}
                   recordingEnabled={recordingEnabled}
                   showOnlyButton={true}
+                  isHost={isHost}
                 />
               )}
 
-              {/* Leave — the only red control in the bar, and the only exit
-                  reachable in one click. */}
-              <button
-                onClick={async () => {
-                  await cleanupAndNavigate(getDashboardUrl());
-                }}
-                className="p-3 rounded-full bg-red-500 hover:bg-red-600 transition-colors"
-                title="Leave call"
-              >
-                <Phone className="w-5 h-5 rotate-[135deg] text-white" />
-              </button>
+              <CallExitButton
+                isHost={isHost}
+                onLeaveForSelf={() => cleanupAndNavigate(getDashboardUrl())}
+                onEnding={handleEnding}
+              />
 
-              {/* Divider */}
               <div className="w-px h-8 bg-zinc-700 mx-1" />
 
-              {/* Layout Selector */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors">
+                  <button
+                    type="button"
+                    aria-label="Change layout"
+                    className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
+                  >
                     <LayoutList className="w-5 h-5 text-white" />
                   </button>
                 </DropdownMenuTrigger>
@@ -404,19 +539,69 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {/* Incoming video quality — the bandwidth escape hatch, and the
-                  single largest cost lever in the video subsystem. */}
               <IncomingVideoQualityMenu />
 
-              {/* Stats Button */}
               <CallStatsButton />
 
-              {/* Participants Toggle */}
+              {inCallChatAllowed && (
+                <button
+                  type="button"
+                  title="Session Chat"
+                  data-testid="toggle-chat-drawer"
+                  onClick={() =>
+                    setActiveSideTab((prev) =>
+                      prev === "chat" ? null : "chat",
+                    )
+                  }
+                  className={cn(
+                    "p-3 rounded-xl transition-colors relative",
+                    activeSideTab === "chat"
+                      ? "bg-white text-zinc-950"
+                      : "bg-zinc-800 hover:bg-zinc-700 text-white",
+                  )}
+                >
+                  <MessageCircle className="w-5 h-5" />
+                  {unreadChatCount > 0 && activeSideTab !== "chat" && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-amber-400 text-zinc-950 rounded-full text-xs font-semibold flex items-center justify-center">
+                      {unreadChatCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {inCallChatAllowed && (
+                <button
+                  type="button"
+                  title="Live Q&A"
+                  data-testid="toggle-qa-drawer"
+                  onClick={() =>
+                    setActiveSideTab((prev) => (prev === "qa" ? null : "qa"))
+                  }
+                  className={cn(
+                    "p-3 rounded-xl transition-colors relative",
+                    activeSideTab === "qa"
+                      ? "bg-amber-400 text-zinc-950"
+                      : "bg-zinc-800 hover:bg-zinc-700 text-white",
+                  )}
+                >
+                  <MessageSquareText className="w-5 h-5" />
+                  {openQuestionsCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-amber-400 text-zinc-950 rounded-full text-xs font-semibold flex items-center justify-center">
+                      {openQuestionsCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
               <button
-                onClick={() => setShowParticipants((prev) => !prev)}
+                onClick={() =>
+                  setActiveSideTab((prev) =>
+                    prev === "participants" ? null : "participants",
+                  )
+                }
                 className={cn(
                   "p-3 rounded-xl transition-colors relative",
-                  showParticipants
+                  activeSideTab === "participants"
                     ? "bg-white text-zinc-900"
                     : "bg-zinc-800 hover:bg-zinc-700 text-white",
                 )}
@@ -429,71 +614,33 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
                 )}
               </button>
 
-              {/* Divider */}
-              <div className="w-px h-8 bg-zinc-700 mx-1" />
-
-              {/* REC TIME Indicator for the host - Before End Call (only if recording enabled) */}
               {isHost && meetingId && recordingEnabled && (
-                <RecordingControls
-                  meetingId={meetingId}
-                  recordingEnabled={recordingEnabled}
-                  showOnlyIndicator={true}
-                />
+                <>
+                  <div className="w-px h-8 bg-zinc-700 mx-1" />
+                  <RecordingControls
+                    meetingId={meetingId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                    isHost={isHost}
+                  />
+                </>
               )}
 
-              {/* Ending for EVERYONE lives behind this menu, and nowhere in
-                  the bar itself. It used to be the widest, highest-contrast
-                  element on the screen, sitting beside the ordinary hang-up —
-                  two destructive actions a thumb's width apart, one of which
-                  cannot be undone by the people it happens to. Reaching it now
-                  takes a deliberate second step, and it still needs the
-                  press-and-hold inside. */}
-              {isHost && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className="p-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 transition-colors"
-                      title="Session options"
-                    >
-                      <MoreVertical className="w-5 h-5 text-white" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="w-72 bg-zinc-900 border-zinc-800 p-3 rounded-xl"
-                    sideOffset={12}
-                  >
-                    <p className="text-sm font-medium text-white">
-                      End for everyone
-                    </p>
-                    <p className="mt-1 mb-3 text-xs text-zinc-400">
-                      Disconnects every participant and closes the room. Leaving
-                      instead only removes you.
-                    </p>
-                    <EndCallButton onEnding={handleEnding} />
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              )}
-
-              {/* Recording Indicator for the guest - At the very end (only if recording enabled) */}
-              {isGuest && meetingId && recordingEnabled && (
-                <RecordingControls
-                  meetingId={meetingId}
-                  recordingEnabled={recordingEnabled}
-                  showOnlyIndicator={true}
-                />
+              {!isHost && meetingId && recordingEnabled && (
+                <>
+                  <div className="w-px h-8 bg-zinc-700 mx-1" />
+                  <RecordingControls
+                    meetingId={meetingId}
+                    recordingEnabled={recordingEnabled}
+                    showOnlyIndicator={true}
+                    isHost={false}
+                  />
+                </>
               )}
             </div>
           </div>
         </div>
 
-        {/* Header. The title was the appointment type in caps repeated from
-            the lobby; it now names the person, with the type demoted to the
-            supporting line. The session clock sits opposite it, because until
-            now nothing on this screen said how long was left. */}
-        {/* Below the participants sidebar (z-40) and its backdrop (z-30): the
-            header sits later in the DOM, so at equal stacking it painted over
-            the panel's own heading and close control. */}
         <div className="pointer-events-none fixed inset-x-4 top-4 z-20 flex items-start justify-between gap-3">
           <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 backdrop-blur-sm">
             <div className="min-w-0">
@@ -511,14 +658,25 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
             </div>
           </div>
 
-          <SessionClockPill startsAt={info.startsAt} endsAt={info.endsAt} />
+          <div className="flex flex-col items-end gap-2">
+            <SessionClockPill startsAt={info.startsAt} endsAt={info.endsAt} />
+            <OverrunBanner
+              callId={call?.id ?? null}
+              startsAt={info.startsAt}
+              endsAt={info.endsAt}
+              baseEndsAt={info.baseEndsAt}
+              extendedSeconds={info.extendedSeconds}
+              extensionsUsed={info.extensionsUsed}
+              isHost={isHost}
+            />
+          </div>
         </div>
 
-        {/* Connection notices sit under the header, out of the video's way,
-            and only appear when there is something the person cannot otherwise
-            explain — their own link degrading, or the server pausing incoming
-            video to protect it. */}
-        <div className="pointer-events-none fixed inset-x-4 top-20 z-20 flex justify-center">
+        <div className="pointer-events-none fixed inset-x-4 top-20 z-20 flex flex-col items-center gap-2">
+          <StageControls
+            appointmentType={info.appointmentType}
+            isHost={isHost}
+          />
           <ConnectionQualityNotice />
         </div>
       </section>

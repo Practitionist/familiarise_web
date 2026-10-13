@@ -4,9 +4,8 @@
  * Every statutory period this codebase reports on is a calendar month reckoned
  * in IST, not UTC. A job that computed its window from UTC components would
  * file the first five and a half hours of each month against the wrong period,
- * which is invisible until a return is queried. Both the GSTR-8 draft and the
- * outward-supplies register need exactly the same shift, so it lives here once
- * rather than being transcribed into each job.
+ * which is invisible until a return is queried; the outward-supplies register
+ * applies the shift through these helpers.
  *
  * Pure module: no Prisma, no environment reads of its own.
  */

@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { PlayCircle, Clock } from "lucide-react";
 import { listPublicRecordings } from "@/lib/data/recordings-explore";
@@ -35,7 +36,8 @@ async function RecordingsGrid() {
           No published recordings yet
         </p>
         <p className="mt-1 text-sm">
-          Consultants can publish webinar and class replays from their dashboard.
+          Consultants can publish webinar and class replays from their
+          dashboard.
         </p>
       </div>
     );
@@ -47,19 +49,20 @@ async function RecordingsGrid() {
         <Link
           key={rec.id}
           href={
-            rec.slug
-              ? `/explore/recordings/${rec.slug}`
-              : `/explore/recordings`
+            rec.slug ? `/explore/recordings/${rec.slug}` : `/explore/recordings`
           }
           className="group rounded-2xl border border-border bg-card overflow-hidden hover:border-foreground/20 hover:shadow-md transition-all"
         >
           <div className="aspect-video relative bg-muted overflow-hidden">
             {rec.thumbnailUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              // `unoptimized`: the thumbnail host is not allow-listed in
+              // next.config, so the image is served as-is.
+              <Image
                 src={rec.thumbnailUrl}
                 alt={rec.listingTitle}
-                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                fill
+                unoptimized
+                className="object-cover transition-transform duration-300 group-hover:scale-105"
               />
             ) : (
               <div className="flex h-full items-center justify-center">
@@ -108,8 +111,8 @@ export default function ExploreRecordingsPage() {
               Recordings Library
             </h1>
             <p className="text-sm md:text-base text-zinc-400 leading-relaxed">
-              Replays of paid webinars and classes, published by verified
-              consultants. Buy once, watch anytime on your schedule.
+              Replays of webinars and classes, published by their consultants.
+              Replay sales are coming soon.
             </p>
           </div>
         </div>

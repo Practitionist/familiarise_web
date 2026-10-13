@@ -1,65 +1,86 @@
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Clock, PlayCircle, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock, PlayCircle } from "lucide-react";
+import prisma from "@/lib/prisma";
+import { getSession } from "@/lib/auth-server";
 import { getPublicRecordingBySlug } from "@/lib/data/recordings-explore";
-import { formatCurrencyAmount } from "@/utils/formatting";
-import { RecordingBuyButton } from "./RecordingBuyButton";
+import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
+import { viewerPlaybackAccess } from "@/lib/stream/recording-slots";
+import { Badge } from "@/components/ui/badge";
+import { buildCaptionTrackDataUri } from "@/components/recordings/caption-track";
 
-// ISR, not force-dynamic. This page reads no session — the gate is the
-// public listing filter (PUBLISHED + durably-ours + discoverable plan), which
-// only changes on publish/unpublish events. A 120s window means an unpublish
-// can stay buyable for up to two minutes; the purchase route re-checks the
-// live gate before minting an order, so a stale shell can never sell a
-// withdrawn replay. In exchange every repeat click is served off the CDN with
-// no function invocation (and no cold-start lottery).
-export const revalidate = 120;
+type RecordingAccessRow = {
+  status: string;
+  storagePath: string | null;
+  recordingUrl: string | null;
+  meeting: { occurrence: { appointmentId: string; ordinal: number } };
+};
 
-// Slugs created after build render on demand, then join the ISR cache.
-export const dynamicParams = true;
-
-export async function generateMetadata({
-  params,
-}: {
-  readonly params: Promise<{ slug: string }>;
-}) {
-  const { slug } = await params;
-  const listing = await getPublicRecordingBySlug(slug);
-  if (!listing) return { title: "Recording not found" };
-  return {
-    title: `${listing.listingTitle} | Familiarise Recordings`,
-    description:
-      listing.listingDescription ??
-      `Recorded ${listing.planType.toLowerCase()} by ${listing.consultant.name ?? "a consultant"}.`,
-  };
+/** The same rule playback applies, so "unlocked" here always plays. */
+async function canUserWatchRecording(
+  userId: string,
+  listingId: string,
+  recording: RecordingAccessRow | null,
+): Promise<boolean> {
+  if (!recording) return false;
+  const access = await viewerPlaybackAccess(userId, {
+    id: listingId,
+    appointmentId: recording.meeting.occurrence.appointmentId,
+    ordinal: recording.meeting.occurrence.ordinal,
+    expired: recording.status === "EXPIRED",
+  });
+  return access.allowed;
 }
 
-function renderMedia(listing: {
-  previewClipUrl: string | null;
-  previewTranscript: string | null;
-  thumbnailUrl: string | null;
-  listingTitle: string;
-}) {
-  if (listing.previewClipUrl) {
+function renderMedia(
+  listing: {
+    previewClipUrl: string | null;
+    previewTranscript: string | null;
+    thumbnailUrl: string | null;
+    listingTitle: string;
+  },
+  fullPlaybackUrl: string | null,
+) {
+  const playbackSrc = fullPlaybackUrl ?? listing.previewClipUrl;
+  if (playbackSrc) {
+    const trimmedPreviewTranscript = listing.previewTranscript?.trim() || null;
+    const captionTrackSrc =
+      !fullPlaybackUrl && trimmedPreviewTranscript
+        ? buildCaptionTrackDataUri(trimmedPreviewTranscript)
+        : null;
     return (
       <video
-        src={listing.previewClipUrl}
+        src={playbackSrc}
         poster={listing.thumbnailUrl ?? undefined}
         controls
         preload="metadata"
+        controlsList="nodownload"
         className="h-full w-full object-cover"
         aria-describedby={
-          listing.previewTranscript ? "preview-transcript" : undefined
+          trimmedPreviewTranscript ? "preview-transcript" : undefined
         }
-      />
+      >
+        {captionTrackSrc && (
+          <track
+            kind="captions"
+            srcLang="en"
+            label="Transcript"
+            src={captionTrackSrc}
+            default
+          />
+        )}
+      </video>
     );
   }
   if (listing.thumbnailUrl) {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
+      <Image
         src={listing.thumbnailUrl}
         alt={listing.listingTitle}
-        className="h-full w-full object-cover"
+        fill
+        unoptimized
+        className="object-cover"
       />
     );
   }
@@ -75,6 +96,30 @@ export default async function RecordingDetailPage({
   const listing = await getPublicRecordingBySlug(slug);
   if (!listing) notFound();
 
+  const session = await getSession();
+  const rawRecording = session?.user?.id
+    ? await prisma.recording.findUnique({
+        where: { id: listing.id },
+        select: {
+          status: true,
+          storagePath: true,
+          recordingUrl: true,
+          meeting: {
+            select: {
+              occurrence: { select: { appointmentId: true, ordinal: true } },
+            },
+          },
+        },
+      })
+    : null;
+
+  const alreadyAccess = session?.user?.id
+    ? await canUserWatchRecording(session.user.id, listing.id, rawRecording)
+    : false;
+
+  const fullPlaybackUrl =
+    alreadyAccess && rawRecording ? getBestRecordingUrl(rawRecording) : null;
+
   return (
     <div className="min-h-screen bg-background">
       {/* Dark Editorial Hero Header */}
@@ -89,7 +134,8 @@ export default async function RecordingDetailPage({
           </Link>
           <div className="space-y-2">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-xs font-medium uppercase tracking-wider text-zinc-300">
-              {listing.planType} replay · <Clock className="inline h-3.5 w-3.5" />{" "}
+              {listing.planType} replay ·{" "}
+              <Clock className="inline h-3.5 w-3.5" />{" "}
               {listing.durationInMinutes} min
             </span>
             <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">
@@ -100,7 +146,9 @@ export default async function RecordingDetailPage({
               {new Date(listing.recordedAt).toLocaleDateString("en-IN", {
                 dateStyle: "medium",
               })}
-              {listing.consultant.name ? ` · by ${listing.consultant.name}` : ""}
+              {listing.consultant.name
+                ? ` · by ${listing.consultant.name}`
+                : ""}
             </p>
           </div>
         </div>
@@ -108,23 +156,32 @@ export default async function RecordingDetailPage({
 
       <main className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
         <div className="space-y-6">
-          <div className="aspect-video rounded-2xl border border-border bg-muted flex items-center justify-center overflow-hidden shadow-sm">
-            {renderMedia(listing)}
+          <div className="relative aspect-video rounded-2xl border border-border bg-muted flex items-center justify-center overflow-hidden shadow-sm">
+            {renderMedia(listing, fullPlaybackUrl)}
+            {alreadyAccess && (
+              <div className="absolute top-3 left-3">
+                <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                  Full Recording Unlocked
+                </Badge>
+              </div>
+            )}
           </div>
 
-          {listing.previewClipUrl && listing.previewTranscript && (
-            <details className="rounded-xl border border-border bg-card p-4">
-              <summary className="cursor-pointer text-sm font-medium text-foreground">
-                Preview transcript
-              </summary>
-              <p
-                id="preview-transcript"
-                className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground"
-              >
-                {listing.previewTranscript}
-              </p>
-            </details>
-          )}
+          {(listing.previewClipUrl || alreadyAccess) &&
+            listing.previewTranscript && (
+              <details className="rounded-xl border border-border bg-card p-4">
+                <summary className="cursor-pointer text-sm font-medium text-foreground">
+                  {alreadyAccess ? "Session transcript" : "Preview transcript"}
+                </summary>
+                <p
+                  id="preview-transcript"
+                  className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground"
+                >
+                  {listing.previewTranscript}
+                </p>
+              </details>
+            )}
 
           {listing.listingDescription && (
             <div className="rounded-2xl border border-border bg-card p-6 space-y-2">
@@ -139,29 +196,20 @@ export default async function RecordingDetailPage({
         </div>
 
         <aside className="space-y-4 h-fit rounded-2xl border border-border bg-card p-6 shadow-sm lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)]">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              On-Demand Access
-            </p>
-            <p className="mt-1 text-3xl font-bold text-foreground">
-              {formatCurrencyAmount(listing.listPricePaise, "INR")}
-            </p>
-          </div>
-          <RecordingBuyButton
-            recordingId={listing.id}
-            listPricePaise={listing.listPricePaise}
-            formattedPrice={formatCurrencyAmount(listing.listPricePaise, "INR")}
-          />
-          <ul className="space-y-2 border-t border-border pt-4 text-xs text-muted-foreground">
-            <li className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-emerald-600" /> Lifetime
-              access via your dashboard
-            </li>
-            <li className="flex items-center gap-2">
-              <PlayCircle className="h-4 w-4 text-muted-foreground" /> Secure
-              streaming — links expire hourly
-            </li>
-          </ul>
+          {alreadyAccess ? (
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+              <span>You can watch the full recording.</span>
+            </div>
+          ) : (
+            <div className="space-y-1 rounded-lg border bg-muted/40 p-3">
+              <p className="text-sm font-semibold">Coming soon</p>
+              <p className="text-xs text-muted-foreground">
+                Replays can&apos;t be bought yet. Attendees of the session can
+                watch it from their dashboard.
+              </p>
+            </div>
+          )}
         </aside>
       </main>
     </div>

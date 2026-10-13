@@ -278,13 +278,16 @@ export interface InboxParamsPatch {
 /**
  * The next search string after a tab / chip / sort / page change. A type
  * change clears the chip and page; any other change resets the page; page 1
- * and a cleared chip are absent, not "null". Other keys pass through.
+ * and a cleared chip are absent, not "null". `focus` is dropped; other keys
+ * pass through.
  */
 export function nextInboxSearch(
   current: string,
   patch: InboxParamsPatch,
 ): string {
   const next = new URLSearchParams(current);
+  // A deep-linked row is highlighted once; any tab/chip/sort/page change ends it.
+  next.delete("focus");
   const apply = (key: string, value: string | null) => {
     if (value === null) next.delete(key);
     else next.set(key, value);

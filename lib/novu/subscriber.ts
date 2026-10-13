@@ -2,25 +2,32 @@
  * Novu Subscriber Management
  * Syncs user data to Novu as subscribers using User.id as subscriberId.
  */
+import { createHmac } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
 import { getNovuClient, isNovuConfigured } from "./client";
+import { resolveNovuSecretKey } from "./secret-key";
 import { CATEGORY_FLAG } from "./templates/conditions";
 import type { PreferenceCategory } from "./templates/types";
+
+/** Computes the HMAC-SHA256 subscriber hash for Novu Inbox authentication when a secret key is configured. */
+export function computeSubscriberHash(
+  subscriberId: string,
+): string | undefined {
+  const { key } = resolveNovuSecretKey();
+  if (!key) return undefined;
+  return createHmac("sha256", key).update(subscriberId).digest("hex");
+}
 
 type RoutingMode = "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER";
 
 export interface SubscriberPreferencesInput {
-  // Master toggle — gates the bell via `masterEnabled` (Q1 fix).
-  // Required: partial updates must forward the persisted value (never a
-  // `?? true` default that would resurrect the bell for opted-out users).
   allNotifications: boolean;
-  // Channel preferences
   inApp?: boolean;
   email?: boolean;
   push?: boolean;
-  // Category preferences (from NotificationPreference model)
   appointmentReminders?: boolean;
   paymentNotifications?: boolean;
   supportUpdates?: boolean;
@@ -28,7 +35,6 @@ export interface SubscriberPreferencesInput {
   trialNotifications?: boolean;
   subscriptionAlerts?: boolean;
   marketingEmails?: boolean;
-  // Org category preferences (ADR 23)
   orgBillingAlerts?: boolean;
   orgMembershipAlerts?: boolean;
   orgProgramAlerts?: boolean;
@@ -42,14 +48,6 @@ interface SubscriberData {
   phone?: string;
   avatar?: string;
   locale?: string;
-  /**
-   * ADR 23 — `OrgWorkspaceProfile.notificationRoutingMode` for operators who
-   * own a workspace. Written onto subscriber data so the Novu workflow
-   * conditions can honour it, which is the same mechanism the category flags
-   * below use. Before this it was written by the UI, displayed back, and read
-   * by nothing: an operator who chose EMAIL_ONLY still got bell notifications
-   * and was told the setting had saved.
-   */
   routingMode?: RoutingMode;
   preferences?: SubscriberPreferencesInput;
 }
@@ -77,12 +75,8 @@ type PersistedUserPrefsRow = {
 };
 
 /**
- * Novu replaces `subscriber.data` wholesale on both `subscribers.create` and
- * `subscribers.patch`. Writing only routing flags in `syncSubscriber` wiped out
- * `masterEnabled`/`preferInApp`/`category*` on every dashboard load, and
- * writing only preference flags in `updateSubscriberPreferences` wiped out
- * `routingMode`/`routingBell`/`routingEmail`. Build the complete custom-data
- * payload on both paths, reading any omitted half from Postgres.
+ * Builds the complete Novu custom-data map by merging caller overrides with persisted
+ * preferences. Propagates DB failures so a transient outage never un-mutes opted-out users.
  */
 export async function buildSubscriberCustomData(
   userId: string,
@@ -92,35 +86,34 @@ export async function buildSubscriberCustomData(
   },
 ): Promise<Record<string, string | boolean>> {
   let dbRow: PersistedUserPrefsRow | null = null;
-  if (overrides.routingMode === undefined || overrides.preferences === undefined) {
-    try {
-      dbRow = (await prisma.user?.findUnique({
-        where: { id: userId },
-        select: {
-          orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
-          notificationPreferences: {
-            select: {
-              allNotifications: true,
-              inAppEnabled: true,
-              emailEnabled: true,
-              pushEnabled: true,
-              appointmentReminders: true,
-              paymentNotifications: true,
-              supportUpdates: true,
-              feedbackAlerts: true,
-              trialNotifications: true,
-              subscriptionAlerts: true,
-              marketingEmails: true,
-              orgBillingAlerts: true,
-              orgMembershipAlerts: true,
-              orgProgramAlerts: true,
-            },
+  if (
+    overrides.routingMode === undefined ||
+    overrides.preferences === undefined
+  ) {
+    dbRow = (await prisma.user?.findUnique({
+      where: { id: userId },
+      select: {
+        orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
+        notificationPreferences: {
+          select: {
+            allNotifications: true,
+            inAppEnabled: true,
+            emailEnabled: true,
+            pushEnabled: true,
+            appointmentReminders: true,
+            paymentNotifications: true,
+            supportUpdates: true,
+            feedbackAlerts: true,
+            trialNotifications: true,
+            subscriptionAlerts: true,
+            marketingEmails: true,
+            orgBillingAlerts: true,
+            orgMembershipAlerts: true,
+            orgProgramAlerts: true,
           },
         },
-      })) as PersistedUserPrefsRow | null;
-    } catch {
-      dbRow = null;
-    }
+      },
+    })) as PersistedUserPrefsRow | null;
   }
 
   const routingMode: RoutingMode =
@@ -130,9 +123,6 @@ export async function buildSubscriberCustomData(
   const dbPrefs = dbRow?.notificationPreferences;
   const prefs = overrides.preferences;
 
-  // #1653 — the category → column map is defined once (`lib/email/preferences.ts`)
-  // and read here and by the email gate, so the two cannot drift. Every
-  // category flag defaults on; marketing is not a category and defaults off.
   const categoryFlags = Object.fromEntries(
     (Object.keys(EMAIL_CATEGORY_COLUMN) as PreferenceCategory[]).map(
       (category) => {
@@ -151,8 +141,7 @@ export async function buildSubscriberCustomData(
       routingMode === "BELL_AND_EMAIL" || routingMode === "BELL_ONLY",
     routingEmail:
       routingMode === "BELL_AND_EMAIL" || routingMode === "EMAIL_ONLY",
-    masterEnabled:
-      prefs?.allNotifications ?? dbPrefs?.allNotifications ?? true,
+    masterEnabled: prefs?.allNotifications ?? dbPrefs?.allNotifications ?? true,
     preferInApp: prefs?.inApp ?? dbPrefs?.inAppEnabled ?? true,
     preferEmail: prefs?.email ?? dbPrefs?.emailEnabled ?? true,
     preferPush: prefs?.push ?? dbPrefs?.pushEnabled ?? false,
@@ -162,11 +151,14 @@ export async function buildSubscriberCustomData(
   };
 }
 
-/**
- * #1455 — strip `NovuError.body` (which can echo subscriber PII on validation
- * errors) before forwarding to Sentry, and classify `RequestTimeoutError` as
- * an expected warning rather than an unhandled error page.
- */
+/** Strips echoed PII from Novu errors and classifies timeouts as warnings. */
+const StatusCodeSchema = z.object({ statusCode: z.number() });
+
+function statusCodeOf(error: unknown): number | undefined {
+  const parsed = StatusCodeSchema.safeParse(error);
+  return parsed.success ? parsed.data.statusCode : undefined;
+}
+
 function reportSubscriberError(
   error: unknown,
   op: "sync" | "update_preferences" | "delete",
@@ -176,12 +168,7 @@ function reportSubscriberError(
   cleanError.name = rawError.name;
   if (rawError.stack) cleanError.stack = rawError.stack;
   const isTimeout = rawError.name === "RequestTimeoutError";
-  const statusCode =
-    error &&
-    typeof error === "object" &&
-    typeof (error as { statusCode?: unknown }).statusCode === "number"
-      ? (error as { statusCode: number }).statusCode
-      : undefined;
+  const statusCode = statusCodeOf(error);
 
   Sentry.captureException(cleanError, {
     level: isTimeout ? "warning" : "error",
@@ -194,11 +181,7 @@ function reportSubscriberError(
   });
 }
 
-/**
- * Sync a user to Novu as a subscriber.
- * The Novu `create` method automatically updates if the subscriber already exists.
- * Called on: registration, login (via API route), profile update.
- */
+/** Upserts user profile and notification preference flags onto the Novu subscriber. */
 export async function syncSubscriber(data: SubscriberData): Promise<void> {
   if (!isNovuConfigured()) {
     console.warn("[Novu] Not configured, skipping subscriber sync");
@@ -211,7 +194,6 @@ export async function syncSubscriber(data: SubscriberData): Promise<void> {
       routingMode: data.routingMode,
       preferences: data.preferences,
     });
-    // create() will update an existing subscriber if the subscriberId matches
     await novu.subscribers.create({
       subscriberId: data.userId,
       firstName: data.firstName,
@@ -232,15 +214,7 @@ export async function syncSubscriber(data: SubscriberData): Promise<void> {
   }
 }
 
-/**
- * Update subscriber notification channel and category preferences in Novu.
- * Channel prefs control which channels deliver notifications (email, in-app, push).
- * Category prefs control which types of notifications are sent at all.
- *
- * Category prefs are stored as subscriber custom data so Novu Dashboard
- * workflows can use them in conditional steps (e.g., skip email step if
- * subscriber.data.categoryAppointments === false).
- */
+/** Idempotently upserts subscriber custom preference data in Novu. */
 export async function updateSubscriberPreferences(
   userId: string,
   preferences: SubscriberPreferencesInput,
@@ -254,12 +228,10 @@ export async function updateSubscriberPreferences(
       routingMode,
       preferences,
     });
-    await novu.subscribers.patch(
-      {
-        data: customData,
-      },
-      userId,
-    );
+    await novu.subscribers.create({
+      subscriberId: userId,
+      data: customData,
+    });
     console.log(`[Novu] Preferences updated for subscriber: ${userId}`);
   } catch (error) {
     reportSubscriberError(error, "update_preferences");
@@ -267,6 +239,17 @@ export async function updateSubscriberPreferences(
       "[Novu] Failed to update subscriber preferences:",
       error instanceof Error ? error.message : String(error),
     );
+  }
+}
+
+/** Deletes the subscriber or throws; one that never existed counts as deleted. */
+export async function removeSubscriber(userId: string): Promise<void> {
+  if (!isNovuConfigured()) return;
+  try {
+    await getNovuClient().subscribers.delete(userId);
+  } catch (error) {
+    if (statusCodeOf(error) === 404) return;
+    throw error;
   }
 }
 
@@ -282,8 +265,7 @@ export async function deleteSubscriber(userId: string): Promise<boolean> {
   if (!isNovuConfigured()) return true;
 
   try {
-    const novu = getNovuClient();
-    await novu.subscribers.delete(userId);
+    await removeSubscriber(userId);
     console.log(`[Novu] Subscriber deleted: ${userId}`);
     return true;
   } catch (error) {

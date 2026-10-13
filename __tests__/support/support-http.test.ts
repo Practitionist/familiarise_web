@@ -102,13 +102,20 @@ describe("Sentry policy", () => {
     const [captured, hints] = mockedCaptureException.mock.calls[0];
     expect(captured).toBe(cause);
     expect(hints.level).toBe("error");
-    expect(hints.tags).toMatchObject({ subsystem: "support", code: "INTERNAL" });
+    expect(hints.tags).toMatchObject({
+      subsystem: "support",
+      code: "INTERNAL",
+    });
     expect(hints.extra).toMatchObject({ route: "x", action: "y" });
     expect(mockedCaptureMessage).not.toHaveBeenCalled();
   });
 
   it("captures exceptions from 4xx as warnings (contract drift, not paging)", () => {
-    supportError({ status: 403, code: "FORBIDDEN", cause: new Error("late authz") });
+    supportError({
+      status: 403,
+      code: "FORBIDDEN",
+      cause: new Error("late authz"),
+    });
     expect(mockedCaptureException).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({ level: "warning" }),
@@ -116,8 +123,16 @@ describe("Sentry policy", () => {
   });
 
   it("applies the 401/429 exemption on the cause path too", () => {
-    supportError({ status: 401, code: "UNAUTHORIZED", cause: new Error("stale token") });
-    supportError({ status: 429, code: "RATE_LIMITED", cause: new Error("burst") });
+    supportError({
+      status: 401,
+      code: "UNAUTHORIZED",
+      cause: new Error("stale token"),
+    });
+    supportError({
+      status: 429,
+      code: "RATE_LIMITED",
+      cause: new Error("burst"),
+    });
     expect(mockedCaptureException).not.toHaveBeenCalled();
     expect(mockedCaptureMessage).not.toHaveBeenCalled();
   });
@@ -139,16 +154,26 @@ describe("Sentry policy", () => {
     );
   });
 
-  it.each([401, 429])("%i without cause is expected client noise — uncaptured", (status) => {
-    supportError({ status, code: status === 401 ? "UNAUTHORIZED" : "RATE_LIMITED" });
-    expect(mockedCaptureException).not.toHaveBeenCalled();
-    expect(mockedCaptureMessage).not.toHaveBeenCalled();
-  });
+  it.each([401, 429])(
+    "%i without cause is expected client noise — uncaptured",
+    (status) => {
+      supportError({
+        status,
+        code: status === 401 ? "UNAUTHORIZED" : "RATE_LIMITED",
+      });
+      expect(mockedCaptureException).not.toHaveBeenCalled();
+      expect(mockedCaptureMessage).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("parseRouteParams", () => {
   it("answers ok with parsed data on valid input", async () => {
-    const out = await parseRouteParams(IdSchema, { id: "demo0813-appt-ba" }, { route: "t" });
+    const out = await parseRouteParams(
+      IdSchema,
+      { id: "demo0813-appt-ba" },
+      { route: "t" },
+    );
     if (!out.ok) throw new Error("expected ok");
     expect(out.data.id).toBe("demo0813-appt-ba");
   });
@@ -166,7 +191,11 @@ describe("parseRouteParams", () => {
   });
 
   it("rejects over-long ids that could abuse downstream queries", async () => {
-    const out = await parseRouteParams(IdSchema, { id: "x".repeat(65) }, { route: "t" });
+    const out = await parseRouteParams(
+      IdSchema,
+      { id: "x".repeat(65) },
+      { route: "t" },
+    );
     if (out.ok) throw new Error("expected failure");
     expect(out.response.status).toBe(400);
   });

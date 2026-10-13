@@ -188,7 +188,7 @@ repository, see [08 error telemetry and privacy](08-error-telemetry-privacy-refe
 
 **The end state is per-user consent layered on top of this flag, and it does not
 exist yet.** Granular consent at consumer signup is Gap #1 in
-`docs/compliance/08-dpdp-and-privacy.md`, dated to Phase 3 — so there is no
+`docs/compliance/09-dpdp-and-privacy.md`, dated to Phase 3 — so there is no
 per-user value to check, and a global environment variable is the only thing
 that can be gated today. It is the coarse switch that has to exist first. It is
 not the finished answer, it should not be read as one, and the natural

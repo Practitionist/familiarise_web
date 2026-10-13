@@ -10,7 +10,6 @@ import { Separator } from "@/components/ui/separator";
 import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
 import RazorpayCheckout from "@/app/checkout/components/RazorpayCheckout";
-import StripeCheckout from "@/app/checkout/components/StripeCheckout";
 import {
   formatPercentage,
   type PricingBreakdown,
@@ -97,10 +96,7 @@ export function CheckoutConsultantHeader({
     <div className="flex items-center justify-between gap-4">
       <div className="flex items-center gap-4 min-w-0">
         <Avatar className="w-12 h-12 border shrink-0">
-          <AvatarImage
-            src={image || "/placeholder-user.jpg"}
-            alt={avatarAlt}
-          />
+          <AvatarImage src={image || "/placeholder-user.jpg"} alt={avatarAlt} />
           <AvatarFallback>{avatarInitial}</AvatarFallback>
         </Avatar>
         <div className="min-w-0">
@@ -232,8 +228,8 @@ export function CheckoutPricingBreakdown({
           )}
           {isLicenseCovered && (
             <p className="text-xs text-emerald-600">
-              Session value {formatPrice(pricing.total)} — covered by
-              enterprise license
+              Session value {formatPrice(pricing.total)} — covered by enterprise
+              license
             </p>
           )}
         </div>
@@ -257,14 +253,6 @@ export interface CheckoutPaymentMethodsCardProps {
     reason?: string;
     message?: string;
   }) => void;
-  onStripeSuccess: (response: { message: string }) => void;
-  onStripeError: (error: {
-    message?: string;
-    code?: string;
-    errorType?: string;
-    error?: string;
-    description?: string;
-  }) => void;
   onMockPay: (gateway: SupportedCheckoutGateway) => void;
   isCheckoutProcessing: boolean;
   processingGateway: string | null;
@@ -277,8 +265,6 @@ export function CheckoutPaymentMethodsCard({
   buildCheckoutData,
   onRazorpaySuccess,
   onRazorpayError,
-  onStripeSuccess,
-  onStripeError,
   onMockPay,
   isCheckoutProcessing,
   processingGateway,
@@ -331,15 +317,7 @@ export function CheckoutPaymentMethodsCard({
       );
     }
 
-    return (
-      <StripeCheckout
-        checkoutData={checkoutData}
-        onPaymentSuccess={onStripeSuccess}
-        onPaymentError={onStripeError}
-        onBeforeCheckout={onBeforeCheckout}
-        disabled={isMaintenanceBlocked || isSoldOut || isCheckingSlot}
-      />
-    );
+    return null;
   };
 
   const renderGatewayAction = (

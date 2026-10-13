@@ -4,7 +4,9 @@
 // BigInt paise; enums are declared below the model(s) that use them.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  // Opt-in per query via relationLoadStrategy: "join"; lib/prisma.ts pins the default to "query".
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -105,9 +107,11 @@ model User {
   moderationActions ModerationAction[]
 
   // Referral system
-  referralCode    ReferralCode?
-  referral        Referral?        @relation("ReferredUser")
-  referralCredits ReferralCredit[]
+  referralCode        ReferralCode?
+  referral            Referral?                    @relation("ReferredUser")
+  referralCredits     ReferralCredit[]
+  // Experts this user has bought from, with the source that owns the relationship.
+  expertRelationships ExpertCustomerRelationship[]
 
   // In-progress onboarding wizard state (resumable drafts). At most one row
   // per user; deleted when onboarding completes. See OnboardingDraft below.
@@ -143,6 +147,7 @@ model User {
 
   invitations                   Invitation[]
   twoFactor                     TwoFactor?
+  passkeys                      Passkey[]
   ssoproviders                  SsoProvider[]
   erasureRequests               ErasureRequest[]
   /// Erasure requests this user processed as an admin. Named relation
@@ -168,6 +173,11 @@ model User {
   verificationDocumentsUploaded ProfileVerificationDocument[] @relation("VerificationDocumentUploader")
   // #1778 — the held windows this user asked to hear about when they free.
   windowBackupInterests         WindowBackupInterest[]
+  supportCasesRequested         SupportCase[]                 @relation("SupportCaseRequester")
+  supportCasesSubmitted         SupportCase[]                 @relation("SupportCaseSubmitter")
+  supportCasesAssigned          SupportCase[]                 @relation("SupportCaseAssignee")
+  supportCaseMessagesAuthored   SupportCaseMessage[]          @relation("SupportCaseMessageAuthor")
+  supportCaseEventsActed        SupportCaseEvent[]            @relation("SupportCaseEventActor")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -193,8 +203,8 @@ model OnboardingDraft {
   userId String @unique
 
   /// Role picked at step 0 (null until then). Mirrors User.role's enum but is
-  /// informational only — the authoritative role flip still happens through
-  /// setOnboardingRoleAction / processOnboardingData.
+  /// informational only: User.role is written only when processOnboardingData
+  /// completes onboarding.
   role UserRole?
 
   /// Zero-based index into the role's step registry.
@@ -247,6 +257,11 @@ model OnboardingDraft {
   /// promote that key to a real column instead of querying the blob.
   payload Json
 
+  /// Optimistic-concurrency counter: a save names the version it read and
+  /// increments it, so a stale tab or device gets a conflict, not a silent
+  /// overwrite.
+  version Int @default(0)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -272,6 +287,7 @@ model PlatformFeedback {
   @@index([userId])
 }
 
+// FROZEN: Unified into SupportCase at pre-MVP cutover; kept read/write compatible until legacy row drain completes.
 model SupportTicket {
   id             String              @id @default(uuid())
   title          String
@@ -299,6 +315,7 @@ model SupportTicket {
 
   responses                SupportResponse[]
   attachments              SupportTicketAttachment[]
+  events                   SupportCaseEvent[]        @relation("LegacySupportTicketEvents")
   // #appt-support — set when a per-appointment thread escalates to a human, so
   // ops works it in this existing queue rather than a parallel system.
   appointmentSupportThread AppointmentSupportThread?
@@ -385,6 +402,7 @@ model SupportTicketCounter {
   @@map("support_ticket_counters")
 }
 
+// FROZEN: Unified into SupportCaseMessage at pre-MVP cutover.
 model SupportResponse {
   id         String  @id @default(uuid())
   message    String  @db.Text
@@ -420,6 +438,7 @@ model SupportTicketAttachment {
   @@index([ticketId])
 }
 
+// FROZEN: Unified into SupportCase at pre-MVP cutover.
 // #appt-support — per-appointment support conversation (Swiggy/Zomato-style).
 // One thread per (appointment, user). Channel-agnostic: messages are produced
 // by a swappable resolver — a deterministic flowchart now, an AI agent later,
@@ -473,6 +492,7 @@ model AppointmentSupportThread {
   @@index([status, lastMessageAt])
 }
 
+// FROZEN: Unified into SupportCaseMessage at pre-MVP cutover.
 model SupportMessage {
   id       String                   @id @default(uuid())
   threadId String
@@ -568,6 +588,171 @@ enum SupportFlowOutcomeKind {
   ESCALATED
 }
 
+/// Unified support case owning the transcript, SLA clocks, FAM reference, flow cursor,
+/// callback schedule, and resolution CSAT. Never declare an @@index or @@unique on the
+/// exact 5-tuple [appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category]
+/// so prisma db push leaves sidecar partial unique index "support_case_open_scope_key" intact.
+model SupportCase {
+  id              String            @id @default(uuid())
+  referenceNumber String            @unique @db.VarChar(20)
+  clientIntakeId  String?           @unique @db.VarChar(128)
+  title           String
+  description     String            @db.Text
+  category        String?           @db.VarChar(64)
+  flowKey         String?           @db.VarChar(64)
+  currentNodeId   String?           @db.VarChar(64)
+  activeChannel   SupportChannel    @default(SELF_SERVE)
+  issueType       SupportIssueType?
+  priority        SupportPriority   @default(MEDIUM)
+  status          SupportCaseStatus @default(OPEN)
+  caseKind        SupportCaseKind   @default(INCIDENT)
+
+  problemCaseId String?
+  problemCase   SupportCase?  @relation("ProblemIncidents", fields: [problemCaseId], references: [id], onDelete: SetNull)
+  incidents     SupportCase[] @relation("ProblemIncidents")
+
+  requesterUserId String
+  requester       User   @relation("SupportCaseRequester", fields: [requesterUserId], references: [id], onDelete: Cascade)
+  submitterUserId String
+  submitter       User   @relation("SupportCaseSubmitter", fields: [submitterUserId], references: [id], onDelete: Cascade)
+
+  organizationId String?
+  organization   Organization? @relation("SupportCaseByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
+
+  appointmentId           String?
+  appointment             Appointment?           @relation("SupportCaseByAppointment", fields: [appointmentId], references: [id], onDelete: SetNull)
+  appointmentOccurrenceId String?
+  occurrence              AppointmentOccurrence? @relation("SupportCaseByOccurrence", fields: [appointmentOccurrenceId], references: [id], onDelete: SetNull)
+
+  assignedToId String?
+  assignedTo   User?   @relation("SupportCaseAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  callbackPhone  String? @db.VarChar(32)
+  callbackWindow String? @db.VarChar(64)
+
+  ackDueAt          DateTime? @db.Timestamptz
+  acknowledgedAt    DateTime? @db.Timestamptz
+  resolutionDueAt   DateTime? @db.Timestamptz
+  resolvedAt        DateTime? @db.Timestamptz
+  closedAt          DateTime? @db.Timestamptz
+  deletedAt         DateTime? @db.Timestamptz
+  firstAgentReplyAt DateTime? @db.Timestamptz
+  awaitingUserSince DateTime? @db.Timestamptz
+  pausedSeconds     Int       @default(0)
+
+  messageSeq    Int       @default(0)
+  lastMessageAt DateTime? @db.Timestamptz
+
+  csatRating Int?      @db.SmallInt
+  csatAt     DateTime? @db.Timestamptz
+
+  subjects SupportCaseSubject[]
+  messages SupportCaseMessage[]
+  events   SupportCaseEvent[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@index([requesterUserId, status])
+  @@index([submitterUserId])
+  @@index([appointmentId, requesterUserId])
+  @@index([organizationId, status])
+  @@index([assignedToId, status])
+  @@index([status, lastMessageAt])
+  @@index([acknowledgedAt, ackDueAt])
+  @@index([resolvedAt, resolutionDueAt])
+  @@index([problemCaseId])
+}
+
+model SupportCaseSubject {
+  id          String             @id @default(uuid())
+  caseId      String
+  supportCase SupportCase        @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  subjectType SupportSubjectType
+  subjectId   String
+  isPrimary   Boolean            @default(false)
+  createdAt   DateTime           @default(now()) @db.Timestamptz
+
+  @@unique([caseId, subjectType, subjectId])
+  @@index([subjectType, subjectId])
+}
+
+model SupportCaseMessage {
+  id           String               @id @default(uuid())
+  caseId       String
+  supportCase  SupportCase          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  seq          Int                  @default(0)
+  sender       SupportMessageSender
+  body         String               @db.Text
+  isInternal   Boolean              @default(false)
+  clientTurnId String?              @db.VarChar(128)
+  metadata     Json?
+  authorUserId String?
+  authorUser   User?                @relation("SupportCaseMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  createdAt    DateTime             @default(now()) @db.Timestamptz
+
+  @@unique([caseId, clientTurnId])
+  @@index([caseId, seq])
+  @@index([authorUserId])
+}
+
+model SupportCaseEvent {
+  id             String               @id @default(uuid())
+  caseId         String?
+  supportCase    SupportCase?         @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  legacyTicketId String?
+  legacyTicket   SupportTicket?       @relation("LegacySupportTicketEvents", fields: [legacyTicketId], references: [id], onDelete: Cascade)
+  actorId        String?
+  actor          User?                @relation("SupportCaseEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+  kind           SupportCaseEventKind
+  fromValue      String?
+  toValue        String?
+  note           String?              @db.Text
+  createdAt      DateTime             @default(now()) @db.Timestamptz
+
+  @@index([caseId, createdAt])
+  @@index([legacyTicketId, createdAt])
+  @@index([actorId])
+}
+
+enum SupportCaseStatus {
+  OPEN
+  IN_PROGRESS
+  ESCALATED
+  ON_HOLD
+  RESOLVED
+  CLOSED
+}
+
+enum SupportCaseKind {
+  INCIDENT
+  PROBLEM
+}
+
+enum SupportSubjectType {
+  APPOINTMENT
+  OCCURRENCE
+  PAYMENT
+  REFUND
+  INVOICE
+  ORGANIZATION
+  ACCOUNT
+}
+
+enum SupportCaseEventKind {
+  CREATED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  VISIBILITY_CHANGED
+  LINKED_PROBLEM
+  DUPLICATE_CLOSED
+  REOPENED
+  AUTO_CLOSED
+  CSAT_RATED
+}
+
 // #appt-support — per-appointment private CSAT (1-5), distinct from the public
 // ConsultantReview. Gives webinar/class a feedback path they lack today and
 // feeds the org-level quality signal. One per (appointment, user).
@@ -624,6 +809,8 @@ model AppointmentFeedback {
   // on that triple here (#1268).
   // Still the unit for "show me this booking's feedback".
   @@index([appointmentId, userId])
+  @@index([appointmentOccurrenceId])
+  @@index([userId])
   // The org aggregate filters raterRole before the date range, so
   // (organizationId, createdAt) is no longer a usable prefix for it.
   @@index([organizationId, raterRole, createdAt])
@@ -894,6 +1081,10 @@ model Session {
   // itself is not enabled (#693).
   impersonatedBy String?
 
+  // Last successful re-authentication (password, TOTP or passkey) in this
+  // session; sensitive actions require it, or createdAt, within 15 minutes.
+  reauthenticatedAt DateTime? @db.Timestamptz
+
   // Device list (newest first per user) and the expired-row sweep.
   @@index([userId, createdAt])
   @@index([expiresAt])
@@ -910,7 +1101,7 @@ model Verification {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([identifier])
-  // scripts/cleanup/cleanup-auth-tokens.ts deletes by expiresAt.
+  // lib/auth/cleanup-auth-tokens.ts deletes by expiresAt.
   @@index([expiresAt])
   @@map("verifications")
 }
@@ -1092,7 +1283,8 @@ model Organization {
   trialsByOrg Trial[] @relation("TrialsByOrg")
 
   // Referral attribution (#727) — same contract as TrialsByOrg.
-  referralsByOrg Referral[] @relation("ReferralsByOrg")
+  referralsByOrg Referral[]    @relation("ReferralsByOrg")
+  supportCases   SupportCase[] @relation("SupportCaseByOrg")
 
   // #674 personal-vs-org scope split — appointments / recordings booked or
   // produced by org members. Mirrors TrialsByOrg.
@@ -1111,19 +1303,17 @@ model Organization {
   meetings                Meeting[]                @relation("MeetingByOrg")
 
   // Payment attribution
-  payments Payment[] @relation("PaymentOrgTag")
+  payments       Payment[] @relation("PaymentOrgTag")
+  hostedPayments Payment[] @relation("PaymentHostOrg")
 
   // Rate cards owned by the org (HOST/HYBRID). The FK was previously a
   // soft reference (string only) which let mis-bound writes silently
   // settle to the platform default. Now enforced at the DB level.
   rateCards RateCard[] @relation("RateCardOwnerOrg")
 
-  /// Per-org Stream.io recording retention window (days). Powers
-  /// `jobs/stream/cleanup-old-stream-recordings.ts` — recordings older
-  /// than this value are deleted from Stream + tombstoned locally.
-  /// Default 90d matches the platform-wide minimum for compliance
-  /// (most large enterprises require ≥90d for grievance / audit).
-  streamRecordingRetentionDays Int @default(90)
+  /// Owner-set cap (days after recording) on org-scoped recordings; null follows
+  /// the platform schedule. Published or purchased replays are never auto-deleted.
+  streamRecordingRetentionDays Int?
 
   /// How long a CHAT channel survives after its conversation goes dormant.
   ///
@@ -1166,6 +1356,7 @@ model Organization {
   // #support-hub — tickets attributed to this org (operator intake + escalated
   // org-appointment threads). Powers the org-filtered ops queue.
   supportTickets            SupportTicket[]
+  moderationReports         ModerationReport[]
 
   // #778 §D — annual aggregate turnover ≥ ₹5cr makes IRN/e-invoice mandatory
   // (CGST e-invoicing threshold). Drives whether OrganizationInvoice must upload
@@ -1184,6 +1375,7 @@ model Organization {
   // serve it because its leading column (canHost) is no longer in the predicate.
   @@index([isPublic, status])
   @@index([dataResidencyRegion])
+  @@index([billingAccountId])
   @@map("organizations")
 }
 
@@ -1436,14 +1628,9 @@ model BillingAccount {
   // INVOICE funding
   creditLimit BigInt? // paise; null = unlimited
 
-  /// #777 §C — wallet minimum-balance + auto-top-up. When walletBalance drops
-  /// below minBalancePaise the auto-top-up cron charges autoTopUpMandateId for
-  /// autoTopUpAmountPaise. All-null = manual top-up only (current behavior).
+  /// Notify-only floor: the wallet-low-balance cron alerts finance below it.
   minBalancePaise      BigInt?
-  autoTopUpEnabled     Boolean   @default(false)
-  autoTopUpAmountPaise BigInt?
-  autoTopUpMandateId   String? // gateway recurring-payment token
-  autoTopUpLastFiredAt DateTime? // idempotency: rate-limit the cron per account
+  autoTopUpLastFiredAt DateTime? // low-balance alert cooldown, CAS-stamped by the cron
 
   invoices     OrganizationInvoice[]
   contracts    Contract[]
@@ -1466,9 +1653,9 @@ enum FundingSource {
 model Contract {
   id               String         @id @default(uuid())
   organizationId   String
-  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   billingAccountId String
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id])
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Restrict)
   purchaseOrderId  String?
   purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
 
@@ -1589,7 +1776,7 @@ enum WalletReason {
 model WalletTopUp {
   id               String         @id @default(uuid())
   billingAccountId String
-  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Cascade)
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Restrict)
 
   // Our idempotency key (we_<uuid>) — also the public topUpId used by
   // GET /top-ups/{topUpId}. @unique guarantees a webhook redelivery or a
@@ -1637,7 +1824,7 @@ enum WalletTopUpStatus {
 model Program {
   id         String        @id @default(uuid())
   contractId String
-  contract   Contract      @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contract   Contract      @relation(fields: [contractId], references: [id], onDelete: Restrict)
   type       ProgramType
   name       String
   status     ProgramStatus @default(ACTIVE)
@@ -1696,7 +1883,7 @@ model LicensedSeatConfig {
   /// heterogeneous) rather than a flat per-unit tier; this is the only knob.
   overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
-  /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
+  /// no ceiling. Non-null = cumulative tax-exclusive overage (basePaise + surchargePaise) within
   /// the current cycle cannot exceed this; subsequent bookings fall back
   /// to BLOCK regardless of overageBehavior.
   maxOveragePerCyclePaise    BigInt?
@@ -1707,45 +1894,40 @@ model LicensedSeatConfig {
 // on this config table — keeps reconciliation and audit single-unit
 // (credits ↔ rupees, no translation layer).
 //
-// `creditsPerCycle` is the hard cap when overageBehavior=BLOCK and
-// the soft cap (with overage routing) otherwise. (#753/#784 — the dead
-// `minimumCreditsPerPeriod` commitment-minimum was dropped in the freeze;
-// nothing ever read it.)
-//
-// Bogus combo: CREDIT_POOL programs under a LICENSE-funded contract
-// don't model a real customer arrangement (a flat-fee license already
-// pays for unmetered usage; a per-cycle credit cap on top is just
-// internal accounting noise). The wizard hides this option; the API
-// rejects it with `BOGUS_LICENSE_CREDIT_POOL` (see
-// `app/api/organizations/[orgId]/programs/route.ts`). Schema permits
-// it because cross-table CHECK constraints are awkward in Postgres
-// and the API+UI layer is tight enough.
+// CREDIT_POOL meters rupee budget across WALLET, INVOICE, LICENSE, and
+// PERSONAL allowance programs, with optional `priceCapPerEngagementPaise`
+// to cap how much of a single engagement's price the pool covers before
+// routing any excess through overageBehavior.
 model CreditPoolConfig {
-  programId               String          @id
-  program                 Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
-  cycle                   BillingCycle
+  programId                  String          @id
+  program                    Program         @relation(fields: [programId], references: [id], onDelete: Cascade)
+  cycle                      BillingCycle
   /// #753 — a MONEY budget in whole-rupee credits (1 credit = ₹1 = 100
   /// paise): recordBookingUtilization meters consumedPaise against
   /// creditBudgetPerCycle × 100. Renamed twice for honesty: creditsPerCycle
   /// hid the money semantics; the interim engagementsPerCycle wrongly
   /// implied a count meter (review catch on #843). LICENSED_SEAT counts
   /// engagements; CREDIT_POOL spends this budget.
-  creditBudgetPerCycle    Int
+  creditBudgetPerCycle       Int
+  /// Optional per-engagement price ceiling covered by the pool (parity with
+  /// LicensedSeatConfig.priceCapPerEngagementPaise). Any portion of an
+  /// engagement's price above this cap routes through overageBehavior.
+  priceCapPerEngagementPaise BigInt?
   /// #775 — over-budget routing (parity with LicensedSeatConfig); bookings
   /// past the cap BLOCK, CHARGE_MEMBER, or CHARGE_ORG per this value.
-  overageBehavior         OverageBehavior @default(BLOCK)
+  overageBehavior            OverageBehavior @default(BLOCK)
   /// #775 — bps markup on the over-budget marginal (see LicensedSeatConfig).
-  overageSurchargeBps     Int?
+  overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker (see LicensedSeatConfig).
-  maxOveragePerCyclePaise BigInt?
+  maxOveragePerCyclePaise    BigInt?
 }
 
 model ProgramAssignment {
   id           String     @id @default(uuid())
   programId    String
-  program      Program    @relation(fields: [programId], references: [id], onDelete: Cascade)
+  program      Program    @relation(fields: [programId], references: [id], onDelete: Restrict)
   membershipId String
-  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  membership   Membership @relation(fields: [membershipId], references: [id], onDelete: Restrict)
 
   // #1554 — timestamptz so the ACTIVE-overlap exclusion below can index tstzrange()
   // (the timestamp→timestamptz cast is only STABLE and Postgres refuses it, 42P17).
@@ -1793,9 +1975,9 @@ model ProgramAssignment {
 model BookingUtilization {
   id                  String            @id @default(uuid())
   programAssignmentId String
-  programAssignment   ProgramAssignment @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
+  programAssignment   ProgramAssignment @relation(fields: [programAssignmentId], references: [id], onDelete: Restrict)
   paymentId           String            @unique
-  payment             Payment           @relation("PaymentBookingUtilization", fields: [paymentId], references: [id], onDelete: Cascade)
+  payment             Payment           @relation("PaymentBookingUtilization", fields: [paymentId], references: [id], onDelete: Restrict)
   /// Engagements consumed by this payment. One engagement = one
   /// Appointment row (one calendar occurrence), regardless of duration.
   /// Recorded:
@@ -1938,9 +2120,9 @@ enum CoveredPlanType {
 model RateCard {
   id              String           @id @default(uuid())
   ownerOrgId      String?
-  ownerOrg        Organization?    @relation("RateCardOwnerOrg", fields: [ownerOrgId], references: [id], onDelete: Cascade)
+  ownerOrg        Organization?    @relation("RateCardOwnerOrg", fields: [ownerOrgId], references: [id], onDelete: Restrict)
   ownerContractId String?
-  ownerContract   Contract?        @relation("RateCardOwnerContract", fields: [ownerContractId], references: [id], onDelete: Cascade)
+  ownerContract   Contract?        @relation("RateCardOwnerContract", fields: [ownerContractId], references: [id], onDelete: Restrict)
   planType        CoveredPlanType?
   planId          String?
 
@@ -1979,7 +2161,7 @@ model RateCard {
 model OrganizationPayoutAccount {
   id             String       @id @default(uuid())
   organizationId String       @unique
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   accountHolderName      String
   accountNumberEncrypted String
@@ -1989,7 +2171,6 @@ model OrganizationPayoutAccount {
   routingNumber          String?
   swiftCode              String?
 
-  stripeConnectId       String? @unique
   razorpayContactId     String? @unique
   razorpayFundAccountId String?
 
@@ -2016,6 +2197,11 @@ model OrganizationEarnings {
 
   paymentId String
   payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  consultantProfileId String?
+  consultantProfile   ConsultantProfile? @relation("ConsultantOrganizationEarnings", fields: [consultantProfileId], references: [id], onDelete: Restrict)
+  role                EarningRole        @default(OWNER)
+  cycleOrdinal        Int?
 
   grossAmountPaise     BigInt
   platformFeePaise     BigInt
@@ -2047,7 +2233,11 @@ model OrganizationEarnings {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@unique([paymentId, organizationId])
+  // One row per (payment, organization, consultant, role, cycle): the NULLS NOT
+  // DISTINCT sidecar unique organization_earnings_split_key in prisma/sql;
+  // no @@unique on that set here so Postgres doesn't carry a duplicate NULLS DISTINCT index.
+  @@index([paymentId, organizationId])
+  @@index([consultantProfileId])
   // #781 §D — createdAt-ordered finance reads (payout batching, statements)
   @@index([organizationId, status, createdAt])
   @@index([orgPayoutId])
@@ -2059,8 +2249,8 @@ model OrganizationPayout {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   /// #1470 — POST-withholding: the sum the payout rail actually transfers to
-  /// the host org, i.e. `netPayoutPaise - tdsAmountPaise`. The ORG_PAYOUT
-  /// journal credits CASH at this figure.
+  /// the host org, i.e. `netPayoutPaise - tdsAmountPaise` less any clawback
+  /// recovered from this payout. The ORG_PAYOUT journal credits CASH at this figure.
   amountPaise    BigInt
   currency       Currency       @default(INR)
   status         PayoutStatus
@@ -2073,9 +2263,9 @@ model OrganizationPayout {
   platformFeePaise  BigInt
   refundsPaise      BigInt @default(0)
   /// #1470 — PRE-withholding: the host org's share net of platform fee and
-  /// refunds, which is also the base TDS is computed on. The ORG_PAYOUT
-  /// journal debits ORG_PAYABLE at this figure, so
-  /// `amountPaise + tdsAmountPaise` must always equal it.
+  /// refunds, which is also the base TDS is computed on. The recovery journal
+  /// and the ORG_PAYOUT journal together debit ORG_PAYABLE at this figure, so
+  /// `amountPaise + tdsAmountPaise + recovered clawback` must always equal it.
   netPayoutPaise    BigInt
 
   // India statutory (fields final; cron + derivation stubbed in v1)
@@ -2107,21 +2297,23 @@ model OrganizationPayout {
   failureReason   String?
   processedAt     DateTime? @db.Timestamptz
   failedAt        DateTime? @db.Timestamptz
+  createdBy       String?
+  approvedAt      DateTime? @db.Timestamptz
+  approvedBy      String?
 
-  /// A1: live RazorpayX/Stripe Connect submission response.
-  /// `gatewayPayoutId` is the gateway's `id` (Razorpay payout id or
-  /// Stripe transfer id). UTR — Unique Transaction Reference; the bank/RBI
+  /// A1: live RazorpayX submission response.
+  /// `gatewayPayoutId` is the RazorpayX payout id. UTR — Unique Transaction Reference; the bank/RBI
   /// settlement reference the gateway returns on a completed NEFT/IMPS/UPI
   /// payout. `gatewayUtr` populates only after the
-  /// `payout.processed`/`transfer.paid` webhook reconciles. The full
+  /// `payout.processed` webhook reconciles. The full
   /// response is stashed in `gatewayResponseRaw` for debugging.
   gatewayPayoutId    String? @unique
   gatewayUtr         String?
   gatewayResponseRaw Json?
 
   /// C1 (PR-4) refund clawback — when an OrganizationEarnings already
-  /// rolled into this payout is later refunded. Manual recovery only
-  /// in v1; admin sees this in the payout-detail page.
+  /// rolled into this payout is later refunded. Netted from the org's next
+  /// payouts (clawback-recovery.ts); admin sees this in the payout-detail page.
   clawbackAmountPaise BigInt    @default(0)
   clawbackInitiatedAt DateTime? @db.Timestamptz
 
@@ -2145,6 +2337,7 @@ model OrganizationPayout {
   // (organizationId, createdAt desc, id desc); the two-column index can't
   // serve the id tiebreaker.
   @@index([organizationId, createdAt, id])
+  @@index([approvedBy])
 }
 
 // #781 §A — closed set of payout rails (was a free-string code bag).
@@ -2461,9 +2654,11 @@ model ConsumerCreditNote {
   /// Exactly one trigger keys the note. Both are @unique, so a webhook
   /// redelivery or a cron retry re-reads the existing note instead of minting a
   /// second one and burning a gapless number.
-  refundId  String? @unique
-  disputeId String? @unique
-  reason    String?
+  refundId     String? @unique
+  disputeId    String? @unique
+  reason       String?
+  /// Issued past the CGST s.34(2) cutoff: no tax reversed, so it stays out of GSTR-1.
+  isCommercial Boolean @default(false)
 
   taxableValuePaise BigInt
   cgstPaise         BigInt @default(0)
@@ -2525,7 +2720,7 @@ enum PlaceOfSupplySource {
 model PurchaseOrder {
   id             String       @id @default(uuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   poNumber             String
   poDate               DateTime
@@ -2590,7 +2785,7 @@ model OrganizationSSOSettings {
 
 model OrgDomainClaim {
   id             String       @id @default(uuid())
-  domain         String       @unique
+  domain         String
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   claimedAt      DateTime     @default(now())
@@ -2608,6 +2803,8 @@ model OrgDomainClaim {
   verificationToken String?
   verifiedAt        DateTime?
 
+  @@unique([organizationId, domain])
+  @@index([domain])
   @@index([organizationId])
   @@map("org_domain_claims")
 }
@@ -2615,7 +2812,7 @@ model OrgDomainClaim {
 model OrgAuditLog {
   id             String       @id @default(cuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 
   actorMembershipId  String?
   targetMembershipId String?
@@ -2635,6 +2832,8 @@ model OrgAuditLog {
 
   @@index([organizationId, createdAt])
   @@index([organizationId, category, createdAt])
+  @@index([actorMembershipId])
+  @@index([targetMembershipId])
 }
 
 enum OrgAuditCategory {
@@ -2711,12 +2910,20 @@ enum LedgerAccountKind {
   WALLET // an org's prepaid balance (a liability we owe the org)
   PLATFORM_FEE // platform revenue
   PLATFORM_PROMO // contra-revenue: platform-funded grants/comps + referral credits
+  REFERRAL_CREDIT_LIABILITY // vested, unredeemed referral credit owed as future discount
   DISCOUNT // contra-revenue: discount given to the buyer (#771 AF-3 booking posting)
   CONSULTANT_PAYABLE // owed to a consultant
   ORG_PAYABLE // owed to a host org
   ORG_RECEIVABLE // an INVOICE-funded org owes us (accrued, cleared on invoice payment)
+  // A consultant owes us money we already disbursed to them and cannot pull
+  // back — a lost dispute or a chargeback on an already-PAID earning. Distinct
+  // from ORG_RECEIVABLE on purpose: that one is an org's invoice receivable,
+  // and a consultant balance parked in an org-scoped kind misreports both the
+  // org-receivables query and the chart of accounts. Always consultant-scoped.
+  CONSULTANT_RECEIVABLE // clawback owed BY a consultant (no inbound recovery path)
   TDS_PAYABLE // TDS withheld, owed to the government
   GST_PAYABLE // GST collected, owed to the government
+  UNAPPLIED_RECEIPTS // a capture staged for auto-refund, owed back to the payer
 }
 
 enum LedgerDirection {
@@ -2769,7 +2976,7 @@ enum LedgerTransactionKind {
   BOOKING
   TOPUP
   TOPUP_REFUND
-  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
+  /// org invoice issued or voided (its GST not booked by a booking), and CHARGE_ORG overage accrual
   INVOICE_ISSUED
   INVOICE_PAID
   INVOICE_REFUND
@@ -2779,6 +2986,8 @@ enum LedgerTransactionKind {
   OVERAGE_MEMBER
   /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
   GRANT
+  REFERRAL_CREDIT // vest, restore, reversal and breakage of referral promotional credit
+  UNAPPLIED_RECEIPT // a parked capture's cash, or its release when an operator recovers the booking
 }
 
 model LedgerTransaction {
@@ -2835,8 +3044,8 @@ model LedgerEntry {
 // Remediation is never a patch to a cache: a finding is a symptom, the fix
 // is upstream, and a money correction is a counter-transaction. #837 added
 // the one exception, a protective wallet-spend freeze on balance drift.
-// Findings are split against a checked-in baseline
-// (lib/payments/ledger/baseline.ts) so only NEW drift fails the run.
+// Findings are split against a checked-in baseline so only NEW drift fails
+// the run.
 // See `docs/enterprise/10-money-and-ledger/13-ledger-integrity.md`.
 model LedgerReconciliationReport {
   id            String   @id @default(uuid())
@@ -2874,20 +3083,22 @@ model LedgerReconciliationReport {
 //////////////////////////////////////////////////// DPDP + HRIS (stubs) ////////////////////////////////////////////////////
 
 model ConsentArtifact {
-  id                 String    @id @default(uuid())
-  userId             String
-  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dataFiduciary      String
-  purposeCodes       String[]
-  grantedAt          DateTime
-  withdrawnAt        DateTime?
-  language           String // one of 22 Schedule VIII languages
-  consentManager     String?
-  version            Int
-  hash               String // tamper-evident
-  auditRetainedUntil DateTime // grantedAt + 7y
+  id                    String    @id @default(uuid())
+  userId                String?
+  user                  User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  subjectPseudonymousId String?
+  dataFiduciary         String
+  purposeCodes          String[]
+  grantedAt             DateTime
+  withdrawnAt           DateTime?
+  language              String // one of 22 Schedule VIII languages
+  consentManager        String?
+  version               Int
+  hash                  String // tamper-evident
+  auditRetainedUntil    DateTime // grantedAt + 7y
 
   @@index([userId, grantedAt])
+  @@index([subjectPseudonymousId])
 }
 
 model DataBreach {
@@ -2970,6 +3181,14 @@ model ConsultantProfile {
   profileCompletionPercentage Int                          @default(0)
   isVerified                  Boolean                      @default(false)
   verificationStatus          ConsultantVerificationStatus @default(PENDING_VERIFICATION)
+  /// DISTINCT PEOPLE this consultant has delivered a session to — not sessions,
+  /// not bookings, not requests; see lib/profiles/mentees-helped.ts for the
+  /// definition and the arms. Stored rather than counted at read time because
+  /// three public surfaces project it and a browse card must not run five
+  /// aggregate queries. Written by `recomputeMenteesHelped`, which the hourly
+  /// auto-complete pass calls when a session stops being a booking, and the
+  /// seed calls once after the bookings exist. It used to be written ONLY by the
+  /// seed, as a random integer, so every public figure was fiction.
   totalMenteesHelped          Int                          @default(0)
 
   domain     Domain      @relation(fields: [domainId], references: [id])
@@ -3009,9 +3228,10 @@ model ConsultantProfile {
   userId String @unique
 
   // Payout relations
-  earnings       ConsultantEarnings[]
-  payouts        ConsultantPayout[]
-  payoutAccounts PayoutAccount[]
+  earnings             ConsultantEarnings[]
+  organizationEarnings OrganizationEarnings[] @relation("ConsultantOrganizationEarnings")
+  payouts              ConsultantPayout[]
+  payoutAccounts       PayoutAccount[]
 
   // Tax & compliance
   taxInfo        ConsultantTaxInfo?
@@ -3020,6 +3240,10 @@ model ConsultantProfile {
 
   // Profile verification
   verificationRequests ConsultantProfileVerification[]
+
+  // Who owns each buyer relationship, and platform-fee waivers.
+  customerRelationships ExpertCustomerRelationship[]
+  feeWaivers            ConsultantFeeWaiver[]
 
   // Enterprise: optional org memberships. A consultant can belong to zero or
   // more HOST/HYBRID orgs via typed Membership rows.
@@ -3034,7 +3258,8 @@ model ConsultantProfile {
   acceptingRequests Boolean     @default(true)
   maxOpenRequests   Int?
 
-  // India statutory (compliance stubs read these)
+  // India statutory (compliance stubs read these; PAN lives encrypted on ConsultantTaxInfo)
+  /// @deprecated Legacy plaintext PAN retained for pre-reset read compatibility (#2006); dropped in PR-6 reset batch.
   panNumber                       String?         @db.VarChar(10)
   residencyStatus                 ResidencyStatus @default(RESIDENT)
   // #778 §D — TDS thresholds/sections differ by payee entity type; without it
@@ -3368,7 +3593,6 @@ model OrgWorkspaceProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([userId])
   @@map("org_workspace_profiles")
 }
 
@@ -3383,7 +3607,7 @@ enum NotificationRoutingMode {
 
 /// Admin-only platform operational events (stack traces, worker errors).
 /// Distinct from OrgAuditLog (org-visible, prose-only).
-/// See docs/enterprise/50-operations/05-system-events.md.
+/// See docs/enterprise/50-operations/04-system-events.md.
 model SystemEvent {
   id String @id @default(uuid())
 
@@ -3529,6 +3753,16 @@ model Achievement {
 
 // #1554 — the hours a consultant offers; never booked directly. Weekly rows keep
 // weekday + minutes-since-midnight with a frozen offset (#503); custom rows are concrete.
+//
+// Neither model carries a `deletedAt` tombstone. Every removal path HARD-deletes
+// (the per-row DELETE routes, the profile soft-delete sweep in
+// app/api/user/consultants/[id], the onboarding re-save, and the availability
+// coalescers in utils/scheduling-engine/mergeAdjacentWeeklyRows.ts), so a
+// tombstone could only ever be set on rows nothing reads. `lib/profiles/profile-completion.ts`
+// used to filter `deletedAt: null` on these two `_count`s, which made it look
+// maintained; the filter was the only reader and it is gone. A consultant
+// tombstone belongs on `ConsultantProfile.deletedAt`, which IS written, and one
+// row there already covers "this profile is gone" for every window it owned.
 model AvailabilityWindowWeekly {
   id                String     @id @default(uuid())
   startDay          DayOfWeek
@@ -3553,9 +3787,6 @@ model AvailabilityWindowWeekly {
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
-
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
@@ -3569,9 +3800,6 @@ model AvailabilityWindowCustom {
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
-
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3602,20 +3830,19 @@ model ConsultationPlan {
   // recordingEnabled:false. Mirrors WebinarPlan/ClassPlan exactly, and defaults
   // OFF — a 1:1 is the most sensitive session type on the platform, so
   // recording it stays an explicit per-plan opt-in by the consultant.
-  recordingEnabled       Boolean                @default(false)
-  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
-  language               String                 @default("English")
-  level                  PlanLevel              @default(BEGINNER)
-  prerequisites          String?                @default("None")
-  materialProvided       String?                @default("None")
-  learningOutcomes       String[]               @default([])
+  recordingEnabled Boolean   @default(false)
+  language         String    @default("English")
+  level            PlanLevel @default(BEGINNER)
+  prerequisites    String?   @default("None")
+  materialProvided String?   @default("None")
+  learningOutcomes String[]  @default([])
   // Buyer-facing positioning: who the offering is for, and what the price buys.
-  targetAudience         String[]               @default([])
-  whatsIncluded          String[]               @default([])
-  imageUrl               String?
+  targetAudience   String[]  @default([])
+  whatsIncluded    String[]  @default([])
+  imageUrl         String?
   // Reserved for SEO-friendly plan URLs. Nullable until routing lands (#696).
-  slug                   String?                @unique
-  topics                 Topic[]                @relation("TopicToConsultationPlan")
+  slug             String?   @unique
+  topics           Topic[]   @relation("TopicToConsultationPlan")
 
   consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultantProfileId String
@@ -3685,8 +3912,13 @@ model Consultation {
 
   appointment Appointment?
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  // No `deletedAt` tombstone. A request is retired by `status` plus
+  // `cancelledAt`, and both are written by the same transition that closed it
+  // (lib/booking/transitions.ts) — so a tombstone would be a second copy of a
+  // fact the row already states, on a row nothing ever hard-deletes. #1319 added
+  // it as a mirror of Appointment.deletedAt and no path ever wrote it; the only
+  // readers were `deletedAt: null` filters in lib/data/requests-inbox.ts, which
+  // were tautologies.
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3719,26 +3951,25 @@ model SubscriptionPlan {
   // recordingEnabled:false. Mirrors WebinarPlan/ClassPlan exactly, and defaults
   // OFF — a 1:1 is the most sensitive session type on the platform, so
   // recording it stays an explicit per-plan opt-in by the consultant.
-  recordingEnabled       Boolean                @default(false)
-  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
+  recordingEnabled       Boolean          @default(false)
   // #1011 — was `callsPerWeek`. Renamed to match ClassPlan so both recurring
   // plan types name the same quantity the same way before the schema freeze.
-  sessionsPerWeek        Int                    @default(1)
-  sessionDurationInHours Float                  @default(1.0) // Duration of each session in hours
-  totalSessions          Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
-  totalHours             Float                  @default(4.0) // totalSessions × sessionDurationInHours
-  emailSupport           PlanEmailSupport       @default(GENERAL)
-  language               String                 @default("English")
-  level                  PlanLevel              @default(BEGINNER)
-  prerequisites          String?                @default("None")
-  materialProvided       String?                @default("None")
-  learningOutcomes       String[]               @default([])
+  sessionsPerWeek        Int              @default(1)
+  sessionDurationInHours Float            @default(1.0) // Duration of each session in hours
+  totalSessions          Int              @default(4) // sessionsPerWeek × durationInMonths × 4
+  totalHours             Float            @default(4.0) // totalSessions × sessionDurationInHours
+  emailSupport           PlanEmailSupport @default(GENERAL)
+  language               String           @default("English")
+  level                  PlanLevel        @default(BEGINNER)
+  prerequisites          String?          @default("None")
+  materialProvided       String?          @default("None")
+  learningOutcomes       String[]         @default([])
   // See ConsultationPlan.targetAudience.
-  targetAudience         String[]               @default([])
-  whatsIncluded          String[]               @default([])
+  targetAudience         String[]         @default([])
+  whatsIncluded          String[]         @default([])
   imageUrl               String?
-  slug                   String?                @unique
-  topics                 Topic[]                @relation("TopicToSubscriptionPlan")
+  slug                   String?          @unique
+  topics                 Topic[]          @relation("TopicToSubscriptionPlan")
 
   // Trial offer. Free by default ONLY until paid-trial checkout is
   // wired (booking rejects paid trials today); the wiring PR flips the
@@ -3824,8 +4055,12 @@ model Subscription {
   /// check-constraints banner.
   sessionsTotal Int?
 
-  appointment        Appointment?
-  convertedFromTrial Trial?
+  appointment               Appointment?
+  convertedFromTrial        Trial?
+  // #1743 — nullable-unique continuity link for same-plan re-purchase renewals.
+  renewedFromSubscriptionId String?       @unique
+  renewedFrom               Subscription? @relation("SubscriptionRenewal", fields: [renewedFromSubscriptionId], references: [id], onDelete: SetNull)
+  renewal                   Subscription? @relation("SubscriptionRenewal")
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
   deletedAt DateTime? @db.Timestamptz
@@ -3908,8 +4143,13 @@ model Trial {
   /// The expiry job cancels a PENDING or AWAITING_PAYMENT trial still unpaid past it.
   paymentDueAt DateTime? @db.Timestamptz
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  // No `deletedAt` tombstone. TrialStatus already has a value for every terminal
+  // outcome — COMPLETED / CONVERTED / CANCELLED / REJECTED — and each is written
+  // through `transitionTrial`, so the status IS the retirement record and a
+  // second marker on the same row could only ever disagree with it. #1319 added
+  // the column as a mirror of Appointment.deletedAt and nothing wrote it; the
+  // only readers were `deletedAt: null` entries in the requests-inbox cohort
+  // builders, which were tautologies against the status filter beside them.
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -3994,30 +4234,31 @@ enum BookingSource {
 // Many-Many Webinar
 
 model WebinarPlan {
-  id                     String                 @id @default(cuid())
-  title                  String
+  id                              String    @id @default(cuid())
+  title                           String
   // See ConsultationPlan.subtitle.
-  subtitle               String?                @db.VarChar(160)
-  topics                 Topic[]                @relation("TopicToWebinarPlan")
-  description            String?                @db.Text
-  price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency          Currency               @default(INR)
-  certificateProvided    Boolean                @default(false)
-  recordingEnabled       Boolean                @default(false) // Allow consultant to record sessions
-  recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
-  durationInHours        Float                  @default(1) // Duration in hours
-  maxParticipants        Int                    @default(100)
-  refundWindowHours      Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
-  language               String                 @default("English")
-  level                  PlanLevel              @default(BEGINNER)
-  prerequisites          String?                @default("None")
-  materialProvided       String?                @default("None")
-  learningOutcomes       String[]               @default([])
+  subtitle                        String?   @db.VarChar(160)
+  topics                          Topic[]   @relation("TopicToWebinarPlan")
+  description                     String?   @db.Text
+  price                           BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
+  priceCurrency                   Currency  @default(INR)
+  certificateProvided             Boolean   @default(false)
+  recordingEnabled                Boolean   @default(false) // Allow consultant to record sessions
+  // Attendees see recordings of every run of this plan, not only the run they joined.
+  shareRecordingsWithAllAttendees Boolean   @default(false)
+  durationInHours                 Float     @default(1) // Duration in hours
+  maxParticipants                 Int       @default(100)
+  refundWindowHours               Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
+  language                        String    @default("English")
+  level                           PlanLevel @default(BEGINNER)
+  prerequisites                   String?   @default("None")
+  materialProvided                String?   @default("None")
+  learningOutcomes                String[]  @default([])
   // See ConsultationPlan.targetAudience.
-  targetAudience         String[]               @default([])
-  whatsIncluded          String[]               @default([])
-  imageUrl               String?
-  slug                   String?                @unique
+  targetAudience                  String[]  @default([])
+  whatsIncluded                   String[]  @default([])
+  imageUrl                        String?
+  slug                            String?   @unique
 
   // Nullable by design: org-curated catalog plans may have no single owning
   // consultant (the org is the owner), unlike ConsultationPlan/SubscriptionPlan
@@ -4108,46 +4349,45 @@ enum WebinarStatus {
 // Many-Many Class
 
 model ClassPlan {
-  id                           String                 @id @default(cuid())
+  id                           String           @id @default(cuid())
   title                        String
   // See ConsultationPlan.subtitle.
-  subtitle                     String?                @db.VarChar(160)
+  subtitle                     String?          @db.VarChar(160)
   // Nullable in the DB (relaxed for legacy rows) but REQUIRED by
   // ClassPlanSchema — authoring always supplies one; the relaxation exists so
   // pre-validation rows don't block migrations.
-  description                  String?                @db.Text
-  topics                       Topic[]                @relation("TopicToClassPlan")
+  description                  String?          @db.Text
+  topics                       Topic[]          @relation("TopicToClassPlan")
   classContents                ClassContent[]
   price                        BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
-  priceCurrency                Currency               @default(INR)
-  certificateProvided          Boolean                @default(false)
-  recordingEnabled             Boolean                @default(false) // Allow consultant to record sessions
-  recordingStoragePolicy       RecordingStoragePolicy @default(STREAM_ONLY)
-  durationInMonths             Int                    @default(1) // Duration in months
+  priceCurrency                Currency         @default(INR)
+  certificateProvided          Boolean          @default(false)
+  recordingEnabled             Boolean          @default(false) // Allow consultant to record sessions
+  durationInMonths             Int              @default(1) // Duration in months
   // #1011 — was `meetingsPerWeek`. See SubscriptionPlan.sessionsPerWeek.
-  sessionsPerWeek              Int                    @default(1)
-  sessionDurationInHours       Float                  @default(1.0) // Duration of each session in hours
-  totalSessions                Int                    @default(4) // sessionsPerWeek × durationInMonths × 4
-  totalHours                   Float                  @default(4.0) // totalSessions × sessionDurationInHours
-  emailSupport                 PlanEmailSupport       @default(GENERAL)
+  sessionsPerWeek              Int              @default(1)
+  sessionDurationInHours       Float            @default(1.0) // Duration of each session in hours
+  totalSessions                Int              @default(4) // sessionsPerWeek × durationInMonths × 4
+  totalHours                   Float            @default(4.0) // totalSessions × sessionDurationInHours
+  emailSupport                 PlanEmailSupport @default(GENERAL)
   // Default mirrors WebinarPlan's usable floor (a 1-participant "class" is a
   // consultation); per-instance capacity lives on Class.maxParticipants.
-  maxParticipants              Int                    @default(30)
+  maxParticipants              Int              @default(30)
   refundWindowHours            Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
   // #1819 — last session ordinal a learner may still join before it starts (null → session 1 only).
   lateJoinUntilSession         Int?
   // #1819 — late joiners see recordings of sessions that ran before their seat.
-  lateJoinersGetPastRecordings Boolean                @default(false)
-  language                     String                 @default("English")
-  level                        PlanLevel              @default(BEGINNER)
-  prerequisites                String?                @default("None")
-  materialProvided             String?                @default("None")
-  learningOutcomes             String[]               @default([])
+  lateJoinersGetPastRecordings Boolean          @default(false)
+  language                     String           @default("English")
+  level                        PlanLevel        @default(BEGINNER)
+  prerequisites                String?          @default("None")
+  materialProvided             String?          @default("None")
+  learningOutcomes             String[]         @default([])
   // See ConsultationPlan.targetAudience.
-  targetAudience               String[]               @default([])
-  whatsIncluded                String[]               @default([])
+  targetAudience               String[]         @default([])
+  whatsIncluded                String[]         @default([])
   imageUrl                     String?
-  slug                         String?                @unique
+  slug                         String?          @unique
 
   // Nullable by design: org-curated catalog plans may have no single owning
   // consultant. See the mirror comment on WebinarPlan.
@@ -4207,11 +4447,7 @@ model Class {
   // Per-instance capacity. See Webinar.maxParticipants.
   maxParticipants Int?
 
-  // Legacy parallel path to the Recording model; deprecated for new writes.
-  // Kept (and rows kept readable) because historical classes still resolve
-  // their recordings through it.
-  recordingUrls   String[]
-  feedbackSummary String?  @db.Text
+  feedbackSummary String? @db.Text
 
   classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   classPlanId String
@@ -4459,7 +4695,8 @@ model Appointment {
   /// `NULL` on a confirmed appointment the exact work queue the reconcile sweep
   /// re-drives — no separate outbox table, because the appointment row already
   /// is the durable record of the work.
-  chatChannelEnsuredAt DateTime? @db.Timestamptz
+  chatChannelEnsuredAt DateTime?     @db.Timestamptz
+  supportCases         SupportCase[] @relation("SupportCaseByAppointment")
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -4498,7 +4735,28 @@ model AppointmentParticipant {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
-  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  /// Restrict, not Cascade. A seat row is the record that a person held a place
+  /// on someone's event and that the consultant delivered it — the same class of
+  /// record as the Payment beside it, which has been SetNull since #781 §B with
+  /// the comment "a soft-deleted Payment must not take the participation record
+  /// with it". Cascade on `user` contradicted that on the same model, so deleting
+  /// a user erased both the funding fact AND the fact of participation at once,
+  /// and left the appointment, its occurrences and the consultant's earnings
+  /// pointing at a delivery nobody can account for. This is the same reasoning
+  /// #1877 already applied to `Payment.user` and `Payment.appointment`.
+  ///
+  /// SetNull was the alternative and is worse: `@@unique([appointmentId,
+  /// userId])` stops constraining anything once `userId` is NULL (Postgres
+  /// treats NULLs as distinct), and every capacity read filters on `userId`, so
+  /// a released seat would silently vanish from the roster instead of being
+  /// refused. Restrict keeps the row and makes the caller decide.
+  ///
+  /// What a Restrict does NOT break: the DPDP §12 erasure flow
+  /// (`lib/compliance/erasure/scrub-user.ts`) never deletes a `User` row at all —
+  /// it pseudonymises PII in place and sets `erasedAt`, which is why money rows
+  /// survive it. It DOES mean the hard-delete branch of `DELETE /api/user/[id]`
+  /// must treat a held seat as money history, which that route now does.
+  user   User   @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   userId String
 
   role   ParticipantRole
@@ -4526,6 +4784,7 @@ model AppointmentParticipant {
   @@index([userId, status])
   // Prisma does not index FKs; without this the SetNull on Payment delete scans.
   @@index([paymentId])
+  @@index([organizationId])
 }
 
 enum ParticipantRole {
@@ -4548,6 +4807,17 @@ enum ParticipantStatus {
 /// polymorphic and deliberately unconstrained: seven lifecycles share one log
 /// and a real FK per entity would mean seven nullable columns. `fromStatus` and
 /// `toStatus` are strings because three different status enums share the log.
+///
+/// `fromStatus` carries two values that belong to NO status enum, and both are
+/// named constants rather than literals — `HISTORY_FROM_CREATED` ("this row
+/// never moved; it is the creation record") and `HISTORY_FROM_UNKNOWN` ("the
+/// pre-read missed this row, so its from-status is not captured", which reports
+/// itself per occurrence so an audit gap is countable). `lib/booking/response-rate.ts`
+/// and `lib/booking/reschedule-restore.ts` both branch on the second, so they
+/// import the constant instead of spelling the string.
+///
+/// Append-only: `booking_status_history_immutable` (check-constraints.sql) refuses
+/// DELETE and UPDATE of audit columns; the SetNull FK columns stay writable.
 model BookingStatusHistory {
   id String @id @default(uuid())
 
@@ -4570,6 +4840,13 @@ model BookingStatusHistory {
 
   @@index([entityId, createdAt])
   @@index([appointmentId, createdAt])
+  // Postgres does not auto-index FKs, and `organization` is `SetNull`, so an org
+  // teardown (and any future org-scoped timeline read) scanned the whole table.
+  // Same reasoning as Grievance.userId and AppointmentParticipant.paymentId.
+  // Nothing reads the column TODAY — org dashboards reach their history through
+  // `appointment.organizationId` — which is exactly why the gap stayed invisible.
+  @@index([organizationId, createdAt])
+  @@index([actorUserId])
 }
 
 enum BookingHistoryEntity {
@@ -4720,8 +4997,12 @@ model RescheduleRequest {
 
   proposedTimes RescheduleProposedTime[]
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  // No `deletedAt` tombstone. `openForAppointmentId @unique` above IS the
+  // liveness marker — it is claimed while the request is open and NULLed the
+  // moment it resolves, and every reader of "is there a live proposal for this
+  // appointment" is that column. A tombstone would duplicate it. #1319 added the
+  // column and no path wrote it; `lib/data/consultant-needs-you.ts` filtered
+  // `deletedAt: null` on it, which was a tautology.
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -4748,8 +5029,11 @@ model RescheduleProposedTime {
   proposedBy   User   @relation("ProposedTimeAuthor", fields: [proposedById], references: [id], onDelete: Cascade)
   proposedById String
 
-  // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  // No `deletedAt` tombstone. An offer is live exactly while its parent request
+  // is open, and every read scopes through `rescheduleRequest` (and, since the
+  // counter-round was retired, through `round`) rather than through a filter on
+  // this row. A row that loses its proposal is CASCADEd with the request, which
+  // is the right destruction: an offer is not a record of anything.
 
   createdAt DateTime @default(now()) @db.Timestamptz
 
@@ -4787,7 +5071,6 @@ enum RescheduleRequestStatus {
   /// parties, so it confirmed with no approval step.
   AUTO_ACCEPTED
   PENDING_REVIEW
-  COUNTERED
   ACCEPTED
   DECLINED
   /// The INITIATOR took their own request back. Distinct from DECLINED, which
@@ -4798,6 +5081,20 @@ enum RescheduleRequestStatus {
   WITHDRAWN
   /// Lapsed unanswered; the request falls back to consultant allocation.
   EXPIRED
+  // `COUNTERED` was removed. It was the round-2 counter-offer: specified in the
+  // enum, present in RESCHEDULE_ALLOWED_FROM, the `round` column and a
+  // "Counter-offer" badge, and written by NOTHING but the seed. The feature was
+  // deliberately retired (see the "no counter-round" note in
+  // lib/booking/reschedule-proposals.ts), so keeping the member meant a live UI
+  // affordance for a state the route could never produce.
+  //
+  // Note for whoever next touches an enum: `prisma db push` cannot DROP an enum
+  // value. It renames the type, creates a replacement, casts every column with a
+  // USING clause, drops the old type and renames — and the cast FAILS on any row
+  // still holding the value. That is why the seed's COUNTERED rows had to go in
+  // the same change: see prisma/seedFiles/6c-create-reschedule-proposals.ts.
+  // scripts/ci/check-db-live-drift.ts fails the build if the live type and the schema
+  // disagree in either direction.
 }
 
 // Document Review Models
@@ -4855,11 +5152,17 @@ model AppointmentDocument {
   deletedById String?
   deletedBy   User?     @relation("DocumentDeleter", fields: [deletedById], references: [id], onDelete: SetNull)
 
+  // Removal requests are flagged on the thread root; every tombstone records why it was removed.
+  removalRequestedAt DateTime?              @db.Timestamptz
+  removalReason      DocumentRemovalReason?
+
   // Metadata
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@index([appointmentId])
+  @@index([appointmentId, deletedAt, uploadedAt(sort: Desc)])
+  @@index([appointmentId, rootDocumentId, deletedAt])
   @@index([reviewStatus])
   @@index([uploadedByRole])
   @@index([responseToDocumentId])
@@ -4884,6 +5187,13 @@ enum DocumentReviewStatus {
 enum DocumentUploadRole {
   CONSULTEE
   CONSULTANT
+}
+
+enum DocumentRemovalReason {
+  USER_REQUEST
+  RETENTION_EXPIRY
+  SUPPORT_ACTION
+  ACCOUNT_ERASURE
 }
 
 // Plan Materials - Consultant-uploaded materials at plan level (shared across all instances)
@@ -4927,6 +5237,8 @@ model PlanMaterial {
   @@index([classPlanId])
   @@index([order])
   @@index([organizationId])
+  @@index([organizationId, uploadedAt(sort: Desc)])
+  @@index([storagePath])
 }
 
 // Buyer-facing Q&A on an offering. Polymorphic across the four plan types the
@@ -4977,19 +5289,22 @@ model AppointmentOccurrence {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   appointmentId String
 
-  /// #440 — denormalized consultant for the DB-level overlap guard. The
-  /// exclusion constraint (btree_gist on (consultantProfileId,
-  /// tstzrange(startsAt, endsAt)) WHERE NOT isTentative) is LIVE in the raw-SQL
-  /// sidecar (prisma/sql/check-constraints.sql: occurrence_no_confirmed_overlap); a
-  /// violation surfaces as Postgres 23P01 → 409 (SchedulingService
-  /// .classifyError). Nullable for attendee (webinar/class) rows, which the
-  /// partial-index guard excludes.
+  /// #440 / #2010 — denormalized host consultant for the DB-level single-active-
+  /// session overlap guard across all 5 offering types (Consultation,
+  /// Subscription, Webinar, Class, Trial). The exclusion constraint (btree_gist
+  /// on (consultantProfileId, tstzrange(startsAt, endsAt)) WHERE NOT isTentative
+  /// AND deletedAt IS NULL AND completionStatus NOT IN ('CANCELLED', 'RESCHEDULED'))
+  /// and CHECK constraint (occurrence_confirmed_requires_consultant_chk) live in
+  /// prisma/sql/check-constraints.sql; a violation surfaces as Postgres 23P01 → 409.
   consultantProfileId String?
 
   meeting     Meeting?
   // #1554 — attendance is keyed to the call itself, so the "were you there"
   // gate reads it without going through Meeting.
   attendances MeetingAttendance[]
+
+  // Referrals that vest when this session is delivered.
+  qualifyingReferrals Referral[] @relation("ReferralQualifyingOccurrence")
 
   // A10 — soft-delete tombstone (#676). Mirrors Appointment.deletedAt.
   deletedAt       DateTime? @db.Timestamptz
@@ -5008,6 +5323,8 @@ model AppointmentOccurrence {
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
+
+  supportCases SupportCase[] @relation("SupportCaseByOccurrence")
 
   // No @@unique/@@index on (appointmentId, ordinal): the live-row unique is the
   // partial index appointment_occurrence_live_ordinal_key in prisma/sql (#1268).
@@ -5187,6 +5504,7 @@ model MeetingPresence {
   @@unique([meetingId, userSessionId])
   @@index([appointmentOccurrenceId])
   @@index([meetingId, userId])
+  @@index([joinedAt])
 }
 
 // Recording storage types
@@ -5196,23 +5514,16 @@ enum RecordingStorageType {
   PLATFORM // Our bucket, whichever vendor backs it — no expiry
 }
 
-// Recording storage policy for plans (determines where recordings are stored)
-
-enum RecordingStoragePolicy {
-  STREAM_ONLY // 2-week temporary storage (free tier)
-  PERMANENT // Kept in our own bucket indefinitely (premium tier)
-}
-
 // Recording status lifecycle
 
 enum RecordingStatus {
   RECORDING // Currently being recorded
   PROCESSING // Stream is processing the recording
-  READY // Available on Stream S3
-  TRANSFERRING // Being transferred to Supabase
-  AVAILABLE // Available on Supabase (permanent)
-  FAILED // Recording failed
-  EXPIRED // Stream S3 URL expired
+  READY // Playable from Stream's copy; the transfer job copies it to our bucket
+  TRANSFERRING // Copy to our bucket in progress
+  AVAILABLE // Copied to our bucket
+  FAILED // Stream reported the recording failed
+  EXPIRED // Deleted by retention, or Stream's copy lapsed before a copy
 }
 
 // #366 curated marketplace listing lifecycle. DRAFT → PUBLISHED on consultant
@@ -5282,10 +5593,7 @@ model Recording {
   storageType RecordingStorageType @default(STREAM_S3)
   status      RecordingStatus      @default(READY)
 
-  // #1280 — vendor-neutral: Stream can write straight into our bucket via
-  // recording_external_storage, and the bucket behind it is a deployment
-  // choice, so neither the column nor the enum names one.
-  storageUrl  String?
+  // Object key in our recordings bucket once copied.
   storagePath String?
 
   // Media metadata
@@ -5299,21 +5607,17 @@ model Recording {
   previewClipDuration Int? // Duration in seconds
 
   // Expiration tracking
-  streamUrlExpiresAt DateTime? // When Stream S3 URL expires
-  transferredAt      DateTime? // When transferred to Supabase
+  streamUrlExpiresAt DateTime? // Stream deletes its copy 14 days after the recording ends
+  transferredAt      DateTime? // When copied to our bucket
 
-  // STR-2/3 (#689) — transfer-to-Supabase health. A failed transfer reverts
-  // status to READY and re-attempts next cron; these track repeated failures so
-  // the job can alert (transferFailureAlertedAt dedupes the page) before a
-  // STREAM_ONLY recording lapses at streamUrlExpiresAt.
+  // Copy health: a failed copy stays READY and retries until the attempt cap;
+  // transferFailureAlertedAt dedupes the engineering alert.
   transferAttempts         Int       @default(0)
   lastTransferError        String?
   transferFailureAlertedAt DateTime? @db.Timestamptz
 
-  // #366 curated marketplace listing — opt-in per recording. Publishing is
-  // only valid once the recording is durably ours (Stream URLs die in ≤14d,
-  // so a STREAM_ONLY recording must never be sold) on webinar/class
-  // plans, with consultant redistribution-consent attestation (audit-logged).
+  // Curated marketplace listing, opt-in per recording. Publishing requires the
+  // copy in our bucket, a webinar/class plan and consultant consent attestation.
   listingStatus      RecordingListingStatus @default(DRAFT)
   listPricePaise     BigInt?
   listingTitle       String?
@@ -5323,11 +5627,7 @@ model Recording {
   publishedAt        DateTime?
   unpublishedAt      DateTime?
 
-  // #1244 review — accessibility gate. A preview clip that carries SPEECH is
-  // inaccessible to anyone who needs text, so publishing one requires a text
-  // alternative and the detail page renders it beside the player. Plain text
-  // rather than WebVTT: this is a transcript, not timed captions (those are
-  // the follow-up), and a consultant can paste one without tooling.
+  // Required when publishing a recording with previewClipUrl so speech clips expose a text transcript.
   previewTranscript String? @db.Text
 
   // Preview assets are copied into the PUBLIC `recordings-previews` bucket so
@@ -5351,6 +5651,10 @@ model Recording {
   organization   Organization? @relation("RecordingByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
+  // Written with EXPIRED so attendees can tell an expert delete from retention, a decline or a lapsed copy.
+  removedAt     DateTime?               @db.Timestamptz
+  removalReason RecordingRemovalReason?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -5360,7 +5664,17 @@ model Recording {
   @@index([status])
   @@index([storageType])
   @@index([streamUrlExpiresAt])
+  @@index([status, storageType, streamUrlExpiresAt, id])
   @@index([listingStatus, publishedAt])
+}
+
+enum RecordingRemovalReason {
+  EXPERT_DELETED
+  RETENTION
+  DECLINED
+  COPY_LAPSED
+  SUPPORT_ACTION
+  ORG_ACTION
 }
 
 enum Platform {
@@ -5413,18 +5727,26 @@ model Payment {
 
   // #778 §D — GST place-of-supply (Sec 12/13) for B2C: buyer's state code, else
   // every interstate sale wrongly defaults. Derivation/IGST-vs-CGST split deferred.
-  consumerStateCode    String? @db.VarChar(2)
-  // #778 §D — GST TCS u/s 52 collected on this payment. The rate is 0.5%
-  // (0.25% CGST + 0.25% SGST, or 0.5% IGST) w.e.f. 10-Jul-2024, Notification
-  // 15/2024-CT — halved from the 1% this comment used to state. paise; #780
-  // widens to BigInt. #1360 — collection stays CA-gated because the platform
-  // bills as PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE
-  // booked in earnings-service), so §52 does not currently bite.
-  gstTcsCollectedPaise BigInt?
+  consumerStateCode String? @db.VarChar(2)
 
-  user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  // Who brought this sale, stamped in the order-mint transaction; decides the take rate.
+  attributionSource           PaymentAttributionSource?
+  attributionReferralId       String?
+  attributionReferral         Referral?                    @relation("PaymentAttributionReferral", fields: [attributionReferralId], references: [id], onDelete: SetNull)
+  // Platform fee actually charged on this sale, in basis points (0 under a fee waiver).
+  platformFeeBps              Int?
+  // Pre-tax referee welcome discount; non-null only on discounted orders (one live per buyer).
+  welcomeDiscountPaise        BigInt?
+  // Set when an expert or platform cancellation returned this order's referral to SIGNED_UP:
+  // the order no longer counts as the referee's first purchase or holds the welcome-discount slot.
+  referralReleasedAt          DateTime?                    @db.Timestamptz
+  // Referrals this payment qualified (at most one in practice).
+  qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
+  firstPaymentOfRelationships ExpertCustomerRelationship[]
+
+  user           User          @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   userId         String
-  appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  appointment    Appointment?  @relation(fields: [appointmentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   appointmentId  String?
   discountCode   DiscountCode? @relation(fields: [discountCodeId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   discountCodeId String?
@@ -5442,8 +5764,10 @@ model Payment {
   // Enterprise: optional org tagging.
   // Set on payments made by an org member (fundingSource: PERSONAL/WALLET/INVOICE/LICENSE).
   // HYBRID orgs with canHost=true also trigger a 3-way split via RateCard.
-  organization   Organization? @relation("PaymentOrgTag", fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
-  organizationId String?
+  organization       Organization? @relation("PaymentOrgTag", fields: [organizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  organizationId     String?
+  hostOrganization   Organization? @relation("PaymentHostOrg", fields: [hostOrganizationId], references: [id], onUpdate: Cascade, onDelete: SetNull)
+  hostOrganizationId String?
 
   // WALLET/INVOICE funding settlement — which billing account is charged.
   billingAccountId String?
@@ -5492,12 +5816,20 @@ model Payment {
   @@index([appointmentId])
   @@index([paymentStatus, createdAt])
   @@index([organizationId])
+  @@index([hostOrganizationId])
   // Dashboard hot path: a user's payments scoped to an org, newest first.
   @@index([userId, organizationId, createdAt])
   @@index([billableToOrgInvoiceId])
   @@index([parentPaymentId])
   @@index([discountCodeId])
   @@index([billingAccountId])
+  @@index([attributionReferralId])
+}
+
+enum PaymentAttributionSource {
+  MARKETPLACE // found through the platform
+  OWN_LINK // the expert's own signed share link
+  CONSUMER_REFERRAL // a consumer referral code on the buyer's first purchase
 }
 
 // Stackable funding leg. Each row captures one source contribution to a
@@ -5575,7 +5907,7 @@ enum PaymentGateway {
   // is free, removing one costs a type recreation and swap.
   //
   // It fails loudly rather than falling through a `default:` branch: see
-  // POST_MVP_GATEWAY_STUBS in lib/payments/constants.ts and the throwing guard
+  // UNIMPLEMENTED_GATEWAYS in lib/payments/constants.ts and the throwing guard
   // in lib/payments/validation/gateway-guards.ts. For a finance or CA review,
   // treat it as not existing — no money has ever moved through it.
   DODO_PAYMENTS
@@ -5595,7 +5927,7 @@ model Refund {
   currency             Currency       @default(INR)
   reason               String? // Reason for refund
   status               RefundStatus
-  refundId             String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
+  refundId             String         @unique // Gateway-specific refund ID
   dedupeKey            String?        @unique // #1780 — one refund per (payment, occurrence|seat|series): a DB guarantee
   paymentGateway       PaymentGateway
   metadata             Json? // Additional gateway-specific metadata
@@ -5605,10 +5937,8 @@ model Refund {
   payment   Payment @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   paymentId String
 
-  // #776 — idempotency stamp for applyRefundCascade. Set once the canonical
-  // cascade (legs/wallet/earnings/ledger/utilization/credit-note) has run, so the
-  // app, gateway-webhook and backstop-cron paths each apply it exactly once. The
-  // cron selects SUCCEEDED refunds where this is null.
+  // Idempotency stamp for applyRefundCascade, claimed once by whichever path runs it.
+  // reconcile-pending-refunds re-drives SUCCEEDED rows still null after 10 minutes.
   cascadedAt DateTime? @db.Timestamptz
 
   /// #779 §A — gateway-failure capture for FAILED refunds. `reason` above is the
@@ -5750,14 +6080,7 @@ model ConsultantEarnings {
   grossAmount          BigInt // Total sale price (paise)
   platformFeePaise     BigInt // Platform cut (20%)
   consultantSharePaise BigInt // Consultant cut (80%)
-  refundedShareAmount  BigInt  @default(0) // Cumulative refunded amount in paise
-  // #778 §D — GST TCS u/s 52 accrued against this consultant's supply (owed to
-  // govt, reconciled into GstTcsBatch) at 0.5% (0.25% CGST + 0.25% SGST, or
-  // 0.5% IGST) w.e.f. 10-Jul-2024, Notification 15/2024-CT. paise; #780 widens
-  // to BigInt. #1360 — impl stays CA-gated because the platform bills as
-  // PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE booked in
-  // earnings-service), so §52 does not currently bite.
-  gstTcsAccruedPaise   BigInt?
+  refundedShareAmount  BigInt @default(0) // Cumulative refunded amount in paise
 
   // Collaborator support
   role     EarningRole @default(OWNER)
@@ -5839,6 +6162,7 @@ model ConsultantPayout {
   processedAt   DateTime? @db.Timestamptz
   approvedAt    DateTime? @db.Timestamptz
   approvedBy    String?
+  createdBy     String?
 
   // UTR — Unique Transaction Reference; the bank/RBI settlement reference the
   // gateway returns on a completed NEFT/IMPS/UPI payout. Mirrors
@@ -5850,6 +6174,15 @@ model ConsultantPayout {
   // both payout creators stamp `payout_<profile>_<batch>`; a transfer must never
   // submit without a dedupe key.
   idempotencyKey String @unique
+
+  // W1a — clawback counterpart of OrganizationPayout.clawbackAmountPaise.
+  // Raised when an earning already PAID here is later reversed (a refund or a
+  // lost dispute). The amount is booked to CONSULTANT_RECEIVABLE and netted
+  // from the consultant's next payouts (clawback-recovery.ts). Amount is NET
+  // of TDS: the transfer was net, `recordTdsReversal` owns the tax leg, and
+  // clawing back gross would take back tax the platform never disbursed.
+  clawbackAmountPaise BigInt    @default(0)
+  clawbackInitiatedAt DateTime? @db.Timestamptz
 
   // A6/A7/PM-16 — Timestamptz on the money models (#676).
   createdAt DateTime @default(now()) @db.Timestamptz
@@ -5881,10 +6214,8 @@ model PayoutAccount {
   upiId String?
 
   // Gateway IDs
-  stripeAccountId     String? @unique
-  stripeAccountStatus String?
-  razorpayContactId   String?
-  razorpayFundAccId   String? @unique
+  razorpayContactId String?
+  razorpayFundAccId String? @unique
 
   // Verification
   isVerified Boolean @default(false)
@@ -5893,7 +6224,7 @@ model PayoutAccount {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  consultantProfile ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Restrict)
 
   @@index([consultantProfileId])
   @@index([isDefault])
@@ -6074,7 +6405,12 @@ model CreditNote {
   // #738-B — triggering dispute (chargeback LOST), when the CN arises from one.
   // Same idempotency discipline as refundId: one credit note per dispute.
   disputeId      String?              @unique
+  // #1894 — non-refund trigger: an overage base already invoiced and credited
+  // back. A statutory document must name its real trigger, not borrow refundId.
+  overageEventId String?              @unique
   reason         String?
+  /// Issued past the CGST s.34(2) cutoff: no tax reversed, so it stays out of GSTR-1.
+  isCommercial   Boolean              @default(false)
 
   // #778 §D — IRP reports credit/debit notes as their own document types for
   // in-scope (AATO ≥ ₹5cr) taxpayers; ≥ ₹10cr adds a 30-day reporting window.
@@ -6152,61 +6488,7 @@ model TdsAdjustment {
   @@index([consultantProfileId, financialYear])
   @@index([organizationId, financialYear])
   @@index([payoutId])
-}
-
-// #778 §D — GST TCS u/s 52 monthly aggregation for GSTR-8. Were we an
-// e-commerce operator collecting on registered consultants, the rate would be
-// 0.5% (0.25% CGST + 0.25% SGST, or 0.5% IGST) w.e.f. 10-Jul-2024,
-// Notification 15/2024-CT — this block used to say 1%, the pre-July-2024 rate.
-// Per-payment collection (Payment.gstTcsCollectedPaise) + per-earning accrual
-// (ConsultantEarnings.gstTcsAccruedPaise) reconcile into one batch per month.
-// #1360 — collection + filing stay CA-gated because the platform bills as
-// PRINCIPAL supplier (18% GST charged at checkout, GST_PAYABLE booked in
-// earnings-service), so §52 does not currently bite.
-enum GstTcsBatchStatus {
-  OPEN
-  FILED
-}
-
-model GstTcsBatch {
-  id            String @id @default(cuid())
-  financialYear String // "2026-27"
-  month         Int // 1-12 (GSTR-8 is monthly)
-
-  // Aggregates for the period (paise; #780 widens to BigInt).
-  netSupplyPaise    BigInt @default(0)
-  tcsCollectedPaise BigInt @default(0)
-
-  status         GstTcsBatchStatus @default(OPEN)
-  filedAt        DateTime?
-  gstr8AckNumber String?
-
-  adjustments GstTcsAdjustment[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([financialYear, month])
-  @@index([status])
-}
-
-// #778 §D — refund reversal of previously-collected GST TCS, netted into the
-// batch for the period in which the refund occurs.
-model GstTcsAdjustment {
-  id      String       @id @default(cuid())
-  batchId String?
-  batch   GstTcsBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
-
-  paymentId   String? // original payment
-  refundId    String? // triggering refund
-  // Signed paise; negative reverses TCS on refund (#780 widens to BigInt).
-  amountPaise BigInt
-  reason      String?
-
-  createdAt DateTime @default(now())
-
-  @@index([batchId])
-  @@index([paymentId])
+  @@index([orgPayoutId])
 }
 
 /// Request-level idempotency for money mutations that have no natural dedupe
@@ -6331,6 +6613,12 @@ model ReferralCode {
   totalEarned         BigInt  @default(0)
   maxReferrals        Int     @default(25) // #880 — tightened from 50 to bound farming/liability
   isActive            Boolean @default(true)
+  // Vest caps, gated by conditional update: UTC calendar year and ISO-week keys with their counters.
+  capYear             String  @default("")
+  yearRewardPaise     BigInt  @default(0)
+  yearExpertVests     Int     @default(0)
+  capWeek             String  @default("")
+  weekVests           Int     @default(0)
 
   user      User       @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   referrals Referral[]
@@ -6343,17 +6631,28 @@ model ReferralCode {
 }
 
 model Referral {
-  id                   String         @id @default(cuid())
-  referralCodeId       String
-  referredUserId       String         @unique
-  status               ReferralStatus @default(SIGNED_UP)
-  referrerRewardAmount BigInt?
-  refereeRewardAmount  BigInt?
-  referrerRewardPaidAt DateTime?
-  refereeRewardPaidAt  DateTime?
-  signedUpAt           DateTime       @default(now())
-  qualifiedAt          DateTime?
-  qualifyingAction     String?
+  id                     String                 @id @default(cuid())
+  referralCodeId         String
+  referredUserId         String                 @unique
+  status                 ReferralStatus         @default(SIGNED_UP)
+  referrerRewardAmount   BigInt?
+  refereeRewardAmount    BigInt?
+  referrerRewardPaidAt   DateTime?
+  refereeRewardPaidAt    DateTime?
+  signedUpAt             DateTime               @default(now())
+  qualifiedAt            DateTime?
+  qualifyingAction       String?
+  // The capture that moved it to QUALIFYING and the session that must be delivered to vest.
+  qualifyingPaymentId    String?
+  qualifyingPayment      Payment?               @relation("ReferralQualifyingPayment", fields: [qualifyingPaymentId], references: [id], onDelete: SetNull)
+  qualifyingOccurrenceId String?
+  qualifyingOccurrence   AppointmentOccurrence? @relation("ReferralQualifyingOccurrence", fields: [qualifyingOccurrenceId], references: [id], onDelete: SetNull)
+  voidReason             String?
+  vestedAt               DateTime?              @db.Timestamptz
+  // ReferralProgramConfig.version the referral was applied under.
+  configVersion          Int?
+  attributedPayments     Payment[]              @relation("PaymentAttributionReferral")
+  feeWaivers             ConsultantFeeWaiver[]
 
   // #727 — attribution-only org tag, mirroring Trial.organizationId.
   // Set when the referrer is a member of an active org; no money coupling
@@ -6370,19 +6669,33 @@ model Referral {
   @@index([referralCodeId])
   @@index([status])
   @@index([organizationId])
+  @@index([qualifyingPaymentId])
+  @@index([qualifyingOccurrenceId])
 }
 
 model ReferralCredit {
-  id              String       @id @default(cuid())
+  id              String              @id @default(cuid())
   userId          String
   amount          BigInt // Credit amount in smallest currency unit (paise)
-  currency        Currency     @default(INR)
+  currency        Currency            @default(INR)
   source          CreditSource
   referralId      String?
-  usedAmount      BigInt       @default(0)
+  usedAmount      BigInt              @default(0)
   remainingAmount BigInt // amount - usedAmount
   expiresAt       DateTime?
   usedAt          DateTime?
+  // #1839 — backoffice manual/compensation issuance & reversal audit fields.
+  idempotencyKey  String?             @unique
+  reason          String?
+  issuedBy        String?
+  reversedAt      DateTime?           @db.Timestamptz
+  reversedBy      String?
+  reversedReason  String?
+  // Only VESTED is spendable; vestedAt is set only when the vest journal posted the liability.
+  state           ReferralCreditState @default(VESTED)
+  vestedAt        DateTime?           @db.Timestamptz
+  voidedAt        DateTime?           @db.Timestamptz
+  configVersion   Int?
 
   user   User                  @relation(fields: [userId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   usages ReferralCreditUsage[]
@@ -6397,6 +6710,14 @@ model ReferralCredit {
   @@index([userId])
   @@index([expiresAt])
   @@index([userId, expiresAt])
+  @@index([state, expiresAt])
+}
+
+enum ReferralCreditState {
+  PENDING // issued at qualification, not spendable
+  VESTED // spendable
+  EXPIRED // lapsed unredeemed balance, breakage posted
+  VOID // qualification failed or reversed by ops
 }
 
 model ReferralCreditUsage {
@@ -6415,20 +6736,87 @@ model ReferralCreditUsage {
   @@index([paymentId])
 }
 
-// #880 — single-row referral-program config (fixed id). Centralizes the
-// conservative-launch controls: the program on/off switch, a monthly budget cap
-// with auto-pause, and the ramped referrer reward. Paise columns are BigInt
-// like every other money column (#780); the Prisma result extension converts
-// them to number at the JS boundary so the gate arithmetic stays in number.
+// Single-row referral-program config (fixed id): every referral economic is data, edited by
+// ADMIN with a reason; `version` bumps on each edit and is snapshotted on referrals and credits.
 model ReferralProgramConfig {
-  id                     String   @id @default("singleton")
-  isActive               Boolean  @default(true)
-  monthlyBudgetPaise     BigInt? // null = unlimited
-  currentPeriod          String   @default("") // "YYYY-MM" of the active budget window
-  currentMonthSpentPaise BigInt   @default(0)
-  referrerRewardPaise    BigInt   @default(30000) // ₹300 launch; ramp to 50000 (₹500)
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  id                        String   @id @default("singleton")
+  isActive                  Boolean  @default(true)
+  paused                    Boolean  @default(false)
+  // 0 = programme effectively off until ops sets a budget.
+  monthlyBudgetPaise        BigInt   @default(0)
+  currentPeriod             String   @default("") // "YYYY-MM" of the active budget window
+  currentMonthSpentPaise    BigInt   @default(0)
+  referrerRewardPaise       BigInt   @default(30000)
+  discountBps               Int      @default(2000)
+  discountMaxPaise          BigInt   @default(30000)
+  redemptionCapBps          Int      @default(2000)
+  minOrderPaise             BigInt   @default(50000)
+  creditExpiryDays          Int      @default(90)
+  qualifyWindowDays         Int      @default(30)
+  perCodeLifetimeCap        Int      @default(25)
+  perReferrerYearlyCapPaise BigInt   @default(1000000)
+  weeklyVestCap             Int      @default(5)
+  expertYearlyReferralCap   Int      @default(10)
+  expertWaiverSessions      Int      @default(3)
+  expertWaiverDays          Int      @default(90)
+  // Budget charged when an expert referral vests: the expected forgone take on its waived sessions.
+  expertReferralBudgetPaise BigInt   @default(180000)
+  version                   Int      @default(1)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+// Buyer ownership per expert: the first paid purchase fixes the source for every later one.
+model ExpertCustomerRelationship {
+  id                  String                   @id @default(cuid())
+  consultantProfileId String
+  consultantProfile   ConsultantProfile        @relation(fields: [consultantProfileId], references: [id], onDelete: Cascade)
+  buyerUserId         String
+  buyer               User                     @relation(fields: [buyerUserId], references: [id], onDelete: Cascade)
+  source              PaymentAttributionSource
+  firstPaymentId      String
+  firstPayment        Payment                  @relation(fields: [firstPaymentId], references: [id], onDelete: Cascade)
+  createdAt           DateTime                 @default(now()) @db.Timestamptz
+
+  @@unique([consultantProfileId, buyerUserId])
+  @@index([buyerUserId])
+  @@index([firstPaymentId])
+}
+
+// Versioned take rates (maker-checker). The active row is the latest approved one with effectiveFrom <= now.
+model PlatformFeeSchedule {
+  id             String    @id @default(cuid())
+  marketplaceBps Int
+  ownLinkBps     Int
+  effectiveFrom  DateTime  @db.Timestamptz
+  makerUserId    String
+  checkerUserId  String?
+  approvedAt     DateTime? @db.Timestamptz
+  reason         String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz
+
+  @@index([approvedAt, effectiveFrom])
+}
+
+// A 0 % platform fee on the next N sessions, consumed by CAS in the capture transaction.
+model ConsultantFeeWaiver {
+  id                  String                    @id @default(cuid())
+  consultantProfileId String
+  consultantProfile   ConsultantProfile         @relation(fields: [consultantProfileId], references: [id], onDelete: Cascade)
+  reason              ConsultantFeeWaiverReason
+  sessionsRemaining   Int
+  expiresAt           DateTime                  @db.Timestamptz
+  referralId          String
+  referral            Referral                  @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  createdAt           DateTime                  @default(now()) @db.Timestamptz
+
+  @@unique([referralId, consultantProfileId])
+  @@index([consultantProfileId, expiresAt])
+}
+
+enum ConsultantFeeWaiverReason {
+  REFERRED_EXPERT
+  REFERRING_EXPERT
 }
 
 // Single-row platform pricing config (fixed id), mirroring
@@ -6448,6 +6836,9 @@ enum ReferralStatus {
   REWARDED
   EXPIRED
   FRAUDULENT
+  QUALIFYING // first paid marketplace capture seen; waiting on delivery + refund window
+  VESTED // reward released
+  VOID // disqualified; see voidReason
 }
 
 enum CreditSource {
@@ -6683,6 +7074,10 @@ model ModerationReport {
   targetUserId String
   targetUser   User   @relation("ReportsReceived", fields: [targetUserId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
+  // Enterprise tenant attribution when reported inside an org context
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+
   // Optional entity references
   // #1300 — a real relation, not a bare string. SetNull: a report is a record of what
   // someone objected to even if the row it named is gone.
@@ -6713,6 +7108,7 @@ model ModerationReport {
   @@index([type])
   @@index([reportedById])
   @@index([targetUserId])
+  @@index([organizationId, status])
   @@index([assignedToId])
   @@index([createdAt])
   // #1270 — the per-message dedup lookup in POST /api/report.
@@ -6858,6 +7254,7 @@ model SystemJobExecution {
   @@index([jobId])
   @@index([status])
   @@index([startedAt])
+  @@index([status, startedAt])
   @@index([triggeredBy])
 }
 
@@ -6948,6 +7345,10 @@ model SsoProvider {
   // app/api/admin/organizations/[orgId]/sso-providers/[providerId]/approval
   // sets it, after re-checking the org's verified OrgDomainClaim.
   domainVerified Boolean       @default(false)
+  // First successful SSO sign-in through this provider by an org OWNER.
+  // Turning enforceSSO on requires it, so a broken IdP cannot lock the org out.
+  provenAt       DateTime?     @db.Timestamptz
+  provenByUserId String?
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -7021,7 +7422,7 @@ enum WebhookEndpointStatus {
 }
 
 /// One row per delivery attempt cycle for a (WebhookEndpoint, eventType,
-/// payload) tuple. The worker (jobs/webhooks/dispatch-outbound-webhooks.ts)
+/// payload) tuple. The worker (scripts/cleanup/dispatch-outbound-webhooks.ts)
 /// polls (status, nextRetryAt) and walks the exponential backoff schedule
 /// (1m → 5m → 30m → 2h → 8h) before marking FAILED at attempt 5. `signature`
 /// stores the `t=...,v1=...` envelope so re-deliveries can reproduce the
@@ -7060,13 +7461,15 @@ enum DeliveryStatus {
   DEAD_LETTER
 }
 
-/// #474 — transactional-email dead-letter. lib/email.ts persists the already
+/// Transactional-email dead-letter. deliver() (lib/email/) persists the already
 /// RENDERED message here when a Resend send fails (instead of swallowing it).
 /// Storing the rendered fields (not the sender args) keeps retry a verbatim
 /// re-send — no Json payload, no re-render dispatcher: the worker
 /// (jobs/email/retry-failed-emails.ts) polls (status, nextRetryAt), re-sends the
 /// stored html/text, walks the backoff schedule, marks DEAD_LETTER once
 /// exhausted (operator-replayable). `emailType` is a plain tag for metrics only.
+/// Single-use credential mail (verification code, reset link) is stored with a
+/// redacted body and dead-lettered without a resend (lib/email/classify.ts).
 model FailedEmail {
   id          String              @id @default(cuid())
   recipient   String
@@ -7111,6 +7514,7 @@ model FailedEmailBatch {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([status, nextRetryAt])
+  @@index([status, updatedAt])
 }
 
 /// #1654 — the Novu trigger outbox: written where the business change commits, drained by
@@ -7137,7 +7541,10 @@ model NotificationOutbox {
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([status, nextRetryAt])
+  @@index([status, updatedAt])
   @@index([entityRef])
+  // The support SLA sweep reads one workflow's recent rows, newest first.
+  @@index([workflowId, createdAt])
 }
 
 enum NotificationOutboxKind {
@@ -7168,6 +7575,7 @@ model EmailEvent {
 
   @@index([resendId])
   @@index([recipient, receivedAt])
+  @@index([receivedAt])
 }
 
 /// #1647 — addresses the senders must not write to; mirrors Resend's own list so support can
@@ -7185,8 +7593,29 @@ enum EmailSuppressionReason {
   MANUAL
 }
 
+/// WebAuthn credentials (@better-auth/passkey). Operators only for now: a
+/// passkey sign-in satisfies the operator second-factor gate.
+model Passkey {
+  id           String    @id @default(cuid())
+  name         String?
+  publicKey    String
+  userId       String
+  credentialID String    @unique
+  counter      Int
+  deviceType   String
+  backedUp     Boolean
+  transports   String?
+  aaguid       String?
+  createdAt    DateTime? @default(now()) @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("passkey")
+}
+
 // BetterAuth two-factor plugin table. Holds the TOTP shared secret and the
-// hashed backup codes for one user.
+// backup codes (a JSON array, AES-encrypted) for one user.
 //
 // The plugin's schema declares `secret` and `backupCodes` as
 // `returned: false`, so Prisma must mark them the same way — BetterAuth never
@@ -7201,10 +7630,10 @@ model TwoFactor {
   // 2FA reset deletes it by userId.
   userId String @unique
 
-  // AES-encrypted with BETTER_AUTH_SECRET by the plugin. Never selected.
+  // XChaCha20-Poly1305 encrypted with BETTER_AUTH_SECRET by the plugin. Never selected.
   secret      String
-  // Comma-separated, hashed (or encrypted) by the plugin per
-  // `backupCodeOptions.storeBackupCodes`. Never selected.
+  // JSON array, AES-encrypted by the plugin (`storeBackupCodes:
+  // "encrypted"`). Never selected.
   backupCodes String
 
   // BetterAuth 1.7 twoFactor columns. `verified` stays false until the first
@@ -7220,17 +7649,14 @@ model TwoFactor {
 
 /// DPDP §12 right-to-erasure request queue. Users file via
 /// `POST /api/users/me/erasure-requests`; admins process via
-/// `POST /api/admin/erasure-requests/[id]/process`. The cron
-/// `jobs/compliance/process-erasure-requests.ts` walks PENDING rows and
-/// either auto-processes (if `AUTO_PROCESS_ERASURE=true`) or pages ops
-/// when within 7 days of the 30-day SLA cliff. The partial-unique index
+/// `POST /api/admin/erasure-requests/[id]/process`. The partial-unique index
 /// on `(userId)` WHERE status IN (PENDING, IN_PROGRESS) lives in the SQL
 /// migration — Prisma 7's `partialIndexes` is still preview and the DB
 /// is the authoritative gate for "at most one open request per user".
 model ErasureRequest {
   id                      String                  @id @default(cuid())
   userId                  String
-  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                    User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
   requestedAt             DateTime                @default(now())
   completedAt             DateTime?
   status                  ErasureStatus           @default(PENDING)
@@ -7245,6 +7671,7 @@ model ErasureRequest {
   notes                   String?                 @db.Text
   /// #1593 — the Stream revocations the scrub still owes, one outbox row each.
   streamRevocationRetries StreamRevocationRetry[]
+  vendorErasureRetries    VendorErasureRetry[]
 
   @@index([status, requestedAt])
   @@index([processedByAdminId])
@@ -7268,6 +7695,34 @@ model StreamRevocationRetry {
   updatedAt        DateTime         @updatedAt @db.Timestamptz
 
   @@unique([erasureRequestId, planType, planId])
+  @@index([status, nextRetryAt])
+}
+
+enum ErasureVendor {
+  STREAM
+  NOVU
+  RAZORPAY
+}
+
+/// Durable outbox row for external vendor erasure steps (Novu subscriber,
+/// RazorpayX contact/fund-account/customer, Stream principal) staged inside
+/// scrubUserInTransaction before local vendor identifiers are cleared.
+model VendorErasureRetry {
+  id               String         @id @default(cuid())
+  erasureRequest   ErasureRequest @relation(fields: [erasureRequestId], references: [id], onDelete: Cascade)
+  erasureRequestId String
+  vendor           ErasureVendor
+  vendorRef        String
+  payload          Json?
+  status           RetryStatus    @default(PENDING)
+  attempts         Int            @default(0)
+  nextRetryAt      DateTime?      @db.Timestamptz
+  lastError        String?        @db.Text
+  completedAt      DateTime?      @db.Timestamptz
+  createdAt        DateTime       @default(now()) @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @db.Timestamptz
+
+  @@unique([erasureRequestId, vendor, vendorRef])
   @@index([status, nextRetryAt])
 }
 
@@ -7374,16 +7829,16 @@ enum OrgDirectoryType {
 model OverageEvent {
   id                   String              @id @default(cuid())
   programAssignmentId  String
-  programAssignment    ProgramAssignment   @relation(fields: [programAssignmentId], references: [id], onDelete: Cascade)
+  programAssignment    ProgramAssignment   @relation(fields: [programAssignmentId], references: [id], onDelete: Restrict)
   bookingUtilizationId String              @unique
-  bookingUtilization   BookingUtilization  @relation(fields: [bookingUtilizationId], references: [id], onDelete: Cascade)
+  bookingUtilization   BookingUtilization  @relation(fields: [bookingUtilizationId], references: [id], onDelete: Restrict)
   overageBehavior      OverageBehavior
   /// #778 elegance — the marginal split into its two components so the money is
   /// auditable and GST-itemizable. `basePaise` is the pass-through over-cap
   /// portion of the real booking price (after `priceCapPerEngagementPaise`);
   /// `surchargePaise` is the `overageSurchargeBps` markup on top. Invariant:
-  /// `marginalPaise == basePaise + surchargePaise`, and (covered) + basePaise ==
-  /// booking price. `marginalPaise` stays the authoritative charged total.
+  /// `marginalPaise == basePaise + surchargePaise + GST on the surcharge`, and
+  /// (covered) + basePaise == booking price. `marginalPaise` is the charged total.
   basePaise            BigInt              @default(0)
   surchargePaise       BigInt              @default(0)
   marginalPaise        BigInt

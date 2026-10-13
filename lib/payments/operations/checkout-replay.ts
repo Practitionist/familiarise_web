@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { isUnimplementedGateway } from "@/lib/payments/constants";
 
 // #828 — replay the original checkout response for a duplicate attempt. The
 // stored Payment carries enough for the client to reopen the gateway with the
@@ -30,13 +31,10 @@ export async function replayByIdempotencyKey(userId: string, key: string) {
       message: "This checkout was already completed.",
     });
   }
-  // Stripe stores the hosted checkout URL in client_secret (see
-  // StripeCheckout.tsx); we don't persist it, so a Stripe PENDING replay
-  // can't be resumed — fall through to the fresh-key 409 below instead of
-  // returning a null secret the client can't redirect with.
+  // Only an implemented gateway minted a resumable order; any other PENDING row gets the 409.
   if (
     existing.paymentStatus === "PENDING" &&
-    existing.paymentGateway !== "STRIPE"
+    !isUnimplementedGateway(existing.paymentGateway)
   ) {
     return NextResponse.json({
       success: true,

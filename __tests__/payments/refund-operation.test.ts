@@ -22,7 +22,6 @@
  * modified.
  */
 
-import type { Prisma } from "@prisma/client";
 import { RefundError } from "@/lib/payments/core/types";
 
 // ---------------------------------------------------------------------------
@@ -216,6 +215,30 @@ function txStub() {
         Object.assign(e, data);
         return e;
       }),
+      // W1c — the REFUNDED writers became CAS-in-WHERE: the guard repeats the
+      // source status AND pins `refundedShareAmount` to the pre-read, so two
+      // concurrent reversals cannot both win. This stub EVALUATES that
+      // predicate rather than always succeeding, so a lost race returns
+      // `{ count: 0 }` exactly as Postgres would. A permissive stub would let
+      // a double-reversal regression pass this suite silently.
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const e = state.consultantEarnings.get(where.id);
+        if (!e) return { count: 0 };
+        if (where.status?.in && !where.status.in.includes(e.status)) {
+          return { count: 0 };
+        }
+        if (where.status && !where.status.in && e.status !== where.status) {
+          return { count: 0 };
+        }
+        if (
+          where.refundedShareAmount !== undefined &&
+          e.refundedShareAmount !== where.refundedShareAmount
+        ) {
+          return { count: 0 };
+        }
+        Object.assign(e, data);
+        return { count: 1 };
+      }),
     },
     // #813 — recordTdsReversal reads/writes TDSRecord through the tx. Fixtures
     // here carry no payoutId so the helper is never invoked, but the surface
@@ -231,6 +254,23 @@ function txStub() {
         if (!e) throw new Error(`OrganizationEarnings ${where.id} not found`);
         Object.assign(e, data);
         return e;
+      }),
+      // W1c — same CAS evaluation as the consultant twin above, so the org
+      // rail cannot double-reverse either if it adopts the pattern.
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const e = state.organizationEarnings.get(where.id);
+        if (!e) return { count: 0 };
+        if (where.status?.in && !where.status.in.includes(e.status)) {
+          return { count: 0 };
+        }
+        if (
+          where.refundedAmountPaise !== undefined &&
+          e.refundedAmountPaise !== where.refundedAmountPaise
+        ) {
+          return { count: 0 };
+        }
+        Object.assign(e, data);
+        return { count: 1 };
       }),
     },
     organizationPayout: {

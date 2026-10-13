@@ -17,6 +17,7 @@ import {
 } from "../../lib/payments/payouts";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import { runJob } from "../../lib/observability/job-sentry";
+import { logMoneyFlags } from "../../lib/feature-flags";
 
 async function main(): Promise<void> {
   await abortIfMaintenance("create-payout-batch");
@@ -56,4 +57,7 @@ async function main(): Promise<void> {
   }
 }
 
-runJob("create-payout-batch", main);
+runJob("create-payout-batch", () => {
+  logMoneyFlags("create-payout-batch");
+  return main();
+});

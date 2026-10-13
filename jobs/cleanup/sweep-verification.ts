@@ -2,9 +2,8 @@
  * Verification Housekeeping Job (GitHub Actions Wrapper)
  *
  * Thin wrapper around scripts/cleanup/sweep-verification.ts.
- * Runs daily at 08:50 IST (03:20 UTC) via
- * .github/workflows/sweep-verification.yml — offset from the other
- * early-morning sweeps so Prisma connections do not contend.
+ * Runs daily at 08:30 IST (03:00 UTC) as a step of
+ * .github/workflows/cron-daily.yml.
  */
 
 import fs from "node:fs";

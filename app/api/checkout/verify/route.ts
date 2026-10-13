@@ -118,8 +118,7 @@ async function deriveBookingState(
 export async function GET(req: NextRequest) {
   try {
     const razorpayClient = getRazorpayClient();
-    // #1584 P1-AZ01 — force-fresh like POST /api/checkout: ?sync=true drives
-    // routeCapturedPayment, so a banned or revoked session must not reach it.
+    // ?sync=true drives routeCapturedPayment, so a banned or revoked session must not reach it.
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;
@@ -204,9 +203,9 @@ export async function GET(req: NextRequest) {
             "orders.fetchPayments",
             () => razorpayClient.orders.fetchPayments(paymentIntent),
           );
-          const captured =
-            orderPayments.items?.find((p) => p.status === "captured") ??
-            orderPayments.items?.[0];
+          const captured = orderPayments.items?.find(
+            (p) => p.status === "captured",
+          );
 
           await routeCapturedPayment({
             orderId: paymentIntent,
@@ -265,6 +264,7 @@ export async function GET(req: NextRequest) {
 
     // Return success response with appointment details
     return NextResponse.json({
+      paymentId: payment.id,
       paymentIntent: payment.paymentIntent,
       appointmentType,
       status: "SUCCEEDED",

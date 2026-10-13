@@ -33,6 +33,15 @@ to 43 top-level entries with no stated boundary.
 
 Documentation for working, production-ready systems.
 
+### Start Here (`start-here/`)
+
+Platform-wide orientation and end-to-end cross-subsystem explainers.
+
+- [README.md](./start-here/README.md) - Orientation index and subsystem reading map
+- [01-booking-and-money-machinery.md](./start-here/01-booking-and-money-machinery.md) - Canonical end-to-end visual guide combining booking lifecycle, org scoping (`?orgScope=`), permission matrices, 20 double-entry ledger permutations, and worked numeric scenarios
+
+---
+
 ### Architecture
 
 - [distributed-systems-explained.md](./architecture/distributed-systems-explained.md) - Redis distributed locking and caching implementation
@@ -57,6 +66,7 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [12-concurrency-and-locking.md](./booking/12-concurrency-and-locking.md) - Distributed locks, Prisma transactions, race condition prevention
 - [13-cron-jobs-and-background-tasks.md](./booking/13-cron-jobs-and-background-tasks.md) - 6+ background jobs for lifecycle management
 - [14-local-development-and-testing.md](./booking/14-local-development-and-testing.md) - Dev setup, mock payments, test scenarios, debugging
+- [01-booking-and-money-machinery.md](./start-here/01-booking-and-money-machinery.md) - End-to-end visual guide combining booking lifecycle, org scoping, permission matrices, and worked ledger examples
 
 ---
 
@@ -79,6 +89,7 @@ Payment system, checkout flows, gateway integrations, payouts, refunds, and more
 - [02-setup.md](./payments/02-setup.md) - Payment system setup
 - [03-status-enums-reference.md](./payments/03-status-enums-reference.md) - Status enums reference
 - [04-abandoned-solutions.md](./payments/04-abandoned-solutions.md) - Abandoned payment handling
+- [01-booking-and-money-machinery.md](./start-here/01-booking-and-money-machinery.md) - End-to-end visual guide with org scoping, permission matrices, 20 ledger permutations, and worked numeric examples
 
 #### Checkout Flow
 
@@ -92,7 +103,6 @@ Payment system, checkout flows, gateway integrations, payouts, refunds, and more
 #### Gateways
 
 - [gateways/razorpay/](./payments/gateways/razorpay/) - Razorpay setup, architecture, payout flow, KYC
-- [gateways/stripe/](./payments/gateways/stripe/) - Stripe setup, architecture, payout flow
 
 #### Approval Payments
 
@@ -141,6 +151,7 @@ Stream.io integration for messaging and video calls. This is the implemented mes
 - [11-hooks-utilities.md](./stream/11-hooks-utilities.md) - Hooks and utilities
 - [12-error-handling.md](./stream/12-error-handling.md) - Error handling
 - [13-recording-webhooks.md](./stream/13-recording-webhooks.md) - Recording webhooks
+- [19-recordings-lifecycle-and-access.md](./stream/19-recordings-lifecycle-and-access.md) - Recording lifecycle, retention and shared-run access
 - [troubleshooting.md](./stream/troubleshooting.md) - Troubleshooting
 
 ---
@@ -194,8 +205,9 @@ intake, org triage, ticket references, SLA clocks, and the deflection counter.
 - [03-ticket-references-and-sla.md](./support/03-ticket-references-and-sla.md) - The `FAM-` reference series and the statutory SLA model
 - [04-deflection-and-support-csat.md](./support/04-deflection-and-support-csat.md) - What fraction the tree resolves, and the two halves of support CSAT
 - [05-schema-reference.md](./support/05-schema-reference.md) - Every support column and index, and why
-- [06-invariants-and-testing.md](./support/06-invariants-and-testing.md) - Eleven invariants to know before editing, and the test map
-- [07-engineering-log-2026-08-29.md](./support/07-engineering-log-2026-08-29.md) - The support-drawer turn loss: eight causes, the schema they required, and two stale audit claims
+- [06-invariants-and-testing.md](./support/06-invariants-and-testing.md) - Sixteen invariants to know before editing, the test map, and how to run the end-to-end QA suite
+- [07-ticket-lifecycle-and-concurrency.md](./support/07-ticket-lifecycle-and-concurrency.md) - Ticket statuses, reopening rules, thread mirroring and the compare-and-set guards
+- [08-intake-callbacks-attachments-and-limits.md](./support/08-intake-callbacks-attachments-and-limits.md) - Intake doors, validated callbacks, receipts, private attachments and per-route rate limits
 
 ---
 
@@ -233,6 +245,16 @@ Storage management and document review system.
 
 ---
 
+### Session documents
+
+Session documents, plan materials and their relationship to recordings: the thread and version model, the 30-day upload window, removal requests, 90-day retention, the per-role pages and the typed error model.
+
+- [documents/README.md](./documents/README.md) - Session documents and plan materials architecture
+- [01-architecture.md](./documents/01-architecture.md) - Threading model, CAS transitions, 2-phase direct upload
+- [2026-10-12-session-documents-and-recordings.md](./decisions/2026-10-12-session-documents-and-recordings.md) - ADR-01 to ADR-19
+
+---
+
 ### Performance
 
 Implemented performance optimizations. The numbering runs from the broad
@@ -243,7 +265,8 @@ strategy documents to the individual slow-query investigations.
 - [02-dashboard-prefetching.md](./performance/02-dashboard-prefetching.md) - Hover-based route prefetching strategy
 - [03-dashboard-appointments-perf.md](./performance/03-dashboard-appointments-perf.md) - Investigation: slow `/api/appointments` query
 - [04-availability-allocation-perf.md](./performance/04-availability-allocation-perf.md) - Investigation: slow wide-window availability-with-allocation query
-- [05-allocation-500-investigation.md](./performance/05-allocation-500-investigation.md) - Investigation: auto-allocate HTTP 500 and transaction-start timeout
+- [05-lighthouse-audit-and-cwv-playbook.md](./performance/05-lighthouse-audit-and-cwv-playbook.md) - Lighthouse audits and the Core Web Vitals playbook
+- [06-database-round-trips-and-join-loading.md](./performance/06-database-round-trips-and-join-loading.md) - Why statement count dominates dashboard latency, and when readers use join loading
 
 ---
 
@@ -255,6 +278,18 @@ How errors, findings and job failures reach a human. The Sentry set records the 
 - [sentry/02-conventions.md](./observability/sentry/02-conventions.md) - `expected:true` for modelled outcomes, findings as messages, the tags that carry meaning, SystemEvent versus Sentry, what an issue status means
 - [sentry/03-actions-failure-sink.md](./observability/sentry/03-actions-failure-sink.md) - `notify-ops-failure.sh`, the envelope endpoint, the dead DSN that silenced it for three weeks, how to tell it is working
 - [sentry/04-triage-runbook.md](./observability/sentry/04-triage-runbook.md) - Scope by release, attribute every issue to one of three causes, decide with a written reason, the chronic ids, the tools
+
+---
+
+### Deployment & Hosting Architecture (`deployment/`)
+
+Live hosting operations on Netlify Pro, multi-platform Mumbai compute evaluation, and zero-downtime hot-standby rollback runbooks.
+
+- [README.md](./deployment/README.md) - Deployment index & Dual-Boot multi-host portability invariants
+- [multi-platform-evaluation.md](./deployment/multi-platform-evaluation.md) - Ranked 10-platform evaluation scorecard (`Cloud Run asia-south1`, `Vercel Pro bom1`, `Fly.io bom`, `Netlify Pro sin`, etc.)
+- [emergency-failback-runbook.md](./deployment/emergency-failback-runbook.md) - `< 90s` hot-standby failback runbook (`Platform X -> Netlify` with zero code reverts)
+- [netlify.md](./deployment/netlify.md) - Full operating handbook for live Netlify Pro (`sin`) deployments, env contexts, and build/cold-start controls
+- [google-cloud.md](./deployment/google-cloud.md) - GCP project `familiarise` (`384845845365`), Google OAuth setup, and `gcloud` CLI guide
 
 ## Guides & Developer Resources
 
@@ -317,15 +352,10 @@ Generic software architecture patterns and learning material (not Familiarise-sp
 
 CFO-level business documentation. See [finances/README.md](./finances/README.md) for full index.
 
-- [01-business-model.md](./finances/01-business-model.md) - Revenue model
-- [02-revenue-distribution.md](./finances/02-revenue-distribution.md) - Revenue splitting
-- [03-pricing-calculator.md](./finances/03-pricing-calculator.md) - Pricing calculator
-- [04-profitability-analysis.md](./finances/04-profitability-analysis.md) - Profitability
-- [05-saas-metrics-monthly.md](./finances/05-saas-metrics-monthly.md) - SaaS metrics
-- [06-tax-compliance-india.md](./finances/06-tax-compliance-india.md) - Tax compliance
-- [07-tax-compliance-marketplace-obligations.md](./finances/07-tax-compliance-marketplace-obligations.md) - Marketplace obligations
-- [08-tax-essentials-simplified.md](./finances/08-tax-essentials-simplified.md) - Simplified tax guide
-- [09-pricing-strategy.md](./finances/09-pricing-strategy.md) - Competitive pricing strategy
+- [01-saas-metrics-monthly.md](./finances/01-saas-metrics-monthly.md) - SaaS metrics
+- [02-tax-compliance-india.md](./finances/02-tax-compliance-india.md) - Tax compliance
+- [03-tax-compliance-marketplace-obligations.md](./finances/03-tax-compliance-marketplace-obligations.md) - Marketplace obligations
+- [04-tax-essentials-simplified.md](./finances/04-tax-essentials-simplified.md) - Simplified tax guide
 
 ---
 
@@ -365,8 +395,6 @@ Competitor analysis and research.
 - [04-upgrad-com.md](./competition/competitors/04-upgrad-com.md) - upGrad analysis
 - [05-propeers-in.md](./competition/competitors/05-propeers-in.md) - ProPeers analysis
 - [06-growthschool-io.md](./competition/competitors/06-growthschool-io.md) - GrowthSchool analysis
-
-- [competitor-analysis.md](./competition/competitors/competitor-analysis.md) - Consolidated competitor analysis
 
 ---
 

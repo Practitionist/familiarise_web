@@ -80,7 +80,12 @@ export async function GET(request: NextRequest) {
     // filter via the `classPlan.organizationId` relation.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true, role: true },
+      select: {
+        organizationId: true,
+        status: true,
+        role: true,
+        organization: { select: { status: true } },
+      },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
@@ -165,7 +170,12 @@ export async function GET(request: NextRequest) {
           appointment: {
             include: {
               occurrences: true,
-              payment: true,
+              // A group appointment carries every attendee's Payment; return only this consultee's.
+              payment: {
+                where: {
+                  user: { consulteeProfile: { id: consulteeProfileId } },
+                },
+              },
             },
           },
         },

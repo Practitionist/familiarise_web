@@ -57,6 +57,7 @@ jest.mock("../../lib/rate-limit", () => ({
   __esModule: true,
   applyRateLimit: jest.fn(async () => null),
   eventMutationLimiter: {},
+  rescheduleAppointmentLimiter: {},
 }));
 jest.mock("../../utils/appointmentlock", () => ({
   __esModule: true,
@@ -174,8 +175,10 @@ function makeConsultationAppointment(overrides: any = {}) {
     ],
     consultation: {
       id: "cons-1",
+      requestedById: "ce-1",
       consultationPlan: {
         title: "Test Plan",
+        consultantProfileId: "cp-1",
         consultantProfile: {
           user: { id: "consultant-1", name: "Dr. Smith" },
         },
@@ -202,8 +205,10 @@ function makeSubscriptionAppointment(overrides: any = {}) {
     consultation: null,
     subscription: {
       id: "sub-1",
+      requestedById: "ce-1",
       subscriptionPlan: {
         title: "Monthly Plan",
+        consultantProfileId: "cp-1",
         consultantProfile: {
           user: { id: "consultant-1", name: "Dr. Smith" },
         },
@@ -225,7 +230,11 @@ function makeWebinarAppointment(overrides: any = {}) {
     occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
-    webinar: { id: "web-1", status: "SCHEDULED" },
+    webinar: {
+      id: "web-1",
+      status: "SCHEDULED",
+      webinarPlan: { consultantProfileId: "cp-1" },
+    },
     class: null,
     ...overrides,
   };
@@ -239,7 +248,11 @@ function makeClassAppointment(overrides: any = {}) {
     consultation: null,
     subscription: null,
     webinar: null,
-    class: { id: "cls-1", status: "SCHEDULED" },
+    class: {
+      id: "cls-1",
+      status: "SCHEDULED",
+      classPlan: { consultantProfileId: "cp-1" },
+    },
     ...overrides,
   };
 }
@@ -395,9 +408,9 @@ describe("CancelAppointmentSchema", () => {
       reason: "SCHEDULE_CONFLICT",
     });
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.reason).toBe("SCHEDULE_CONFLICT");
-    }
+    expect(result.success ? result.data.reason : undefined).toBe(
+      "SCHEDULE_CONFLICT",
+    );
   });
 
   it("should accept all valid CancellationReason enum values", () => {
@@ -424,11 +437,9 @@ describe("CancelAppointmentSchema", () => {
       notes: "Need to cancel due to scheduling conflict",
     });
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.notes).toBe(
-        "Need to cancel due to scheduling conflict",
-      );
-    }
+    expect(result.success ? result.data.notes : undefined).toBe(
+      "Need to cancel due to scheduling conflict",
+    );
   });
 
   it("should accept reason and notes together", () => {
@@ -471,9 +482,14 @@ describe("Reschedule Route Handler - POST", () => {
     jest.clearAllMocks();
     mockTx = makeMockTx();
 
-    // Default: authenticated user
+    // Default: authenticated user with matching profile IDs
     (getSession as jest.Mock).mockResolvedValue({
-      user: { id: "user-1", name: "John Doe" },
+      user: {
+        id: "user-1",
+        name: "John Doe",
+        consulteeProfileId: "ce-1",
+        consultantProfileId: "cp-1",
+      },
     });
 
     // Default: transaction passes callback through to mock tx
@@ -871,6 +887,7 @@ describe("Reschedule Route Handler - POST", () => {
       occurrences: [],
     });
     mockTx.appointment.findUnique.mockResolvedValue(appointment);
+    mockTx.appointmentOccurrence.updateManyAndReturn.mockResolvedValueOnce([]);
 
     const req = makeRescheduleRequest("apt-1", "CONSULTATION");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
@@ -878,6 +895,20 @@ describe("Reschedule Route Handler - POST", () => {
 
     expect(res.status).toBe(200);
     expect(body.slotsAffected).toBe(0);
+    expect(body.slotsMoved).toBe(0);
+  });
+
+  it("should return 409 NO_RESCHEDULABLE_SLOTS when booking has occurrences but zero live slots moved", async () => {
+    const appointment = makeConsultationAppointment();
+    mockTx.appointment.findUnique.mockResolvedValue(appointment);
+    mockTx.appointmentOccurrence.updateManyAndReturn.mockResolvedValueOnce([]);
+
+    const req = makeRescheduleRequest("apt-1", "CONSULTATION");
+    const res = await rescheduleHandler(req, makeParams("apt-1"));
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("NO_RESCHEDULABLE_SLOTS");
   });
 
   it("should return 500 for unexpected errors", async () => {
@@ -905,9 +936,14 @@ describe("Cancel Route Handler - POST", () => {
     jest.clearAllMocks();
     mockTx = makeMockTx();
 
-    // Default: authenticated
+    // Default: authenticated user with matching profile IDs
     (getSession as jest.Mock).mockResolvedValue({
-      user: { id: "user-1", name: "John Doe" },
+      user: {
+        id: "user-1",
+        name: "John Doe",
+        consulteeProfileId: "ce-1",
+        consultantProfileId: "cp-1",
+      },
     });
 
     // Default: consultation appointment found (pre-transaction fetch)
@@ -1179,6 +1215,7 @@ describe("Cancel Route Handler - POST", () => {
           status: "SCHEDULED",
           webinarPlan: {
             title: "Intro to X",
+            consultantProfileId: "cp-1",
             consultantProfile: {
               user: { id: "consultant-1", name: "Dr Who" },
             },
@@ -1223,6 +1260,7 @@ describe("Cancel Route Handler - POST", () => {
           status: "SCHEDULED",
           classPlan: {
             title: "Weekly Cohort",
+            consultantProfileId: "cp-1",
             consultantProfile: {
               user: { id: "consultant-1", name: "Dr Who" },
             },
@@ -1254,6 +1292,7 @@ describe("Cancel Route Handler - POST", () => {
           status: "SCHEDULED",
           classPlan: {
             title: "Weekly Cohort",
+            consultantProfileId: "cp-1",
             consultantProfile: {
               user: { id: "consultant-1", name: "Dr Who" },
             },
@@ -1308,7 +1347,11 @@ describe("Cancel Route Handler - POST", () => {
   it("should identify canceller as consultant when consultant cancels", async () => {
     // Session user is the consultant
     (getSession as jest.Mock).mockResolvedValue({
-      user: { id: "consultant-1", name: "Dr. Smith" },
+      user: {
+        id: "consultant-1",
+        name: "Dr. Smith",
+        consultantProfileId: "cp-1",
+      },
     });
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
       makeConsultationAppointment(),
@@ -1328,7 +1371,11 @@ describe("Cancel Route Handler - POST", () => {
   it("should identify canceller as consultee when consultee cancels", async () => {
     // Session user is the consultee (user-1)
     (getSession as jest.Mock).mockResolvedValue({
-      user: { id: "user-1", name: "John Doe" },
+      user: {
+        id: "user-1",
+        name: "John Doe",
+        consulteeProfileId: "ce-1",
+      },
     });
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
       makeConsultationAppointment(),

@@ -27,6 +27,7 @@ export default async function OrgCatalogPage({
   const { orgId } = await params;
 
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "catalog.manage",
     canHost: true,
   });
@@ -34,28 +35,30 @@ export default async function OrgCatalogPage({
     redirect(`/dashboard/organization/${orgId}/home`);
   }
 
-  const [expertMemberships, materials, materialsTotal] = await Promise.all([
-    readExperts(orgId),
-    // #1527-4d — the Materials tab is metadata only (ADR 20).
-    prisma.planMaterial.findMany({
-      where: { organizationId: orgId },
-      select: {
-        id: true,
-        originalName: true,
-        fileSize: true,
-        mimeType: true,
-        description: true,
-        uploadedAt: true,
-        consultationPlan: { select: { id: true, title: true } },
-        subscriptionPlan: { select: { id: true, title: true } },
-        webinarPlan: { select: { id: true, title: true } },
-        classPlan: { select: { id: true, title: true } },
-      },
-      orderBy: { uploadedAt: "desc" },
-      take: 200,
-    }),
-    prisma.planMaterial.count({ where: { organizationId: orgId } }),
-  ]);
+  const [expertMemberships, materials, materialsTotal, orgPlans] =
+    await Promise.all([
+      readExperts(orgId),
+      // #1527-4d — the Materials tab is metadata only (ADR 20).
+      prisma.planMaterial.findMany({
+        where: { organizationId: orgId },
+        select: {
+          id: true,
+          originalName: true,
+          fileSize: true,
+          mimeType: true,
+          description: true,
+          uploadedAt: true,
+          consultationPlan: { select: { id: true, title: true } },
+          subscriptionPlan: { select: { id: true, title: true } },
+          webinarPlan: { select: { id: true, title: true } },
+          classPlan: { select: { id: true, title: true } },
+        },
+        orderBy: { uploadedAt: "desc" },
+        take: 200,
+      }),
+      prisma.planMaterial.count({ where: { organizationId: orgId } }),
+      readOrgPlans(orgId),
+    ]);
 
   const experts = expertMemberships.map((m) => ({
     consultantProfileId: m.consultantProfileId as string,
@@ -75,11 +78,13 @@ export default async function OrgCatalogPage({
           mimeType: m.mimeType,
           description: m.description,
           uploadedAt: m.uploadedAt,
+          planId: planRef?.planId ?? null,
           planTitle: planRef?.title ?? null,
           planType: planRef?.planType ?? "CLASS",
         };
       })}
       materialsTotal={materialsTotal}
+      orgPlans={orgPlans}
     />
   );
 }
@@ -101,4 +106,22 @@ function readExperts(orgId: string) {
     },
     orderBy: { createdAt: "asc" },
   });
+}
+
+/** The organisation's plans, for Catalog › Materials' plan picker. */
+async function readOrgPlans(orgId: string) {
+  const where = { organizationId: orgId };
+  const select = { id: true, title: true } as const;
+  const [consultations, subscriptions, webinars, classes] = await Promise.all([
+    prisma.consultationPlan.findMany({ where, select, take: 100 }),
+    prisma.subscriptionPlan.findMany({ where, select, take: 100 }),
+    prisma.webinarPlan.findMany({ where, select, take: 100 }),
+    prisma.classPlan.findMany({ where, select, take: 100 }),
+  ]);
+  return [
+    ...consultations.map((p) => ({ ...p, planType: "CONSULTATION" as const })),
+    ...subscriptions.map((p) => ({ ...p, planType: "SUBSCRIPTION" as const })),
+    ...webinars.map((p) => ({ ...p, planType: "WEBINAR" as const })),
+    ...classes.map((p) => ({ ...p, planType: "CLASS" as const })),
+  ];
 }

@@ -1,5 +1,6 @@
 import type { SupportChannel, SupportPriority } from "@prisma/client";
 
+import type { UserSentryIssues } from "@/lib/observability/sentry-issues-types";
 import type { CaseTopic } from "@/lib/support/case-topic";
 import type { SlaState } from "@/lib/support/sla";
 
@@ -21,7 +22,12 @@ export interface InboxRow {
   key: string;
   kind: "ticket" | "thread";
   scope: "session" | "platform";
-  requester: { id: string; name: string | null; email: string | null };
+  /** Name only: contact fields are on the case detail, never the list. */
+  requester: {
+    id: string;
+    name: string | null;
+    callbackRequested?: boolean;
+  };
   subject: string;
   reference: string | null;
   topic: CaseTopic;
@@ -79,6 +85,23 @@ export interface CasePayment {
   createdAt: string;
 }
 
+export interface CaseDuplicateRef {
+  id: string;
+  reference: string;
+  title: string;
+  status: string;
+}
+
+export interface CaseHistoryEvent {
+  id: string;
+  kind: string;
+  fromValue: string | null;
+  toValue: string | null;
+  note: string | null;
+  actorName: string | null;
+  createdAt: string;
+}
+
 export interface CaseWorkspace {
   key: string;
   kind: "ticket" | "thread";
@@ -94,18 +117,27 @@ export interface CaseWorkspace {
   sla: SlaState | null;
   ackDueAt: string | null;
   resolutionDueAt: string | null;
+  lastMessageAt?: string | null;
   createdAt: string;
+  updatedAt: string;
+  handoffSummary?: string | null;
+  botPromises?: string[];
+  duplicateOpenCases?: CaseDuplicateRef[];
+  events?: CaseHistoryEvent[];
   person: {
     id: string;
     name: string | null;
     role: string | null;
     email: string | null;
+    phone: string | null;
+    callbackRequested?: boolean;
     joinedAt: string;
   };
   booking: CaseBooking | null;
   payment: CasePayment | null;
   organization: { id: string; name: string } | null;
   pastCases: { key: string; subject: string; status: string; at: string }[];
+  sentryIssues?: UserSentryIssues;
   timeline: TimelineItem[];
   attachments: { id: string; name: string; url: string; size: number }[];
 }
@@ -118,6 +150,10 @@ export interface OwnTicketCase {
   reference: string | null;
   topic: CaseTopic;
   status: string;
+  ackDueAt?: string | null;
+  resolvedAt?: string | null;
+  /** Submitted as `{ rating }` to `/api/support/cases/[caseId]/csat`; returned as `csatRating`. */
+  csatRating?: number | null;
   createdAt: string;
   payment: CasePayment | null;
   organization: { id: string; name: string } | null;

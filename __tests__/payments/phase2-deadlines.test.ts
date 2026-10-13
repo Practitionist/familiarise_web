@@ -36,6 +36,7 @@ const END = new Date("2026-10-01T10:00:00.000Z");
 const consultationCreate = jest.fn();
 const webhookAppointmentCreate = jest.fn();
 const webhookTx = {
+  $executeRaw: jest.fn(async () => 0),
   payment: { findUnique: jest.fn(), update: jest.fn(), updateMany: jest.fn() },
   consultation: {
     create: consultationCreate,
@@ -98,6 +99,8 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/payments/payouts", () => ({
   __esModule: true,
   createEarningsFromPayment: jest.fn(),
+  planEarningsForPayment: jest.fn(async () => null),
+  resolvePaymentForEarnings: jest.fn(async () => null),
   reverseEarningsForPayment: jest.fn(),
 }));
 jest.mock("../../lib/email", () => ({
@@ -116,8 +119,6 @@ jest.mock("../../lib/novu", () => ({
 }));
 jest.mock("../../lib/referrals/service", () => ({
   __esModule: true,
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
 }));
 
 const ensureChannelsForAppointment = jest.fn();
@@ -148,10 +149,18 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
   validateWebhookMetadata: jest.fn(),
 }));
+// #1846 — a capture can now be refused for a full room (the group-event
+// creators replay the checkout capacity gate), so the reading must be a real
+// one. A bare `jest.fn()` reads as "no reading", which the production gate must
+// NOT read as "room available"; answer with a room that has space instead.
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
-  getWebinarCapacity: jest.fn(),
-  getClassCapacity: jest.fn(),
+  getWebinarCapacity: jest.fn(() => ({
+    isFull: false,
+    registered: 1,
+    max: 10,
+  })),
+  getClassCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";

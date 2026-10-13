@@ -51,7 +51,10 @@ export async function GET(
   const { orgId } = await params;
   // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
   // floor that admitted BILLING_ADMIN.
-  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "identity.read",
+  });
   if (access.error) return access.error;
 
   const claims = await prisma.orgDomainClaim.findMany({
@@ -76,8 +79,20 @@ export async function POST(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
+    // Unverified orgs claim domains to unlock >5 seats (requireActive: true omitted; SUSPENDED rejected below).
   });
   if (access.error) return access.error;
+  if (access.org?.status === "SUSPENDED") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        message:
+          "Domain claims cannot be modified while the organization is suspended.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
 
   const raw = await req.json().catch(() => null);
   const parsed = CreateBodySchema.safeParse(raw);
@@ -91,17 +106,33 @@ export async function POST(
 
   try {
     const created = await prisma.$transaction(async (tx) => {
-      const existing = await tx.orgDomainClaim.findUnique({
-        where: { domain: body.domain },
-        include: { organization: { select: { id: true, name: true } } },
-      });
-      if (existing) {
-        const mine = existing.organizationId === orgId;
+      const [verifiedOwner, existingMine] = await Promise.all([
+        tx.orgDomainClaim.findFirst({
+          where: { domain: body.domain, verifiedAt: { not: null } },
+          select: { organizationId: true },
+        }),
+        tx.orgDomainClaim.findUnique({
+          where: {
+            organizationId_domain: {
+              organizationId: orgId,
+              domain: body.domain,
+            },
+          },
+          select: { id: true, organizationId: true },
+        }),
+      ]);
+      if (existingMine) {
         throw Object.assign(
           new Error(
-            mine
-              ? `Domain '${body.domain}' is already claimed by this organization`
-              : `Domain '${body.domain}' is already claimed by another organization`,
+            `Domain '${body.domain}' is already claimed by this organization`,
+          ),
+          { httpStatus: 409 },
+        );
+      }
+      if (verifiedOwner && verifiedOwner.organizationId !== orgId) {
+        throw Object.assign(
+          new Error(
+            `Domain '${body.domain}' is already claimed by another organization`,
           ),
           { httpStatus: 409 },
         );
@@ -139,15 +170,15 @@ export async function POST(
           recordName: `_familiarise-verify.${created.domain}`,
           recordValue: created.verificationToken,
           recordType: "TXT",
-          instructionsUrl: "/docs/enterprise/20-iam-and-security/01-sso-and-authentication.md",
+          instructionsUrl:
+            "/docs/enterprise/20-iam-and-security/01-sso-and-authentication.md",
         },
       },
       { status: 201 },
     );
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     // P2002 race: two concurrent OWNERs claim the same domain at the
@@ -168,7 +199,10 @@ export async function POST(
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

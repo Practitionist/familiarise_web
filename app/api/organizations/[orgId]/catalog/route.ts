@@ -73,6 +73,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "catalog.manage",
     canHost: true,
   });
@@ -288,6 +289,7 @@ export async function DELETE(
   const access = await requireOrgAccess(orgId, {
     permission: "catalog.manage",
     canHost: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -314,7 +316,10 @@ export async function DELETE(
               where: scope,
               data: { archivedAt },
             })
-          : await tx.classPlan.updateMany({ where: scope, data: { archivedAt } });
+          : await tx.classPlan.updateMany({
+              where: scope,
+              data: { archivedAt },
+            });
 
       if (affected > 0) {
         await tx.orgAuditLog.create({
@@ -334,7 +339,9 @@ export async function DELETE(
       return affected;
     });
 
-    return NextResponse.json(restore ? { restored: count } : { archived: count });
+    return NextResponse.json(
+      restore ? { restored: count } : { archived: count },
+    );
   } catch (err) {
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),

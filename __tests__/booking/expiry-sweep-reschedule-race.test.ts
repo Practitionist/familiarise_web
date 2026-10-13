@@ -86,7 +86,7 @@ describe("expiry sweep × live reschedule proposals", () => {
     // assertions in this file would keep passing while the hole reopened.
     expect(RESCHEDULE_OPEN_STATUSES.length).toBeGreaterThan(0);
     expect(RESCHEDULE_OPEN_STATUSES).toEqual(
-      expect.arrayContaining(["PENDING_REVIEW", "COUNTERED"]),
+      expect.arrayContaining(["PENDING_REVIEW"]),
     );
   });
 

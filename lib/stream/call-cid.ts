@@ -23,6 +23,12 @@
  */
 export const STREAM_CALL_TYPE = "default";
 
+/** The baseline call role on `default`; it holds `join-call` and every non-presenter participant joins under it. */
+export const CALL_MEMBER_ROLE = "call_member";
+
+/** Custom call role on `default` that adds mute, pin and backstage to the publish grants; never end or permission changes. */
+export const CO_PRESENTER_CALL_ROLE = "co_presenter";
+
 /** Bare call id → cid. Idempotent: an already-prefixed value is returned as-is. */
 export function toCallCid(
   callId: string,
@@ -42,10 +48,31 @@ export function toCallId(callCidOrId: string): string {
     : callCidOrId.slice(separator + 1) || callCidOrId;
 }
 
+const OCCURRENCE_CALL_ID_PATTERN = /^occurrence-(.+?)(?:-r[a-z0-9]+)?$/i;
+
+/**
+ * Extracts the underlying `AppointmentOccurrence.id` from a canonical or
+ * reopened Stream call identifier (`occurrence-<id>` or `occurrence-<id>-r<base36>`).
+ */
+export function parseOccurrenceIdFromCallId(
+  callCidOrId: string,
+): string | null {
+  const bare = toCallId(callCidOrId);
+  const match = OCCURRENCE_CALL_ID_PATTERN.exec(bare);
+  return match ? match[1] : null;
+}
+
 /** cid → call type, falling back to the app default for a bare id. */
 export function callTypeFromCid(callCidOrId: string): string {
   const separator = callCidOrId.indexOf(":");
   return separator === -1
     ? STREAM_CALL_TYPE
     : callCidOrId.slice(0, separator) || STREAM_CALL_TYPE;
+}
+
+/** Extract anchor occurrence/slot ID from `slot-<id>[-r<suffix>]` or `occurrence-<id>[-r<suffix>]`. */
+export function parseSlotIdFromCallId(callCidOrId: string): string | null {
+  const bare = toCallId(callCidOrId);
+  const match = bare.match(/^(?:slot|occurrence)-(.+?)(?:-r[a-z0-9]+)?$/i);
+  return match?.[1] ?? null;
 }

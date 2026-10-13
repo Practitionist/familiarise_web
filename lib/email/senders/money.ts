@@ -1,41 +1,63 @@
 /**
- * #1653 — the money emails: refund processed and failed for the payer, and the
- * org billing notices (invoice overdue, wallet low, payout failed or reversed,
- * member overage due) for the org's visibility roster.
- *
- * Every sender takes user ids plus raw domain values, resolves the recipients
- * through the preference gate, and never throws: a missed email is reported
- * to Sentry and must never fail the request, the webhook or the job that
- * moved the money (ADR 21). The org senders take the roster as ids because
- * the call site computes it once with `rosterForOrg()` so the bell and the
- * email always reach the same people.
+ * Money emails: refund processed and failed for the payer, and org billing
+ * notices (invoice overdue, wallet low, payout failed or reversed, member
+ * overage due) for the org's visibility roster.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import type { ReactElement } from "react";
+import {
+  OrgBillingReceiptEmail,
+  type OrgBillingReceiptKind,
+} from "@/emails/orgs/OrgBillingReceiptEmail";
 import { OrgInvoiceOverdueEmail } from "@/emails/orgs/OrgInvoiceOverdueEmail";
 import { OrgOverageDueEmail } from "@/emails/orgs/OrgOverageDueEmail";
 import { OrgPayoutFailedEmail } from "@/emails/orgs/OrgPayoutFailedEmail";
 import { OrgWalletLowEmail } from "@/emails/orgs/OrgWalletLowEmail";
+import {
+  DisputeNoticeEmail,
+  type DisputeNoticeKind,
+} from "@/emails/payments/DisputeNoticeEmail";
+import {
+  PayoutStatusEmail,
+  type PayoutStatusKind,
+} from "@/emails/payments/PayoutStatusEmail";
 import { RefundFailedEmail } from "@/emails/payments/RefundFailedEmail";
 import { RefundProcessedEmail } from "@/emails/payments/RefundProcessedEmail";
-import type { Tx } from "@/lib/prisma";
-import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
-import { formatCurrencyAmount } from "@/utils/formatting";
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
-import { loadEmailRecipients, type EmailRecipient } from "../preferences";
-import {
-  sendToRecipients,
-  stageToRecipients,
-  type SendToRecipientsResult,
-  type StagedRecipientEmail,
+import type { EmailRecipient } from "../preferences";
+import type {
+  SendToRecipientsResult,
+  StagedRecipientEmail,
 } from "../send-to-recipients";
+import {
+  dateText,
+  defineBudgetedEmailSender,
+  defineFixedBudgetEmailSender,
+  defineLifecycleStager,
+  greet,
+  money,
+  prepareSpecEmails,
+  stageSpecGuarded,
+  type Paise,
+  type PreparedRecipientEmails,
+  type RecipientEmailSpec,
+  type StagingTx,
+} from "./shared";
+
+export {
+  type DisputeNoticeKind,
+  type OrgBillingReceiptKind,
+  type PayoutStatusKind,
+};
 
 export const MONEY_EMAIL_TYPES = {
   REFUND_PROCESSED: "REFUND_PROCESSED",
   REFUND_FAILED: "REFUND_FAILED",
+  PAYOUT_STATUS: "PAYOUT_STATUS",
+  DISPUTE_NOTICE: "DISPUTE_NOTICE",
+  ORG_BILLING_RECEIPT: "ORG_BILLING_RECEIPT",
   ORG_INVOICE_OVERDUE: "ORG_INVOICE_OVERDUE",
   ORG_WALLET_LOW: "ORG_WALLET_LOW",
   ORG_PAYOUT_FAILED: "ORG_PAYOUT_FAILED",
@@ -44,41 +66,7 @@ export const MONEY_EMAIL_TYPES = {
 
 const NOTHING_SENT: SendToRecipientsResult = { sent: 0, skipped: 0, failed: 0 };
 
-/** Email-only date, rendered in the recipient's zone. */
-const DATE_PATTERN = "d MMM yyyy";
-
-/** Money columns arrive as BigInt from Prisma and as number from webhooks. */
-type Paise = number | bigint;
-
-function money(amountPaise: Paise, currency: string): string {
-  return formatCurrencyAmount(Number(amountPaise), currency);
-}
-
-function greetingName(recipient: EmailRecipient): string {
-  return recipient.name?.trim() || "there";
-}
-
-// One catch for every sender: report under the email subsystem and hand back
-// an empty result so the caller's money path continues untouched.
-async function guarded(
-  emailType: string,
-  run: () => Promise<SendToRecipientsResult>,
-): Promise<SendToRecipientsResult> {
-  try {
-    return await run();
-  } catch (error) {
-    console.error(`[email] ${emailType} sender failed:`, error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "email", emailType } },
-    );
-    return NOTHING_SENT;
-  }
-}
-
-// ============================================================================
-// Refund processed
-// ============================================================================
+// ── Refund processed ────────────────────────────────────────────────────────
 
 export interface RefundProcessedEmailArgs {
   userId: string;
@@ -86,73 +74,50 @@ export interface RefundProcessedEmailArgs {
   amountPaise: Paise;
   currency: string;
   planTitle?: string;
-  /** Passed only when the refund cascade's credit note is already in scope. */
   creditNoteNumber?: string;
 }
 
-function refundProcessedEnvelope(args: RefundProcessedEmailArgs) {
+function refundProcessedSpec(
+  args: RefundProcessedEmailArgs,
+): RecipientEmailSpec {
   const amountText = money(args.amountPaise, args.currency);
   const appUrl = getAppUrl();
   return {
     emailType: MONEY_EMAIL_TYPES.REFUND_PROCESSED,
+    category: "payments",
     from: SENDERS.payments,
     entityRef: `payment:${args.paymentId}`,
     subject: () => `Your refund of ${amountText} is on its way`,
     render: (r: EmailRecipient): ReactElement =>
       RefundProcessedEmail({
-        recipientName: greetingName(r),
+        recipientName: greet(r),
         amountText,
         planTitle: args.planTitle,
         creditNoteNumber: args.creditNoteNumber,
         refundPolicyUrl: `${appUrl}/refund`,
-        // #1527 — this envelope is shared by every refund recipient, always
-        // the payer.
         dashboardUrl: `${appUrl}${goHref("client", "payments")}`,
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };
 }
 
-/**
- * Post-commit refund receipt. The budget is the caller's: `REQUEST` from a
- * route, `JOB` from a script.
- */
-export async function sendRefundProcessedEmail(
-  args: RefundProcessedEmailArgs,
-  opts: { budgetMs: number },
-): Promise<SendToRecipientsResult> {
-  return guarded(MONEY_EMAIL_TYPES.REFUND_PROCESSED, async () => {
-    const recipients = await loadEmailRecipients([args.userId], "payments");
-    return sendToRecipients({
-      recipients,
-      ...refundProcessedEnvelope(args),
-      budgetMs: opts.budgetMs,
-    });
-  });
-}
+export const sendRefundProcessedEmail =
+  defineBudgetedEmailSender<RefundProcessedEmailArgs>(
+    (args) => ({
+      userIds: [args.userId],
+      spec: refundProcessedSpec(args),
+    }),
+    NOTHING_SENT,
+  );
 
-/**
- * The transaction owner's twin (the refund webhook): every read goes through
- * `tx`, the rows are staged inside it, and the caller runs
- * `attemptStaged(list, MONEY_EMAIL_TYPES.REFUND_PROCESSED, EMAIL_BUDGET_MS.WEBHOOK)`
- * after commit. A staging failure propagates so the transaction rolls back
- * with it; a render failure is reported inside `stageToRecipients()`.
- */
 export async function stageRefundProcessedEmail(
-  tx: Pick<Tx, "failedEmail" | "emailSuppression" | "user">,
+  tx: StagingTx,
   args: RefundProcessedEmailArgs,
 ): Promise<StagedRecipientEmail[]> {
-  const recipients = await loadEmailRecipients([args.userId], "payments", tx);
-  return stageToRecipients({
-    tx,
-    recipients,
-    ...refundProcessedEnvelope(args),
-  });
+  return stageSpecGuarded(refundProcessedSpec(args), [args.userId], tx);
 }
 
-// ============================================================================
-// Refund failed
-// ============================================================================
+// ── Refund failed ───────────────────────────────────────────────────────────
 
 export interface RefundFailedEmailArgs {
   userId: string;
@@ -161,95 +126,81 @@ export interface RefundFailedEmailArgs {
   currency: string;
 }
 
-/** From the reconcile job, once a refund is claimed FAILED. */
-export async function sendRefundFailedEmail(
-  args: RefundFailedEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(MONEY_EMAIL_TYPES.REFUND_FAILED, async () => {
-    const recipients = await loadEmailRecipients([args.userId], "payments");
-    const amountText = money(args.amountPaise, args.currency);
-    const support = supportEmail();
-    return sendToRecipients({
-      recipients,
-      emailType: MONEY_EMAIL_TYPES.REFUND_FAILED,
-      from: SENDERS.payments,
-      entityRef: `payment:${args.paymentId}`,
-      budgetMs: EMAIL_BUDGET_MS.JOB,
-      subject: () => "We couldn't complete your refund",
-      render: (r) =>
-        RefundFailedEmail({
-          recipientName: greetingName(r),
-          amountText,
-          supportEmail: support,
-          unsubscribeUrl: r.unsubscribeUrl,
-        }),
-    });
-  });
-}
+export const sendRefundFailedEmail =
+  defineFixedBudgetEmailSender<RefundFailedEmailArgs>(
+    EMAIL_BUDGET_MS.JOB,
+    (args) => {
+      const amountText = money(args.amountPaise, args.currency);
+      const support = supportEmail();
+      return {
+        userIds: [args.userId],
+        spec: {
+          emailType: MONEY_EMAIL_TYPES.REFUND_FAILED,
+          category: "payments",
+          from: SENDERS.payments,
+          entityRef: `payment:${args.paymentId}`,
+          subject: () => "We couldn't complete your refund",
+          render: (r) =>
+            RefundFailedEmail({
+              recipientName: greet(r),
+              amountText,
+              supportEmail: support,
+              unsubscribeUrl: r.unsubscribeUrl,
+            }),
+        },
+      };
+    },
+    NOTHING_SENT,
+  );
 
-// ============================================================================
-// Org payout failed or reversed
-// ============================================================================
+// ── Org payout failed or reversed ───────────────────────────────────────────
 
 export interface OrgPayoutFailedEmailArgs {
-  /** The visibility roster, computed once by the caller with `rosterForOrg()`. */
   recipientUserIds: string[];
   kind: "FAILED" | "REVERSED";
   orgName: string;
   payoutId: string;
-  /**
-   * #1474 — same basis as the bell: FAILED names the attempted gross,
-   * REVERSED names the cash that went out and came back (post-TDS).
-   */
   amountPaise: Paise;
   currency: string;
   reason: string;
   dashboardUrl: string;
-  /**
-   * #1474 — pre-formatted withheld slice, e.g. "₹8.52". Rendered only when
-   * present (REVERSED with withholding).
-   */
   withheldText?: string;
 }
 
-/** From the payout webhook, after the FAILED or REVERSED claim commits. */
-export async function sendOrgPayoutFailedEmail(
-  args: OrgPayoutFailedEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(MONEY_EMAIL_TYPES.ORG_PAYOUT_FAILED, async () => {
-    const recipients = await loadEmailRecipients(
-      args.recipientUserIds,
-      "orgBilling",
-    );
-    const amountText = money(args.amountPaise, args.currency);
-    const subject =
-      args.kind === "REVERSED"
-        ? `A payout to ${args.orgName} was reversed`
-        : `A payout to ${args.orgName} failed`;
-    return sendToRecipients({
-      recipients,
-      emailType: MONEY_EMAIL_TYPES.ORG_PAYOUT_FAILED,
-      from: SENDERS.finance,
-      entityRef: `orgPayout:${args.payoutId}`,
-      budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
-      subject: () => subject,
-      render: (r) =>
-        OrgPayoutFailedEmail({
-          kind: args.kind,
-          orgName: args.orgName,
-          amountText,
-          reason: args.reason,
-          dashboardUrl: args.dashboardUrl,
-          unsubscribeUrl: r.unsubscribeUrl,
-          withheldText: args.withheldText,
-        }),
-    });
-  });
-}
+export const sendOrgPayoutFailedEmail =
+  defineFixedBudgetEmailSender<OrgPayoutFailedEmailArgs>(
+    EMAIL_BUDGET_MS.WEBHOOK,
+    (args) => {
+      const amountText = money(args.amountPaise, args.currency);
+      const subject =
+        args.kind === "REVERSED"
+          ? `A payout to ${args.orgName} was reversed`
+          : `A payout to ${args.orgName} failed`;
+      return {
+        userIds: args.recipientUserIds,
+        spec: {
+          emailType: MONEY_EMAIL_TYPES.ORG_PAYOUT_FAILED,
+          category: "orgBilling",
+          from: SENDERS.finance,
+          entityRef: `orgPayout:${args.payoutId}`,
+          subject: () => subject,
+          render: (r) =>
+            OrgPayoutFailedEmail({
+              kind: args.kind,
+              orgName: args.orgName,
+              amountText,
+              reason: args.reason,
+              dashboardUrl: args.dashboardUrl,
+              unsubscribeUrl: r.unsubscribeUrl,
+              withheldText: args.withheldText,
+            }),
+        },
+      };
+    },
+    NOTHING_SENT,
+  );
 
-// ============================================================================
-// Org invoice overdue
-// ============================================================================
+// ── Org invoice overdue ─────────────────────────────────────────────────────
 
 export interface OrgInvoiceOverdueEmailArgs {
   recipientUserIds: string[];
@@ -260,48 +211,43 @@ export interface OrgInvoiceOverdueEmailArgs {
   currency: string;
   dueDate: Date;
   daysLate: number;
-  /** 0 for the first notice, then the escalation reminder number. */
   reminderStage: number;
   payUrl: string;
 }
 
-/** From the dunning job, after each stage's claim commits. */
-export async function sendOrgInvoiceOverdueEmail(
-  args: OrgInvoiceOverdueEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(MONEY_EMAIL_TYPES.ORG_INVOICE_OVERDUE, async () => {
-    const recipients = await loadEmailRecipients(
-      args.recipientUserIds,
-      "orgBilling",
-    );
-    const amountText = money(args.totalPaise, args.currency);
-    const dayWord = args.daysLate === 1 ? "day" : "days";
-    return sendToRecipients({
-      recipients,
-      emailType: MONEY_EMAIL_TYPES.ORG_INVOICE_OVERDUE,
-      from: SENDERS.finance,
-      entityRef: `orgInvoice:${args.invoiceId}`,
-      budgetMs: EMAIL_BUDGET_MS.JOB,
-      subject: () =>
-        `Invoice ${args.invoiceNumber} is ${args.daysLate} ${dayWord} overdue`,
-      render: (r) =>
-        OrgInvoiceOverdueEmail({
-          orgName: args.orgName,
-          invoiceNumber: args.invoiceNumber,
-          amountText,
-          dueDateText: formatInViewerZone(args.dueDate, r.zone, DATE_PATTERN),
-          daysLate: args.daysLate,
-          reminderStage: args.reminderStage,
-          payUrl: args.payUrl,
-          unsubscribeUrl: r.unsubscribeUrl,
-        }),
-    });
-  });
-}
+export const sendOrgInvoiceOverdueEmail =
+  defineFixedBudgetEmailSender<OrgInvoiceOverdueEmailArgs>(
+    EMAIL_BUDGET_MS.JOB,
+    (args) => {
+      const amountText = money(args.totalPaise, args.currency);
+      const dayWord = args.daysLate === 1 ? "day" : "days";
+      return {
+        userIds: args.recipientUserIds,
+        spec: {
+          emailType: MONEY_EMAIL_TYPES.ORG_INVOICE_OVERDUE,
+          category: "orgBilling",
+          from: SENDERS.finance,
+          entityRef: `orgInvoice:${args.invoiceId}`,
+          subject: () =>
+            `Invoice ${args.invoiceNumber} is ${args.daysLate} ${dayWord} overdue`,
+          render: (r) =>
+            OrgInvoiceOverdueEmail({
+              orgName: args.orgName,
+              invoiceNumber: args.invoiceNumber,
+              amountText,
+              dueDateText: dateText(args.dueDate, r.zone),
+              daysLate: args.daysLate,
+              reminderStage: args.reminderStage,
+              payUrl: args.payUrl,
+              unsubscribeUrl: r.unsubscribeUrl,
+            }),
+        },
+      };
+    },
+    NOTHING_SENT,
+  );
 
-// ============================================================================
-// Org wallet low
-// ============================================================================
+// ── Org wallet low ──────────────────────────────────────────────────────────
 
 export interface OrgWalletLowEmailArgs {
   recipientUserIds: string[];
@@ -313,43 +259,38 @@ export interface OrgWalletLowEmailArgs {
   topUpUrl: string;
 }
 
-/** From the wallet job, after the cooldown claim. */
-export async function sendOrgWalletLowEmail(
-  args: OrgWalletLowEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(MONEY_EMAIL_TYPES.ORG_WALLET_LOW, async () => {
-    const recipients = await loadEmailRecipients(
-      args.recipientUserIds,
-      "orgBilling",
-    );
-    const balanceText = money(args.balancePaise, args.currency);
-    const floorText = money(args.minimumPaise, args.currency);
-    return sendToRecipients({
-      recipients,
-      emailType: MONEY_EMAIL_TYPES.ORG_WALLET_LOW,
-      from: SENDERS.finance,
-      entityRef: `org:${args.organizationId}`,
-      budgetMs: EMAIL_BUDGET_MS.JOB,
-      subject: () => `${args.orgName}'s wallet is running low`,
-      render: (r) =>
-        OrgWalletLowEmail({
-          orgName: args.orgName,
-          balanceText,
-          floorText,
-          topUpUrl: args.topUpUrl,
-          unsubscribeUrl: r.unsubscribeUrl,
-        }),
-    });
-  });
-}
+export const sendOrgWalletLowEmail =
+  defineFixedBudgetEmailSender<OrgWalletLowEmailArgs>(
+    EMAIL_BUDGET_MS.JOB,
+    (args) => {
+      const balanceText = money(args.balancePaise, args.currency);
+      const floorText = money(args.minimumPaise, args.currency);
+      return {
+        userIds: args.recipientUserIds,
+        spec: {
+          emailType: MONEY_EMAIL_TYPES.ORG_WALLET_LOW,
+          category: "orgBilling",
+          from: SENDERS.finance,
+          entityRef: `org:${args.organizationId}`,
+          subject: () => `${args.orgName}'s wallet is running low`,
+          render: (r) =>
+            OrgWalletLowEmail({
+              orgName: args.orgName,
+              balanceText,
+              floorText,
+              topUpUrl: args.topUpUrl,
+              unsubscribeUrl: r.unsubscribeUrl,
+            }),
+        },
+      };
+    },
+    NOTHING_SENT,
+  );
 
-// ============================================================================
-// Org member overage due
-// ============================================================================
+// ── Org member overage due ──────────────────────────────────────────────────
 
 export interface OrgOverageDueEmailArgs {
   userId: string;
-  /** The OverageEvent row the member is asked to pay. */
   overageEventId: string;
   orgName: string;
   programTitle: string;
@@ -359,32 +300,242 @@ export interface OrgOverageDueEmailArgs {
   payUrl: string;
 }
 
-/** From checkout, after the overage commits. */
-export async function sendOrgOverageDueEmail(
-  args: OrgOverageDueEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(MONEY_EMAIL_TYPES.ORG_PROGRAM_OVERAGE_DUE, async () => {
-    const recipients = await loadEmailRecipients([args.userId], "orgBilling");
-    const amountText = money(args.amountPaise, args.currency);
-    return sendToRecipients({
-      recipients,
-      emailType: MONEY_EMAIL_TYPES.ORG_PROGRAM_OVERAGE_DUE,
+export const sendOrgOverageDueEmail =
+  defineFixedBudgetEmailSender<OrgOverageDueEmailArgs>(
+    EMAIL_BUDGET_MS.REQUEST,
+    (args) => {
+      const amountText = money(args.amountPaise, args.currency);
+      return {
+        userIds: [args.userId],
+        spec: {
+          emailType: MONEY_EMAIL_TYPES.ORG_PROGRAM_OVERAGE_DUE,
+          category: "orgBilling",
+          from: SENDERS.finance,
+          entityRef: `overage:${args.overageEventId}`,
+          subject: () => "Payment due for your recent booking",
+          render: (r) =>
+            OrgOverageDueEmail({
+              recipientName: greet(r),
+              orgName: args.orgName,
+              programTitle: args.programTitle,
+              amountText,
+              dueByText: args.dueBy ? dateText(args.dueBy, r.zone) : undefined,
+              payUrl: args.payUrl,
+              unsubscribeUrl: r.unsubscribeUrl,
+            }),
+        },
+      };
+    },
+    NOTHING_SENT,
+  );
+
+// ── Payout status (B2C consultant & Org) ────────────────────────────────────
+
+export interface PayoutStatusEmailArgs {
+  userId?: string;
+  recipientUserIds?: string[];
+  payoutId: string;
+  status: PayoutStatusKind;
+  amountPaise: Paise;
+  currency: string;
+  orgName?: string | null;
+  method?: string | null;
+  reason?: string | null;
+  withheldText?: string | null;
+  dashboardUrl?: string;
+}
+
+function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const userIds = args.recipientUserIds ?? (args.userId ? [args.userId] : []);
+  const amountText = money(args.amountPaise, args.currency);
+  const target = args.orgName ? ` to ${args.orgName}` : "";
+  const subject =
+    args.status === "COMPLETED"
+      ? `Your payout of ${amountText}${target} is complete`
+      : args.status === "REVERSED"
+        ? `Your payout${target} was reversed`
+        : `Your payout${target} could not be completed`;
+  const resolvedDashboardUrl =
+    args.dashboardUrl ?? `${getAppUrl()}${goHref("expert", "earnings")}`;
+
+  return {
+    userIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.PAYOUT_STATUS,
+      category: args.orgName ? "orgBilling" : "payments",
       from: SENDERS.finance,
-      entityRef: `overage:${args.overageEventId}`,
-      budgetMs: EMAIL_BUDGET_MS.REQUEST,
-      subject: () => "Payment due for your recent booking",
-      render: (r) =>
-        OrgOverageDueEmail({
-          recipientName: greetingName(r),
+      entityRef: args.orgName
+        ? `orgPayout:${args.payoutId}`
+        : `payout:${args.payoutId}`,
+      subject: () => subject,
+      render: (r: EmailRecipient): ReactElement =>
+        PayoutStatusEmail({
+          status: args.status,
+          recipientName: greet(r),
           orgName: args.orgName,
-          programTitle: args.programTitle,
           amountText,
-          dueByText: args.dueBy
-            ? formatInViewerZone(args.dueBy, r.zone, DATE_PATTERN)
-            : undefined,
-          payUrl: args.payUrl,
+          payoutId: args.payoutId,
+          method: args.method,
+          reason: args.reason,
+          withheldText: args.withheldText,
+          dashboardUrl: resolvedDashboardUrl,
           unsubscribeUrl: r.unsubscribeUrl,
         }),
-    });
-  });
+    },
+  };
 }
+
+export async function preparePayoutStatusEmail(
+  args: PayoutStatusEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildPayoutStatusEmail(args);
+  return prepareSpecEmails(spec, userIds);
+}
+
+export const sendPayoutStatusEmail =
+  defineBudgetedEmailSender<PayoutStatusEmailArgs>(
+    buildPayoutStatusEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.WEBHOOK,
+  );
+
+export const stagePayoutStatusEmail =
+  defineLifecycleStager<PayoutStatusEmailArgs>(buildPayoutStatusEmail);
+
+// ── Dispute notice ──────────────────────────────────────────────────────────
+
+export interface DisputeNoticeEmailArgs {
+  userId?: string;
+  recipientUserIds?: string[];
+  disputeId: string;
+  paymentId?: string | null;
+  kind: DisputeNoticeKind;
+  amountPaise: Paise;
+  currency: string;
+  reason?: string | null;
+  outcome?: "WON" | "LOST" | string | null;
+  respondBy?: Date | null;
+  dashboardUrl?: string;
+}
+
+function buildDisputeNoticeEmail(args: DisputeNoticeEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const userIds = args.recipientUserIds ?? (args.userId ? [args.userId] : []);
+  const amountText = money(args.amountPaise, args.currency);
+  const subject =
+    args.kind === "OPENED"
+      ? `Payment dispute opened (${amountText})`
+      : `Payment dispute resolved (${amountText})`;
+  const resolvedDashboardUrl =
+    args.dashboardUrl ?? `${getAppUrl()}${goHref("expert", "earnings")}`;
+
+  return {
+    userIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.DISPUTE_NOTICE,
+      category: null,
+      from: SENDERS.finance,
+      entityRef: `dispute:${args.disputeId}`,
+      subject: () => subject,
+      render: (r: EmailRecipient): ReactElement =>
+        DisputeNoticeEmail({
+          kind: args.kind,
+          recipientName: greet(r),
+          amountText,
+          disputeId: args.disputeId,
+          paymentId: args.paymentId,
+          reason: args.reason,
+          outcome: args.outcome,
+          respondByText: args.respondBy
+            ? dateText(args.respondBy, r.zone)
+            : null,
+          dashboardUrl: resolvedDashboardUrl,
+        }),
+    },
+  };
+}
+
+export const sendDisputeNoticeEmail =
+  defineBudgetedEmailSender<DisputeNoticeEmailArgs>(
+    buildDisputeNoticeEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.WEBHOOK,
+  );
+
+export const stageDisputeNoticeEmail =
+  defineLifecycleStager<DisputeNoticeEmailArgs>(buildDisputeNoticeEmail);
+
+// ── Org billing receipts (invoice issued/paid & wallet top-up) ──────────────
+
+export interface OrgBillingEmailArgs {
+  recipientUserIds: string[];
+  organizationId: string;
+  orgName: string;
+  kind: OrgBillingReceiptKind;
+  amountPaise: Paise;
+  currency: string;
+  invoiceId?: string | null;
+  invoiceNumber?: string | null;
+  dueDate?: Date | null;
+  newBalancePaise?: Paise | null;
+  dashboardUrl: string;
+}
+
+function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const amountText = money(args.amountPaise, args.currency);
+  const invLabel = args.invoiceNumber ? ` ${args.invoiceNumber}` : "";
+  const subject =
+    args.kind === "INVOICE_ISSUED"
+      ? `Invoice${invLabel} issued for ${args.orgName}`
+      : args.kind === "INVOICE_PAID"
+        ? `Invoice${invLabel} paid for ${args.orgName}`
+        : `Wallet top-up confirmed for ${args.orgName}`;
+  const entityRef = args.invoiceId
+    ? `orgInvoice:${args.invoiceId}`
+    : `org:${args.organizationId}`;
+  const newBalanceText =
+    args.newBalancePaise !== undefined && args.newBalancePaise !== null
+      ? money(args.newBalancePaise, args.currency)
+      : null;
+
+  return {
+    userIds: args.recipientUserIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
+      category: "orgBilling",
+      from: SENDERS.finance,
+      entityRef,
+      subject: () => subject,
+      render: (r: EmailRecipient): ReactElement =>
+        OrgBillingReceiptEmail({
+          kind: args.kind,
+          recipientName: greet(r),
+          orgName: args.orgName,
+          amountText,
+          invoiceNumber: args.invoiceNumber,
+          dueDateText: args.dueDate ? dateText(args.dueDate, r.zone) : null,
+          newBalanceText,
+          dashboardUrl: args.dashboardUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const sendOrgBillingEmail =
+  defineBudgetedEmailSender<OrgBillingEmailArgs>(
+    buildOrgBillingEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.WEBHOOK,
+  );
+
+export const stageOrgBillingEmail =
+  defineLifecycleStager<OrgBillingEmailArgs>(buildOrgBillingEmail);

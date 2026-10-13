@@ -1,11 +1,5 @@
 /**
- * Maintenance Mode Library
- *
- * Two-tier state management:
- * - Redis: fast edge reads for middleware (fail-open: defaults to OFF if unreachable)
- * - Prisma: audit trail and scheduling for admin dashboard
- *
- * Three phases: OFF → DEGRADED (read-only, warning banner) → OFFLINE (full maintenance page)
+ * Maintenance Mode Library (Node.js reader & writer)
  */
 
 import { MaintenancePhase } from "@prisma/client";
@@ -13,6 +7,17 @@ import { MaintenancePhase } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import redis, { withCircuitBreaker } from "@/lib/redis";
 import { REDIS_KEYS } from "@/lib/maintenance-keys";
+import {
+  invalidateMaintenancePhaseCache,
+  readMaintenancePhase,
+  resetMaintenancePhaseCacheForTesting,
+} from "@/lib/maintenance-cron";
+
+export {
+  invalidateMaintenancePhaseCache,
+  readMaintenancePhase,
+  resetMaintenancePhaseCacheForTesting,
+};
 
 export interface MaintenanceState {
   phase: MaintenancePhase;
@@ -30,20 +35,63 @@ const OFF_STATE: MaintenanceState = {
   betterstackIncidentId: null,
 };
 
+/** Upper bound on the Redis key TTL; a window with no planned end expires after this. */
+const MAINTENANCE_KEY_TTL_SECONDS = 24 * 60 * 60;
+/** How long past its planned end an untended window stays up before the keys expire. */
+const MAINTENANCE_GRACE_MS = 60 * 60 * 1000;
+
+/** TTL capped at the planned end plus grace; null once that deadline has passed. */
+function maintenanceKeyTtlSeconds(
+  estimatedEnd: Date | null | undefined,
+  now: number,
+): number | null {
+  if (!estimatedEnd) return MAINTENANCE_KEY_TTL_SECONDS;
+  const remainingMs = estimatedEnd.getTime() + MAINTENANCE_GRACE_MS - now;
+  if (remainingMs <= 0) return null;
+  return Math.min(MAINTENANCE_KEY_TTL_SECONDS, Math.ceil(remainingMs / 1000));
+}
+
 /**
- * Read current maintenance state from Redis.
+ * The DB row is the source of truth: Redis keys are re-armed only while the
+ * platform window is open and its planned end plus grace is still ahead.
+ */
+async function refreshMaintenanceKeysFromWindow(): Promise<void> {
+  const row = await prisma.maintenanceWindow.findFirst({
+    where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
+    orderBy: { createdAt: "desc" },
+    select: { estimatedEnd: true },
+  });
+  if (!row?.estimatedEnd) return;
+  const ttlSeconds = maintenanceKeyTtlSeconds(row.estimatedEnd, Date.now());
+  if (ttlSeconds === null) return;
+  await Promise.all([
+    redis.pexpire(REDIS_KEYS.PHASE, ttlSeconds * 1000),
+    redis.pexpire(REDIS_KEYS.CONFIG, ttlSeconds * 1000),
+  ]);
+}
+
+/**
+ * Read current maintenance state directly from Redis (uncached on entry so
+ * cross-instance admin/money-gate reads never observe a stale 60s cached OFF).
  * Fail-open: returns OFF if Redis is unreachable.
  */
 export async function getMaintenanceState(): Promise<MaintenanceState> {
   return withCircuitBreaker(
     async () => {
-      const [phase, configRaw] = await Promise.all([
-        redis.get<string>(REDIS_KEYS.PHASE),
-        redis.get<string>(REDIS_KEYS.CONFIG),
-      ]);
-
+      const phase = await readMaintenancePhase("maintenance", {
+        bypassCache: true,
+      });
       if (!phase || phase === "OFF") return OFF_STATE;
 
+      // A failed refresh must not turn an active window into OFF_STATE.
+      await refreshMaintenanceKeysFromWindow().catch((error: unknown) => {
+        console.warn(
+          "[maintenance] TTL refresh failed:",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+
+      const configRaw = await redis.get<string>(REDIS_KEYS.CONFIG);
       let config: Partial<MaintenanceState> = {};
       if (configRaw) {
         try {
@@ -62,7 +110,6 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
         betterstackIncidentId: config.betterstackIncidentId ?? null,
       };
     },
-    // Fail-open: site stays up if Redis is down
     () => OFF_STATE,
   );
 }
@@ -81,104 +128,76 @@ export async function setMaintenanceState(
     betterstackIncidentId?: string;
   } = {},
 ): Promise<void> {
-  // Write both Redis keys concurrently to minimize inconsistency window.
-  // #697 INF-1 — 24h TTL: an OFFLINE phase whose owner loses access must not
-  // keep the platform down forever. Every setMaintenanceState call refreshes
-  // the clock, so a tended window outlives the TTL; an abandoned one expires
-  // to OFF. Long windows need a refresh at least daily (runbook rule).
-  const MAINTENANCE_KEY_TTL_SECONDS = 24 * 60 * 60;
-  await Promise.all([
-    redis.set(REDIS_KEYS.PHASE, phase, { ex: MAINTENANCE_KEY_TTL_SECONDS }),
-    redis.set(
-      REDIS_KEYS.CONFIG,
-      JSON.stringify({
-        reason: config.reason ?? null,
-        estimatedEnd: config.estimatedEnd ?? null,
-        bypassSecret: config.bypassSecret ?? null,
-        betterstackIncidentId: config.betterstackIncidentId ?? null,
-      }),
-      { ex: MAINTENANCE_KEY_TTL_SECONDS },
-    ),
-  ]);
+  const estimatedEndDate =
+    config.estimatedEnd && !isNaN(new Date(config.estimatedEnd).getTime())
+      ? new Date(config.estimatedEnd)
+      : undefined;
+  // A planned end already past its grace still gets one grace period to be tended.
+  const ttlSeconds =
+    phase === MaintenancePhase.OFF
+      ? MAINTENANCE_KEY_TTL_SECONDS
+      : (maintenanceKeyTtlSeconds(estimatedEndDate, Date.now()) ??
+        MAINTENANCE_GRACE_MS / 1000);
 
-  // Persist to Prisma for audit trail (transactional to prevent find+update races)
   await prisma.$transaction(async (tx) => {
+    const activeWindow = await tx.maintenanceWindow.findFirst({
+      where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
+      orderBy: { createdAt: "desc" },
+    });
+
     if (phase === MaintenancePhase.OFF) {
-      // #1598 P1-W01 — platform rows only (organizationId null); the per-org
-      // write API is #730/#746, so OFF must never close a tenant's window.
-      const activeWindow = await tx.maintenanceWindow.findFirst({
+      await tx.maintenanceWindow.updateMany({
         where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
-        orderBy: { createdAt: "desc" },
+        data: {
+          phase: MaintenancePhase.OFF,
+          endedAt: new Date(),
+          endedBy: config.endedBy,
+        },
       });
-
-      if (activeWindow) {
-        await tx.maintenanceWindow.update({
-          where: { id: activeWindow.id },
-          data: {
-            phase: MaintenancePhase.OFF,
-            endedAt: new Date(),
-            endedBy: config.endedBy,
-          },
-        });
-      }
+    } else if (activeWindow) {
+      await tx.maintenanceWindow.update({
+        where: { id: activeWindow.id },
+        data: {
+          phase,
+          reason: config.reason,
+          estimatedEnd: estimatedEndDate,
+        },
+      });
     } else {
-      // #1598 P1-W01 — same platform-only scope as the OFF branch above.
-      const activeWindow = await tx.maintenanceWindow.findFirst({
-        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
-        orderBy: { createdAt: "desc" },
+      await tx.maintenanceWindow.create({
+        data: {
+          phase,
+          reason: config.reason,
+          startedAt: new Date(),
+          startedBy: config.startedBy,
+          estimatedEnd: estimatedEndDate,
+          bypassSecret: config.bypassSecret,
+        },
       });
-
-      if (activeWindow) {
-        await tx.maintenanceWindow.update({
-          where: { id: activeWindow.id },
-          data: {
-            phase,
-            reason: config.reason,
-            estimatedEnd:
-              config.estimatedEnd &&
-              !isNaN(new Date(config.estimatedEnd).getTime())
-                ? new Date(config.estimatedEnd)
-                : undefined,
-          },
-        });
-      } else {
-        await tx.maintenanceWindow.create({
-          data: {
-            phase,
-            reason: config.reason,
-            startedAt: new Date(),
-            startedBy: config.startedBy,
-            estimatedEnd:
-              config.estimatedEnd &&
-              !isNaN(new Date(config.estimatedEnd).getTime())
-                ? new Date(config.estimatedEnd)
-                : undefined,
-            bypassSecret: config.bypassSecret,
-          },
-        });
-      }
     }
   });
+
+  try {
+    await Promise.all([
+      redis.set(REDIS_KEYS.PHASE, phase, { ex: ttlSeconds }),
+      redis.set(
+        REDIS_KEYS.CONFIG,
+        JSON.stringify({
+          reason: config.reason ?? null,
+          estimatedEnd: config.estimatedEnd ?? null,
+          bypassSecret: config.bypassSecret ?? null,
+          betterstackIncidentId: config.betterstackIncidentId ?? null,
+        }),
+        { ex: ttlSeconds },
+      ),
+    ]);
+  } finally {
+    invalidateMaintenancePhaseCache();
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Per-org maintenance (read side only — admin write API ships separately)
-// ---------------------------------------------------------------------------
-
 /**
- * Read the currently-active MaintenanceWindow row scoped to a single org.
- *
- * Per the schema comment on `MaintenanceWindow.organizationId`, NULL rows
- * are platform-wide and non-null rows scope to a single tenant. This helper
- * only returns the *org-specific* active window — callers should still
- * consult `getMaintenanceState()` for the platform-wide Redis check.
- *
- * Returns `null` if there is no active org-specific window. "Active" means
- * `phase !== OFF` and the most recent row by `createdAt`.
- *
- * Used by per-org financial jobs (payout batch, subscription invoicing)
- * to skip an individual tenant during a planned downtime window without
- * affecting other tenants.
+ * Read the currently-active MaintenanceWindow row scoped to a single organization.
  */
 export async function getActiveOrgMaintenanceWindow(
   organizationId: string,

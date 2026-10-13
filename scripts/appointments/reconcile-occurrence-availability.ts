@@ -889,6 +889,7 @@ async function topUpIncompleteEvents(): Promise<TopUpSweepResult> {
         mode: "auto",
         topUp: true,
         allowPartial: true,
+        idempotencyKey: `topup:${candidate.eventType}:${candidate.eventId}:${candidate.confirmedSessions}->${candidate.requiredSessions}:${candidate.availabilityChangedAt?.toISOString() ?? "none"}`,
       });
 
       // Every outcome advances the event's `updatedAt`, which is the attempt

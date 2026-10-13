@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import type { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import {
@@ -16,6 +17,9 @@ import {
   createRazorpayOrder,
 } from "@/lib/payments/core/razorpay";
 import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
+import { deriveReplayAmount } from "@/lib/payments/pricing/replay-price";
+import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
+import type { replayChargeNotesSchema } from "@/lib/payments/webhooks/recording-purchase";
 import {
   isDiscoverablePlanPlan,
   loadOwnedListingRecording,
@@ -29,9 +33,184 @@ import {
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
+class OrgMembershipRequiredError extends Error {
+  constructor() {
+    super(
+      "Active organization membership is required to purchase this recording.",
+    );
+    this.name = "OrgMembershipRequiredError";
+  }
+}
+
+async function persistRecordingPurchase(params: {
+  recordingId: string;
+  buyerId: string;
+  orderId: string;
+  amountPaise: number;
+  hostOrgId: string | null | undefined;
+}): Promise<void> {
+  const { recordingId, buyerId, orderId, amountPaise, hostOrgId } = params;
+  if (!hostOrgId) {
+    await prisma.recordingPurchase.create({
+      data: {
+        recordingId,
+        buyerId,
+        gatewayOrderId: orderId,
+        amountPaise,
+        status: "PENDING",
+      },
+    });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const activeMembership = await tx.membership.findFirst({
+      where: {
+        userId: buyerId,
+        organizationId: hostOrgId,
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    if (!activeMembership) {
+      throw new OrgMembershipRequiredError();
+    }
+    await tx.recordingPurchase.create({
+      data: {
+        recordingId,
+        buyerId,
+        gatewayOrderId: orderId,
+        amountPaise,
+        status: "PENDING",
+      },
+    });
+  });
+}
+
+async function validateRecordingPurchaseEligibility(
+  loaded: Extract<
+    Awaited<ReturnType<typeof loadOwnedListingRecording>>,
+    { status: "ok" }
+  >,
+  userId: string,
+  consultantProfileId?: string | null,
+): Promise<
+  | { ok: true; listPricePaise: number; hostOrgId: string | null }
+  | { ok: false; response: NextResponse }
+> {
+  const hostOrgId =
+    loaded.plan.plan.visibility === "ORG_ONLY"
+      ? loaded.plan.plan.organizationId
+      : null;
+  if (loaded.plan.plan.visibility === "ORG_ONLY") {
+    if (!hostOrgId) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error: "This recording is no longer available for purchase.",
+            code: "NOT_ELIGIBLE",
+          },
+          { status: 409 },
+        ),
+      };
+    }
+    const activeMembership = await prisma.membership.findFirst({
+      where: {
+        userId,
+        organizationId: hostOrgId,
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    if (!activeMembership) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error:
+              "Active organization membership is required to purchase this recording.",
+            code: "ORG_MEMBERSHIP_REQUIRED",
+          },
+          { status: 403 },
+        ),
+      };
+    }
+  }
+
+  const isEligiblePlan =
+    isDiscoverablePlanPlan(loaded.plan.plan) ||
+    (loaded.plan.plan.archivedAt === null &&
+      Boolean(loaded.plan.plan.organizationId) &&
+      loaded.plan.plan.visibility === "ORG_ONLY");
+
+  if (
+    loaded.listingStatus !== "PUBLISHED" ||
+    loaded.listPricePaise === null ||
+    loaded.listPricePaise <= BigInt(0) ||
+    !isDurablyOurs({
+      status: loaded.recordingStatus,
+      storageType: loaded.storageType,
+    }) ||
+    !isEligiblePlan
+  ) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "This recording is no longer available for purchase.",
+          code: "NOT_ELIGIBLE",
+        },
+        { status: 409 },
+      ),
+    };
+  }
+
+  if (
+    consultantProfileId &&
+    loaded.plan.plan.consultantProfileId === consultantProfileId
+  ) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: "You already own this recording", code: "ALREADY_ENTITLED" },
+        { status: 400 },
+      ),
+    };
+  }
+
+  const acceptedCollaborator = prisma.collaborator
+    ? await prisma.collaborator.findFirst({
+        where: {
+          status: "ACCEPTED",
+          tier: "PRESENTER",
+          consultantProfile: { userId },
+          ...(loaded.plan.kind === "WEBINAR"
+            ? { webinarPlanId: loaded.plan.plan.id }
+            : { classPlanId: loaded.plan.plan.id }),
+        },
+        select: { id: true },
+      })
+    : null;
+  if (acceptedCollaborator) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Collaborators already have access to this recording",
+          code: "ALREADY_ENTITLED",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  return { ok: true, listPricePaise: loaded.listPricePaise, hostOrgId };
+}
+
 export async function POST(_request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -39,8 +218,6 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
     const { recordingId } = await params;
 
     const loaded = await loadOwnedListingRecording(recordingId, null, {
-      // Buyers are consultees — no ownership requirement. Self-purchase by
-      // the owning consultant is rejected separately below.
       requireOwnership: false,
     });
     if (loaded.status !== "ok") {
@@ -53,48 +230,49 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Sell-side eligibility (R2 review) — must match publicRecordingWhere at
-    // ORDER time: published, positively priced, still AVAILABLE on Supabase,
-    // under a live + discoverable plan.
-    if (
-      loaded.listingStatus !== "PUBLISHED" ||
-      loaded.listPricePaise === null ||
-      loaded.listPricePaise <= BigInt(0) ||
-      !isDurablyOurs({
-        status: loaded.recordingStatus,
-        storageType: loaded.storageType,
-      }) ||
-      !isDiscoverablePlanPlan(loaded.plan.plan)
-    ) {
-      return NextResponse.json(
-        {
-          error: "This recording is no longer available for purchase.",
-          code: "NOT_ELIGIBLE",
-        },
-        { status: 409 },
-      );
-    }
-    // Consultants don't buy their own replays — owners already hold playback.
-    if (
-      session.user.consultantProfileId &&
-      loaded.plan.plan.consultantProfileId === session.user.consultantProfileId
-    ) {
-      return NextResponse.json(
-        { error: "You already own this recording", code: "ALREADY_ENTITLED" },
-        { status: 400 },
-      );
-    }
+    const eligibility = await validateRecordingPurchaseEligibility(
+      loaded,
+      session.user.id,
+      session.user.consultantProfileId,
+    );
+    if (!eligibility.ok) return eligibility.response;
+    const { listPricePaise, hostOrgId } = eligibility;
 
     const buyerId = session.user.id;
-    const amountPaise = loaded.listPricePaise;
     // #1771 row 1 — resolved before the lock so a slow Customer call holds nothing.
-    const customerId = await savedCardCustomerId(buyerId);
+    const [customerId, buyer] = await Promise.all([
+      savedCardCustomerId(buyerId),
+      prisma.user.findUnique({
+        where: { id: buyerId },
+        select: { country: true },
+      }),
+    ]);
+    // The detail page prices from the same inputs, so the shown total is the charge.
+    const buyerCountry = detectBuyerCountry({ userCountry: buyer?.country });
+    const derived = await deriveReplayAmount({
+      listPricePaise,
+      buyerCountry,
+    });
     // #1584 P2-P0-02 — read → mint → create under one lock, and the PENDING
     // re-read happens INSIDE it so a second caller resumes, never re-mints.
     const outcome = await lockRecordingPurchase(
       recordingId,
       buyerId,
       async () => {
+        if (hostOrgId) {
+          const activeMembership = await prisma.membership.findFirst({
+            where: {
+              userId: buyerId,
+              organizationId: hostOrgId,
+              status: "ACTIVE",
+            },
+            select: { id: true },
+          });
+          if (!activeMembership) {
+            return { kind: "forbidden_org" as const };
+          }
+        }
+
         const [owned, pendingOrder] = await Promise.all([
           prisma.recordingPurchase.findFirst({
             where: { recordingId, buyerId, status: "SUCCEEDED" },
@@ -115,27 +293,30 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
           };
         }
 
+        // The capture handler splits the charge from these; they sum to `amount`.
+        const metadata: z.input<typeof replayChargeNotesSchema> = {
+          type: "recording_purchase",
+          recordingId,
+          userId: buyerId,
+          originalAmountPaise: String(derived.originalAmount),
+          taxAmountPaise: String(derived.taxAmount),
+          buyerCountry,
+        };
         const order = await createRazorpayOrder({
-          amount: Number(amountPaise),
+          amount: derived.amount,
           currency: "INR",
           paymentGateway: "RAZORPAY",
-          metadata: {
-            type: "recording_purchase",
-            recordingId,
-            userId: buyerId,
-          },
+          metadata,
           customerId,
         });
 
         try {
-          await prisma.recordingPurchase.create({
-            data: {
-              recordingId,
-              buyerId,
-              gatewayOrderId: order.id,
-              amountPaise,
-              status: "PENDING",
-            },
+          await persistRecordingPurchase({
+            recordingId,
+            buyerId,
+            orderId: order.id,
+            amountPaise: derived.amount,
+            hostOrgId,
           });
         } catch (rowError) {
           // A payable order must not outlive its ledger row — best-effort cancel
@@ -158,6 +339,16 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       },
     );
 
+    if (outcome.kind === "forbidden_org") {
+      return NextResponse.json(
+        {
+          error:
+            "Active organization membership is required to purchase this recording.",
+          code: "ORG_MEMBERSHIP_REQUIRED",
+        },
+        { status: 403 },
+      );
+    }
     if (outcome.kind === "owned") {
       return NextResponse.json(
         { error: "You already own this recording", code: "ALREADY_ENTITLED" },
@@ -170,6 +361,16 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       { status: kind === "minted" ? 201 : 200 },
     );
   } catch (error) {
+    if (error instanceof OrgMembershipRequiredError) {
+      return NextResponse.json(
+        {
+          error:
+            "Active organization membership is required to purchase this recording.",
+          code: "ORG_MEMBERSHIP_REQUIRED",
+        },
+        { status: 403 },
+      );
+    }
     // The mint lock's refusals are typed (409 busy / 503 Redis down), not faults.
     if (
       error instanceof RecordingPurchaseInProgressError ||

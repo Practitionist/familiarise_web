@@ -125,6 +125,7 @@ export function SubscriptionDetails({
               brochure={{ planId: plan.id, planType: "subscriptions" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
+              filesIncluded={plan.materials}
               faqs={plan.faqs}
               topics={plan.topics}
             />
@@ -145,8 +146,8 @@ export function SubscriptionDetails({
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
                     for {plan.durationInMonths} month
-                    {plan.durationInMonths !== 1 ? "s" : ""} ·{" "}
-                    {plan.totalHours}h total
+                    {plan.durationInMonths !== 1 ? "s" : ""} · {plan.totalHours}
+                    h total
                   </p>
                 </div>
 

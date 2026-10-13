@@ -8,29 +8,50 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import prisma from "@/lib/prisma";
-import { Prisma, RecordingStatus } from "@prisma/client";
+import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
-import { generateRecordingTitle } from "@/lib/stream/recording-utils";
+import { liveParticipant } from "@/lib/booking/participants";
+import {
+  generateRecordingTitle,
+  streamCopyExpiresAt,
+  type AppointmentWithOwnership,
+} from "@/lib/stream/recording-utils";
+import {
+  discardDeclinedRecording,
+  wasDeclinedDuringRecording,
+} from "@/lib/stream/recording-decline";
+import {
+  createReadyRecordingOrAdoptRace,
+  stageAndSendRecordingReadyNotifications,
+} from "@/lib/stream/recording-handlers";
 import type {
   RecordingRow,
-  ConsultantRecordingWithDetails,
-  ConsulteeRecordingWithDetails,
   RecordingWithAccessControl,
-  WebinarPlanRecordingWithDetails,
-  ClassPlanRecordingWithDetails,
 } from "./recording-types";
-import {
-  consultantRecordingInclude,
-  consulteeRecordingInclude,
-  recordingWithAccessControlInclude,
-  webinarPlanRecordingInclude,
-  classPlanRecordingInclude,
-} from "./recording-types";
+import { recordingWithAccessControlInclude } from "./recording-types";
 
 /** One composite file per call, the shape every reader of `Recording` expects. */
 const RECORDING_TYPE = "composite";
+
+/**
+ * Check whether a presigned URL issued at `signedAtMs` with TTL `expiresSeconds`
+ * has expired or is within its safety margin of expiring.
+ */
+export function isPresignedUrlExpired(
+  signedAtMs: number,
+  expiresSeconds: number,
+  nowMs: number = Date.now(),
+): boolean {
+  if (!Number.isFinite(signedAtMs) || !Number.isFinite(expiresSeconds)) {
+    return true;
+  }
+  if (expiresSeconds <= 0) return true;
+  const expiresAtMs = signedAtMs + expiresSeconds * 1000;
+  const safetyBufferMs = Math.min(60_000, Math.floor(expiresSeconds * 500));
+  return nowMs >= expiresAtMs - safetyBufferMs;
+}
 
 // Types for Stream Recording API responses
 export interface StreamRecording {
@@ -38,6 +59,7 @@ export interface StreamRecording {
   url: string;
   start_time: Date;
   end_time: Date;
+  session_id: string;
 }
 
 /**
@@ -50,9 +72,13 @@ export type SyncableSession = {
   streamCallId: string | null;
   occurrence: {
     appointment:
-      | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> & {
-          organizationId: string | null;
-        })
+      | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> &
+          AppointmentWithOwnership &
+          NonNullable<
+            Parameters<typeof stageAndSendRecordingReadyNotifications>[0]
+          > & {
+            organizationId: string | null;
+          })
       | null;
   };
 };
@@ -117,9 +143,11 @@ export class RecordingService {
   /**
    * Stop recording for a call
    * @param streamCallId The Stream call ID
+   * @param userId Optional user ID who triggered the stop
    */
   static async stopRecording(
     streamCallId: string,
+    userId?: string,
   ): Promise<{ success: boolean; error?: string }> {
     try {
       const client = getStreamVideoClient();
@@ -134,6 +162,7 @@ export class RecordingService {
 
       streamLogger.info("Recording stopped via API", {
         streamCallId: callId,
+        ...(userId ? { userId } : {}),
       });
 
       return { success: true };
@@ -142,6 +171,7 @@ export class RecordingService {
         error instanceof Error ? error.message : "Failed to stop recording";
       streamLogger.error("Failed to stop recording", error, {
         streamCallId,
+        ...(userId ? { userId } : {}),
       });
       return { success: false, error: errorMessage };
     }
@@ -178,381 +208,13 @@ export class RecordingService {
         url: r.url,
         start_time: r.start_time,
         end_time: r.end_time,
+        session_id: r.session_id,
       }));
     } catch (error) {
       streamLogger.error("Failed to get call recordings from Stream", error, {
         streamCallId,
       });
       return null;
-    }
-  }
-
-  /**
-   * Get recordings for a meeting session from database
-   * @param meetingId The meeting session ID
-   */
-  static async getSessionRecordings(
-    meetingId: string,
-  ): Promise<RecordingRow[]> {
-    try {
-      const recordings = await prisma.recording.findMany({
-        where: {
-          meetingId,
-          status: {
-            notIn: ["FAILED", "EXPIRED"],
-          },
-        },
-        orderBy: {
-          recordedAt: "desc",
-        },
-      });
-
-      return recordings;
-    } catch (error) {
-      streamLogger.error("Failed to get session recordings", error, {
-        meetingId,
-      });
-      return [];
-    }
-  }
-
-  /**
-   * Get all recordings for a webinar plan
-   * @param webinarPlanId The webinar plan ID
-   */
-  static async getWebinarPlanRecordings(
-    webinarPlanId: string,
-  ): Promise<WebinarPlanRecordingWithDetails[]> {
-    try {
-      const recordings = await prisma.recording.findMany({
-        where: {
-          meeting: {
-            occurrence: {
-              appointment: {
-                webinar: {
-                  webinarPlanId,
-                },
-              },
-            },
-          },
-          status: {
-            notIn: ["FAILED", "EXPIRED"],
-          },
-        },
-        include: webinarPlanRecordingInclude,
-        orderBy: {
-          recordedAt: "desc",
-        },
-      });
-
-      return recordings;
-    } catch (error) {
-      streamLogger.error("Failed to get webinar plan recordings", error, {
-        webinarPlanId,
-      });
-      return [];
-    }
-  }
-
-  /**
-   * Get all recordings for a class plan
-   * @param classPlanId The class plan ID
-   */
-  static async getClassPlanRecordings(
-    classPlanId: string,
-  ): Promise<ClassPlanRecordingWithDetails[]> {
-    try {
-      const recordings = await prisma.recording.findMany({
-        where: {
-          meeting: {
-            occurrence: {
-              appointment: {
-                class: {
-                  classPlanId,
-                },
-              },
-            },
-          },
-          status: {
-            notIn: ["FAILED", "EXPIRED"],
-          },
-        },
-        include: classPlanRecordingInclude,
-        orderBy: {
-          recordedAt: "desc",
-        },
-      });
-
-      return recordings;
-    } catch (error) {
-      streamLogger.error("Failed to get class plan recordings", error, {
-        classPlanId,
-      });
-      return [];
-    }
-  }
-
-  /**
-   * Get all recordings for a consultant
-   * @param consultantProfileId The consultant profile ID
-   * @param filters Optional filters for type, status, search, and pagination
-   */
-  static async getConsultantRecordings(
-    consultantProfileId: string,
-    filters?: {
-      type?: "webinar" | "class";
-      status?: RecordingStatus;
-      search?: string;
-      page?: number;
-      limit?: number;
-      /**
-       * #1166 ORG-6 — view scope on Recording.organizationId (indexed).
-       * `null` pins personal (B2C), a string pins that org, omitted = no
-       * filter. Same convention as consultant-earnings-analytics.
-       */
-      organizationId?: string | null;
-    },
-  ): Promise<{ recordings: ConsultantRecordingWithDetails[]; total: number }> {
-    try {
-      const page = filters?.page ?? 1;
-      const limit = filters?.limit ?? 12;
-
-      // Build type-specific conditions based on filter
-      const typeConditions: Prisma.RecordingWhereInput[] = [];
-
-      if (!filters?.type || filters.type === "webinar") {
-        // Owner's webinar recordings
-        typeConditions.push({
-          meeting: {
-            occurrence: {
-              appointment: {
-                webinar: {
-                  webinarPlan: { consultantProfileId },
-                },
-              },
-            },
-          },
-        });
-        // Collaborator's webinar recordings
-        typeConditions.push({
-          meeting: {
-            occurrence: {
-              appointment: {
-                webinar: {
-                  webinarPlan: {
-                    collaborators: {
-                      some: { consultantProfileId, status: "ACCEPTED" },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        });
-      }
-
-      if (!filters?.type || filters.type === "class") {
-        // Owner's class recordings
-        typeConditions.push({
-          meeting: {
-            occurrence: {
-              appointment: {
-                class: {
-                  classPlan: { consultantProfileId },
-                },
-              },
-            },
-          },
-        });
-        // Collaborator's class recordings
-        typeConditions.push({
-          meeting: {
-            occurrence: {
-              appointment: {
-                class: {
-                  classPlan: {
-                    collaborators: {
-                      some: { consultantProfileId, status: "ACCEPTED" },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        });
-      }
-
-      // Build status filter - use provided status or default exclusions
-      const statusFilter = filters?.status
-        ? { status: filters.status }
-        : { status: { notIn: ["FAILED", "EXPIRED"] as RecordingStatus[] } };
-
-      // Build search filter
-      const searchFilter = filters?.search
-        ? { title: { contains: filters.search, mode: "insensitive" as const } }
-        : {};
-
-      const where = {
-        OR: typeConditions,
-        ...statusFilter,
-        ...searchFilter,
-        ...(filters?.organizationId !== undefined
-          ? { organizationId: filters.organizationId }
-          : {}),
-      };
-
-      const [recordings, total] = await Promise.all([
-        prisma.recording.findMany({
-          where,
-          include: consultantRecordingInclude,
-          orderBy: {
-            recordedAt: "desc",
-          },
-          skip: (page - 1) * limit,
-          take: limit,
-        }),
-        prisma.recording.count({ where }),
-      ]);
-
-      return { recordings, total };
-    } catch (error) {
-      streamLogger.error("Failed to get consultant recordings", error, {
-        consultantProfileId,
-      });
-      return { recordings: [], total: 0 };
-    }
-  }
-
-  /**
-   * Get paid webinar/class plan IDs for a user based on successful payments.
-   * Shared by getConsulteeRecordings and the resources API.
-   * @param userId The user ID
-   */
-  static async getPaidPlanIds(userId: string): Promise<{
-    webinarPlanIds: string[];
-    classPlanIds: string[];
-  }> {
-    const enrolledAppointments = await prisma.payment.findMany({
-      where: {
-        userId,
-        paymentStatus: "SUCCEEDED",
-        appointment: {
-          OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
-        },
-      },
-      select: {
-        amount: true,
-        refunds: { select: { amountPaise: true, status: true } },
-        appointment: {
-          select: {
-            webinar: { select: { webinarPlanId: true } },
-            class: { select: { classPlanId: true } },
-          },
-        },
-      },
-    });
-
-    // #689 — drop fully-refunded purchases before deriving entitled plans; a
-    // SUCCEEDED payment whose refunds cover it no longer grants recording access.
-    const entitled = enrolledAppointments.filter(isPaymentEntitled);
-
-    const webinarPlanIds = Array.from(
-      new Set(
-        entitled
-          .map((e) => e.appointment?.webinar?.webinarPlanId)
-          .filter((id): id is string => !!id),
-      ),
-    );
-    const classPlanIds = Array.from(
-      new Set(
-        entitled
-          .map((e) => e.appointment?.class?.classPlanId)
-          .filter((id): id is string => !!id),
-      ),
-    );
-
-    return { webinarPlanIds, classPlanIds };
-  }
-
-  /**
-   * Get all recordings for a consultee (paid enrollments only)
-   * @param userId The user ID (for payment lookup)
-   * @param filters Optional filters for type
-   */
-  static async getConsulteeRecordings(
-    userId: string,
-    filters?: {
-      type?: "webinar" | "class";
-    },
-  ): Promise<ConsulteeRecordingWithDetails[]> {
-    try {
-      const { webinarPlanIds, classPlanIds } =
-        await this.getPaidPlanIds(userId);
-
-      // Build query based on type filter
-      const whereConditions = [];
-
-      if (!filters?.type || filters.type === "webinar") {
-        if (webinarPlanIds.length > 0) {
-          whereConditions.push({
-            meeting: {
-              occurrence: {
-                appointment: {
-                  webinar: {
-                    webinarPlanId: {
-                      in: webinarPlanIds,
-                    },
-                  },
-                },
-              },
-            },
-          });
-        }
-      }
-
-      if (!filters?.type || filters.type === "class") {
-        if (classPlanIds.length > 0) {
-          whereConditions.push({
-            meeting: {
-              occurrence: {
-                appointment: {
-                  class: {
-                    classPlanId: {
-                      in: classPlanIds,
-                    },
-                  },
-                },
-              },
-            },
-          });
-        }
-      }
-
-      // If no valid enrollments found, return empty array
-      if (whereConditions.length === 0) {
-        return [];
-      }
-
-      // Fetch recordings for enrolled plans
-      const recordings = await prisma.recording.findMany({
-        where: {
-          OR: whereConditions,
-          status: {
-            notIn: ["FAILED", "EXPIRED"],
-          },
-        },
-        include: consulteeRecordingInclude,
-        orderBy: {
-          recordedAt: "desc",
-        },
-      });
-
-      return recordings;
-    } catch (error) {
-      streamLogger.error("Failed to get consultee recordings", error, {
-        userId,
-      });
-      return [];
     }
   }
 
@@ -566,7 +228,30 @@ export class RecordingService {
     try {
       const recording = await prisma.recording.findUnique({
         where: { id: recordingId },
-        include: recordingWithAccessControlInclude,
+        include: {
+          ...recordingWithAccessControlInclude,
+          meeting: {
+            include: {
+              occurrence: {
+                include: {
+                  appointment: {
+                    include: {
+                      ...recordingWithAccessControlInclude.meeting.include
+                        .occurrence.include.appointment.include,
+                      consultation: { include: { consultationPlan: true } },
+                      subscription: { include: { subscriptionPlan: true } },
+                      trial: { include: { subscriptionPlan: true } },
+                      participants: {
+                        where: liveParticipant(),
+                        select: { userId: true, role: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       });
 
       return recording;
@@ -624,6 +309,33 @@ export class RecordingService {
       const appointment = await prisma.appointment.findUnique({
         where: { id: appointmentId },
         include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                select: {
+                  recordingEnabled: true,
+                },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                select: {
+                  recordingEnabled: true,
+                },
+              },
+            },
+          },
+          trial: {
+            include: {
+              subscriptionPlan: {
+                select: {
+                  recordingEnabled: true,
+                },
+              },
+            },
+          },
           webinar: {
             include: {
               webinarPlan: {
@@ -649,18 +361,13 @@ export class RecordingService {
         return false;
       }
 
-      // Check webinar recording setting
-      if (appointment.webinar?.webinarPlan?.recordingEnabled) {
-        return true;
-      }
-
-      // Check class recording setting
-      if (appointment.class?.classPlan?.recordingEnabled) {
-        return true;
-      }
-
-      // Consultations and subscriptions don't have recording enabled by default
-      return false;
+      return Boolean(
+        appointment.webinar?.webinarPlan?.recordingEnabled ||
+        appointment.class?.classPlan?.recordingEnabled ||
+        appointment.consultation?.consultationPlan?.recordingEnabled ||
+        appointment.subscription?.subscriptionPlan?.recordingEnabled ||
+        appointment.trial?.subscriptionPlan?.recordingEnabled,
+      );
     } catch (error) {
       streamLogger.error("Failed to check recording enabled", error, {
         appointmentId,
@@ -670,89 +377,139 @@ export class RecordingService {
   }
 
   /**
-   * Get recordings that are expiring soon (for transfer to Supabase)
-   * @param daysBeforeExpiry Number of days before expiry to consider
+   * Persist a single Stream recording segment and trigger idempotent ready notifications.
+   * Existing rows re-run notification staging so transient outbox/provider errors self-heal on retry.
    */
-  static async getExpiringRecordings(
-    daysBeforeExpiry: number = 3,
-  ): Promise<RecordingRow[]> {
-    const expiryThreshold = new Date();
-    expiryThreshold.setDate(expiryThreshold.getDate() + daysBeforeExpiry);
+  private static async syncSingleRecordingSegment(params: {
+    sessionId: string;
+    streamCallId: string;
+    appointment: SyncableSession["occurrence"]["appointment"];
+    streamRec: StreamRecording;
+    syncedRecordings: RecordingRow[];
+  }): Promise<void> {
+    const {
+      sessionId,
+      streamCallId,
+      appointment,
+      streamRec,
+      syncedRecordings,
+    } = params;
 
-    try {
-      const recordings = await prisma.recording.findMany({
-        where: {
-          storageType: "STREAM_S3",
-          status: "READY",
-          streamUrlExpiresAt: {
-            lte: expiryThreshold,
-          },
-        },
-        orderBy: {
-          streamUrlExpiresAt: "asc",
-        },
+    if (
+      await wasDeclinedDuringRecording(
+        sessionId,
+        appointment,
+        new Date(streamRec.end_time),
+      )
+    ) {
+      await discardDeclinedRecording({
+        meetingId: sessionId,
+        streamCallId,
+        sessionId: streamRec.session_id,
+        filename: streamRec.filename,
       });
-
-      return recordings;
-    } catch (error) {
-      streamLogger.error("Failed to get expiring recordings", error, {
-        daysBeforeExpiry,
-      });
-      return [];
+      return;
     }
+
+    const existingRecording = await prisma.recording.findFirst({
+      where: {
+        meetingId: sessionId,
+        streamRecordingId: streamRec.filename,
+      },
+    });
+
+    if (existingRecording) {
+      await stageAndSendRecordingReadyNotifications(
+        appointment,
+        existingRecording.id,
+        streamCallId,
+      ).catch((err) =>
+        streamLogger.error(
+          "Failed to retry recording ready notifications during sync",
+          err,
+          { recordingId: existingRecording.id, streamCallId },
+        ),
+      );
+      streamLogger.info("Recording already exists, skipping creation", {
+        recordingId: existingRecording.id,
+        filename: streamRec.filename,
+      });
+      return;
+    }
+
+    const startDate = new Date(streamRec.start_time);
+    const endDate = new Date(streamRec.end_time);
+    const rawDurationMs = endDate.getTime() - startDate.getTime();
+    const durationInMinutes = Number.isFinite(rawDurationMs)
+      ? Math.max(0, Math.round(rawDurationMs / (1000 * 60)))
+      : 0;
+
+    const title = generateRecordingTitle(appointment, startDate);
+    const streamUrlExpiresAt = streamCopyExpiresAt(endDate);
+
+    const recording = await createReadyRecordingOrAdoptRace({
+      meetingId: sessionId,
+      streamCallId,
+      filename: streamRec.filename,
+      title,
+      url: streamRec.url,
+      durationInMinutes,
+      startDate,
+      streamUrlExpiresAt,
+      organizationId: appointment?.organizationId ?? null,
+    });
+
+    syncedRecordings.push(recording);
+
+    await stageAndSendRecordingReadyNotifications(
+      appointment,
+      recording.id,
+      streamCallId,
+    ).catch((err) =>
+      streamLogger.error(
+        "Failed to stage recording ready notifications during sync",
+        err,
+        { recordingId: recording.id, streamCallId },
+      ),
+    );
+
+    streamLogger.info("Recording synced successfully", {
+      recordingId: recording.id,
+      sessionId,
+      title,
+      durationInMinutes,
+    });
+  }
+
+  private static async syncSegmentsSequentially(
+    segments: StreamRecording[],
+    index: number,
+    sessionId: string,
+    streamCallId: string,
+    appointment: SyncableSession["occurrence"]["appointment"],
+    syncedRecordings: RecordingRow[],
+  ): Promise<void> {
+    if (index >= segments.length) return;
+    await this.syncSingleRecordingSegment({
+      sessionId,
+      streamCallId,
+      appointment,
+      streamRec: segments[index],
+      syncedRecordings,
+    });
+    return this.syncSegmentsSequentially(
+      segments,
+      index + 1,
+      sessionId,
+      streamCallId,
+      appointment,
+      syncedRecordings,
+    );
   }
 
   /**
-   * Get the current recording state for a meeting session
-   * @param meetingId The meeting session ID
-   */
-  static async getRecordingState(meetingId: string): Promise<{
-    isRecording: boolean;
-    startedAt: Date | null;
-    startedBy: string | null;
-  }> {
-    try {
-      const session = await prisma.meeting.findUnique({
-        where: { id: meetingId },
-        select: {
-          isRecording: true,
-          recordingStartedAt: true,
-          recordingStartedBy: true,
-        },
-      });
-
-      if (!session) {
-        return { isRecording: false, startedAt: null, startedBy: null };
-      }
-
-      return {
-        isRecording: session.isRecording,
-        startedAt: session.recordingStartedAt,
-        startedBy: session.recordingStartedBy,
-      };
-    } catch (error) {
-      streamLogger.error("Failed to get recording state", error, {
-        meetingId,
-      });
-      return { isRecording: false, startedAt: null, startedBy: null };
-    }
-  }
-
-  /**
-   * Mirrors one session's Stream recordings into the database.
-   *
-   * The consultant and consultee sync paths held byte-identical copies of this
-   * loop, so the #1166 ORG-6 org-tag fix had to be made twice — and the gap it
-   * closed existed twice for the same reason. One writer now.
-   *
-   * Failures are swallowed per session, deliberately: one unreachable call must
-   * not abandon the rest of the sync.
-   *
-   * Public since #1270 for a third caller,
-   * `scripts/stream/reconcile-orphaned-recordings.ts`. It stays the ONLY
-   * writer: the nightly reconciliation decides WHICH sessions to look at, this
-   * decides what a Stream recording becomes in our database. A second copy of
-   * the loop is how the org-tag gap above came to exist twice.
+   * Mirrors one session's Stream recordings into the database and stages ready notifications.
+   * Shared by user-triggered sync endpoints and `reconcile-orphaned-recordings`.
    */
   static async syncSessionRecordings(
     session: SyncableSession,
@@ -765,73 +522,17 @@ export class RecordingService {
         session.streamCallId,
       );
 
-      // Could not ask Stream. Returning here rather than treating it as an
-      // empty result is the whole point: a caller deciding whether a recording
-      // is missing must be able to tell "Stream says there is nothing" from
-      // "Stream did not answer".
       if (streamRecordings === null)
         return { ok: false, reason: "stream-unreachable" };
 
-      for (const streamRec of streamRecordings) {
-        // Check if recording already exists (by filename/streamRecordingId)
-        const existingRecording = await prisma.recording.findFirst({
-          where: {
-            meetingId: session.id,
-            streamRecordingId: streamRec.filename,
-          },
-        });
-
-        if (existingRecording) {
-          streamLogger.info("Recording already exists, skipping", {
-            recordingId: existingRecording.id,
-            filename: streamRec.filename,
-          });
-          continue;
-        }
-
-        // Calculate duration in minutes
-        const startDate = new Date(streamRec.start_time);
-        const endDate = new Date(streamRec.end_time);
-        const durationInMinutes = Math.round(
-          (endDate.getTime() - startDate.getTime()) / (1000 * 60),
-        );
-
-        // Generate title from appointment info (same logic as handleRecordingReady)
-        const appointment = session.occurrence.appointment;
-        const title = generateRecordingTitle(appointment, startDate);
-
-        // Calculate Stream URL expiration (2 weeks from now)
-        const streamUrlExpiresAt = new Date();
-        streamUrlExpiresAt.setDate(streamUrlExpiresAt.getDate() + 14);
-
-        // #1166 ORG-6 — mirror the parent appointment's org tag, as the webhook
-        // writer does: the personal recordings read now filters on this column,
-        // so a sync that left it null would surface an org session as personal.
-        const recording = await prisma.recording.create({
-          data: {
-            title,
-            recordingUrl: streamRec.url,
-            durationInMinutes,
-            recordedAt: startDate,
-            streamRecordingId: streamRec.filename,
-            streamCallId: session.streamCallId,
-            storageType: "STREAM_S3",
-            status: "READY",
-            streamUrlExpiresAt,
-            meetingId: session.id,
-            organizationId: appointment?.organizationId ?? null,
-          },
-        });
-
-        syncedRecordings.push(recording);
-
-        streamLogger.info("Recording synced successfully", {
-          recordingId: recording.id,
-          sessionId: session.id,
-          title,
-          durationInMinutes,
-        });
-      }
+      await this.syncSegmentsSequentially(
+        streamRecordings,
+        0,
+        session.id,
+        session.streamCallId,
+        session.occurrence.appointment,
+        syncedRecordings,
+      );
       return { ok: true };
     } catch (sessionError) {
       streamLogger.error(
@@ -876,6 +577,11 @@ export class RecordingService {
                     subscriptionPlan: true,
                   },
                 },
+                trial: {
+                  include: {
+                    subscriptionPlan: true,
+                  },
+                },
                 webinar: {
                   include: {
                     webinarPlan: true,
@@ -892,7 +598,7 @@ export class RecordingService {
         },
       } as const;
 
-      // Get all Meetings for consultant's webinars and classes (owned or collaborated)
+      // Get all Meetings for consultant's sessions (owned or collaborated)
       const meetings = await prisma.meeting.findMany({
         where: {
           streamCallId: { not: "" },
@@ -929,6 +635,24 @@ export class RecordingService {
                         some: { consultantProfileId, status: "ACCEPTED" },
                       },
                     },
+                  },
+                },
+                // Owned consultations
+                {
+                  consultation: {
+                    consultationPlan: { consultantProfileId },
+                  },
+                },
+                // Owned subscriptions
+                {
+                  subscription: {
+                    subscriptionPlan: { consultantProfileId },
+                  },
+                },
+                // Owned trials
+                {
+                  trial: {
+                    subscriptionPlan: { consultantProfileId },
                   },
                 },
               ],
@@ -995,13 +719,19 @@ export class RecordingService {
         return { synced: 0, recordings: [] };
       }
 
-      // Find all paid enrollments for webinars/classes through Payment records
+      // Find all paid enrollments through Payment records
       const paidEnrollments = await prisma.payment.findMany({
         where: {
           userId: effectiveUserId,
           paymentStatus: "SUCCEEDED",
           appointment: {
-            OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
+            OR: [
+              { webinar: { isNot: null } },
+              { class: { isNot: null } },
+              { consultation: { isNot: null } },
+              { subscription: { isNot: null } },
+              { trial: { isNot: null } },
+            ],
           },
         },
         include: {
@@ -1023,6 +753,11 @@ export class RecordingService {
                                 },
                               },
                               subscription: {
+                                include: {
+                                  subscriptionPlan: true,
+                                },
+                              },
+                              trial: {
                                 include: {
                                   subscriptionPlan: true,
                                 },

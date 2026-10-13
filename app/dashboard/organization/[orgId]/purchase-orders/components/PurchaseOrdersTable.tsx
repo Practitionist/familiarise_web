@@ -11,6 +11,7 @@
  * server side; this is the client-side mirror).
  */
 
+import { httpsHref } from "@/schemas/url";
 import { FileText, Loader2, Pencil, Trash2 } from "lucide-react";
 
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -83,21 +84,24 @@ export function PurchaseOrdersTable({
       key: "poNumber",
       header: "PO #",
       primary: true,
-      cell: (po) => (
-        <span className="font-medium">
-          {po.poNumber}
-          {po.uploadedDocUrl && (
-            <a
-              href={po.uploadedDocUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-2 text-xs underline text-primary"
-            >
-              doc
-            </a>
-          )}
-        </span>
-      ),
+      cell: (po) => {
+        const docHref = httpsHref(po.uploadedDocUrl);
+        return (
+          <span className="font-medium">
+            {po.poNumber}
+            {docHref && (
+              <a
+                href={docHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-2 text-xs underline text-primary"
+              >
+                doc
+              </a>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: "status",

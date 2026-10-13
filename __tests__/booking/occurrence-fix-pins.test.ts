@@ -63,7 +63,6 @@ jest.mock("../../lib/novu", () => ({
   notifyAppointmentBooked: jest.fn(),
 }));
 jest.mock("../../lib/referrals/service", () => ({
-  processConsultantBookingReferral: jest.fn(),
   reverseCreditsForPayment: jest.fn(),
   qualifyReferralOnFirstBooking: jest.fn(),
 }));
@@ -450,7 +449,7 @@ describe("#828 — replayByIdempotencyKey returns the original attempt", () => {
     expect(res!.status).toBe(409);
   });
 
-  it("does not resume a Stripe PENDING attempt (hosted URL is not persisted)", async () => {
+  it("409s a PENDING attempt on a gateway with no implementation", async () => {
     mockPaymentFindFirst.mockResolvedValue({
       paymentIntent: "cs_test_x",
       paymentStatus: "PENDING",

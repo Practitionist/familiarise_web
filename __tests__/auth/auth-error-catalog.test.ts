@@ -14,10 +14,8 @@
  *      a well-meaning future edit from turning the sign-in form into a
  *      customer-enumeration oracle.
  *
- *   3. **No raw server text.** No path may surface Better Auth's `message`.
- *      This is the regression that shipped `TypeError: Cannot read properties
- *      of undefined (reading 'metadata')` to a customer via
- *      `lib/sso/signin-with-toast.ts`.
+ *   3. **No raw server text.** No path may surface Better Auth's `message`,
+ *      which can be a raw `TypeError` meant for developers.
  */
 
 import {

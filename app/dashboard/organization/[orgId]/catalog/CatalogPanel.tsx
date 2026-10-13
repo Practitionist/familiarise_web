@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Library, Archive, Undo2, Loader2 } from "lucide-react";
 
 import { EmptyState } from "@/components/dashboard/DataCard";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
   ResponsiveTable,
@@ -19,6 +20,40 @@ const VISIBILITY_LABEL: Record<CatalogRow["visibility"], string> = {
   ORG_AND_PUBLIC: "Public + members",
 };
 
+type DraftFilter = "ALL" | "PUBLISHED" | "DRAFT";
+
+export function isCatalogRowDraft(row: CatalogRow): boolean {
+  if (typeof row.isDraft === "boolean") return row.isDraft;
+  if (row.status) return row.status === "DRAFT";
+  const instances = row.webinars ?? row.classes;
+  if (Array.isArray(instances) && instances.length > 0) {
+    return instances.every((inst) => inst.status === "DRAFT");
+  }
+  return false;
+}
+
+export function resolveCatalogTopicCount(row: CatalogRow): number {
+  if (typeof row.topicsCount === "number") return row.topicsCount;
+  if (typeof row._count?.topics === "number") return row._count.topics;
+  if (Array.isArray(row.topics)) return row.topics.length;
+  return 0;
+}
+
+export function resolveCatalogExpertName(
+  row: CatalogRow,
+  expertNamesById?: Record<string, string>,
+): string {
+  if (row.consultantName) return row.consultantName;
+  if (row.consultantProfile?.user?.name) return row.consultantProfile.user.name;
+  if (row.consultantProfile?.user?.email) {
+    return row.consultantProfile.user.email;
+  }
+  if (row.consultantProfileId && expertNamesById?.[row.consultantProfileId]) {
+    return expertNamesById[row.consultantProfileId];
+  }
+  return "—";
+}
+
 /**
  * One kind's table.
  *
@@ -32,9 +67,6 @@ const VISIBILITY_LABEL: Record<CatalogRow["visibility"], string> = {
  * BOTH kinds' full row sets, columns array and cell closures on every tab
  * switch. Radix unmounts the inactive panel, so only the visible kind's rows
  * are built now.
- *
- * The router-level cause is filed separately — this removes the amplifier that
- * made the catalog the worst-hit consumer of it.
  */
 export function CatalogPanel({
   kind,
@@ -43,6 +75,7 @@ export function CatalogPanel({
   error,
   onToggleArchive,
   isMutating,
+  expertNamesById,
 }: Readonly<{
   kind: Kind;
   rows: CatalogRow[];
@@ -50,7 +83,18 @@ export function CatalogPanel({
   error: unknown;
   onToggleArchive: (planId: string, restore: boolean) => void;
   isMutating: boolean;
+  expertNamesById?: Record<string, string>;
 }>) {
+  const [draftFilter, setDraftFilter] = useState<DraftFilter>("ALL");
+
+  const filteredRows = useMemo(() => {
+    if (draftFilter === "ALL") return rows;
+    return rows.filter((r) => {
+      const draft = isCatalogRowDraft(r);
+      return draftFilter === "DRAFT" ? draft : !draft;
+    });
+  }, [rows, draftFilter]);
+
   // Memoized so the array and its cell closures survive re-renders that do not
   // change the handler — previously reallocated on every call, twice per render.
   const columns = useMemo<ResponsiveColumn<CatalogRow>[]>(
@@ -59,7 +103,43 @@ export function CatalogPanel({
         key: "title",
         header: "Offering",
         primary: true,
-        cell: (r) => <span className="font-medium">{r.title}</span>,
+        cell: (r) => {
+          const draft = isCatalogRowDraft(r);
+          return (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">{r.title}</span>
+              {r.archivedAt ? (
+                <StatusBadge label="Archived" tone="neutral" size="sm" />
+              ) : draft ? (
+                <StatusBadge label="Draft" tone="caution" size="sm" />
+              ) : (
+                <StatusBadge label="Published" tone="success" size="sm" />
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        key: "expert",
+        header: "Delivered by",
+        cell: (r) => (
+          <span className="text-muted-foreground">
+            {resolveCatalogExpertName(r, expertNamesById)}
+          </span>
+        ),
+      },
+      {
+        key: "topics",
+        header: "Topics",
+        className: "tabular-nums",
+        cell: (r) => {
+          const count = resolveCatalogTopicCount(r);
+          return (
+            <span className="text-muted-foreground">
+              {count} {count === 1 ? "topic" : "topics"}
+            </span>
+          );
+        },
       },
       {
         key: "price",
@@ -105,7 +185,7 @@ export function CatalogPanel({
         },
       },
     ],
-    [onToggleArchive, isMutating],
+    [onToggleArchive, isMutating, expertNamesById],
   );
 
   if (isLoading) {
@@ -138,6 +218,33 @@ export function CatalogPanel({
   }
 
   return (
-    <ResponsiveTable columns={columns} rows={rows} getRowId={(r) => r.id} />
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {(
+          [
+            { value: "ALL", label: "All statuses" },
+            { value: "PUBLISHED", label: "Published" },
+            { value: "DRAFT", label: "Drafts" },
+          ] as const
+        ).map((opt) => (
+          <Button
+            key={opt.value}
+            type="button"
+            size="sm"
+            variant={draftFilter === opt.value ? "secondary" : "ghost"}
+            className="h-7 px-2.5 text-xs"
+            onClick={() => setDraftFilter(opt.value)}
+          >
+            {opt.label}
+          </Button>
+        ))}
+      </div>
+      <ResponsiveTable
+        columns={columns}
+        rows={filteredRows}
+        getRowId={(r) => r.id}
+        empty="No offerings match the selected status filter."
+      />
+    </div>
   );
 }

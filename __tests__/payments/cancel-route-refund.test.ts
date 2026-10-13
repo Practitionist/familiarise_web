@@ -22,6 +22,7 @@
 const mockAppointmentFindUnique = jest.fn();
 const mockAppointmentFindMany = jest.fn();
 const mockPaymentFindMany = jest.fn();
+const mockOrgFundingPayment = jest.fn();
 const mockRefundBookingPayment = jest.fn();
 const mockRecordSystemError = jest.fn();
 const mockGetSession = jest.fn();
@@ -103,7 +104,13 @@ jest.mock("../../lib/prisma", () => ({
       // read onto the tx client, so this one must stay silent.
       findFirst: (...a: unknown[]) => globalAppointmentFindFirst(...a),
     },
-    payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
+    payment: {
+      findMany: (...a: unknown[]) => mockPaymentFindMany(...a),
+      // The org actor's funding proof (lib/booking/org-actor.ts): the booking's
+      // OWN payment row, keyed on the org. Distinct from the refund-quote read
+      // above, which is why it is a separate mock rather than a shared one.
+      findFirst: (...a: unknown[]) => mockOrgFundingPayment(...a),
+    },
     // #1775 P-3 — the reserved row a gateway throw leaves behind.
     refund: {
       findUnique: jest.fn(async () => ({ status: "PENDING" })),
@@ -343,6 +350,8 @@ beforeEach(() => {
   ]);
   txStub.rescheduleRequest.findMany.mockResolvedValue([]);
   mockPaymentFindMany.mockResolvedValue([]);
+  // No org funding proof by default: the participant paths never ask.
+  mockOrgFundingPayment.mockResolvedValue(null);
   mockMembershipFindUnique.mockResolvedValue(null);
   mockRecordSystemError.mockResolvedValue(undefined);
   mockRefundBookingPayment.mockImplementation(
@@ -683,6 +692,8 @@ describe("#1166 — an admin of the funding org acts on the payer side", () => {
       status: "ACTIVE",
       role: "OWNER",
     });
+    // The org's money paid, which is the whole basis of the act-for-org right.
+    mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "WALLET" });
     // Inside the final two hours: the buyer's own tier pays nothing here, while
     // the consultant tier would pay in full. The org admin must score as the
     // buyer they act for.
@@ -727,6 +738,35 @@ describe("#1166 — an admin of the funding org acts on the payer side", () => {
 
     expect(res.status).toBe(403);
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("refuses an OWNER when the member's own card paid, however the booking is tagged", async () => {
+    // #1854 / ADR 19 — `Appointment.organizationId` is a TAG: checkout stamps it
+    // for a `fundingSource: PERSONAL` booking too, so the tag alone used to let
+    // an owner cancel (and refund) a member's personal-card consultation.
+    mockGetSession.mockResolvedValue({
+      user: {
+        id: "org-owner-3",
+        name: "Org Owner",
+        consultantProfileId: null,
+        consulteeProfileId: null,
+      },
+    });
+    mockAppointmentFindUnique.mockResolvedValue(orgFundedAppointment());
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "OWNER",
+    });
+    mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "CARD" });
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(403);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+    expect(txStub.orgAuditLog.create).not.toHaveBeenCalled();
   });
 
   it("refuses an invited-but-inactive admin", async () => {

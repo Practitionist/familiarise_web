@@ -1,55 +1,57 @@
-"use client";
+import { HydrationBoundary } from "@tanstack/react-query";
 
-import { use } from "react";
 import {
-  DashboardHeader,
   DashboardContent,
+  DashboardHeader,
 } from "@/components/dashboard/PageScaffold";
-import { UrlTabs } from "@/components/dashboard/UrlTabs";
-import { RecordingsList } from "./components/RecordingsList";
+import { PersonalLibrary } from "@/components/dashboard/library/PersonalLibrary";
+import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { readRecordingLibrary } from "@/lib/data/recording-library";
+import { libraryKeys } from "@/lib/documents/query-keys";
+import { parseLibraryQuery } from "@/lib/library/library-query";
+import { seedLibraryPage } from "@/lib/library/library-seed";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
+import { DisplayZoneProvider } from "@/lib/time/zoned-format";
 
-interface RecordingsPageProps {
-  params: Promise<{
-    consultantId: string;
-  }>;
-}
-
-/** #1527 §13b — All · Webinars · Classes as URL tabs (`?tab=`), so a link keeps its tab. */
-export default function RecordingsPage({
+export default async function ConsultantRecordingsRoute({
   params,
-}: Readonly<RecordingsPageProps>) {
-  const { consultantId } = use(params);
-
+  searchParams,
+}: Readonly<{
+  params: Promise<{ consultantId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}>) {
+  const { consultantId } = await params;
+  const access = await requirePersonalProfileAccess("consultant", consultantId);
+  const viewerZone = await getViewerZone();
+  const seed = await seedLibraryPage({
+    name: "recordings:expert",
+    queryKey: libraryKeys.personal("recordings", "consultant", consultantId),
+    searchParams: await searchParams,
+    // An inspecting operator's list is read by the route as the profile's owner.
+    skip: access.isInspecting,
+    read: () =>
+      readRecordingLibrary({
+        userId: access.userId,
+        owner: { kind: "personal", side: "expert" },
+        query: parseLibraryQuery(() => null),
+      }),
+  });
   return (
     <>
       <DashboardHeader
         title="Recordings"
-        subtitle="Manage your webinar and class recordings"
+        description="Recordings of the sessions you host, by booking. Open a booking to manage a recording."
       />
       <DashboardContent>
-        <UrlTabs
-          tabs={[
-            {
-              value: "all",
-              label: "All",
-              content: <RecordingsList consultantId={consultantId} />,
-            },
-            {
-              value: "webinar",
-              label: "Webinars",
-              content: (
-                <RecordingsList consultantId={consultantId} type="webinar" />
-              ),
-            },
-            {
-              value: "class",
-              label: "Classes",
-              content: (
-                <RecordingsList consultantId={consultantId} type="class" />
-              ),
-            },
-          ]}
-        />
+        <DisplayZoneProvider zone={viewerZone.zone}>
+          <HydrationBoundary state={seed}>
+            <PersonalLibrary
+              tree="consultant"
+              profileId={consultantId}
+              artifact="recordings"
+            />
+          </HydrationBoundary>
+        </DisplayZoneProvider>
       </DashboardContent>
     </>
   );

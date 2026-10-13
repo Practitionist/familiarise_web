@@ -38,7 +38,9 @@ export const PAYOUT_CONSTANTS = {
  */
 export const INSTANT_PAYOUT_AUTO_APPROVE_PAISE = (() => {
   const fromEnv = Number(process.env.INSTANT_PAYOUT_AUTO_APPROVE_PAISE);
-  return Number.isSafeInteger(fromEnv) && fromEnv > 0 ? fromEnv : 2_500_000;
+  return Number.isSafeInteger(fromEnv) && fromEnv > 0
+    ? fromEnv
+    : PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD;
 })();
 
 // ============================================================================
@@ -49,14 +51,14 @@ export const TAX_CONSTANTS = {
   /** GST rate for consulting services (18%) */
   GST_RATE: 18,
 
-  /** SAC code for consulting services */
+  /** SAC 999293: commercial training and coaching services (the platform default). */
   SAC_CODE: "999293",
 
-  /** HSN codes for different service types */
+  /** SAC codes keyed by service type; 998311 (management consulting) is not emitted yet. */
   HSN_CODES: {
-    CONSULTING: "999293", // SAC for consulting services
-    EDUCATION: "999294", // SAC for educational services
-    TRAINING: "999295", // SAC for training services
+    CONSULTING: "999293", // commercial training and coaching services
+    EDUCATION: "999294", // other education and training services n.e.c.
+    TRAINING: "999295", // services involving conduct of examinations for admission
   } as const,
 } as const;
 

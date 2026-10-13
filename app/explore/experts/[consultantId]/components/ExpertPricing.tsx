@@ -57,6 +57,7 @@ interface ExpertPricingProps {
   selectedSubscriptionPlanId?: string;
   onSelectSubscriptionPlanId?: (planId: string) => void;
   bookingRequest?: number;
+  onDurationChange?: (durationInHours: number) => void;
 }
 
 export function ExpertPricing({
@@ -85,14 +86,12 @@ export function ExpertPricing({
   selectedSubscriptionPlanId,
   onSelectSubscriptionPlanId,
   bookingRequest = 0,
+  onDurationChange,
 }: Readonly<ExpertPricingProps>) {
   const reduceMotion = useReducedMotion();
   const [internalServiceTab, setInternalServiceTab] = useState<
     "consultations" | "subscriptions"
-  >(
-    initialService ??
-      (autoOpenTrial ? "subscriptions" : "consultations"),
-  );
+  >(initialService ?? (autoOpenTrial ? "subscriptions" : "consultations"));
   const activeServiceTab = controlledServiceTab ?? internalServiceTab;
   const handleServiceTabChange = (tab: "consultations" | "subscriptions") => {
     setInternalServiceTab(tab);
@@ -323,6 +322,7 @@ export function ExpertPricing({
                 selectedPlanId={selectedConsultationPlanId}
                 onSelectPlanId={onSelectConsultationPlanId}
                 bookingRequest={bookingRequest}
+                onDurationChange={onDurationChange}
               />
             </TabsContent>
             <TabsContent value="subscriptions">
@@ -360,6 +360,7 @@ export function ExpertPricing({
             selectedPlanId={selectedConsultationPlanId}
             onSelectPlanId={onSelectConsultationPlanId}
             bookingRequest={bookingRequest}
+            onDurationChange={onDurationChange}
           />
         ) : hasSubscriptions ? (
           <SubscriptionPricingToggle

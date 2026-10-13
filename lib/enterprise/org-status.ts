@@ -16,14 +16,27 @@
  * filters at call sites — the rules for "is this org billable" or
  * "should this cron skip this org" should change in one place, not 17.
  */
-import { OrgStatus } from "@prisma/client";
+// Type-only: lib/api/scope/parse reaches this module from client components,
+// and a value import of @prisma/client would ship the engine to the browser.
+import type { OrgStatus } from "@prisma/client";
 
 /**
  * Statuses that may be charged on the next billing cycle. Excludes
  * SUSPENDED (billing freeze) and DEACTIVATED (terminal). Used by
  * subscription-invoice + consolidated-invoice rollup crons.
  */
-export const BILLABLE_ORG_STATUSES: OrgStatus[] = [OrgStatus.ACTIVE];
+export const BILLABLE_ORG_STATUSES: OrgStatus[] = ["ACTIVE"];
+
+/**
+ * Statuses where outbound notifications + dashboard access are still
+ * meaningful. SUSPENDED orgs keep dashboard read-only access so OWNERs
+ * can resolve the suspension cause.
+ */
+export const ADDRESSABLE_ORG_STATUSES: OrgStatus[] = [
+  "PENDING_VERIFICATION",
+  "ACTIVE",
+  "SUSPENDED",
+];
 
 /**
  * Statuses that block new member onboarding (invitation accept). A
@@ -31,7 +44,7 @@ export const BILLABLE_ORG_STATUSES: OrgStatus[] = [OrgStatus.ACTIVE];
  * invite link is clicked.
  */
 export function isOnboardingBlocked(status: OrgStatus): boolean {
-  return status === OrgStatus.SUSPENDED || status === OrgStatus.DEACTIVATED;
+  return status === "SUSPENDED" || status === "DEACTIVATED";
 }
 
 /**

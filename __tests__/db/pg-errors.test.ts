@@ -1,8 +1,11 @@
-// Structured Postgres-error predicates: pins the SQLSTATE detection and the
-// quarantined exclusion-constraint text fallback (Prisma's unmodelled-constraint
-// gap, prisma/prisma#25562). Replaces the message-substring matching that used
-// to live inline in SchedulingService.classifyError.
 import { isUniqueViolation, isExclusionViolation } from "@/lib/db/pg-errors";
+
+// What Prisma 7 rethrows for an adapter-pg `kind: "postgres"` (unmapped) error.
+const driverAdapterError = (code: string, msg: string) =>
+  Object.assign(new Error(msg), {
+    name: "DriverAdapterError",
+    cause: { kind: "postgres", code, originalCode: code, message: msg },
+  });
 
 describe("pg-errors predicates", () => {
   describe("isUniqueViolation", () => {
@@ -14,6 +17,10 @@ describe("pg-errors predicates", () => {
       expect(
         isUniqueViolation({ code: "P2010", meta: { code: "23505" } }),
       ).toBe(true);
+    });
+
+    it("matches 23505 on a raw DriverAdapterError cause", () => {
+      expect(isUniqueViolation(driverAdapterError("23505", "dup"))).toBe(true);
     });
 
     it("ignores unrelated and non-object errors", () => {
@@ -28,6 +35,12 @@ describe("pg-errors predicates", () => {
     it("matches the structured SQLSTATE 23P01 in meta.code", () => {
       expect(
         isExclusionViolation({ code: "P2010", meta: { code: "23P01" } }),
+      ).toBe(true);
+    });
+
+    it("matches 23P01 on a raw DriverAdapterError cause", () => {
+      expect(
+        isExclusionViolation(driverAdapterError("23P01", "conflicting key")),
       ).toBe(true);
     });
 
@@ -51,6 +64,9 @@ describe("pg-errors predicates", () => {
       expect(
         isExclusionViolation(new Error("unique constraint failed")),
       ).toBe(false);
+      expect(isExclusionViolation(driverAdapterError("23505", "dup"))).toBe(
+        false,
+      );
       expect(isExclusionViolation(undefined)).toBe(false);
     });
   });

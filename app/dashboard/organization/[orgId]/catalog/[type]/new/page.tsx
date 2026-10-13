@@ -22,6 +22,7 @@ export default async function NewOrgOfferingPage({
   if (!isOrgOfferingType(type)) notFound();
 
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "catalog.manage",
     canHost: true,
   });

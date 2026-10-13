@@ -20,6 +20,7 @@ import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { runJob } from "@/lib/observability/job-sentry";
+import { postOpsChat } from "@/lib/observability/ops-chat";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
 
 const MAX_BATCH = 50;
@@ -64,6 +65,12 @@ export async function runNotificationDrainTick(params: {
       deadLettered: 0,
       errors: [],
     };
+    const tickFailures: Array<{
+      id: string;
+      workflowId: string;
+      outcome: string;
+      error?: string;
+    }> = [];
 
     const dueRows = await params.prisma.notificationOutbox.findMany({
       where: {
@@ -77,7 +84,6 @@ export async function runNotificationDrainTick(params: {
               { status: "RETRY", nextRetryAt: { lte: nowDate } },
             ],
           },
-          // A zoned or quiet-hours deferral: the row waits until its instant.
           { OR: [{ notBefore: null }, { notBefore: { lte: nowDate } }] },
         ],
       },
@@ -92,39 +98,69 @@ export async function runNotificationDrainTick(params: {
         transactionId: true,
         attempts: true,
         status: true,
+        createdAt: true,
       },
     });
 
     const recordOutcome = (
+      row: StagedTrigger,
       outcome: Awaited<ReturnType<typeof attemptTrigger>>,
     ): boolean => {
       result.scanned += 1;
-      if (outcome.outcome === "SENT") result.sent += 1;
-      else if (outcome.outcome === "DEAD_LETTER") result.deadLettered += 1;
-      else if (outcome.outcome === "RETRY") result.retried += 1;
-      else if (outcome.error) {
-        // PENDING with no row change: Novu is not configured, so stop early —
-        // every later row would answer the same way.
+      if (row.createdAt) {
+        const lagSeconds = Math.max(
+          0,
+          (nowDate.getTime() - new Date(row.createdAt).getTime()) / 1000,
+        );
+        Sentry.metrics?.distribution?.(
+          "notifications.outbox.lag_seconds",
+          lagSeconds,
+        );
+      }
+      if (outcome.outcome === "SENT") {
+        result.sent += 1;
+      } else if (outcome.outcome === "DEAD_LETTER") {
+        result.deadLettered += 1;
+        tickFailures.push({
+          id: row.id,
+          workflowId: row.workflowId,
+          outcome: "DEAD_LETTER",
+          ...(outcome.error ? { error: String(outcome.error) } : {}),
+        });
+      } else if (outcome.outcome === "RETRY") {
+        result.retried += 1;
+        tickFailures.push({
+          id: row.id,
+          workflowId: row.workflowId,
+          outcome: "RETRY",
+          ...(outcome.error ? { error: String(outcome.error) } : {}),
+        });
+      } else if (outcome.error) {
         result.errors.push(String(outcome.error));
         return false;
       }
       return true;
     };
 
-    // Probe the first row so an unconfigured Novu stops immediately without
-    // fanning out a batch; then drain remaining rows with bounded concurrency.
     if (dueRows.length > 0) {
-      const firstOutcome = await attempt(dueRows[0], { relay: true, now });
-      if (recordOutcome(firstOutcome)) {
+      const firstRow = dueRows[0];
+      const firstOutcome = await attempt(firstRow, {
+        relay: true,
+        now,
+        suppressSentry: true,
+      });
+      if (recordOutcome(firstRow, firstOutcome)) {
         const rest = dueRows.slice(1);
         for (let i = 0; i < rest.length; i += DRAIN_CONCURRENCY) {
           const chunk = rest.slice(i, i + DRAIN_CONCURRENCY);
           const outcomes = await Promise.all(
-            chunk.map((row) => attempt(row, { relay: true, now })),
+            chunk.map((row) =>
+              attempt(row, { relay: true, now, suppressSentry: true }),
+            ),
           );
           let shouldContinue = true;
-          for (const outcome of outcomes) {
-            if (!recordOutcome(outcome)) {
+          for (let j = 0; j < chunk.length; j += 1) {
+            if (!recordOutcome(chunk[j], outcomes[j])) {
               shouldContinue = false;
               break;
             }
@@ -132,6 +168,28 @@ export async function runNotificationDrainTick(params: {
           if (!shouldContinue) break;
         }
       }
+    }
+
+    if (tickFailures.length > 0) {
+      Sentry.captureException(
+        new Error(
+          `Notification outbox drain encountered ${tickFailures.length} failure(s) (${result.deadLettered} dead-lettered, ${result.retried} retried)`,
+        ),
+        {
+          level: result.deadLettered > 0 ? "error" : "warning",
+          tags: {
+            subsystem: "novu",
+            op: "drain-outbox",
+            ...(result.deadLettered > 0 ? { outbox_dead_letter: "true" } : {}),
+          },
+          extra: {
+            scanned: result.scanned,
+            retried: result.retried,
+            deadLettered: result.deadLettered,
+            failures: tickFailures.slice(0, 10),
+          },
+        },
+      );
     }
 
     span?.setAttributes?.({
@@ -150,13 +208,35 @@ export async function runNotificationDrainTick(params: {
 
     if (typeof params.prisma.notificationOutbox.count === "function") {
       try {
-        const pendingCount = await params.prisma.notificationOutbox.count({
-          where: { status: { in: ["PENDING", "RETRY"] } },
-        });
+        const [pendingCount, deadLetterCount] = await Promise.all([
+          params.prisma.notificationOutbox.count({
+            where: { status: { in: ["PENDING", "RETRY"] } },
+          }),
+          params.prisma.notificationOutbox.count({
+            where: { status: "DEAD_LETTER" },
+          }),
+        ]);
         Sentry.metrics?.gauge?.("notifications.outbox.pending", pendingCount);
+        Sentry.metrics?.gauge?.(
+          "notifications.outbox.dead_letter",
+          deadLetterCount,
+        );
       } catch {
         // Best-effort metric gauge; never fail the drain tick.
       }
+    }
+
+    if (result.deadLettered > 0) {
+      const deadLetterWorkflows = [
+        ...new Set(
+          tickFailures
+            .filter((f) => f.outcome === "DEAD_LETTER")
+            .map((f) => f.workflowId),
+        ),
+      ].join(", ");
+      await postOpsChat(
+        `:rotating_light: Notification outbox dead-lettered ${result.deadLettered} row(s) (${deadLetterWorkflows || "unknown"})`,
+      );
     }
 
     return result;
@@ -183,9 +263,10 @@ export async function drainNotificationOutbox(opts?: {
 }
 
 if (require.main === module) {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  require("dotenv/config");
   runJob("drain-notification-outbox", async () => {
+    // Loaded here (not at module top) so importing this file from Next/tests never
+    // reads .env; dynamic import is the ESM form of the old lazy require.
+    await import("dotenv/config");
     await abortIfMaintenance("drain-notification-outbox");
     Sentry.logger.info("job:drain-notification-outbox started");
     try {

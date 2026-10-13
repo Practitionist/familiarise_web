@@ -25,11 +25,12 @@ import * as Sentry from "@sentry/nextjs";
 import { authClient, useSession } from "@/lib/auth-client";
 import { AUTH_PROVIDERS, type AuthProviderId } from "@/lib/auth-providers";
 import { PROVIDER_ICONS } from "@/components/auth/auth-icons";
-import { signOutEverywhere } from "@/lib/auth/sign-out";
+import { signInHref, signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   humanizeAuthError,
   normalizeAuthErrorCode,
 } from "@/lib/labels/auth-errors";
+import { withReauth } from "@/lib/auth/reauth-client";
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -114,11 +115,13 @@ export function PasswordSection() {
       // #1856 — a password change must end every other session, or a
       // stolen device survives the reset. BetterAuth does it in the same
       // request, so there is no second call that can fail on its own.
-      const { error } = await authClient.changePassword({
-        currentPassword: current,
-        newPassword: next,
-        revokeOtherSessions: true,
-      });
+      const { error } = await withReauth(() =>
+        authClient.changePassword({
+          currentPassword: current,
+          newPassword: next,
+          revokeOtherSessions: true,
+        }),
+      );
       if (error) {
         // BEFORE: `error.message` straight into the form. Better Auth's
         // sentence for a wrong current password is "Invalid password", and
@@ -150,7 +153,7 @@ export function PasswordSection() {
             description: copy.description,
             variant: "destructive",
           });
-          await signOutEverywhere("/auth/signin");
+          await signOutEverywhere(signInHref());
           return;
         }
         return;
@@ -238,7 +241,12 @@ interface DeviceSession {
   lastSeenAt: string;
   expiresAt: string;
   isCurrent: boolean;
-  isImpersonated: boolean;
+}
+
+interface SessionsPage {
+  sessions: DeviceSession[];
+  total: number;
+  nextCursor: string | null;
 }
 
 /**
@@ -266,8 +274,7 @@ function reportRevokeFailure(
 
 /**
  * "Last active" — the session row's `updatedAt`, which BetterAuth bumps at
- * most once per `updateAge` (1 day). So it is day-granular: "in the last
- * day" or "N days ago", never minutes.
+ * most once a day for a consumer, so the copy stays day-granular.
  */
 function formatLastActive(iso: string): string {
   const diffMs = Math.max(0, Date.now() - new Date(iso).getTime());
@@ -288,6 +295,8 @@ type SessionsLoadError = "signed-out" | "retryable";
 export function SessionsSection() {
   const { toast } = useToast();
   const [sessions, setSessions] = useState<DeviceSession[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<SessionsLoadError | null>(null);
   const [pendingRevoke, setPendingRevoke] = useState<DeviceSession | null>(
@@ -298,6 +307,9 @@ export function SessionsSection() {
   // `sessions` here would re-create `load` on every setSessions and
   // re-trigger the mount effect into a refetch loop.
   const hasLoadedRef = useRef(false);
+  // Bumped by every full reload, so a page fetched for an older list is dropped.
+  const listGenerationRef = useRef(0);
+  const loadingMoreRef = useRef(false);
   // One error event per mount: a broken backend 500ing for every visitor
   // must not turn every Retry click into a Sentry event (quota), and
   // 401 (dead session — an expected flow) and 429 (the limiter working
@@ -322,11 +334,13 @@ export function SessionsSection() {
   );
 
   const load = useCallback(async () => {
+    const generation = ++listGenerationRef.current;
     setIsLoading(true);
     setLoadError(null);
     let status: number | null = null;
     try {
       const res = await fetch("/api/user/sessions");
+      if (generation !== listGenerationRef.current) return;
       // 401 means THIS session is gone (revoked elsewhere, expired) —
       // retrying the same dead cookie is futile, so say so instead of
       // offering a Retry that can never succeed. Anything else (500,
@@ -337,10 +351,14 @@ export function SessionsSection() {
       }
       status = res.status;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = (await res.json()) as { sessions: DeviceSession[] };
+      const body = (await res.json()) as SessionsPage;
+      if (generation !== listGenerationRef.current) return;
       setSessions(body.sessions);
+      setTotal(body.total);
+      setNextCursor(body.nextCursor);
       hasLoadedRef.current = true;
     } catch (error) {
+      if (generation !== listGenerationRef.current) return;
       reportLoadFailure(status, error);
       // Stale list beats no list: a refresh failure keeps the last known
       // rows (flagged by toast) instead of blanking the section — but a
@@ -354,13 +372,43 @@ export function SessionsSection() {
         setLoadError("retryable");
       }
     } finally {
-      setIsLoading(false);
+      if (generation === listGenerationRef.current) setIsLoading(false);
     }
   }, [reportLoadFailure, toast]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    const generation = listGenerationRef.current;
+    setIsLoading(true);
+    try {
+      const res = await fetch(
+        `/api/user/sessions?cursor=${encodeURIComponent(nextCursor)}`,
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as SessionsPage;
+      if (generation !== listGenerationRef.current) return;
+      setSessions((prev) => {
+        const seen = new Set((prev ?? []).map((s) => s.id));
+        return [
+          ...(prev ?? []),
+          ...body.sessions.filter((s) => !seen.has(s.id)),
+        ];
+      });
+      setTotal(body.total);
+      setNextCursor(body.nextCursor);
+    } catch {
+      if (generation !== listGenerationRef.current) return;
+      toast({ title: "Couldn't load more sessions", variant: "destructive" });
+    } finally {
+      loadingMoreRef.current = false;
+      if (generation === listGenerationRef.current) setIsLoading(false);
+    }
+  }, [nextCursor, toast]);
 
   const revokeOne = useCallback(
     async (target: DeviceSession) => {
@@ -379,7 +427,7 @@ export function SessionsSection() {
       // failing the dialog would strand the user — sign out cleanly.
       if (res.status === 401) {
         toast({ title: "Your session ended. Signing you out." });
-        await signOutEverywhere("/auth/signin");
+        await signOutEverywhere(signInHref());
         return;
       }
       if (res.status === 429) {
@@ -420,7 +468,7 @@ export function SessionsSection() {
       // Dead session: nothing else to end that matters — sign out here.
       if (res.status === 401) {
         toast({ title: "Your session ended. Signing you out." });
-        await signOutEverywhere("/auth/signin");
+        await signOutEverywhere(signInHref());
         return;
       }
       if (res.status === 429) {
@@ -503,7 +551,7 @@ export function SessionsSection() {
               </span>
               <span className="text-muted-foreground">
                 {formatLastActive(s.lastSeenAt)}
-                {s.ipAddress ? ` · ${s.ipAddress}` : ""}
+                {s.ipAddress ? ` · Signed in from ${s.ipAddress}` : ""}
               </span>
             </span>
             {!s.isCurrent && (
@@ -517,6 +565,18 @@ export function SessionsSection() {
             )}
           </li>
         ))}
+        {nextCursor && (
+          <li className="pt-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isLoading}
+              onClick={() => void loadMore()}
+            >
+              Show more ({total - sessions.length} more)
+            </Button>
+          </li>
+        )}
       </ul>
     );
   }
@@ -532,7 +592,7 @@ export function SessionsSection() {
         <Button
           variant="outline"
           size="sm"
-          disabled={isLoading || (sessions?.length ?? 0) < 2}
+          disabled={isLoading || total < 2}
           onClick={() => {
             // Unlike the ConfirmDialog paths, nothing here catches a
             // rejection — surface it as a toast instead of an unhandled

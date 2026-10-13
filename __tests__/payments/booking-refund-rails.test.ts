@@ -48,6 +48,10 @@ jest.mock("../../lib/prisma", () => ({
           findMany: (...a: unknown[]) => mockRefundFindMany(...a),
           create: (...a: unknown[]) => mockRefundCreate(...a),
           update: (...a: unknown[]) => mockRefundUpdate(...a),
+          updateMany: async (...a: unknown[]) => {
+            mockRefundUpdate(...a);
+            return { count: 1 };
+          },
         },
       }),
   },
@@ -97,10 +101,8 @@ jest.mock("../../lib/email/send-to-recipients", () => ({
   attemptStaged: (...a: unknown[]) => mockAttemptStagedEmails(...a),
 }));
 
-import {
-  isInternalFundedIntent,
-  refundBookingPayment,
-} from "../../lib/payments/operations/booking-refund";
+import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
+import { isInternalFundedIntent } from "../../lib/payments/funding-rail";
 
 const PAYMENT_ID = "pay-1";
 
@@ -234,7 +236,7 @@ describe("refundBookingPayment", () => {
       }),
     );
     expect(mockRefundUpdate).toHaveBeenCalledWith({
-      where: { id: "refund-row-1" },
+      where: { id: "refund-row-1", status: "PENDING" },
       data: { status: "SUCCEEDED" },
     });
   });
@@ -269,6 +271,7 @@ describe("refundBookingPayment", () => {
       expect.anything(),
       100_000,
       100_000,
+      "refund-row-1",
     );
   });
 

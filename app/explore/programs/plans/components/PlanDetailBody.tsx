@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatRole } from "@/components/collaborators/format";
 import { PlanBrochureDownload } from "@/components/plans/PlanBrochureDownload";
 import type { BrochurePlanType } from "@/lib/pdf/plan-brochure-data";
+import { fileTypeLabel } from "@/lib/documents/file-policy";
 import {
   CurriculumOutline,
   PlanFaqAccordion,
@@ -100,6 +101,12 @@ export function PlanCollaboratorsCard({
  * Every section returns null when empty, so a sparsely-authored plan renders a
  * short page rather than a run of empty bordered cards with headings.
  */
+export interface PlanFileIncluded {
+  id: string;
+  originalName: string;
+  mimeType: string;
+}
+
 export interface PlanDetailBodyProps {
   aboutHeading: string;
   description?: string | null;
@@ -110,6 +117,8 @@ export interface PlanDetailBodyProps {
   curriculumHeading?: string;
   prerequisites?: string | null;
   materialProvided?: string | null;
+  /** The plan's real files, names and types only; buyers open them from their booking. */
+  filesIncluded?: PlanFileIncluded[];
   faqs?: PlanFaqItem[] | null;
   topics?: { id: string; name: string }[];
   brochure?: { planId: string; planType: BrochurePlanType };
@@ -165,6 +174,7 @@ export function PlanDetailBody({
   curriculumHeading = "What we'll cover",
   prerequisites,
   materialProvided,
+  filesIncluded,
   faqs,
   topics,
   brochure,
@@ -241,6 +251,34 @@ export function PlanDetailBody({
           <p className="text-muted-foreground whitespace-pre-line">
             {prerequisites}
           </p>
+        </SectionCard>
+      )}
+
+      {(filesIncluded?.length ?? 0) > 0 && (
+        <SectionCard>
+          <h2 className="mb-1 text-xl font-semibold text-foreground">
+            Files included
+          </h2>
+          <p className="mb-4 text-sm text-muted-foreground">
+            {filesIncluded!.length}{" "}
+            {filesIncluded!.length === 1 ? "file" : "files"} you can open from
+            your booking.
+          </p>
+          <ul className="space-y-2">
+            {filesIncluded!.map((file) => (
+              <li
+                key={file.id}
+                className="flex items-center justify-between gap-3 text-sm"
+              >
+                <span className="min-w-0 truncate text-foreground">
+                  {file.originalName}
+                </span>
+                <Badge variant="secondary" className="shrink-0">
+                  {fileTypeLabel(file)}
+                </Badge>
+              </li>
+            ))}
+          </ul>
         </SectionCard>
       )}
 

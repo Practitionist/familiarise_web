@@ -45,7 +45,10 @@ function TestimonialCard({
 
       <div className="flex items-center gap-3 pt-4 border-t border-white/[0.06]">
         <Avatar className="w-9 h-9 border border-zinc-700 shrink-0">
-          <AvatarImage src={review.consulteeProfile?.user?.image ?? ""} />
+          <AvatarImage
+            src={review.consulteeProfile?.user?.image ?? ""}
+            alt={review.consulteeProfile?.user?.name || "Verified Participant"}
+          />
           <AvatarFallback className="bg-zinc-800 text-zinc-300 text-xs font-medium">
             {review.consulteeProfile?.user?.name?.charAt(0) ?? "U"}
           </AvatarFallback>
@@ -152,6 +155,10 @@ export function TestimonialsSection({
                   <Avatar className="w-11 h-11 border border-zinc-700">
                     <AvatarImage
                       src={featuredReview.consulteeProfile?.user?.image ?? ""}
+                      alt={
+                        featuredReview.consulteeProfile?.user?.name ||
+                        "Verified Participant"
+                      }
                     />
                     <AvatarFallback className="bg-zinc-800 text-zinc-300 text-sm">
                       {featuredReview.consulteeProfile?.user?.name?.charAt(0) ??
@@ -175,11 +182,7 @@ export function TestimonialsSection({
             {/* Static 3-Column Review Grid */}
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5 mb-14">
               {gridReviews.slice(0, 6).map((review, idx) => (
-                <TestimonialCard
-                  key={review.id}
-                  review={review}
-                  index={idx}
-                />
+                <TestimonialCard key={review.id} review={review} index={idx} />
               ))}
             </div>
           </>

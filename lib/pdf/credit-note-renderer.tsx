@@ -27,6 +27,7 @@ import type { Currency } from "@prisma/client";
 // #1365 — the consumer documents share their page furniture, their Devanagari
 // registration and their formatting with the consumer tax invoice.
 import {
+  BODY_FONT,
   StatutoryDocumentFrame,
   statutoryStyles,
   formatStatutoryDate,
@@ -78,7 +79,7 @@ function fmt(d: Date | null | undefined): string {
 }
 
 const styles = StyleSheet.create({
-  page: { padding: 36, fontFamily: "Helvetica", fontSize: 10, color: "#222" },
+  page: { padding: 36, fontFamily: BODY_FONT, fontSize: 10, color: "#222" },
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",

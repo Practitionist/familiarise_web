@@ -26,7 +26,12 @@ export async function GET(
   try {
     const { classId } = await params;
 
-    const authz = await authorizeEventAccess(session, "class", classId);
+    const authz = await authorizeEventAccess(
+      session,
+      "class",
+      classId,
+      request.method,
+    );
     if (authz) return authz;
 
     const classData = await prisma.class.findUniqueOrThrow({
@@ -151,7 +156,6 @@ export async function PUT(
         schedulingPeriodStartsAt: body.schedulingPeriodStartsAt,
         schedulingPeriodEndsAt: body.schedulingPeriodEndsAt,
         status: requestedStatus,
-        recordingUrls: body.recordingUrls,
         feedbackSummary: body.feedbackSummary,
       },
       include: {

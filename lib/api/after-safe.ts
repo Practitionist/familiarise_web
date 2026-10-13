@@ -31,31 +31,22 @@ import { reportSentryError } from "@/lib/observability/report";
 export function scheduleAfter(
   task: () => Promise<unknown> | unknown,
   op?: string,
-): void {
-  const run = () =>
+): Promise<void> {
+  const run = (): Promise<void> =>
     Promise.resolve()
       .then(task)
+      .then(() => undefined)
       .catch((error) => {
         reportSentryError(error, {
           subsystem: "after",
           op: op ?? "scheduleAfter",
-          // Deliberately NOT `expected: true`. In this codebase that flag means
-          // "a modelled outcome — an ANSWER, not a fault", and `beforeSend`
-          // re-levels it to `info` and tags it, which is exactly the bucket
-          // the triage runbook says to read as "the code refused correctly".
-          // A bell that failed to send is a FAULT, not a refusal: nothing
-          // refused, the work just did not happen. Levelling it as a warning
-          // rather than an error keeps it out of the noise floor without
-          // claiming it was intended.
           level: "warning",
         });
       });
   try {
     after(run);
+    return Promise.resolve();
   } catch {
-    // Outside a request scope `after()` throws; run it inline instead so the
-    // task is not silently skipped. The task's own rejection is still caught
-    // and reported by `run` above.
-    void run();
+    return run();
   }
 }

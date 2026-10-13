@@ -12,6 +12,7 @@ import {
 import { MeetingRoomSkeleton } from "./MeetingRoomSkeleton";
 import { useGetCallById } from "./hooks/useGetCallById";
 import Alert from "./components/Alert";
+import { MeetingLobbyGateCard } from "./components/MeetingLobbyGateCard";
 import MeetingSetup from "./components/MeetingSetup";
 import MeetingRoom from "./components/MeetingRoom";
 import { useSession } from "@/lib/auth-client";
@@ -23,10 +24,49 @@ const MeetingPage = () => {
   // used to be two effects racing each other: the call was created client-side
   // before the access check came back, so an unauthorized visitor minted a real
   // Stream call and only then saw "Access Denied".
-  const { call, isCallLoading, error, access, rejoin } = useGetCallById(
-    id as string,
-  );
+  const {
+    call,
+    isCallLoading,
+    error,
+    access,
+    consentRequired,
+    roomNotProvisioned,
+    rejoin,
+    retryJoin,
+  } = useGetCallById(id as string);
   const [isSetupComplete, setIsSetupComplete] = useState(false);
+  const [isGrantingConsent, setIsGrantingConsent] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
+
+  const handleGrantConsentAndJoin = async () => {
+    if (isGrantingConsent) return;
+    setIsGrantingConsent(true);
+    setConsentError(null);
+    try {
+      const response = await fetch("/api/user/privacy/consent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purposeCodes: ["STREAM_DATA_PROCESSING"] }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(
+          typeof body?.error === "string"
+            ? body.error
+            : "Could not record your consent. Please try again.",
+        );
+      }
+      retryJoin();
+    } catch (err) {
+      setConsentError(
+        err instanceof Error
+          ? err.message
+          : "Could not record your consent. Please try again.",
+      );
+    } finally {
+      setIsGrantingConsent(false);
+    }
+  };
 
   // Release the camera and microphone on ANY exit from this page, not just the
   // explicit Leave button: navigating away and the browser Back button both
@@ -56,8 +96,8 @@ const MeetingPage = () => {
     };
   }, [call]);
 
-  // Loading states — lobby anatomy matches MeetingSetup to avoid spinner flash
-  if (isSessionPending || isCallLoading) {
+  // Loading states — keep gate card mounted during retryJoin so Check Again never flashes blank
+  if (isSessionPending || (isCallLoading && !access)) {
     return <MeetingRoomSkeleton />;
   }
 
@@ -66,30 +106,64 @@ const MeetingPage = () => {
     return <Alert title="You need to be logged in to join this meeting" />;
   }
 
-  // Access denied
-  if (access && !access.hasAccess) {
+  // Inline 1-click DPDP consent prompt when STREAM_DATA_PROCESSING consent is missing
+  if (access && !access.hasAccess && consentRequired) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-muted p-4">
-        <div className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-red-100 flex items-center justify-center">
-            <ShieldAlert className="w-8 h-8 text-red-600" />
+        <div
+          data-testid="stream-consent-prompt"
+          className="w-full max-w-md bg-card p-8 rounded-2xl shadow-xl border border-border text-center"
+        >
+          <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
+            <ShieldAlert className="w-8 h-8 text-amber-600" />
           </div>
           <h2 className="text-xl font-bold text-foreground mb-2">
-            Access Denied
+            Enable Live Video &amp; Audio Processing
           </h2>
-          <p className="text-muted-foreground mb-4">{access.message}</p>
-          <p className="text-sm text-muted-foreground/70">
-            If you believe this is an error, please contact support or the
-            meeting host.
+          <p className="text-muted-foreground mb-3">{access.message}</p>
+          <p className="text-sm text-muted-foreground/80 mb-6">
+            Under India&apos;s DPDP Act, we need your consent to process live
+            video, audio, and session metadata via our real-time media provider
+            so you can join this session.
           </p>
-          <button
-            onClick={() => window.history.back()}
-            className="mt-6 px-6 py-2.5 bg-foreground text-background rounded-lg font-medium hover:bg-foreground/90 transition-colors"
-          >
-            Go Back
-          </button>
+          {consentError && (
+            <p className="mb-4 text-sm text-red-600" role="alert">
+              {consentError}
+            </p>
+          )}
+          <div className="flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={handleGrantConsentAndJoin}
+              disabled={isGrantingConsent}
+              data-testid="grant-stream-consent-button"
+              className="w-full px-6 py-2.5 bg-foreground text-background rounded-lg font-medium hover:bg-foreground/90 transition-colors disabled:opacity-50"
+            >
+              {isGrantingConsent
+                ? "Granting Consent…"
+                : "Grant Consent & Join Session"}
+            </button>
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              className="w-full px-6 py-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Go Back
+            </button>
+          </div>
         </div>
       </div>
+    );
+  }
+
+  // Access refused (too early, session concluded, or unauthorized)
+  if (access && !access.hasAccess) {
+    return (
+      <MeetingLobbyGateCard
+        meetingId={id as string}
+        access={access}
+        onRetryJoin={retryJoin}
+      />
     );
   }
 
@@ -98,6 +172,7 @@ const MeetingPage = () => {
       <Alert
         title="Meeting Error"
         description={`Failed to load meeting: ${error.message}`}
+        onRetry={roomNotProvisioned ? retryJoin : undefined}
       />
     );
   }
@@ -118,10 +193,11 @@ const MeetingPage = () => {
           {!isSetupComplete ? (
             <MeetingSetup
               setIsSetupComplete={setIsSetupComplete}
-              meetingId={id as string}
+              meetingId={call.id}
+              role={access?.role ?? null}
             />
           ) : (
-            <MeetingRoom onRejoin={rejoin} />
+            <MeetingRoom onRejoin={rejoin} role={access?.role ?? null} />
           )}
         </StreamTheme>
       </StreamCall>

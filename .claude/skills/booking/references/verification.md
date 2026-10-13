@@ -79,14 +79,15 @@ booking change: `stream-webhook-drift.yml` fires only on a `paths:` filter over
 three `lib/stream/` files, `claude-code-review.yml` only on a `labeled` event,
 and `claude.yml` only when a comment or review body contains `@claude`.
 
-CI's `test-and-build` job is the gate: `npx tsc --noEmit`, `npx prisma generate`,
-the SSO invariant script, the money-column and workflow-hygiene guards,
-`npm run test`, and `npm run build`. The `db-guards` job runs the DB-sidecar and
-DB-drift guards against a throwaway Postgres. There is no `typecheck`
+CI's `test-and-build` job is the gate: it passes only when the `typecheck`
+job (`npm audit`, `prisma generate`, `npx tsc --noEmit`, and the money-column,
+auth-schema and workflow-hygiene guards), the `unit-tests` job (`npm run test`)
+and the `build` job (`npm run build`) all pass. The `db-guards` job runs the
+DB-sidecar guard against a throwaway Postgres. There is no `typecheck`
 script, so type-check locally by typing `npx tsc --noEmit` yourself.
 
-The separate `lint` job is advisory: both the ESLint and Prettier steps carry
-`continue-on-error: true`, and the summary prints "non-blocking". There is no
+In the separate `lint` job ESLint errors fail the job; the Prettier step carries
+`continue-on-error: true`, so formatting is advisory in CI. There is no
 `--max-warnings` anywhere, and the config marks almost everything `warn`; only
 `react-hooks/rules-of-hooks` and `no-restricted-imports` are errors. That
 layering guard is the one lint rule that catches a bad booking refactor — it
@@ -119,7 +120,7 @@ booking, a real Payment row and real earnings without touching a gateway.
 For anything touching a lock, a CAS transition or an exclusion constraint, run
 `npm run test:chaos:api`, which executes the real-API booking and webhook-storm
 categories against a seeded database and a running server. The runbook is
-`docs/enterprise/50-operations/07-chaos-test-runbook.md`. Its booking scenarios
+`docs/enterprise/50-operations/06-chaos-test-runbook.md`. Its booking scenarios
 cover the cancel-versus-reschedule race, the reschedule storm, two concurrent
 `DELETE`s on one pending payment (exactly one 200, the loser a 409), the
 last-seat storm, and webhook bulk-replay and out-of-order. They restore their
@@ -154,9 +155,9 @@ new schema, say so and stop; do not push it to prove a test passes.
 Since #1322 merged, `db:push` on `dev` is push-then-sidecars-then-assert
 (`db:push:schema` = `prisma db push && npm run db:sidecars`, then
 `db:assert-sidecars`), so a push can no longer silently leave
-`slot_no_confirmed_overlap` and the money CHECK constraints behind. The bare
-escape hatch survives as `db:push:no-sidecars-DANGEROUS`. Either way, "Prisma
-schema is up to date" says nothing about the sidecars.
+`occurrence_no_confirmed_overlap` and the money CHECK constraints behind. There is
+no sidecar-skipping push script any more, so `npm run db:push` is the only path.
+"Prisma schema is up to date" says nothing about the sidecars.
 
 ## 8. The preview-QA recipe used on the 2026-09-18/19 requests train (#1703)
 

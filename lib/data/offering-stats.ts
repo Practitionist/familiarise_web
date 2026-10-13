@@ -30,6 +30,7 @@ const BOOKED: ReadonlySet<AppointmentStatus> = new Set([
 interface PlanHead {
   id: string;
   title: string;
+  consultantProfileId: string | null;
   organizationId: string | null;
   archivedAt: Date | null;
 }
@@ -37,6 +38,7 @@ interface PlanHead {
 const PLAN_HEAD = {
   id: true,
   title: true,
+  consultantProfileId: true,
   organizationId: true,
   archivedAt: true,
 } as const;
@@ -99,7 +101,6 @@ async function readEventTallies(
   webinarPlanIds: string[],
   classPlanIds: string[],
   tallies: Map<string, Tally>,
-  instancePlan: Map<string, string>,
 ) {
   const add = (key: string, counts: { participants: number } | undefined) => {
     const t = tallies.get(key) ?? emptyTally();
@@ -113,7 +114,6 @@ async function readEventTallies(
     });
     for (const w of webinars) {
       const key = offeringStatKey("webinar", w.webinarPlanId);
-      instancePlan.set(`webinar:${w.id}`, key);
       add(key, w.appointment?._count);
     }
   }
@@ -124,16 +124,15 @@ async function readEventTallies(
     });
     for (const c of classes) {
       const key = offeringStatKey("class", c.classPlanId);
-      instancePlan.set(`class:${c.id}`, key);
       add(key, c.appointment?._count);
     }
   }
 }
 
 /**
- * #1846 — which plans the DELETE routes would accept right now. The same
+ * Which owned plans the DELETE routes would accept right now. The same
  * `UNTOUCHED_PLAN` guard they carry in their WHERE runs here as a query, so
- * the card offers Delete exactly when the server would not refuse it.
+ * the card offers Delete only when the server would not refuse it.
  */
 async function readDeletablePlanIds(ids: {
   consultation: string[];
@@ -163,23 +162,34 @@ async function readDeletablePlanIds(ids: {
   return new Set(rows.map((row) => row.id));
 }
 
-/** The owner's net share per plan key, plus the lifetime total. */
-async function readEarningsByPlan(
-  consultantProfileId: string,
-  instancePlan: Map<string, string>,
-): Promise<{ byPlan: Map<string, number>; lifetime: number }> {
+/** Consultant net share per plan key (owned + co-hosted), plus lifetime total. */
+async function readEarningsByPlan(consultantProfileId: string): Promise<{
+  byPlan: Map<string, number>;
+  lifetime: number;
+  paidWebinarPlanIds: string[];
+  paidClassPlanIds: string[];
+}> {
   const byPlan = new Map<string, number>();
+  const paidWebinarPlanIds = new Set<string>();
+  const paidClassPlanIds = new Set<string>();
+
   const grouped = await prisma.consultantEarnings.groupBy({
     by: ["paymentId"],
     where: { consultantProfileId },
     _sum: { consultantSharePaise: true, refundedShareAmount: true },
   });
-  if (grouped.length === 0) return { byPlan, lifetime: 0 };
+  if (grouped.length === 0) {
+    return {
+      byPlan,
+      lifetime: 0,
+      paidWebinarPlanIds: [],
+      paidClassPlanIds: [],
+    };
+  }
 
   const netByPayment = new Map<string, number>();
   let lifetime = 0;
   for (const g of grouped) {
-    // #780 — _sum bypasses the result extension: bigint until sumPaise'd.
     const net =
       sumPaise(g._sum.consultantSharePaise) -
       sumPaise(g._sum.refundedShareAmount);
@@ -193,10 +203,10 @@ async function readEarningsByPlan(
       id: true,
       appointment: {
         select: {
-          webinarId: true,
-          classId: true,
           consultation: { select: { consultationPlanId: true } },
           subscription: { select: { subscriptionPlanId: true } },
+          webinar: { select: { webinarPlanId: true } },
+          class: { select: { classPlanId: true } },
         },
       },
     },
@@ -208,62 +218,101 @@ async function readEarningsByPlan(
       key = offeringStatKey("consultation", a.consultation.consultationPlanId);
     } else if (a?.subscription) {
       key = offeringStatKey("subscription", a.subscription.subscriptionPlanId);
-    } else if (a?.webinarId) {
-      key = instancePlan.get(`webinar:${a.webinarId}`);
-    } else if (a?.classId) {
-      key = instancePlan.get(`class:${a.classId}`);
+    } else if (a?.webinar?.webinarPlanId) {
+      paidWebinarPlanIds.add(a.webinar.webinarPlanId);
+      key = offeringStatKey("webinar", a.webinar.webinarPlanId);
+    } else if (a?.class?.classPlanId) {
+      paidClassPlanIds.add(a.class.classPlanId);
+      key = offeringStatKey("class", a.class.classPlanId);
     }
-    // A collaborator's share on someone else's plan counts toward lifetime only.
     if (!key) continue;
     byPlan.set(key, (byPlan.get(key) ?? 0) + (netByPayment.get(p.id) ?? 0));
   }
-  return { byPlan, lifetime };
+  return {
+    byPlan,
+    lifetime,
+    paidWebinarPlanIds: [...paidWebinarPlanIds],
+    paidClassPlanIds: [...paidClassPlanIds],
+  };
 }
 
 export async function readOfferingStats(
   consultantProfileId: string,
 ): Promise<OfferingStats> {
-  const where = { consultantProfileId };
+  const { byPlan, lifetime, paidWebinarPlanIds, paidClassPlanIds } =
+    await readEarningsByPlan(consultantProfileId);
+
+  const ownedWhere = { consultantProfileId };
   const consultationPlans = await prisma.consultationPlan.findMany({
-    where,
+    where: ownedWhere,
     select: PLAN_HEAD,
   });
   const subscriptionPlans = await prisma.subscriptionPlan.findMany({
-    where,
+    where: ownedWhere,
     select: PLAN_HEAD,
   });
   const webinarPlans = await prisma.webinarPlan.findMany({
-    where,
+    where: {
+      OR: [
+        { consultantProfileId },
+        {
+          collaborators: {
+            some: { consultantProfileId, status: "ACCEPTED" },
+          },
+        },
+        ...(paidWebinarPlanIds.length > 0
+          ? [
+              {
+                id: { in: paidWebinarPlanIds },
+                collaborators: { some: { consultantProfileId } },
+              },
+            ]
+          : []),
+      ],
+    },
     select: PLAN_HEAD,
   });
   const classPlans = await prisma.classPlan.findMany({
-    where,
+    where: {
+      OR: [
+        { consultantProfileId },
+        {
+          collaborators: {
+            some: { consultantProfileId, status: "ACCEPTED" },
+          },
+        },
+        ...(paidClassPlanIds.length > 0
+          ? [
+              {
+                id: { in: paidClassPlanIds },
+                collaborators: { some: { consultantProfileId } },
+              },
+            ]
+          : []),
+      ],
+    },
     select: PLAN_HEAD,
   });
 
   const ids = (plans: PlanHead[]) => plans.map((p) => p.id);
+  const ownedIds = (plans: PlanHead[]) =>
+    plans
+      .filter((p) => p.consultantProfileId === consultantProfileId)
+      .map((p) => p.id);
+
   const tallies = new Map<string, Tally>();
-  const instancePlan = new Map<string, string>();
   await readRequestTallies(
     ids(consultationPlans),
     ids(subscriptionPlans),
     tallies,
   );
-  await readEventTallies(
-    ids(webinarPlans),
-    ids(classPlans),
-    tallies,
-    instancePlan,
-  );
-  const { byPlan, lifetime } = await readEarningsByPlan(
-    consultantProfileId,
-    instancePlan,
-  );
+  await readEventTallies(ids(webinarPlans), ids(classPlans), tallies);
+
   const deletable = await readDeletablePlanIds({
-    consultation: ids(consultationPlans),
-    subscription: ids(subscriptionPlans),
-    webinar: ids(webinarPlans),
-    class: ids(classPlans),
+    consultation: ownedIds(consultationPlans),
+    subscription: ownedIds(subscriptionPlans),
+    webinar: ownedIds(webinarPlans),
+    class: ownedIds(classPlans),
   });
 
   const toRows = (planType: OfferingPlanType, plans: PlanHead[]) =>
@@ -277,7 +326,9 @@ export async function readOfferingStats(
         title: plan.title,
         bookings: tally.bookings,
         earningsPaise,
-        canDelete: deletable.has(plan.id),
+        canDelete:
+          plan.consultantProfileId === consultantProfileId &&
+          deletable.has(plan.id),
         orgGoverned: plan.organizationId !== null,
         archived: plan.archivedAt !== null,
       };

@@ -49,7 +49,7 @@ const config: Config = {
   //   "clover"
   // ],
 
-  // An object that configures minimum threshold enforcement for coverage results (#1885)
+  // Minimum threshold enforcement for full-suite coverage runs
   coverageThreshold: {
     global: {
       branches: 60,
@@ -256,6 +256,12 @@ export default async (): Promise<Config> => {
   }
   return {
     ...resolved,
+    moduleNameMapper: {
+      "^@/lib/redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
+      "(?:^|/)lib/redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
+      "^\\./redis-edge$": "<rootDir>/__mocks__/redis-edge.ts",
+      ...resolved.moduleNameMapper,
+    },
     transformIgnorePatterns: patterns.map((p) =>
       p.startsWith(NODE_MODULES_LOOKAHEAD)
         ? p.replace(

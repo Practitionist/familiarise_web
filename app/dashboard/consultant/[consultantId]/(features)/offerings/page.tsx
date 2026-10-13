@@ -3,7 +3,6 @@
 import type { ReactNode } from "react";
 import { useParams } from "next/navigation";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { PlannerSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import {
   DashboardHeader,
@@ -16,15 +15,13 @@ import { NewOfferingMenu } from "@/components/offerings/list/NewOfferingMenu";
 import { OfferingsTabs } from "@/components/offerings/list/OfferingsTabs";
 
 /**
- * /offerings — the Event Planner renamed and redesigned (#1527 §7.2). The
- * webinar/class instances come from the planner read; the 1:1 plan lists and
- * the per-offering stats load inside the list.
+ * /offerings — webinar/class instances come from the planner read; 1:1 plan
+ * lists and per-offering stats load inside the list.
  */
 export default function OfferingsPage() {
   const consultantId = useParams().consultantId as string;
 
-  // keepPreviousData: a refetch keeps the cards instead of flashing a
-  // skeleton (documents-page idiom, #346).
+  // Refetches keep current cards mounted instead of flashing a skeleton.
   const {
     data: plannerData,
     isLoading,
@@ -48,12 +45,10 @@ export default function OfferingsPage() {
     );
   } else {
     body = (
-      <DashboardErrorBoundary>
-        <EventManagementDashboard
-          consultantId={consultantId}
-          data={plannerData}
-        />
-      </DashboardErrorBoundary>
+      <EventManagementDashboard
+        consultantId={consultantId}
+        data={plannerData}
+      />
     );
   }
 

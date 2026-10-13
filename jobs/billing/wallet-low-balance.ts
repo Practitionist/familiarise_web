@@ -7,10 +7,8 @@
  * account per day, claimed via a conditional updateMany so two cron replicas
  * (or a same-day re-run) can't double-notify.
  *
- * There is NO money movement here and NO WalletTopUp row is created. The
- * gateway-mandate auto-charge is a TODO(#1319) for when Razorpay mandates land
- * (that's why autoTopUpMandateId / autoTopUpAmountPaise stay unused by this
- * wave). For now we just detect, tell finance, and stamp the cooldown.
+ * There is NO money movement here and NO WalletTopUp row is created: it
+ * detects, tells finance, and stamps the cooldown.
  *
  * Schedule: daily at 05:15 IST (`.github/workflows/wallet-low-balance.yml`).
  * Quiet slot — after the 23:30 UTC dunning cron, no other cron at 23:xx.
@@ -82,11 +80,6 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
       data: { autoTopUpLastFiredAt: now },
     });
     if (claim.count === 0) continue;
-
-    // TODO(#1319): when Razorpay mandates land, charge autoTopUpMandateId for
-    // autoTopUpAmountPaise here (inside a tx that writes the WalletTopUp +
-    // ledger row) when autoTopUpEnabled. This wave is NOTIFY-ONLY — no money
-    // moves and no WalletTopUp is created.
 
     stats.notified += 1;
     await notifyOrgWalletLow(ba.ownerOrgId, {

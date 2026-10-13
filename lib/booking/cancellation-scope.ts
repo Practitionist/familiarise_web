@@ -175,7 +175,12 @@ export async function resolveBookingRefundContext(
         // occurrences, so there is no per-payer subset to scope to; the payer
         // filter lives on the payment lookup above.
         where: { deletedAt: null },
-        select: { startsAt: true, completionStatus: true, isTentative: true },
+        select: {
+          startsAt: true,
+          completionStatus: true,
+          isTentative: true,
+          updatedAt: true,
+        },
       },
     },
   });
@@ -235,11 +240,27 @@ export async function resolveBookingRefundContext(
     .map((s) => s.startsAt.getTime())
     .sort((a, b) => a - b);
 
+  const rawHoursUntilNextSession =
+    liveStarts.length > 0 ? (liveStarts[0] - Date.now()) / 3_600_000 : null;
+  const noticeFloorHours = await computeRescheduleNoticeFloorHours(
+    db,
+    row?.id,
+    slots,
+  );
+  let hoursUntilNextSession = rawHoursUntilNextSession;
+  if (rawHoursUntilNextSession !== null && noticeFloorHours !== null) {
+    hoursUntilNextSession = Math.min(
+      rawHoursUntilNextSession,
+      noticeFloorHours,
+    );
+  } else if (noticeFloorHours !== null) {
+    hoursUntilNextSession = noticeFloorHours;
+  }
+
   return {
     paidPayment,
     policy,
-    hoursUntilNextSession:
-      liveStarts.length > 0 ? (liveStarts[0] - Date.now()) / 3_600_000 : null,
+    hoursUntilNextSession,
     sessionsCompleted: slots.filter(isCompletedOccurrence).length,
     sessionsRemaining: liveStarts.length,
     slotsTotal: slots.length,
@@ -247,3 +268,65 @@ export async function resolveBookingRefundContext(
     scheduledStarts,
   };
 }
+
+function noticeHoursBetween(
+  startsAt: Date,
+  stampedAt: Date | null | undefined,
+): number | null {
+  if (!(stampedAt instanceof Date)) return null;
+  const hours = (startsAt.getTime() - stampedAt.getTime()) / 3_600_000;
+  return hours >= 0 ? hours : null;
+}
+
+async function computeRescheduleNoticeFloorHours(
+  db: unknown,
+  appointmentId: string | undefined,
+  slots: Array<{
+    startsAt: Date;
+    updatedAt?: Date | null;
+    completionStatus: string;
+  }>,
+): Promise<number | null> {
+  const occurrenceDelegate = (
+    db as {
+      appointmentOccurrence?: {
+        findMany?: (args: unknown) => Promise<
+          Array<{
+            startsAt: Date;
+            deletedAt?: Date | null;
+            completionStatus: string;
+          }>
+        >;
+      };
+    }
+  ).appointmentOccurrence;
+
+  const tombstonedSlots = appointmentId
+    ? ((await occurrenceDelegate?.findMany?.({
+        where: {
+          appointmentId,
+          deletedAt: { not: null },
+          completionStatus: "RESCHEDULED",
+        },
+        select: {
+          startsAt: true,
+          deletedAt: true,
+          completionStatus: true,
+        },
+      })) ?? [])
+    : [];
+
+  const liveRescheduledNotices = slots
+    .filter((s) => s.completionStatus === "RESCHEDULED")
+    .map((s) => noticeHoursBetween(s.startsAt, s.updatedAt));
+  const tombstonedNotices = tombstonedSlots
+    .filter((t) => t.completionStatus === "RESCHEDULED")
+    .map((t) => noticeHoursBetween(t.startsAt, t.deletedAt));
+
+  const validNotices = [...liveRescheduledNotices, ...tombstonedNotices].filter(
+    (h): h is number => h !== null,
+  );
+  return validNotices.length > 0 ? Math.min(...validNotices) : null;
+}
+
+

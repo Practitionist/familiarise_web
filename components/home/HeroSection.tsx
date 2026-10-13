@@ -1,7 +1,3 @@
-"use client";
-
-import { useCallback, useEffect, useRef, useState } from "react";
-import { motion, useInView } from "framer-motion";
 import {
   ArrowRight,
   BadgeCheck,
@@ -26,8 +22,16 @@ const QUICK_DOMAINS = [
 
 const PREVIEW_FORMATS = [
   { label: "1:1 Consultation", meta: "45 min • Live HD video", active: true },
-  { label: "Mentorship Plan", meta: "Weekly calls + async chat", active: false },
-  { label: "Cohort Class", meta: "Multi-week structured curriculum", active: false },
+  {
+    label: "Mentorship Plan",
+    meta: "Weekly calls + async chat",
+    active: false,
+  },
+  {
+    label: "Cohort Class",
+    meta: "Multi-week structured curriculum",
+    active: false,
+  },
 ];
 
 const PREVIEW_SLOTS = ["Today, 6:00 PM", "Tomorrow, 11:00 AM", "Thu, 4:30 PM"];
@@ -39,41 +43,9 @@ function AnimatedNumber({
   value: number;
   suffix?: string;
 }) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true });
-  const [displayValue, setDisplayValue] = useState(0);
-
-  const animate = useCallback(() => {
-    const duration = 1400;
-    const steps = 45;
-    const increment = value / steps;
-    let current = 0;
-    const timer = setInterval(() => {
-      current += increment;
-      if (current >= value) {
-        setDisplayValue(value);
-        clearInterval(timer);
-      } else {
-        setDisplayValue(Math.floor(current));
-      }
-    }, duration / steps);
-    return () => clearInterval(timer);
-  }, [value]);
-
-  useEffect(() => {
-    if (isInView) {
-      return animate();
-    }
-  }, [isInView, animate]);
-
   return (
-    <span
-      ref={ref}
-      className="text-3xl md:text-4xl font-bold text-white tabular-nums tracking-tight"
-    >
-      {value % 1 !== 0
-        ? displayValue.toFixed(1)
-        : displayValue.toLocaleString()}
+    <span className="text-3xl md:text-4xl font-bold text-white tabular-nums tracking-tight">
+      {value % 1 !== 0 ? value.toFixed(1) : value.toLocaleString()}
       {suffix}
     </span>
   );
@@ -94,44 +66,26 @@ export function HeroSection({
         <div className="grid lg:grid-cols-12 gap-12 lg:gap-10 items-center">
           {/* Left column: Headline, Inline Search, Domain Pills & Verified Stats */}
           <div className="lg:col-span-7">
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45 }}
-              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.06] border border-white/10 text-zinc-300 text-xs font-medium mb-6"
-            >
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.06] border border-white/10 text-zinc-300 text-xs font-medium mb-6">
               <Sparkles className="w-3.5 h-3.5 text-zinc-300" />
               {/* #1490 — enforced by the directory reads themselves: only VERIFIED profiles are public. */}
               <span>Every expert is verified before they are listed</span>
-            </motion.div>
+            </div>
 
-            <motion.h1
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.05 }}
-              className="text-fluid-4xl md:text-fluid-5xl font-bold text-white mb-6 leading-[1.08] tracking-tight"
-            >
+            <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold text-white mb-6 leading-[1.08] tracking-tight">
               Learn directly from the{" "}
               <span className="silver-text">best minds</span>{" "}
               <span className="text-zinc-400">in your industry</span>
-            </motion.h1>
+            </h1>
 
-            <motion.p
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              className="text-base md:text-lg text-zinc-400 mb-8 max-w-2xl leading-relaxed"
-            >
+            <p className="text-base md:text-lg text-zinc-400 mb-8 max-w-2xl leading-relaxed">
               Book 1-on-1 consultations, ongoing mentorship subscriptions,
               cohort classes, and live webinars with verified practitioners —
               backed by built-in HD video and escrow payment protection.
-            </motion.p>
+            </p>
 
             {/* Interactive Search Bar */}
-            <motion.form
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.15 }}
+            <form
               action="/explore/experts"
               method="GET"
               className="mb-5 max-w-2xl"
@@ -156,15 +110,10 @@ export function HeroSection({
                   <ArrowRight className="ml-2 w-4 h-4" />
                 </Button>
               </div>
-            </motion.form>
+            </form>
 
             {/* Popular Domain Pills & Secondary Actions */}
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-              className="flex flex-wrap items-center gap-2 mb-10"
-            >
+            <div className="flex flex-wrap items-center gap-2 mb-10">
               <span className="text-xs font-medium text-zinc-500 mr-1">
                 Popular domains:
               </span>
@@ -183,16 +132,11 @@ export function HeroSection({
               >
                 Become an Expert →
               </Link>
-            </motion.div>
+            </div>
 
             {/* Real Database Stats (#1490) */}
             {stats.length > 0 && (
-              <motion.dl
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.25 }}
-                className="grid grid-cols-2 sm:grid-cols-3 gap-6 pt-8 border-t border-white/[0.08] max-w-xl"
-              >
+              <dl className="grid grid-cols-2 sm:grid-cols-3 gap-6 pt-8 border-t border-white/[0.08] max-w-xl">
                 {stats.map((stat) => (
                   <div key={stat.key}>
                     <dd>
@@ -203,17 +147,12 @@ export function HeroSection({
                     </dt>
                   </div>
                 ))}
-              </motion.dl>
+              </dl>
             )}
           </div>
 
           {/* Right column: Interactive Session & Booking Architecture Preview */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.15 }}
-            className="lg:col-span-5"
-          >
+          <div className="lg:col-span-5">
             <div className="rounded-2xl border border-white/10 bg-zinc-900/70 backdrop-blur-md p-6 shadow-2xl">
               {/* Header bar */}
               <div className="flex items-center justify-between pb-5 mb-5 border-b border-white/[0.08]">
@@ -331,7 +270,7 @@ export function HeroSection({
                 </Button>
               </div>
             </div>
-          </motion.div>
+          </div>
         </div>
       </div>
     </section>

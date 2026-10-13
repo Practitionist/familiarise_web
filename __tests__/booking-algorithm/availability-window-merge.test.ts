@@ -98,6 +98,28 @@ describe("mergeAdjacentWeeklyRows", () => {
       { ...fourHours, endTimeUtc: 720 },
     ]);
   });
+
+  it("does not merge two rows on the same local startDay that fall on different UTC start days (24h apart)", () => {
+    // Monday 22:00–01:00 IST -> UTC Monday 16:30–19:30 (990..1170, utcStartDay=Monday)
+    const monNightIst = {
+      startDay: "MONDAY" as const,
+      endDay: "MONDAY" as const,
+      startTimeUtc: 990,
+      endTimeUtc: 1170,
+      utcOffsetMinutes: 330,
+    };
+    // Monday 01:00–02:00 IST -> UTC Sunday 19:30–20:30 (1170..1230, utcStartDay=Sunday)
+    const monPreDawnIst = {
+      startDay: "MONDAY" as const,
+      endDay: "MONDAY" as const,
+      startTimeUtc: 1170,
+      endTimeUtc: 1230,
+      utcOffsetMinutes: 330,
+    };
+    expect(mergeAdjacentWeeklyRows([monNightIst, monPreDawnIst])).toHaveLength(
+      2,
+    );
+  });
 });
 
 describe("mergeAdjacentCustomRows (#1320)", () => {

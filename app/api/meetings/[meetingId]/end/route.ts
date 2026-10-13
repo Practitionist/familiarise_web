@@ -8,38 +8,13 @@ import {
 } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
+import { recordMeetingEndedSynchronously } from "@/lib/stream/session-handlers";
 import { reportSentryError } from "@/lib/observability/report";
 
 /**
  * POST /api/meetings/[meetingId]/end
- *
- * #1270 — ending a call for everyone, decided by the server.
- *
- * `end-call` is granted to `call_member` on the live `default` call type, and
- * the join route gives every participant that role. So the only thing stopping
- * a consultee from ending a consultation was `EndCallButton` not rendering for
- * them — a React conditional over `custom.consultantUserId`, which until this
- * change was a value the browser itself had written when it minted the call.
- * Two lines in devtools ended the session for everyone in the room.
- *
- * This route is the replacement affordance. It re-resolves access from the
- * database and requires the caller to be on the hosting side, so revoking
- * `end-call` from `call_member` in scripts/stream/ensure-call-type-grants.ts
- * becomes possible without taking the host's own control down with it. That
- * revocation has since been applied on the live type (#1607): `call_member`
- * keeps `join-ended-call` and nothing else that ends or records.
- *
- * "Host" is `resolveMeetingAccess`'s host — the plan owner OR an accepted
- * collaborator on a webinar or class. Collaborators co-deliver those sessions,
- * so an owner-only test would leave a co-host unable to close a room they are
- * running. It is wider than the button's own `isHost`, which compares against a
- * single `custom.consultantUserId`; a collaborator sees no button and would
- * have to call this deliberately.
- *
- * `Meeting.endedAt` is deliberately not written here. The `call.ended`
- * webhook owns it, and it also sets the slot's completionStatus and the
- * session's actual duration — writing `endedAt` first would make that handler
- * treat the event as a duplicate and skip all of it.
+ * Ends the Stream call for all participants when invoked by an authorized host or co-presenter,
+ * stamping `Meeting.endedAt` synchronously via CAS so immediate dashboard reloads reflect termination.
  */
 export async function POST(
   _req: NextRequest,
@@ -52,9 +27,6 @@ export async function POST(
     const { userId, meetingId, access } = guard;
     meetingIdForLog = meetingId;
 
-    // A participant is authorized to BE in this call and not to close it. The
-    // distinction is the whole point of the route, so it gets its own refusal
-    // rather than reusing the access one.
     if (access.role !== "host") {
       streamLogger.warn("Meeting end refused — caller is not the host", {
         userId,
@@ -70,15 +42,29 @@ export async function POST(
       );
     }
 
+    const resolvedCallId = toCallId(access.streamCallId);
     await withStreamCircuitBreaker(() =>
-      getStreamVideoClient()
-        .video.call(STREAM_CALL_TYPE, toCallId(access.streamCallId))
-        .end(),
+      getStreamVideoClient().video.call(STREAM_CALL_TYPE, resolvedCallId).end(),
     );
+
+    const recorded = await recordMeetingEndedSynchronously(
+      resolvedCallId,
+      new Date(),
+    ).catch((err) => {
+      streamLogger.warn(
+        "Synchronous end stamp failed; webhook will reconcile",
+        {
+          meetingId,
+          reason: err instanceof Error ? err.message : String(err),
+        },
+      );
+      throw err;
+    });
 
     streamLogger.info("Meeting ended by host", {
       userId,
       meetingId,
+      endedReason: recorded?.endedReason ?? null,
     });
 
     return NextResponse.json({ ended: true, callId: meetingId });

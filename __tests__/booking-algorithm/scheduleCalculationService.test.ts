@@ -265,22 +265,18 @@ describe("ScheduleCalculationService.calculateRequiredSlots", () => {
       ).toBe(1);
     });
 
-    it("should default to 2 slots when duration is missing", () => {
-      const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
-      expect(
+    it("should throw when duration is missing", () => {
+      expect(() =>
         ScheduleCalculationService.calculateRequiredSlots("consultation", {}),
-      ).toBe(2);
-      consoleSpy.mockRestore();
+      ).toThrow("Consultation duration is required");
     });
 
-    it("should default to 2 slots when duration is 0", () => {
-      const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
-      expect(
+    it("should throw when duration is 0", () => {
+      expect(() =>
         ScheduleCalculationService.calculateRequiredSlots("consultation", {
           durationInHours: 0,
         }),
-      ).toBe(2);
-      consoleSpy.mockRestore();
+      ).toThrow("Consultation duration must be positive");
     });
   });
 
@@ -301,10 +297,10 @@ describe("ScheduleCalculationService.calculateRequiredSlots", () => {
       ).toBe(4);
     });
 
-    it("should default to 2 slots when duration missing", () => {
-      expect(
+    it("should throw when duration is missing", () => {
+      expect(() =>
         ScheduleCalculationService.calculateRequiredSlots("webinar", {}),
-      ).toBe(2);
+      ).toThrow("Webinar duration is required");
     });
   });
 
@@ -353,17 +349,14 @@ describe("ScheduleCalculationService.calculateRequiredSlots", () => {
       consoleSpy.mockRestore();
     });
 
-    it("should default session duration to 1 hour when missing", () => {
-      const consoleSpy = jest.spyOn(console, "warn").mockImplementation();
-      // 4 weeks × 2 calls × 2 slots = 16
-      expect(
+    it("should throw when session duration is missing", () => {
+      expect(() =>
         ScheduleCalculationService.calculateRequiredSlots("subscription", {
           schedulingPeriodStartsAt: new Date("2025-01-06"),
           schedulingPeriodEndsAt: new Date("2025-01-31"),
           sessionsPerWeek: 2,
         }),
-      ).toBe(16);
-      consoleSpy.mockRestore();
+      ).toThrow("Subscription session duration is required");
     });
   });
 

@@ -3,13 +3,10 @@ name: DB Live Drift
 permissions:
   contents: read
 
-# The shared live DB (dev AND prod) vs dev's schema + sidecars. Off the PR path:
-# red here means "run `npm run db:push` against the live DB", not "fix a PR".
+# Read-only: `prisma migrate diff` of the shared live DB against dev's schema.
 on:
   schedule:
     - cron: "3 7 * * *"
-  push:
-    branches: [dev]
   workflow_dispatch:
 
 concurrency:
@@ -26,24 +23,29 @@ jobs:
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout code
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
 
-      - run: npm ci --ignore-scripts
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
 
-      - run: npx --no-install prisma generate
+      - name: Generate Prisma client
+        run: npx --no-install prisma generate
 
-      - name: Sidecar + enum drift guard
+      - name: Live drift check (read-only)
+        # check-db-sidecars.ts exits 0 when DATABASE_URL is unset, so require it here.
         run: |
-          test -n "$DATABASE_URL" || { echo "DATABASE_URL secret missing"; exit 1; }
+          test -n "$DATABASE_URL" || { echo "::error title=DB live drift::DATABASE_URL secret is not set"; exit 1; }
+          node_modules/.bin/tsx scripts/ci/check-db-live-drift.ts
           node_modules/.bin/tsx scripts/ci/check-db-sidecars.ts
-          node_modules/.bin/tsx scripts/ci/check-db-drift.ts
 
       - name: Notify on failure
         if: failure()

@@ -8,6 +8,7 @@
 import type {
   TConsultationWithPlan,
   TSubscriptionWithPlan,
+  TTrialWithPlan,
 } from "@/hooks/useEvents";
 import type {
   TConsulteeEventsResponse,
@@ -16,7 +17,9 @@ import type {
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
+  REJOIN_GRACE_MS,
   getCurrentOrNextOccurrence,
+  getOccurrenceJoinState,
   liveOccurrencesOf,
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
@@ -47,7 +50,7 @@ export type BookingStatus = "CONFIRMED" | null;
 
 export interface ProcessedEvent {
   id: string;
-  type: "consultation" | "subscription" | "class" | "webinar";
+  type: "consultation" | "subscription" | "class" | "webinar" | "trial";
   title: string;
   consultantName: string;
   consultantImage?: string | null;
@@ -150,13 +153,11 @@ interface SessionPick extends SlotWithContext {
  * from the consultant. `startsAt`/`endsAt` now describe the run, and
  * `rawSlot` is the run's anchor — the row the video room is keyed to.
  */
-function findNextSlot(slots: SlotWithContext[]): SessionPick | null {
+function findNextSlot(
+  slots: SlotWithContext[],
+  now: Date = new Date(),
+): SessionPick | null {
   if (slots.length === 0) return null;
-
-  const now = new Date();
-  const sortedSlots = [...slots].sort(
-    (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
-  );
 
   const run = getCurrentOrNextOccurrence(
     slots.map((s) => ({ ...s.rawSlot, appointmentId: s.appointmentId })),
@@ -167,12 +168,7 @@ function findNextSlot(slots: SlotWithContext[]): SessionPick | null {
     return { ...anchor, run: anchor.rawSlot };
   }
 
-  // Every row was cancelled/rescheduled: keep the old shape so the card still
-  // renders (with Join inert) instead of vanishing from Home.
-  const fallback =
-    sortedSlots.find((s) => s.startsAt > now) ??
-    sortedSlots[sortedSlots.length - 1];
-  return { ...fallback, run: null };
+  return null;
 }
 
 /** Slot rows in the shape `findNextSlot` groups on. */
@@ -220,6 +216,7 @@ function toSlotContexts(
 function awaitingReason(
   status: string | null | undefined,
   slots: SlotWithContext[],
+  now: Date = new Date(),
 ): NeedsActionReason | null {
   const { bucket, needsActionReason } = deriveBucket({
     status,
@@ -231,6 +228,7 @@ function awaitingReason(
       }),
     ),
     isUnscheduled: slots.length === 0 && !isPendingOrPayment(status),
+    now,
   });
   if (bucket !== "needsAction") return null;
   return needsActionReason;
@@ -245,16 +243,21 @@ function isPendingOrPayment(status: string | null | undefined): boolean {
  */
 function processConsultation(
   consultation: TConsultationWithPlan,
+  now: Date = new Date(),
 ): ProcessedEvent | null {
   const slots = consultation.appointment?.occurrences ?? [];
   const appointmentId = consultation.appointment?.id ?? "";
   const slotContexts = toSlotContexts(slots, appointmentId);
   // #1061 — the card's time range and its Join target are the whole session,
   // not the first 30-minute row of it.
-  const session = findNextSlot(slotContexts);
+  const session = findNextSlot(slotContexts, now);
   // A fresh request has no occurrence yet; it used to vanish from Home while
   // the Appointments page showed it awaiting approval (#1703).
-  const needsActionReason = awaitingReason(consultation.status, slotContexts);
+  const needsActionReason = awaitingReason(
+    consultation.status,
+    slotContexts,
+    now,
+  );
   if (!session && !needsActionReason) return null;
 
   // Build meeting appointment
@@ -313,6 +316,7 @@ function processConsultation(
  */
 function processSubscription(
   subscription: TSubscriptionWithPlan,
+  now: Date = new Date(),
 ): ProcessedEvent | null {
   // #1554 — one wrapper per subscription, N occurrences.
   const nextAppointment = subscription.appointment;
@@ -320,10 +324,10 @@ function processSubscription(
     ? toSlotContexts(nextAppointment.occurrences ?? [], nextAppointment.id)
     : [];
 
-  const nextSlot = findNextSlot(allSlots);
+  const nextSlot = findNextSlot(allSlots, now);
   // A paid subscription awaiting allocation has a wrapper and no occurrences;
   // it used to vanish from Home (#1703).
-  const needsActionReason = awaitingReason(subscription.status, allSlots);
+  const needsActionReason = awaitingReason(subscription.status, allSlots, now);
   if (!nextSlot && !needsActionReason) return null;
 
   // Build meeting appointment
@@ -378,7 +382,10 @@ function processSubscription(
 /**
  * Process a webinar into a ProcessedEvent
  */
-function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
+function processWebinar(
+  webinar: TConsulteeWebinar,
+  now: Date = new Date(),
+): ProcessedEvent | null {
   const allSlots: SlotWithContext[] = [];
   const appointmentId = webinar.appointment?.id ?? "";
 
@@ -389,7 +396,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
 
   if (allSlots.length === 0) return null;
 
-  const nextSlot = findNextSlot(allSlots);
+  const nextSlot = findNextSlot(allSlots, now);
   if (!nextSlot) return null;
 
   // Build meeting appointment
@@ -449,7 +456,10 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
 /**
  * Process a class into a ProcessedEvent
  */
-function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
+function processClass(
+  classEvent: TConsulteeClass,
+  now: Date = new Date(),
+): ProcessedEvent | null {
   // #1554 — one wrapper per class, N occurrences.
   const nextAppointment = classEvent.appointment;
   const allSlots: SlotWithContext[] = nextAppointment
@@ -458,7 +468,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
 
   if (allSlots.length === 0) return null;
 
-  const nextSlot = findNextSlot(allSlots);
+  const nextSlot = findNextSlot(allSlots, now);
   if (!nextSlot) return null;
 
   // Build meeting appointment
@@ -515,6 +525,64 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
 }
 
 /**
+ * Process a trial into a ProcessedEvent
+ */
+function processTrial(
+  trial: TTrialWithPlan,
+  now: Date = new Date(),
+): ProcessedEvent | null {
+  const slots = trial.appointment?.occurrences ?? [];
+  const appointmentId = trial.appointment?.id ?? "";
+  const slotContexts = toSlotContexts(slots, appointmentId);
+  const session = findNextSlot(slotContexts, now);
+  const needsActionReason = awaitingReason(trial.status, slotContexts, now);
+  if (!session && !needsActionReason) return null;
+
+  const joinableAppointment: MeetingAppointment = {
+    id: appointmentId,
+    appointmentType: "TRIAL",
+    occurrences: slots.map((s) => ({
+      id: s.id,
+      startsAt: s.startsAt,
+      endsAt: s.endsAt,
+      isTentative: s.isTentative,
+      appointmentId: s.appointmentId,
+    })),
+  };
+
+  return {
+    id: trial.id,
+    type: "trial",
+    title: trial.subscriptionPlan?.title ?? "Trial",
+    consultantName:
+      trial.subscriptionPlan?.consultantProfile?.user?.name ?? "Expert",
+    consultantImage: trial.subscriptionPlan?.consultantProfile?.user?.image,
+    startsAt: session?.startsAt ?? null,
+    endsAt: session?.endsAt ?? null,
+    status: trial.status ?? "PENDING",
+    slots: slotContexts.map(toEventSlot),
+    appointmentId: appointmentId || undefined,
+    needsActionReason,
+    pendingPaymentUrl:
+      payLinkHref({
+        paymentId: payablePaymentId(
+          (trial.appointment as { payment?: unknown } | null)?.payment as
+            | Parameters<typeof payablePaymentId>[0]
+            | undefined,
+        ),
+        checkoutUrl: trial.pendingPaymentUrl,
+      }) ??
+      (trial.status === "AWAITING_PAYMENT"
+        ? `/checkout/plans/trial/${trial.id}`
+        : null),
+    joinableAppointment: session ? joinableAppointment : undefined,
+    joinableSlot: session?.rawSlot,
+    joinableOccurrence: session?.run ?? null,
+    organizationId: trial.appointment?.organizationId ?? null,
+  };
+}
+
+/**
  * A session is a group of contiguous slots belonging to the same appointment.
  */
 export interface SessionGroup {
@@ -555,30 +623,37 @@ export function groupSlotsIntoSessions(
  */
 export function processAllEvents(
   eventsData: TConsulteeEventsResponse,
+  now: Date = new Date(),
 ): ProcessedEvent[] {
   const events: ProcessedEvent[] = [];
 
   // Process consultations
   eventsData.consultations?.forEach((c) => {
-    const processed = processConsultation(c);
+    const processed = processConsultation(c, now);
     if (processed) events.push(processed);
   });
 
   // Process subscriptions
   eventsData.subscriptions?.forEach((s) => {
-    const processed = processSubscription(s);
+    const processed = processSubscription(s, now);
     if (processed) events.push(processed);
   });
 
   // Process webinars
   eventsData.webinars?.forEach((w) => {
-    const processed = processWebinar(w);
+    const processed = processWebinar(w, now);
     if (processed) events.push(processed);
   });
 
   // Process classes
   eventsData.classes?.forEach((c) => {
-    const processed = processClass(c);
+    const processed = processClass(c, now);
+    if (processed) events.push(processed);
+  });
+
+  // Process trials
+  eventsData.trials?.forEach((t) => {
+    const processed = processTrial(t, now);
     if (processed) events.push(processed);
   });
 
@@ -588,8 +663,11 @@ export function processAllEvents(
 /**
  * Filter and sort events for upcoming display
  */
-export function getUpcomingEvents(events: ProcessedEvent[]): ProcessedEvent[] {
-  const now = new Date();
+export function getUpcomingEvents(
+  events: ProcessedEvent[],
+  now: Date = new Date(),
+): ProcessedEvent[] {
+  const nowMs = now.getTime();
   // Awaiting rows have no time yet; they sort first because they are the
   // ones blocked on someone.
   const anchor = (e: ProcessedEvent) => e.startsAt?.getTime() ?? -Infinity;
@@ -597,8 +675,12 @@ export function getUpcomingEvents(events: ProcessedEvent[]): ProcessedEvent[] {
     .filter(
       (e) =>
         e.needsActionReason !== null ||
-        (e.startsAt !== null && e.startsAt > now) ||
-        e.slots.some((s) => s.startsAt > now),
+        (!!e.joinableOccurrence &&
+          getOccurrenceJoinState(e.joinableOccurrence, { now }) !== "ended") ||
+        (e.startsAt !== null && e.startsAt.getTime() > nowMs) ||
+        liveOccurrencesOf(e.slots).some(
+          (s) => s.endsAt.getTime() + REJOIN_GRACE_MS >= nowMs,
+        ),
     )
     .sort((a, b) => anchor(a) - anchor(b));
 }

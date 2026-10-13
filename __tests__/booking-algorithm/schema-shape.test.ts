@@ -38,15 +38,9 @@ describe("new booking models", () => {
 
 describe("hygiene", () => {
   it.each([
-    "Consultation",
     "Subscription",
     "Webinar",
     "Class",
-    "Trial",
-    "RescheduleRequest",
-    "RescheduleProposedTime",
-    "AvailabilityWindowWeekly",
-    "AvailabilityWindowCustom",
     "BookingUtilization",
     "Appointment",
     "AppointmentOccurrence",
@@ -54,6 +48,35 @@ describe("hygiene", () => {
     "Refund",
   ])("%s carries a deletedAt tombstone", (name) => {
     expect(model(name)).toMatch(/deletedAt\s+DateTime\?\s+@db\.Timestamptz/);
+  });
+
+  // The mirror of the list above. These six carried a `deletedAt` column that
+  // NO code path ever wrote: a request is retired by `status` plus
+  // `cancelledAt`, and an availability row is removed by `deleteMany`. Every
+  // reader was a `deletedAt: null` filter that could therefore only ever hide
+  // nothing — which is the worst kind of filter, because it looks like a
+  // liveness test and is not one.
+  //
+  // Pinning the absence matters as much as pinning the presence above: it is
+  // what stops the next person re-adding a filter that reads a column nobody
+  // writes, and it is why the corresponding `deletedAt: null` filters had to
+  // come out of `lib/data/requests-inbox.ts` and
+  // `lib/scheduling/uncovered-upcoming.ts` in the same change.
+  it.each([
+    "Consultation",
+    "Trial",
+    "RescheduleRequest",
+    "RescheduleProposedTime",
+    "AvailabilityWindowWeekly",
+    "AvailabilityWindowCustom",
+  ])("%s has no deletedAt tombstone, because nothing wrote one", (name) => {
+    // Comment-stripped: each of these models now carries a schema comment
+    // explaining the removal, and that prose names `deletedAt` — so a naive
+    // substring check would pass on the comment and miss the point.
+    const fields = model(name)
+      .split("\n")
+      .map((l) => l.split("//")[0]);
+    expect(fields.join("\n")).not.toMatch(/^\s+deletedAt\s/m);
   });
 
   it("Trial, Webinar and BookingUtilization have no naive DateTime column", () => {

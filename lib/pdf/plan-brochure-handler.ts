@@ -50,7 +50,7 @@ export async function handlePlanBrochureDownload(
   try {
     const [plan, session] = await Promise.all([
       fetchPlanByType(planId, type),
-      getSession(true).catch((error) => {
+      getSession().catch((error) => {
         reportSentryError(error, { subsystem: "plans", expected: true });
         return null;
       }),

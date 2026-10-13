@@ -82,6 +82,7 @@ interface ConsultationPricingToggleProps {
   selectedPlanId?: string;
   onSelectPlanId?: (planId: string) => void;
   bookingRequest?: number;
+  onDurationChange?: (durationInHours: number) => void;
 }
 
 const WEEKDAY_LABELS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] as const;
@@ -102,12 +103,7 @@ function buildAvailableSlots(
   timezone: string,
   selectedDate: Date | null,
 ): SlotWithStatus[] {
-  if (
-    !slotTimings ||
-    slotTimings.length === 0 ||
-    !timezone ||
-    !selectedDate
-  ) {
+  if (!slotTimings || slotTimings.length === 0 || !timezone || !selectedDate) {
     return [];
   }
 
@@ -115,9 +111,7 @@ function buildAvailableSlots(
     ...slot,
     isAllocated: slot.isAllocated || false,
     bookingStatus: (slot.bookingStatus || "available") as
-      | "available"
-      | "partially-booked"
-      | "fully-booked",
+      "available" | "partially-booked" | "fully-booked",
   }));
 
   const brokenDownSlots = buildDurationWindowStarts(
@@ -650,6 +644,7 @@ export default function ConsultationPricingToggle({
   selectedPlanId,
   onSelectPlanId,
   bookingRequest = 0,
+  onDurationChange,
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
   const router = useRouter();
@@ -699,6 +694,10 @@ export default function ConsultationPricingToggle({
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
 
+  useEffect(() => {
+    onDurationChange?.(selectedDuration);
+  }, [selectedDuration, onDurationChange]);
+
   const availableSlots = useMemo(
     () =>
       buildAvailableSlots(
@@ -740,7 +739,10 @@ export default function ConsultationPricingToggle({
   }, [selectedSlot, slotsLoading, slotsError, availableSlots]);
 
   const bookingMode = consultantDetails.bookingMode ?? "INSTANT";
-  const cta = consultationCtaFor(bookingMode, currentSlot?.isAllocated ?? false);
+  const cta = consultationCtaFor(
+    bookingMode,
+    currentSlot?.isAllocated ?? false,
+  );
   const paused =
     cta.action === "request" && consultantDetails.acceptingRequests === false;
 
@@ -1027,10 +1029,7 @@ export default function ConsultationPricingToggle({
                 </DialogDescription>
               </DialogHeader>
 
-              <BookingSteps
-                steps={["Date", "Time", "Review"]}
-                current={step}
-              />
+              <BookingSteps steps={["Date", "Time", "Review"]} current={step} />
 
               {selectionNotice && (
                 <p

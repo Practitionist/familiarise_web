@@ -12,7 +12,7 @@ last-reviewed: 2026-09-30
 > cache off, `customSession` reloads memberships on every request, so nothing
 > read the counter. See
 > [02-jit-and-session-refresh](../20-iam-and-security/02-jit-and-session-refresh.md)
-> and [ADR 36](36-auth-schema-freeze.md).
+> and [ADR 36](35-auth-schema-freeze.md).
 
 ## Context
 

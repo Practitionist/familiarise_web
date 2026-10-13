@@ -144,10 +144,20 @@ export async function POST(
     // sees the order id (and audit writes tie to the gateway side-effect).
     try {
       await prisma.$transaction(async (tx) => {
-        await tx.organizationInvoice.update({
-          where: { id: invoiceId },
+        const claimed = await tx.organizationInvoice.updateMany({
+          where: { id: invoiceId, providerPaymentOrderId: null },
           data: { providerPaymentOrderId: razorpayOrderId },
         });
+        if (claimed.count === 0) {
+          const current = await tx.organizationInvoice.findUnique({
+            where: { id: invoiceId },
+            select: { providerPaymentOrderId: true },
+          });
+          if (current?.providerPaymentOrderId) {
+            razorpayOrderId = current.providerPaymentOrderId;
+            return;
+          }
+        }
         await tx.orgAuditLog.create({
           data: {
             organizationId: orgId,

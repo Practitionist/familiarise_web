@@ -4,6 +4,7 @@ import { Button } from "components/ui/button";
 import { Input } from "components/ui/input";
 import { Label } from "components/ui/label";
 import { TrashIcon } from "assets/icons";
+import { PICKER_STEP_SECONDS } from "@/utils/scheduling-engine/interval-validation";
 import type { SlotsType } from "@/utils/schedule/types";
 
 interface AvailabilityGridProps {
@@ -28,6 +29,14 @@ interface AvailabilityGridProps {
  * validation and state transitions stay with the caller (useConsultantSettingsForm),
  * which passes validated slots back down. Used identically by the weekly
  * and custom schedule columns.
+ *
+ * The native time inputs step by PICKER_STEP_SECONDS (15 minutes) because that
+ * is the granularity the consultant may TYPE. It is deliberately not the 30
+ * minutes they are published at — the caller's update handler snaps the picked
+ * pair onto the booking grid before it is stored, so what the input shows is
+ * what will be published. A fixed 30-minute step could not be honest here: in a
+ * :45-offset zone the publishable local values are :15 and :45, which a
+ * :00-phased step cannot offer at all.
  */
 export function AvailabilityGrid({
   dayKey,
@@ -52,15 +61,15 @@ export function AvailabilityGrid({
       </div>
       {slots?.map((slot, slotIndex) => (
         <div key={`${dayKey}-${slotIndex}`} className="space-y-2">
-          <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2 sm:grid-cols-7">
+          <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2">
             <Input
               type="time"
               value={slot.startTime}
               onChange={(e) =>
                 onUpdateSlot(dayKey, slotIndex, "startTime", e.target.value)
               }
-              className={`min-w-0 sm:col-span-3 ${!slot.isValid ? "border-red-500" : ""}`}
-              step="900"
+              className={`min-w-0 ${!slot.isValid ? "border-red-500" : ""}`}
+              step={PICKER_STEP_SECONDS}
             />
             <span className="text-center text-sm text-zinc-500">to</span>
             <Input
@@ -69,13 +78,13 @@ export function AvailabilityGrid({
               onChange={(e) =>
                 onUpdateSlot(dayKey, slotIndex, "endTime", e.target.value)
               }
-              className={`min-w-0 sm:col-span-2 ${!slot.isValid ? "border-red-500" : ""}`}
-              step="900"
+              className={`min-w-0 ${!slot.isValid ? "border-red-500" : ""}`}
+              step={PICKER_STEP_SECONDS}
             />
             <button
               type="button"
               onClick={() => onDeleteSlot(dayKey, slotIndex)}
-              className="rounded p-1 hover:bg-zinc-100 justify-self-end sm:justify-self-center"
+              className="rounded p-1 hover:bg-zinc-100 justify-self-center"
               aria-label={`Delete slot ${slotIndex + 1} for ${label}`}
             >
               <TrashIcon className="h-5 w-5" />

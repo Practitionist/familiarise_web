@@ -1,23 +1,25 @@
 import type { Tx } from "@/lib/prisma";
 import type { AppointmentStatus } from "@prisma/client";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
 
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
+  HISTORY_FROM_UNKNOWN,
   transitionConsultationRequest,
   transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
 } from "./transitions";
 
 /**
- * Put a booking back exactly as it was before a reschedule released it. Two
- * endings share it (#1846): the initiator's withdrawal, and expiry, where
- * nobody decided and the booking keeps its original times (#1527 decision 9).
- * A decline is the one ending that keeps the slots released, because someone
- * did decide: the consultee still wants to move and the consultant has not
- * agreed a time, so the booking belongs in their allocate queue.
+ * Put a booking back exactly as it was before a reschedule released it. Three
+ * endings share it (#1846): the initiator's withdrawal, expiry, where nobody
+ * decided and the booking keeps its original times (#1527 decision 9), and a
+ * decline, where the counterparty said no to the NEW time — which is not the
+ * same as saying yes to losing the old one.
  *
  * This is cheap for one reason worth stating: a reschedule never rewrites
  * `startsAt`. The released rows still carry their original times, so restoring
@@ -29,7 +31,7 @@ import {
  * (SQLSTATE 23P01) when the consultant's original time was taken while the
  * proposal was open. That aborts the caller's transaction; each caller decides
  * what the answer is (a typed 409 for withdraw, an unrestored expiry for the
- * sweep) with `isExclusionViolation` from `lib/db/pg-errors`.
+ * sweep, a parked booking for a decline) — see {@link isRestoreMiss}.
  */
 
 export interface RestorableRequest {
@@ -84,9 +86,9 @@ async function readRescheduleOrigin(
     orderBy: { createdAt: "desc" },
     select: { fromStatus: true },
   });
-  // appendHistory renders a lost pre-read as the literal "UNKNOWN" (A12); that
-  // is no origin either, so the fallback and its report fire for it too.
-  if (!origin || origin.fromStatus === "UNKNOWN") return undefined;
+  // appendHistory renders a lost pre-read as HISTORY_FROM_UNKNOWN (A12); that is
+  // no origin either, so the fallback and its report fire for it too.
+  if (!origin || origin.fromStatus === HISTORY_FROM_UNKNOWN) return undefined;
   return origin.fromStatus;
 }
 
@@ -116,16 +118,22 @@ function restoreTargetFor(
 }
 
 /**
- * Restore the released slots and the parent request on the caller's
- * transaction. The caller has already ended the proposal through its CAS, so
- * a concurrent answer has lost before this runs. Returns how many slots came
- * back.
+ * Move the parent request back off PENDING — the state a whole-booking
+ * reschedule pushed it into.
+ *
+ * Shared by the restore and the park: the two differ only in whether the slots
+ * came back, and both must land the parent somewhere, because PENDING with no
+ * live session and no open proposal is exactly the shape the 48-hour "paid but
+ * never allocated" sweep selects — and that sweep refunds in full
+ * (`expireUnallocatedPaidSubscriptions`). A paid booking whose consultant
+ * answered a reschedule would otherwise be refunded for a decision a human
+ * made. See {@link parkParentForUnrestoredEnding}.
  */
-export async function restoreRescheduledBooking(
+async function settleParentAfterReschedule(
   tx: RestoreTx,
   request: RestorableRequest,
   meta: RestoreMeta,
-): Promise<number> {
+): Promise<void> {
   const auditMeta = {
     actorUserId: meta.actorUserId,
     appointmentId: request.appointmentId,
@@ -138,24 +146,6 @@ export async function restoreRescheduledBooking(
       expected: true,
       extra: { rescheduleRequestId: request.id, entity },
     });
-
-  // Reverses exactly what the reschedule did to these rows. The from-set
-  // rides in `fromIn` rather than the WHERE (the helper overwrites
-  // `completionStatus` there), and `allowZero` keeps the outcome intact:
-  // restoring nothing means the released rows are gone, which is what an
-  // allocation replacing them does, not a lost CAS.
-  // No appointmentId: a whole-subscription reschedule releases slots across
-  // sibling appointments, so each row's history belongs to the appointment it
-  // actually sits on, not to the one the proposal was opened against.
-  const restored = await transitionOccurrenceCompletion(tx, {
-    actorUserId: meta.actorUserId,
-    reason: meta.reason,
-    where: { id: { in: request.releasedOccurrenceIds } },
-    to: "SCHEDULED",
-    data: { isTentative: false },
-    fromIn: ["RESCHEDULED"],
-    allowZero: true,
-  });
 
   // A consultation reschedule sends the booking back to PENDING so it
   // re-enters the consultant's queue; restoring has to undo that or the
@@ -230,8 +220,103 @@ export async function restoreRescheduledBooking(
       }
     }
   }
+}
+
+/**
+ * Restore the released slots and the parent request on the caller's
+ * transaction. The caller has already ended the proposal through its CAS, so
+ * a concurrent answer has lost before this runs. Returns how many slots came
+ * back.
+ */
+export async function restoreRescheduledBooking(
+  tx: RestoreTx,
+  request: RestorableRequest,
+  meta: RestoreMeta,
+): Promise<number> {
+  // Reverses exactly what the reschedule did to these rows. The from-set
+  // rides in `fromIn` rather than the WHERE (the helper overwrites
+  // `completionStatus` there), and `allowZero` keeps the outcome intact:
+  // restoring nothing means the released rows are gone, which is what an
+  // allocation replacing them does, not a lost CAS.
+  // No appointmentId: a whole-subscription reschedule releases slots across
+  // sibling appointments, so each row's history belongs to the appointment it
+  // actually sits on, not to the one the proposal was opened against.
+  const restored = await transitionOccurrenceCompletion(tx, {
+    actorUserId: meta.actorUserId,
+    reason: meta.reason,
+    where: { id: { in: request.releasedOccurrenceIds } },
+    to: "SCHEDULED",
+    data: { isTentative: false },
+    fromIn: ["RESCHEDULED"],
+    allowZero: true,
+  });
+
+  await settleParentAfterReschedule(tx, request, meta);
 
   return restored;
+}
+
+/**
+ * Park the parent of an ending whose restore could NOT land, so the booking
+ * stops being the shape the refunding sweeps select.
+ *
+ * The declined-reschedule case: the counterparty said no, the original time was
+ * taken while the proposal was open, so the sessions stay released and a human
+ * has to place them. Leaving the parent in PENDING is not a neutral waiting
+ * state — `expireUnallocatedPaidSubscriptions` matches PENDING + zero live
+ * session + no open proposal + a payment captured over 48h ago, and refunds the
+ * plan in full. A DECLINED proposal is no longer open, so the decline is
+ * precisely what makes the booking match.
+ *
+ * There is no enum state for "a human must place these times": every candidate
+ * is either already the swept state or a terminal one, and the schema is frozen
+ * pre-launch, so the parent is settled to its ORIGIN instead — which for a paid
+ * booking is APPROVED, out of the 48h cohort's reach. Durability for the
+ * sessions still needing times is the caller's job: `AppointmentStatus` cannot
+ * express it, so it must be signalled (see `declineProposal`).
+ *
+ * Returns the parent's state once settled, or null when the booking has no
+ * 1:1 parent to settle. A state other than the origin comes back when there
+ * was nothing to move — a partial proposal never flipped the parent, and a
+ * never-approved one has no origin to restore to.
+ */
+export async function parkParentForUnrestoredEnding(
+  tx: RestoreTx,
+  request: RestorableRequest,
+  meta: RestoreMeta,
+): Promise<AppointmentStatus | null> {
+  await settleParentAfterReschedule(tx, request, meta);
+
+  const parent = request.appointment?.consultationId
+    ? await tx.consultation.findUnique({
+        where: { id: request.appointment.consultationId },
+        select: { status: true },
+      })
+    : request.appointment?.subscriptionId
+      ? await tx.subscription.findUnique({
+          where: { id: request.appointment.subscriptionId },
+          select: { status: true },
+        })
+      : null;
+  return parent?.status ?? null;
+}
+
+/**
+ * A restore that cannot land: the overlap constraint, or a parent request CAS
+ * that missed. The proposal's own CAS miss is NOT one — that means it was
+ * answered, and the answer wins.
+ *
+ * The single definition of "the restore could not happen", so every ending that
+ * attempts one asks the same question instead of deciding it again. The
+ * distinction matters because a restore miss is not a fault to retry: the
+ * original time is gone, and no amount of waiting brings it back.
+ */
+export function isRestoreMiss(error: unknown): boolean {
+  if (isExclusionViolation(error)) return true;
+  return (
+    error instanceof IllegalTransitionError &&
+    error.entity !== "RescheduleRequest"
+  );
 }
 
 /**

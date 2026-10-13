@@ -12,6 +12,7 @@ import { FilterBar } from "@/components/dashboard/FilterBar";
 import { TablePagination } from "@/components/dashboard/TablePagination";
 import { Stat, StatRow } from "@/components/dashboard/Stat";
 import { Section } from "@/components/dashboard/Section";
+import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
   ResponsiveTable,
   type ResponsiveColumn,
@@ -24,6 +25,7 @@ import type {
   ConsulteeCreditUsageRow,
   ConsulteePaymentsPayload,
 } from "@/lib/data/consultee-payments";
+import { z } from "zod";
 import { NeedsYouBand } from "./NeedsYouBand";
 import {
   PAYMENT_FILTER_KEYS,
@@ -31,6 +33,41 @@ import {
   type PaymentFilterKey,
 } from "./payments-query";
 import { PaymentsHistoryList } from "./PaymentsHistoryList";
+
+const creditStateRowSchema = z
+  .object({
+    state: z.enum(["PENDING", "VESTED", "EXPIRED", "VOID"]).optional(),
+  })
+  .passthrough();
+
+type CreditStateValue = "PENDING" | "VESTED" | "EXPIRED" | "VOID";
+
+function resolveCreditState(credit: ConsulteeCreditRow): CreditStateValue {
+  const parsed = creditStateRowSchema.safeParse(credit);
+  if (parsed.success && parsed.data.state) {
+    return parsed.data.state;
+  }
+  if (credit.expiresAt && new Date(credit.expiresAt).getTime() <= Date.now()) {
+    return "EXPIRED";
+  }
+  return "VESTED";
+}
+
+function creditStateBadgeProps(state: CreditStateValue): {
+  label: string;
+  tone: "warning" | "success" | "neutral" | "critical";
+} {
+  switch (state) {
+    case "PENDING":
+      return { label: "PENDING", tone: "warning" };
+    case "VESTED":
+      return { label: "VESTED", tone: "success" };
+    case "EXPIRED":
+      return { label: "EXPIRED", tone: "neutral" };
+    case "VOID":
+      return { label: "VOID", tone: "critical" };
+  }
+}
 
 const STATUS_OPTIONS = [
   { value: "paid", label: "Paid" },
@@ -87,6 +124,24 @@ const creditColumns = (
         {creditSourceLabel(credit.source)}
       </span>
     ),
+  },
+  {
+    key: "state",
+    header: "Status",
+    cell: (credit) => {
+      const state = resolveCreditState(credit);
+      const badge = creditStateBadgeProps(state);
+      return (
+        <div className="space-y-0.5">
+          <StatusBadge label={badge.label} tone={badge.tone} size="sm" />
+          {state === "PENDING" && (
+            <p className="text-[11px] text-muted-foreground">
+              In post-session hold window — not yet spendable
+            </p>
+          )}
+        </div>
+      );
+    },
   },
   {
     key: "date",

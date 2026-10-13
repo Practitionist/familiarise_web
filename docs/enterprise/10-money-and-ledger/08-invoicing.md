@@ -53,7 +53,20 @@ sequenceDiagram
   WH->>L: INVOICE_PAID — Dr CASH / Cr ORG_RECEIVABLE(org) (clears the accrual)
 ```
 
-On `ISSUED → PAID` the invoice-paid webhook (`app/api/webhooks/utils.ts`) posts `invoicepaid:<invoiceId>` (kind `INVOICE_PAID`): `Dr CASH / Cr ORG_RECEIVABLE(org)` for the invoice total, in the same transaction that flips the status. Note **issuance posts no money leg** — the receivable was accrued at booking; issuance just rolls accrued bookings into the invoice and records an audit row ([ledger & postings §3](03-ledger-and-postings.md)).
+On `ISSUED → PAID` the invoice-paid webhook (`app/api/webhooks/utils.ts`) posts `invoicepaid:<invoiceId>` (kind `INVOICE_PAID`): `Dr CASH / Cr ORG_RECEIVABLE(org)` for the invoice total, in the same transaction that flips the status. A rollup invoice posts no money leg at issue, because the receivable and the GST were booked booking by booking; issuance just rolls accrued bookings into the invoice and records an audit row. An invoice that bills a supply no booking has booked posts its own issue journal instead (§1.2).
+
+### 1.2 Which invoices journal at issue
+
+Whether issuance posts anything depends only on whether a booking journal already booked the supply's GST. `postInvoiceIssuedJournal` (`lib/payments/billing/org-invoice-journal.ts`) decides this from the invoice itself, inside the issuing transaction, so the cron, the manual `POST` and the `DRAFT → ISSUED` `PATCH` all share one rule.
+
+| Invoice kind                     | Created by                                        | GST already booked elsewhere?                                         | At issue          |
+| -------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------- | ----------------- |
+| Accrual rollup                   | `rollupOrgInvoiceAccruals`                        | Yes — each billed booking's `booking:` journal credited `GST_PAYABLE` | Nothing           |
+| Licence subscription fee         | `generate-subscription-invoices`                  | No — licensed bookings book no GST, so the fee is taxed once, here    | `invoice-issued:` |
+| Manual programme or contract fee | `POST …/invoices` (lines never carry a booking)   | No                                                                    | `invoice-issued:` |
+| Wallet top-up                    | Not an invoice (`WalletTopUp` + `topup:` journal) | The later wallet-funded bookings book their own GST                   | Not applicable    |
+
+The table reads as one sentence: a supply whose GST is already in the journal is never booked again, and a supply billed only on this document is booked here. A wallet top-up is an advance against future bookings, not a supply, so it mints no invoice and its cash sits in `WALLET` until a booking spends it. The posting shapes for issue, void and refund are in [ledger & postings §4.3a](03-ledger-and-postings.md).
 
 ### 1.1 Worked walkthrough — Wipro's month-end invoice
 
@@ -71,7 +84,7 @@ totalPaise    = 20_000_000 + 3_600_000           =  23_600_000   (₹2,36,000)
 
 (The code rounds the *whole* 18% tax first, then floors half for CGST and lets SGST take the remainder, so `cgst + sgst == taxPaise` exactly — `gst.ts:16`. On a round subtotal like this there's no residual; on an odd subtotal SGST carries the extra paise.)
 
-`invoiceNumber` is allocated gapless per `(orgId, FY)` — Wipro's first FY2026 invoice is `INV-WIP-2026-0001` (the seed's prefix). The OWNER issues it (`DRAFT → ISSUED`, `issuedAt` stamped, IRN enqueued), `dueDate = issuedAt + 60d` (NET-60). **Issuance posts no money leg** — the ₹2,36,000 receivable was already accrued booking-by-booking. Sixty days later Wipro pays; the invoice-paid webhook posts `Dr CASH 23_600_000 / Cr ORG_RECEIVABLE(wipro) 23_600_000` and flips `ISSUED → PAID` in one transaction. The `ORG_RECEIVABLE(wipro)` balance returns to zero for that invoice's bookings.
+`invoiceNumber` is allocated gapless per `(orgId, FY)` — Wipro's first FY2026 invoice is `INV-WIP-2026-0001` (the seed's prefix). The OWNER issues it (`DRAFT → ISSUED`, `issuedAt` stamped, IRN enqueued), `dueDate = issuedAt + 60d` (NET-60). **Issuance posts no money leg** for this rollup — the ₹2,36,000 receivable and its GST were already booked booking-by-booking. Sixty days later Wipro pays; the invoice-paid webhook posts `Dr CASH 23_600_000 / Cr ORG_RECEIVABLE(wipro) 23_600_000` and flips `ISSUED → PAID` in one transaction. The `ORG_RECEIVABLE(wipro)` balance returns to zero for that invoice's bookings.
 
 Were Wipro registered in a *different* state from the platform's supplier registration, the same ₹2,00,000 would carry `igstPaise = 36_00000` (₹36,000) and zero CGST/SGST — same total, different columns, because the place-of-supply crossed a state line.
 
@@ -158,7 +171,7 @@ Which tax columns are populated depends entirely on the buyer's `placeOfSupply` 
 | Export (zero-rated) | all tax = 0; `lutNumber` set |
 | Reverse charge | `reverseCharge = true`; buyer self-accounts |
 
-`placeOfSupply` is the buyer's 2-char GST state code (e.g. `"27"` Maharashtra). `deriveGstBreakdown` (`lib/compliance/gst.ts`) populates the columns. Authoritative rules: [`../compliance/02-gst-overview.md`](../../compliance/02-gst-overview.md). The booking's `GST_PAYABLE` credit ([ledger & postings §4.2](03-ledger-and-postings.md)) is the platform-side liability; the invoice records the customer-facing breakdown.
+`placeOfSupply` is the buyer's 2-char GST state code (e.g. `"27"` Maharashtra). A domestic organisation must have `gstStateCode` on file before a manual invoice is raised (409 `GST_STATE_REQUIRED`), and an invoiced organisation cannot clear it in settings; a zero-rated export records the platform's LUT from `PLATFORM_LUT_NUMBER` in `lutNumber`. `deriveGstBreakdown` (`lib/compliance/gst.ts`) populates the columns. Authoritative rules: [`../compliance/03-gst-overview.md`](../../compliance/03-gst-overview.md). The booking's `GST_PAYABLE` credit ([ledger & postings §4.2](03-ledger-and-postings.md)) is the platform-side liability; the invoice records the customer-facing breakdown.
 
 `hsnCode` default `999293` (commercial training & coaching); line items may override per-row.
 
@@ -166,7 +179,7 @@ Which tax columns are populated depends entirely on the buyer's `placeOfSupply` 
 
 ## 4. IRN (e-invoice) — mapper + uploader
 
-The model carries every field the IRP returns: `irn` (64-char), `ackNumber`, `ackDate`, `signedQrPayload`, `irpStatus` (`PENDING | GENERATED | CANCELLED | FAILED`), `irpUploadedAt`, plus retry telemetry (`irpRetryCount`, `irpLastError`, `irpLastAttemptAt`). The daily IRP uploader (`jobs/compliance/irp-uploader.ts`, `.github/workflows/irp-uploader.yml`) selects `irpStatus = PENDING` invoices `issuedAt` within **30 days** (the CBIC retroactive-IRN cut-off), batch size 50, and for each one:
+The model carries every field the IRP returns: `irn` (64-char), `ackNumber`, `ackDate`, `signedQrPayload`, `irpStatus` (`PENDING | GENERATED | CANCELLED | FAILED`), `irpUploadedAt`, plus retry telemetry (`irpRetryCount`, `irpLastError`, `irpLastAttemptAt`). The daily IRP uploader (`jobs/compliance/irp-uploader.ts`, `.github/workflows/irp-uploader.yml`) selects `irpStatus = PENDING` B2B invoices (those carrying the buyer's GSTIN, since B2C is outside e-invoicing) `issuedAt` within **30 days** (the CBIC retroactive-IRN cut-off), batch size 50, and for each one:
 
 1. **Map** the fetched row to the NIC e-invoice **schema v1.1** JSON via the pure mapper `buildIrpPayload` (`lib/compliance/irp-payload.ts`) — no DB access; the cron fetches, the mapper transforms. It splits each line's GST in the same intra/inter mode as the whole invoice (CGST+SGST vs IGST), rounds per line and pushes the paise residual onto the last line so `ItemList` sums reconcile to `ValDtls` exactly (the IRP rejects any per-line vs total mismatch), derives the 2-digit **numeric** GST state code from the GSTIN prefix, and tags `SupTyp` (`EXPWOP` for a zero-rated LUT export, else `B2B`). A mapping failure is **permanent** (missing buyer GSTIN, no line items, unresolved seller state): the row flips straight to `FAILED` with `irpLastError = "MAP: …"` — retrying can't fix structurally-unmappable data and the 30-day window shouldn't be burned looping on it.
 2. **Submit** via `generateIrn` (`lib/compliance/irp.ts`). On `GENERATED` it persists `irn` / `ackNumber` / `ackDate` / `signedQrPayload` / `irpUploadedAt`. On `FAILED` it keeps the row `PENDING` and bumps `irpRetryCount` until the **cap (12 ≈ 12 daily retries)**, then flips to `FAILED` for manual review.
@@ -187,26 +200,17 @@ The model carries every field the IRP returns: `irn` (64-char), `ackNumber`, `ac
 
 ## 6. Purchase orders + 3-way match
 
-`PurchaseOrder` (created via `POST …/purchase-orders`, OWNER) declares a budget; `requiresPO = true` on the org warns when an OWNER creates a contract without one. The classic AP control:
+`PurchaseOrder` (created via `POST …/purchase-orders`, OWNER) declares a budget. When the org has `requiresPO = true`, raising a manual invoice or signing a contract (creating it `ACTIVE`, or setting `signedAt` / `status = ACTIVE` on a patch) without a purchase order answers 409 `PO_REQUIRED`. The classic AP control:
 
 1. **PO** declares the commit (`totalAmountPaise`).
 2. **Contract** ties the cycle + terms to the PO (`Contract.purchaseOrderId`).
 3. **Invoice** points at the same PO and decrements `remainingAmountPaise`.
 
-**Atomic compare-and-swap** guards the balance (`…/invoices/route.ts`):
-
-```ts
-const claim = await tx.purchaseOrder.updateMany({
-  where: { id, organizationId: orgId, status: "ACTIVE",
-           remainingAmountPaise: { gte: gst.totalPaise } },
-  data:  { remainingAmountPaise: { decrement: gst.totalPaise } },
-});
-if (claim.count !== 1) throw { httpStatus: 409, code: "PO_BALANCE_EXCEEDED" };
-```
+**Atomic compare-and-swap** guards the balance. Both the manual invoice route and the monthly rollup draw through `drawPurchaseOrder` (`lib/payments/billing/purchase-order-draw.ts`), whose `updateMany` decrements `remainingAmountPaise` only while the order is `ACTIVE`, in the invoice's currency, and still covers the total; the route answers 409 `PO_BALANCE_EXCEEDED` when the claim misses.
 
 The predicate is the lock: two POSTs racing for the last ₹1 can't both win (`claim.count = 1` for exactly one). When `remainingAmountPaise` hits zero the PO goes `CLOSED`. **Restoration:** the PATCH route runs the inverse increment when an invoice goes `VOID`/`CANCELLED` with a PO attached (only restores what was decremented, gated by the transition allow-list). UI copy for `PO_BALANCE_EXCEEDED` lives in `lib/labels/org-errors.ts`. Regression coverage: `__tests__/enterprise/po-balance-enforcement.test.ts`.
 
-The three-way match applies to manually created invoices only. The monthly accrual rollup (`rollupOrgInvoiceAccruals`) and the subscription-invoice cron issue their invoices with `purchaseOrderId` null and draw nothing down, so an organisation whose members book on the INVOICE rail can have its purchase order balance untouched while accrual invoices accumulate against it. Extending the draw-down to auto-generated invoices is the open item under #1744; until it lands, an organisation that must invoice against a PO should raise those invoices by hand. Since #1744 the rollup does raise the same `invoice.issued` webhook and owner notice as a manual invoice, so integrators see both kinds.
+The monthly accrual rollup (`rollupOrgInvoiceAccruals`) draws too: it picks the oldest unexpired `ACTIVE` purchase order in INR that covers the invoice total, stamps `purchaseOrderId` on the invoice and in the `invoice.issued` payload, and decrements the balance in the same transaction. When an organisation that requires a purchase order has none that covers the total, the invoice is still issued (the cycle is never left unbilled) and an `INVOICE` system event names it so an operator can attach one. The subscription-invoice cron still issues without a purchase order.
 
 ---
 
@@ -220,7 +224,7 @@ When an `ISSUED` invoice's `dueDate` passes, the **dunning cron** (`jobs/billing
 | **2 — escalation** | `OVERDUE`, `dunningReminderCount < 3`, last touch (`lastDunningReminderAt ?? markedOverdueAt`) older than **7 days** | `updateMany … lastDunningReminderAt = priorValue` → `now`, `dunningReminderCount += 1` | `notifyOrgInvoiceOverdue` at the next reminder stage |
 | **3 — suspend (#812, `ENABLE_DUNNING_SUSPEND`-gated)** | `OVERDUE`, `dunningReminderCount >= 3`, `dunningSuspendedAt = null`, `lastDunningReminderAt` older than **7 days** (the last reminder, not the overdue stamp) | inside a Serializable transaction: `updateMany … dunningSuspendedAt = now` (claim) plus the audit write | an `INVOICE_DUNNING_SUSPENDED` `OrgAuditLog` row; `checkout.ts` then blocks the org's new sponsored bookings |
 
-So the reminder cadence is **7-day intervals, capped at 3 reminders**, after which (when `ENABLE_DUNNING_SUSPEND` is set) a final suspend stage stamps `dunningSuspendedAt` 7 days past the last reminder. Each claim is a conditional `updateMany` on the prior stamp value, so two cron replicas / a same-day re-run can't double-notify or double-suspend (the loser sees `count === 0` and skips); stage 3 wraps its claim and audit write in one Serializable transaction so the two replicas can't both stamp + log. Only **dunnable** orgs are chased (`ACTIVE` / `PENDING_VERIFICATION` / `SUSPENDED`); a `DEACTIVATED` org is being torn down, so its invoices aren't pursued.
+Stage 3 suspends at most 20 invoices per run (oldest final reminder first), so switching `ENABLE_DUNNING_SUSPEND` on cannot suspend the whole overdue backlog in one tick. So the reminder cadence is **7-day intervals, capped at 3 reminders**, after which (when `ENABLE_DUNNING_SUSPEND` is set) a final suspend stage stamps `dunningSuspendedAt` 7 days past the last reminder. Each claim is a conditional `updateMany` on the prior stamp value, so two cron replicas / a same-day re-run can't double-notify or double-suspend (the loser sees `count === 0` and skips); stage 3 wraps its claim and audit write in one Serializable transaction so the two replicas can't both stamp + log. Only **dunnable** orgs are chased (`ACTIVE` / `PENDING_VERIFICATION` / `SUSPENDED`); a `DEACTIVATED` org is being torn down, so its invoices aren't pursued.
 
 > **Walkthrough — Meridian Consulting (fictional) goes overdue.** Meridian's ₹4,00,000 NET-30 invoice issues 1-Apr, `dueDate` 1-May. It isn't paid. **Day 1 of overdue (≈2-May):** the dunning cron's stage-1 query finds it (`ISSUED`, `dueDate < now`, `markedOverdueAt = null`), claims `ISSUED → OVERDUE` stamping `markedOverdueAt`, fires `notifyOrgInvoiceOverdue` (reminder 0), and writes an `INVOICE_OVERDUE` audit row. **+7d (≈9-May):** stage 2 sees `OVERDUE`, `dunningReminderCount (0) < 3`, last touch (`markedOverdueAt`) >7d old → bumps the count to 1, stamps `lastDunningReminderAt`, sends reminder 1. **+14d, +21d:** reminders 2 and 3. **+28d:** `dunningReminderCount` is now 3, the `< 3` predicate fails, so **the reminder cadence stops** — Meridian gets no fourth reminder. From here behaviour depends on `ENABLE_DUNNING_SUSPEND`: with the flag **off** the invoice simply sits in `OVERDUE` and a human picks up collections; with the flag **on**, 7 days after the last reminder (≈28-May, measured from `lastDunningReminderAt`, not the overdue stamp) stage 3 stamps `dunningSuspendedAt` inside a Serializable transaction, writes an `INVOICE_DUNNING_SUSPENDED` audit row, and `checkout.ts` blocks Meridian's new sponsored bookings until the invoice is paid. Meridian is fictional precisely because this is a failure path — a real seeded org (Wipro, IIT Madras) is never shown defaulting.
 
@@ -238,8 +242,9 @@ A refund without a GST credit note is a filing mismatch, so a refund against an 
 - Splits the proportional tax the same way the invoice did: **IGST** (inter-state) or **CGST+SGST** (intra-state, CGST takes the odd-paise remainder), mirroring `OrganizationInvoice`'s breakout so the CN nets cleanly.
 - Allocates a **gapless per-org credit-note number** `<PREFIX>-CN-<FY>-<SEQ>` from `OrgCreditNoteCounter` (`lib/payments/billing/credit-note-numbering.ts`), atomic `UPSERT…RETURNING` — a **separate series from the invoice counter**, as Rule 53 requires.
 - Idempotency is `CreditNote.refundId @unique`: it probes first and returns the existing CN on replay, so a webhook redelivery / cron retry never mints a duplicate or burns a sequence number.
+- Past the CGST s.34(2) cutoff (30 November after the financial year of the supply — the booking date, or a cycle invoice's cycle start — `lib/compliance/gst-credit-note-cutoff.ts`) the note is commercial: base amount only, every tax head zero, and a reason that starts with "Commercial credit note". The refund cascade then posts no `GST_PAYABLE` debit, so the GST portion is a platform cost.
 
-A sibling, `mintInvoiceRefundCreditNote`, covers the other path — the org paid an `OrganizationInvoice` directly (via the gateway) and that payment was refunded — keyed off the invoice rather than a booking's accrual legs. Same proportional-tax shape, same `refundId @unique` idempotency.
+A sibling, `mintInvoiceRefundCreditNote`, covers the other path — the org paid an `OrganizationInvoice` directly (via the gateway) and that payment was refunded — keyed off the invoice rather than a booking's accrual legs. Same proportional-tax shape, same `refundId @unique` idempotency. For an issue-journalled invoice the refund journal takes its GST share from this note, so a commercial note past the cutoff leaves the GST on `GST_PAYABLE` and the whole refund comes off `PLATFORM_FEE`.
 
 ```prisma
 model CreditNote {
@@ -269,7 +274,7 @@ The status-level invoice transition is the coarse view (`PAID → REFUNDED` for 
 
 ## 8b. Consumer invoices (B2C) — #1365
 
-Everything above concerns `OrganizationInvoice`, which is the document a sponsoring organization receives. A personal buyer paying by card receives a different document on a different series, and that path is documented separately in [B2C tax invoices and credit notes](../../payments/07-b2c-tax-invoice.md).
+Everything above concerns `OrganizationInvoice`, which is the document a sponsoring organization receives. A personal buyer paying by card receives a different document on a different series, and that path is documented separately in [B2C tax invoices and credit notes](../../payments/06-b2c-tax-invoice.md).
 
 The two families are deliberately separate models rather than one model with nullable columns. `OrganizationInvoice` requires an organization, a billing account and a due date, and those columns are load-bearing for dunning and for the IRP e-invoice payload; a consumer invoice has none of them, is paid before it is issued, and runs on one platform-wide gapless series instead of one series per organization. Collapsing them would make every one of those columns optional and would quietly weaken the B2B guarantees this page describes.
 
@@ -283,7 +288,7 @@ A `CHARGE_ORG` program overage isn't billed instantly — its marginal accrues a
 
 For each rolled `CHARGE_ORG` `OverageEvent` it then walks the state machine `PENDING → ACCRUED` (via `transitionOverage`), stamping `settledAt` and the exact `invoiceLineItemId` the event landed on (auditability + reversal). The event reaches its terminal `CHARGED` only when the invoice is **paid** — the `INVOICE_PAID` ledger handler flips `ACCRUED → CHARGED`. This is why `settle-invoice-accruals` deliberately includes `OVERAGE_INVOICE_ACCRUAL` in its "orgs to bill" scan: an org whose base bookings are all LICENSE-covered (₹0 legs) but which has `CHARGE_ORG` overage would otherwise be skipped and never billed for the overage.
 
-The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` / `surchargePaise` / `marginalPaise`), so the charge stays GST-auditable even though the current rollup writes one combined line per booking; per-line surcharge itemization on the invoice is a future refinement.
+The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` / `surchargePaise` / `marginalPaise`), so the charge stays GST-auditable even though the current rollup writes one combined line per booking; per-line surcharge itemization on the invoice is a future refinement. The surcharge carries 18% GST by the organisation's place of supply: checkout adds it to the tax-inclusive `OVERAGE_INVOICE_ACCRUAL` leg and to the parent's `taxAmount`, so the booking journal credits it to `GST_PAYABLE` and the rollup bills it once through `accruedTaxPaise`. The `marginalPaise` it records is GST-inclusive.
 
 ---
 
@@ -291,6 +296,8 @@ The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` /
 
 - `autoGenerated = true` — monthly roll-up cron; `billedPayments[]` lists captured payments.
 - `autoGenerated = false` — OWNER-created via `POST …/invoices` for ad-hoc charges (setup fees, overage bundles).
+
+`autoGenerated` is set by both the rollup and the subscription cron, so it does not tell the two apart. What does is whether the invoice bills bookings, which is the test the issue journal and the `ORG_INVOICE_GST_MISMATCH` reconcile step both use: a booking-billing invoice is compared against its bookings' GST, any other against its `invoice-issued:` and refund journals.
 
 ---
 
@@ -307,11 +314,15 @@ The `base` vs `surcharge` split is itemized on the `OverageEvent` (`basePaise` /
 
 ---
 
+## Deprecated & Superseded Approaches
+
+Every invoice kind used to post nothing at issue, which was right only for the rollup: a subscription or manual invoice drove `ORG_RECEIVABLE` negative when paid and never booked its GST. Those invoices now post `invoice-issued:`. The monthly rollup used to issue every invoice with `purchaseOrderId` null and draw nothing down, so a purchase order's balance ignored accrual invoices; it now draws through the shared CAS helper. `requiresPO` used to be a UI warning only; it is now a 409 on invoice creation and contract signing. A manual invoice for an organisation with no `gstStateCode` used to fall back to the GSTIN prefix for its place of supply; the route now requires the declared state. The IRP uploader used to pick up B2C organisation invoices and fail them permanently for a missing buyer GSTIN; it now never selects them.
+
 ### Related docs
 - [Funding & programs](../00-foundations/03-funding-and-programs.md) — the INVOICE funding source.
 - [Payment legs](09-payment-legs.md) — how `INVOICE_ACCRUAL` / `OVERAGE_INVOICE_ACCRUAL` legs roll up.
 - [Booking → earnings §6](05-booking-to-earnings.md) — the overage flow that feeds §9, and the refund-failed notify (§6.5).
 - [Ledger & postings](03-ledger-and-postings.md) — the `INVOICE_PAID` / `REFUND` transactions.
 - [Ledger integrity](13-ledger-integrity.md) — `INVOICE_TOTAL_MISMATCH`, `OVERAGE_CHARGESTATUS_INTEGRITY`.
-- [Compliance map](../40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) → [`../compliance/02-gst-overview.md`](../../compliance/02-gst-overview.md) (GST/IRN) · [`../compliance/05-refund-and-chargeback-tax-adjustments.md`](../../compliance/05-refund-and-chargeback-tax-adjustments.md) (credit notes / TDS adjustments) — authoritative.
+- [Compliance map](../40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) → [`../compliance/03-gst-overview.md`](../../compliance/03-gst-overview.md) (GST/IRN) · [`../compliance/06-refund-and-chargeback-tax-adjustments.md`](../../compliance/06-refund-and-chargeback-tax-adjustments.md) (credit notes / TDS adjustments) — authoritative.
 - Ground truth: `lib/payments/billing/{invoice-rollup,invoice-numbering,credit-note-numbering}.ts`, `lib/payments/operations/refund.ts`, `lib/compliance/{irp,irp-payload}.ts`, `jobs/billing/{dunning,settle-invoice-accruals}.ts`, `jobs/compliance/irp-uploader.ts`.

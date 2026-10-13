@@ -1,307 +1,136 @@
-# Webhook Monitoring & Success Notifications Guide
+# Webhook Monitoring, Recovery Sweeps & Retention Guide
 
-> **Moved (org/B2B side):** The organization-side documentation for inbound payment webhooks (including the org-relevant monitoring and archival jobs) now lives in [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md). This file keeps the consumer-marketplace (B2C) and gateway-generic details only.
+> **Scope:** Operational monitoring, observability signals, stuck-webhook recovery (`sweep-stuck-webhook-events`), and weekly storage retention (`archive-webhook-events`) across Razorpay/RazorpayX, Stream, Resend, Novu, and Stripe. Organization double-entry ledger mechanics live in [`docs/enterprise/10-money-and-ledger/12-payment-webhooks.md`](../../enterprise/10-money-and-ledger/12-payment-webhooks.md).
 
-## Overview
+---
 
-This guide covers how to monitor webhook activity, track success notifications, and troubleshoot payment gateway integrations.
+## 1. Webhook Lifecycle State Machine (`WebhookEvent`)
 
-## Success Toast Notifications
+Inbound webhooks backed by `logWebhookEvent` (`lib/webhooks/event-log.ts`) transition through a deterministic four-state machine using `(processed, error, claimedAt, deferCount)`:
 
-### Implementation Status ✅
-
-All checkout pages now display success toast notifications with:
-
-- ✅ Clear success indicators (green checkmark)
-- ✅ Appropriate messaging for skip payment vs real payment
-- ✅ 2-second delay before redirect to allow users to see the toast
-- ✅ Consistent implementation across all event types
-
-### Supported Event Types
-
-1. **Consultation Booking**: `"✅ Consultation Booked Successfully!"`
-2. **Webinar Registration**: `"✅ Webinar Registration Successful!"`
-3. **Class Registration**: `"✅ Class Registration Successful!"`
-4. **Subscription Activation**: `"✅ Subscription Activated Successfully!"`
-
-### Skip Payment vs Real Payment Messages
-
-- **Skip Payment**: `"Your [type] has been confirmed. Check your dashboard for details."`
-- **Real Payment**: `"Payment processed successfully. Your [type] is confirmed."`
-
-## Webhook Monitoring
-
-### Webhook Endpoints Created
-
-1. **Stripe Webhooks**: `/api/webhooks/stripe`
-2. **Razorpay Webhooks**: `/api/webhooks/razorpay`
-
-### Webhook Event Logging
-
-All webhook events are automatically logged to the console with detailed information:
-
-```javascript
-console.log(`🔔 [Gateway] Webhook Event: ${event.type}`, {
-  id: event.id,
-  created: timestamp,
-  data: event.data.object,
-});
+```mermaid
+stateDiagram-v2
+    [*] --> InProgress: logWebhookEvent (processed=false, error=null, claimedAt=null)
+    InProgress --> Succeeded: markWebhookEventProcessed(id, undefined, claim)
+    InProgress --> Deferred: Handler returns DeferSignal (deferCount++)
+    InProgress --> Failed: Handler throws transient error (processed=false, error=msg)
+    InProgress --> Permanent: ZodError / terminal failure (error="permanent: ...")
+    Deferred --> InProgress: sweep-stuck-webhook-events reclaims stale row (>6m)
+    Failed --> InProgress: sweep-stuck-webhook-events retries non-terminal error (<168h)
+    Deferred --> GaveUp: Aged past 168h (error="gave up: ...")
+    Succeeded --> [*]
+    Permanent --> [*]
+    GaveUp --> [*]
 ```
 
-### Tracked Events
+### CAS Lease Fencing (`WebhookClaim`)
 
-#### Stripe Events
+When `POST /api/webhooks/razorpay` or `POST /api/stream/webhooks` acknowledges HTTP `200` and enters `after()`, it holds a `WebhookClaim` (`{ claimedAt }`). If the Netlify function container freezes before `after()` completes:
 
-- ✅ `payment_intent.succeeded` - Payment completed
-- ❌ `payment_intent.payment_failed` - Payment failed
-- ✅ `invoice.payment_succeeded` - Subscription payment
-- 🆕 `customer.subscription.created` - New subscription
+1. Once `claimedAt` (or `receivedAt` on initial arrival) ages past **6 minutes**, `sweep-stuck-webhook-events` atomically reclaims the row via `reclaimStaleProcessingWebhookEvent`, stamping a fresh `claimedAt`.
+2. If the frozen container subsequently thaws and reaches `markWebhookEventProcessed(eventId, error, claim)`, the conditional `updateMany({ where: { eventId, claimedAt: claim.claimedAt } })` matches **0 rows** (`Webhook completion fenced: claim was superseded`), preventing stale execution from clobbering the sweeper's result.
 
-#### Razorpay Events
+---
 
-- ✅ `payment.captured` - Payment completed
-- ❌ `payment.failed` - Payment failed
-- ✅ `order.paid` - Order payment completed
-- ✅ `subscription.charged` - Subscription payment
-- 🆕 `subscription.activated` - New subscription
+## 2. Automated Recovery Sweep (`sweep-stuck-webhook-events`)
 
-## How to Check if Webhooks are Working
+Registered in `lib/cron/cleanup-registry.ts` (`POST /api/cleanup/sweep-stuck-webhook-events`) and protected by Postgres `withCronLock("sweep-stuck-webhook-events", { failMode: "closed" })`:
 
-### Method 1: Server Logs (Recommended)
+- **Providers Covered**: `"razorpay"`, `"stream"`, and `"novu"`.
+- **Per-Event Execution Timeout**: Each claimed event re-drive executes inside a strict per-event deadline (`Promise.race`) so a slow upstream REST lookup or network stall on one event cannot exhaust the sweep's 15-second batch budget or block `PG_POOL_MAX=1`.
+- **Single-Event Batch Alerting (Sentry Quota Safe)**:
+  - Never calls `Sentry.captureException` per row inside loops.
+  - Emits **at most one consolidated warning per sweep** when any stuck event reaches `deferCount >= 5` or `age > 1 hour` (`sweep-stuck-webhook-events: N webhook event(s) still unprocessed`), listing up to 20 stalled `eventId` entries in structured Sentry context.
+- **Terminal Error Exclusions (`TERMINAL_ERROR_PREFIXES`)**:
+  - Rows prefixed with `"permanent:"` (schema validation failures) or `"gave up:"` (>168 hours unresolvable deferral) are permanently excluded from re-drives.
 
-#### Development Environment
+---
 
-```bash
-# In your development terminal, look for webhook logs
-npm run dev
+## 3. Production SQL Diagnostic Queries
 
-# Watch for logs like:
-# 🔔 Stripe Webhook Event: payment_intent.succeeded
-# 🔔 Razorpay Webhook Event: payment.captured
-```
-
-#### Production Environment
-
-```bash
-# Check your hosting platform logs (Vercel, Heroku, etc.)
-# Or use your logging service (LogRocket, Sentry, etc.)
-
-# Look for webhook event logs with timestamps
-```
-
-### Method 2: Payment Gateway Dashboards
-
-#### Stripe Dashboard
-
-1. Go to https://dashboard.stripe.com/webhooks
-2. Click on your webhook endpoint
-3. View **"Recent events"** tab
-4. Check **"Attempts"** for delivery status
-5. Look for HTTP 200 responses (success)
-
-#### Razorpay Dashboard
-
-1. Go to https://dashboard.razorpay.com/webhooks
-2. Select your webhook endpoint
-3. Check **"Logs"** section
-4. Look for successful delivery status
-5. Verify response codes
-
-### Method 3: Database Checks
-
-#### Verify Booking Status Updates
+### Inspect Unprocessed or Deferred Webhooks
 
 ```sql
--- Check recent consultation bookings
--- NOTE: the DB column is still `requestStatus` — the Prisma field renamed
--- to `status` via @map, the column did not.
-SELECT id, "requestStatus", "createdAt", "updatedAt"
-FROM "Consultation"
-ORDER BY createdAt DESC
-LIMIT 10;
-
--- Check payment records
-SELECT id, paymentStatus, paymentGateway, amount, createdAt
-FROM Payment
-ORDER BY createdAt DESC
-LIMIT 10;
+SELECT
+  id,
+  provider,
+  "eventType",
+  "eventId",
+  processed,
+  "deferCount",
+  "claimedAt",
+  "receivedAt",
+  error
+FROM "WebhookEvent"
+WHERE processed = false
+   OR (error IS NOT NULL AND error NOT LIKE 'permanent:%' AND error NOT LIKE 'gave up:%')
+ORDER BY "receivedAt" ASC
+LIMIT 25;
 ```
 
-### Method 4: Test Webhook Endpoints Directly
+### Verify Recent Resend Email Deliveries & Suppressions
 
-#### Test Stripe Webhook
+```sql
+SELECT
+  "svixId",
+  type,
+  recipient,
+  "createdAt"
+FROM "EmailEvent"
+ORDER BY "createdAt" DESC
+LIMIT 20;
 
-```bash
-# Use Stripe CLI to forward events (development)
-stripe listen --forward-to localhost:3000/api/webhooks/stripe
-
-# Send test events
-stripe trigger payment_intent.succeeded
+SELECT
+  email,
+  reason,
+  "createdAt"
+FROM "EmailSuppression"
+ORDER BY "createdAt" DESC
+LIMIT 20;
 ```
 
-#### Test Razorpay Webhook
+### Diagnose High `deferCount` on Refund or Dispute Events
 
-```bash
-# Use ngrok for local testing
-ngrok http 3000
+1. Extract the `pay_...` ID from `WebhookEvent.payload` (`payload.refund.entity.payment_id` or `payload.dispute.entity.payment_id`).
+2. Check whether `Payment.gatewayPaymentId` or `Payment.paymentIntent` exists in Postgres:
+   ```sql
+   SELECT id, "paymentIntent", "gatewayPaymentId", "paymentStatus", "createdAt"
+   FROM "Payment"
+   WHERE "gatewayPaymentId" = 'pay_...' OR "paymentIntent" = 'order_...';
+   ```
+3. If no row exists, `payment.captured` has not yet landed — trigger or inspect `reconcile-payment-status`. If the row exists with `gatewayPaymentId IS NULL`, verify Razorpay API credentials (`RAZORPAY_KEY_ID` / `RAZORPAY_SECRET`) used by fallback `payments.fetch`.
 
-# Configure webhook URL in Razorpay dashboard:
-# https://your-ngrok-url.ngrok.io/api/webhooks/razorpay
-```
+---
 
-## Troubleshooting Webhook Issues
+## 4. Environment Configuration & Secret Rotation Checklist
 
-### Common Problems
+| Variable                               | Provider  | Purpose & Verification Rule                                                                                                             |
+| -------------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `RAZORPAY_WEBHOOK_SECRET`              | Razorpay  | Primary HMAC-SHA256 secret for all payment, order, refund, and dispute events.                                                          |
+| `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`     | Razorpay  | Optional grace-window secret during Dashboard secret rotation; emits `WEBHOOK` `WARN` when matched so operators know when to retire it. |
+| `RAZORPAYX_WEBHOOK_SECRET`             | RazorpayX | Dedicated HMAC-SHA256 secret tried **only** when `isPayoutEventName(body)` matches `payout.*` or `fund_account.*`.                      |
+| `STREAM_API_KEY` / `STREAM_API_SECRET` | Stream    | Verifies `X-Api-Key` and `X-Signature` over uncompressed UTF-8 payload bytes.                                                           |
+| `RESEND_WEBHOOK_SECRET`                | Resend    | Svix `whsec_...` secret verifying `svix-id`, `svix-timestamp` (5m window), and `svix-signature`.                                        |
+| `NOVU_WEBHOOK_SECRET`                  | Novu      | Verifies Svix outbound webhooks (`svix-id`, `svix-timestamp`, `svix-signature`, 5m window) or channel HMAC (`x-novu-signature`).        |
 
-#### 1. Webhook Not Receiving Events
+---
 
-**Symptoms**: No logs in console, no webhook attempts in dashboard
+## 5. Weekly Multi-Table Retention Archival (`archive-webhook-events`)
 
-**Solutions**:
+Executed weekly on Sunday at 00:00 UTC via `scripts/cleanup/archive-webhook-events.ts` (`POST /api/cleanup/archive-webhook-events`, guarded by `withCronLock("archive-webhook-events", { failMode: "open" })`):
 
-- ✅ Verify webhook URL is correct in payment gateway dashboard
-- ✅ Check if webhook URL is publicly accessible (not localhost)
-- ✅ Ensure webhook endpoint is deployed and running
-- ✅ Verify webhook is enabled in gateway dashboard
+| Table                     | Condition                                                        | Retention Window | Rationale                                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `WebhookEvent`            | `processed = true AND error IS NULL`                             | **30 days**      | Retains clean idempotency history far past every provider's retry window (max 5 days on Novu, 3 days on Stripe, 24h on Razorpay). |
+| `WebhookEvent`            | `processed = false AND error LIKE 'permanent:%' \| 'gave up:%'`  | **30 days**      | Prunes unreplayable terminal payloads (`TERMINAL_ERROR_PREFIXES`) after monthly inspection window.                                |
+| `WebhookEvent`            | Other failed rows (`processed = false AND error IS NOT NULL`)    | **90 days**      | Retains non-terminal failed/errored payloads for quarterly financial audit inspection.                                            |
+| `EmailEvent`              | All recorded Resend delivery events                              | **90 days**      | Retains delivery audit logs for 90 days while permanent `EmailSuppression` records persist indefinitely.                          |
+| `OutboundWebhookDelivery` | Terminal rows (`status IN ('SUCCESS', 'FAILED', 'DEAD_LETTER')`) | **30 days**      | Prunes completed enterprise tenant webhook delivery logs without touching active retry queue entries.                             |
 
-#### 2. Webhook Authentication Failing
+---
 
-**Symptoms**: 400/401 errors in webhook attempts
+## Deprecated & Superseded Approaches
 
-**Solutions**:
-
-- ✅ Check `STRIPE_WEBHOOK_SECRET` environment variable
-- ✅ Check `RAZORPAY_WEBHOOK_SECRET` environment variable
-- ✅ Regenerate webhook secrets if necessary
-- ✅ Verify signature verification logic
-
-#### 3. Webhook Events Not Processing
-
-**Symptoms**: 200 responses but no business logic execution
-
-**Solutions**:
-
-- ✅ Check event type handling in webhook endpoint
-- ✅ Verify metadata/notes contain required booking information
-- ✅ Check database connection and permissions
-- ✅ Review error logs for unhandled exceptions
-
-#### 4. Development vs Production Issues
-
-**Symptoms**: Works locally but not in production
-
-**Solutions**:
-
-- ✅ Verify environment variables are set in production
-- ✅ Check production webhook URL configuration
-- ✅ Ensure SSL certificate is valid
-- ✅ Review production logs for errors
-
-## Environment Variable Checklist
-
-### Required for Webhook Monitoring
-
-```bash
-# Stripe (if using Stripe)
-STRIPE_SECRET_KEY=sk_test_... # or sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-
-# Razorpay (if using Razorpay)
-RAZORPAY_KEY_ID=rzp_test_... # or rzp_live_...
-RAZORPAY_SECRET=...
-RAZORPAY_WEBHOOK_SECRET=...
-
-# Optional: Skip payment for testing
-SKIP_PAYMENT=true # Remove for production
-```
-
-## Best Practices
-
-### 1. Webhook Security
-
-- ✅ Always verify webhook signatures
-- ✅ Use HTTPS for webhook URLs
-- ✅ Keep webhook secrets secure
-- ✅ Implement idempotency for webhook processing
-- ✅ **Razorpay composite eventId** (Mar 2026): eventId is now formatted as `{eventType}:{entityId}` to prevent cross-event collisions (e.g., a `payment.captured` and `refund.created` for the same entity no longer share an idempotency key)
-
-### 2. Error Handling
-
-- ✅ Log all webhook events with detailed context
-- ✅ Handle webhook retries gracefully
-- ✅ Implement dead letter queues for failed events
-- ✅ Monitor webhook failure rates
-
-### 3. Testing
-
-- ✅ Test webhook endpoints in development
-- ✅ Use test payment methods before going live
-- ✅ Verify webhook processing with real payments
-- ✅ Test edge cases (failed payments, timeouts)
-
-### 4. Monitoring
-
-- ✅ Set up alerts for webhook failures
-- ✅ Monitor payment success rates
-- ✅ Track booking status updates
-- ✅ Review logs regularly
-
-### Method 5: The deferral warning
-
-A Razorpay webhook can be valid and still be unprocessable on arrival, most commonly a `refund.created` that overtakes the `payment.captured` which would have created the Payment row. The handler answers those with a `DeferSignal`, the dispatcher deliberately leaves the row `processed=false, error=null`, and `sweep-stuck-webhook-events` re-drives it until the awaited row lands or the seven-day give-up cap fires.
-
-A row whose `error` starts with `permanent:` is the opposite case and is never re-driven: both the Stream and the Razorpay dispatch write that prefix when a payload fails its schema, because a payload that does not match today will not match next tick either (FAMILIARISE_WEB-3W), and the sweeper's selector excludes every prefix in `TERMINAL_ERROR_PREFIXES`.
-
-The problem with that design was that a deferred row is indistinguishable from a row whose handler crashed before recording anything, so an event that would never become processable stayed silent for a week. The dispatcher now increments `WebhookEvent.deferCount` every time it defers, and the sweeper raises a single Sentry warning per run listing every event that has deferred five or more times or has been unprocessed for over an hour. If you see `sweep-stuck-webhook-events: N webhook event(s) still unprocessed` in Sentry, the attached context names each event id, its provider, its type and its defer count.
-
-A high `deferCount` on a refund means the handler could not resolve the payment the refund names, and there are two quite different reasons for that. Check the local capture state first: look the `pay_…` id up against `Payment.gatewayPaymentId` and the order id against `Payment.paymentIntent`, and if neither finds a row then the payment really was never captured on our side and the event is a reconciliation question rather than a webhook one. If a row does exist, the failure is in the lookup rather than in the data, which on a pre-`gatewayPaymentId` row means the dispatcher's `payments.fetch` translation is failing — check the Razorpay credentials the function is running with and the gateway's availability, because an authentication or network failure there produces exactly the same silent, repeating deferral as a genuinely missing capture.
-
-## Success Indicators
-
-### Your webhooks are working correctly if:
-
-1. ✅ **Console logs show webhook events** with proper formatting
-2. ✅ **Payment gateway dashboards show successful deliveries** (HTTP 200)
-3. ✅ **Database records are updated** (booking status, payment status)
-4. ✅ **Users see success toast notifications** before redirect
-5. ✅ **Email confirmations are sent** (if implemented)
-6. ✅ **Dashboard shows updated booking information**
-
-### Your success notifications are working if:
-
-1. ✅ **Toast appears immediately** after successful checkout
-2. ✅ **Message is appropriate** for payment vs skip payment mode
-3. ✅ **Redirect happens after 2 seconds** allowing time to read toast
-4. ✅ **Dashboard shows correct booking status** after redirect
-5. ✅ **Consistent behavior** across all event types and payment gateways
-
-## Quick Testing Checklist
-
-### Skip Payment Mode (Development)
-
-1. Set `SKIP_PAYMENT=true`
-2. Complete checkout flow
-3. Verify success toast appears
-4. Check dashboard for booking
-5. Review console logs
-
-### Real Payment Mode
-
-1. Set `SKIP_PAYMENT=false`
-2. Use test payment credentials
-3. Complete payment flow
-4. Check webhook logs
-5. Verify booking confirmation
-6. Test with different payment methods
-
-### All Event Types
-
-- [ ] Consultation booking
-- [ ] Subscription activation
-- [ ] Webinar registration
-- [ ] Class registration
-
-### Both Payment Gateways
-
-- [ ] Stripe integration
-- [ ] Razorpay integration
+- **72-Hour Lower Floor on Stuck-Event Sweeping**: Superseded because `archive-webhook-events` retains failed rows for 90 days; skipping stuck rows older than 72 hours orphaned valid events permanently when weekend incidents exceeded 3 days. `maxAgeHours` now emits a warning log without excluding older unprocessed rows.
+- **Unbounded Per-Event Sweep Loop**: Superseded by explicit per-event timeouts (`Promise.race`) inside `sweep-stuck-webhook-events` so a single hung webhook replay cannot starve subsequent rows or exceed Netlify function limits under `PG_POOL_MAX=1`.
+- **Archiving `WebhookEvent` Alone While Leaving `EmailEvent` and `OutboundWebhookDelivery` Unbounded**: Superseded by unified weekly pruning across all three webhook log tables in `archive-webhook-events`.

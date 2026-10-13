@@ -73,7 +73,10 @@ export async function GET(
   // audit.read — same matrix entry as the sidebar + page gate. Rows are then
   // scoped per category grant: SUPPORT/MANAGER never get a money row,
   // BILLING_ADMIN gets only money rows (#1527 P0-6).
-  const access = await requireOrgAccess(orgId, { permission: "audit.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "audit.read",
+  });
   if (access.error) return access.error;
   const rowScope = auditRowScope(access.member.role) ?? {};
 
@@ -182,7 +185,7 @@ export async function GET(
 
   const members = membershipIds.length
     ? await prisma.membership.findMany({
-        where: { id: { in: membershipIds } },
+        where: { id: { in: membershipIds }, organizationId: orgId },
         select: {
           id: true,
           role: true,

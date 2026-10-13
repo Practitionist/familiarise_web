@@ -28,16 +28,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 import { createPurchaseOrder } from "../utils/api";
-import type { CreatePurchaseOrderBody, PoCurrency } from "../utils/types";
+import type { CreatePurchaseOrderBody } from "../utils/types";
 
 interface CreatePurchaseOrderDialogProps {
   orgId: string;
@@ -57,7 +50,6 @@ export function CreatePurchaseOrderDialog({
   const [poDate, setPoDate] = useState(today);
   const [validUntil, setValidUntil] = useState("");
   const [totalRupees, setTotalRupees] = useState("");
-  const [currency, setCurrency] = useState<PoCurrency>("INR");
   const [uploadedDocUrl, setUploadedDocUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -66,7 +58,6 @@ export function CreatePurchaseOrderDialog({
     setPoDate(today);
     setValidUntil("");
     setTotalRupees("");
-    setCurrency("INR");
     setUploadedDocUrl("");
     setError(null);
   };
@@ -106,7 +97,7 @@ export function CreatePurchaseOrderDialog({
       poDate: new Date(poDate).toISOString(),
       validUntil: validUntil ? new Date(validUntil).toISOString() : null,
       totalAmountPaise: totalPaise,
-      currency,
+      currency: "INR",
       uploadedDocUrl: uploadedDocUrl.trim() || null,
     });
   };
@@ -134,7 +125,7 @@ export function CreatePurchaseOrderDialog({
               placeholder="e.g. PO-2026-0042"
               maxLength={64}
             />
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-muted-foreground">
               Use the number your AP team issued. Must be unique within this
               org.
             </p>
@@ -158,7 +149,7 @@ export function CreatePurchaseOrderDialog({
                 value={validUntil}
                 onChange={(e) => setValidUntil(e.target.value)}
               />
-              <p className="text-xs text-zinc-500">Optional</p>
+              <p className="text-xs text-muted-foreground">Optional</p>
             </div>
           </div>
 
@@ -173,24 +164,19 @@ export function CreatePurchaseOrderDialog({
                 onChange={(e) => setTotalRupees(e.target.value)}
                 placeholder="0.00"
               />
-              <p className="text-xs text-zinc-500">In rupees, to the paisa.</p>
+              <p className="text-xs text-muted-foreground">
+                In rupees, to the paisa.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="currency">Currency</Label>
-              <Select
-                value={currency}
-                onValueChange={(v) => setCurrency(v as PoCurrency)}
-              >
-                <SelectTrigger id="currency">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="INR">INR</SelectItem>
-                  <SelectItem value="USD">USD</SelectItem>
-                  <SelectItem value="EUR">EUR</SelectItem>
-                  <SelectItem value="GBP">GBP</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                id="currency"
+                value="INR (₹)"
+                disabled
+                readOnly
+                aria-label="Currency (INR)"
+              />
             </div>
           </div>
 

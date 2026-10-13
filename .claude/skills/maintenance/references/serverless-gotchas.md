@@ -38,3 +38,19 @@ With "require branches to be up to date", every merge makes the others BEHIND. M
 ## 7. Orchestration hygiene that saved the campaign
 
 Executors on cheaper models than the orchestrator (Opus high for money code, Sonnet for E2E/docs/mechanical); one worktree per PR under a sibling path with `node_modules`/`.env` symlinked; every long agent prompt carries "if you approach a session limit: commit what is consistent, push, report"; resume dead agents from their worktree; keep a resume queue (plan file §) updated after every event; monitors emit one terminal line.
+
+## 8. App Router client conventions that fail silently (2026-10-02)
+
+URL-state writes must go through `replaceUrl()` in `lib/navigation/history.ts`, which passes `null` as the history state. Next 15 patches `history.replaceState` and `history.pushState` and skips its router sync when the state carries `__NA`, and `window.history.state` always carries it after hydration, so passing `window.history.state` moves the address bar while `useSearchParams` never changes (PR #1928). ESLint `no-restricted-syntax` now bans passing `.state`; the explore writers are the documented exception until #1927.
+
+Recovering from a server-thrown error in an `error.tsx` boundary needs `startTransition(() => { router.refresh(); reset(); })`, because `reset()` alone re-renders the same failed server payload. `components/dashboard/DashboardRouteError.tsx` retries once automatically, and it reads the retry decision on every render: a decision made once in `useState` spun on "Reconnecting…" forever when the failed retry came back as an update. `__tests__/dashboards/dashboard-route-error.test.tsx` pins this, and a blip that heals itself no longer spends Sentry quota.
+
+Placeholder data (`keepPreviousData`) belongs to the previous tab or filter, so never render the new tab's empty state from it.
+
+## 9. Multi-Host Portability & Hot-Standby Gotchas (`docs/deployment/README.md`)
+
+- **Never trust `x-nf-client-connection-ip` unconditionally**: Only Netlify's edge strips client-forged `x-nf-client-connection-ip`. Outside `process.env.NETLIFY === "true"` (`Cloud Run`, `Vercel`, `Fly`), any client sending `-H "x-nf-client-connection-ip: <ip>"` bypasses Upstash and BetterAuth rate limiters completely.
+- **Never rely on `Netlify-Vary` alone**: Vercel and standard CDNs ignore `Netlify-Vary` and cache anonymous responses publicly (`s-maxage`), poisoning authenticated reads. Always send `Cache-Control: private, no-store` when session cookies exist and `Vary: Cookie, Accept-Encoding` alongside `Netlify-Vary`.
+- **Never hardcode `output: "standalone"` or unconditional `sharp` exclusions**: Gate `output: "standalone"` on `process.env.NEXT_STANDALONE === "true"` and exclude `node_modules/sharp/**` & `node_modules/@img/**` **only** when `process.env.NETLIFY === "true" || process.env.VERCEL === "1"`.
+- **Never proxy binary uploads or downloads `> 4 MB` through Route Handlers**: Vercel enforces a hard `4.5 MB` payload cap (`413`) and AWS Lambda / Netlify caps sync payloads at `6 MB`. Always use Supabase `createSignedUploadUrl` for uploads and `302` redirects to `createSignedUrl` for downloads.
+- **Standby Cron Split-Brain (`ops:active_cron_platform`)**: Standby Netlify `cron-tick.mts` continues running on `prod` even when DNS points elsewhere, and `netlify env:set` requires a 12-minute rebuild. Gate active cron execution dynamically via Upstash REST key `ops:active_cron_platform`.

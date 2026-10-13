@@ -81,9 +81,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
 }) => {
   const { data: session } = useSession();
   const [optionalOpen, setOptionalOpen] = useState(false);
-  // Reflects the parent's async role-flip (ORG_WORKSPACE path hits the
-  // `setOnboardingRoleAction` server action before advancing). When the
-  // action fails, the parent shows a toast and does NOT unmount us, so the
+  // Covers the async `onNext`; if the parent does not advance, the
   // `finally` re-enables the button for retry.
   const [isSubmitting, setIsSubmitting] = useState(false);
 

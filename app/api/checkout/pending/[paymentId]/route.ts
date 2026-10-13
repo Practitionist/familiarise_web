@@ -35,7 +35,7 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ paymentId: string }> },
 ) {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -89,7 +89,10 @@ export async function DELETE(
         { status: 409 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "checkout" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "checkout" } },
+    );
     console.error(
       JSON.stringify({
         event: "cancel_pending_failed",

@@ -1,231 +1,100 @@
-# Local Razorpay Testing Guide
+# Local Testing — Razorpay Test Cards, Test UPI & Signed Webhooks
 
-Complete guide to testing your Razorpay integration locally before touching production.
+Official citations:
+- [Test Card Details (`https://razorpay.com/docs/payments/payments/test-card-details/`)](https://razorpay.com/docs/payments/payments/test-card-details/)
+- [Standard Checkout Test Integration (`https://razorpay.com/docs/payments/payment-gateway/web-integration/standard/integration-steps/#2-test-integration`)](https://razorpay.com/docs/payments/payment-gateway/web-integration/standard/integration-steps/#2-test-integration)
 
-## Step 1: Get Test API Keys
+---
 
-1. Go to [Razorpay Dashboard](https://dashboard.razorpay.com)
-2. Toggle to **Test Mode** (top-left switch)
-3. Go to **Settings → API Keys → Generate Key**
-4. You'll get:
-   - `rzp_test_xxxxx` — Key ID
-   - A secret — Key Secret (shown once, save it)
+## 1. Official Razorpay Test Card Numbers
 
-Update `.env.local`:
-```
-RAZORPAY_KEY_ID=rzp_test_xxxxx
-RAZORPAY_SECRET=your_test_secret
-NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_test_xxxxx
-```
+> **NEVER use Stripe test card numbers** (`4242...`, `4111...`, `4000...`) or legacy retired cards (`4012 0010...`) with Razorpay. Always use the official Razorpay test cards below (`https://razorpay.com/docs/payments/payments/test-card-details/`).
 
-**Test keys start with `rzp_test_`, live keys with `rzp_live_`.** They access completely separate environments — test data is invisible in live mode and vice versa.
+### Domestic (Indian) Cards — Success
+Use any future expiry date (e.g., `05/30`), any 3-digit CVV (4-digit for Amex), and any cardholder name. On the mock bank ACS page, click **Success** (or enter any 4–10 digit OTP).
 
-## Step 2: Create Test Plans
+| Network & Type | Card Number |
+|---|---|
+| **Visa (Debit, Consumer)** | `4100 2800 0000 1007` |
+| **Mastercard (Credit, Business)** | `5555 5100 0008 1006` *(or `5500 6700 0000 1002`)* |
+| **Mastercard (Prepaid, Consumer)** | `5180 2872 0009 1001` |
+| **RuPay (Credit, Consumer)** | `6527 6589 0000 1005` |
+| **Diners (Credit, Consumer)** | `3608 280009 1007` |
+| **Amex (Credit, Consumer)** | `3402 560004 01007` |
+| **EMI (Mastercard)** | `5241 8100 0000 0000` |
 
-Plans must exist before you can create subscriptions. Create them in test mode:
+### Domestic (Indian) Cards — Error Simulation (`4100 2800 ...`)
+These cards deterministically trigger specific failure reasons (`payment.failed`):
+
+| Simulated Error Reason | Visa Card Number | Mastercard Card Number |
+|---|---|---|
+| `payment_timed_out` | `4100 2800 0009 0000` | `5305 6200 0009 0000` |
+| `insufficient_fund` | `4100 2800 0008 0001` | `5305 6200 0008 0001` |
+| `payment_cancelled` | `4100 2800 0007 0002` | `5305 6200 0007 0002` |
+| `card_declined` | `4100 2800 0006 0003` | `5305 6200 0006 0003` |
+| `card_disabled_for_online_payments` | `4100 2800 0003 0006` | `5305 6200 0003 0006` |
+| `gateway_technical_error` | `4100 2800 0002 0007` | `5305 6200 0002 0007` |
+| `card_number_invalid` | `4100 2800 0001 0008` | `5305 6200 0001 0008` |
+| `authentication_failed` | `4100 2800 0000 0009` | `5305 6200 0000 0009` |
+
+### International Cards
+
+| Network | Card Number |
+|---|---|
+| **Visa (International)** | `4012 8888 8888 1881` |
+| **Mastercard (International)** | `5555 5555 5555 4444` *(or `5105 1051 0510 5100` / `5104 0600 0000 0008`)* |
+
+---
+
+## 2. Test UPI VPAs, Netbanking & Phone Number Gotcha
+
+### Test UPI VPAs (UPI Collect Only in Test Mode)
+- **Success VPA**: `success@razorpay`
+- **Failure VPA**: `failure@razorpay`
+- **Watch out**: In Test Mode, only **UPI Collect** (typing a `@razorpay` VPA) works; UPI Intent and UPI QR Code require Live Mode.
+
+### Test Netbanking & Wallets
+- Selecting any bank under Netbanking or any Wallet in Test Mode opens Razorpay's mock bank page with **Success** and **Failure** buttons.
+
+### Phone Number Gotcha in Test Mode (`#717`)
+- **Never use `9999999999` or `+919999999999`** in Test Mode! Razorpay's test backend rejects any phone number whose last 10 digits are identical with `"Invalid mobile number"`.
+- `normalizeRazorpayContact` in [`lib/payments/razorpay-prefill.ts`](../../../../../lib/payments/razorpay-prefill.ts) filters out `/(\d)\1{9,}/`. Always use a non-repeating number such as **`9876543210`** (`+919876543210`).
+
+---
+
+## 3. Simulating Signed Webhooks Locally (`POST /api/webhooks/razorpay`)
+
+Unlike Stripe (`stripe listen`), Razorpay's CLI does **not** provide a local webhook-forwarding (`listen`) command. You can either:
+1. Expose `localhost:3000` with `ngrok http 3000` or `cloudflared tunnel --url http://localhost:3000` and register `https://<tunnel>/api/webhooks/razorpay` in **Razorpay Dashboard (Test Mode) → Developers → Webhooks**, OR
+2. Send a locally signed webhook directly to `http://localhost:3000/api/webhooks/razorpay` using the script below.
+
+### Local Signed Webhook Helper (`curl` + `openssl`)
 
 ```bash
-curl -u rzp_test_xxxxx:your_test_secret \
-  https://api.razorpay.com/v1/plans \
+#!/usr/bin/env bash
+set -euo pipefail
+
+WEBHOOK_URL="${WEBHOOK_URL:-http://localhost:3000/api/webhooks/razorpay}"
+SECRET="${RAZORPAY_WEBHOOK_SECRET:?Set RAZORPAY_WEBHOOK_SECRET in your environment}"
+
+ORDER_ID="${1:-order_TestLocal00001}"
+PAYMENT_ID="${2:-pay_TestLocal00001}"
+AMOUNT_PAISE="${3:-118000}"
+
+BODY=$(cat <<EOF
+{"entity":"event","account_id":"acc_TestLocal","event":"payment.captured","contains":["payment"],"payload":{"payment":{"entity":{"id":"${PAYMENT_ID}","entity":"payment","amount":${AMOUNT_PAISE},"currency":"INR","status":"captured","order_id":"${ORDER_ID}","invoice_id":null,"international":false,"method":"upi","amount_refunded":0,"refund_status":null,"captured":true,"description":"Consultation booking","card_id":null,"bank":null,"wallet":null,"vpa":"success@razorpay","email":"buyer@example.com","contact":"+919876543210","notes":{"type":"booking"},"fee":2360,"tax":360,"error_code":null,"error_description":null,"error_source":null,"error_step":null,"error_reason":null,"created_at":$(date +%s)}}},"created_at":$(date +%s)}
+EOF
+)
+
+SIGNATURE=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')
+
+curl -i -X POST "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
-  -d '{
-    "period": "monthly",
-    "interval": 1,
-    "item": {
-      "name": "Pro Plan Monthly",
-      "amount": 99900,
-      "currency": "INR",
-      "description": "Pro plan billed monthly"
-    }
-  }'
+  -H "x-razorpay-signature: ${SIGNATURE}" \
+  --data-raw "$BODY"
 ```
 
-Save the returned `plan_id` (e.g., `plan_test_xxxxx`) in your `.env.local`:
-```
-RAZORPAY_PLAN_MONTHLY=plan_test_xxxxx
-```
-
-**Test and live plans have different IDs.** You need separate plan IDs per environment.
-
-## Step 3: Set Up ngrok for Webhooks
-
-Razorpay can't reach `localhost`. You need a public tunnel.
-
-### Install ngrok
-```bash
-# macOS
-brew install ngrok
-
-# or download from https://ngrok.com/download
-# Sign up for free account and add authtoken
-ngrok config add-authtoken your_token
-```
-
-### Start the tunnel
-```bash
-# Start your app first
-npm run dev   # localhost:3000
-
-# In another terminal, start ngrok
-ngrok http 3000
-```
-
-ngrok gives you a URL like `https://abc123.ngrok-free.app`. This is your public URL.
-
-**Keep ngrok running** throughout your testing session. If you restart ngrok, you get a new URL and must re-register the webhook.
-
-### Free tier limitation
-ngrok free tier gives a random URL each time. Paid plans give a stable subdomain. For development, random is fine — just update the webhook URL each session.
-
-> Razorpay's own validate-test guide now demos `zrok` as the tunnel, but ngrok still works fine — use either.
-
-## Step 4: Register Webhook in Razorpay
-
-1. Go to **Razorpay Dashboard → Account & Settings → Webhooks** (in test mode)
-2. Click **Add New Webhook**
-3. Set the URL: `https://abc123.ngrok-free.app/api/webhooks/razorpay`
-4. Set a webhook secret (any strong string) — save it as `RAZORPAY_WEBHOOK_SECRET` in `.env.local`
-5. Select events to listen for:
-   - `subscription.authenticated`
-   - `subscription.activated`
-   - `subscription.charged`
-   - `subscription.cancelled`
-   - `subscription.completed`
-   - `subscription.halted`
-   - `subscription.paused`
-   - `subscription.resumed`
-   - `subscription.pending`
-   - `subscription.updated`
-   - `payment.authorized`
-   - `payment.failed`
-   - `refund.created` (if using refunds)
-   - `refund.processed`
-   - `refund.failed`
-   - `refund.speed_changed`
-6. Click **Create Webhook**
-
-**Webhook secret is NOT the same as API secret.** They're separate values.
-
-## Step 5: End-to-End Test Flow
-
-### Test a subscription
-
-1. Start your app and ngrok
-2. Click your subscribe button — it should create a subscription and open `short_url`
-3. On the Razorpay checkout page, use test card details (see below)
-4. After payment, check:
-   - **Your terminal**: webhook logs should show incoming events
-   - **ngrok inspector** at `http://127.0.0.1:4040`: shows all requests with payloads
-   - **Razorpay Dashboard → Webhooks**: shows delivery attempts and response codes
-   - **Your database**: subscription should be `active`
-
-### Test card numbers
-
-Domestic success cards:
-
-| Card | Number | Behavior |
-|------|--------|----------|
-| Success (Visa) | `4100 2800 0000 1007` | Payment succeeds |
-| Success (Mastercard) | `5500 6700 0000 1002` | Payment succeeds |
-| Success (RuPay) | `6527 6589 0000 1005` | Payment succeeds |
-
-Failure / error cards (each forces a specific decline reason):
-
-| Card | Number | Error |
-|------|--------|-------|
-| Card declined | `4100 2800 0006 0003` | `card_declined` |
-| Insufficient funds | `4100 2800 0008 0001` | `insufficient_fund` |
-| Payment timed out | `4100 2800 0009 0000` | `payment_timed_out` |
-| Authentication failed | `4100 2800 0000 0009` | `authentication_failed` |
-
-- **Expiry**: Any future date (e.g., `12/35`)
-- **CVV**: Any 3 digits (e.g., `123`)
-- **Name**: Anything
-- **OTP/3DS**: No fixed OTP — any OTP of 4–10 digits succeeds; fewer than 4 digits fails.
-
-### Test UPI
-Use any valid format UPI ID like `success@razorpay` for successful payments, or `failure@razorpay` to test the failure path.
-
-### Test a refund
-
-```bash
-# After a successful test payment, get the payment ID from your DB or dashboard
-curl -u rzp_test_xxxxx:your_test_secret \
-  https://api.razorpay.com/v1/payments/pay_xxxxx/refund \
-  -H "Content-Type: application/json" \
-  -d '{ "amount": 99900 }'
-```
-
-Test mode refunds are typically immediate (not contractually documented). Live mode takes 5-7 business days.
-
-## Step 6: Inspect Webhook Payloads
-
-### ngrok web inspector
-Open `http://127.0.0.1:4040` in your browser. You can:
-- See every request Razorpay sends
-- Inspect headers (including `x-razorpay-signature` and `x-razorpay-event-id`)
-- View the full JSON payload
-- **Replay requests** — click "Replay" to re-send a webhook for debugging
-
-### Manual webhook testing with curl
-
-Generate a test signature:
-```bash
-# Replace with your actual webhook secret and payload
-export WEBHOOK_SECRET="your_webhook_secret"
-export PAYLOAD='{"event":"subscription.activated","payload":{"subscription":{"entity":{"id":"sub_test123","plan_id":"plan_test456","status":"active","notes":{"userId":"user_1","planKey":"pro_monthly"}}}}}'
-
-# Generate signature
-SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | awk '{print $NF}')
-
-# Send test webhook
-curl -X POST http://localhost:3000/api/webhooks/razorpay \
-  -H "Content-Type: application/json" \
-  -H "x-razorpay-event-id: evt_test_$(date +%s)" \
-  -H "x-razorpay-signature: $SIGNATURE" \
-  -d "$PAYLOAD"
-```
-
-Expected responses:
-- `200 OK` — webhook processed successfully
-- `400 Missing signature` — signature header missing
-- `400 Invalid signature` — wrong secret or payload mismatch
-
-## Step 7: Going to Production Checklist
-
-Before switching from test to live:
-
-- [ ] Generate **live** API keys from Razorpay Dashboard (production mode)
-- [ ] Create **live** plans (plan IDs are different from test)
-- [ ] Register webhook with your **production URL** (not ngrok)
-- [ ] Set **live** webhook secret
-- [ ] Update all env vars (`rzp_test_` → `rzp_live_`, plan IDs, webhook secret)
-- [ ] Verify webhook endpoint is HTTPS (required for live)
-- [ ] Test with a real Rs 1 payment to confirm the full flow
-- [ ] Enable all needed webhook events in live webhook settings
-- [ ] Remove any test-mode skips or debug logging from production code
-
-## Troubleshooting
-
-### Webhook not arriving
-1. Check ngrok is running and URL matches webhook registration
-2. Check ngrok inspector (`http://127.0.0.1:4040`) for incoming requests
-3. Check Razorpay Dashboard → Webhooks → delivery attempts
-4. Verify you're in **test mode** on the dashboard (not live)
-
-### Signature verification failing
-1. Check you're using `RAZORPAY_WEBHOOK_SECRET`, not `RAZORPAY_SECRET`
-2. Check you're reading raw body with `request.text()`, not `request.json()`
-3. Check the secret matches what you set in Razorpay Dashboard
-
-### ngrok URL changed
-If ngrok restarted, update the webhook URL in Razorpay Dashboard. Old URL won't work.
-
-### Payment stuck in "created"
-User didn't complete checkout. In test mode, go to the `short_url` and complete payment with test card.
-
-### Webhook returns 500
-Check your app logs. Common causes:
-- Database not running or not migrated
-- Missing env vars
-- Auth middleware blocking the webhook endpoint (webhooks are unauthenticated — exempt this route)
+### Why `--data-raw` and Single-Line `BODY` Matter
+- `app/api/webhooks/razorpay/route.ts` computes `HMAC-SHA256` over the **exact raw bytes** of the request body (`readBodyWithinCap(req)`).
+- Always sign the exact string passed to `--data-raw` without re-formatting or adding a trailing newline.
+- Remember that `schemas/webhooks/razorpay.ts` validates `payment.captured` strictly with `razorpayPaymentCapturedEventSchema`, so all nullable fields on `payload.payment.entity` (`invoice_id`, `refund_status`, `description`, `card_id`, `bank`, `wallet`, `vpa`, `fee`, `tax`, `error_*`) must be present (as `null` or typed values).

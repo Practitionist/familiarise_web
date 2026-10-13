@@ -49,6 +49,7 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/payments/payouts/earnings-service", () => ({
   createEarningsFromPayment: (...a: unknown[]) =>
     mockCreateEarningsFromPayment(...a),
+  ParkedCaptureEarningsError: class extends Error {},
 }));
 
 jest.mock("../../lib/enterprise/system-events", () => {
@@ -72,6 +73,7 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
+import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 
 const DAY = 24 * 60 * 60 * 1000;
 const CONSULTANT_PROFILE = "cp-1";
@@ -146,10 +148,15 @@ describe("the cohort has no age window", () => {
     const where = mockPaymentFindMany.mock.calls[0][0].where;
     expect(where).toEqual({
       paymentStatus: "SUCCEEDED",
+      // Synchronous rails settle earnings in their own checkout tx.
+      isMockPayment: false,
+      appointmentId: { not: null },
       earnings: { none: {} },
       // #1583 C-P0-05 — money that already left is not owed to anyone.
       refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
       disputes: { none: { status: { in: ["LOST", "CHARGE_REFUNDED"] } } },
+      // A parked capture's cash is already in UNAPPLIED_RECEIPTS.
+      AND: [notSettledElsewhereWhere],
     });
     // The thirty-day floor is the bug; its absence is the fix.
     expect(where.createdAt).toBeUndefined();
@@ -276,8 +283,11 @@ describe("a refund that lands after the cohort read", () => {
     expect(result.createdCount).toBe(0);
     expect(result.skippedCount).toBe(1);
     expect(mockReportSentryMessage).toHaveBeenCalledWith(
-      expect.stringContaining("EARNINGS_SKIPPED_REFUNDED: payment pay-late"),
-      expect.objectContaining({ expected: true }),
+      "EARNINGS_SKIPPED_REFUNDED: payment(s) refunded or charged back after the cohort read; not accrued",
+      expect.objectContaining({
+        expected: true,
+        extra: { paymentIds: ["pay-late"] },
+      }),
     );
   });
 });

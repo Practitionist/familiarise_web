@@ -286,7 +286,13 @@ const Footer: React.FC = () => {
             )}
 
             <p className="text-sm text-zinc-400 mt-4">
-              We respect your privacy. Unsubscribe at any time.
+              No spam, unsubscribe anytime.{" "}
+              <Link
+                href="/privacy"
+                className="underline hover:text-zinc-200 transition-colors"
+              >
+                Privacy Policy
+              </Link>
             </p>
           </div>
         </div>

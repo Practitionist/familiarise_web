@@ -51,6 +51,8 @@ export const referralApplyLimiter = makeLimiter(3, "24 h", "rl:referral-apply");
 export const remindLimiter = makeLimiter(1, "24 h", "rl:remind");
 /** 5 per hour — support-tickets, feedbacks, reviews, report */
 export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");
+/** 60 per hour — non-escalating support decision-tree button choices */
+export const supportTurnLimiter = makeLimiter(60, "1 h", "rl:support-turn");
 /** 20 per hour — review composer writes */
 export const reviewWriteLimiter = makeLimiter(20, "1 h", "rl:review-write");
 /** 20 per minute — POST /api/meetings/[id]/join */
@@ -89,6 +91,12 @@ export const currencyLimiter = makeLimiter(30, "1 m", "rl:currency");
 export const participantReadLimiter = makeLimiter(30, "1 m", "rl:participants");
 /** 10 per minute — event mutations: /api/bookings/* POST/PATCH */
 export const eventMutationLimiter = makeLimiter(10, "1 m", "rl:event-mutation");
+/** 5 per 10 minutes per (appointment, user) — /api/appointments/[id]/reschedule* (#1497) */
+export const rescheduleAppointmentLimiter = makeLimiter(
+  5,
+  "10 m",
+  "rl:reschedule-appt",
+);
 /** 10 per minute per user — document upload POSTs */
 export const documentUploadLimiter = makeLimiter(
   10,
@@ -100,6 +108,17 @@ export const brochureDownloadLimiter = makeLimiter(
   6,
   "1 m",
   "rl:plan-brochure",
+);
+/** Per user per minute, presign and commit apart: a bulk upload of a booking's 20-file cap fits each. */
+export const documentUploadUrlLimiter = makeLimiter(
+  20,
+  "1 m",
+  "rl:document-upload-url",
+);
+export const documentCommitLimiter = makeLimiter(
+  20,
+  "1 m",
+  "rl:document-commit",
 );
 /** 30 per minute per user — bulk document review */
 export const documentReviewLimiter = makeLimiter(
@@ -161,9 +180,9 @@ export const orgDataExportLimiter = makeLimiter(
   "24 h",
   "rl:org-data-export",
 );
-/** 120 per hour per IP — GET /api/auth/sso/domain-check */
+/** 1000 per hour per IP (offices share one NAT address) — GET /api/auth/sso/domain-check */
 export const ssoDomainCheckLimiter = makeLimiter(
-  120,
+  1000,
   "1 h",
   "rl:sso-domain-check",
 );
@@ -174,12 +193,23 @@ export const inviteAcceptIpLimiter = makeLimiter(
   "rl:org-invite-accept",
 );
 export const inviteAcceptLimiter = inviteAcceptIpLimiter;
+/** 10 per minute per IP — GET /api/referrals/code/check/[code] */
+export const referralCheckLimiter = makeLimiter(10, "1 m", "rl:referral-check");
+/** 2 per hour per recipient — the "someone tried to sign up" notice */
+export const existingAccountNoticeLimiter = makeLimiter(
+  2,
+  "1 h",
+  "rl:existing-account-notice",
+);
 /** 20 per hour per admin — POST /api/admin/team/members and setup-link */
 export const staffCreateLimiter = makeLimiter(
   20,
   "1 h",
   "rl:platform:staff-create",
 );
+
+/** 5 per 15 minutes per user — POST /api/user/reauthenticate (password and TOTP guesses) */
+export const reauthLimiter = makeLimiter(5, "15 m", "rl:reauth");
 
 /**
  * Seconds until the sliding window admits the caller again, floored at 1.

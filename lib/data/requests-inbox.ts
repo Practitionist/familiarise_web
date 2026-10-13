@@ -93,12 +93,26 @@ const INBOX_APPOINTMENT_SELECT = {
     },
     payment: { select: BUYER_PAYMENT_DISPLAY_SELECT },
     organization: { select: { name: true } },
+    // #1760 — the EXPIRED edge tells a lapsed pay link from an unanswered
+    // request. #1846 added the second arm: a consultant's withdraw-approval now
+    // ends in CANCELLED rather than EXPIRED, so the `toStatus: "EXPIRED"` filter
+    // alone would drop the edge that says WHO ended the booking. Added, not
+    // substituted — the EXPIRED edge is still what proves a pay link lapsed, and
+    // narrowing this select would silently un-prove it.
     statusHistory: {
-      where: { toStatus: "EXPIRED" as const },
-      select: { fromStatus: true, toStatus: true },
+      where: {
+        OR: [
+          { toStatus: "EXPIRED" as const },
+          {
+            toStatus: "CANCELLED" as const,
+            reason: "WITHDRAWN_BY_CONSULTANT",
+          },
+        ],
+      },
+      select: { fromStatus: true, toStatus: true, reason: true },
     },
   },
-} as const;
+};
 
 const CONSULTATION_SELECT = {
   id: true,
@@ -180,7 +194,9 @@ const INBOX_ORDER = [
 // back as `number`, which GetPayload still spells `bigint`.
 const findConsultations = (where: Prisma.ConsultationWhereInput) =>
   prisma.consultation.findMany({
-    where: { ...where, deletedAt: null },
+    // No `deletedAt`: a request is retired by `status` + `cancelledAt`, both
+    // written by the transition that closed it. See the Consultation model.
+    where,
     select: CONSULTATION_SELECT,
     orderBy: INBOX_ORDER,
     take: INBOX_SCAN,
@@ -314,7 +330,17 @@ function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
     nextAction.kind === "ALLOCATE" && nextAction.deadline
       ? { ...row, deadline: nextAction.deadline }
       : row;
-  return { ...timed, bucket: inboxBucketOf(timed, bookingState.state, now) };
+  const isStrandedReschedule =
+    row.kind === "consultation" &&
+    bookingState.state !== "REQUESTED" &&
+    row.rescheduledSlotCount > 0 &&
+    row.proposal === null;
+  return {
+    ...timed,
+    bucket: isStrandedReschedule
+      ? "answer-today"
+      : inboxBucketOf(timed, bookingState.state, now),
+  };
 }
 
 function consultationRow(
@@ -579,7 +605,8 @@ function trialWhere(
   return {
     ...scopeToWhereOrgId(scope),
     consultantProfileId,
-    deletedAt: null,
+    // No `deletedAt`: every terminal trial outcome is a TrialStatus value, so
+    // the status filter below is already the liveness test. See the Trial model.
     status: { in: statuses },
   };
 }
@@ -601,6 +628,39 @@ interface CohortPlan {
 type ChipKey = InboxChip | "all";
 const chipKey = (chip: InboxChip | undefined): ChipKey => chip ?? "all";
 
+/**
+ * An APPROVED consultation whose whole-booking reschedule ended (declined or
+ * expired) after its original time was claimed by another booking: its only
+ * occurrences are still `RESCHEDULED`, no live confirmed session exists, and
+ * no `PENDING_REVIEW` proposal remains open. Surface it in the Requests inbox
+ * so the consultant can allocate a replacement slot.
+ */
+function strandedApprovedConsultationWhere(
+  cp: string,
+  scope: Scope,
+): Prisma.ConsultationWhereInput {
+  return {
+    status: "APPROVED",
+    consultationPlan: { consultantProfileId: cp },
+    appointment: {
+      ...scopeToWhereOrgId(scope),
+      occurrences: {
+        some: { completionStatus: "RESCHEDULED", deletedAt: null },
+        none: {
+          completionStatus: {
+            in: ["SCHEDULED", "COMPLETED", "UNVERIFIED"],
+          },
+          isTentative: false,
+          deletedAt: null,
+        },
+      },
+      rescheduleRequests: {
+        none: { status: "PENDING_REVIEW" },
+      },
+    },
+  };
+}
+
 /** The consultation sub-cohorts a chip reads; an unknown chip reads nothing. */
 function consultationCohort(
   cp: string,
@@ -613,13 +673,15 @@ function consultationCohort(
     scope,
     "APPROVED_PENDING_PAYMENT",
   );
+  const stranded = strandedApprovedConsultationWhere(cp, scope);
   const byChip: Partial<Record<ChipKey, Prisma.ConsultationWhereInput[]>> = {
-    all: [pendingConsultationWhere(cp, scope), awaiting],
+    all: [pendingConsultationWhere(cp, scope), stranded, awaiting],
     "answer-today": [
       {
         ...pendingConsultationWhere(cp, scope),
         requestedAt: dueWithinDay(CONSULTATION_HOLD_MS, now),
       },
+      stranded,
     ],
     "awaiting-payment": [awaiting],
     declined: [consultationRequestWhere(cp, scope, "REJECTED")],
@@ -806,15 +868,17 @@ async function readCounts(
   if (known?.type !== "consultation") {
     tasks.push(() =>
       prisma.consultation.count({
-        where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
+        where: pendingConsultationWhere(cp, scope),
       }),
     );
     tasks.push(() =>
       prisma.consultation.count({
-        where: {
-          ...consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-          deletedAt: null,
-        },
+        where: strandedApprovedConsultationWhere(cp, scope),
+      }),
+    );
+    tasks.push(() =>
+      prisma.consultation.count({
+        where: consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
       }),
     );
   }
@@ -845,6 +909,8 @@ async function readCounts(
   let i = 0;
   const consultationPending =
     known?.type === "consultation" ? 0 : (results[i++] ?? 0);
+  const consultationStranded =
+    known?.type === "consultation" ? 0 : (results[i++] ?? 0);
   const consultationAwaiting =
     known?.type === "consultation" ? 0 : (results[i++] ?? 0);
   const subscriptionPending =
@@ -857,7 +923,7 @@ async function readCounts(
     consultation:
       known?.type === "consultation"
         ? known.total
-        : consultationPending + consultationAwaiting,
+        : consultationPending + consultationStranded + consultationAwaiting,
     subscription:
       known?.type === "subscription"
         ? known.total
@@ -868,21 +934,30 @@ async function readCounts(
 }
 
 /**
- * #1527 — the consultant nav badge: the inbox's own tab counts, so badge and
- * tabs cannot disagree. Personal scope by default (#1345: org-funded requests
- * belong to that org's dashboard).
+ * Rows only this consultant can clear (the REQUESTED state): the nav
+ * badge and Home's "requests to answer". Awaiting-payment and next-cycle rows
+ * wait on the client, so they stay on the tabs but not on the badge. Personal
+ * scope by default (org-funded requests belong to that org's dashboard).
  */
-export async function readRequestsInboxCounts(args: {
+export async function readRequestsToAnswerCount(args: {
   consultantProfileId: string;
   orgScope?: Scope;
-  now?: Date;
-}): Promise<Record<InboxType, number>> {
-  return readCounts(
-    args.consultantProfileId,
-    args.orgScope ?? PERSONAL,
-    args.now ?? new Date(),
-    null,
-  );
+}): Promise<number> {
+  const cp = args.consultantProfileId;
+  const scope = args.orgScope ?? PERSONAL;
+  const tasks: (() => Promise<number>)[] = [
+    () =>
+      prisma.consultation.count({
+        where: pendingConsultationWhere(cp, scope),
+      }),
+    () =>
+      prisma.subscription.count({
+        where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
+      }),
+    () => prisma.trial.count({ where: trialWhere(cp, scope, ["PENDING"]) }),
+  ];
+  const results = await mapLimit(tasks, poolLimit(), (run) => run());
+  return results.reduce((sum, n) => sum + n, 0);
 }
 
 export async function readRequestsInbox(

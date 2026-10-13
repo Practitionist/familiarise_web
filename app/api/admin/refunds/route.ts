@@ -11,11 +11,12 @@ import {
   RefundValidationError,
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import {
-  fundingRailForIntent,
-  refundBookingPayment,
-} from "@/lib/payments/operations/booking-refund";
-import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
+  classSeriesLedgers,
+  refundWholeEventPayments,
+} from "@/lib/payments/operations/event-refunds";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import { notifyRefundProcessed } from "@/lib/novu";
@@ -23,6 +24,7 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 /**
  * #1586 / parity with #1740 M9 — the payer's receipt for the whole-event
@@ -196,6 +198,8 @@ export async function POST(req: NextRequest) {
     // privileged: staff read every money surface for ticket context.
     const auth = await requireBackofficeSurface("refunds.manage");
     if (auth.error) return auth.error;
+    const stale = requireFreshSession(auth.session);
+    if (stale) return stale;
 
     // #677/PM-36 — throttle the most dangerous button in the app. Keyed per
     // admin user; 10/min is far above legitimate ops cadence.
@@ -243,11 +247,35 @@ export async function POST(req: NextRequest) {
 
         const eventKind = body.classId ? "class" : "webinar";
         const eventId = (body.classId ?? body.webinarId)!;
+        // #1780 D-5 — the class ledger, so this door nets each seat to what the
+        // series did not deliver (and deducts what an `occ:` session refund
+        // already returned) instead of refunding a partly-delivered class in
+        // full. Without it, `seriesAmount` is `undefined` on every rail and a
+        // moderation ban or this button handed back all ten sessions of a class
+        // the learner sat through eight of. A webinar refunds in full by design,
+        // so it has no ledger. An operator who really means "everything" still
+        // has the single-payment door above, where `amountPaise` is theirs to set.
+        const ledgers = body.classId ? await classSeriesLedgers(eventId) : null;
         const summary = await refundWholeEventPayments(
           eventKind,
           eventId,
           `admin whole-event refund: ${body.reason}`,
           initiatedByUserId,
+          {
+            ledgers: ledgers ?? undefined,
+            // This door's OWN idempotency scope, not the shared `series-cancel`
+            // the cancel paths use. Sharing one key across two doors meant a
+            // class cancelled and then refunded from here collided: the gateway
+            // rail's key is `${prefix}:${paymentId}`, `refundPayment` answers a
+            // known key from the prior Refund row before it checks any balance,
+            // and the second door was handed the first door's refund — which
+            // `refundsIssued` then counted, so this door reported seats it had
+            // not refunded. A distinct prefix means the two operations are
+            // separately at-most-once, and a retry of THIS one reuses its own
+            // key. An operator who genuinely needs a second, different refund on
+            // a seat still has the single-payment door above.
+            dedupeKeyPrefix: "admin-event-refund",
+          },
         );
         // #1583 C-P0-03 — a repeat is idempotent because every rail clamps to
         // the refundable balance, so no parent CAS is needed: answer 200, never

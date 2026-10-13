@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
+import { PendingSsoApprovals } from "@/components/dashboard/backoffice/organizations/PendingSsoApprovals";
 import { FilterBar } from "@/components/dashboard/FilterBar";
 import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -12,6 +13,7 @@ import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
+import type { PendingSsoApproval } from "@/lib/backoffice/org-detail";
 import { ORG_STATUS, orgStatus } from "@/lib/labels/backoffice-labels";
 import { humanizeEnum } from "@/lib/ui/tone";
 
@@ -86,7 +88,9 @@ const columns: ResponsiveColumn<OrgListItem>[] = [
  * live on each org's detail page, and pending ones also queue on
  * Verification.
  */
-export default function OrganizationsPageClient() {
+export default function OrganizationsPageClient({
+  pendingSso,
+}: Readonly<{ pendingSso: PendingSsoApproval[] }>) {
   const { basePath } = useBackofficeCapability();
   const [status, setStatus] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -117,6 +121,7 @@ export default function OrganizationsPageClient() {
         title="Organizations"
         description="Every organization on the platform. Open one to verify, suspend or invoice it."
       />
+      <PendingSsoApprovals rows={pendingSso} basePath={basePath} />
       <ResponsiveTable<OrgListItem>
         columns={columns}
         rows={data?.data ?? []}

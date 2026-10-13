@@ -12,7 +12,13 @@ import {
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { notifyNewBookingRequest } from "@/lib/novu";
-import { EMAIL_BUDGET_MS, sendNewBookingRequestEmail } from "@/lib/email";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import type { StagedTrigger } from "@/lib/novu/outbox";
+import { EMAIL_BUDGET_MS } from "@/lib/email";
+import {
+  stageNewBookingRequestEmail,
+  type StagedRecipientEmail,
+} from "@/lib/email/senders/booking";
 import { PENDING_CONSULTATION_EXPIRATION_HOURS } from "@/scripts/appointments/expire-stale-requests";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
@@ -37,7 +43,7 @@ import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -194,6 +200,73 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (
+      typeof consultationPlan.durationInHours === "number" &&
+      consultationPlan.durationInHours > 0
+    ) {
+      const expectedDurationMs = Math.round(
+        consultationPlan.durationInHours * 60 * 60 * 1000,
+      );
+      if (endTime.getTime() - startTime.getTime() !== expectedDurationMs) {
+        return NextResponse.json(
+          {
+            error: `Requested slot duration must match the plan duration (${consultationPlan.durationInHours} hour(s)).`,
+            code: "INVALID_SLOT_DURATION",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (availabilityWindowWeeklyId && availabilityWindowCustomId) {
+      return NextResponse.json(
+        {
+          error:
+            "Provide either availabilityWindowWeeklyId or availabilityWindowCustomId, not both.",
+          code: "AMBIGUOUS_AVAILABILITY_WINDOW",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (
+      availabilityWindowWeeklyId &&
+      prisma.availabilityWindowWeekly?.findFirst
+    ) {
+      const weeklyWindow = await prisma.availabilityWindowWeekly.findFirst({
+        where: { id: availabilityWindowWeeklyId, consultantProfileId },
+        select: { id: true },
+      });
+      if (!weeklyWindow) {
+        return NextResponse.json(
+          {
+            error: "Availability window not found for this consultant",
+            code: "INVALID_AVAILABILITY_WINDOW",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (
+      availabilityWindowCustomId &&
+      prisma.availabilityWindowCustom?.findFirst
+    ) {
+      const customWindow = await prisma.availabilityWindowCustom.findFirst({
+        where: { id: availabilityWindowCustomId, consultantProfileId },
+        select: { id: true },
+      });
+      if (!customWindow) {
+        return NextResponse.json(
+          {
+            error: "Availability window not found for this consultant",
+            code: "INVALID_AVAILABILITY_WINDOW",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     // Create request notes with availability slot information
     const requestNotes =
       `Request for approval - Slot: ${startTime.toISOString()} to ${endTime.toISOString()}. ` +
@@ -211,6 +284,10 @@ export async function POST(req: NextRequest) {
     let consulteeLock: Awaited<ReturnType<typeof lockConsulteeBooking>> | null =
       null;
     let lock;
+    let stagedBell: StagedTrigger | undefined;
+    let stagedEmailRows: StagedRecipientEmail[] = [];
+    let createdConsultation:
+      Awaited<ReturnType<typeof prisma.consultation.create>> | undefined;
 
     try {
       consulteeLock = await lockConsulteeBooking(session.user.id);
@@ -428,12 +505,7 @@ export async function POST(req: NextRequest) {
           }),
         );
 
-        // Fire-and-forget: notify consultant of new booking request.
-        //
-        // ADR 23 — the link used to hardcode the personal Requests page even for
-        // an org-hosted plan, where the request is not listed: the personal scope
-        // pins organizationId: null. Single recipient with a known side, so this
-        // resolves to a precise route rather than the /dashboard bounce.
+        // ADR 23 — single recipient with a known side resolves to a precise route rather than the /dashboard bounce.
         const requestOrgId = consultation.appointment?.organizationId ?? null;
         const reviewUrl = scopedHref({
           organizationId: requestOrgId,
@@ -443,27 +515,25 @@ export async function POST(req: NextRequest) {
             profileId: consultation.consultationPlan.consultantProfile.id,
           },
         });
-        await notifyNewBookingRequest(
-          consultation.consultationPlan.consultantProfile.user.id,
-          {
-            ...notificationScope(requestOrgId),
-            consulteeName: consultation.requestedBy.user.name || "A consultee",
-            planTitle: consultation.consultationPlan.title,
-            appointmentType: "CONSULTATION",
-            requestedDateTime: startTime.toISOString(),
-            dashboardUrl: reviewUrl,
-          },
-        );
-
-        // #1653 — the email twin. The deadline is the stale-request sweep's
-        // window from `requestedAt`, capped at the session itself: an approval
-        // after either is moot. The sender never throws.
         const sweepExpiry = new Date(
           consultation.requestedAt.getTime() +
             PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
         );
-        await sendNewBookingRequestEmail(
-          {
+        const [bellResult, emailRows] = await Promise.all([
+          notifyNewBookingRequest(
+            consultation.consultationPlan.consultantProfile.user.id,
+            {
+              ...notificationScope(requestOrgId),
+              consulteeName:
+                consultation.requestedBy.user.name || "A consultee",
+              planTitle: consultation.consultationPlan.title,
+              appointmentType: "CONSULTATION",
+              requestedDateTime: startTime.toISOString(),
+              dashboardUrl: reviewUrl,
+            },
+            { deferAttempt: true },
+          ),
+          stageNewBookingRequestEmail({
             requestId: consultation.id,
             consultantUserId:
               consultation.consultationPlan.consultantProfile.user.id,
@@ -476,17 +546,11 @@ export async function POST(req: NextRequest) {
             requestedAt: startTime,
             respondBy: sweepExpiry < startTime ? sweepExpiry : startTime,
             reviewUrl,
-          },
-          EMAIL_BUDGET_MS.REQUEST,
-        );
-
-        return NextResponse.json(
-          {
-            message: "Request for approval submitted successfully",
-            data: consultation,
-          },
-          { status: 201 },
-        );
+          }).catch(() => []),
+        ]);
+        stagedBell = bellResult?.staged;
+        stagedEmailRows = emailRows;
+        createdConsultation = consultation;
       } catch (lockError) {
         console.error(
           JSON.stringify({
@@ -546,6 +610,28 @@ export async function POST(req: NextRequest) {
         await unlockConsulteeBooking(consulteeLock);
       }
     }
+
+    await flushNotificationsAfter(
+      {
+        bells: [stagedBell],
+        emails: [
+          {
+            rows: stagedEmailRows,
+            emailType: "NEW_BOOKING_REQUEST",
+            budgetMs: EMAIL_BUDGET_MS.REQUEST,
+          },
+        ],
+      },
+      "scheduling.request-for-approval",
+    );
+
+    return NextResponse.json(
+      {
+        message: "Request for approval submitted successfully",
+        data: createdConsultation,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     // Consultee-lock failures surface here (the inner catch only wraps the
     // slot-atom section). Map them to the SAME structured responses the slot

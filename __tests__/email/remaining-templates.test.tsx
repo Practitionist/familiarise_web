@@ -12,6 +12,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AccountLinkedEmail } from "@/emails/auth/AccountLinkedEmail";
 import { PasswordResetEmail } from "@/emails/auth/PasswordResetEmail";
 import { VerificationEmail } from "@/emails/auth/VerificationEmail";
+import { ExistingAccountEmail } from "@/emails/auth/ExistingAccountEmail";
+import { PasswordChangedEmail } from "@/emails/auth/PasswordChangedEmail";
 import { WelcomeEmail } from "@/emails/auth/WelcomeEmail";
 import WindowOpenedEmail from "@/emails/booking/WindowOpenedEmail";
 import OrgCreatedEmail from "@/emails/organizations/OrgCreatedEmail";
@@ -62,20 +64,40 @@ describe("auth email templates", () => {
     expect(invite).toContain(`href="${resetLink}"`);
   });
 
-  it("VerificationEmail renders recipient name and verification link", () => {
-    const verificationLink = "https://app.test/api/auth/verify-email?token=xyz";
-    const out = html(
-      <VerificationEmail name="Asha" verificationLink={verificationLink} />,
-    );
+  it("VerificationEmail renders the code and its lifetime, and no name", () => {
+    const out = html(<VerificationEmail code="482913" expiresInMinutes={10} />);
     expect(out).toContain("Confirm your email");
+    expect(out).toContain("482913");
+    expect(out).toContain("10 minutes");
+    expect(out).toContain("Hi there,");
+  });
+
+  it("ExistingAccountEmail links to sign-in and password reset", () => {
+    const out = html(
+      <ExistingAccountEmail
+        signInUrl="https://app.test/auth/signin"
+        resetUrl="https://app.test/auth/forgot-password"
+      />,
+    );
+    expect(out).toContain("You already have an account");
+    expect(out).toContain('href="https://app.test/auth/signin"');
+    expect(out).toContain('href="https://app.test/auth/forgot-password"');
+  });
+
+  it("PasswordChangedEmail names the user and offers a reset", () => {
+    const out = html(
+      <PasswordChangedEmail
+        name="Asha"
+        resetUrl="https://app.test/auth/forgot-password"
+      />,
+    );
+    expect(out).toContain("Your password was changed");
     expect(out).toContain("Asha");
-    expect(out).toContain(`href="${verificationLink}"`);
+    expect(out).toContain('href="https://app.test/auth/forgot-password"');
   });
 
   it("WelcomeEmail renders recipient name and dashboard CTA", () => {
-    const out = html(
-      <WelcomeEmail name="Asha" dashboardUrl={dashboardUrl} />,
-    );
+    const out = html(<WelcomeEmail name="Asha" dashboardUrl={dashboardUrl} />);
     expect(out).toContain("Welcome to Familiarise!");
     expect(out).toContain("Asha");
     expect(out).toContain(`href="${dashboardUrl}"`);
@@ -230,7 +252,8 @@ describe("waitlist, booking window, and verification email templates", () => {
     expect(confirmOut).toContain("Asha");
     expect(confirmOut).toContain(`href="${confirmLink}"`);
 
-    const unsubscribeLink = "https://app.test/api/waitlist/unsubscribe?token=w1";
+    const unsubscribeLink =
+      "https://app.test/api/waitlist/unsubscribe?token=w1";
     const welcomeOut = html(
       <WaitlistWelcomeEmail name="Asha" unsubscribeLink={unsubscribeLink} />,
     );
@@ -288,7 +311,9 @@ describe("waitlist, booking window, and verification email templates", () => {
         supportEmail="support@familiarise.com"
       />,
     );
-    expect(reminder).toContain("Reminder: your expert profile is waiting on you");
+    expect(reminder).toContain(
+      "Reminder: your expert profile is waiting on you",
+    );
     expect(reminder).toContain("within 3 days");
   });
 });

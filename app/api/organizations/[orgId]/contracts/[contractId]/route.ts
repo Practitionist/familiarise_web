@@ -17,6 +17,8 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionContract } from "@/lib/enterprise/transitions";
 import { getContractLockState } from "@/lib/enterprise/config-lock";
+import { computeCycleEnd } from "@/lib/enterprise/cycle-engine";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { closeContractSeats } from "@/lib/api/organizations/seat-count";
 
 // Term fields that lock once the contract leaves DRAFT or starts billing
@@ -25,6 +27,7 @@ const TERM_FIELDS = [
   "effectiveFrom",
   "effectiveTo",
   "paymentTermsDays",
+  "terms",
 ] as const;
 
 const ContractStatusSchema = z.enum([
@@ -59,6 +62,7 @@ export async function GET(
 ) {
   const { orgId, contractId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "contracts.read",
     canSponsor: true,
   });
@@ -105,6 +109,7 @@ export async function PATCH(
   const access = await requireOrgAccess(orgId, {
     permission: "contracts.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -149,6 +154,24 @@ export async function PATCH(
         }
       }
 
+      const signs =
+        (body.status === "ACTIVE" && current.status !== "ACTIVE") ||
+        (body.signedAt !== undefined &&
+          body.signedAt !== null &&
+          current.signedAt === null);
+      const purchaseOrderId =
+        body.purchaseOrderId !== undefined
+          ? body.purchaseOrderId
+          : current.purchaseOrderId;
+      if (access.org.requiresPO && signs && !purchaseOrderId) {
+        throw Object.assign(
+          new Error(
+            "This organisation needs a purchase order on every signed contract. Attach an active purchase order and try again.",
+          ),
+          { httpStatus: 409, code: "PO_REQUIRED" },
+        );
+      }
+
       if (body.purchaseOrderId) {
         const po = await tx.purchaseOrder.findUnique({
           where: { id: body.purchaseOrderId },
@@ -173,6 +196,7 @@ export async function PATCH(
         const liveAssignmentCount = await tx.programAssignment.count({
           where: {
             program: { contractId },
+            status: { in: ["ACTIVE", "PAUSED"] },
             periodEnd: { gte: now },
           },
         });
@@ -203,8 +227,19 @@ export async function PATCH(
         }
       }
 
+      const defaultSignedAt =
+        body.status === "ACTIVE" &&
+        current.status !== "ACTIVE" &&
+        body.signedAt === undefined
+          ? (current.signedAt ?? new Date())
+          : undefined;
+
       const scalarData = {
-        ...(body.signedAt !== undefined && { signedAt: body.signedAt }),
+        ...(body.signedAt !== undefined
+          ? { signedAt: body.signedAt }
+          : defaultSignedAt !== undefined
+            ? { signedAt: defaultSignedAt }
+            : {}),
         ...(body.effectiveFrom !== undefined && {
           effectiveFrom: body.effectiveFrom,
         }),
@@ -254,6 +289,55 @@ export async function PATCH(
           },
         });
 
+        if (body.status === "ACTIVE" && current.status !== "ACTIVE") {
+          const existingSub = await tx.billingSubscription.findUnique({
+            where: { contractId },
+          });
+          const effectiveFromVal =
+            body.effectiveFrom ?? current.effectiveFrom ?? new Date();
+          const effectiveToVal =
+            body.effectiveTo !== undefined
+              ? body.effectiveTo
+              : current.effectiveTo;
+          if (existingSub) {
+            const cycleEnd = computeCycleEnd(
+              effectiveFromVal,
+              existingSub.cycle,
+            );
+            await tx.billingSubscription.update({
+              where: { id: existingSub.id },
+              data: {
+                currentCycleStart: effectiveFromVal,
+                currentCycleEnd: cycleEnd,
+                nextInvoiceDate: cycleEnd,
+                startsAt: effectiveFromVal,
+                endsAt: effectiveToVal ?? null,
+              },
+            });
+          }
+
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId: orgId,
+            eventType: "contract.signed",
+            payload: {
+              contractId,
+              billingAccountId: current.billingAccountId,
+              status: "ACTIVE",
+              signedAt: (
+                body.signedAt ??
+                defaultSignedAt ??
+                current.signedAt ??
+                new Date()
+              ).toISOString(),
+              effectiveFrom: effectiveFromVal.toISOString(),
+              effectiveTo: effectiveToVal?.toISOString() ?? null,
+              supersededContractId: null,
+              reason: null,
+            },
+          });
+        }
+
         // #779 §A / #1846 SM-C14 — a dead contract takes its programs and
         // their live seats down with it in this same tx, through the same
         // helper the nightly expiry job uses: ACTIVE and PAUSED seats close,
@@ -262,13 +346,20 @@ export async function PATCH(
         // against in-period seats, so for it this only tidies seats whose
         // period already ended.
         if (body.status === "TERMINATED" || body.status === "EXPIRED") {
+          const closedAt = new Date();
           await closeContractSeats(tx, {
             contractId,
             organizationId: orgId,
             actorMembershipId: access.member.id,
             contractStatus: body.status,
-            now: new Date(),
+            now: closedAt,
           });
+          if (typeof tx.billingSubscription?.updateMany === "function") {
+            await tx.billingSubscription.updateMany({
+              where: { contractId },
+              data: { endsAt: closedAt, activeSeatCount: 0 },
+            });
+          }
         }
       } else if (Object.keys(scalarData).length > 0) {
         await tx.contract.update({
@@ -322,6 +413,7 @@ export async function DELETE(
   const access = await requireOrgAccess(orgId, {
     permission: "contracts.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -349,6 +441,11 @@ export async function DELETE(
           new Error("Cannot delete a contract that has programs attached."),
           { httpStatus: 409 },
         );
+      }
+      if (typeof tx.rateCard?.deleteMany === "function") {
+        await tx.rateCard.deleteMany({
+          where: { ownerContractId: contractId },
+        });
       }
       await tx.contract.delete({ where: { id: contractId } });
       await tx.orgAuditLog.create({

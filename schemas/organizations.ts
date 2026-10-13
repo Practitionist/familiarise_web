@@ -12,6 +12,7 @@
 // `components/organization/create-wizard/schemas.ts`.
 
 import { z } from "zod";
+import { OrgOnboardingSchema } from "@/utils/onboarding";
 import {
   HostInvitableMemberRoleSchema,
   MemberRoleSchema,
@@ -52,6 +53,12 @@ export const CreateOrganizationPayloadSchema = z.object({
   // PERSONAL is selected so operators see the gap.
   fundingSource: SelfServiceFundingSourceSchema.optional(),
   paymentTermsDays: z.number().int().min(0).max(180).optional(),
+  gstStateCode: z
+    .string()
+    .regex(/^\d{2}$/)
+    .optional(),
+  /** First-time owner: completes onboarding in the org-create transaction. */
+  onboarding: OrgOnboardingSchema.optional(),
 });
 
 // PATCH /api/organizations/[orgId] — fields the dashboard surfaces.
@@ -316,13 +323,17 @@ export const SsoProviderRowSchema = z.object({
   id: z.string(),
   providerId: z.string(),
   issuer: z.string(),
+  // Comma-separated: one provider may cover several verified domains.
   domain: z.string(),
-  // Server occasionally hands back null when the provider was registered
-  // before the type column existed; tolerate it so the table renders.
-  providerType: z.literal("oidc").nullable(),
+  providerType: z.literal("oidc"),
   // False until platform staff approve the provider; sign-in through it is
   // refused until then.
   domainVerified: z.boolean(),
+  // Set by the first SSO sign-in through it by an org OWNER; enforcement
+  // needs a proven provider.
+  provenAt: z.string().nullable(),
+  // Built server-side from BETTER_AUTH_URL, the origin the plugin redirects to.
+  callbackUrl: z.string(),
 });
 
 export const SsoSettingsResponseSchema = z.object({
@@ -347,17 +358,15 @@ export const PatchSsoSettingsPayloadSchema = z.object({
 });
 
 // POST /api/organizations/[orgId]/sso/providers — outbound. SSO is
-// OIDC-only.
+// OIDC-only; PKCE and scopes are fixed server-side.
 const OidcConfigSchema = z.object({
-  issuer: z.string().min(1),
   clientId: z.string().min(1),
   clientSecret: z.string().min(1),
   discoveryEndpoint: z.string().url(),
-  pkce: z.boolean(),
 });
 // No providerId: the server generates it.
 export const CreateSsoProviderPayloadSchema = z.object({
-  domain: z.string().min(1),
+  domains: z.array(z.string().min(1)).min(1),
   issuer: z.string().min(1),
   providerType: z.literal("oidc"),
   oidcConfig: OidcConfigSchema,
@@ -365,3 +374,115 @@ export const CreateSsoProviderPayloadSchema = z.object({
 export type CreateSsoProviderPayload = z.infer<
   typeof CreateSsoProviderPayloadSchema
 >;
+
+// PATCH /api/organizations/[orgId]/sso/providers/[providerId] — outbound.
+export const UpdateSsoProviderPayloadSchema = z.object({
+  clientSecret: z.string().min(1).optional(),
+  domains: z.array(z.string().min(1)).min(1).optional(),
+});
+export type UpdateSsoProviderPayload = z.infer<
+  typeof UpdateSsoProviderPayloadSchema
+>;
+
+// ───────────────────────────── Programs ─────────────────────────────
+
+export const CoveredPlanTypeSchema = z.enum([
+  "CONSULTATION",
+  "CLASS",
+  "WEBINAR",
+  "SUBSCRIPTION",
+]);
+
+export const BillingCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
+export const OverageBehaviorSchema = z.enum([
+  "BLOCK",
+  "CHARGE_MEMBER",
+  "CHARGE_ORG",
+]);
+export const ChargeMemberSettlementModeSchema = z.enum([
+  "CHECKOUT_COPAY",
+  "POST_HOC_LINK",
+]);
+export const ProgramStatusSchema = z.enum([
+  "ACTIVE",
+  "PAUSED",
+  "EXPIRED",
+  "CANCELLED",
+]);
+
+export const LicensedSeatConfigSchema = z.object({
+  ratePerSeatPaise: z.number().int().min(0),
+  cycle: BillingCycleSchema,
+  coveredEngagementsPerCycle: z.number().int().min(0).nullable().optional(),
+  overageBehavior: OverageBehaviorSchema.optional(),
+  chargeMemberSettlementMode: ChargeMemberSettlementModeSchema.optional(),
+  priceCapPerEngagementPaise: z.number().int().positive().nullable().optional(),
+  overageSurchargeBps: z.number().int().min(0).max(10000).nullable().optional(),
+  maxOveragePerCyclePaise: z.number().int().positive().nullable().optional(),
+});
+
+export const CreditPoolConfigSchema = z.object({
+  cycle: BillingCycleSchema,
+  creditBudgetPerCycle: z.number().int().min(1),
+  overageBehavior: OverageBehaviorSchema.optional(),
+  chargeMemberSettlementMode: ChargeMemberSettlementModeSchema.optional(),
+  priceCapPerEngagementPaise: z.number().int().positive().nullable().optional(),
+  overageSurchargeBps: z.number().int().min(0).max(10000).nullable().optional(),
+  maxOveragePerCyclePaise: z.number().int().positive().nullable().optional(),
+});
+
+export const CreateProgramSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("LICENSED_SEAT"),
+    contractId: z.string().min(1),
+    name: z.string().min(2).max(120),
+    coveredPlanTypes: z.array(CoveredPlanTypeSchema).default([]),
+    allowedCategories: z.array(z.string()).default([]),
+    licensedSeatConfig: LicensedSeatConfigSchema,
+    forceOverlap: z.boolean().default(false),
+  }),
+  z.object({
+    type: z.literal("CREDIT_POOL"),
+    contractId: z.string().min(1),
+    name: z.string().min(2).max(120),
+    coveredPlanTypes: z.array(CoveredPlanTypeSchema).default([]),
+    allowedCategories: z.array(z.string()).default([]),
+    creditPoolConfig: CreditPoolConfigSchema,
+    forceOverlap: z.boolean().default(false),
+  }),
+]);
+export const CreateProgramPayloadSchema = CreateProgramSchema;
+export type CreateProgramPayload = z.infer<typeof CreateProgramSchema>;
+
+export const UpdateProgramSchema = z
+  .object({
+    name: z.string().min(2).max(120).optional(),
+    status: ProgramStatusSchema.optional(),
+    archived: z.boolean().optional(),
+    coveredPlanTypes: z.array(CoveredPlanTypeSchema).optional(),
+    allowedCategories: z.array(z.string()).optional(),
+    ratePerSeatPaise: z.number().int().min(0).optional(),
+    coveredEngagementsPerCycle: z.number().int().min(1).nullable().optional(),
+    creditBudgetPerCycle: z.number().int().min(1).optional(),
+    overageBehavior: OverageBehaviorSchema.optional(),
+    chargeMemberSettlementMode: ChargeMemberSettlementModeSchema.optional(),
+    overageSurchargeBps: z
+      .number()
+      .int()
+      .min(0)
+      .max(10000)
+      .nullable()
+      .optional(),
+    priceCapPerEngagementPaise: z
+      .number()
+      .int()
+      .positive()
+      .nullable()
+      .optional(),
+    maxOveragePerCyclePaise: z.number().int().positive().nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: "PATCH body must contain at least one field",
+  });
+export const UpdateProgramPayloadSchema = UpdateProgramSchema;
+export type UpdateProgramPayload = z.infer<typeof UpdateProgramSchema>;

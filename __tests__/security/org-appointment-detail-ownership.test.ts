@@ -28,8 +28,8 @@ describe("org appointment detail binds both ids", () => {
   it("requires org membership first", () => {
     // #1527 decision 6 — SUSPENDED is admitted for the member's own session
     // only; the operator branch 404s it.
-    expect(src).toContain(
-      "await requireOrgAccess(orgId, { allowSuspended: true })",
+    expect(src).toMatch(
+      /await requireOrgAccess\(orgId, \{[^}]*\ballowSuspended: true\b[^}]*\}\)/,
     );
   });
 
@@ -78,8 +78,12 @@ describe("org appointment detail binds both ids", () => {
     expect(src).toContain(
       "appointment.consultation ?? appointment.subscription",
     );
-    expect(src).toMatch(/canCancel=\{\s*mayCancel && status !== null/);
-    expect(src).toMatch(/canReschedule=\{\s*mayReschedule && status !== null/);
+    expect(src).toMatch(
+      /canCancel=\{\s*mayCancel &&\s*status !== null &&\s*fundedByOrg &&/,
+    );
+    expect(src).toMatch(
+      /canReschedule=\{\s*mayReschedule &&\s*status !== null &&\s*fundedByOrg &&/,
+    );
   });
 
   it("orders the org check before the participation check", () => {

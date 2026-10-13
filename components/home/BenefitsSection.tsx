@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { renderLCPImage } from "@/utils/image";
+import { renderLazyImage } from "@/utils/image";
 import type { SupabaseImageFile } from "@/lib/supabase";
 import { BENEFITS } from "./data";
 
@@ -58,9 +58,9 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
                     <benefit.icon className="w-6 h-6 text-primary-foreground" />
                   </div>
                   <div className="min-w-0">
-                    <h4 className="font-semibold text-foreground mb-1">
+                    <h3 className="font-semibold text-foreground mb-1">
                       {benefit.title}
-                    </h4>
+                    </h3>
                     <p className="text-muted-foreground text-sm leading-relaxed">
                       {benefit.description}
                     </p>
@@ -78,7 +78,7 @@ export function BenefitsSection({ images }: BenefitsSectionProps) {
             className="relative"
           >
             <div className="relative rounded-2xl overflow-hidden shadow-elevation-3 border border-border">
-              {renderLCPImage(images, 0, "/placeholder.svg", 600, 400)}
+              {renderLazyImage(images, 0, "/placeholder.svg", 600, 400)}
             </div>
             {/* Floating card decoration */}
             <div className="absolute -bottom-6 -left-6 bg-card rounded-xl shadow-elevation-3 p-4 hidden md:block border border-border">

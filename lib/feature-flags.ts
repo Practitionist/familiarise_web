@@ -9,9 +9,9 @@ export const ENABLE_HOST_ORGS = process.env.ENABLE_HOST_ORGS === "true";
 /** Live payout disbursement gate (#776 §B). */
 export const ENABLE_LIVE_PAYOUTS = process.env.ENABLE_LIVE_PAYOUTS === "true";
 
-/** Section 194-O gross withholding base (#1132). */
+/** Section 194-O gross withholding base (#1132 / #1901 — defaults to true; set to "false" for shadow-only mode). */
 export const ENABLE_TDS_194O_GROSS =
-  process.env.ENABLE_TDS_194O_GROSS === "true";
+  process.env.ENABLE_TDS_194O_GROSS !== "false";
 
 /** Admin TDS dashboard + Form 26Q filing surfaces (#737). */
 export const ENABLE_TDS_ADMIN_VIEW =
@@ -30,3 +30,13 @@ export const ENABLE_SAVED_CARDS = process.env.ENABLE_SAVED_CARDS === "true";
 
 /** Bank EMI at checkout (#1780 row 1). */
 export const ENABLE_CHECKOUT_EMI = process.env.ENABLE_CHECKOUT_EMI === "true";
+
+/** One log line with the money flags a job sees, so a missing Actions variable is visible. */
+export function logMoneyFlags(job: string): void {
+  console.log(
+    `[${job}] money flags: ENABLE_LIVE_PAYOUTS=${process.env.ENABLE_LIVE_PAYOUTS || "unset"} ` +
+      `ENABLE_DUNNING_SUSPEND=${process.env.ENABLE_DUNNING_SUSPEND || "unset"} ` +
+      `RATE_CARD_SCOPED_RESOLUTION=${process.env.RATE_CARD_SCOPED_RESOLUTION || "unset"} ` +
+      `TDS_ENGINE=${process.env.TDS_ENGINE || "unset"}`,
+  );
+}

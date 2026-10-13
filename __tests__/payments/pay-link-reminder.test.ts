@@ -46,10 +46,6 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   // #1861 L2 — the sweep expires only an order proven to hold no payment.
   cancelRazorpayOrder: jest.fn().mockResolvedValue("no_live_payment"),
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({
-  __esModule: true,
-  getStripeClient: jest.fn(),
-}));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) =>
     fn(),
@@ -164,6 +160,17 @@ describe("remindApprovalPaymentsDue", () => {
     const second = await remindApprovalPaymentsDue();
     expect(second.skippedCount).toBe(1);
     expect(mockSendPaymentLinkEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("filters Consultation only on fields its model declares", async () => {
+    db.consultation.findMany.mockResolvedValue([]);
+    await remindApprovalPaymentsDue();
+    const { where } = db.consultation.findMany.mock.calls[0][0];
+    expect(where).not.toHaveProperty("deletedAt");
+    expect(where.appointment).toMatchObject({ deletedAt: null });
+    expect(db.subscription.findMany.mock.calls[0][0].where).toMatchObject({
+      deletedAt: null,
+    });
   });
 
   it("a send with no guard row is an error, not a reminder", async () => {

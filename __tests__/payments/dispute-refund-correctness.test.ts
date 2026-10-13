@@ -45,10 +45,7 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   getRazorpayClient: () => ({
     payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) },
   }),
-}));
-jest.mock("../../lib/payments/core/stripe", () => ({
-  stripeClient: null,
-  getStripeClient: () => null,
+  withRazorpaySdkTimeout: (_op: string, fn: () => unknown) => fn(),
 }));
 
 // Minimal stubs for the rest of utils.ts's import graph so module load works.
@@ -96,6 +93,7 @@ jest.mock("../../lib/payments/operations/refund", () => ({
   applyRefundCascade: jest.fn().mockResolvedValue({}),
   mintInvoiceRefundCreditNote: jest.fn(),
   mintRefundCreditNote: jest.fn(),
+  refundMemberOverageSidePayment: jest.fn(),
 }));
 
 // In-memory store for the tx stub.
@@ -218,7 +216,6 @@ describe("PM-4 — handleDisputeCreated pages when it can't link the dispute", (
       "open",
       null,
       true,
-      "RAZORPAY",
     );
 
     expect(recordSystemError).toHaveBeenCalled();
@@ -245,7 +242,6 @@ describe("PM-4 — handleDisputeCreated pages when it can't link the dispute", (
       "open",
       null,
       true,
-      "RAZORPAY",
     );
 
     const summaries = recordSystemError.mock.calls.map(
@@ -274,7 +270,6 @@ describe("PM-4 — handleDisputeCreated pages when it can't link the dispute", (
       "open",
       null,
       true,
-      "RAZORPAY",
     );
 
     expect(recordSystemError).not.toHaveBeenCalled();
@@ -297,7 +292,6 @@ describe("PM-13 — handleRefundCreated drops orphan refund.failed", () => {
       10000,
       "INR",
       "failed",
-      "RAZORPAY",
     );
 
     expect(stub.refund.create).not.toHaveBeenCalled();
@@ -319,7 +313,6 @@ describe("PM-13 — handleRefundCreated drops orphan refund.failed", () => {
       10000,
       "INR",
       "processed",
-      "RAZORPAY",
     );
 
     expect(stub.refund.create).toHaveBeenCalledTimes(1);
@@ -361,7 +354,6 @@ describe("the alert cannot break the dispute path", () => {
           "open",
           null,
           true,
-          "RAZORPAY",
         ),
       ).resolves.not.toThrow();
       // Give the microtask queue a turn: an unhandled rejection surfaces on the

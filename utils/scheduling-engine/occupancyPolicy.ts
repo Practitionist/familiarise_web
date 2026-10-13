@@ -146,6 +146,7 @@ export function buildOccupiedAppointmentFilter(
 export function buildConsultantOccupancyWhere(
   consultantProfileId: string | undefined,
   consultantUserId: string,
+  now?: Date,
 ): Prisma.AppointmentWhereInput {
   const reachesConsultant: Prisma.AppointmentWhereInput[] = [
     {
@@ -169,7 +170,11 @@ export function buildConsultantOccupancyWhere(
   }
 
   return {
-    AND: [{ OR: buildOccupiedAppointmentFilter() }, { OR: reachesConsultant }],
+    AND: [
+      { OR: buildOccupiedAppointmentFilter() },
+      { OR: reachesConsultant },
+      ...(now ? [{ NOT: buildDeadHoldFilter(now) }] : []),
+    ],
   };
 }
 

@@ -51,7 +51,13 @@ describe("nav badges reuse their page's predicate", () => {
   });
 
   it("the failed-emails tab opens on the badge's dead-letter state", () => {
-    expect(DEAD_LETTER_EMAIL_WHERE).toEqual({ status: "DEAD_LETTER" });
+    expect(DEAD_LETTER_EMAIL_WHERE).toEqual({
+      status: "DEAD_LETTER",
+      OR: [{ lastError: null }, { lastError: { not: "held:pre-launch" } }],
+    });
+    expect(read("app/api/admin/failed-emails/route.ts")).toContain(
+      "DEAD_LETTER_EMAIL_WHERE",
+    );
     expect(
       read(
         "app/dashboard/(backoffice)/[tree]/compliance/CompliancePageClient.tsx",

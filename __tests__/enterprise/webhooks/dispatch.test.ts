@@ -15,6 +15,7 @@
  * happy-path and zero-subscriber path are the load-bearing cases.
  */
 
+import type { PrismaLike } from "@/lib/prisma";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 function makePrismaStub() {
@@ -37,8 +38,7 @@ describe("dispatchWebhookEvent", () => {
     createMany.mockResolvedValue({ count: 2 });
 
     const result = await dispatchWebhookEvent({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: prisma as any,
+      prisma: prisma as unknown as PrismaLike,
       organizationId: "org-1",
       eventType: "invoice.issued",
       payload: { invoiceId: "inv-1", totalPaise: 5000 },
@@ -76,8 +76,7 @@ describe("dispatchWebhookEvent", () => {
     const { prisma, findMany, createMany } = makePrismaStub();
     findMany.mockResolvedValue([]);
     const result = await dispatchWebhookEvent({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: prisma as any,
+      prisma: prisma as unknown as PrismaLike,
       organizationId: "org-1",
       eventType: "member.added",
       payload: { membershipId: "m-1" },
@@ -105,8 +104,7 @@ describe("dispatchWebhookEvent", () => {
     };
 
     await dispatchWebhookEvent({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: prisma as any,
+      prisma: prisma as unknown as PrismaLike,
       organizationId: "org-1",
       eventType: "invoice.issued",
       payload,

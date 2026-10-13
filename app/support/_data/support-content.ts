@@ -525,7 +525,7 @@ export const supportArticles: SupportArticle[] = [
     category: "payments",
     title: "Which payment methods work, and why did my payment fail?",
     excerpt:
-      "UPI, cards, netbanking, and wallets via Razorpay and Stripe — plus failure fixes.",
+      "UPI, cards, netbanking, and wallets via Razorpay — plus failure fixes.",
     updated: "September 2026",
     contactCategory: "billing",
     related: [
@@ -536,7 +536,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Supported methods",
         paragraphs: [
-          "Checkout accepts UPI, credit and debit cards, netbanking, and wallets through Razorpay, with Stripe available for international cards. Prices are set by experts with the platform fee included in the displayed price, and INR is the default currency.",
+          "Checkout accepts UPI, credit and debit cards, netbanking, and wallets through Razorpay, including international cards. Prices are set by experts with the platform fee included in the displayed price, and INR is the default currency.",
         ],
       },
       {
@@ -641,8 +641,9 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Earning and using credits",
         paragraphs: [
-          "Referrals reward both sides (for example ₹300 each, rising toward ₹500 in promotions). Credits apply automatically at checkout above the minimum order value (for example ₹500+), oldest-expiring first, and expire 90 days after they are issued. Credits are INR-only.",
-          "Your referral link is on the Invite & earn page of your dashboard. A referral earns its rewards when the person you invited completes their first paid booking within 30 days of signing up; until then it stays pending, and a sign-up alone earns nothing.",
+          "A friend who joins through your link gets 20% off their first booking, up to ₹300, taken off the price before tax. You get ₹300 of credit after your friend's first paid session has taken place and its refund window has passed; if that booking is refunded or disputed, the credit is cancelled.",
+          "Credit applies automatically at checkout on orders of ₹500 or more, oldest-expiring first, and can cover up to 20% of a booking (less on an expert's own-link bookings). Credit expires 90 days after it becomes spendable, is INR-only and cannot be withdrawn or transferred.",
+          "Your referral link is on the Invite & earn page of your dashboard. A referral counts when the person you invited makes their first paid booking within 30 days of signing up; a sign-up alone earns nothing.",
         ],
       },
       {
@@ -1390,7 +1391,7 @@ export const supportArticles: SupportArticle[] = [
       {
         heading: "Data use",
         paragraphs: [
-          "We process your data to run the marketplace — accounts, bookings, payments (via Razorpay/Stripe), and video (via Stream) — as described in the Privacy Policy. Payment and video providers receive only what they need to complete their function.",
+          "We process your data to run the marketplace — accounts, bookings, payments (via Razorpay), and video (via Stream) — as described in the Privacy Policy. Payment and video providers receive only what they need to complete their function.",
         ],
       },
       {

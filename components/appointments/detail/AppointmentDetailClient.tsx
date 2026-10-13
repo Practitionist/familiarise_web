@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -9,11 +9,8 @@ import {
   ArrowLeft,
   CalendarX,
   CreditCard,
-  ExternalLink,
-  FileText,
   LifeBuoy,
   Users,
-  Video,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -43,7 +40,6 @@ import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   paymentStatusBadge,
   paymentStatusDot,
-  recordingStatusBadge,
   resolveSponsoringOrgName,
 } from "@/lib/labels/session-labels";
 import { AppointmentsType } from "@prisma/client";
@@ -69,6 +65,7 @@ import {
 import {
   getOccurrenceVMJoinState,
   isDeadOccurrence,
+  isDeliberateEnd,
   isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
 import { NeedsYouCallout } from "./NeedsYouCallout";
@@ -84,6 +81,7 @@ import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
+import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -109,26 +107,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
       <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </p>
-      {children}
-    </div>
-  );
-}
-
-function ResourceSubgroup({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon: typeof FileText;
-  children: ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
-        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
         {title}
       </p>
       {children}
@@ -238,8 +216,8 @@ interface AppointmentDetailClientProps {
   role: "consultee" | "consultant";
   adapter: AppointmentActionAdapter;
   backHref: string;
-  /** Role-specific documents block (consultee upload widget / consultant list). */
-  renderDocuments?: (vm: AppointmentVM) => ReactNode;
+  /** This booking's Documents workspace and Recording details pages in the viewer's tree. */
+  resourceHrefs: ResourceHrefs;
   /** Consultant-only: participants management link resolver. */
   participantsHref?: (detail: TAppointmentDetail) => string | null;
   joinWindowMs?: number;
@@ -256,7 +234,7 @@ export function AppointmentDetailClient({
   role,
   adapter,
   backHref,
-  renderDocuments,
+  resourceHrefs,
   participantsHref,
   joinWindowMs,
   consultantId,
@@ -303,7 +281,9 @@ export function AppointmentDetailClient({
     mutationFn: () => postRequestAction("withdraw-approval"),
   });
 
-  const mapped = detail ? mapAppointmentDetail(detail, role) : null;
+  const mapped = detail
+    ? mapAppointmentDetail(detail, role, new Date(), consultantId)
+    : null;
   // #1540 — which calls of this booking the viewer has already rated, in ONE
   // request; #1554 made the booking one Appointment, so that is one row.
   const sessionFeedback = useSessionFeedback(appointmentId);
@@ -343,7 +323,7 @@ export function AppointmentDetailClient({
     );
   }
 
-  const { vm, recordings } = mapped;
+  const { vm } = mapped;
   const action = adapter.primaryAction(vm);
   const orgName =
     detail.appointment.organization?.name ??
@@ -489,15 +469,16 @@ export function AppointmentDetailClient({
       !isSponsoredPayment(p) ||
       p.childPayments.some((c) => c.userId === viewerId),
   );
+  const liveVmOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
   // A single-sitting booking's one confirmed session is already the header's
   // date line; the Sessions card stays only while it carries something the
   // header cannot — a held row awaiting payment, or an open proposal.
   const soleSession =
     isSingleSessionKind(vm.kind) &&
-    vm.occurrences.length === 1 &&
-    !vm.occurrences[0].isTentative &&
+    liveVmOccurrences.length === 1 &&
+    !liveVmOccurrences[0].isTentative &&
     !openProposal
-      ? vm.occurrences[0]
+      ? liveVmOccurrences[0]
       : null;
   const soleSessionOver =
     !!soleSession &&
@@ -515,10 +496,12 @@ export function AppointmentDetailClient({
       ? soleSession
       : null;
   const anchorSession = vm.nextAt
-    ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
+    ? liveVmOccurrences.find(
+        (s) => s.startsAt.getTime() === vm.nextAt?.getTime(),
+      )
     : undefined;
-  const hasConfirmedSessions = vm.occurrences.some((s) => !s.isTentative);
-  const hasTentativeSessions = vm.occurrences.some((s) => s.isTentative);
+  const hasConfirmedSessions = liveVmOccurrences.some((s) => !s.isTentative);
+  const hasTentativeSessions = liveVmOccurrences.some((s) => s.isTentative);
   // #1429 F2 / #1775 P-1 — both Pay Now entry points ask the one shared
   // helper: the trial's branded page or our pay page (SPA push), else a hosted link.
   const payHref = bookingPayHref(vm);
@@ -568,6 +551,11 @@ export function AppointmentDetailClient({
                     Sponsored · {sponsoredBy}
                   </span>
                 )}
+                {vm.kind === "TRIAL" && (
+                  <span className="rounded bg-muted text-muted-foreground px-1.5 py-px text-[10px] font-medium">
+                    Trial booking — direct chat requires a paid plan
+                  </span>
+                )}
               </div>
               {/* #1527 — the kind is a fact about the booking, so it reads in
                   the meta line rather than as a second chip beside the status. */}
@@ -591,6 +579,14 @@ export function AppointmentDetailClient({
                     <CountdownBadge
                       targetDate={vm.nextAt}
                       sessionEndDate={anchorSession?.endsAt ?? undefined}
+                      meetingEnded={
+                        anchorSession
+                          ? isDeliberateEnd({
+                              endedAt: anchorSession.meetingEndedAt,
+                              endedReason: anchorSession.meetingEndedReason,
+                            })
+                          : false
+                      }
                     />
                   )}
                 </div>
@@ -874,7 +870,7 @@ export function AppointmentDetailClient({
                     isJoining={action.kind === "join" && !!action.busy}
                     onJoinSession={
                       action.kind === "join" && action.onClick
-                        ? () => action.onClick!()
+                        ? action.onClick
                         : undefined
                     }
                     showHeld
@@ -1082,72 +1078,11 @@ export function AppointmentDetailClient({
 
           <aside className="min-w-0 lg:sticky lg:top-20">
             <Section title="Resources">
-              <div className="space-y-5">
-                {supportsDocuments(vm.kind) && (
-                  <>
-                    <ResourceSubgroup title="Documents" icon={FileText}>
-                      {renderDocuments ? (
-                        renderDocuments(vm)
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          No documents for this booking.
-                        </p>
-                      )}
-                    </ResourceSubgroup>
-
-                    <div className="border-t border-border" />
-                  </>
-                )}
-
-                <ResourceSubgroup
-                  title={`Recordings · ${recordings.length}`}
-                  icon={Video}
-                >
-                  {recordings.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      No recordings for this booking yet. Recorded sessions are
-                      listed here once they finish processing.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {recordings.map((rec) => (
-                        <div
-                          key={rec.id}
-                          className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-foreground">
-                              {rec.title}
-                            </p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {format(rec.recordedAt, "d MMM yyyy")} ·{" "}
-                              {rec.durationInMinutes} min
-                            </p>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <StatusBadge
-                              {...recordingStatusBadge(rec.status)}
-                              size="sm"
-                            />
-                            {rec.url && (
-                              <Button variant="outline" size="sm" asChild>
-                                <a
-                                  href={rec.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  Watch
-                                  <ExternalLink className="ml-1 h-3 w-3" />
-                                </a>
-                              </Button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </ResourceSubgroup>
-              </div>
+              <ResourceSnapshot
+                appointmentId={appointmentId}
+                supportsDocuments={supportsDocuments(vm.kind)}
+                hrefs={resourceHrefs}
+              />
             </Section>
           </aside>
         </div>

@@ -16,6 +16,9 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
 import { Loader2Icon, SearchIcon, UserPlusIcon, XIcon } from "lucide-react";
+import { useChatContext } from "stream-chat-react";
+import { useOrgScope } from "@/hooks/useOrgScope";
+import { scopeOrgId } from "@/lib/api/scope/parse";
 import type { ConsulteeSearchResult } from "@/schemas/stream-search";
 
 interface AddMembersDialogProps {
@@ -37,6 +40,13 @@ export const AddMembersDialog = ({
   const [isSearching, setIsSearching] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const { channel } = useChatContext();
+  const { scope } = useOrgScope({ defaultForOrgMember: "personal" });
+  const rawChannelOrgId = (channel?.data as Record<string, unknown> | undefined)
+    ?.organization_id;
+  const channelOrgId =
+    typeof rawChannelOrgId === "string" ? rawChannelOrgId : null;
+  const activeOrgId = channelOrgId ?? scopeOrgId(scope);
   const { toast } = useToast();
 
   // Reset state when dialog opens/closes
@@ -79,12 +89,18 @@ export const AddMembersDialog = ({
       setHasSearched(true);
 
       try {
+        const orgScopeParam = activeOrgId
+          ? encodeURIComponent(`org:${activeOrgId}`)
+          : "";
+        const orgQueryParam = activeOrgId
+          ? `&organizationId=${encodeURIComponent(activeOrgId)}&scope=${orgScopeParam}`
+          : `&scope=personal`;
         const response = await fetch(
           // Both halves encoded. `term` was, `exclude` was not — so a member id
           // containing `&`, `+`, `#` or a space truncated or corrupted the
           // exclusion set, and people already in the channel reappeared as
           // addable.
-          `/api/stream/search-consultees?term=${encodeURIComponent(term)}&exclude=${encodeURIComponent(exclude)}`,
+          `/api/stream/search-consultees?term=${encodeURIComponent(term)}&exclude=${encodeURIComponent(exclude)}${orgQueryParam}`,
           { signal: controller.signal },
         );
 
@@ -111,7 +127,7 @@ export const AddMembersDialog = ({
         if (requestId === requestIdRef.current) setIsSearching(false);
       }
     },
-    [toast],
+    [toast, activeOrgId],
   );
 
   const debouncedSearch = useDebouncedCallback(searchConsultees, 300);

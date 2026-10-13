@@ -50,8 +50,8 @@ describe("eventIdSchema", () => {
   it("surfaces the invalid-format message for mock ids", () => {
     const result = eventIdSchema.safeParse("mock0801-appt-pending");
     expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues[0]?.message).toBe(EVENT_ID_INVALID_MESSAGE);
-    }
+    expect(result.success ? undefined : result.error.issues[0]?.message).toBe(
+      EVENT_ID_INVALID_MESSAGE,
+    );
   });
 });

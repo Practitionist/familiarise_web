@@ -177,19 +177,6 @@ export async function resolveCheckoutCancellationPolicyId(
   return platform.id;
 }
 
-/** Load the terms a booking was sold under, by policy id. */
-export async function loadPolicyTerms(
-  db: PrismaLike,
-  policyId: string | null | undefined,
-): Promise<CancellationPolicyTerms> {
-  if (!policyId) return PLATFORM_DEFAULT_TERMS;
-  const row = await db.cancellationPolicy.findUnique({
-    where: { id: policyId },
-    ...POLICY_TERMS_INCLUDE,
-  });
-  return termsFromPolicyRow(row);
-}
-
 /**
  * Publish a new immutable version of an org's ladder and archive the previous one.
  *

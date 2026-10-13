@@ -15,11 +15,8 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import {
-  buildSignupConsentArtifacts,
-  checkConsent,
-} from "@/lib/compliance/dpdp";
-import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
+import { checkConsent, ensureConsentPurposes } from "@/lib/compliance/dpdp";
+import { PURPOSE_CODES, SIGNUP_PURPOSES } from "@/lib/compliance/purpose-codes";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
 import { transitionMembership } from "@/lib/enterprise/transitions";
@@ -31,6 +28,7 @@ import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { attemptOnboardingEmail, stageOrgWelcomeEmail } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
@@ -78,7 +76,10 @@ export async function POST(req: NextRequest) {
   // declaration below; binding to a fresh const preserves the
   // narrowed type for closure reads.
   const inv = invitation;
-  if (inv.email.toLowerCase() !== auth.session.user.email.toLowerCase()) {
+  if (
+    auth.session.user.emailVerified !== true ||
+    inv.email.toLowerCase() !== auth.session.user.email.toLowerCase()
+  ) {
     return NextResponse.json(
       { error: "This invitation is not addressed to you" },
       { status: 403 },
@@ -88,6 +89,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "Invitation has expired" },
       { status: 410 },
+    );
+  }
+
+  // Accept never onboards anyone: a new account completes the gate (DOB 18+
+  // and consent) first and comes back here, for every role.
+  if (auth.session.user.onboardingCompleted !== true) {
+    return NextResponse.json(
+      {
+        error: "Finish setting up your account to join this organization.",
+        code: "ONBOARDING_REQUIRED",
+        gateHref: `/onboarding/gate?callbackUrl=${encodeURIComponent(
+          `/organizations/invite/${inv.id}`,
+        )}`,
+      },
+      { status: 403 },
     );
   }
 
@@ -193,9 +209,7 @@ export async function POST(req: NextRequest) {
       }
       // #1854 — consent commits with the join or rolls back with it.
       if (needsConsent) {
-        await tx.consentArtifact.createMany({
-          data: buildSignupConsentArtifacts(userId),
-        });
+        await ensureConsentPurposes(tx, userId, SIGNUP_PURPOSES);
       }
 
       // Re-fetch org status inside the tx so a SUSPENDED/DEACTIVATED org
@@ -204,7 +218,13 @@ export async function POST(req: NextRequest) {
       // mid-flight between the email click and the POST.
       const org = await tx.organization.findUnique({
         where: { id: inv.organizationId },
-        select: { id: true, name: true, status: true },
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          canSponsor: true,
+          canHost: true,
+        },
       });
       if (!org) {
         throw Object.assign(new Error("Organization no longer exists"), {
@@ -215,6 +235,20 @@ export async function POST(req: NextRequest) {
         throw Object.assign(
           new Error(
             `Organization is ${org.status.toLowerCase()}; cannot accept new members`,
+          ),
+          { httpStatus: 403 },
+        );
+      }
+      if (normalizedRole === "EXPERT" && org.canHost === false) {
+        throw Object.assign(
+          new Error("Organization cannot host experts (canHost is false)"),
+          { httpStatus: 403 },
+        );
+      }
+      if (normalizedRole === "LEARNER" && org.canSponsor === false) {
+        throw Object.assign(
+          new Error(
+            "Organization cannot sponsor learners (canSponsor is false)",
           ),
           { httpStatus: 403 },
         );
@@ -254,9 +288,8 @@ export async function POST(req: NextRequest) {
 
       // #729 §AC4/AC5 + #819 — who-is-acting identity rule. Accepting an
       // invitation is the USER'S OWN consenting action, so the lightweight
-      // ConsulteeProfile may be lazy-created here (lib/auth.ts names
-      // "invite-accept as LEARNER" as a sanctioned creation point — gating
-      // it broke sponsored-employee onboarding). EXPERT stays strict: a
+      // ConsulteeProfile may be lazy-created here (a sanctioned creation
+      // point; see lib/profiles/ensure-consultee-profile.ts). EXPERT stays strict: a
       // consultant identity carries domain/rates/verification/payout
       // prerequisites that no invite click can substitute for. SSO JIT keeps
       // its own lazy path; there is no admin direct-add any more (#1846).
@@ -270,8 +303,7 @@ export async function POST(req: NextRequest) {
           // carries domain/rates/verification/payout prerequisites no invite
           // click can substitute for. Emits the NOT_A_CONSULTANT code (not
           // free-form copy) so lib/labels/org-errors.ts humanizes it; the
-          // invite page tells the user to finish consultant onboarding and
-          // accept again from the emailed link.
+          // invite page links the (already onboarded) user to add mode.
           throw Object.assign(new Error("NOT_A_CONSULTANT"), {
             httpStatus: 400,
           });
@@ -314,6 +346,19 @@ export async function POST(req: NextRequest) {
             role: normalizedRole,
             ...(rejoining && { rejoinedFrom: existing.status }),
           },
+        },
+      });
+
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: inv.organizationId,
+        eventType: "member.added",
+        payload: {
+          membershipId: created.id,
+          userId,
+          role: normalizedRole,
+          source: "INVITATION",
+          invitationId: inv.id,
         },
       });
 

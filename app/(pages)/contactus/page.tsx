@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { ContactForm } from "./ContactForm";
 import {
+  ACK_PROMISE_COPY,
+  ANTI_SCAM_NOTICE,
   COMPANY_INFO,
   PAGE_META,
   BUSINESS_HOURS,
@@ -39,8 +41,7 @@ export default function ContactUsPage() {
             <span>{PAGE_META.contact.title}</span>
           </div>
           <h1 className="text-fluid-4xl md:text-fluid-5xl mb-4 font-bold tracking-tight">
-            Get in touch with{" "}
-            <span className="silver-text">our team</span>
+            Get in touch with <span className="silver-text">our team</span>
           </h1>
           <p className="mx-auto max-w-2xl text-lg leading-relaxed text-zinc-400">
             {PAGE_META.contact.description} We respond within 24–48 hours on
@@ -191,6 +192,36 @@ export default function ContactUsPage() {
               <Suspense>
                 <ContactForm />
               </Suspense>
+            </div>
+          </div>
+        </div>
+        {/* Additional Information */}
+        <div className="mt-8 rounded-2xl border border-border bg-card p-6 shadow-elevation-1">
+          <div className="grid md:grid-cols-3 gap-6 text-center">
+            <div>
+              <h3 className="font-semibold mb-2 text-foreground">
+                Quick Response
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                We acknowledge all inquiries {ACK_PROMISE_COPY}
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-2 text-foreground">
+                Professional Support
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {ANTI_SCAM_NOTICE}
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-2 text-foreground">
+                Payment &amp; Refunds
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Report failed debits or refund issues promptly with your booking
+                reference for priority reconciliation.
+              </p>
             </div>
           </div>
         </div>

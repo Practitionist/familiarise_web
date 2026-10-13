@@ -1,17 +1,12 @@
+import { APIError } from "better-auth/api";
 import type { PrismaLike } from "@/lib/prisma";
+import { emailDomain, providerDomains } from "@/lib/sso/domains";
+import { recordSsoRefusal } from "@/lib/sso/refusal-audit";
+
 /**
- * Server-side SSO enforcement decision for BetterAuth `session.create.before`.
- *
- * Runs just before a session cookie is issued, on every path that mints one.
- * For a user whose email domain an org enforces, only that org's own SSO
- * callback may mint it: a linked SSO account is not enough, since it would
- * also let a password, a Google sign-in or a verification auto sign-in through.
- * Pure helper — all I/O is injected so this can be unit-tested without a DB.
- *
- * Fails OPEN in one case: the org has `enforceSSO=true` but no staff-approved
- * (`domainVerified`) provider, so there is nowhere to send its users. Staff
- * recover an org whose IdP breaks by turning enforcement off from the back
- * office (app/api/admin/organizations/[orgId]/sso-enforcement).
+ * SSO enforcement is per email domain: a domain is enforced only when its
+ * verified org enforces SSO and an approved provider an OWNER has proven covers
+ * it. Every other domain fails open, so it is never locked out.
  */
 
 export type EnforceDecision =
@@ -23,36 +18,27 @@ export interface EnforcedOrgInfo {
   registeredProviderIds: string[];
 }
 
+export interface DomainSso {
+  organizationId: string;
+  /** The org is ACTIVE, enforces SSO, and a covering provider is proven. */
+  enforced: boolean;
+  /** Approved providers that cover the domain, oldest first. */
+  providerIds: string[];
+}
+
 /**
- * Single source of truth for "given an email domain, which org enforces SSO
- * for it?" (#673). Two call sites:
- *
- *   1. `lib/auth.ts` databaseHooks.session.create.before — pre-cookie veto
- *   2. `app/api/auth/sso/domain-check/route.ts` — unauth pre-login probe
- *
- * Returns `null` (= don't enforce) when any precondition fails:
- *   - No `OrgDomainClaim` row for the domain.
- *   - Claim exists but `verifiedAt IS NULL` (DNS TXT proof missing — a
- *     malicious OWNER who claimed a public domain like `google.com`
- *     without verifying must NOT be able to gate sessions for unrelated
- *     users).
- *   - Owning org is not ACTIVE (PENDING_VERIFICATION, SUSPENDED, DEACTIVATED).
- *   - `OrganizationSSOSettings.enforceSSO` is false.
- *
- * The verified claim is the only domain truth: every verified domain of an
- * enforcing org is enforced.
- *
- * See `docs/authentication/sso.md` §3.
+ * The approved SSO providers covering `domain`, and whether its org enforces
+ * them. Null when no verified claim exists, the org is suspended or
+ * deactivated, or no approved provider covers the domain.
  */
-export async function lookupEnforcedOrg(
-  prisma: PrismaLike, // #780 extended client
+export async function lookupDomainSso(
+  prisma: PrismaLike,
   domain: string,
-): Promise<EnforcedOrgInfo | null> {
-  const claim = await prisma.orgDomainClaim.findUnique({
-    where: { domain },
+): Promise<DomainSso | null> {
+  const claim = await prisma.orgDomainClaim.findFirst({
+    where: { domain, verifiedAt: { not: null } },
     select: {
       organizationId: true,
-      verifiedAt: true,
       organization: {
         select: {
           status: true,
@@ -61,29 +47,43 @@ export async function lookupEnforcedOrg(
       },
     },
   });
-
-  if (
-    !claim ||
-    !claim.verifiedAt ||
-    !claim.organization ||
-    claim.organization.status !== "ACTIVE" ||
-    !claim.organization.ssoSettings?.enforceSSO
-  ) {
+  const status = claim?.organization?.status;
+  if (!claim || !status || status === "SUSPENDED" || status === "DEACTIVATED") {
     return null;
   }
 
-  // Only staff-approved providers count. The sso() plugin refuses sign-in
-  // through an unapproved one, so enforcing against it would lock the org
-  // out; until approval the org fails open like it has no provider.
   const rows = await prisma.ssoProvider.findMany({
     where: { organizationId: claim.organizationId, domainVerified: true },
-    select: { providerId: true },
+    select: { providerId: true, domain: true, provenAt: true },
+    orderBy: { createdAt: "asc" },
   });
+  const covering = rows.filter((r) =>
+    providerDomains(r.domain).includes(domain),
+  );
+  if (covering.length === 0) return null;
 
   return {
     organizationId: claim.organizationId,
-    registeredProviderIds: rows.map((r) => r.providerId),
+    enforced:
+      status === "ACTIVE" &&
+      !!claim.organization?.ssoSettings?.enforceSSO &&
+      covering.some((r) => r.provenAt !== null),
+    providerIds: covering.map((r) => r.providerId),
   };
+}
+
+/** The enforcing org and the providers that may mint a session for `domain`. */
+export async function lookupEnforcedOrg(
+  prisma: PrismaLike,
+  domain: string,
+): Promise<EnforcedOrgInfo | null> {
+  const sso = await lookupDomainSso(prisma, domain);
+  return sso?.enforced
+    ? {
+        organizationId: sso.organizationId,
+        registeredProviderIds: sso.providerIds,
+      }
+    : null;
 }
 
 export interface EnforceInputs {
@@ -93,14 +93,14 @@ export interface EnforceInputs {
   path: string | null | undefined;
   /** `ctx.params.providerId` on the SSO callback. */
   providerId: string | null | undefined;
-  /** The enforcing org and its approved provider ids, or null if the domain is not enforced. */
+  /** The enforcing org and the providers covering the domain, or null if not enforced. */
   lookupEnforcedOrg: (domain: string) => Promise<EnforcedOrgInfo | null>;
 }
 
 export async function shouldRejectSession(
   inputs: EnforceInputs,
 ): Promise<EnforceDecision> {
-  const domain = inputs.email?.toLowerCase().split("@")[1];
+  const domain = emailDomain(inputs.email);
   if (!domain) return { reject: false };
 
   const enforced = await inputs.lookupEnforcedOrg(domain);
@@ -108,15 +108,45 @@ export async function shouldRejectSession(
     return { reject: false };
   }
 
-  const viaOwnSso =
+  const viaCoveringSso =
     inputs.path === "/sso/callback/:providerId" &&
     !!inputs.providerId &&
     enforced.registeredProviderIds.includes(inputs.providerId);
-  if (viaOwnSso) return { reject: false };
+  if (viaCoveringSso) return { reject: false };
 
   return {
     reject: true,
     reason: "SSO_REQUIRED",
     organizationId: enforced.organizationId,
   };
+}
+
+/**
+ * `session.create.before` gate: throws SSO_REQUIRED and records the refusal.
+ * Returns the enforcing org for the user's domain (null when not enforced).
+ */
+export async function assertSsoSessionAllowed(
+  prisma: PrismaLike,
+  input: Omit<EnforceInputs, "lookupEnforcedOrg">,
+): Promise<EnforcedOrgInfo | null> {
+  let enforced: EnforcedOrgInfo | null = null;
+  const decision = await shouldRejectSession({
+    ...input,
+    lookupEnforcedOrg: async (domain) =>
+      (enforced = await lookupEnforcedOrg(prisma, domain)),
+  });
+  if (!decision.reject) return enforced;
+  if (input.email) {
+    await recordSsoRefusal({
+      organizationId: decision.organizationId,
+      code: "SSO_REQUIRED",
+      email: input.email,
+      path: input.path,
+    });
+  }
+  throw new APIError("FORBIDDEN", {
+    message:
+      "This email domain requires SSO sign-in through your organization's provider. Password and Google sign-in are off for it.",
+    code: "SSO_REQUIRED",
+  });
 }

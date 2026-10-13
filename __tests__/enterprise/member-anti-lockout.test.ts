@@ -59,6 +59,7 @@ jest.mock("../../lib/auth-helpers", () => {
   };
 });
 
+import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { PATCH } from "@/app/api/organizations/[orgId]/members/[memberId]/route";
@@ -89,7 +90,7 @@ function makeRequest(body: unknown) {
     method: "PATCH",
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
-  }) as unknown as Request;
+  }) as unknown as NextRequest;
 }
 
 function makeParams(orgId = "org-1", memberId = "m-target") {
@@ -114,8 +115,7 @@ function wireTxShim() {
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (fn as any)(tx);
+    return (fn as (tx: unknown) => unknown)(tx);
   });
 }
 
@@ -137,8 +137,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     mockedPrisma.membership.count.mockResolvedValueOnce(0);
 
     const res = (await PATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeRequest({ role: "MAINTAINER" }) as any,
+      makeRequest({ role: "MAINTAINER" }),
       makeParams(),
     )) as Response;
 
@@ -160,8 +159,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     mockedPrisma.membership.count.mockResolvedValueOnce(0);
 
     const res = (await PATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeRequest({ status: "REMOVED" }) as any,
+      makeRequest({ status: "REMOVED" }),
       makeParams(),
     )) as Response;
 
@@ -186,8 +184,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     });
 
     const res = (await PATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeRequest({ role: "MAINTAINER" }) as any,
+      makeRequest({ role: "MAINTAINER" }),
       makeParams(),
     )) as Response;
 
@@ -221,8 +218,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     });
 
     const res = (await PATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeRequest({ role: "EXPERT" }) as any,
+      makeRequest({ role: "EXPERT" }),
       makeParams(),
     )) as Response;
 

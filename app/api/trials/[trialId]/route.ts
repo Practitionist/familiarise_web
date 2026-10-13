@@ -50,6 +50,7 @@ import {
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
+  buildCohostCommitmentFilter,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
@@ -233,7 +234,13 @@ async function validateSlotAvailability(
     where: {
       appointment: {
         AND: [
-          { OR: occupiedFilter },
+          {
+            OR: [
+              ...occupiedFilter,
+              ...buildCohostCommitmentFilter(consultantProfileId),
+            ],
+          },
+          { OR: buildOccupiedAppointmentFilter() },
           // #1319 — a lapsed checkout hold is not a booking (parity with checkout).
           { NOT: buildDeadHoldFilter(new Date()) },
         ],
@@ -254,6 +261,10 @@ async function validateSlotAvailability(
       appointment: {
         deletedAt: null,
         participants: { some: liveParticipant(consulteeUserId) },
+        AND: [
+          { OR: buildOccupiedAppointmentFilter() },
+          { NOT: buildDeadHoldFilter(new Date()) },
+        ],
       },
       startsAt: { lt: endTime },
       endsAt: { gt: startTime },
@@ -357,15 +368,24 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     // Handle status transitions
     if (status) {
-      // State machine:
+      // State machine, post-#1775:
       //   free trial   PENDING → SCHEDULED → COMPLETED → CONVERTED
-      //   paid trial   PENDING → AWAITING_PAYMENT → SCHEDULED → …
+      //   paid trial   PENDING → SCHEDULED → …   (paid at REQUEST, so accept
+      //                                              schedules it directly)
       // REJECTED = consultant declines, CANCELLED = consultee cancels or the
-      // pay-link lapses past paymentDueAt.
+      // pay-link lapses past paymentDueAt. `AWAITING_PAYMENT` survives in the
+      // map below as a legal source state for rows written under the old
+      // accept-then-pay flow; nothing writes it any more.
       const validTransitions: Record<TrialStatus, TrialStatus[]> = {
+        // `AWAITING_PAYMENT` is listed as a legal TARGET for the same reason it
+        // is listed in TRIAL_ALLOWED_FROM: a row written under the old
+        // accept-then-pay flow must still be able to be cancelled below. No
+        // code path selects it.
         PENDING: ["AWAITING_PAYMENT", "SCHEDULED", "CANCELLED", "REJECTED"],
-        // Only the webhook moves this to SCHEDULED (on payment capture); the
-        // expiry job and the consultee move it to CANCELLED.
+        // Pre-#1775 shape: the capture webhook moved this to SCHEDULED. That arm
+        // is now unreachable (the accept handler schedules a paid trial
+        // directly), so nothing produces this edge today; it is kept so a legacy
+        // row is not trapped in a state the map cannot leave.
         AWAITING_PAYMENT: ["SCHEDULED", "CANCELLED"],
         SCHEDULED: ["COMPLETED", "CANCELLED"],
         COMPLETED: ["CONVERTED"],
@@ -583,8 +603,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                   trialOccurrence,
                 );
 
-            // Update trial with appointment link and the resulting status —
-            // AWAITING_PAYMENT for a paid trial, SCHEDULED for a free one.
+            // Update trial with appointment link and the resulting status.
+            // SCHEDULED for BOTH rails: since #1775 a paid trial was paid at
+            // request, so accept schedules it rather than parking it in
+            // AWAITING_PAYMENT (the sentence this comment used to carry).
             // CAS (#1319): fromIn narrows the allowed-from map to the exact
             // status this request read outside the transaction. Two accepts
             // that both saw PENDING pick DIFFERENT slots, so neither trips the
@@ -846,6 +868,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             id: true,
             subscriptionPlanId: true,
             requestedById: true,
+            status: true,
           },
         });
 
@@ -872,6 +895,19 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             {
               error:
                 "Subscription must belong to the same consultee as the trial",
+            },
+            { status: 400 },
+          );
+        }
+
+        if (
+          subscription.status &&
+          !["APPROVED", "SCHEDULED", "COMPLETED"].includes(subscription.status)
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Subscription must be approved or active before converting a trial",
             },
             { status: 400 },
           );
@@ -905,7 +941,29 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     // whole PATCH rolls back instead of clobbering it. The app-level
     // validTransitions check above is only the friendly error text.
     const { status: nextStatus, ...restUpdate } = updateData;
+    let subscriptionBecameInactive = false;
     const updatedTrial = await prisma.$transaction(async (tx) => {
+      if (
+        nextStatus === TrialStatus.CONVERTED &&
+        subscriptionId &&
+        typeof tx.subscription?.findUnique === "function"
+      ) {
+        const currentSub = await tx.subscription.findUnique({
+          where: { id: subscriptionId },
+          select: { status: true, deletedAt: true },
+        });
+        if (
+          !currentSub ||
+          currentSub.deletedAt ||
+          (currentSub.status &&
+            !["APPROVED", "SCHEDULED", "COMPLETED"].includes(
+              currentSub.status,
+            ))
+        ) {
+          subscriptionBecameInactive = true;
+          return null;
+        }
+      }
       if (nextStatus !== undefined) {
         await transitionTrial(tx, {
           where: { id: trialId },
@@ -973,6 +1031,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         },
       });
     });
+    if (subscriptionBecameInactive || !updatedTrial) {
+      return NextResponse.json(
+        {
+          error:
+            "Subscription must be approved or active before converting a trial",
+        },
+        { status: 400 },
+      );
+    }
     // #1654 — awaited: an un-awaited trigger is dropped when the instance
     // freezes after the response; each effect still fails on its own.
     for (const effect of afterCommit) {

@@ -72,16 +72,17 @@ Use case: simultaneously broadcast a webinar to the Stream platform and YouTube 
 
 | Product        | Direction             | Priced on              | Familiarise use          |
 | -------------- | --------------------- | ---------------------- | ------------------------ |
-| Video Calls    | Many ↔ Many           | Participant-minutes     | Consultations, Classes   |
-| Live Streaming | One → Many            | Participant-minutes     | Large webinars           |
-| Activity Feeds | Database events       | API calls + activities  | Not yet used             |
-| HLS add-on     | WebRTC → web embed    | Participant-minutes     | Public webinar embeds    |
-| Noise Cancel   | Per-stream processing | Participant-minutes     | All calls                |
-| Transcriptions | Once per call         | Call-minutes            | Accessibility            |
-| RTMP In        | External → Stream     | Call-minutes            | Pro AV equipment         |
-| RTMP Out       | Stream → External     | Call-minutes            | YouTube/Twitch simulcast |
+| Video Calls    | Many ↔ Many           | Participant-minutes    | Consultations, Classes   |
+| Live Streaming | One → Many            | Participant-minutes    | Large webinars           |
+| Activity Feeds | Database events       | API calls + activities | Not yet used             |
+| HLS add-on     | WebRTC → web embed    | Participant-minutes    | Public webinar embeds    |
+| Noise Cancel   | Per-stream processing | Participant-minutes    | All calls                |
+| Transcriptions | Once per call         | Call-minutes           | Accessibility            |
+| RTMP In        | External → Stream     | Call-minutes           | Pro AV equipment         |
+| RTMP Out       | Stream → External     | Call-minutes           | YouTube/Twitch simulcast |
 
 **Key pricing unit distinction:**
+
 - **Participant-minutes** = scales with audience size (more viewers = more cost)
 - **Call-minutes** = fixed per session regardless of how many people are on it
 
@@ -92,3 +93,9 @@ Use case: simultaneously broadcast a webinar to the Stream platform and YouTube 
 - [`00-pricing-overview.md`](./00-pricing-overview.md) — Stream pricing quick reference and cost cliff
 - [`14-pricing-and-cost-model.md`](./14-pricing-and-cost-model.md) — Full rate tables and permutation matrices
 - [`15-enterprise-and-maker-account.md`](./15-enterprise-and-maker-account.md) — Enterprise tiers, Maker account, AI Moderation
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Stream Automatic Cloud Push Storage**: Superseded by pull-based SigV4 multipart transfer (`transfer-recordings`) from Stream S3 (14-day primary copy) into Cloudflare R2 with HEAD byte-size verification.

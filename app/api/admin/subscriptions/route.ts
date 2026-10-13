@@ -1,62 +1,81 @@
-/**
- * Admin Subscriptions API
- * View and manage platform subscriptions
- */
-
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { z } from "zod";
 
-/**
- * GET /api/admin/subscriptions
- * Get all subscriptions with optional filters
- */
+import prisma from "@/lib/prisma";
+import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { withOpsAction } from "@/lib/backoffice/ops-action-log";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal";
+import {
+  CANCELLABLE_FROM,
+  transitionSubscriptionRequest,
+} from "@/lib/booking/transitions";
+
+function buildSubscriptionFilter(
+  status: string | null,
+  now: Date,
+  soonThreshold: Date,
+): Prisma.SubscriptionWhereInput | undefined {
+  if (status === "active") {
+    return {
+      status: { not: "CANCELLED" },
+      schedulingPeriodEndsAt: { gt: soonThreshold },
+    };
+  }
+  if (status === "expiring_soon") {
+    return {
+      status: { not: "CANCELLED" },
+      schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+    };
+  }
+  if (status === "expired") {
+    return {
+      status: { not: "CANCELLED" },
+      schedulingPeriodEndsAt: { lte: now },
+    };
+  }
+  if (status === "cancelled") {
+    return { status: "CANCELLED" };
+  }
+  return undefined;
+}
+
+function deriveSubscriptionDisplayStatus(
+  isCancelled: boolean,
+  isActive: boolean,
+  isExpiringSoon: boolean,
+): "cancelled" | "expiring_soon" | "active" | "expired" {
+  if (isCancelled) return "cancelled";
+  if (!isActive) return "expired";
+  if (isExpiringSoon) return "expiring_soon";
+  return "active";
+}
+
 export async function GET(req: NextRequest) {
   try {
     const auth = await requirePrivilegedAuth();
     if (auth.error) return auth.error;
 
-    // Parse query parameters
     const { searchParams } = new URL(req.url);
-    const status = searchParams.get("status"); // active, expired, cancelled
+    const status = searchParams.get("status");
     const search = searchParams.get("search");
     const limit = parseInt(searchParams.get("limit") || "20");
     const offset = parseInt(searchParams.get("offset") || "0");
-    // #674 comment 7 — optional org-scope filter on Payment.organizationId.
     const orgId = searchParams.get("orgId");
 
     const now = new Date();
-    const soonThreshold = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
+    const soonThreshold = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const subscriptionFilter = buildSubscriptionFilter(
+      status,
+      now,
+      soonThreshold,
+    );
 
-    // Build subscription date filter based on status
-    let subscriptionDateFilter: Prisma.SubscriptionWhereInput = {};
-    if (status === "active") {
-      // Active = ends more than 7 days from now (includes expiring_soon for "active" filter)
-      subscriptionDateFilter = {
-        schedulingPeriodEndsAt: { gt: now },
-      };
-    } else if (status === "expiring_soon") {
-      // Expiring soon = ends within 7 days but not expired
-      subscriptionDateFilter = {
-        schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
-      };
-    } else if (status === "expired") {
-      // Expired = ends in the past
-      subscriptionDateFilter = {
-        schedulingPeriodEndsAt: { lte: now },
-      };
-    }
-
-    // Build where clause with status filter in the database query
     const where: Prisma.PaymentWhereInput = {
       appointment: {
         appointmentType: "SUBSCRIPTION",
-        subscription:
-          Object.keys(subscriptionDateFilter).length > 0
-            ? subscriptionDateFilter
-            : undefined,
+        subscription: subscriptionFilter,
       },
     };
 
@@ -77,7 +96,6 @@ export async function GET(req: NextRequest) {
       where.organizationId = orgId;
     }
 
-    // Base where clause for all subscription queries (without status filter)
     const baseWhere = {
       paymentStatus: "SUCCEEDED" as const,
       appointment: {
@@ -85,7 +103,6 @@ export async function GET(req: NextRequest) {
       },
     };
 
-    // Get subscription payments and stats in parallel
     const [subscriptions, total, activeCount, expiringCount, expiredCount] =
       await Promise.all([
         prisma.payment.findMany({
@@ -95,16 +112,27 @@ export async function GET(req: NextRequest) {
           },
           include: {
             user: {
-              select: { name: true, email: true },
+              select: { id: true, name: true, email: true },
             },
             appointment: {
               include: {
+                occurrences: {
+                  where: { deletedAt: null },
+                  select: {
+                    id: true,
+                    completionStatus: true,
+                  },
+                },
                 subscription: {
                   include: {
                     subscriptionPlan: {
                       include: {
                         consultantProfile: {
-                          include: { user: { select: { name: true } } },
+                          include: {
+                            user: {
+                              select: { id: true, name: true, email: true },
+                            },
+                          },
                         },
                       },
                     },
@@ -123,73 +151,103 @@ export async function GET(req: NextRequest) {
             paymentStatus: "SUCCEEDED",
           },
         }),
-        // Count active subscriptions (ends > 7 days from now)
-        prisma.payment.count({
-          where: {
-            ...baseWhere,
-            appointment: {
-              appointmentType: "SUBSCRIPTION",
-              subscription: { schedulingPeriodEndsAt: { gt: soonThreshold } },
-            },
-          },
-        }),
-        // Count expiring soon subscriptions (ends within 7 days)
         prisma.payment.count({
           where: {
             ...baseWhere,
             appointment: {
               appointmentType: "SUBSCRIPTION",
               subscription: {
-                schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+                status: { not: "CANCELLED" },
+                schedulingPeriodEndsAt: { gt: soonThreshold },
               },
             },
           },
         }),
-        // Count expired subscriptions
         prisma.payment.count({
           where: {
             ...baseWhere,
             appointment: {
               appointmentType: "SUBSCRIPTION",
-              subscription: { schedulingPeriodEndsAt: { lte: now } },
+              subscription: {
+                status: { not: "CANCELLED" },
+                schedulingPeriodEndsAt: { gt: now, lte: soonThreshold },
+              },
+            },
+          },
+        }),
+        prisma.payment.count({
+          where: {
+            ...baseWhere,
+            appointment: {
+              appointmentType: "SUBSCRIPTION",
+              subscription: {
+                status: { not: "CANCELLED" },
+                schedulingPeriodEndsAt: { lte: now },
+              },
             },
           },
         }),
       ]);
 
-    // Format subscriptions with status
     const formattedSubscriptions = subscriptions.map((s) => {
       const subscription = s.appointment?.subscription;
+      const plan = subscription?.subscriptionPlan;
+      const consultantUser = plan?.consultantProfile?.user;
+      const occurrences = s.appointment?.occurrences ?? [];
+      const sessionsCompleted = occurrences.filter(
+        (o) => o.completionStatus === "COMPLETED",
+      ).length;
+      const sessionsUpcoming = occurrences.filter(
+        (o) =>
+          o.completionStatus !== "COMPLETED" &&
+          o.completionStatus !== "CANCELLED",
+      ).length;
+      const sessionsScheduled = occurrences.length;
+      const sessionsTotal =
+        subscription?.sessionsTotal ?? plan?.totalSessions ?? 0;
+
       const endDate = subscription?.schedulingPeriodEndsAt;
-      const isActive = endDate && new Date(endDate) > now;
-      const isExpiringSoon =
-        endDate &&
-        new Date(endDate) > now &&
-        new Date(endDate) < new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const isCancelled = subscription?.status === "CANCELLED";
+      const isActive = Boolean(
+        !isCancelled && endDate && new Date(endDate) > now,
+      );
+      const isExpiringSoon = Boolean(
+        isActive && endDate && new Date(endDate) <= soonThreshold,
+      );
 
       return {
         id: s.id,
         paymentId: s.id,
+        appointmentId: s.appointment?.id ?? null,
+        subscriptionId: subscription?.id ?? null,
         amount: s.amount,
         currency: s.currency,
         gateway: s.paymentGateway,
+        userId: s.user?.id ?? s.userId,
         userName: s.user?.name || "Unknown",
         userEmail: s.user?.email || "",
-        consultantName:
-          subscription?.subscriptionPlan?.consultantProfile?.user?.name,
+        consultantUserId: consultantUser?.id ?? null,
+        consultantName: consultantUser?.name,
+        consultantEmail: consultantUser?.email ?? null,
+        planTitle: plan?.title ?? "Subscription Plan",
+        durationInMonths: plan?.durationInMonths ?? 1,
+        sessionsPerWeek: plan?.sessionsPerWeek ?? 1,
+        sessionsTotal,
+        sessionsCompleted,
+        sessionsUpcoming,
+        sessionsScheduled,
         startDate: subscription?.schedulingPeriodStartsAt,
         endDate: subscription?.schedulingPeriodEndsAt,
         subscriptionStatus: subscription?.status,
-        status: isActive
-          ? isExpiringSoon
-            ? "expiring_soon"
-            : "active"
-          : "expired",
+        status: deriveSubscriptionDisplayStatus(
+          isCancelled,
+          isActive,
+          isExpiringSoon,
+        ),
         createdAt: s.createdAt,
       };
     });
 
-    // Status filtering now happens in the database query, so pagination is correct
     return NextResponse.json({
       subscriptions: formattedSubscriptions,
       stats: {
@@ -205,7 +263,10 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
       { error: "Failed to fetch subscriptions" },
@@ -213,3 +274,79 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
+const MutateSubscriptionShape = {
+  subscriptionId: z.string().trim().min(1),
+  action: z.literal("CANCEL"),
+};
+
+export const POST = withOpsAction(
+  "subscriptions.manage",
+  "subscriptions.ops.mutate",
+  MutateSubscriptionShape,
+  {
+    mode: "gateway",
+    target: ({ body }) => ({ kind: "Subscription", id: body.subscriptionId }),
+    run: async ({ body, actor }) => {
+      const existing = await prisma.subscription.findUnique({
+        where: { id: body.subscriptionId },
+        select: {
+          id: true,
+          status: true,
+          appointment: {
+            select: {
+              id: true,
+            },
+          },
+        },
+      });
+      if (!existing) {
+        throw new OpsRefusal(
+          "SUBSCRIPTION_NOT_FOUND",
+          "Subscription not found.",
+          404,
+        );
+      }
+
+      if (existing.status === "CANCELLED") {
+        throw new OpsRefusal(
+          "ALREADY_IN_STATE",
+          "Subscription is already in CANCELLED state.",
+          409,
+        );
+      }
+
+      await prisma.$transaction((tx) =>
+        transitionSubscriptionRequest(tx, {
+          actorUserId: actor.userId,
+          reason: body.reason,
+          organizationId: null,
+          where: { id: existing.id },
+          to: "CANCELLED",
+          data: {
+            cancelledAt: new Date(),
+            cancelledBy: actor.userId,
+            cancellationReason: "OTHER",
+            cancellationNotes: body.reason,
+          },
+          fromIn: [...CANCELLABLE_FROM],
+        }),
+      );
+
+      return {
+        target: { kind: "Subscription", id: existing.id },
+        status: 200,
+        response: {
+          subscriptionId: existing.id,
+          previousStatus: existing.status,
+          status: "CANCELLED",
+        },
+        before: { status: existing.status },
+        after: {
+          status: "CANCELLED",
+          action: "CANCEL",
+        },
+      };
+    },
+  },
+);

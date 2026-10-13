@@ -227,7 +227,7 @@ describe("GET /api/health", () => {
       expect(body.status).toBe("healthy");
     });
 
-    it("marks cron stale when both Redis and SystemJobExecution are older than the 6h threshold", async () => {
+    it("marks cron stale when both Redis and SystemJobExecution are older than the 45-minute threshold", async () => {
       mockIsMockRedis.mockReturnValue(false);
       const staleDate = new Date(Date.now() - 7 * 60 * 60 * 1000);
       mockRedisGet.mockImplementation(async (key: string) =>

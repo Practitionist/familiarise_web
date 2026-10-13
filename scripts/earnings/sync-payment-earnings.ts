@@ -21,7 +21,11 @@
 import prisma from "../../lib/prisma";
 import { PaymentStatus, AppointmentsType, type Prisma } from "@prisma/client";
 import { AppointmentType } from "../../lib/payments/payouts/constants";
-import { createEarningsFromPayment } from "../../lib/payments/payouts/earnings-service";
+import {
+  createEarningsFromPayment,
+  ParkedCaptureEarningsError,
+} from "../../lib/payments/payouts/earnings-service";
+import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
@@ -32,15 +36,13 @@ const BATCH_SIZE = 100;
 /**
  * #1319 — the cohort has no age window any more, so the run needs a ceiling.
  *
- * Settlement for an org-funded checkout runs after the checkout transaction
- * commits, and a failure there is recorded and moved past. This sweep is the
- * only thing that repairs it — and it used to look back thirty days, so a
- * payment that stayed unaccrued for a month left the cohort silently and the
- * consultant was never paid for a session they had already delivered. There is
- * no age at which money stops being owed, so there is no window here now. The
- * ceiling bounds the runtime instead, and the ordering is oldest-first because
- * the payments that have gone unaccrued longest are the ones somebody has been
- * waiting on.
+ * The cohort is the gateway captures whose Phase-1 earnings write rolled back
+ * to its savepoint and whose post-commit retry also failed; the synchronous
+ * rails (org-funded, credit-funded, mock) write earnings inside the checkout
+ * transaction and never land here. There is no age at which money stops being
+ * owed, so there is no window. The ceiling bounds the runtime instead, and the
+ * ordering is oldest-first because the payments that have gone unaccrued
+ * longest are the ones somebody has been waiting on.
  *
  * Refunded and charged-back money is out of the cohort (#1583 C-P0-05): the
  * money already left, and the refund cascade ran before any earning existed,
@@ -232,6 +234,7 @@ async function syncPaymentEarningsUnlocked(
   );
   /** Collected across batches so the whole run pages in one indexed read. */
   const unaccruable: UnaccruablePayment[] = [];
+  const skippedRefundedIds: string[] = [];
 
   // FIX #571: Use cursor-based pagination instead of skip-based.
   // Skip-based pagination on a mutating result set (earnings: { none: {} })
@@ -245,9 +248,15 @@ async function syncPaymentEarningsUnlocked(
     const payments = await prisma.payment.findMany({
       where: {
         paymentStatus: PaymentStatus.SUCCEEDED,
+        // Synchronous rails carry the flag and settle earnings in their own tx.
+        isMockPayment: false,
+        // An appointment-less row is never healed here, so it must not hold a cohort slot.
+        appointmentId: { not: null },
         earnings: { none: {} }, // No linked earnings
         refunds: { none: { status: { in: [...RETURNED_REFUND_STATUSES] } } },
         disputes: { none: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } },
+        // A parked capture's cash sits in UNAPPLIED_RECEIPTS; booking it would count CASH twice.
+        AND: [notSettledElsewhereWhere],
       },
       take,
       ...(cursor
@@ -374,15 +383,7 @@ async function syncPaymentEarningsUnlocked(
         select: { id: true },
       });
       if (refundedSince) {
-        reportSentryMessage(
-          `EARNINGS_SKIPPED_REFUNDED: payment ${payment.id} was refunded or charged back after the cohort read; not accrued`,
-          {
-            subsystem: "payments",
-            op: "sync-payment-earnings.race",
-            expected: true,
-            extra: { paymentId: payment.id },
-          },
-        );
+        skippedRefundedIds.push(payment.id);
         skippedCount++;
         continue;
       }
@@ -409,11 +410,28 @@ async function syncPaymentEarningsUnlocked(
           skippedCount++;
         }
       } catch (err) {
+        if (err instanceof ParkedCaptureEarningsError) {
+          skippedCount++;
+          continue;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`Payment ${payment.id}: ${msg}`);
         errorCount++;
       }
     }
+  }
+
+  if (skippedRefundedIds.length > 0) {
+    // Keep message string static so Sentry groups all occurrences into one issue; IDs live in extra.
+    reportSentryMessage(
+      "EARNINGS_SKIPPED_REFUNDED: payment(s) refunded or charged back after the cohort read; not accrued",
+      {
+        subsystem: "payments",
+        op: "sync-payment-earnings.race",
+        expected: true,
+        extra: { paymentIds: skippedRefundedIds },
+      },
+    );
   }
 
   const pagedCount = await pageUnaccruablePayments(unaccruable, now);
@@ -423,6 +441,7 @@ async function syncPaymentEarningsUnlocked(
   const skippedRefunded = await prisma.payment.count({
     where: {
       paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: { not: null },
       earnings: { none: {} },
       ...REFUNDED_OR_DISPUTED,
     },

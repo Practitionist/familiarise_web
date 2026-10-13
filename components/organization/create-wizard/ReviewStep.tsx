@@ -4,12 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Building2, Pencil, Check, X, Loader2 } from "lucide-react";
 import { z } from "zod";
 import { getSteps } from "./types";
@@ -38,6 +33,8 @@ import {
   ApiResponseError,
 } from "@/lib/fetch-helpers";
 import { humanizeOrgError } from "@/lib/labels/org-errors";
+import { STATE_NUMERIC_TO_NAME } from "@/lib/compliance/state-codes";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 interface InviteResult {
   email: string;
@@ -104,6 +101,7 @@ export function ReviewStep({
   onBack,
   onGoToStep,
   initialData,
+  onboarding,
   afterLaunch,
   finalRedirectPath,
 }: StepProps) {
@@ -134,7 +132,9 @@ export function ReviewStep({
 
   const handleLaunch = async () => {
     if (!initialData.name || !initialData.billingEmail) {
-      setError("Missing organization name or billing email. Please go back to step 1.");
+      setError(
+        "Missing organization name or billing email. Please go back to step 1.",
+      );
       return;
     }
 
@@ -170,8 +170,10 @@ export function ReviewStep({
               ? {
                   fundingSource: initialData.fundingSource ?? "PERSONAL",
                   paymentTermsDays: initialData.paymentTermsDays ?? 60,
+                  gstStateCode: initialData.gstStateCode,
                 }
               : {}),
+            ...(onboarding ? { onboarding } : {}),
           },
         );
         const createRes = await fetch("/api/organizations", {
@@ -190,8 +192,8 @@ export function ReviewStep({
 
       // Step 2a — PATCH branding colors (org endpoint accepts these).
       const hasBranding =
-        initialData.primaryColor != null ||
-        initialData.secondaryColor != null;
+        (initialData.primaryColor ?? null) !== null ||
+        (initialData.secondaryColor ?? null) !== null;
       if (hasBranding) {
         const patchPayload = validateOutboundPayload(
           PatchOrganizationPayloadSchema,
@@ -216,9 +218,9 @@ export function ReviewStep({
       // by /api/organizations/[orgId]/rate-cards, not the org PATCH route.
       const hasRateCard =
         canHost &&
-        (initialData.platformBps != null ||
-          initialData.orgBps != null ||
-          initialData.consultantBps != null);
+        ((initialData.platformBps ?? null) !== null ||
+          (initialData.orgBps ?? null) !== null ||
+          (initialData.consultantBps ?? null) !== null);
       if (hasRateCard) {
         const rateCardPayload = validateOutboundPayload(
           CreateRateCardPayloadSchema,
@@ -228,14 +230,11 @@ export function ReviewStep({
             consultantBps: initialData.consultantBps ?? 8000,
           },
         );
-        const rcRes = await fetch(
-          `/api/organizations/${orgId}/rate-cards`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(rateCardPayload),
-          },
-        );
+        const rcRes = await fetch(`/api/organizations/${orgId}/rate-cards`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(rateCardPayload),
+        });
         await parseJsonResponse(
           rcRes,
           z.object({}).passthrough(),
@@ -255,7 +254,7 @@ export function ReviewStep({
               CreateInvitationPayloadSchema,
               { email, role: inviteRoleNarrowed },
             );
-            const res = await fetch(
+            const res = await fetchWithIdentity(
               `/api/organizations/${orgId}/invitations`,
               {
                 method: "POST",
@@ -284,22 +283,13 @@ export function ReviewStep({
         await new Promise((r) => setTimeout(r, 1500));
       }
 
-      // Onboarding caller uses this to flip `user.onboardingCompleted`
-      // atomically with the launch. We deliberately don't block the
-      // redirect on failure: the org + invitations are already
-      // persisted, and the user is much better served by landing on
-      // their new dashboard than by being trapped on the Review screen
-      // with a confusing error. The onboarding flag will be flipped on
-      // the next dashboard load (or via a follow-up server action) and
-      // the failure is captured in the console for ops.
+      // Onboarding already committed with the org; this hook is cleanup only,
+      // so a failure here never blocks landing on the new dashboard.
       if (afterLaunch) {
         try {
           await afterLaunch(orgId);
-        } catch (afterErr) {
-          console.error(
-            "afterLaunch hook failed — proceeding to dashboard anyway",
-            afterErr,
-          );
+        } catch {
+          // Best-effort: the draft row expires on its own.
         }
       }
 
@@ -357,7 +347,10 @@ export function ReviewStep({
         </p>
         <div className="flex items-center gap-1">
           <strong>Capability:</strong>{" "}
-          <Badge variant="secondary" className={CAPABILITY_BADGE_CLASS[capability]}>
+          <Badge
+            variant="secondary"
+            className={CAPABILITY_BADGE_CLASS[capability]}
+          >
             {CAPABILITY_LABEL[capability]}
           </Badge>
         </div>
@@ -401,6 +394,13 @@ export function ReviewStep({
               {initialData.paymentTermsDays ?? 60}
             </p>
           )}
+          {initialData.gstStateCode && (
+            <p>
+              <strong>GST state:</strong>{" "}
+              {STATE_NUMERIC_TO_NAME[initialData.gstStateCode] ??
+                initialData.gstStateCode}
+            </p>
+          )}
         </Section>
       )}
 
@@ -420,7 +420,8 @@ export function ReviewStep({
           </p>
           <p className="text-xs text-zinc-500 mt-2">
             Stored as basis points (integer math). Rate changes create a new
-            effective rate card so historical earnings keep their original split.
+            effective rate card so historical earnings keep their original
+            split.
           </p>
         </Section>
       )}
@@ -452,8 +453,9 @@ export function ReviewStep({
               </span>
             </div>
           )}
-          {!initialData.primaryColor &&
-            !initialData.secondaryColor && <span>Skipped</span>}
+          {!initialData.primaryColor && !initialData.secondaryColor && (
+            <span>Skipped</span>
+          )}
         </div>
       </Section>
 
@@ -478,10 +480,7 @@ export function ReviewStep({
         <Card>
           <CardContent className="py-3 px-4 space-y-1">
             {inviteResults.map((r) => (
-              <div
-                key={r.email}
-                className="flex items-center gap-2 text-sm"
-              >
+              <div key={r.email} className="flex items-center gap-2 text-sm">
                 {r.ok ? (
                   <Check className="h-4 w-4 text-emerald-500" />
                 ) : (
@@ -508,11 +507,7 @@ export function ReviewStep({
         >
           Back
         </Button>
-        <Button
-          type="button"
-          onClick={handleLaunch}
-          disabled={isSubmitting}
-        >
+        <Button type="button" onClick={handleLaunch} disabled={isSubmitting}>
           {isSubmitting ? (
             <>
               <Loader2 className="h-4 w-4 mr-1 animate-spin" /> Launching…

@@ -12,6 +12,7 @@ import {
   articlesForCategory,
   getCategory,
 } from "../_data/support-content";
+import { ACK_PROMISE_COPY, ANTI_SCAM_NOTICE } from "@/app/(pages)/constants";
 
 export const revalidate = 3600;
 
@@ -96,7 +97,8 @@ export default async function SupportCategoryPage({
             <div className="mt-8 rounded-2xl border border-border bg-muted/40 p-5">
               <p className="font-semibold">Still stuck?</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                We reply within 24–48 hours on business days.
+                We acknowledge all requests {ACK_PROMISE_COPY}.{" "}
+                {ANTI_SCAM_NOTICE}
               </p>
               <Link
                 href="/contactus"

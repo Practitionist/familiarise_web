@@ -26,7 +26,7 @@ Third, and the constraint that shaped the answer: the Novu plan in use caps an e
 
 3. **Bodies reference fields only through `payload.` and `subscriber.`,** and a unit test refuses a bare variable. One payload often reaches both parties, so a body names the plan and the time and names a person only where every reader is the other party.
 
-4. **Step conditions are `!= false`, never `== true`.** The runbook in `docs/enterprise/50-operations/09-novu-console-conditions.md` asked for `subscriber.data.categoryX is true`. Novu evaluates the stored JSON Logic and runs the step when it is true; a subscriber whose flag was never written resolves to `null`, and `null == true` would have silenced them. The manifest encodes `routingBell != false` on every bell and `categoryX != false` per family, which is what the runbook meant.
+4. **Step conditions are `!= false`, never `== true`.** The runbook in `docs/enterprise/50-operations/10-novu-console-conditions.md` asked for `subscriber.data.categoryX is true`. Novu evaluates the stored JSON Logic and runs the step when it is true; a subscriber whose flag was never written resolves to `null`, and `null == true` would have silenced them. The manifest encodes `routingBell != false` on every bell and `categoryX != false` per family, which is what the runbook meant.
 
 5. **Staff activity is its own event** (`support-ticket-activity`, in the `support-ticket` family) with the customer's name and a verb (`replied`, `reopened`), so ops can later digest or throttle it without touching the owner's bell. Ticket events carry `reference` (`FAM-2026-000007`) as a field of its own and `status` as a sentence fragment (`in progress`), with `statusCode` keeping the enum.
 
@@ -44,4 +44,4 @@ The owner asked whether notifications should be decoupled behind a broker. They 
 
 ## Relations
 
-Supersedes the hand-maintained sections of `docs/notifications/03-novu-template-specs.md` and the manual steps of `docs/enterprise/50-operations/09-novu-console-conditions.md`. Closes the console halves of #1604, #1511, #1085 and #1055. Builds on ADR 23 (notification scope) and ADR 27 (state-as-outbox).
+Supersedes the hand-maintained sections of `docs/notifications/03-novu-template-specs.md` and the manual steps of `docs/enterprise/50-operations/10-novu-console-conditions.md`. Closes the console halves of #1604, #1511, #1085 and #1055. Builds on ADR 23 (notification scope) and ADR 27 (state-as-outbox).

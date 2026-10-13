@@ -120,13 +120,11 @@ async function buildBundleFor(
 /**
  * Whether the requester may still receive this kind — re-checked at build
  * time so a role change between request and build can't widen the bundle.
- * Platform admins act through a stub membership with OWNER reach.
  */
 async function requesterMayExport(
   requestedByMembershipId: string,
   kind: OrgDataExportKind,
 ): Promise<boolean> {
-  if (requestedByMembershipId.startsWith("__admin_stub_")) return true;
   const requester = await prisma.membership.findUnique({
     where: { id: requestedByMembershipId },
     select: { status: true, role: true },

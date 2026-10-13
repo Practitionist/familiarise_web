@@ -141,6 +141,66 @@ describe("offering manifests", () => {
     );
     for (const names of content) expect(names).toEqual(content[0]);
   });
+
+  it("renders every Content section field full-width (single column)", () => {
+    for (const manifest of ALL) {
+      const content = manifest.sections.find((s) => s.id === "content")!;
+      expect(content.fields.map((f) => f.span)).toEqual(
+        content.fields.map(() => 6),
+      );
+    }
+  });
+
+  it("places PriceField helper text below the input control row to align with sibling inputs", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const source = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "components/planner/components/form-fields/PriceField.tsx",
+      ),
+      "utf8",
+    );
+    const inputIdx = source.indexOf('<div className="flex gap-2">');
+    const descriptionIdx = source.indexOf(
+      "{description && <FormDescription>{description}</FormDescription>}",
+    );
+    expect(inputIdx).toBeGreaterThan(-1);
+    expect(descriptionIdx).toBeGreaterThan(inputIdx);
+  });
+
+  it("renders ThisMonthCard in a 2x2 StatRow grid and prevents Stat value overflow", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const cardSource = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "app/dashboard/consultant/[consultantId]/(features)/home/ThisMonthCard.tsx",
+      ),
+      "utf8",
+    );
+    expect(cardSource).toContain("<StatRow columns={2}>");
+
+    const statSource = fs.readFileSync(
+      path.join(process.cwd(), "components/dashboard/Stat.tsx"),
+      "utf8",
+    );
+    expect(statSource).toContain("min-w-0 truncate text-[26px]");
+  });
+
+  it("matches OfferingEditor sticky full-bleed bars to DashboardShell padding without double negative margins", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const editorSource = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "components/offerings/editor/OfferingEditor.tsx",
+      ),
+      "utf8",
+    );
+    expect(editorSource).not.toContain("-mx-10");
+    expect(editorSource).toContain("-mx-4 -mt-4");
+  });
 });
 
 /**

@@ -70,7 +70,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-refunds",
     name: "Reconcile Pending Refunds",
-    description: "Sync refund status with payment gateways (Stripe, Razorpay)",
+    description: "Sync refund status with Razorpay",
     schedule: "Every 15 minutes",
     category: "Refunds",
   },
@@ -78,7 +78,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-disputes",
     name: "Reconcile Disputes",
-    description: "Sync dispute status with Stripe and track urgent deadlines",
+    description: "Sync dispute status with Razorpay and track urgent deadlines",
     schedule: "Every 6 hours",
     category: "Disputes",
   },
@@ -108,7 +108,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "process-payouts",
     name: "Process Payouts",
-    description: "Send approved payouts via RazorpayX and Stripe Connect",
+    description: "Send approved payouts via RazorpayX",
     schedule: "Weekly (Mon 9PM UTC)",
     category: "Payouts",
   },
@@ -132,13 +132,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     name: "Alert Orphaned Payments",
     description: "Find SUCCEEDED payments with no appointment (CRITICAL)",
     schedule: "Every 6 hours",
-    category: "Alerts",
-  },
-  {
-    id: "alert-dispute-deadlines",
-    name: "Alert Dispute Deadlines",
-    description: "Alert when dispute dueBy is within 48h (URGENT)",
-    schedule: "Hourly",
     category: "Alerts",
   },
   // Cleanup
@@ -176,8 +169,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-payment-status",
     name: "Reconcile Payment Status",
-    description:
-      "Query Stripe/Razorpay for actual status on stale PENDING payments",
+    description: "Query Razorpay for actual status on stale PENDING payments",
     schedule: "Every 30 minutes",
     category: "Reconciliation",
   },
@@ -186,6 +178,14 @@ const SYSTEM_JOBS: SystemJob[] = [
     name: "Reconcile Occurrence Availability",
     description: "Fix tentative flags, detect double-bookings",
     schedule: "Hourly",
+    category: "Reconciliation",
+  },
+  {
+    id: "purge-deleted-documents",
+    name: "Purge Deleted Documents",
+    description:
+      "Tombstone session documents past retention, then purge tombstones past the grace window",
+    schedule: "Daily",
     category: "Reconciliation",
   },
   {

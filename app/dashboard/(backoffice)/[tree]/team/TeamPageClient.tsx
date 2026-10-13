@@ -45,11 +45,12 @@ import {
   type MemberRow,
   type RowAction,
 } from "./team-row-actions";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 type Role = MemberRow["role"];
 
 async function call(url: string, init: RequestInit): Promise<unknown> {
-  const response = await fetch(url, {
+  const response = await fetchWithReauth(url, {
     ...init,
     headers: { "Content-Type": "application/json" },
   });

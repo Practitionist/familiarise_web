@@ -6,6 +6,7 @@ import {
 } from "@/lib/booking/entitlement";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { OCCUPIED_REQUEST_STATUSES } from "@/utils/scheduling-engine/occupancyPolicy";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 
 /** One live occurrence of the subscription's wrapper (#1554): one call. */
 type ExistingOccurrence = { id: string; startsAt: Date };
@@ -214,11 +215,13 @@ export class SubscriptionValidationService {
     const errors: string[] = [];
 
     for (const slotDate of slotDates) {
+      const slotEnd = new Date(slotDate.getTime() + SCHEDULING_INTERVAL_MS);
       if (
         !isWithinInterval(slotDate, {
           start: subscriptionStart,
           end: subscriptionEnd,
-        })
+        }) ||
+        slotEnd > subscriptionEnd
       ) {
         errors.push(
           `Slot ${slotDate.toLocaleDateString()} is outside subscription period (${subscriptionStart.toLocaleDateString()} - ${subscriptionEnd.toLocaleDateString()})`,
@@ -291,20 +294,6 @@ export class SubscriptionValidationService {
   ): Map<string, number> {
     const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5); // 30-minute intervals
 
-    // Group slots by scheduling-timezone day first (server-tz-independent;
-    // matches the client's dayKey bucketing).
-    const slotsByDay = new Map<string, Date[]>();
-    for (const slotDate of slotDates) {
-      const dayKey = ScheduleCalculationService.dayKey(
-        slotDate,
-        schedulingTimezone,
-      );
-      if (!slotsByDay.has(dayKey)) {
-        slotsByDay.set(dayKey, []);
-      }
-      slotsByDay.get(dayKey)!.push(slotDate);
-    }
-
     const getWeekString = (date: Date): string =>
       // Must match the key format used by generateWeeklyInfo and
       // groupAppointmentsByWeek — all three use ScheduleCalculationService.weekKey.
@@ -315,65 +304,44 @@ export class SubscriptionValidationService {
     // WHY: Date arithmetic and timezone conversions can introduce sub-second precision errors
     const TOLERANCE_MS = 1000; // 1 second tolerance
 
-    /**
-     * Count how many complete calls exist in a day's worth of slots.
-     *
-     * Previously used exact-length equality (daySlots.length === slotsPerCall),
-     * which meant 2 calls on the same day (e.g., 4 slots with slotsPerCall=2)
-     * would count as 0 calls because 4 !== 2.
-     *
-     * Now sorts slots chronologically and greedily groups consecutive slots
-     * into calls of size `slotsPerCall`, correctly counting multiple calls
-     * on the same day.
-     */
-    const countCallsInDay = (daySlots: Date[]): number => {
-      if (daySlots.length < slotsPerCall) return 0;
+    // #1690 — Sort all proposed slots chronologically across the entire list
+    // and group consecutive 30-min atoms into whole calls of `slotsPerCall`
+    // before attributing each call to the week of `callStart`. Grouping by day
+    // first split overnight calls crossing midnight (e.g. 23:30–00:30) into
+    // two 1-slot days that each Math.floor'd to 0 calls.
+    const weekCalls = new Map<string, number>();
+    if (slotDates.length < slotsPerCall) {
+      return weekCalls;
+    }
 
-      const sortedSlots = [...daySlots].sort(
-        (a, b) => a.getTime() - b.getTime(),
-      );
+    const sortedSlots = [...slotDates].sort(
+      (a, b) => a.getTime() - b.getTime(),
+    );
 
-      let callCount = 0;
-      let consecutiveCount = 1; // Current run of consecutive slots
-
-      for (let i = 1; i < sortedSlots.length; i++) {
-        const prevEnd = new Date(sortedSlots[i - 1].getTime() + 30 * 60 * 1000); // Add 30 min
-        const currentStart = sortedSlots[i];
-        const timeDiff = Math.abs(currentStart.getTime() - prevEnd.getTime());
-
-        if (timeDiff <= TOLERANCE_MS) {
-          // This slot is consecutive with the previous one
-          consecutiveCount++;
-        } else {
-          // Gap detected — check if the previous run formed complete call(s)
-          callCount += Math.floor(consecutiveCount / slotsPerCall);
-          consecutiveCount = 1;
-        }
+    const attributeRun = (run: Date[]) => {
+      for (let k = 0; (k + 1) * slotsPerCall <= run.length; k++) {
+        const callStart = run[k * slotsPerCall];
+        const weekString = getWeekString(callStart);
+        weekCalls.set(weekString, (weekCalls.get(weekString) || 0) + 1);
       }
-
-      // Don't forget the last run
-      callCount += Math.floor(consecutiveCount / slotsPerCall);
-
-      return callCount;
     };
 
-    // Process each day to count confirmed calls per week
-    const weekCalls = new Map<string, number>();
-    slotsByDay.forEach((daySlots) => {
-      if (daySlots.length === 0) return;
+    let currentRun: Date[] = [sortedSlots[0]];
+    for (let i = 1; i < sortedSlots.length; i++) {
+      const prevEnd = new Date(
+        sortedSlots[i - 1].getTime() + SCHEDULING_INTERVAL_MS,
+      );
+      const currentStart = sortedSlots[i];
+      const timeDiff = Math.abs(currentStart.getTime() - prevEnd.getTime());
 
-      const weekString = getWeekString(daySlots[0]);
-
-      if (!weekCalls.has(weekString)) {
-        weekCalls.set(weekString, 0);
+      if (timeDiff <= TOLERANCE_MS) {
+        currentRun.push(currentStart);
+      } else {
+        attributeRun(currentRun);
+        currentRun = [currentStart];
       }
-
-      // Count all complete calls in this day (handles multiple calls per day)
-      const callsThisDay = countCallsInDay(daySlots);
-      if (callsThisDay > 0) {
-        weekCalls.set(weekString, weekCalls.get(weekString)! + callsThisDay);
-      }
-    });
+    }
+    attributeRun(currentRun);
 
     return weekCalls;
   }

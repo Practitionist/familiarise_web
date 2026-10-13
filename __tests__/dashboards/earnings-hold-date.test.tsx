@@ -53,7 +53,6 @@ const response = {
       platformFeePaise: 200,
       consultantSharePaise: 1000,
       refundedShareAmount: 0,
-      gstTcsAccruedPaise: null,
       role: "OWNER",
       shareBps: 10000,
       appointmentOccurrenceId: null,

@@ -33,11 +33,15 @@ import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { z } from "zod";
+import { razorpayFetchedPaymentSchema } from "@/schemas/webhooks/razorpay";
 
 const verifySignatureSchema = z.object({
   razorpay_order_id: z.string().startsWith("order_"),
@@ -51,8 +55,7 @@ const verifySignatureSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     const razorpayClient = getRazorpayClient();
-    // #1584 P1-AZ01 — force-fresh like POST /api/checkout: this door drives
-    // routeCapturedPayment, so a banned or revoked session must not reach it.
+    // Drives routeCapturedPayment, so a banned or revoked session must not reach it.
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;
@@ -137,6 +140,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Stale order: the hold lapsed, so refuse before driving the pipeline.
+    if (payment.paymentStatus === "EXPIRED") {
+      return NextResponse.json(
+        {
+          verified: false,
+          error: "ORDER_EXPIRED",
+          paymentStatus: "EXPIRED",
+          orderId: razorpay_order_id,
+        },
+        { status: 409 },
+      );
+    }
+
     // The gateway is the authority on what was actually captured and on the
     // `notes` that select the handler. The signature only proves the pair
     // (order_id, payment_id) came from Razorpay; it carries neither amount nor
@@ -145,17 +161,14 @@ export async function POST(req: NextRequest) {
     let capturedAmountPaise: number | undefined;
     try {
       if (!razorpayClient) throw new Error("RAZORPAY_NOT_INITIALIZED");
-      const gatewayPayment =
-        await razorpayClient.payments.fetch(razorpay_payment_id);
-      // Razorpay types `notes` as a string|number map; the handlers all read
-      // string values, so normalize rather than cast.
-      notes = Object.fromEntries(
-        Object.entries(gatewayPayment.notes ?? {}).map(([k, v]) => [
-          k,
-          String(v),
-        ]),
+      // A malformed gateway answer throws into the catch below and defers.
+      const gatewayPayment = razorpayFetchedPaymentSchema.parse(
+        await withRazorpaySdkTimeout("payments.fetch", () =>
+          razorpayClient.payments.fetch(razorpay_payment_id),
+        ),
       );
-      capturedAmountPaise = Number(gatewayPayment.amount);
+      notes = gatewayPayment.notes;
+      capturedAmountPaise = gatewayPayment.amount;
 
       // The signature proves the id pair came from Razorpay. It says nothing
       // about capture state, and this route is the ONLY confirmation path that

@@ -119,7 +119,7 @@ export function WebinarDetails({
       {/* Hero Banner */}
       <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
         <Image
-          src={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
+          src={generateProgramImageUrl(plan.imageUrl)}
           alt="Webinar cover"
           fill
           className="object-cover"
@@ -220,6 +220,7 @@ export function WebinarDetails({
               brochure={{ planId: plan.id, planType: "webinars" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
+              filesIncluded={plan.materials}
               faqs={plan.faqs}
               topics={plan.topics}
             />

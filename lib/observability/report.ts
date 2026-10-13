@@ -6,7 +6,9 @@
 
 import * as Sentry from "@sentry/nextjs";
 import type { SeverityLevel } from "@sentry/nextjs";
+import { isExpectedError } from "@/lib/observability/expected";
 import {
+  isDeadlock,
   isExclusionViolation,
   isPoolExhaustion,
   isUniqueViolation,
@@ -38,6 +40,8 @@ export interface ReportOpts {
   /** Merged over the derived subsystem/op/expected tags — can override any of them. */
   tags?: Record<string, string>;
   contexts?: Record<string, Record<string, unknown>>;
+  /** Stable grouping key; a run-level aggregate must not split per id. */
+  fingerprint?: string[];
 }
 
 function buildSentryCaptureContext(opts: ReportOpts) {
@@ -55,6 +59,7 @@ function buildSentryCaptureContext(opts: ReportOpts) {
     ...(level ? { level } : {}),
     ...(opts.extra ? { extra: opts.extra } : {}),
     ...(opts.contexts ? { contexts: opts.contexts } : {}),
+    ...(opts.fingerprint ? { fingerprint: opts.fingerprint } : {}),
   };
 }
 
@@ -92,10 +97,12 @@ function normaliseError(error: unknown): Error {
 
 /**
  * #1696 / #1092 — Extract structured Postgres/Prisma error tags (`pool_exhaustion`,
- * `pg_code`, `pg_constraint`) so Sentry alert rules and triage searches can filter
- * on SQLSTATE (`23P01` exclusion overlap, `23505` unique violation, `40001`
- * serialization failure) even when Prisma wraps raw-SQL constraints in
- * `PrismaClientUnknownRequestError`.
+ * `pg_code`, `pg_constraint`) and state-machine transition tags (`transition_entity`,
+ * `transition_from`, `transition_to`) so Sentry alert rules and triage searches can
+ * filter on SQLSTATE (`23P01` exclusion overlap, `23505` unique violation, `40001`
+ * serialization failure, `40P01` deadlock, `55P03` lock timeout, `57014` statement
+ * timeout) even when Prisma 7 + adapter-pg wraps raw SQL errors under
+ * `meta.driverAdapterError.cause.originalCode`.
  */
 function extractPgErrorTags(error: unknown): Record<string, string> {
   const out: Record<string, string> = {};
@@ -106,14 +113,34 @@ function extractPgErrorTags(error: unknown): Record<string, string> {
     error && typeof error === "object" && "message" in error
       ? String((error as { message?: unknown }).message ?? "")
       : "";
-  const metaCode =
-    error && typeof error === "object" && "meta" in error
-      ? (error as { meta?: { code?: unknown } }).meta?.code
+  const errObj =
+    error && typeof error === "object"
+      ? (error as {
+          code?: unknown;
+          name?: unknown;
+          entity?: unknown;
+          to?: unknown;
+          from?: unknown;
+          cause?: { originalCode?: unknown };
+          meta?: {
+            code?: unknown;
+            driverAdapterError?: { cause?: { originalCode?: unknown } };
+          };
+        })
       : undefined;
-  const prismaCode =
-    error && typeof error === "object" && "code" in error
-      ? (error as { code?: unknown }).code
-      : undefined;
+  const metaCode = errObj?.meta?.code;
+  const driverCode =
+    errObj?.meta?.driverAdapterError?.cause?.originalCode ??
+    (errObj?.name === "DriverAdapterError"
+      ? errObj?.cause?.originalCode
+      : undefined);
+  const prismaCode = errObj?.code;
+  const sqlStateCandidate =
+    typeof metaCode === "string"
+      ? metaCode
+      : typeof driverCode === "string"
+        ? driverCode
+        : undefined;
 
   if (isExclusionViolation(error)) {
     out.pg_code = "23P01";
@@ -125,22 +152,83 @@ function extractPgErrorTags(error: unknown): Record<string, string> {
     }
   } else if (isUniqueViolation(error)) {
     out.pg_code = "23505";
+  } else if (isDeadlock(error)) {
+    out.pg_code = "40P01";
   } else if (
     prismaCode === "P2034" ||
-    metaCode === "40001" ||
+    sqlStateCandidate === "40001" ||
     /(?:code[:\s`"]*40001\b|sqlstate[:\s`"(]*40001\b)/i.test(msg) ||
     /could not serialize access/i.test(msg)
   ) {
     out.pg_code = "40001";
-  } else if (typeof metaCode === "string" && /^[0-9A-Z]{5}$/.test(metaCode)) {
-    out.pg_code = metaCode;
+  } else if (
+    sqlStateCandidate === "55P03" ||
+    /\b55P03\b|lock_not_available|could not obtain lock/i.test(msg)
+  ) {
+    out.pg_code = "55P03";
+  } else if (
+    sqlStateCandidate === "57014" ||
+    /\b57014\b|canceling statement due to statement timeout/i.test(msg)
+  ) {
+    out.pg_code = "57014";
+  } else if (
+    typeof sqlStateCandidate === "string" &&
+    /^[0-9A-Z]{5}$/.test(sqlStateCandidate)
+  ) {
+    out.pg_code = sqlStateCandidate;
+  }
+
+  if (
+    prismaCode === "ILLEGAL_TRANSITION" ||
+    errObj?.name === "IllegalTransitionError"
+  ) {
+    if (typeof errObj?.entity === "string" && errObj.entity) {
+      out.transition_entity = errObj.entity;
+    }
+    if (typeof errObj?.to === "string" && errObj.to) {
+      out.transition_to = errObj.to;
+    }
+    if (typeof errObj?.from === "string" && errObj.from) {
+      out.transition_from = errObj.from;
+    }
   }
 
   return out;
 }
 
-/** Report a caught fault or modelled outcome. Normalises non-Error throws. */
-export function reportSentryError(error: unknown, opts: ReportOpts): void {
+function safeJsonStringify(payload: Record<string, unknown>): string {
+  try {
+    const seen = new WeakSet<object>();
+    return JSON.stringify(payload, (_key, value: unknown) => {
+      if (typeof value === "bigint") return value.toString();
+      if (value && typeof value === "object") {
+        if (seen.has(value)) return "[Circular]";
+        seen.add(value);
+      }
+      return value;
+    });
+  } catch {
+    return JSON.stringify({
+      event: payload.event ?? "observability.fault",
+      kind: payload.kind ?? "unknown",
+      subsystem: payload.subsystem ?? null,
+      op: payload.op ?? null,
+      level: payload.level ?? "error",
+      message:
+        typeof payload.message === "string"
+          ? payload.message
+          : "Unserializable fault payload",
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
+/**
+ * Report a caught fault or modelled outcome. Normalises non-Error throws and
+ * returns the Sentry event ID (empty string if mocked/suppressed) so API
+ * responses and UI error boundaries can surface a correlation reference.
+ */
+export function reportSentryError(error: unknown, opts: ReportOpts): string {
   const normalised = normaliseError(error);
   const context = buildSentryCaptureContext(opts);
   const pgTags = extractPgErrorTags(error);
@@ -148,14 +236,48 @@ export function reportSentryError(error: unknown, opts: ReportOpts): void {
     Object.keys(pgTags).length > 0
       ? { ...pgTags, ...context.tags }
       : context.tags;
-  Sentry.captureException(normalised, {
+  if (!opts.expected && !isExpectedError(error) && opts.level !== "info") {
+    console.error(
+      safeJsonStringify({
+        event: "observability.fault",
+        kind: "exception",
+        subsystem: opts.subsystem,
+        op: opts.op ?? null,
+        level: context.level,
+        message: normalised.message,
+        name: normalised.name,
+        tags,
+        extra: opts.extra ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  const eventId = Sentry.captureException(normalised, {
     ...context,
     tags,
     extra: { ...(opts.extra ?? {}), thrown: error },
   });
+  return typeof eventId === "string" ? eventId : "";
 }
 
 /** Sibling of `reportSentryError` for sites with no exception object to attach — idempotency short-circuits, race-losses, malformed-input rejections. */
-export function reportSentryMessage(message: string, opts: ReportOpts): void {
-  Sentry.captureMessage(message, buildSentryCaptureContext(opts));
+export function reportSentryMessage(message: string, opts: ReportOpts): string {
+  const context = buildSentryCaptureContext(opts);
+  if (!opts.expected && (opts.level === "error" || opts.level === "fatal")) {
+    console.error(
+      safeJsonStringify({
+        event: "observability.fault",
+        kind: "message",
+        subsystem: opts.subsystem,
+        op: opts.op ?? null,
+        level: context.level,
+        message,
+        tags: context.tags,
+        extra: opts.extra ?? null,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  }
+  const eventId = Sentry.captureMessage(message, context);
+  return typeof eventId === "string" ? eventId : "";
 }

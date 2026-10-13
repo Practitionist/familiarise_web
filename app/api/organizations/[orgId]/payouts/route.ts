@@ -25,7 +25,9 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { createOrgPayoutBatch } from "@/lib/payments/payouts/org-payout-service";
+import { clawbackRecoveredByPayout } from "@/lib/payments/payouts/clawback-recovery";
 import type { PayoutStatus } from "@prisma/client";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 const PayoutStatusSchema = z.enum([
   "PENDING",
@@ -64,14 +66,21 @@ const QuerySchema = z.object({
 
 // In-flight = held/reserved but not yet disbursed (mirrors the client's
 // former "Pending" card definition).
-const IN_FLIGHT_STATUSES: PayoutStatus[] = ["PENDING", "APPROVED", "PROCESSING"];
+const IN_FLIGHT_STATUSES: PayoutStatus[] = [
+  "PENDING",
+  "APPROVED",
+  "PROCESSING",
+];
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "payouts.read",
+  });
   if (access.error) return access.error;
 
   if (!access.org.canHost) {
@@ -112,8 +121,8 @@ export async function GET(
   // (ignores status/date filters) so the summary cards don't shift as the
   // table is filtered/paged — matching the client's original "stay on the
   // full set" intent.
-  const [payouts, total, paidAgg, pendingAgg, statusCounts] =
-    await Promise.all([
+  const [payouts, total, paidAgg, pendingAgg, statusCounts] = await Promise.all(
+    [
       prisma.organizationPayout.findMany({
         where,
         orderBy: { createdAt: "desc" },
@@ -141,7 +150,13 @@ export async function GET(
         where: { organizationId: orgId },
         _count: { id: true },
       }),
-    ]);
+    ],
+  );
+
+  const recovered = await clawbackRecoveredByPayout(
+    prisma,
+    payouts.map((p) => p.id),
+  );
 
   const counts = Object.fromEntries(
     statusCounts.map((s) => [s.status, s._count.id]),
@@ -149,7 +164,10 @@ export async function GET(
   const totalCount = statusCounts.reduce((sum, s) => sum + s._count.id, 0);
 
   return NextResponse.json({
-    data: payouts,
+    data: payouts.map((p) => ({
+      ...p,
+      clawbackRecoveredPaise: recovered.get(p.id) ?? 0,
+    })),
     pagination: {
       total,
       limit: q.limit,
@@ -171,8 +189,11 @@ export async function POST(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "payouts.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
+  const stale = requireFreshSession(access.session);
+  if (stale) return stale;
 
   if (!access.org.canHost) {
     return NextResponse.json(
@@ -224,6 +245,7 @@ export async function POST(
         paymentGateway: PAYOUT_GATEWAY,
         notes: body.notes,
         actorMembershipId: access.member.id,
+        createdBy: access.session.user.id,
       },
     );
 
@@ -255,11 +277,13 @@ export async function POST(
     // payout account, no READY earnings, etc.), so the existing branch
     // already maps it correctly.
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

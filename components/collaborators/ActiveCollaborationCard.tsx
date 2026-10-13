@@ -7,16 +7,37 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { goHref } from "@/lib/dashboard/go";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  LogOut,
+} from "lucide-react";
 import type { CollaborationWithPlan } from "./types";
 import {
   COLLABORATOR_STATUS_BADGE,
@@ -34,11 +55,18 @@ import {
 export function ActiveCollaborationCard({
   collab,
   currentUser,
+  onRefresh,
 }: {
   collab: CollaborationWithPlan;
   currentUser?: { name: string | null; image: string | null };
+  onRefresh?: () => void;
 }) {
   const [slotsExpanded, setSlotsExpanded] = useState(false);
+  const [isLeaving, setIsLeaving] = useState(false);
+  const { toast } = useToast();
+  const router = useRouter();
+
+  const planId = collab.webinarPlan?.id ?? collab.classPlan?.id;
 
   const owner =
     collab.planType === "webinar"
@@ -53,17 +81,7 @@ export function ActiveCollaborationCard({
     (c) => c.id !== collab.id,
   );
 
-  // Accurate shares: host = remainder after PENDING+ACCEPTED collaborators
-  const countedCollaborators = allCollaboratorsOnPlan.filter(
-    (c) => c.status === "PENDING" || c.status === "ACCEPTED",
-  );
-  const totalCollabShare =
-    countedCollaborators.reduce((sum, c) => sum + c.revenueShareBps, 0) / 100;
-  const hostShare = Number((100 - totalCollabShare).toFixed(2));
   const youShare = Number((collab.revenueShareBps / 100).toFixed(2));
-  const otherShare = Number(
-    Math.max(0, totalCollabShare - youShare).toFixed(2),
-  );
 
   const hasExpandableDetails =
     (collab.planType === "webinar" &&
@@ -75,6 +93,36 @@ export function ActiveCollaborationCard({
 
   const planTypeLabel = collab.planType === "webinar" ? "Webinar" : "Class";
   const roleLabel = formatRole(collab.role);
+
+  const handleLeaveCollaboration = async () => {
+    if (!planId) return;
+    setIsLeaving(true);
+    try {
+      const res = await fetch(
+        `/api/collaborations/${collab.planType}/${planId}/${collab.id}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? "Failed to withdraw from collaboration");
+      }
+      toast({ title: "Left collaboration" });
+      if (onRefresh) {
+        onRefresh();
+      } else {
+        router.refresh();
+      }
+    } catch (error) {
+      toast({
+        title: "Failed to leave collaboration",
+        description:
+          error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLeaving(false);
+    }
+  };
 
   return (
     <Card className="overflow-hidden border-zinc-200/80 shadow-sm transition-shadow hover:shadow-md">
@@ -115,12 +163,75 @@ export function ActiveCollaborationCard({
               </p>
             )}
             <p className="mt-0.5 text-sm text-zinc-500">
-              by {owner?.user.name ?? "Unknown"}
+              by {owner?.user.name ?? "Plan Host"}
             </p>
           </div>
+
+          {planId && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={isLeaving}
+                  className="shrink-0 text-xs text-zinc-500 hover:text-red-600"
+                >
+                  {isLeaving ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <LogOut className="mr-1.5 h-3.5 w-3.5" />
+                  )}
+                  Leave
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Leave collaboration?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Stepping down from &ldquo;{collab.planTitle}&rdquo; stops
+                    your revenue share on future sales and immediately revokes
+                    live call and coordination channel access. Any already
+                    settled earnings remain intact.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={isLeaving}>
+                    Cancel
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleLeaveCollaboration}
+                    disabled={isLeaving}
+                    className="bg-red-600 text-white hover:bg-red-700"
+                  >
+                    Leave Collaboration
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
 
-        {/* Revenue share — accurate host remainder, not 100 − you alone */}
+        {/* Payout onboarding warning */}
+        {collab.payoutAccountReady === false && (
+          <div className="mt-3 flex items-start justify-between gap-2 rounded-lg border border-amber-200/80 bg-amber-50/80 px-3 py-2 text-xs text-amber-900">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+              <span>
+                Complete payout onboarding so settled earnings can be
+                transferred to your account.
+              </span>
+            </div>
+            <Link
+              href={goHref("expert", "settings?tab=payouts")}
+              className="shrink-0 font-semibold underline hover:text-amber-700"
+            >
+              Set up payouts
+            </Link>
+          </div>
+        )}
+
+        {/* Revenue share */}
         <div className="mt-3.5">
           <RevenueSplitBar
             avatar={currentUser}
@@ -131,36 +242,15 @@ export function ActiveCollaborationCard({
                 className: "bg-teal-600",
               },
               {
-                key: "host",
-                percent: hostShare,
-                className: "bg-zinc-800",
-              },
-              {
-                key: "others",
-                percent: otherShare,
-                className: "bg-zinc-300",
+                key: "remaining",
+                percent: Number(Math.max(0, 100 - youShare).toFixed(2)),
+                className: "bg-zinc-200",
               },
             ]}
             label={
-              <>
-                <span className="font-semibold text-zinc-800">
-                  You {youShare}%
-                </span>
-                {owner && (
-                  <>
-                    <span className="text-zinc-400"> · </span>
-                    <span>
-                      {owner.user.name} {hostShare}%
-                    </span>
-                  </>
-                )}
-                {otherShare > 0 && (
-                  <>
-                    <span className="text-zinc-400"> · </span>
-                    <span>Others {otherShare}%</span>
-                  </>
-                )}
-              </>
+              <span className="font-semibold text-zinc-800">
+                Your share: {youShare}%
+              </span>
             }
           />
         </div>
@@ -184,9 +274,7 @@ export function ActiveCollaborationCard({
                     <p className="truncate text-sm font-medium text-zinc-900">
                       {owner.user.name ?? "Unknown"}
                     </p>
-                    <p className="truncate text-xs text-zinc-500">
-                      Host · {hostShare}% share
-                    </p>
+                    <p className="truncate text-xs text-zinc-500">Host</p>
                   </div>
                 </div>
                 <Badge

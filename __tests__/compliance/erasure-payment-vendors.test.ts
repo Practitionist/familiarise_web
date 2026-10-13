@@ -4,6 +4,11 @@
 
 // #1771 rows 1 and 5 — erasure deletes saved-card tokens, deactivates the
 // RazorpayX objects, nulls the masked bank fields and keeps the rzp ids.
+// Session-document erasure has its own suite; this one pins the vendors.
+jest.mock("../../lib/documents/document-erasure", () => ({
+  eraseUserSessionDocuments: jest.fn(async () => []),
+}));
+
 jest.mock("../../lib/enterprise/outbound-webhooks/dispatch", () => ({
   dispatchWebhookEvent: jest.fn(),
 }));

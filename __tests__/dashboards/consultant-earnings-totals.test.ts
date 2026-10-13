@@ -18,6 +18,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     consultantEarnings: { groupBy: jest.fn() },
     consultantPayout: { findMany: jest.fn() },
+    ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 jest.mock("../../lib/payments/payouts", () => ({
@@ -38,11 +39,17 @@ it("a COMPLETED payout with netAmount null counts as amount − tdsDeducted in t
   groupBy.mockResolvedValue([]);
   findMany.mockResolvedValue([
     {
+      id: "po_1",
       amount: BigInt(100_000),
       tdsDeducted: BigInt(100),
       netAmount: BigInt(99_900),
     },
-    { amount: BigInt(50_000), tdsDeducted: BigInt(50), netAmount: null },
+    {
+      id: "po_2",
+      amount: BigInt(50_000),
+      tdsDeducted: BigInt(50),
+      netAmount: null,
+    },
   ]);
 
   const { totals } = await buildConsultantEarningsPayload("cp_1");

@@ -85,7 +85,7 @@ flowchart TD
   CMT -- "no (14d)" --> CMTO["timeout cron → OverageEvent FAILED<br/>frees the breaker ceiling, notifies member"]
 ```
 
-The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditBudgetPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's *current* usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
+The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditBudgetPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's *current* usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise + GST on the surcharge`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
 
 > 🟡 **Gap (SUBSCRIPTION lazy-debit crosses the cap silently).** SUBSCRIPTION engagements debit at slot-allocation time, and `SchedulingService` discards `recordBookingUtilization`'s result — a `wasOverage=true` crossing on a `CHARGE_*` program at allocation never reaches `recordOverageAtCheckout`, so no `OverageEvent`, side-payment, or accrual leg is created while `overageCount` still increments (a silent under-charge; the reconciler's `OVERAGE_COUNT_DRIFT` fires on exactly these rows). Wiring it needs a #715-style design decision first, because follow-on allocations pass `priceAtBookingPaise: 0` and the marginal price basis is undefined on that path. Found in the 2026-06-10 overage architecture audit.
 
@@ -135,7 +135,7 @@ engagement at ₹10,000 — so `basePaise = min(₹12,000, 1 × ₹10,000) = ₹
 `OrganizationInvoice` cycle (`PENDING → ACCRUED → CHARGED`). The learner pays
 nothing extra at checkout; their employer's AP sees the ₹10,000 on the invoice.
 Had Wipro set `maxOveragePerCyclePaise`, the same 13th booking would instead
-fall back to `BLOCK` once the cycle's cumulative `OverageEvent.marginalPaise`
+fall back to `BLOCK` once the cycle's cumulative tax-exclusive overage (`basePaise + surchargePaise`)
 crossed that ceiling — the circuit breaker overrides `CHARGE_ORG`.
 
 ### Walkthrough B — IIT Madras drains a credit pool (BLOCK)
@@ -220,7 +220,7 @@ model LicensedSeatConfig {
   /// `priceCapPerEngagementPaise`. Null = no markup (marginal == price).
   overageSurchargeBps        Int?
   /// #768 lockdown #14/#15 — circuit breaker on CHARGE_ORG runaway. Null =
-  /// no ceiling. Non-null = cumulative OverageEvent.marginalPaise within
+  /// no ceiling. Non-null = cumulative tax-exclusive overage (basePaise + surchargePaise) within
   /// the current cycle cannot exceed this; subsequent bookings fall back
   /// to BLOCK regardless of overageBehavior.
   maxOveragePerCyclePaise    Int?
@@ -240,7 +240,7 @@ model LicensedSeatConfig {
   basis-point markup. Our model passes through the heterogeneous real price
   rather than a flat per-unit tier, so this is the single surcharge lever.
 - `maxOveragePerCyclePaise` is the **circuit breaker** (#768): once the
-  cycle's cumulative `OverageEvent.marginalPaise` would exceed it, the next
+  cycle's cumulative tax-exclusive overage (`basePaise + surchargePaise`) would exceed it, the next
   booking falls back to `BLOCK` regardless of `overageBehavior`. Caps a
   CHARGE_ORG runaway at a known ceiling.
 - `activeSeatCount` is the aggregate across non-completed assignments.

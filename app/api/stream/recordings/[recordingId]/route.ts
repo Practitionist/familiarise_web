@@ -1,44 +1,43 @@
 /**
- * Recording Details API Route
- * GET /api/stream/recordings/[recordingId]
- *
- * Gets details for a specific recording. Access is a capability question, not
- * a role question — see the branches below.
- *
- * #1270 — platform operators are no longer a single blanket grant. ADMIN gets
- * the playback URL; STAFF gets metadata and never a URL that renders the
- * session; both are audited. See lib/stream/recording-operator-access.ts.
+ * GET mints a playback URL per request for the viewer the slot rule admits;
+ * ADMIN plays, STAFF and organisation roles get metadata only (audited).
+ * PATCH and DELETE are the host's manage actions.
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import {
+  RecordingListingStatus,
+  RecordingStatus,
+  type RecordingRemovalReason,
+  RecordingStorageType,
+} from "@prisma/client";
+import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
+import { purgeExpiredRecordingAssets } from "@/lib/stream/recording-retention";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
-import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import {
-  hiddenFromLateJoiner,
-  lateJoinRecordingAccess,
-} from "@/lib/stream/late-join-recordings";
+  viewerPlaybackAccess,
+  type CatchUpRefusal,
+} from "@/lib/stream/recording-slots";
 import {
   auditOperatorRecordingAccess,
   resolveOperatorRecordingAccess,
 } from "@/lib/stream/recording-operator-access";
+import { hasAnyOrgPermission } from "@/lib/auth/org-permissions";
 
 import { getSession } from "@/lib/auth-server";
-import * as Sentry from "@sentry/nextjs";
-
-/** #366 — a captured standalone replay purchase grants playback. */
-async function hasReplayPurchase(
-  userId: string,
-  recordingId: string,
-): Promise<boolean> {
-  const purchase = await prisma.recordingPurchase.findFirst({
-    where: { recordingId, buyerId: userId, status: "SUCCEEDED" },
-    select: { id: true },
-  });
-  return !!purchase;
-}
+import { notifyAttendeesOfRemovedRecording } from "@/lib/stream/recording-removal-notice";
+import {
+  resolveRecordingWriteAccess,
+  type RecordingWriteAccess,
+} from "@/lib/stream/recording-write-access";
+import {
+  answerFileRoute,
+  fileApiError,
+  parseJsonBody,
+} from "@/lib/documents/api-error";
 
 type RouteParams = {
   params: Promise<{
@@ -46,147 +45,125 @@ type RouteParams = {
   }>;
 };
 
-export async function GET(req: NextRequest, { params }: RouteParams) {
-  try {
-    // Check authentication
-    const session = await getSession(true);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+function recordingGoneResponse(recording: {
+  removedAt: Date | null;
+  removalReason: string | null;
+}) {
+  return fileApiError("GONE", {
+    fields: {
+      removedAt: recording.removedAt?.toISOString() ?? null,
+      removalReason: recording.removalReason,
+    },
+  });
+}
+
+/**
+ * Every media URL is withheld, not only `playbackUrl`: a thumbnail is a frame of the session and the
+ * preview clip a cut of it. `access.level` is what a consumer branches on, since a null URL alone is ambiguous.
+ */
+function metadataOnlyResponse(
+  metadata: Record<string, unknown>,
+  reason: string,
+) {
+  return NextResponse.json({
+    recording: {
+      ...metadata,
+      playbackUrl: null,
+      thumbnailUrl: null,
+      previewClipUrl: null,
+      previewTranscript: null,
+    },
+    access: { level: "METADATA_ONLY" as const, reason },
+  });
+}
+
+/** Org members with operations or catalog roles see the recording's metadata, never the media. */
+async function hasOrgMetadataAccess(
+  organizationId: string | null,
+  userId: string,
+): Promise<boolean> {
+  if (!organizationId) return false;
+  const membership = await prisma.membership.findFirst({
+    where: { organizationId, userId, status: "ACTIVE" },
+    select: { role: true },
+  });
+  return (
+    !!membership &&
+    hasAnyOrgPermission(membership.role, ["operations.read", "catalog.manage"])
+  );
+}
+
+type PlaybackGrant =
+  | { kind: "play"; viaOperatorGrant: boolean }
+  | { kind: "metadata" }
+  | { kind: "refused"; code: CatchUpRefusal };
+
+/**
+ * Operator, then the shared viewer rule (host, own slot, purchase, catch-up);
+ * organisation and staff roles get metadata only.
+ */
+async function resolvePlaybackGrant(
+  user: { id: string; role?: string | null },
+  recording: NonNullable<
+    Awaited<ReturnType<typeof RecordingService.getRecordingById>>
+  >,
+): Promise<PlaybackGrant> {
+  const operator = resolveOperatorRecordingAccess(user.role);
+  if (operator.canPlay) return { kind: "play", viaOperatorGrant: true };
+
+  const occurrence = recording.meeting.occurrence;
+  const access = await viewerPlaybackAccess(user.id, {
+    id: recording.id,
+    appointmentId: occurrence.appointmentId,
+    ordinal: occurrence.ordinal,
+    expired: recording.status === RecordingStatus.EXPIRED,
+  });
+  if (access.allowed) return { kind: "play", viaOperatorGrant: false };
+  if (access.code === "LATE_JOIN_HIDDEN") {
+    return { kind: "refused", code: access.code };
+  }
+
+  const organizationId =
+    recording.organizationId ?? recording.meeting.organizationId ?? null;
+  if (
+    operator.canRead ||
+    (await hasOrgMetadataAccess(organizationId, user.id))
+  ) {
+    return { kind: "metadata" };
+  }
+  return { kind: "refused", code: access.code };
+}
+
+export async function GET(_req: NextRequest, { params }: RouteParams) {
+  return answerFileRoute(async () => {
+    const session = await getSession();
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
 
     const { recordingId } = await params;
-
-    // Get recording with related data
     const recording = await RecordingService.getRecordingById(recordingId);
+    if (!recording) return fileApiError("NOT_FOUND");
 
-    if (!recording) {
-      return NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 },
-      );
-    }
+    const grant = await resolvePlaybackGrant(session.user, recording);
+    if (grant.kind === "refused") return fileApiError(grant.code);
 
-    // Check access permissions
-    const appointment = recording.meeting.occurrence.appointment;
+    const viaOperatorGrant =
+      grant.kind === "metadata" || grant.viaOperatorGrant;
+    const mayPlay = grant.kind === "play";
+    const streamCopyLapsed =
+      recording.storageType === RecordingStorageType.STREAM_S3 &&
+      recording.streamUrlExpiresAt !== null &&
+      new Date(recording.streamUrlExpiresAt) < new Date();
 
-    let hasAccess = false;
-    // True when the ONLY thing letting this caller through is their platform
-    // role. Drives the audit write and the metadata-only downgrade below.
-    let viaOperatorGrant = false;
-
-    const operator = resolveOperatorRecordingAccess(session.user.role);
-
-    // #1270 — ADMIN holds `recordings.play`, the widest grant there is, so the
-    // ownership walk below cannot add anything for them. Short-circuit.
-    if (operator.canPlay) {
-      hasAccess = true;
-      viaOperatorGrant = true;
-    }
-
-    // Capability, not UserRole (#org-appts): an org EXPERT whose top-level role is CONSULTEE still owns recordings they delivered.
-    // Provider path: gate on owning a consultant profile, not on role.
-    if (!hasAccess && session.user.consultantProfileId) {
-      const consultantProfileId = session.user.consultantProfileId;
-
-      if (appointment?.webinar?.webinarPlan) {
-        hasAccess =
-          appointment.webinar.webinarPlan.consultantProfileId ===
-          consultantProfileId;
-        if (!hasAccess) {
-          const collab = await prisma.collaborator.findFirst({
-            where: {
-              webinarPlanId: appointment.webinar.webinarPlan.id,
-              consultantProfileId,
-              status: "ACCEPTED",
-            },
-          });
-          hasAccess = !!collab;
-        }
-      } else if (appointment?.class?.classPlan) {
-        hasAccess =
-          appointment.class.classPlan.consultantProfileId ===
-          consultantProfileId;
-        if (!hasAccess) {
-          const collab = await prisma.collaborator.findFirst({
-            where: {
-              classPlanId: appointment.class.classPlan.id,
-              consultantProfileId,
-              status: "ACCEPTED",
-            },
-          });
-          hasAccess = !!collab;
-        }
-      }
-    }
-
-    // Attendee path: consultee entitlement, gated on capability not role.
-    if (!hasAccess) {
-      // Consultee can access recordings for sessions they participated in.
-      // Use plan-level entitlement: the recording's appointment is the consultant's
-      // allocation slot, not the attendee's enrollment slot, so we check by plan ID.
-      const planFilter = appointment?.webinar?.webinarPlan?.id
-        ? { webinar: { webinarPlanId: appointment.webinar.webinarPlan.id } }
-        : appointment?.class?.classPlan?.id
-          ? { class: { classPlanId: appointment.class.classPlan.id } }
-          : null;
-      if (planFilter) {
-        const payments = await prisma.payment.findMany({
-          where: {
-            userId: session.user.id,
-            paymentStatus: "SUCCEEDED",
-            appointment: planFilter,
-          },
-          select: {
-            amount: true,
-            refunds: { select: { amountPaise: true, status: true } },
-          },
-        });
-        // #689 — a SUCCEEDED payment fully reversed by refunds is no longer an
-        // entitlement; access needs at least one net-positive purchase for the plan.
-        hasAccess = payments.some(isPaymentEntitled);
-        // #1819 — a late joiner's seat hides the sessions before it (host toggle).
-        if (hasAccess && appointment?.class) {
-          const lateJoin = await lateJoinRecordingAccess(session.user.id);
-          hasAccess = !hiddenFromLateJoiner(recording, lateJoin);
-        }
-      }
-
-      // #366 — standalone replay purchase (marketplace buyers hold no booking
-      // on the parent plan, so the payment path above can't see them).
-      if (!hasAccess) {
-        hasAccess = await hasReplayPurchase(session.user.id, recordingId);
-      }
-    }
-
-    // #1270 — STAFF land here only after every ownership and entitlement path
-    // above has failed. A staff member who actually delivered or bought the
-    // session already passed one of those and keeps full playback; this branch
-    // is the operator with no relationship to the session at all.
-    if (!hasAccess && operator.canRead) {
-      hasAccess = true;
-      viaOperatorGrant = true;
-    }
-
-    if (!hasAccess) {
-      return NextResponse.json(
-        { error: "Access denied to this recording" },
-        { status: 403 },
-      );
-    }
-
-    // Only an operator reaching in on their role alone is capped; anyone who
-    // arrived through participation or purchase plays as before.
-    const mayPlay = !viaOperatorGrant || operator.canPlay;
-
-    // Written before the URL is minted, so the trail cannot lag the access it
-    // describes. A failure here fails the request rather than serving an
-    // unaudited read.
     if (viaOperatorGrant) {
       await auditOperatorRecordingAccess({
         actorUserId: session.user.id,
         actorRole: String(session.user.role),
         surface: "GET /api/stream/recordings/[recordingId]",
-        played: mayPlay,
+        // Only a response that carries a playback URL counts as played.
+        played:
+          mayPlay &&
+          recording.status !== RecordingStatus.EXPIRED &&
+          !streamCopyLapsed,
         recordingId: recording.id,
         meetingId: recording.meeting?.id ?? null,
         streamCallId: recording.meeting?.streamCallId ?? null,
@@ -194,8 +171,6 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       });
     }
 
-    // Everything an operator needs to answer "where is my replay" — and
-    // nothing that renders the session.
     const metadata = {
       id: recording.id,
       title: recording.title,
@@ -209,64 +184,229 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       createdAt: recording.createdAt,
     };
 
-    if (!mayPlay) {
-      // Every media URL is withheld, not only `playbackUrl`. A thumbnail is a
-      // frame of the session and the preview clip is a cut of it, so handing
-      // either over is still handing over the content the cap exists to
-      // protect. `access.level` is what a consumer branches on — a null URL
-      // alone cannot distinguish "not permitted" from "not ready yet".
-      return NextResponse.json({
-        recording: {
-          ...metadata,
-          playbackUrl: null,
-          thumbnailUrl: null,
-          previewClipUrl: null,
-        },
-        access: {
-          level: "METADATA_ONLY" as const,
-          reason:
-            "Playback requires the recordings.play permission; staff receive metadata only.",
-        },
-      });
-    }
-
-    // Check if Stream URL has expired
-    if (
-      recording.storageType === "STREAM_S3" &&
-      recording.streamUrlExpiresAt &&
-      new Date(recording.streamUrlExpiresAt) < new Date()
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Recording has expired on Stream storage. Transfer to permanent storage or sync recordings.",
-          expired: true,
-        },
-        { status: 410 },
+    // An expired recording is gone for everyone except an operator reading its metadata.
+    if (recording.status === RecordingStatus.EXPIRED) {
+      if (!viaOperatorGrant) return recordingGoneResponse(recording);
+      return metadataOnlyResponse(
+        metadata,
+        "This recording has expired; only its metadata remains.",
       );
     }
 
-    // Get the best available URL (async — generates presigned URL for Supabase)
-    const playbackUrl = await getBestRecordingUrl(recording);
+    if (!mayPlay) {
+      return metadataOnlyResponse(
+        metadata,
+        "Organisation and staff roles see recording metadata only.",
+      );
+    }
+
+    if (streamCopyLapsed) return recordingGoneResponse(recording);
+
+    const playbackUrl = getBestRecordingUrl(recording);
+
+    return NextResponse.json(
+      {
+        recording: {
+          ...metadata,
+          playbackUrl,
+          thumbnailUrl: recording.thumbnailUrl,
+          previewClipUrl: recording.previewClipUrl,
+          previewTranscript: recording.previewTranscript ?? null,
+        },
+        access: { level: "FULL" as const },
+      },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
+  }, "stream");
+}
+
+const patchRecordingSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+});
+
+function sanitizeRecordingMutationResponse(recording: unknown) {
+  if (!recording || typeof recording !== "object") return recording;
+  const {
+    recordingUrl: _recordingUrl,
+    storagePath: _storagePath,
+    previewClipStoragePath: _previewClipStoragePath,
+    ...safeRecording
+  } = recording as Record<string, unknown>;
+  return safeRecording;
+}
+
+const REMOVAL_REASON = {
+  host: "EXPERT_DELETED",
+  org: "ORG_ACTION",
+  operator: "SUPPORT_ACTION",
+} as const satisfies Record<string, RecordingRemovalReason>;
+
+/** Who the attendee notice names: the expert, the organisation, or support. */
+function removerName(
+  access: Exclude<RecordingWriteAccess, { allowed: false }>,
+  actorName: string | null | undefined,
+): string {
+  if (access.via === "operator") return "Familiarise support";
+  if (access.via === "org") return access.orgName;
+  return actorName ?? "Your expert";
+}
+
+function writeTarget(
+  recording: NonNullable<
+    Awaited<ReturnType<typeof RecordingService.getRecordingById>>
+  >,
+) {
+  return {
+    appointmentId: recording.meeting.occurrence.appointmentId,
+    sessionHostProfileId: recording.meeting.occurrence.consultantProfileId,
+  };
+}
+
+export async function PATCH(req: NextRequest, { params }: RouteParams) {
+  return answerFileRoute(async () => {
+    const session = await getSession();
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
+
+    const { recordingId } = await params;
+    const recording = await RecordingService.getRecordingById(recordingId);
+    if (!recording) return fileApiError("NOT_FOUND");
+
+    const access = await resolveRecordingWriteAccess(
+      session.user,
+      writeTarget(recording),
+    );
+    if (!access.allowed) return fileApiError("FORBIDDEN");
+
+    const body = await parseJsonBody(req, patchRecordingSchema);
+
+    if (access.via === "operator") {
+      await auditOperatorRecordingAccess({
+        actorUserId: session.user.id,
+        actorRole: String(session.user.role),
+        surface: "PATCH /api/stream/recordings/[recordingId]",
+        played: false,
+        recordingId: recording.id,
+        meetingId: recording.meeting?.id ?? null,
+        streamCallId: recording.meeting?.streamCallId ?? null,
+        organizationId: recording.meeting?.organizationId ?? null,
+      });
+    }
+
+    const updated = await prisma.recording.update({
+      where: { id: recordingId },
+      data: {
+        ...(body.title !== undefined ? { title: body.title } : {}),
+      },
+    });
 
     return NextResponse.json({
-      recording: {
-        ...metadata,
-        playbackUrl,
-        thumbnailUrl: recording.thumbnailUrl,
-        previewClipUrl: recording.previewClipUrl,
-      },
-      access: { level: "FULL" as const },
+      recording: sanitizeRecordingMutationResponse(updated),
     });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
+  }, "stream");
+}
+
+export async function DELETE(_req: NextRequest, { params }: RouteParams) {
+  return answerFileRoute(async () => {
+    const session = await getSession();
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
+
+    const { recordingId } = await params;
+    const recording = await RecordingService.getRecordingById(recordingId);
+    if (!recording) return fileApiError("NOT_FOUND");
+
+    const access = await resolveRecordingWriteAccess(
+      session.user,
+      writeTarget(recording),
     );
-    streamLogger.error("Error getting recording", error);
-    return NextResponse.json(
-      { error: "Failed to get recording" },
-      { status: 500 },
+    if (!access.allowed) return fileApiError("FORBIDDEN");
+
+    // Always block deletion when any PENDING or SUCCEEDED purchase exists,
+    // regardless of current listingStatus (prevents unpublish-then-delete bypass).
+    const findActivePurchase = () =>
+      prisma.recordingPurchase?.findFirst?.({
+        where: {
+          recordingId,
+          status: { in: ["PENDING", "SUCCEEDED"] },
+        },
+        select: { id: true },
+      });
+
+    const activePurchase = await findActivePurchase();
+    if (activePurchase) return fileApiError("RECORDING_HAS_BUYERS");
+
+    if (access.via === "operator") {
+      await auditOperatorRecordingAccess({
+        actorUserId: session.user.id,
+        actorRole: String(session.user.role),
+        surface: "DELETE /api/stream/recordings/[recordingId]",
+        played: false,
+        recordingId: recording.id,
+        meetingId: recording.meeting?.id ?? null,
+        streamCallId: recording.meeting?.streamCallId ?? null,
+        organizationId: recording.meeting?.organizationId ?? null,
+      });
+    }
+
+    // If the recording was PUBLISHED, unpublish it first to close the checkout
+    // window before deleting objects from storage, then re-verify no purchase
+    // raced in while PUBLISHED.
+    if (recording.listingStatus === RecordingListingStatus.PUBLISHED) {
+      await prisma.recording.update({
+        where: { id: recordingId },
+        data: {
+          listingStatus: RecordingListingStatus.UNPUBLISHED,
+          unpublishedAt: new Date(),
+        },
+      });
+      const racedPurchase = await findActivePurchase();
+      if (racedPurchase) return fileApiError("RECORDING_HAS_BUYERS");
+    }
+
+    // Expire before deleting: a status change that raced this request leaves
+    // the stored objects untouched, and a failed delete is retried by expire-recordings.
+    const [expired] = await prisma.recording.updateManyAndReturn({
+      where: { id: recordingId, status: recording.status },
+      data: {
+        status: RecordingStatus.EXPIRED,
+        recordingUrl: "",
+        listingStatus: RecordingListingStatus.UNPUBLISHED,
+        removedAt: new Date(),
+        removalReason: REMOVAL_REASON[access.via],
+      },
+      select: { id: true, storagePath: true },
+    });
+    if (!expired) return fileApiError("RECORDING_CHANGED");
+    // The row is already removed, so a failed notice must not fail the delete.
+    await notifyAttendeesOfRemovedRecording({
+      appointmentId: recording.meeting.occurrence.appointmentId,
+      recordingTitle: recording.title,
+      removedBy: removerName(access, session.user.name),
+    }).catch((error: unknown) => {
+      streamLogger.warn("Recording removal notice not sent", {
+        recordingId,
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+    });
+    // The row is removed from here on: asset and pointer clean-up is best-effort.
+    const purged = await purgeExpiredRecordingAssets(expired).catch(
+      (error: unknown) => ({
+        success: false,
+        error: error instanceof Error ? error.message : "unknown error",
+      }),
     );
-  }
+    if (!purged.success) {
+      streamLogger.warn("Deleted recording assets left for the expiry sweep", {
+        recordingId,
+        error: purged.error,
+      });
+    }
+    const updated = await prisma.recording
+      .findUnique({ where: { id: recordingId } })
+      .catch(() => null);
+
+    return NextResponse.json({
+      success: true,
+      recording: sanitizeRecordingMutationResponse(updated),
+    });
+  }, "stream");
 }

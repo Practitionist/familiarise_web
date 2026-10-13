@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { unsubscribe } from "@/lib/waitlist/service";
 import { getAppUrl } from "@/lib/url";
 
-export async function GET(request: NextRequest): Promise<Response> {
+export function GET(request: NextRequest): Response {
   const { searchParams } = new URL(request.url);
   const email = searchParams.get("email");
   const token = searchParams.get("token");
@@ -28,22 +28,14 @@ export async function GET(request: NextRequest): Promise<Response> {
     );
   }
 
-  try {
-    await unsubscribe({ email, token });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "waitlist" } },
-    );
-    console.error("[waitlist/unsubscribe]", error);
-  }
-
-  // Same page on a bad token as on success — a differing response would
-  // confirm whether an address is on the list.
+  const actionUrl = `${getAppUrl()}/api/waitlist/unsubscribe?email=${encodeURIComponent(
+    email,
+  )}&token=${encodeURIComponent(token)}`;
   return html(
-    "You are unsubscribed",
-    "You will not receive any more newsletters from Familiarise. Changed your mind? You can sign up again from any page on the site.",
+    "Confirm unsubscribe",
+    "Click below to stop receiving newsletters from Familiarise.",
     200,
+    actionUrl,
   );
 }
 
@@ -64,12 +56,26 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
   }
 
-  // RFC 8058 wants a 200 regardless; mail clients treat anything else as a
-  // broken unsubscribe and may report the sender.
+  if (request.headers.get("accept")?.includes("text/html")) {
+    return html(
+      "You are unsubscribed",
+      "You will not receive any more newsletters from Familiarise. Changed your mind? You can sign up again from any page on the site.",
+      200,
+    );
+  }
+
   return NextResponse.json({ success: true });
 }
 
-function html(title: string, body: string, status: number): Response {
+function html(
+  title: string,
+  body: string,
+  status: number,
+  postActionUrl?: string,
+): Response {
+  const cta = postActionUrl
+    ? `<form method="post" action="${postActionUrl}" style="margin:0"><button type="submit" style="cursor:pointer;border:0;background:#000;color:#fff;padding:12px 20px;border-radius:5px;font-size:15px">Unsubscribe</button></form>`
+    : `<a href="${getAppUrl()}" style="display:inline-block;background:#000;color:#fff;padding:12px 20px;border-radius:5px;text-decoration:none;font-size:15px">Go to Familiarise</a>`;
   return new Response(
     `<!DOCTYPE html>
 <html lang="en">
@@ -84,7 +90,7 @@ function html(title: string, body: string, status: number): Response {
       <div style="background:#fff;border-radius:8px;padding:32px">
         <h1 style="margin:0 0 12px;font-size:24px;color:#111">${title}</h1>
         <p style="margin:0 0 24px;font-size:16px;line-height:1.5;color:#444">${body}</p>
-        <a href="${getAppUrl()}" style="display:inline-block;background:#000;color:#fff;padding:12px 20px;border-radius:5px;text-decoration:none;font-size:15px">Go to Familiarise</a>
+        ${cta}
       </div>
     </div>
   </body>

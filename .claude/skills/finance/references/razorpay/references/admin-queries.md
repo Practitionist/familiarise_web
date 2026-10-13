@@ -1,308 +1,187 @@
-# Razorpay Admin Operations
+# Admin Diagnostic Queries & Razorpay cURL Reference
 
-Run these commands directly to query and manage your Razorpay account. All commands use the Razorpay REST API with basic auth.
-
-**Before running**: Ensure `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` are set in your environment or `.env.local`. If not, ask the user for their key ID and secret.
-
-```bash
-# Load env vars if using .env.local
-export RAZORPAY_KEY_ID=$(grep RAZORPAY_KEY_ID .env.local | head -1 | cut -d'=' -f2)
-export RAZORPAY_SECRET=$(grep RAZORPAY_SECRET .env.local | head -1 | cut -d'=' -f2)
-```
-
-## Authentication
-
-All API calls use HTTP Basic Auth: `-u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET`
-
-Test keys (`rzp_test_`) only access test data. Live keys (`rzp_live_`) only access live data.
+Read-only SQL queries against this repository's Prisma/PostgreSQL schema (`prisma/schema.prisma`) and `curl` commands for inspecting Razorpay and RazorpayX entities.
 
 ---
 
-## Payments
+## 1. PostgreSQL / Prisma Diagnostic Queries (Read-Only)
 
-### Fetch a specific payment
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/payments/pay_xxxxx | jq .
+All money columns in Postgres are stored in **integer paise (`BigInt`)** (`amount`, `originalAmount`, `taxAmount`, `amountPaise`, `consultantSharePaise`, etc.). Divide by `100.0` for display in `₹`.
+
+### 1.1 Recent Payments & Gateway Identifiers
+```sql
+SELECT
+  id,
+  "userId",
+  "paymentStatus",
+  "paymentGateway",
+  "paymentIntent"     AS razorpay_order_id,
+  "gatewayPaymentId"  AS razorpay_payment_id,
+  amount / 100.0      AS gross_inr,
+  "originalAmount" / 100.0 AS base_inr,
+  "taxAmount" / 100.0 AS gst_inr,
+  "createdAt"
+FROM "Payment"
+WHERE "paymentGateway" = 'RAZORPAY'
+ORDER BY "createdAt" DESC
+LIMIT 25;
 ```
 
-Key fields: `id`, `amount` (paise), `status` (`created|authorized|captured|refunded|failed`), `method`, `email`, `subscription_id`, `order_id`, `created_at`
-
-### List recent payments
-```bash
-# Last 10 payments
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/payments?count=10" | jq '.items[] | {id, amount, status, method, email, created_at}'
+### 1.2 Stuck or Deferred Razorpay Webhook Events
+```sql
+SELECT
+  "eventId",
+  "eventType",
+  processed,
+  "deferCount",
+  error,
+  "createdAt",
+  "processedAt"
+FROM "WebhookEvent"
+WHERE provider = 'razorpay'
+  AND (processed = false OR error IS NOT NULL)
+ORDER BY "createdAt" DESC
+LIMIT 50;
 ```
 
-### List payments by subscription
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/subscriptions/sub_xxxxx/payments" | jq '.items[] | {id, amount, status, method, created_at}'
+### 1.3 Pending / Placeholder / Uncascaded Refunds
+```sql
+SELECT
+  r.id,
+  r."refundId",
+  r.status,
+  r."amountPaise" / 100.0 AS refund_inr,
+  r."cascadedAt",
+  r."failureReason",
+  p."paymentIntent"       AS razorpay_order_id,
+  p."gatewayPaymentId"    AS razorpay_payment_id,
+  r."createdAt",
+  r."updatedAt"
+FROM "Refund" r
+JOIN "Payment" p ON p.id = r."paymentId"
+WHERE r.status = 'PENDING'
+   OR (r.status = 'SUCCEEDED' AND r."cascadedAt" IS NULL AND r."amountPaise" > 0)
+ORDER BY r."updatedAt" ASC;
 ```
 
-### Filter payments by status
-```bash
-# Failed payments only
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/payments?count=20" | jq '.items[] | select(.status == "failed") | {id, amount, error_code, error_description}'
+### 1.4 Active Disputes Approaching Response Deadline (`respond_by`)
+```sql
+SELECT
+  d.id,
+  d."disputeId",
+  d.status,
+  d."amountPaise" / 100.0 AS disputed_inr,
+  d.reason,
+  d."dueBy",
+  ROUND(EXTRACT(EPOCH FROM (d."dueBy" - NOW())) / 3600.0, 1) AS hours_until_deadline,
+  p."paymentIntent"       AS razorpay_order_id,
+  p."gatewayPaymentId"    AS razorpay_payment_id
+FROM "Dispute" d
+LEFT JOIN "Payment" p ON p.id = d."paymentId"
+WHERE d.status IN ('NEEDS_RESPONSE', 'WARNING_NEEDS_RESPONSE', 'UNDER_REVIEW', 'WARNING_UNDER_REVIEW')
+ORDER BY d."dueBy" ASC NULLS LAST;
 ```
 
----
-
-## Subscriptions
-
-### Fetch a specific subscription
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/subscriptions/sub_xxxxx | jq .
+### 1.5 Consultant & Organization Payouts In Flight
+```sql
+SELECT
+  'CONSULTANT'          AS payee_type,
+  id,
+  "consultantProfileId" AS payee_id,
+  status,
+  method,
+  amount / 100.0        AS payout_inr,
+  "providerPayoutId"    AS razorpayx_payout_id,
+  "idempotencyKey",
+  "failureReason",
+  "createdAt",
+  "updatedAt"
+FROM "ConsultantPayout"
+WHERE status IN ('PENDING', 'APPROVED', 'PROCESSING')
+UNION ALL
+SELECT
+  'ORGANIZATION'        AS payee_type,
+  id,
+  "organizationId"      AS payee_id,
+  status,
+  method,
+  "amountPaise" / 100.0 AS payout_inr,
+  "gatewayPayoutId"     AS razorpayx_payout_id,
+  "idempotencyKey",
+  "failureReason",
+  "createdAt",
+  "updatedAt"
+FROM "OrganizationPayout"
+WHERE status IN ('PENDING', 'APPROVED', 'PROCESSING')
+ORDER BY "updatedAt" ASC;
 ```
 
-Key fields: `id`, `plan_id`, `status` (`created|authenticated|active|pending|halted|cancelled|completed|expired|paused`), `current_start`, `current_end`, `total_count`, `paid_count`, `remaining_count`, `short_url`, `notes`
-
-### List all subscriptions
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/subscriptions?count=20" | jq '.items[] | {id, plan_id, status, paid_count, current_end}'
-```
-
-### Filter subscriptions by status
-```bash
-# Active subscriptions only
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/subscriptions?count=50" | jq '.items[] | select(.status == "active") | {id, plan_id, customer_id, current_end}'
-```
-
-### Cancel a subscription
-```bash
-# Cancel at cycle end (graceful — recommended)
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  -X POST https://api.razorpay.com/v1/subscriptions/sub_xxxxx/cancel \
-  -H "Content-Type: application/json" \
-  -d '{"cancel_at_cycle_end": 1}' | jq .
-
-# Cancel immediately
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  -X POST https://api.razorpay.com/v1/subscriptions/sub_xxxxx/cancel \
-  -H "Content-Type: application/json" \
-  -d '{"cancel_at_cycle_end": 0}' | jq .
-```
-
-### Pause a subscription
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  -X POST https://api.razorpay.com/v1/subscriptions/sub_xxxxx/pause \
-  -H "Content-Type: application/json" \
-  -d '{"pause_initiated_by": "customer"}' | jq .
-```
-
-### Resume a paused subscription
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  -X POST https://api.razorpay.com/v1/subscriptions/sub_xxxxx/resume \
-  -H "Content-Type: application/json" \
-  -d '{"resume_initiated_by": "customer"}' | jq .
-```
-
----
-
-## Invoices
-
-### Fetch a specific invoice
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/invoices/inv_xxxxx | jq .
-```
-
-### List recent invoices
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/invoices?count=10" | jq '.items[] | {id, subscription_id, payment_id, status, amount, issued_at}'
-```
-
-### List invoices for a subscription
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/invoices?subscription_id=sub_xxxxx" | jq '.items[] | {id, payment_id, status, amount}'
-```
-
----
-
-## Refunds
-
-### Fetch a specific refund
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/refunds/rfnd_xxxxx | jq .
-```
-
-Key fields: `id`, `payment_id`, `amount` (paise), `status` (`pending|processed|failed`), `speed_requested` (`normal|optimum`), `speed_processed` (`normal|instant`), `created_at`
-
-### List refunds for a payment
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/payments/pay_xxxxx/refunds" | jq '.items[] | {id, amount, status, speed_requested, speed_processed, created_at}'
-```
-
-### Issue a full refund
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  -X POST https://api.razorpay.com/v1/payments/pay_xxxxx/refund \
-  -H "Content-Type: application/json" \
-  -d '{}' | jq .
-```
-
-### Issue a partial refund
-```bash
-# Amount in paise (e.g., 50000 = Rs 500)
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  -X POST https://api.razorpay.com/v1/payments/pay_xxxxx/refund \
-  -H "Content-Type: application/json" \
-  -d '{"amount": 50000}' | jq .
+### 1.6 Double-Entry Ledger Balance Sanity Check (`SUM(DEBIT) = SUM(CREDIT)`)
+```sql
+SELECT
+  lt.id,
+  lt."idempotencyKey",
+  lt.kind,
+  SUM(CASE WHEN le.direction = 'DEBIT'  THEN le."amountPaise" ELSE 0 END) AS total_debit_paise,
+  SUM(CASE WHEN le.direction = 'CREDIT' THEN le."amountPaise" ELSE 0 END) AS total_credit_paise
+FROM "LedgerTransaction" lt
+JOIN "LedgerEntry" le ON le."transactionId" = lt.id
+GROUP BY lt.id, lt."idempotencyKey", lt.kind
+HAVING SUM(CASE WHEN le.direction = 'DEBIT'  THEN le."amountPaise" ELSE 0 END)
+    <> SUM(CASE WHEN le.direction = 'CREDIT' THEN le."amountPaise" ELSE 0 END);
 ```
 
 ---
 
-## Customers
+## 2. Razorpay & RazorpayX API Inspection (`curl`)
 
-### Fetch a customer
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/customers/cust_xxxxx | jq .
-```
-
-### Search customers by email
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/customers?count=10" | jq '.items[] | select(.email == "user@example.com")'
-```
-
----
-
-## Plans
-
-### List all plans
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/plans?count=20" | jq '.items[] | {id, period, interval, item: .item.name, amount: .item.amount}'
-```
-
-### Fetch a specific plan
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/plans/plan_xxxxx | jq .
-```
-
-### Create a new plan
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  -X POST https://api.razorpay.com/v1/plans \
-  -H "Content-Type: application/json" \
-  -d '{
-    "period": "monthly",
-    "interval": 1,
-    "item": {
-      "name": "Plan Name",
-      "amount": 99900,
-      "currency": "INR",
-      "description": "Plan description"
-    }
-  }' | jq .
-```
-
----
-
-## Orders
-
-### Fetch an order
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/orders/order_xxxxx | jq .
-```
-
-### List payments for an order
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/orders/order_xxxxx/payments" | jq '.items[] | {id, amount, status, method}'
-```
-
----
-
-## Settlements
-
-Settlements are the actual money transfers from Razorpay to your bank account, net of fees, tax, and adjustments. Default cycle is **T+2 working days** for domestic accounts and **T+7** for international; instant settlements are also available at an extra fee.
-
-### List recent settlements
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/settlements?count=10" | jq '.items[] | {id, amount, status, fees, tax, created_at}'
-```
-
-### Fetch a specific settlement
-```bash
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/settlements/setl_xxxxx | jq .
-```
-
-### Settlement reconciliation (per-day / per-month breakdown)
-```bash
-# Recon report for a settlement — itemizes every payment, refund, fee, and adjustment
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/settlements/recon/combined?year=2026&month=6&count=100" \
-  | jq '.items[] | {entity_id, type, amount, fee, tax, settled_at}'
-```
-
-Use the recon API for accurate net-revenue figures — it nets fees, tax, and adjustments per settlement, which is more reliable than summing captured payments.
-
----
-
-## Webhooks (via Dashboard API)
-
-### Check recent webhook deliveries
-```bash
-# No direct API for this — use Dashboard: Settings → Webhooks → Click webhook → View deliveries
-# But you can verify your endpoint is reachable:
-curl -X POST https://your-app.com/api/webhooks/razorpay \
-  -H "Content-Type: application/json" \
-  -d '{"test": true}'
-# Should return 400 (missing signature), NOT 404 or 500
-```
-
----
-
-## Quick Health Check
-
-Run all of these to verify your Razorpay setup is working:
+All commands below are **read-only (`GET`)** unless explicitly marked otherwise. Export `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` first.
 
 ```bash
-# 1. Verify credentials
-echo "--- Credentials ---"
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  https://api.razorpay.com/v1/plans?count=1 | jq '{ok: (.count != null), mode: (if (.items[0].id // "" | startswith("plan_live")) then "LIVE" else "TEST" end)}'
+# Fetch an Order and its Payments
+curl -s -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" \
+  "https://api.razorpay.com/v1/orders/order_XXXXX" | jq .
 
-# 2. Count active subscriptions
-echo "--- Active Subscriptions ---"
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/subscriptions?count=50" | jq '[.items[] | select(.status == "active")] | length'
+curl -s -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" \
+  "https://api.razorpay.com/v1/orders/order_XXXXX/payments" | jq .
 
-# 3. Recent payments
-echo "--- Last 5 Payments ---"
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/payments?count=5" | jq '.items[] | {id, amount, status, created_at}'
+# Fetch a Payment and its Refunds
+curl -s -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" \
+  "https://api.razorpay.com/v1/payments/pay_XXXXX" | jq .
 
-# 4. Recent refunds
-echo "--- Last 5 Refunds ---"
-curl -s -u $RAZORPAY_KEY_ID:$RAZORPAY_SECRET \
-  "https://api.razorpay.com/v1/refunds?count=5" | jq '.items[] | {id, payment_id, amount, status}'
+curl -s -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" \
+  "https://api.razorpay.com/v1/payments/pay_XXXXX/refunds" | jq .
+
+# Fetch a Refund by ID
+curl -s -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" \
+  "https://api.razorpay.com/v1/refunds/rfnd_XXXXX" | jq .
+
+# Fetch a Dispute by ID
+curl -s -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" \
+  "https://api.razorpay.com/v1/disputes/disp_XXXXX" | jq .
+
+# Fetch a Customer and their Saved-Card Tokens
+curl -s -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" \
+  "https://api.razorpay.com/v1/customers/cust_XXXXX" | jq .
+
+curl -s -u "$RAZORPAY_KEY_ID:$RAZORPAY_SECRET" \
+  "https://api.razorpay.com/v1/customers/cust_XXXXX/tokens" | jq .
 ```
 
-## Gotchas
+### RazorpayX Payouts & Validations (`GET`)
 
-1. **Test vs live isolation**: Test keys can't see live data. Double-check which mode you're in.
-2. **`jq` required**: All commands pipe to `jq` for readability. Install with `brew install jq` if missing.
-3. **Amounts are in paise**: Rs 999 = `99900` paise. Always divide by 100 for display.
-4. **Timestamps are Unix seconds**: Convert with `date -r <timestamp>` on macOS or use `jq 'to_date'`.
-5. **Rate limits**: Razorpay has undocumented rate limits. Don't script tight loops against the API.
-6. **Pagination**: Default `count` is 10, max is 100. Use `skip` parameter for pagination: `?count=100&skip=100`.
-7. **Refund on subscription payment**: Refunding does NOT cancel the subscription. Cancel separately if needed.
-8. **Cancel is irreversible**: Once cancelled, a subscription cannot be reactivated. Create a new one instead.
+```bash
+# Fetch a Payout by ID (inspect status, utr, and status_details)
+curl -s -u "${RAZORPAYX_KEY_ID:-$RAZORPAY_KEY_ID}:${RAZORPAYX_KEY_SECRET:-$RAZORPAY_SECRET}" \
+  "https://api.razorpay.com/v1/payouts/pout_XXXXX" | jq .
+
+# Look up a Payout by our internal row ID (reference_id)
+curl -s -u "${RAZORPAYX_KEY_ID:-$RAZORPAY_KEY_ID}:${RAZORPAYX_KEY_SECRET:-$RAZORPAY_SECRET}" \
+  "https://api.razorpay.com/v1/payouts?account_number=${RAZORPAYX_ACCOUNT_NUMBER}&reference_id=cpout_XXXXX" | jq .
+
+# Fetch a Fund Account Validation (penny drop / reverse penny drop)
+curl -s -u "${RAZORPAYX_KEY_ID:-$RAZORPAY_KEY_ID}:${RAZORPAYX_KEY_SECRET:-$RAZORPAY_SECRET}" \
+  "https://api.razorpay.com/v1/fund_accounts/validations/fav_XXXXX" | jq .
+```
+
+> **Note on Razorpay Subscriptions API (not used in this repo):** If you ever inspect or manage a Razorpay Subscription externally, remember that `POST /v1/subscriptions/:id/pause` takes `{"pause_at": "now"}` and `POST /v1/subscriptions/:id/resume` takes `{"resume_at": "now"}` (`pause_initiated_by` is a response-only field, never a request parameter). See [`not-used-here/subscriptions.md`](not-used-here/subscriptions.md). <!-- drift-ok -->

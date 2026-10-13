@@ -27,23 +27,24 @@ import {
   streamApiLimiter,
 } from "@/lib/rate-limit";
 import { Ratelimit } from "@upstash/ratelimit";
+import {
+  ATTRIBUTION_COOKIE_MAX_AGE_S,
+  EXPERT_VIA_COOKIE,
+  parseViaToken,
+} from "@/lib/referrals/attribution-token-shape";
+import {
+  matchesPrefix,
+  PROTECTED_PAGE_PREFIXES,
+} from "@/lib/navigation/protected-routes";
 
 const URLS = {
   SIGNIN: "/auth/signin",
 };
 
 const ROUTE_PATTERNS = {
-  PROTECTED_PREFIXES: [
-    "/form/",
-    "/dashboard/",
-    "/settings/",
-    "/profile/",
-    "/checkout/",
-    "/meetings/",
-  ],
+  PROTECTED_PREFIXES: [...PROTECTED_PAGE_PREFIXES],
   PUBLIC_AUTH_PREFIXES: ["/auth/"],
   AUTHENTICATED_API_PREFIXES: [
-    "/api/form/onboarding/",
     "/api/verification/",
     "/api/user/",
     "/api/bookings/",
@@ -74,13 +75,8 @@ const ROUTE_PATTERNS = {
   ],
 };
 
-const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean => {
-  for (const prefix of prefixes) {
-    const base = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
-    if (pathname === base || pathname.startsWith(`${base}/`)) return true;
-  }
-  return false;
-};
+const matchesAnyPrefix = (pathname: string, prefixes: string[]): boolean =>
+  prefixes.some((prefix) => matchesPrefix(pathname, prefix));
 
 function maintenanceRetryAfterHeaders(
   estimatedEnd: string | null,
@@ -284,6 +280,18 @@ export async function middleware(
     return NextResponse.next();
   }
 
+  if (
+    pathname.startsWith("/dashboard/consultant/") &&
+    pathname.endsWith("/settings/payouts")
+  ) {
+    const targetUrl = req.nextUrl.clone();
+    targetUrl.pathname = pathname.replace(
+      /\/settings\/payouts$/,
+      "/settings/get-paid",
+    );
+    return NextResponse.redirect(targetUrl, 308);
+  }
+
   const isSubNavigation =
     req.headers.get("Next-Router-Prefetch") === "1" ||
     req.headers.get("RSC") === "1";
@@ -294,12 +302,35 @@ export async function middleware(
   if (maintenance?.kind === "respond") return maintenance.response;
 
   const response = await routeRequest(req, pathname);
+  rememberExpertVia(req, pathname, response);
   if (maintenance?.kind === "banner") {
     for (const [key, value] of Object.entries(maintenance.headers)) {
       response.headers.set(key, value);
     }
   }
   return response;
+}
+
+export function isExpertShareAttributionPath(pathname: string): boolean {
+  return /^\/explore\/(experts|programs\/plans)\//.test(pathname);
+}
+
+/** An expert's signed share link: keep the token for checkout, which verifies it. */
+function rememberExpertVia(
+  req: NextRequest,
+  pathname: string,
+  response: NextResponse,
+): void {
+  if (!isExpertShareAttributionPath(pathname)) return;
+  const via = parseViaToken(req.nextUrl.searchParams.get("via"));
+  if (!via) return;
+  response.cookies.set(EXPERT_VIA_COOKIE, via, {
+    maxAge: ATTRIBUTION_COOKIE_MAX_AGE_S,
+    path: "/",
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
 }
 
 async function routeRequest(
@@ -327,9 +358,17 @@ async function routeRequest(
   const isAuthenticated = !!getSessionCookie(req);
 
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.AUTHENTICATED_API_PREFIXES)) {
+    // `code`/`message` is the coded shape file routes answer with; `error` stays for older clients.
     return isAuthenticated
       ? next()
-      : NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      : NextResponse.json(
+          {
+            code: "UNAUTHORIZED",
+            message: "Sign in required.",
+            error: "Unauthorized",
+          },
+          { status: 401 },
+        );
   }
 
   if (matchesAnyPrefix(pathname, ROUTE_PATTERNS.PUBLIC_AUTH_PREFIXES)) {

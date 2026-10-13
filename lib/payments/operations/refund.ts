@@ -14,7 +14,7 @@
  *      flips it to SUCCEEDED. Use this when the refund originates inside
  *      the app and you want it gateway-bound + ledgered in one call.
  *
- *   2. `applyRefundCascade(tx, ...)` — gateway-initiated (Stripe /
+ *   2. `applyRefundCascade(tx, ...)` — gateway-initiated (the
  *      Razorpay webhook → `Refund` row already exists). The cascade
  *      cron in `scripts/refunds/cascade-refund-earnings.ts` calls this
  *      to fan out the side-effects without re-creating the Refund row.
@@ -43,16 +43,30 @@ import {
 } from "@/lib/observability/report";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
-  EarningStatus,
   type LedgerAccountKind,
   PaymentStatus,
   Prisma,
   RefundStatus,
   UserRole,
 } from "@prisma/client";
+import {
+  attemptTrigger,
+  notifyRefundProcessed,
+  type StagedTrigger,
+} from "@/lib/novu";
 import { notifyRefundRequested } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
+import { goHref } from "@/lib/dashboard/go";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import {
+  MONEY_EMAIL_TYPES,
+  stageRefundProcessedEmail,
+} from "@/lib/email/senders/money";
+import {
+  attemptStaged as attemptStagedEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
 
 // Type-only on purpose: the gateway barrel loads lib/payments/core/razorpay,
 // whose #1219 guard throws at module load on a TEST key in production. A
@@ -65,15 +79,26 @@ import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
-import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
 import { postPayoutClawback } from "./reversal-engine";
+import {
+  accumulatePaidConsultantClawback,
+  applyPaidConsultantClawbacks,
+  type PendingConsultantClawback,
+} from "@/lib/payments/payouts/paid-consultant-clawback";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
+import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
+import {
+  COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
+  isPastGstCreditNoteCutoff,
+} from "@/lib/compliance/gst-credit-note-cutoff";
 import {
   recordSystemEventSafe,
   recordSystemErrorSafe,
@@ -84,8 +109,18 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import {
+  hasUnappliedReceipt,
+  postUnappliedRefund,
+} from "@/lib/payments/ledger/unapplied-receipts";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import { revokeReplayEntitlement } from "@/lib/payments/recording-entitlement";
+
+import {
+  applyCappedEarningReversal,
+  applyCappedOrgEarningReversal,
+} from "@/lib/payments/payouts/earning-reversal-cas";
 
 // ============================================================================
 // Public types
@@ -96,6 +131,8 @@ export type RefundInput = {
   /** Defaults to full remaining (Payment.amount − sum(existing refunds)). */
   amountPaise?: number;
   reason: string;
+  /** Optional customer-facing reason included in customer refund notifications. */
+  customerReason?: string;
   /** For audit; staff/admin/customer userId. Optional — gateway-driven
    *  cascades pass null since there's no human actor. */
   initiatedByUserId?: string | null;
@@ -252,6 +289,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     where: { id: input.paymentId },
     select: {
       id: true,
+      userId: true,
       amount: true,
       currency: true,
       paymentStatus: true,
@@ -268,6 +306,16 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     const err = new RefundValidationError(
       `Payment ${input.paymentId} not found`,
       "PAYMENT_NOT_FOUND",
+    );
+    reportModelledRefundOutcome(err);
+    throw err;
+  }
+  // Org-funded and credit-funded intents have no gateway money; only
+  // refundBookingPayment's in-ledger rails may return them.
+  if (fundingRailForIntent(payment.paymentIntent) !== "GATEWAY") {
+    const err = new RefundValidationError(
+      `Payment ${input.paymentId} is not gateway-funded; refund it through refundBookingPayment`,
+      "NOT_A_GATEWAY_PAYMENT",
     );
     reportModelledRefundOutcome(err);
     throw err;
@@ -563,8 +611,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     // the gateway (covers "call actually landed but we never heard back")
     // or FAILs it after 24h, which triggers the payer notification (#779).
     await prisma.refund
-      .update({
-        where: { id: reserved.id },
+      .updateMany({
+        where: { id: reserved.id, status: RefundStatus.PENDING },
         data: {
           metadata: {
             initiatedByUserId: input.initiatedByUserId ?? null,
@@ -588,8 +636,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // id — no heuristic amount+time matching needed.
   if (gateway.status === "FAILED") {
     try {
-      await prisma.refund.update({
-        where: { id: reserved.id },
+      await prisma.refund.updateMany({
+        where: { id: reserved.id, status: RefundStatus.PENDING },
         data: {
           refundId: gateway.refundId || reserved.refundId,
           status: RefundStatus.FAILED,
@@ -603,8 +651,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       // (it still records the decline via the reconciler) and never surface a
       // raw P2002 for a refund whose money state is already correct.
       await prisma.refund
-        .update({
-          where: { id: reserved.id },
+        .updateMany({
+          where: { id: reserved.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             failureReason: "Gateway declined the refund",
@@ -637,13 +685,12 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   let boundRefundRowId = reserved.id;
   if (gateway.refundId && gateway.refundId !== reserved.refundId) {
     try {
-      await prisma.refund.update({
-        where: { id: reserved.id },
+      await prisma.refund.updateMany({
+        where: { id: reserved.id, status: RefundStatus.PENDING },
         data: {
           refundId: gateway.refundId,
           // Merge, not replace: Phase 1's audit keys (initiatedByUserId,
-          // source) must survive gateway-id binding — the Razorpay path always
-          // returns notes, so a bare assign wiped them (release #1014 review).
+          // source) must survive gateway-id binding when gateway notes arrive.
           ...(gateway.metadata
             ? {
                 metadata: {
@@ -669,60 +716,54 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         // integrity fault — rethrow rather than silently adopt it.
         throw err;
       }
-      // Retire our placeholder: it is a pure reservation (cascadedAt null, no
-      // legs reference it), and leaving it PENDING would double-count against
-      // the refundable balance until the reconciler failed it at 24h.
-      // #1205-triage — carry Phase 1's audit keys onto the surviving row:
-      // the webhook that minted it had no knowledge of initiatedByUserId/
-      // source, and without this merge the adopt path is the one bind path
-      // that loses them.
-      const winnerFull = await prisma.refund.findUniqueOrThrow({
-        where: { id: winner.id },
-        select: { metadata: true },
-      });
-      // #1780 — the placeholder goes first so the winner can take its
-      // dedupeKey (unique) in the same transaction; the key must survive.
-      await prisma.$transaction([
-        prisma.refund.delete({ where: { id: reserved.id } }),
-        prisma.refund.update({
+      // Retire our placeholder and merge Phase 1 audit keys onto the surviving webhook row.
+      if (winner.id === reserved.id) {
+        boundRefundRowId = reserved.id;
+      } else {
+        const winnerFull = await prisma.refund.findUniqueOrThrow({
           where: { id: winner.id },
-          data: {
-            ...(reserved.dedupeKey ? { dedupeKey: reserved.dedupeKey } : {}),
-            metadata: {
-              ...(winnerFull.metadata &&
-              typeof winnerFull.metadata === "object" &&
-              !Array.isArray(winnerFull.metadata)
-                ? winnerFull.metadata
-                : {}),
-              ...(reserved.metadata &&
-              typeof reserved.metadata === "object" &&
-              !Array.isArray(reserved.metadata)
-                ? reserved.metadata
-                : {}),
-            } as Prisma.InputJsonValue,
+          select: { metadata: true },
+        });
+        await prisma.$transaction([
+          prisma.refund.delete({ where: { id: reserved.id } }),
+          prisma.refund.update({
+            where: { id: winner.id },
+            data: {
+              ...(reserved.dedupeKey ? { dedupeKey: reserved.dedupeKey } : {}),
+              metadata: {
+                ...(winnerFull.metadata &&
+                typeof winnerFull.metadata === "object" &&
+                !Array.isArray(winnerFull.metadata)
+                  ? winnerFull.metadata
+                  : {}),
+                ...(reserved.metadata &&
+                typeof reserved.metadata === "object" &&
+                !Array.isArray(reserved.metadata)
+                  ? reserved.metadata
+                  : {}),
+              } as Prisma.InputJsonValue,
+            },
+          }),
+        ]);
+        boundRefundRowId = winner.id;
+        reportSentryMessage(
+          `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,
+          {
+            subsystem: "payments",
+            tags: { feature: "refund" },
+            extra: {
+              placeholderRowId: reserved.id,
+              gatewayRefundId: gateway.refundId,
+            },
           },
-        }),
-      ]);
-      boundRefundRowId = winner.id;
-      reportSentryMessage(
-        `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,
-        {
-          subsystem: "payments",
-          tags: { feature: "refund" },
-          extra: {
-            placeholderRowId: reserved.id,
-            gatewayRefundId: gateway.refundId,
-          },
-        },
-      );
+        );
+      }
     }
   } else {
-    // No real gateway id (falsy keeps the pending_ placeholder, mirroring the
-    // FAILED branch) — just merge metadata onto the reservation row.
     if (gateway.metadata) {
       await prisma.refund
-        .update({
-          where: { id: reserved.id },
+        .updateMany({
+          where: { id: reserved.id, status: RefundStatus.PENDING },
           data: {
             metadata: {
               ...(reserved.metadata &&
@@ -739,8 +780,6 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   }
 
   if (gateway.status !== "SUCCEEDED") {
-    // Money not settled yet — no cascade, row stays PENDING under its real
-    // gateway id so the webhook reconciles instead of duplicating.
     return {
       refundId: boundRefundRowId,
       amountRefundedPaise: requested,
@@ -753,114 +792,199 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
     };
   }
 
-  // PHASE 3b — settle: cascade + SUCCEEDED atomically. A throw here rolls
-  // back the cascade AND the cascadedAt claim, leaving the row PENDING under
-  // its gateway id for the webhook redelivery / backstop cron to re-drive.
-  //
-  // Wrapped in withSerializableRetry (as the Phase 1 comment above already
-  // promised): this tx writes earnings/legs concurrently with dispute
-  // handling and other cascades, so P2034 is an expected outcome — unwrapped,
-  // a transient abort surfaced to the caller as a raw error AFTER the gateway
-  // refund had already landed, stranding the row in webhook-only recovery.
-  const settled = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        const cascade = await applyRefundCascade(tx, {
-          paymentId: input.paymentId,
-          refundId: boundRefundRowId,
-          amountPaise: requested,
-          reason: input.reason,
-          initiatedByUserId: input.initiatedByUserId ?? null,
-        });
+  let settled: {
+    refundId: string;
+    amountRefundedPaise: number;
+    legsReversed: number;
+    consultantEarningsReversed: number;
+    organizationEarningsReversed: number;
+    clawbackInitiated: boolean;
+    memberOverageRefundDue: { overagePaymentId: string } | null;
+    status: "SUCCEEDED" | "PENDING";
+    gatewayRefundId: string | undefined;
+  };
+  let stagedBell: StagedTrigger | null = null;
+  let stagedEmails: StagedRecipientEmail[] = [];
+  try {
+    settled = await withSerializableRetry(() => {
+      stagedBell = null;
+      stagedEmails = [];
+      return prisma.$transaction(
+        async (tx) => {
+          const settledClaim = await tx.refund.updateMany({
+            where: { id: boundRefundRowId, status: RefundStatus.PENDING },
+            data: { status: RefundStatus.SUCCEEDED },
+          });
+          if (settledClaim.count === 0) {
+            const current = await tx.refund.findUnique({
+              where: { id: boundRefundRowId },
+              select: { status: true },
+            });
+            return {
+              refundId: boundRefundRowId,
+              amountRefundedPaise: requested,
+              legsReversed: 0,
+              consultantEarningsReversed: 0,
+              organizationEarningsReversed: 0,
+              clawbackInitiated: false,
+              memberOverageRefundDue: null,
+              status:
+                current?.status === RefundStatus.SUCCEEDED
+                  ? ("SUCCEEDED" as const)
+                  : ("PENDING" as const),
+              gatewayRefundId: gateway.refundId || undefined,
+            };
+          }
 
-        await tx.refund.update({
-          where: { id: boundRefundRowId },
-          data: { status: RefundStatus.SUCCEEDED },
-        });
+          const cascade = await applyRefundCascade(tx, {
+            paymentId: input.paymentId,
+            refundId: boundRefundRowId,
+            amountPaise: requested,
+            reason: input.reason,
+            initiatedByUserId: input.initiatedByUserId ?? null,
+          });
 
-        // Restore referral credits. This closes the #B20 gap: credit restoration
-        // used to live ONLY in the gateway-refund webhook, so a refund initiated
-        // through the app (or through the reversal engine) settled without ever
-        // giving the buyer their credits back.
-        //
-        // It must run AFTER the SUCCEEDED update above, because
-        // reverseCreditsForPayment derives its restoration target from the
-        // cumulative SUCCEEDED refund total for the payment — called before, this
-        // refund would be missing from that sum and credits would be
-        // under-restored. It is re-entrant, so the webhook calling it again for
-        // the same refund is a no-op.
-        // `payment.amount` is the denominator, matching what the webhook passes
-        // at app/api/webhooks/utils.ts — the proportion is (cumulative refunded /
-        // amount charged), and the two paths must agree or a payment refunded
-        // partly through each would restore the wrong total.
-        const restoredCredits = await reverseCreditsForPayment(
-          input.paymentId,
-          tx,
-          requested,
-          payment.amount,
-        );
-        if (restoredCredits > 0) {
-          console.log(
-            `🔄 Restored ${restoredCredits} referral credits for app-initiated refund on payment ${input.paymentId}`,
+          // Runs after SUCCEEDED transition so cumulative SUCCEEDED refund sum includes this row.
+          const restoredCredits = await reverseCreditsForPayment(
+            input.paymentId,
+            tx,
+            requested,
+            payment.amount,
+            boundRefundRowId,
           );
-        }
+          if (restoredCredits > 0) {
+            console.log(
+              `🔄 Restored ${restoredCredits} referral credits for app-initiated refund on payment ${input.paymentId}`,
+            );
+          }
 
-        return {
-          refundId: boundRefundRowId,
-          amountRefundedPaise: requested,
-          ...cascade,
-          status: "SUCCEEDED" as const,
-          gatewayRefundId: gateway.refundId || undefined,
-        };
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 10_000,
-        timeout: 15_000,
-      },
-    ),
-  );
+          if (payment.userId) {
+            if (typeof tx.notificationOutbox?.upsert === "function") {
+              const bell = await notifyRefundProcessed(
+                payment.userId,
+                {
+                  ...notificationScope(payment.organizationId),
+                  amount: requested,
+                  currency: payment.currency,
+                  ...(input.customerReason
+                    ? { reason: input.customerReason }
+                    : {}),
+                  dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+                },
+                { tx, entityRef: `payment:${payment.id}` },
+              );
+              stagedBell = bell?.staged ?? null;
+            }
+            if (
+              typeof tx.user?.findMany === "function" &&
+              typeof tx.failedEmail?.create === "function"
+            ) {
+              stagedEmails = await stageRefundProcessedEmail(tx, {
+                userId: payment.userId,
+                paymentId: payment.id,
+                amountPaise: requested,
+                currency: payment.currency,
+              });
+            }
+          }
 
-  // #715/#716 — the parent booking was fully refunded and carried a CHARGED
-  // CHARGE_MEMBER overage on a SEPARATE side-payment. Refund it now that the
-  // parent settled: outside the tx (its own gateway call + Serializable
-  // cascade), and best-effort so a hiccup never rolls back the parent refund.
-  if (settled.memberOverageRefundDue) {
-    const sidePaymentId = settled.memberOverageRefundDue.overagePaymentId;
-    try {
-      await refundPayment({
-        paymentId: sidePaymentId,
-        reason: `overage credit-back — parent booking ${input.paymentId} refunded`,
-        initiatedByUserId: input.initiatedByUserId ?? null,
-      });
-    } catch (err) {
-      // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign idempotent
-      // re-drives — the nested refundPayment call already reported them
-      // (expected:true) at their origin above; anything else here is a real
-      // gap between the parent refund and the member's credit-back — page
-      // ops rather than fail the settled parent.
-      if (
-        !(err instanceof RefundValidationError) ||
-        (err.code !== "ALREADY_FULLY_REFUNDED" &&
-          err.code !== "PAYMENT_NOT_SUCCEEDED")
-      ) {
-        reportSentryError(err, {
-          subsystem: "payments",
-          tags: { feature: "overage-credit-back" },
-          extra: { parentPaymentId: input.paymentId, sidePaymentId },
-        });
-        void recordSystemErrorSafe({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
-          err,
-          context: { parentPaymentId: input.paymentId, sidePaymentId },
-        });
-      }
-    }
+          return {
+            refundId: boundRefundRowId,
+            amountRefundedPaise: requested,
+            ...cascade,
+            status: "SUCCEEDED" as const,
+            gatewayRefundId: gateway.refundId || undefined,
+          };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
+      );
+    });
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+    stagedBell = null;
+    stagedEmails = [];
+    reportSentryError(err, { subsystem: "payments", expected: true });
+    const current = await prisma.refund.findUnique({
+      where: { id: boundRefundRowId },
+      select: { status: true },
+    });
+    settled = {
+      refundId: boundRefundRowId,
+      amountRefundedPaise: requested,
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+      memberOverageRefundDue: null,
+      status:
+        current?.status === RefundStatus.SUCCEEDED
+          ? ("SUCCEEDED" as const)
+          : ("PENDING" as const),
+      gatewayRefundId: gateway.refundId || undefined,
+    };
   }
 
+  await Promise.allSettled([
+    ...(stagedBell ? [attemptTrigger(stagedBell)] : []),
+    attemptStagedEmails(
+      stagedEmails,
+      MONEY_EMAIL_TYPES.REFUND_PROCESSED,
+      EMAIL_BUDGET_MS.REQUEST,
+    ),
+  ]);
+
+  await refundMemberOverageSidePayment({
+    parentPaymentId: input.paymentId,
+    due: settled.memberOverageRefundDue,
+    initiatedByUserId: input.initiatedByUserId ?? null,
+  });
+
   return settled;
+}
+
+/**
+ * Refunds a fully-refunded booking's CHARGE_MEMBER overage side-payment once the
+ * parent's cascade has committed; best effort, so it never undoes the parent.
+ */
+export async function refundMemberOverageSidePayment(input: {
+  parentPaymentId: string;
+  due: ApplyRefundCascadeResult["memberOverageRefundDue"];
+  initiatedByUserId: string | null;
+}): Promise<void> {
+  if (!input.due) return;
+  const sidePaymentId = input.due.overagePaymentId;
+  try {
+    await refundPayment({
+      paymentId: sidePaymentId,
+      reason: `overage credit-back — parent booking ${input.parentPaymentId} refunded`,
+      initiatedByUserId: input.initiatedByUserId,
+    });
+  } catch (err) {
+    // ALREADY_FULLY_REFUNDED / PAYMENT_NOT_SUCCEEDED are benign re-drives the
+    // nested call already reported; anything else is a real credit-back gap.
+    if (
+      !(err instanceof RefundValidationError) ||
+      (err.code !== "ALREADY_FULLY_REFUNDED" &&
+        err.code !== "PAYMENT_NOT_SUCCEEDED")
+    ) {
+      reportSentryError(err, {
+        subsystem: "payments",
+        tags: { feature: "overage-credit-back" },
+        extra: { parentPaymentId: input.parentPaymentId, sidePaymentId },
+      });
+      await recordSystemErrorSafe({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Overage credit-back refund failed for side-payment ${sidePaymentId}`,
+        err,
+        context: { parentPaymentId: input.parentPaymentId, sidePaymentId },
+      });
+    }
+  }
 }
 
 // ============================================================================
@@ -935,12 +1059,26 @@ export async function applyRefundCascade(
     where: { id: input.paymentId },
     include: {
       legs: { orderBy: { createdAt: "asc" } },
-      // #813 — the scalar `earnings.payoutId` is all the TDS-reversal helper needs
-      // to find the original TDSRecord; the prior `payout` TDS-field include was
-      // dead (review finding).
-      earnings: true,
+      earnings: {
+        include: {
+          payout: {
+            select: {
+              status: true,
+              amount: true,
+              tdsDeducted: true,
+              clawbackInitiatedAt: true,
+            },
+          },
+        },
+      },
       organizationEarnings: { include: { orgPayout: true } },
       bookingUtilization: true,
+      appointment: {
+        select: {
+          subscription: { select: { status: true } },
+          trial: { select: { status: true } },
+        },
+      },
       // #1582 C-P0-03 — the cumulative cap at cascade time (owner decision Q3).
       refunds: { select: { id: true, amountPaise: true, status: true } },
       disputes: REFUNDABLE_BALANCE_SELECT.disputes,
@@ -983,6 +1121,20 @@ export async function applyRefundCascade(
     });
   }
 
+  // Replay sales are the only appointment-less payments that grant playback;
+  // only a full refund revokes it, so a partial goodwill refund keeps access.
+  if (payment.appointmentId === null) {
+    const otherSucceededPaise = payment.refunds
+      .filter(
+        (r) =>
+          r.id !== rawInput.refundId && r.status === RefundStatus.SUCCEEDED,
+      )
+      .reduce((sum, r) => sum + r.amountPaise, 0);
+    if (otherSucceededPaise + input.amountPaise >= payment.amount) {
+      await revokeReplayEntitlement(tx, payment.paymentIntent);
+    }
+  }
+
   if (payment.amount <= 0 || input.amountPaise <= 0) {
     // Zero-amount payments (LICENSE-only) have no money to refund, and a
     // cascade clamped to zero (#1582 C-P0-03: every rupee already returned or
@@ -990,6 +1142,33 @@ export async function applyRefundCascade(
     // `reversal < 0` trigger and the journal rejects a 0 entry, which would
     // fail the tx at COMMIT and leave the refund re-cascading forever.
     // Still reverse the booking utilization so the seat returns.
+    if (payment.bookingUtilization) {
+      await reverseBookingUtilization(tx, {
+        paymentId: payment.id,
+        reason: input.reason,
+      });
+    }
+    return {
+      legsReversed: 0,
+      consultantEarningsReversed: 0,
+      organizationEarningsReversed: 0,
+      clawbackInitiated: false,
+      memberOverageRefundDue: null,
+    };
+  }
+
+  // A parked capture never booked revenue, GST, earnings or an invoice, so its
+  // refund only returns the cash from UNAPPLIED_RECEIPTS.
+  if (
+    payment.earnings.length === 0 &&
+    payment.organizationEarnings.length === 0 &&
+    (await hasUnappliedReceipt(tx, payment.id))
+  ) {
+    await postUnappliedRefund(tx, {
+      paymentId: payment.id,
+      refundId: input.refundId,
+      amountPaise: input.amountPaise,
+    });
     if (payment.bookingUtilization) {
       await reverseBookingUtilization(tx, {
         paymentId: payment.id,
@@ -1022,20 +1201,36 @@ export async function applyRefundCascade(
   let walletOwnerOrgId: string | null = null;
   // legAmounts holds only positive legs — LICENSE/zero-value legs are excluded
   // here so they never skew the proportional split.
+  const positiveLegs = payment.legs.filter((l) => l.amountPaise > 0);
+  const totalPositivePaise = positiveLegs.reduce(
+    (sum, l) => sum + l.amountPaise,
+    0,
+  );
+  const eligibleLegs =
+    totalPositivePaise > payment.amount
+      ? positiveLegs.filter((l) => l.source !== "REFERRAL_CREDIT")
+      : positiveLegs;
+
   const legAmounts: Array<{
     leg: (typeof payment.legs)[number];
     reverse: number;
-  }> = payment.legs
-    .filter((l) => l.amountPaise > 0) // negative refund legs already in place
-    .map((leg) => ({ leg, reverse: proportion(leg.amountPaise) }));
+  }> = eligibleLegs.map((leg) => ({
+    leg,
+    reverse: proportion(leg.amountPaise),
+  }));
 
-  if (legAmounts.length > 0) {
+  const lastCashLeg = legAmounts.at(-1);
+  if (lastCashLeg) {
     const totalAssigned = legAmounts.reduce((a, l) => a + l.reverse, 0);
-    const remainder = input.amountPaise - totalAssigned;
-    // Last reversed leg absorbs the floor remainder so the legs sum to exactly
-    // input.amountPaise (#776).
-    legAmounts[legAmounts.length - 1].reverse += remainder;
+    lastCashLeg.reverse += input.amountPaise - totalAssigned;
   }
+
+  const linkedOrgInvoice = payment.billableToOrgInvoiceId
+    ? await tx.organizationInvoice.findUnique({
+        where: { id: payment.billableToOrgInvoiceId },
+        select: { status: true, issuedAt: true },
+      })
+    : null;
 
   for (const { leg, reverse } of legAmounts) {
     if (reverse <= 0) continue;
@@ -1088,25 +1283,7 @@ export async function applyRefundCascade(
 
       case "INVOICE_ACCRUAL":
       case "OVERAGE_INVOICE_ACCRUAL": {
-        // Both base and overage accrual legs share the same reversal
-        // semantics: if the invoice is already PAID, clawback is handled
-        // at the OrganizationEarnings level below (mutating the leg of a
-        // settled invoice would diverge from the issued document).
-        //
-        // #786/#781 §B — funding legs are append-only: the original leg is
-        // never mutated; the refund nets through a negative *_REVERSAL
-        // sibling. One reversal leg per source keeps @@unique([paymentId,
-        // source]) intact; subsequent partial refunds decrement the
-        // existing reversal leg. The monthly rollup sums original +
-        // reversal so it bills the net — and the full funding history
-        // stays readable from the legs.
-        const billable = payment.billableToOrgInvoiceId
-          ? await tx.organizationInvoice.findUnique({
-              where: { id: payment.billableToOrgInvoiceId },
-              select: { status: true },
-            })
-          : null;
-        const alreadyBilled = billable?.status === "PAID";
+        const alreadyBilled = linkedOrgInvoice?.status === "PAID";
         if (!alreadyBilled) {
           const reversalSource =
             leg.source === "INVOICE_ACCRUAL"
@@ -1224,6 +1401,12 @@ export async function applyRefundCascade(
       : (trancheAbsorb.get(earnings.id) ?? 0);
 
   let consultantEarningsReversed = 0;
+  // What each row ACTUALLY absorbed, by earning id (absent = 0). Step 9's
+  // debits and the TDS filing read this, never `reversalOf(row)`: booking the
+  // request is the EARNINGS_LEDGER_DRIFT that reconcile-ledgers raises.
+  const appliedByEarning = new Map<string, number>();
+  let clawbackInitiated = false;
+  const consultantClawbacks = new Map<string, PendingConsultantClawback>();
   for (const earnings of payment.earnings) {
     const shareReversal = reversalOf(earnings);
     if (shareReversal <= 0) continue;
@@ -1231,35 +1414,25 @@ export async function applyRefundCascade(
     // a second reversal (e.g. app refund THEN a lost-dispute chargeback creates a
     // new Refund → new cascadedAt → Step 6 re-runs) would otherwise inflate
     // refundedShareAmount past consultantSharePaise and corrupt readyAmount/over-refund math.
-    const newRefundedShare = Math.min(
-      earnings.consultantSharePaise,
-      earnings.refundedShareAmount + shareReversal,
+    // #CASC — the cap and status predicate live in the WHERE
+    // (applyCappedEarningReversal), which also asserts the transition.
+    const reversal = await applyCappedEarningReversal(
+      tx,
+      earnings,
+      shareReversal,
     );
-    const fully = newRefundedShare >= earnings.consultantSharePaise;
-
-    let nextStatus = earnings.status;
-    if (fully && earnings.status !== EarningStatus.REFUNDED) {
-      // Guard the transition. PAID → REFUNDED is allowed; other
-      // sources (PENDING/HELD/READY/PENDING_TRUST) → REFUNDED is
-      // implicitly allowed by the guard. The guard rejects
-      // REFUNDED→anything (already-terminal), which we skip via the
-      // outer `!== REFUNDED` check.
-      assertEarningStatusTransitionLegal(
-        earnings.id,
-        earnings.status,
-        EarningStatus.REFUNDED,
+    appliedByEarning.set(earnings.id, reversal.reversedPaise);
+    if (reversal.lostRace) {
+      // Someone else owns this row's reversal now (or we only got the residual
+      // after a re-read). Report it — and do NOT count the row as reversed by
+      // this cascade unless this call actually moved paise.
+      console.warn(
+        `Earnings ${earnings.id}: refund cascade CAS lost, ` +
+          `${reversal.reversedPaise} paise applied of ${shareReversal} ` +
+          `(${reversal.refundedShareAmount}/${earnings.consultantSharePaise}).`,
       );
-      nextStatus = EarningStatus.REFUNDED;
     }
-
-    await tx.consultantEarnings.update({
-      where: { id: earnings.id },
-      data: {
-        refundedShareAmount: newRefundedShare,
-        status: nextStatus,
-      },
-    });
-    consultantEarningsReversed++;
+    if (reversal.reversedPaise > 0) consultantEarningsReversed++;
 
     // #813 — refund-driven TDS reversal for an already-paid-out earning, so the
     // quarterly 26Q nets the withholding back out. Previously only admin
@@ -1267,7 +1440,10 @@ export async function applyRefundCascade(
     // left the TDS un-reversed. The shared helper owns the integer proportion,
     // the dedup/cap against double-reversal, and the filed-aware FY/quarter
     // policy (pending CA sign-off).
-    if (earnings.payoutId) {
+    //
+    // Skipped when the CAS applied 0. The basis stays booking-level
+    // (`input.amountPaise / payment.amount`): 26Q is filed per payout.
+    if (earnings.payoutId && reversal.reversedPaise > 0) {
       await recordTdsReversal(tx, {
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
@@ -1277,13 +1453,47 @@ export async function applyRefundCascade(
         refundId: input.refundId,
       });
     }
+
+    accumulatePaidConsultantClawback(
+      consultantClawbacks,
+      earnings,
+      reversal.reversedPaise,
+      { isOrgPayment: Boolean(payment.organizationId) },
+    );
+  }
+
+  if (
+    await applyPaidConsultantClawbacks(tx, consultantClawbacks, {
+      refundId: input.refundId,
+      reason: input.reason,
+      onApplied: async (consultantPayoutId, claw) => {
+        await recordSystemEventSafe({
+          db: tx,
+          organizationId: null,
+          category: "PAYOUT",
+          severity: "WARN",
+          message: `Consultant payout clawback initiated: ${claw.netAmountPaise} paise from payout ${consultantPayoutId}`,
+          context: {
+            paymentId: payment.id,
+            refundId: input.refundId,
+            consultantPayoutId,
+            consultantProfileId: claw.consultantProfileId,
+            clawbackPaise: claw.netAmountPaise,
+          },
+        });
+      },
+    })
+  ) {
+    clawbackInitiated = true;
   }
 
   // -----------------------------------------------------------------------
   // Step 7: OrganizationEarnings reversal + clawback.
   // -----------------------------------------------------------------------
   let organizationEarningsReversed = 0;
-  let clawbackInitiated = false;
+  // What each ORG row ACTUALLY absorbed, keyed by earning id — the org twin of
+  // `appliedByEarning` above, for the identical reason.
+  const appliedByOrgEarning = new Map<string, number>();
 
   for (const orgEarn of payment.organizationEarnings) {
     // #776 — `refundedAmountPaise` tracks the ORG-SHARE portion only. The
@@ -1302,32 +1512,29 @@ export async function applyRefundCascade(
     // followed by a lost-dispute chargeback that mints a fresh Refund) would
     // otherwise inflate refundedAmountPaise past orgSharePaise and drive the
     // payout readyAmount negative, blocking the whole batch.
-    const newRefunded = Math.min(
-      orgEarn.orgSharePaise,
-      orgEarn.refundedAmountPaise + orgShareRev,
+    //
+    // #CASC — that cap and the legal-source predicate live in the shared CAS
+    // writer's WHERE, which also asserts the transition before writing.
+    const orgReversal = await applyCappedOrgEarningReversal(
+      tx,
+      orgEarn,
+      orgShareRev,
     );
-    // Fully refunded when the org share is exhausted — its sole refundable
-    // portion (platform fee + consultant share are not org receivables).
-    const fully = newRefunded >= orgEarn.orgSharePaise;
-
-    let nextStatus = orgEarn.status;
-    if (fully && orgEarn.status !== EarningStatus.REFUNDED) {
-      assertEarningStatusTransitionLegal(
-        orgEarn.id,
-        orgEarn.status,
-        EarningStatus.REFUNDED,
+    if (orgReversal.lostRace) {
+      // Someone else owns this row's reversal now (or we only got the residual
+      // after a re-read). Report it — and do NOT count the row as reversed by
+      // this cascade unless this call actually moved paise.
+      console.warn(
+        `Org earnings ${orgEarn.id}: refund cascade CAS lost, ` +
+          `${orgReversal.reversedPaise} paise applied of ${orgShareRev} ` +
+          `(${orgReversal.refundedAmountPaise}/${orgEarn.orgSharePaise}).`,
       );
-      nextStatus = EarningStatus.REFUNDED;
     }
-
-    await tx.organizationEarnings.update({
-      where: { id: orgEarn.id },
-      data: {
-        refundedAmountPaise: newRefunded,
-        status: nextStatus,
-      },
-    });
-    organizationEarningsReversed++;
+    // What this row ACTUALLY absorbed; everything below reads it, never
+    // `orgShareRev`. 0 means post nothing (`postLedgerTxn` throws on 0).
+    const orgApplied = orgReversal.reversedPaise;
+    appliedByOrgEarning.set(orgEarn.id, orgApplied);
+    if (orgApplied > 0) organizationEarningsReversed++;
 
     // Clawback: if this earnings row was already rolled into a payout
     // and that payout is COMPLETED (bank wire left), record the
@@ -1335,12 +1542,12 @@ export async function applyRefundCascade(
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&
-      orgShareRev > 0
+      orgApplied > 0
     ) {
       await tx.organizationPayout.update({
         where: { id: orgEarn.orgPayoutId },
         data: {
-          clawbackAmountPaise: { increment: orgShareRev },
+          clawbackAmountPaise: { increment: orgApplied },
           // Only stamp on the FIRST clawback — preserves the
           // earliest-clawback timestamp across multiple partial
           // refunds against the same payout.
@@ -1356,14 +1563,14 @@ export async function applyRefundCascade(
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Refund clawback initiated: ${orgShareRev} paise from payout ${orgEarn.orgPayoutId}`,
+          description: `Refund clawback initiated: ${orgApplied} paise from payout ${orgEarn.orgPayoutId}`,
           details: {
             paymentId: payment.id,
             refundId: input.refundId,
             orgEarningsId: orgEarn.id,
             orgPayoutId: orgEarn.orgPayoutId,
             amountPaise: input.amountPaise,
-            clawbackAmountPaise: orgShareRev,
+            clawbackAmountPaise: orgApplied,
             initiatedByUserId: input.initiatedByUserId ?? null,
           } as Prisma.InputJsonValue,
         },
@@ -1375,7 +1582,7 @@ export async function applyRefundCascade(
       await postPayoutClawback(tx, {
         refundId: input.refundId,
         payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgShareRev,
+        amountPaise: orgApplied,
         organizationId: orgEarn.organizationId,
       });
 
@@ -1391,11 +1598,13 @@ export async function applyRefundCascade(
   // reversal. Idempotent on refundId, so calling it from both paths (or a cron
   // retry) is safe.
   // -----------------------------------------------------------------------
+  const cascadeNow = new Date();
   const refundCreditNote = await mintRefundCreditNote(tx, {
     paymentId: payment.id,
     refundId: input.refundId,
     amountPaise: input.amountPaise,
     reason: input.reason,
+    now: cascadeNow,
   });
 
   // #1365 — the B2C sibling: a personal buyer's invoice is reversed by its own
@@ -1405,6 +1614,7 @@ export async function applyRefundCascade(
     refundId: input.refundId,
     amountPaise: input.amountPaise,
     reason: input.reason,
+    now: cascadeNow,
   });
 
   // -----------------------------------------------------------------------
@@ -1472,27 +1682,6 @@ export async function applyRefundCascade(
       { reversedAt: new Date() },
       { fromIn: ["CHARGED"] },
     );
-  }
-
-  // #738-A — TCS u/s 52 parity: if collection ever stamped this payment
-  // (flag-gated, schema-live), the refund must net it out of the next GSTR-8.
-  // Inert while gstTcsCollectedPaise stays null. Idempotency rides on the
-  // cascade's own exactly-once discipline (cascadedAt), not a unique here —
-  // partial refunds legitimately produce one adjustment per refund.
-  if ((payment.gstTcsCollectedPaise ?? 0) > 0) {
-    const tcsReverse = Math.floor(
-      (payment.gstTcsCollectedPaise! * input.amountPaise) / payment.amount,
-    );
-    if (tcsReverse > 0) {
-      await tx.gstTcsAdjustment.create({
-        data: {
-          paymentId: payment.id,
-          refundId: input.refundId,
-          amountPaise: -tcsReverse,
-          reason: `refund (${input.reason})`,
-        },
-      });
-    }
   }
 
   // -----------------------------------------------------------------------
@@ -1595,16 +1784,28 @@ export async function applyRefundCascade(
 
     const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
     if (fundingTotal > 0) {
-      const consRev = payment.earnings.reduce((s, e) => s + reversalOf(e), 0);
+      // APPLIED total (Step 6); `platformPlug` lands any un-clawed remainder on
+      // PLATFORM_FEE rather than debiting a payable for paise never taken back.
+      const consRev = payment.earnings.reduce(
+        (s, e) => s + (appliedByEarning.get(e.id) ?? 0),
+        0,
+      );
+      // APPLIED (Step 7's `appliedByOrgEarning`), for the same reason as consRev.
       const orgRev = payment.organizationEarnings.reduce(
-        (s, o) => s + proportion(o.orgSharePaise),
+        (s, o) => s + (appliedByOrgEarning.get(o.id) ?? 0),
         0,
       );
       // #812 — default a missing taxAmount to 0. A `null`/`undefined` here would
       // make gstRev NaN → the platform plug NaN → the posting silently lose a leg
       // and (now that the ledger blocks) roll the whole refund back. taxAmount
       // defaults to 0 in the schema, but legacy/imported rows may lack it.
-      const gstRev = proportion(payment.taxAmount ?? 0);
+      // Past the s.34(2) cutoff the GST stays with the government and the platform bears it.
+      const taxPaise = payment.taxAmount ?? 0;
+      const cutoffSourceDate = linkedOrgInvoice?.issuedAt ?? payment.createdAt;
+      const gstRev =
+        taxPaise > 0 && isPastGstCreditNoteCutoff(cutoffSourceDate, cascadeNow)
+          ? 0
+          : proportion(taxPaise);
       // #775 — a CHARGE_MEMBER side-payment refund: the member's capture
       // credited ORG_PAYABLE (overage:<paymentId> txn), so refunding it must
       // pull that relief credit BACK from the org — not bill the platform.
@@ -1627,11 +1828,25 @@ export async function applyRefundCascade(
       const debits: Posting[] = [];
       if (platformPlug > 0) {
         if (overageCapture && orgId) {
-          debits.push({
-            account: { kind: "ORG_PAYABLE", organizationId: orgId },
-            direction: "DEBIT",
-            amountPaise: platformPlug,
-          });
+          // The org was credited net of GST; GST kept past the cutoff is the platform's to bear.
+          const absorbedGst = Math.min(
+            platformPlug,
+            proportion(taxPaise) - gstRev,
+          );
+          if (platformPlug - absorbedGst > 0) {
+            debits.push({
+              account: { kind: "ORG_PAYABLE", organizationId: orgId },
+              direction: "DEBIT",
+              amountPaise: platformPlug - absorbedGst,
+            });
+          }
+          if (absorbedGst > 0) {
+            debits.push({
+              account: { kind: "PLATFORM_FEE" },
+              direction: "DEBIT",
+              amountPaise: absorbedGst,
+            });
+          }
         } else {
           // Funding returned exceeds the reversed shares → platform gives back
           // its fee portion.
@@ -1649,7 +1864,9 @@ export async function applyRefundCascade(
       // left collaborators' payables un-reversed in the ledger — an invisible
       // per-account divergence on every multi-collaborator refund.
       for (const earning of payment.earnings) {
-        const earningRev = reversalOf(earning);
+        // #Bugfix — debit what the CAS ACTUALLY applied, not the request;
+        // anything else is unrepairable EARNINGS_LEDGER_DRIFT.
+        const earningRev = appliedByEarning.get(earning.id) ?? 0;
         if (earningRev > 0) {
           debits.push({
             account: {
@@ -1661,7 +1878,19 @@ export async function applyRefundCascade(
           });
         }
       }
-      if (orgRev > 0 && orgId) {
+      if (payment.organizationEarnings.length > 0) {
+        for (const orgEarn of payment.organizationEarnings) {
+          const orgDelta = appliedByOrgEarning.get(orgEarn.id) ?? 0;
+          const hostOrgId = orgEarn.organizationId ?? orgId;
+          if (orgDelta > 0 && hostOrgId) {
+            debits.push({
+              account: { kind: "ORG_PAYABLE", organizationId: hostOrgId },
+              direction: "DEBIT",
+              amountPaise: orgDelta,
+            });
+          }
+        }
+      } else if (orgRev > 0 && orgId) {
         debits.push({
           account: { kind: "ORG_PAYABLE", organizationId: orgId },
           direction: "DEBIT",
@@ -1736,6 +1965,22 @@ export async function applyRefundCascade(
     throw err;
   }
 
+  if (payment.appointment?.subscription?.status === "CANCELLED") {
+    await stampTranchesOnCancel(tx, {
+      paymentId: payment.id,
+      now: new Date(),
+    });
+  }
+  if (
+    payment.appointment?.trial?.status === "CANCELLED" ||
+    payment.appointment?.trial?.status === "REJECTED"
+  ) {
+    await stampTrialEarningsOnCancel(tx, {
+      paymentId: payment.id,
+      now: new Date(),
+    });
+  }
+
   return {
     legsReversed,
     consultantEarningsReversed,
@@ -1760,15 +2005,30 @@ export type OrgCreditNoteMintResult = {
  * note already issued against it is summed, mirroring the consumer minter.
  * Aggregations bypass the money extension, hence `sumPaise`.
  */
-async function remainingOrgInvoiceCreditPaise(
+export async function remainingOrgInvoiceCreditPaise(
   tx: Tx,
-  invoice: { id: string; totalPaise: number },
+  invoice: { id: string; totalPaise: number; subtotalPaise: number },
 ): Promise<number> {
-  const issued = await tx.creditNote.aggregate({
-    where: { invoiceId: invoice.id },
+  await tx.$executeRaw`SELECT id FROM "OrganizationInvoice" WHERE id = ${invoice.id} FOR UPDATE`;
+  const taxNotes = await tx.creditNote.aggregate({
+    where: { invoiceId: invoice.id, isCommercial: false },
     _sum: { totalPaise: true },
   });
-  return invoice.totalPaise - sumPaise(issued._sum.totalPaise);
+  const commercialNotes = await tx.creditNote.aggregate({
+    where: { invoiceId: invoice.id, isCommercial: true },
+    _sum: { subtotalPaise: true },
+  });
+  // A commercial note carries no tax, so it consumes its value grossed up at the invoice's rate.
+  const commercialGross =
+    invoice.subtotalPaise > 0
+      ? Math.round(
+          (sumPaise(commercialNotes._sum.subtotalPaise) * invoice.totalPaise) /
+            invoice.subtotalPaise,
+        )
+      : 0;
+  return (
+    invoice.totalPaise - sumPaise(taxNotes._sum.totalPaise) - commercialGross
+  );
 }
 
 /** Records the refused over-credit for ops; no money moved, so it is expected. */
@@ -1833,6 +2093,7 @@ export async function mintRefundCreditNote(
     // CreditNote, so each path is idempotent independently.
     refundId?: string;
     disputeId?: string;
+    now?: Date;
   },
 ): Promise<OrgCreditNoteMintResult> {
   if (!params.refundId === !params.disputeId) {
@@ -1845,6 +2106,8 @@ export async function mintRefundCreditNote(
     select: {
       id: true,
       amount: true,
+      taxAmount: true,
+      createdAt: true,
       organizationId: true,
       billableToOrgInvoiceId: true,
       legs: { select: { source: true, amountPaise: true } },
@@ -1911,21 +2174,13 @@ export async function mintRefundCreditNote(
     return { creditNoteId: null };
   }
 
-  // #812 — `invoicedReverse` is the TAX-EXCLUSIVE leg amount being reversed (the
-  // INVOICE_ACCRUAL legs are the invoice's pre-tax subtotal; invoices are built
-  // tax-exclusive: total = subtotal + GST). So the GST rate is the invoice's tax
-  // over its SUBTOTAL, not over its total, and the reversed amount is the credit
-  // note's subtotal with tax added on top — mirroring the invoice's own
-  // structure. Computing the fraction over totalPaise (tax-inclusive) under-
-  // credited the full GST (CGST Sec 34 reverses output tax proportionally). The
-  // sibling mintInvoiceRefundCreditNote takes a tax-INCLUSIVE payment refund, so
-  // it keeps the over-total fraction — do not change it.
-  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
-  const taxFraction =
-    invoice.subtotalPaise > 0 ? invoiceTax / invoice.subtotalPaise : 0;
-  let cnSubtotal = invoicedReverse;
-  let cnTax = Math.round(invoicedReverse * taxFraction);
-  let cnTotal = cnSubtotal + cnTax;
+  // The accrual legs are tax-inclusive (they sum to Payment.amount), so the
+  // reversed slice carries the payment's own tax share.
+  const taxShare = (paise: number): number =>
+    Math.round((paise * (payment.taxAmount ?? 0)) / payment.amount);
+  let cnTotal = invoicedReverse;
+  let cnTax = taxShare(cnTotal);
+  let cnSubtotal = cnTotal - cnTax;
 
   // #1582 C-P0-01 — the cap is cumulative across every note on this invoice,
   // not per note, mirroring the consumer minter: two partial refunds plus a
@@ -1943,8 +2198,13 @@ export async function mintRefundCreditNote(
   }
   if (cnTotal > remaining) {
     cnTotal = remaining;
-    cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+    cnTax = taxShare(cnTotal);
     cnSubtotal = cnTotal - cnTax;
+  }
+  const commercial = isPastGstCreditNoteCutoff(invoice.issuedAt, params.now);
+  if (commercial) {
+    cnTax = 0;
+    cnTotal = cnSubtotal;
   }
   const interState = invoice.igstPaise > 0;
   const cnIgst = interState ? cnTax : 0;
@@ -1954,7 +2214,7 @@ export async function mintRefundCreditNote(
   const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
     tx,
     org,
-    new Date(),
+    params.now ?? new Date(),
   );
 
   const cn = await tx.creditNote.create({
@@ -1964,7 +2224,10 @@ export async function mintRefundCreditNote(
       organizationId: org.id,
       invoiceId: invoice.id,
       refundId: params.refundId,
-      reason: params.reason,
+      reason: commercial
+        ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
+        : params.reason,
+      isCommercial: commercial,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,
       cgstPaise: cnCgst,
@@ -1980,6 +2243,72 @@ export async function mintRefundCreditNote(
   return { creditNoteId: cn.id };
 }
 
+async function computeCreditNoteAmounts(
+  tx: Tx,
+  invoice: {
+    id: string;
+    subtotalPaise: number | null;
+    totalPaise: number;
+    igstPaise: number;
+    cgstPaise: number;
+    sgstPaise: number;
+  },
+  remaining: number,
+  amountPaise: number,
+  exactSubtotalPaise?: number,
+): Promise<{
+  cnSubtotal: number;
+  cnIgst: number;
+  cnCgst: number;
+  cnSgst: number;
+  cnTotal: number;
+} | null> {
+  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
+  const invoiceSubtotal =
+    invoice.subtotalPaise ?? Math.max(0, invoice.totalPaise - invoiceTax);
+  let cnSubtotal: number;
+  let cnTax: number;
+  let cnTotal: number;
+
+  if (exactSubtotalPaise !== undefined) {
+    // #1900: Compute credit note tax directly from exactSubtotalPaise to avoid
+    // 1-paisa rounding drift on cnSubtotal vs the overage ledger reversal.
+    const issuedSub = await tx.creditNote.aggregate({
+      where: { invoiceId: invoice.id },
+      _sum: { subtotalPaise: true },
+    });
+    const remainingSubtotalPaise = Math.max(
+      0,
+      invoiceSubtotal - sumPaise(issuedSub?._sum?.subtotalPaise),
+    );
+    cnSubtotal = Math.min(exactSubtotalPaise, remainingSubtotalPaise);
+    if (cnSubtotal <= 0) return null;
+    cnTax =
+      invoiceSubtotal > 0
+        ? Math.round((cnSubtotal * invoiceTax) / invoiceSubtotal)
+        : 0;
+    cnTotal = cnSubtotal + cnTax;
+    if (cnTotal > remaining) {
+      cnTotal = remaining;
+      cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+      cnSubtotal = cnTotal - cnTax;
+    }
+  } else {
+    cnTotal = Math.min(amountPaise, invoice.totalPaise, remaining);
+    if (cnTotal <= 0) return null;
+    const taxFraction =
+      invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
+    cnTax = Math.round(cnTotal * taxFraction);
+    cnSubtotal = cnTotal - cnTax;
+  }
+
+  const interState = invoice.igstPaise > 0;
+  const cnIgst = interState ? cnTax : 0;
+  const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
+  const cnCgst = interState ? 0 : cnTax - cnSgst;
+  return { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal };
+}
+
 /**
  * #776 / PR#785 review — mint a GST credit note (CGST Sec 34) for a refunded
  * ORG INVOICE payment (the org paid an OrganizationInvoice via the gateway and
@@ -1992,13 +2321,19 @@ export async function mintInvoiceRefundCreditNote(
   tx: Tx,
   params: {
     invoiceId: string;
-    refundId: string;
     amountPaise: number;
+    exactSubtotalPaise?: number;
     reason: string;
-  },
+  } & (
+    | { refundId: string; overageEventId?: never }
+    | { overageEventId: string; refundId?: never }
+  ),
 ): Promise<OrgCreditNoteMintResult> {
+  // Idempotent on whichever trigger raised it (both are @unique).
   const existing = await tx.creditNote.findUnique({
-    where: { refundId: params.refundId },
+    where: params.overageEventId
+      ? { overageEventId: params.overageEventId }
+      : { refundId: params.refundId },
     select: { id: true },
   });
   if (existing) return { creditNoteId: existing.id };
@@ -2010,14 +2345,20 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: true,
       status: true,
       issuedAt: true,
+      billingCycleStart: true,
+      subtotalPaise: true,
       totalPaise: true,
       igstPaise: true,
       cgstPaise: true,
       sgstPaise: true,
     },
   });
-  if (!invoice || invoice.totalPaise <= 0) return { creditNoteId: null };
-  if (invoice.status === "DRAFT" || !invoice.issuedAt) {
+  if (
+    !invoice ||
+    invoice.totalPaise <= 0 ||
+    invoice.status === "DRAFT" ||
+    !invoice.issuedAt
+  ) {
     return { creditNoteId: null };
   }
 
@@ -2035,23 +2376,32 @@ export async function mintInvoiceRefundCreditNote(
       organizationId: org.id,
       invoiceId: invoice.id,
       requestedPaise: params.amountPaise,
-      refundId: params.refundId,
+      refundId: params.refundId ?? params.overageEventId,
     });
     return { creditNoteId: null, outcome: "FULLY_CREDITED" };
   }
-  const cnTotal = Math.min(params.amountPaise, invoice.totalPaise, remaining);
-  if (cnTotal <= 0) return { creditNoteId: null };
 
-  // Same proportional-tax shape as mintRefundCreditNote.
-  const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
-  const taxFraction =
-    invoice.totalPaise > 0 ? invoiceTax / invoice.totalPaise : 0;
-  const cnTax = Math.round(cnTotal * taxFraction);
-  const cnSubtotal = cnTotal - cnTax;
-  const interState = invoice.igstPaise > 0;
-  const cnIgst = interState ? cnTax : 0;
-  const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
-  const cnCgst = interState ? 0 : cnTax - cnSgst;
+  const amounts = await computeCreditNoteAmounts(
+    tx,
+    invoice,
+    remaining,
+    params.amountPaise,
+    params.exactSubtotalPaise,
+  );
+  if (!amounts) return { creditNoteId: null };
+  // A cycle invoice's earliest supply is its cycle start, so the cutoff runs from there.
+  const commercial = isPastGstCreditNoteCutoff(
+    invoice.billingCycleStart ?? invoice.issuedAt,
+  );
+  const { cnSubtotal, cnIgst, cnCgst, cnSgst, cnTotal } = commercial
+    ? {
+        ...amounts,
+        cnIgst: 0,
+        cnCgst: 0,
+        cnSgst: 0,
+        cnTotal: amounts.cnSubtotal,
+      }
+    : amounts;
 
   const { creditNoteNumber, fiscalYear } = await generateOrgCreditNoteNumber(
     tx,
@@ -2065,8 +2415,12 @@ export async function mintInvoiceRefundCreditNote(
       fiscalYear,
       organizationId: org.id,
       invoiceId: invoice.id,
-      refundId: params.refundId,
-      reason: params.reason,
+      refundId: params.refundId ?? null,
+      overageEventId: params.overageEventId ?? null,
+      reason: commercial
+        ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
+        : params.reason,
+      isCommercial: commercial,
       subtotalPaise: cnSubtotal,
       igstPaise: cnIgst,
       cgstPaise: cnCgst,

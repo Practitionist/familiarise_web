@@ -90,12 +90,12 @@ describe("ADR 20 — org-roster notifications carry no session content", () => {
     expect(src).not.toContain("OPERATOR_ROLES");
   });
 
-  it("RecordingPayload is still the only content-bearing shared payload", () => {
+  it("no shared payload carries a content field; recordings link to the in-app page", () => {
     const src = read(WORKFLOWS);
-    // If a second payload grows a content field, this fails and whoever added
-    // it has to come and think about who receives it.
+    // If a payload grows a content field, this fails and whoever added it has
+    // to come and think about who receives it.
     const carriers = CONTENT_FIELDS.filter((f) => src.includes(f));
-    expect(carriers).toEqual(["recordingUrl"]);
+    expect(carriers).toEqual([]);
   });
 });
 

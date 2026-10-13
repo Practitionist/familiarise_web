@@ -10,6 +10,7 @@ import type {
   EventChannelType,
 } from "../../types/stream-chat";
 import { getDmChannelId } from "@/lib/stream-utils";
+import { mapRoleToStream } from "@/lib/user";
 
 describe("Stream Chat Types", () => {
   describe("StreamChatUser", () => {
@@ -166,19 +167,6 @@ describe("Stream Chat Types", () => {
 
   describe("Role mapping", () => {
     it("should map application roles to Stream roles", () => {
-      // This tests the role mapping pattern used in the app
-      const mapRoleToStream = (
-        role: "ADMIN" | "CONSULTANT" | "CONSULTEE" | "STAFF",
-      ): string => {
-        const mapping: Record<string, string> = {
-          ADMIN: "admin",
-          CONSULTANT: "user",
-          CONSULTEE: "user",
-          STAFF: "admin",
-        };
-        return mapping[role] || "user";
-      };
-
       expect(mapRoleToStream("ADMIN")).toBe("admin");
       expect(mapRoleToStream("CONSULTANT")).toBe("user");
       expect(mapRoleToStream("CONSULTEE")).toBe("user");

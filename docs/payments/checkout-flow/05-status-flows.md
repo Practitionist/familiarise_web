@@ -413,10 +413,10 @@ flowchart TD
 
 ### Files Involved
 
-| File                                          | Purpose                                                                            |
-| --------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `jobs/cleanup-abandoned-payments.ts`          | Main cleanup job                                                                   |
-| `app/api/cleanup/abandoned-payments/route.ts` | HTTP twin: abandoned checkouts, lapsed pay-links, and the 12 h reminder in one run |
+| File                                             | Purpose                                                                            |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `scripts/payments/cleanup-abandoned-payments.ts` | Core cleanup logic behind the cron entry and the HTTP twin                         |
+| `app/api/cleanup/abandoned-payments/route.ts`    | HTTP twin: abandoned checkouts, lapsed pay-links, and the 12 h reminder in one run |
 
 ---
 

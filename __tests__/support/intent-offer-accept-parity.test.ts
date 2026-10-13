@@ -15,7 +15,10 @@
  * added with a fresh category cannot reintroduce it.
  */
 
+jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
+
 import { SupportThreadCategory } from "@prisma/client";
+import { ORG_PARTY_CATEGORIES } from "@/lib/support/service";
 import { ALL_FLOWS } from "@/lib/support/flows";
 import { ALL_PLATFORM_FLOWS } from "@/lib/support/platform-flows";
 import {
@@ -37,6 +40,10 @@ describe("intent offer/accept parity", () => {
     for (const member of Object.values(SupportThreadCategory)) {
       expect(SupportThreadCategoryEnum.safeParse(member).success).toBe(true);
     }
+  });
+
+  it("neither offers nor accepts the OTHER escalation from an org party", () => {
+    expect(ORG_PARTY_CATEGORIES.has("OTHER")).toBe(false);
   });
 
   it("rejects a category that is not a real thread category", () => {

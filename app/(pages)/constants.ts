@@ -1,27 +1,53 @@
-// Company Information
-export const COMPANY_NAME = "Familiarise";
-export const CONTACT_EMAIL = "hello@familiarise.com";
-export const SUPPORT_EMAIL = "support@familiarise.com";
-export const PHONE = "";
-export const ADDRESS = "Bengaluru, Karnataka, India";
-export const JURISDICTION = "Bengaluru, Karnataka, India";
-export const LAST_UPDATED = "September 2026";
+import {
+  STATUTORY_ACK_HOURS,
+  STATUTORY_RESOLUTION_DAYS,
+} from "@/lib/support/sla";
+
+export const ACK_PROMISE_COPY = `within ${STATUTORY_ACK_HOURS} hours` as const;
+
+export const SUPPORT_CONTACT_EMAIL = "support@familiarisenow.com" as const;
+export const PRIVACY_CONTACT_EMAIL = "privacy@familiarisenow.com" as const;
+export const DPDP_CONTACT_EMAIL = "dpdp@familiarisenow.com" as const;
+
+export function resolveLiveMailbox(): string {
+  return (
+    process.env.CONTACT_INBOX_ADDRESS?.trim() || "support@practitionist.com"
+  );
+}
 
 export const COMPANY_INFO = {
-  name: COMPANY_NAME,
-  email: CONTACT_EMAIL,
-  supportEmail: SUPPORT_EMAIL,
-  phone: PHONE,
-  address: ADDRESS,
-  jurisdiction: JURISDICTION,
+  name: "Practitionist (OPC) Private Limited",
+  email: resolveLiveMailbox(),
+  supportEmail: resolveLiveMailbox(),
+  phone: process.env.NEXT_PUBLIC_SUPPORT_PHONE?.trim() || "",
+  address:
+    process.env.NEXT_PUBLIC_COMPANY_ADDRESS?.trim() ||
+    "Bengaluru, Karnataka, India",
+  jurisdiction:
+    process.env.NEXT_PUBLIC_COMPANY_JURISDICTION?.trim() || "Haryana, India",
 } as const;
 
-// Policy Dates - Update when policies are revised
-export const POLICY_DATES = {
-  privacyLastUpdated: LAST_UPDATED,
-  termsLastUpdated: LAST_UPDATED,
-  refundLastUpdated: LAST_UPDATED,
+export const GRIEVANCE_OFFICER = {
+  name:
+    process.env.NEXT_PUBLIC_GRIEVANCE_OFFICER_NAME?.trim() ||
+    "Grievance Redressal Officer — Practitionist (OPC) Private Limited",
+  designation: "Grievance & Nodal Compliance Officer",
+  email: resolveLiveMailbox(),
+  phone: process.env.NEXT_PUBLIC_SUPPORT_PHONE?.trim() || "",
+  ackPromise: ACK_PROMISE_COPY,
+  resolutionPromise: `within ${STATUTORY_RESOLUTION_DAYS} days`,
 } as const;
+
+export const POLICY_DATES = {
+  privacyLastUpdated: "October 2026",
+  termsLastUpdated: "October 2026",
+  refundLastUpdated: "October 2026",
+  grievanceLastUpdated: "October 2026",
+  reviewsPolicyLastUpdated: "October 2026",
+} as const;
+
+export const ANTI_SCAM_NOTICE =
+  "Familiarise support will never ask for your OTP, UPI PIN, card CVV, or screen-sharing access." as const;
 
 // Business Hours
 export const BUSINESS_HOURS = {
@@ -38,8 +64,7 @@ export const INQUIRY_CATEGORIES = [
   { value: "billing", label: "Billing & Payments" },
   { value: "booking", label: "Booking Issues" },
   { value: "consultant", label: "Consultant Support" },
-  // #1230 wave-4b — the enterprise funnel (#1132): these two route into the
-  // Lead pipeline instead of the support queue.
+  { value: "grievance", label: "Grievance Redressal" },
   { value: "enterprise", label: "Enterprise / Platform demo" },
   { value: "team-training", label: "Team training program" },
   { value: "feedback", label: "Feedback" },
@@ -49,6 +74,8 @@ export const INQUIRY_CATEGORIES = [
 // Support Resources Links
 export const SUPPORT_LINKS = [
   { href: "/support", label: "Help Center" },
+  { href: "/grievance", label: "Grievance Redressal" },
+  { href: "/reviews-policy", label: "Reviews & Moderation Policy" },
   { href: "/pricing", label: "Pricing & Platform Fees" },
   { href: "/refund", label: "Cancellation & Refund Policy" },
   { href: "/privacy", label: "Privacy Policy" },

@@ -29,6 +29,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "members.directory",
   });
   if (access.error) return access.error;

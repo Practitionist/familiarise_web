@@ -11,9 +11,9 @@ last-reviewed: 2026-06-05
 This page is one of four operational surfaces in this band, and it sits at
 the front of the chain that the rest of the band documents. The HTTP routes
 catalogued below are the synchronous entry points; the crons in
-[`03-runbooks.md`](03-runbooks.md) drive the asynchronous work; both write to
-the event streams described in [`05-system-events.md`](05-system-events.md);
-and [`04-monitoring.md`](04-monitoring.md) turns those streams into alerts.
+[`02-runbooks.md`](02-runbooks.md) drive the asynchronous work; both write to
+the event streams described in [`04-system-events.md`](04-system-events.md);
+and [`03-monitoring.md`](03-monitoring.md) turns those streams into alerts.
 The diagram below shows how the four fit together so you can place any route
 in the larger operational picture.
 

@@ -42,6 +42,7 @@ import type {
   PlaceOfSupplySource,
 } from "@prisma/client";
 import {
+  BODY_FONT,
   StatutoryDocumentFrame,
   statutoryStyles,
   formatStatutoryDate,
@@ -50,7 +51,7 @@ import {
   type StatutoryBuyer,
 } from "./statutory-document-frame";
 
-// The Devanagari face used by the consumer documents is registered once in
+// The Devanagari face used by statutory documents is registered once in
 // ./statutory-document-frame. Re-exported here because that is where callers
 // have always imported it from.
 export { BODY_FONT } from "./statutory-document-frame";
@@ -143,7 +144,7 @@ export type OrgInvoicePdfData = {
 const orgStyles = StyleSheet.create({
   page: {
     padding: 36,
-    fontFamily: "Helvetica",
+    fontFamily: BODY_FONT,
     fontSize: 10,
     color: "#222",
   },
@@ -445,6 +446,8 @@ export type ConsumerInvoicePdfData = {
   sacCode: string;
   taxRateBps: number;
   taxableValuePaise: number;
+  /** Pre-tax discount (welcome discount or code) taken off the list price; 0 when none. */
+  discountPaise?: number;
   cgstPaise: number;
   sgstPaise: number;
   igstPaise: number;
@@ -498,10 +501,13 @@ export function ConsumerInvoiceDocument({
                 data.description ??
                 "Consulting services booked on the platform",
               code: data.sacCode,
-              amountPaise: data.taxableValuePaise,
+              amountPaise: data.taxableValuePaise + (data.discountPaise ?? 0),
             },
           ]}
           totals={[
+            ...(data.discountPaise
+              ? [{ label: "Discount", paise: -data.discountPaise }]
+              : []),
             { label: "Taxable value", paise: data.taxableValuePaise },
             ...taxTotalLines(data),
           ]}

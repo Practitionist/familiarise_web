@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { CancellationReasonEnum } from "./enums";
 
 export const CancelAppointmentSchema = z.object({
@@ -13,9 +14,6 @@ export const CancelAppointmentSchema = z.object({
  * request, and it is the only shape group events accept. `.passthrough()`
  * because the same body also carries `slotIds`, which the route parses itself.
  */
-/** ADR B1 — the calendar's atomic unit. */
-const SLOT_MS = 30 * 60 * 1000;
-
 export const RescheduleProposalSchema = z
   .object({
     proposedSlots: z
@@ -28,11 +26,20 @@ export const RescheduleProposalSchema = z
           // Exactly one atom per row, not merely "ends after it starts".
           // Auto-confirm hands the allocator `startsAt` alone, and manual mode
           // reads each string as ONE 30-minute start — so a 60-minute row is
-          // silently booked as 30. The count check downstream still passes
-          // (one row per released slot), which is what makes it invisible: the
-          // consultee asks to move a 1-hour session and gets half of one.
+          // silently booked as 30.
+          //
+          // The count check downstream is NOT one row per released session, and
+          // that is the point: a released session is a whole `AppointmentOccurrence`
+          // covering `slotsPerSession` atoms, while this payload is the atom the
+          // allocator consumes, so a 1-hour session is legitimately proposed as
+          // two rows. One row = one atom is what lets the allocator be handed a
+          // multi-atom block; `proposalCoverageMatches` then compares ATOM
+          // COUNTS on both sides, so the two measures are commensurable and the
+          // same total coverage is required of both.
           .refine(
-            (s) => new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime() === SLOT_MS,
+            (s) =>
+              new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime() ===
+              SCHEDULING_INTERVAL_MS,
             { message: "Each proposed time must be exactly one 30-minute slot" },
           ),
       )
@@ -47,3 +54,30 @@ export const RescheduleProposalSchema = z
     preferredDays: z.enum(["WEEKDAYS", "WEEKENDS"]).optional(),
   })
   .passthrough();
+
+/** A priced cancel quote from `GET /api/appointments/[id]/cancel/preview` or the trial twin. */
+const CancelRefundQuoteSchema = z.object({
+  refundPct: z.number(),
+  estimatedRefundPaise: z.number(),
+  currency: z.string(),
+  /** Null with no live session, and on the whole-event rail, which never consults the clock. */
+  hoursUntilNextSession: z.number().nullable(),
+  prorated: z.boolean(),
+  /** Null on the whole-event rail, where a roster refunds through several rails at once. */
+  fundingRail: z.enum(["GATEWAY", "INTERNAL", "CREDITS"]).nullable(),
+  /** The sponsoring organisation, set only on the INTERNAL rail. */
+  payerOrganizationName: z.string().nullable().optional(),
+  /** A class or webinar cancel refunds the whole roster: the sum across `attendeeCount` attendees. */
+  wholeEvent: z.boolean().optional(),
+  attendeeCount: z.number().nullable().optional(),
+  paid: z.literal(true).optional(),
+  /** What was paid, for the trial breakdown line. */
+  grossPaise: z.number().optional(),
+});
+
+/** The cancel preview: a priced quote, or the trial's `paid: false` when nothing was charged. */
+export const CancelRefundPreviewSchema = z.union([
+  z.object({ paid: z.literal(false) }),
+  CancelRefundQuoteSchema,
+]);
+export type CancelRefundPreview = z.infer<typeof CancelRefundPreviewSchema>;

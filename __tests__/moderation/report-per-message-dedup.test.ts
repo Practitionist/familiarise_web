@@ -49,23 +49,37 @@ const matches = (row: Row, where: Record<string, unknown>): boolean => {
 };
 
 type FindFirstArgs = { where: Record<string, unknown> };
-type UpdateArgs = {
-  where: { id: string };
-  data: { reportCount?: { increment: number }; contentText?: string };
-};
 type CreateArgs = { data: Partial<Row> & { reportedById: string } };
 
 const findFirst = jest.fn(
   async ({ where }: FindFirstArgs) =>
     rows.find((row) => matches(row, where)) ?? null,
 );
-const update = jest.fn(async ({ where, data }: UpdateArgs) => {
-  const row = rows.find((r) => r.id === where.id)!;
+type UpdateManyArgs = {
+  where: { id: string; reportCount?: number };
+  data: {
+    reportCount?: { increment: number };
+    contentText?: string;
+    description?: string;
+  };
+};
+
+const findUnique = jest.fn(
+  async ({ where }: { where: { id: string } }) =>
+    rows.find((r) => r.id === where.id) ?? null,
+);
+const updateMany = jest.fn(async ({ where, data }: UpdateManyArgs) => {
+  const row = rows.find(
+    (r) =>
+      r.id === where.id &&
+      (where.reportCount === undefined || r.reportCount === where.reportCount),
+  );
+  if (!row) return { count: 0 };
   if (data.reportCount?.increment) {
     row.reportCount += data.reportCount.increment;
   }
   if (typeof data.contentText === "string") row.contentText = data.contentText;
-  return row;
+  return { count: 1 };
 });
 const create = jest.fn(async ({ data }: CreateArgs) => {
   const row: Row = {
@@ -134,7 +148,8 @@ jest.mock("../../lib/prisma", () => ({
     // below, so naming them directly here is a temporal-dead-zone error.
     moderationReport: {
       findFirst: (args: FindFirstArgs) => findFirst(args),
-      update: (args: UpdateArgs) => update(args),
+      findUnique: (args: { where: { id: string } }) => findUnique(args),
+      updateMany: (args: UpdateManyArgs) => updateMany(args),
       create: (args: CreateArgs) => create(args),
     },
     user: { findUnique: jest.fn(async () => ({ id: "target-1" })) },
@@ -312,7 +327,7 @@ describe("POST /api/report — message reports aggregate per message", () => {
   it("scopes a review report on the review, not on a message id", async () => {
     await post({
       type: "REVIEW",
-      reason: "Fake review",
+      reason: "SPAM_OR_FAKE",
       targetUserId: "target-1",
       reviewId: "review-1",
     });
@@ -328,7 +343,7 @@ describe("POST /api/report — message reports aggregate per message", () => {
   it("refuses a review report that names a review nobody wrote", async () => {
     const res = await post({
       type: "REVIEW",
-      reason: "Fake review",
+      reason: "SPAM_OR_FAKE",
       targetUserId: "target-1",
       reviewId: "does-not-exist",
     });
@@ -347,7 +362,7 @@ describe("POST /api/report — message reports aggregate per message", () => {
     // indistinguishable from outside.
     const wrong = await post({
       type: "REVIEW",
-      reason: "Fake review",
+      reason: "SPAM_OR_FAKE",
       targetUserId: "someone-else",
       reviewId: "review-1",
     });
@@ -357,7 +372,7 @@ describe("POST /api/report — message reports aggregate per message", () => {
     (getSession as jest.Mock).mockResolvedValue({ user: { id: "reporter-2" } });
     const right = await post({
       type: "REVIEW",
-      reason: "Fake review",
+      reason: "SPAM_OR_FAKE",
       targetUserId: "target-1",
       reviewId: "review-1",
     });
@@ -370,7 +385,7 @@ describe("POST /api/report — message reports aggregate per message", () => {
   it("needs no targetUserId at all on a review report", async () => {
     const res = await post({
       type: "REVIEW",
-      reason: "Fake review",
+      reason: "SPAM_OR_FAKE",
       reviewId: "review-1",
     });
     expect(res.status).toBe(201);
@@ -408,7 +423,7 @@ describe("POST /api/report — message reports aggregate per message", () => {
     // let a removed review keep accruing reports against its author.
     const res = await post({
       type: "REVIEW",
-      reason: "Fake review",
+      reason: "SPAM_OR_FAKE",
       targetUserId: "target-1",
       reviewId: "review-removed",
     });
@@ -423,7 +438,7 @@ describe("POST /api/report — message reports aggregate per message", () => {
   it("requires a review report to name a review at all", async () => {
     const res = await post({
       type: "REVIEW",
-      reason: "Fake review",
+      reason: "SPAM_OR_FAKE",
       targetUserId: "target-1",
     });
     expect(res.status).toBe(400);

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { motion } from "framer-motion";
 import { Quote, Star } from "lucide-react";
@@ -120,10 +121,22 @@ export function SatisfiedTestimonial() {
                     <p className="font-medium text-white text-sm">
                       {testimonial.name}
                     </p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-zinc-400">
                       {testimonial.role} at {testimonial.company}
                     </p>
                   </div>
+                </div>
+                {/* Reviewed on Familiarise */}
+                <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-zinc-800">
+                  <Image
+                    src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
+                    alt="Familiarise"
+                    width={14}
+                    height={14}
+                  />
+                  <span className="text-[10px] text-zinc-400">
+                    Reviewed on Familiarise
+                  </span>
                 </div>
               </div>
             </motion.div>

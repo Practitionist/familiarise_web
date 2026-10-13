@@ -45,8 +45,8 @@ jest.mock("../../lib/prisma", () => {
   return { __esModule: true, default: db };
 });
 
-// B1's sweep now routes refunds through booking-refund, whose module graph
-// constructs a Stripe client (needs global fetch — absent in this env).
+// B1's sweep routes refunds through booking-refund, whose module graph needs
+// global fetch (absent in this env).
 const refundBookingPayment = jest.fn();
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   __esModule: true,

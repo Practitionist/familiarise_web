@@ -3,10 +3,8 @@
  * ORG_WORKSPACE. Mirrors ensure-consultee-profile: idempotent on the
  * `userId @unique`, and the link is written only when it is still null.
  *
- * Callers: the role handoff (`setOnboardingRoleAction`), `POST /api/organizations`,
- * and — since #1699 made the profile required for the role — `requireOnboarded`,
- * which heals a completed legacy operator instead of bouncing them into a
- * wizard whose handoff refuses an onboarded user (review comment on #1699).
+ * Callers: `requireOnboarded`, which heals an onboarded ORG_WORKSPACE row that
+ * lacks the link. `POST /api/organizations` upserts the same row in its tx.
  */
 
 import type { PrismaLike } from "@/lib/prisma";

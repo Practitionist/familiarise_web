@@ -43,6 +43,29 @@ export interface IssueInvitationInput {
   origin: string;
 }
 
+const GOVERNANCE_INVITE_ROLES: ReadonlySet<MemberRole> = new Set([
+  "OWNER",
+  "MAINTAINER",
+  "BILLING_ADMIN",
+]);
+
+export class InvitationRoleEscalationError extends MembershipGuardError {
+  constructor(
+    message = "Only an Owner can grant or remove the Owner, Maintainer or Billing admin role.",
+  ) {
+    super("ROLE_REQUIRES_OWNER", message, 403);
+    this.name = "InvitationRoleEscalationError";
+  }
+}
+
+export function canCallerAssignRole(
+  callerRole: MemberRole,
+  targetRole: MemberRole,
+): boolean {
+  if (callerRole === "OWNER") return true;
+  return !GOVERNANCE_INVITE_ROLES.has(targetRole);
+}
+
 /**
  * Creates the invitation, or refreshes the pending one for the same email,
  * and stages its bell and email in the same transaction. Refuses a person who
@@ -52,13 +75,17 @@ export interface IssueInvitationInput {
  */
 export async function issueInvitation(tx: Tx, input: IssueInvitationInput) {
   const { orgId, email, role, expiresAt, inviter } = input;
+  const actor = {
+    kind: "member" as const,
+    membershipId: inviter.membershipId,
+    role: inviter.role,
+  };
   // #1851 decision 6 — only an OWNER invites an OWNER, MAINTAINER or
   // BILLING_ADMIN; the accept route trusts the stored role.
-  assertActorMayManage(
-    { kind: "member", membershipId: inviter.membershipId, role: inviter.role },
-    role,
-    role,
-  );
+  if (!canCallerAssignRole(inviter.role, role)) {
+    throw new InvitationRoleEscalationError();
+  }
+  assertActorMayManage(actor, role, role);
 
   const member = await tx.membership.findFirst({
     where: { organizationId: orgId, user: { email } },
@@ -84,6 +111,12 @@ export async function issueInvitation(tx: Tx, input: IssueInvitationInput) {
   const existing = await tx.invitation.findFirst({
     where: { organizationId: orgId, email, status: "PENDING" },
   });
+  if (existing) {
+    if (!canCallerAssignRole(inviter.role, existing.role)) {
+      throw new InvitationRoleEscalationError();
+    }
+    assertActorMayManage(actor, existing.role, role);
+  }
 
   // PR-1d / #675: an unverified org onboards a small founding team and is
   // capped until a domain is verified. A re-invite is already counted.

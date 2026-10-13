@@ -1,10 +1,13 @@
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 import { resolveMeetingAccess } from "@/lib/meetings/access";
 import type { MeetingAccess } from "@/lib/meetings/access";
 import { isStreamConfigured } from "@/lib/stream-client";
 import { streamLogger } from "@/lib/stream-logger";
+
+export const meetingIdParamSchema = z.string().trim().min(1).max(128);
 
 /**
  * The five questions every meeting route asks before it touches Stream.
@@ -29,6 +32,28 @@ export type MeetingRouteGrant = {
   access: Extract<MeetingAccess, { streamCallId: string }>;
 };
 
+function buildAccessRefusalBody(
+  access: Exclude<MeetingAccess, { hasAccess: true }>,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    error: access.message,
+    reason: access.reason,
+  };
+  if ("code" in access && access.code) {
+    body.code = access.code;
+  }
+  if ("startsAt" in access && access.startsAt) {
+    body.startsAt = access.startsAt;
+  }
+  if ("endsAt" in access && access.endsAt) {
+    body.endsAt = access.endsAt;
+  }
+  if ("canReopen" in access && typeof access.canReopen === "boolean") {
+    body.canReopen = access.canReopen;
+  }
+  return body;
+}
+
 export async function guardMeetingRoute(
   params: Promise<{ meetingId: string }>,
   /** Named in the two log lines this emits, so a refusal says which route. */
@@ -45,10 +70,12 @@ export async function guardMeetingRoute(
   }
   const { session } = authResult;
 
-  const { meetingId } = await params;
-  if (!meetingId) {
+  const { meetingId: rawMeetingId } = await params;
+  const parsedMeetingId = meetingIdParamSchema.safeParse(rawMeetingId);
+  if (!parsedMeetingId.success) {
     return refuse({ error: "Meeting ID is required" }, 400);
   }
+  const meetingId = parsedMeetingId.data;
 
   if (!isStreamConfigured()) {
     streamLogger.error(`Stream not configured — cannot ${op} meeting`);
@@ -67,7 +94,7 @@ export async function guardMeetingRoute(
       reason: access.reason,
     });
     return refuse(
-      { error: access.message, reason: access.reason },
+      buildAccessRefusalBody(access),
       access.reason === "not_found" ? 404 : 403,
     );
   }

@@ -5,7 +5,6 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
 } from "@/lib/cron/with-cron-lock";
-import { reportSentryError } from "@/lib/observability/report";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   assertNotInMaintenance,
@@ -74,6 +73,28 @@ export function parseLimitParam(req: NextRequest): number | undefined {
     throw new InvalidLimitError();
   }
   return Math.min(n, LIMIT_CAP);
+}
+
+/**
+ * {@link parseLimitParam} with a floor, for the routes the Netlify ticker
+ * drives whose core work is per-row.
+ *
+ * The distinction from the bare parser is the DEFAULT. A route whose `run`
+ * ignores the request entirely (its core takes no arguments) silently runs its
+ * unbounded cohort inside the ticker's abort — the failure this exists to
+ * close. Giving such a route a fallback means every caller is bounded, and
+ * `?limit=` can only tighten that bound, never remove it.
+ *
+ * The fallback belongs HERE rather than at the ticker, because the ticker is
+ * not the only caller: a hand-rolled `curl` with `CRON_SECRET`, an operator
+ * probe, and a future scheduler all reach the same route, and a limit enforced
+ * only by one caller is a limit that silently disappears with it.
+ */
+export function parseLimitParamOrDefault(
+  req: NextRequest,
+  fallback: number,
+): number {
+  return parseLimitParam(req) ?? fallback;
 }
 
 /**
@@ -216,7 +237,14 @@ export function cleanupRoute<T extends object>(opts: {
       // forbids, and one the cron caller has no use for anyway.
       // #1441 — a script that rethrows a plain object reached Sentry as
       // "Error: [object Object]"; the report helper keeps its message/code.
-      reportSentryError(error, { subsystem: "cron", tags: { job } });
+      // Keyed by target like the lock branch above: a systemic fault
+      // fails every tick and used to cost one event per tick per job.
+      captureThrottled(
+        `cron:${job}`,
+        error,
+        { subsystem: "cron", tags: { job } },
+        LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
+      );
       console.error(`Error in ${job}:`, error);
       return {
         body: { error: failureMessage ?? `Failed to run ${job}` },

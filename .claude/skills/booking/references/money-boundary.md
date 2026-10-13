@@ -98,8 +98,11 @@ change a tier, a proration denominator or a clamp, change it here.
 **The tiers are typed rows, not a Json snapshot (#1499).** `CancellationPolicy` +
 `CancellationPolicyTier` hold one published, immutable version of a ladder;
 `Appointment.cancellationPolicyId` points at the version that governed the sale.
-`Appointment.cancellationPolicySnapshot` is FROZEN — never written, never read,
-dropped at the reset — so do not add a reader for it. Loading and publishing live
+`Appointment.cancellationPolicySnapshot` was FROZEN and has since been **dropped** —
+it is no longer a column on `Appointment`, so there is nothing left to add a reader
+to. The only surviving trace of the name is a cross-reference comment in the
+`SupportTicket` SLA block (`prisma/schema.prisma:327`). Refund terms come from the
+typed rows via `cancellationPolicyId` alone. Loading and publishing live
 in `lib/payments/operations/cancellation-policy-store.ts`
 (`POLICY_TERMS_INCLUDE`, `termsFromPolicyRow`, `ensurePlatformCancellationPolicy`,
 `resolveCheckoutCancellationPolicyId`, `publishOrgCancellationPolicy`); the maths

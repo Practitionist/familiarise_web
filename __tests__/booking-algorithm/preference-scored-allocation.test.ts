@@ -626,7 +626,10 @@ describe("findAllocationPreference", () => {
     await findAllocationPreference(["slot-1"]);
 
     const where = findFirst.mock.calls[0][0].where;
-    expect(where.status).toEqual({ in: ["PENDING_REVIEW", "COUNTERED"] });
+    // One open status. `COUNTERED` was here until the counter-round was retired
+    // and the enum member removed; this is the literal the six read surfaces used
+    // to duplicate and are now all driven from RESCHEDULE_OPEN_STATUSES.
+    expect(where.status).toEqual({ in: ["PENDING_REVIEW"] });
     expect(where.OR).toEqual([
       { preferredTimeOfDay: { not: null } },
       { preferredDays: { not: null } },

@@ -4,6 +4,8 @@
 const DEFAULT_TRANSACTIONAL_DOMAIN = "mail.familiarisenow.com";
 const DEFAULT_NEWSLETTER_DOMAIN = "news.familiarisenow.com";
 const DEFAULT_SUPPORT_EMAIL = "support@familiarisenow.com";
+/** Reply-To on ops alerts, so a reply never loops back to the alert recipient. */
+export const OPS_EMAIL = "ops@familiarisenow.com";
 
 // Static `process.env.X` reads (not a dynamic key) so Next.js can inline the
 // NEXT_PUBLIC_ ones; a blank value counts as unset.
@@ -77,6 +79,10 @@ export const SENDERS = {
   get system(): string {
     return `system@${transactionalDomain()}`;
   },
+  /** The From header of every ops alert: the system address with a display name. */
+  get ops(): string {
+    return `Familiarise Ops <system@${transactionalDomain()}>`;
+  },
 };
 
 // #474 — the retry worker's non-null `from` fallback for a row persisted
@@ -91,6 +97,6 @@ export const EMAIL_BUDGET_MS = {
   CONTACT_AND_WAITLIST: 5_000,
   WEBHOOK: 3_000,
   JOB: 10_000,
-  // #1653 — API-route senders: the request must not wait on Resend longer than this.
   REQUEST: 5_000,
+  LIFECYCLE: 5_000,
 } as const;

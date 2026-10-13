@@ -31,7 +31,7 @@ Rescheduling allows a consultee to request new time slots for an existing appoin
 
 **Stale-tab guard (#1012):** Re-allocation after a reschedule must send `expectedTentativeSlotCount` matching the live tentative set. A second tab that submits after the first finished receives 409 instead of delete+recreating confirmed slots.
 
-**Planner webinar time/duration edits (#1071):** Host edits go through `replaceContiguousSlotRun`, which reconciles the live N×30min atoms in place (tentative-flip first so `slot_no_confirmed_overlap` cannot self-collide, then update / create / soft-retire). This is distinct from consultee allocate-reschedule; class planner PATCH does not rewrite session slot runs when only `sessionDurationInHours` changes.
+**Planner webinar time/duration edits (#1071):** Host edits go through `replaceContiguousSlotRun`, which reconciles the live N×30min atoms in place (tentative-flip first so `occurrence_no_confirmed_overlap` cannot self-collide, then update / create / soft-retire). This is distinct from consultee allocate-reschedule; class planner PATCH does not rewrite session slot runs when only `sessionDurationInHours` changes.
 
 **Code location:** `app/api/appointments/[appointmentId]/reschedule/route.ts`
 
@@ -209,7 +209,7 @@ After the consultee initiates a reschedule, the request appears on the consultan
 
 ### How Rescheduled Requests Appear
 
-The consultant's dashboard includes a **Requests** inbox (`components/dashboard/shared/requests/RequestsInbox.tsx` over `lib/data/requests-inbox.ts`, #1775). Its read returns consultations and subscriptions in `PENDING` and `APPROVED_PENDING_PAYMENT`, and a reschedule surfaces as a `PENDING` row. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
+The consultant's dashboard includes a **Requests** inbox (`components/dashboard/shared/requests/RequestsInbox.tsx` over `lib/data/requests-inbox.ts`). Its read returns consultations and subscriptions in `PENDING` and `APPROVED_PENDING_PAYMENT` as well as paid `APPROVED` consultations and subscriptions that still need occurrences placed (including bookings parked in `APPROVED` after a declined, withdrawn, or expired whole-booking reschedule could not restore its original slot). When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
 
 - Bare tentativeness is NOT the signal: every fresh request already carries tentative holds (request-for-approval and unpaid checkout create them that way), and tombstoned/stale duplicates linger. Counting bare `isTentative` over-counted reschedules (e.g. demanded 12 slots for a 4-session plan, #1739).
 - The ratio of **released** to total sessions determines the badge type.
