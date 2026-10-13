@@ -13,16 +13,19 @@
 import assert from "node:assert/strict";
 
 import { toPlain } from "@/lib/data/serialize";
+import { Prisma } from "@prisma/client";
+
 import prisma from "@/lib/prisma";
 import { moneyResultExtensions } from "@/lib/prisma-extensions";
 
 const ABOVE_INT4 = 3_000_000_000;
 
 function readPayment(
+  db: Pick<typeof prisma, "payment">,
   paymentId: string,
   relationLoadStrategy: "join" | "query",
 ) {
-  return prisma.payment.findUniqueOrThrow({
+  return db.payment.findUniqueOrThrow({
     where: { id: paymentId },
     include: {
       earnings: {
@@ -56,9 +59,17 @@ async function checkPaymentParity(): Promise<void> {
     return;
   }
 
+  // One snapshot for both reads, so a concurrent write cannot fail the comparison.
+  const [joinedRow, queriedRow] = await prisma.$transaction(
+    async (tx) => [
+      await readPayment(tx, anchor.paymentId, "join"),
+      await readPayment(tx, anchor.paymentId, "query"),
+    ],
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+  );
   // Result-extension rows are Proxies; compare them as the plain values readers ship.
-  const joined = toPlain(await readPayment(anchor.paymentId, "join"));
-  const queried = toPlain(await readPayment(anchor.paymentId, "query"));
+  const joined = toPlain(joinedRow);
+  const queried = toPlain(queriedRow);
   assert.deepStrictEqual(joined, queried);
   assert.ok(joined.earnings.length > 0 && joined.legs.length > 0);
   for (const earning of joined.earnings) {
