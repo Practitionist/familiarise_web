@@ -86,21 +86,13 @@ export function PriceField<T extends FieldValues = FieldValues>({
         {label}
         {required && <RequiredMark />}
       </FormLabel>
-      {description && (
-        <FormDescription id={`${priceId}-description`}>
-          {description}
-        </FormDescription>
-      )}
 
-      <div className="flex gap-2 rounded-2xl border border-border bg-muted/40 p-2">
+      <div className="flex gap-2">
         <Select
           value={currencyField.value}
           onValueChange={currencyField.onChange}
         >
-          <SelectTrigger
-            className="h-11 w-[90px] rounded-xl bg-background"
-            aria-label="Price currency"
-          >
+          <SelectTrigger className="w-[90px]" aria-label="Price currency">
             <SelectValue placeholder="Currency" />
           </SelectTrigger>
           <SelectContent>
@@ -118,22 +110,12 @@ export function PriceField<T extends FieldValues = FieldValues>({
           ref={priceField.ref}
           onBlur={priceField.onBlur}
           aria-invalid={!!priceError}
-          aria-describedby={
-            [
-              description ? `${priceId}-description` : "",
-              error ? `${priceId}-error` : "",
-            ]
-              .filter(Boolean)
-              .join(" ") || undefined
-          }
+          aria-describedby={error ? `${priceId}-error` : undefined}
           type="number"
           min="0"
           max={99999999}
           placeholder="0"
-          className={cn(
-            "h-11 min-w-0 flex-1 rounded-xl bg-background",
-            error && "border-destructive",
-          )}
+          className={cn("flex-1", error && "border-destructive")}
           value={priceField.value}
           onChange={(e) => {
             const value = e.target.value;
@@ -141,6 +123,8 @@ export function PriceField<T extends FieldValues = FieldValues>({
           }}
         />
       </div>
+
+      {description && <FormDescription>{description}</FormDescription>}
 
       {!isOrgCatalog && (
         <p className="text-xs text-muted-foreground">
