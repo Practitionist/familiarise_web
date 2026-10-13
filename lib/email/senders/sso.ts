@@ -11,16 +11,67 @@ import SsoProviderEmail, {
 import prisma from "@/lib/prisma";
 import { EMAIL_BUDGET_MS, SENDERS } from "../config";
 import type { SendToRecipientsResult } from "../send-to-recipients";
-import { absolute, greet, sendSpecGuarded } from "./shared";
+import {
+  absolute,
+  defineLifecycleStager,
+  greet,
+  sendSpecGuarded,
+  type RecipientEmailSpec,
+} from "./shared";
 
 export interface SsoProviderEmailArgs {
   organizationId: string;
   orgName: string;
   providerId: string;
-  domains: string[];
-  issuer: string;
+  domains?: string[];
+  issuer?: string;
+  deletedByName?: string;
   reason?: string;
 }
+
+export interface SsoProviderLifecycleEmailArgs extends SsoProviderEmailArgs {
+  kind: SsoProviderEmailKind;
+  userIds: string[];
+  actionUrl?: string;
+}
+
+function buildSsoProviderEmailSpec(args: SsoProviderLifecycleEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const defaultActionUrl =
+    args.kind === "SUBMITTED"
+      ? `/dashboard/admin/organizations/${args.organizationId}`
+      : `/dashboard/organization/${args.organizationId}/settings/sso`;
+  const actionUrl = args.actionUrl ?? defaultActionUrl;
+  return {
+    userIds: args.userIds,
+    spec: {
+      emailType: `SSO_PROVIDER_${args.kind}`,
+      category: null,
+      from: SENDERS.security,
+      entityRef: `sso-provider:${args.providerId}`,
+      subject: () => ssoProviderSubject(args.kind, args.orgName),
+      render: (r) =>
+        React.createElement(SsoProviderEmail, {
+          kind: args.kind,
+          recipientName: greet(r),
+          orgName: args.orgName,
+          providerId: args.providerId,
+          domains: args.domains,
+          issuer: args.issuer,
+          deletedByName: args.deletedByName,
+          reason: args.reason,
+          actionUrl: absolute(actionUrl),
+        }),
+    },
+  };
+}
+
+export const stageSsoProviderEmail =
+  defineLifecycleStager<SsoProviderLifecycleEmailArgs>(
+    buildSsoProviderEmailSpec,
+  );
 
 function send(
   kind: SsoProviderEmailKind,
@@ -28,28 +79,13 @@ function send(
   userIds: string[],
   actionUrl: string,
 ): Promise<SendToRecipientsResult> {
-  return sendSpecGuarded(
-    {
-      emailType: `SSO_PROVIDER_${kind}`,
-      category: null,
-      from: SENDERS.security,
-      entityRef: `sso-provider:${args.providerId}`,
-      subject: () => ssoProviderSubject(kind, args.orgName),
-      render: (r) =>
-        React.createElement(SsoProviderEmail, {
-          kind,
-          recipientName: greet(r),
-          orgName: args.orgName,
-          providerId: args.providerId,
-          domains: args.domains,
-          issuer: args.issuer,
-          reason: args.reason,
-          actionUrl: absolute(actionUrl),
-        }),
-    },
+  const built = buildSsoProviderEmailSpec({
+    ...args,
+    kind,
     userIds,
-    EMAIL_BUDGET_MS.REQUEST,
-  );
+    actionUrl,
+  });
+  return sendSpecGuarded(built.spec, built.userIds, EMAIL_BUDGET_MS.REQUEST);
 }
 
 /** To every platform ADMIN: a provider is waiting in the approval queue. */

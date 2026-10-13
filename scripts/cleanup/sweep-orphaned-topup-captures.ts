@@ -35,8 +35,10 @@ export interface TopupCaptureSweepOptions {
 export async function sweepOrphanedTopupCaptures(
   opts: TopupCaptureSweepOptions = {},
 ): Promise<TopupCaptureSweepResult> {
-  return withCronLock("sweep-orphaned-topup-captures", { failMode: "closed" }, () =>
-    sweepOrphanedTopupCapturesUnlocked(opts),
+  return withCronLock(
+    "sweep-orphaned-topup-captures",
+    { failMode: "closed" },
+    () => sweepOrphanedTopupCapturesUnlocked(opts),
   );
 }
 
@@ -59,7 +61,11 @@ async function sweepOrphanedTopupCapturesUnlocked(
       providerPaymentId: { not: null },
       capturedAt: { lt: captureBefore, gte: tooOld },
     },
-    select: { providerOrderId: true, providerPaymentId: true, amountPaise: true },
+    select: {
+      providerOrderId: true,
+      providerPaymentId: true,
+      amountPaise: true,
+    },
     orderBy: { capturedAt: "asc" },
     take: limit,
   });
@@ -87,7 +93,13 @@ async function sweepOrphanedTopupCapturesUnlocked(
     }
   }
 
-  return { success: true, scanned: orphans.length, recredited, stillFailing, errors };
+  return {
+    success: true,
+    scanned: orphans.length,
+    recredited,
+    stillFailing,
+    errors,
+  };
 }
 
 export async function disconnectDatabase(): Promise<void> {

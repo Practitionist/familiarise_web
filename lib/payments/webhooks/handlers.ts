@@ -66,6 +66,7 @@ import {
   attempt as attemptEmail,
   attemptStaged,
   EMAIL_BUDGET_MS,
+  type RenderedEmail,
   type StagedRecipientEmail,
 } from "@/lib/email";
 import {
@@ -96,6 +97,8 @@ import {
 } from "./legacy-appointment-creation";
 import {
   loadAppointmentForEmails,
+  preparePaymentFailedEmail,
+  preparePaymentSuccessEmail,
   resolveAppointmentNotificationContext,
   stageBookedEmails,
   stagePaymentFailedEmail,
@@ -137,6 +140,7 @@ type PaymentSuccessTxResult =
       successEmail: StagedOutboxEmail | null;
       bookedEmails: StagedRecipientEmail[];
       stagedBells: StagedTrigger[];
+      stageBellsRan: boolean;
     };
 
 const PHASE_2_DEADLINE_MS = 5_000;
@@ -251,6 +255,42 @@ export async function handlePaymentSuccess(
     );
   } catch {
     preplannedEarnings = null;
+  }
+
+  let preRenderedSuccessEmail: RenderedEmail | null | undefined;
+  try {
+    const prePayment = await prisma.payment.findUnique({
+      where: { paymentIntent: paymentIntentId },
+      include: { user: { include: { consulteeProfile: true } } },
+    });
+    if (
+      prePayment?.appointmentId &&
+      prePayment.paymentStatus !== PaymentStatus.SUCCEEDED
+    ) {
+      const preApptType =
+        metadata.appointmentType ||
+        (
+          await prisma.appointment.findUnique({
+            where: { id: prePayment.appointmentId },
+            select: { appointmentType: true },
+          })
+        )?.appointmentType;
+      if (preApptType) {
+        const preApptForEmails = await loadAppointmentForEmails(
+          prisma,
+          prePayment.appointmentId,
+        );
+        if (preApptForEmails) {
+          preRenderedSuccessEmail = await preparePaymentSuccessEmail(
+            prePayment,
+            preApptForEmails,
+            preApptType,
+          );
+        }
+      }
+    }
+  } catch {
+    preRenderedSuccessEmail = undefined;
   }
 
   // Phase 1: Serializable transaction for payment confirmation and appointment state transitions.
@@ -518,7 +558,7 @@ export async function handlePaymentSuccess(
                 error: errorMessage,
                 action_required:
                   "IMMEDIATE: Manual appointment creation or full refund required",
-                dashboard_url: `${getAppUrl()}/admin/payments/${payment.id}`,
+                dashboard_url: `${getAppUrl()}/dashboard/admin/payments/${payment.id}`,
                 timestamp: new Date().toISOString(),
               }),
             );
@@ -783,6 +823,7 @@ export async function handlePaymentSuccess(
                 payment,
                 appointmentForEmails,
                 metadata.appointmentType,
+                preRenderedSuccessEmail,
               )
             : null;
           const bookedEmails = appointmentForEmails
@@ -793,8 +834,11 @@ export async function handlePaymentSuccess(
                 metadata.appointmentType,
               )
             : [];
+          const stageBellsRan = Boolean(
+            appointmentForEmails && tx.notificationOutbox,
+          );
           const stagedBells =
-            appointmentForEmails && tx.notificationOutbox
+            stageBellsRan && appointmentForEmails
               ? await stagePaymentSuccessBells(
                   tx,
                   payment,
@@ -820,6 +864,7 @@ export async function handlePaymentSuccess(
             successEmail,
             bookedEmails,
             stagedBells,
+            stageBellsRan,
           };
         },
         {
@@ -1113,7 +1158,7 @@ export async function handlePaymentSuccess(
 
   await mintConsumerInvoiceBestEffort({ paymentId });
 
-  if (txResult.stagedBells.length === 0) {
+  if (!txResult.stageBellsRan) {
     try {
       const appointmentForNotif = await resolveAppointmentNotificationContext(
         appointmentId,
@@ -1269,6 +1314,36 @@ export async function handlePaymentFailure(
   failureReason?: string,
   gatewayPaymentId?: string,
 ) {
+  let preRenderedFailedEmail: RenderedEmail | null | undefined;
+  try {
+    const prePayment = await prisma.payment.findUnique({
+      where: { paymentIntent: paymentIntentId },
+      select: {
+        id: true,
+        paymentStatus: true,
+        appointmentId: true,
+        amount: true,
+        currency: true,
+        description: true,
+        expiresAt: true,
+        user: { select: { email: true, name: true } },
+      },
+    });
+    if (
+      prePayment &&
+      prePayment.paymentStatus === PaymentStatus.PENDING &&
+      (!prePayment.expiresAt || prePayment.expiresAt <= new Date()) &&
+      prePayment.appointmentId
+    ) {
+      preRenderedFailedEmail = await preparePaymentFailedEmail(
+        prePayment,
+        prisma,
+      );
+    }
+  } catch {
+    preRenderedFailedEmail = undefined;
+  }
+
   const staged = await prisma.$transaction(async (tx) => {
     const consultantUserSelect = {
       select: {
@@ -1399,7 +1474,11 @@ export async function handlePaymentFailure(
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
     }
 
-    const failedEmail = await stagePaymentFailedEmail(tx, payment);
+    const failedEmail = await stagePaymentFailedEmail(
+      tx,
+      payment,
+      preRenderedFailedEmail,
+    );
 
     const consultantUser =
       payment.appointment?.consultation?.consultationPlan?.consultantProfile

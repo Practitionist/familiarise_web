@@ -27,6 +27,7 @@ import {
   notifyCollaboratorRemoved,
   notifyCollaboratorWithdrawn,
 } from "@/lib/novu/service";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import {
   sendCollaboratorInvitedEmail,
   sendCollaboratorAcceptedEmail,
@@ -407,29 +408,31 @@ export async function inviteCollaborator(
       if (invitedProfile) {
         const ownerName = inviterProfile?.user?.name ?? "Plan Owner";
         const resolvedTitle = planTitle ?? planKindLabel(planType);
-        await Promise.allSettled([
-          notifyCollaboratorInvited(invitedProfile.userId, {
-            planTitle: resolvedTitle,
-            planType,
-            role: collaboratorRoleLabel(role),
-            revenueSharePercentage,
-            ownerName,
-            dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-          }),
-          sendCollaboratorInvitedEmail(
-            {
-              recipientUserId: invitedProfile.userId,
-              actorName: ownerName,
-              collaboratorName: invitedProfile.user?.name ?? "Collaborator",
+        await scheduleAfter(async () => {
+          await Promise.all([
+            notifyCollaboratorInvited(invitedProfile.userId, {
               planTitle: resolvedTitle,
               planType,
-              role: txResult.role,
-              revenueShareBps: txResult.revenueShareBps,
-              collaboratorId: txResult.id,
-            },
-            EMAIL_BUDGET_MS.REQUEST,
-          ),
-        ]);
+              role: collaboratorRoleLabel(role),
+              revenueSharePercentage,
+              ownerName,
+              dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+            }).catch(() => undefined),
+            sendCollaboratorInvitedEmail(
+              {
+                recipientUserId: invitedProfile.userId,
+                actorName: ownerName,
+                collaboratorName: invitedProfile.user?.name ?? "Collaborator",
+                planTitle: resolvedTitle,
+                planType,
+                role: txResult.role,
+                revenueShareBps: txResult.revenueShareBps,
+                collaboratorId: txResult.id,
+              },
+              EMAIL_BUDGET_MS.REQUEST,
+            ).catch(() => undefined),
+          ]);
+        }, "collaborator.invited");
       }
     } catch (error) {
       Sentry.captureException(
@@ -857,17 +860,29 @@ async function notifyHostOfResponse(
       revenueShareBps: updated.revenueShareBps,
       collaboratorId: updated.id,
     };
-    if (updated.status === "ACCEPTED") {
-      await Promise.allSettled([
-        notifyCollaboratorAccepted(hostUserId, payload),
-        sendCollaboratorAcceptedEmail(emailPayload, EMAIL_BUDGET_MS.REQUEST),
-      ]);
-    } else {
-      await Promise.allSettled([
-        notifyCollaboratorDeclined(hostUserId, payload),
-        sendCollaboratorDeclinedEmail(emailPayload, EMAIL_BUDGET_MS.REQUEST),
-      ]);
-    }
+    await scheduleAfter(async () => {
+      if (updated.status === "ACCEPTED") {
+        await Promise.all([
+          notifyCollaboratorAccepted(hostUserId, payload).catch(
+            () => undefined,
+          ),
+          sendCollaboratorAcceptedEmail(
+            emailPayload,
+            EMAIL_BUDGET_MS.REQUEST,
+          ).catch(() => undefined),
+        ]);
+      } else {
+        await Promise.all([
+          notifyCollaboratorDeclined(hostUserId, payload).catch(
+            () => undefined,
+          ),
+          sendCollaboratorDeclinedEmail(
+            emailPayload,
+            EMAIL_BUDGET_MS.REQUEST,
+          ).catch(() => undefined),
+        ]);
+      }
+    }, `collaborators.${updated.status.toLowerCase()}`);
   } catch (error) {
     reportSentryError(error, {
       subsystem: "collaborators",
@@ -933,7 +948,7 @@ export async function removeCollaborator(
   if (profile?.userId) {
     accessRevoked = (
       await revokeCollaboratorAccess(planType, planId, profile.userId, {
-        notify: !withdrawn,
+        notify: false,
       })
     ).success;
   }
@@ -960,19 +975,29 @@ export async function removeCollaborator(
                 },
               },
             });
-      await sendCollaboratorRemovedEmail(
-        {
-          recipientUserId: profile.userId,
-          actorName: plan?.consultantProfile?.user?.name ?? "Plan Owner",
-          collaboratorName: profile.user?.name ?? "Collaborator",
-          planTitle: plan?.title ?? planKindLabel(planType),
-          planType,
-          role: result.role,
-          revenueShareBps: result.revenueShareBps,
-          collaboratorId: result.id,
-        },
-        EMAIL_BUDGET_MS.REQUEST,
-      );
+      const planTitle = plan?.title ?? planKindLabel(planType);
+      await scheduleAfter(async () => {
+        await Promise.all([
+          notifyCollaboratorRemoved(profile.userId, {
+            planTitle,
+            planType,
+            dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+          }).catch(() => undefined),
+          sendCollaboratorRemovedEmail(
+            {
+              recipientUserId: profile.userId,
+              actorName: plan?.consultantProfile?.user?.name ?? "Plan Owner",
+              collaboratorName: profile.user?.name ?? "Collaborator",
+              planTitle,
+              planType,
+              role: result.role,
+              revenueShareBps: result.revenueShareBps,
+              collaboratorId: result.id,
+            },
+            EMAIL_BUDGET_MS.REQUEST,
+          ).catch(() => undefined),
+        ]);
+      }, "collaborators.removed");
     } catch (error) {
       reportSentryError(error, {
         subsystem: "collaborators",
@@ -1028,27 +1053,29 @@ async function notifyHostOfWithdrawal(
       plan?.consultantProfile?.userId ?? inviterProfile?.userId ?? null;
     if (!hostUserId) return;
     const planTitle = plan?.title ?? planKindLabel(planType);
-    await Promise.allSettled([
-      notifyCollaboratorWithdrawn(hostUserId, {
-        planTitle,
-        planType,
-        collaboratorName,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-      }),
-      sendCollaboratorWithdrawnEmail(
-        {
-          recipientUserId: hostUserId,
-          actorName: collaboratorName,
-          collaboratorName,
+    await scheduleAfter(async () => {
+      await Promise.all([
+        notifyCollaboratorWithdrawn(hostUserId, {
           planTitle,
           planType,
-          role: collaborator.role,
-          revenueShareBps: collaborator.revenueShareBps,
-          collaboratorId: collaborator.id,
-        },
-        EMAIL_BUDGET_MS.REQUEST,
-      ),
-    ]);
+          collaboratorName,
+          dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+        }).catch(() => undefined),
+        sendCollaboratorWithdrawnEmail(
+          {
+            recipientUserId: hostUserId,
+            actorName: collaboratorName,
+            collaboratorName,
+            planTitle,
+            planType,
+            role: collaborator.role,
+            revenueShareBps: collaborator.revenueShareBps,
+            collaboratorId: collaborator.id,
+          },
+          EMAIL_BUDGET_MS.REQUEST,
+        ).catch(() => undefined),
+      ]);
+    }, "collaborators.withdrawn");
   } catch (error) {
     reportSentryError(error, {
       subsystem: "collaborators",
@@ -1078,11 +1105,13 @@ export async function revokeCollaboratorAccess(
               where: { id: planId },
               select: { title: true },
             });
-      await notifyCollaboratorRemoved(userId, {
-        planTitle: plan?.title ?? planKindLabel(planType),
-        planType,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
-      });
+      await scheduleAfter(async () => {
+        await notifyCollaboratorRemoved(userId, {
+          planTitle: plan?.title ?? planKindLabel(planType),
+          planType,
+          dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+        }).catch(() => undefined);
+      }, "collaborators.access_revoked");
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),

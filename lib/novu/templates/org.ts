@@ -38,8 +38,9 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     description: "Billing admins. `reminderStage` counts the dunning notices.",
     category: "orgBilling",
     inApp: {
-      subject: "Invoice overdue",
-      body: "Invoice {{payload.invoiceNumber}} for {{payload.total}} is {{payload.daysLate}} day{% if payload.daysLate != 1 %}s{% endif %} overdue.{% if payload.reminderStage >= 1 %} This is reminder {{payload.reminderStage}}.{% endif %}",
+      subject:
+        "{% if payload.reminderStage > 3 %}Sponsored bookings paused{% else %}Invoice overdue{% endif %}",
+      body: "{% if payload.reminderStage > 3 %}Invoice {{payload.invoiceNumber}} ({{payload.amount}}) is past due and sponsored bookings are now paused until payment is received.{% else %}Invoice {{payload.invoiceNumber}} for {{payload.total}} is {{payload.daysLate}} day{% if payload.daysLate != 1 %}s{% endif %} overdue.{% if payload.reminderStage >= 1 %} This is reminder {{payload.reminderStage}}.{% endif %}{% endif %}",
       redirect: "payUrl",
     },
   },
@@ -115,8 +116,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.ORG_PROGRAM_OVERAGE_DUE,
     name: "Member overage due",
-    description:
-      "The member, when an over-cap booking creates a side-charge (#775).",
+    description: "The member, when an over-cap booking creates a side-charge.",
     category: "orgBilling",
     inApp: {
       subject: "Payment due",
@@ -124,8 +124,31 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
       redirect: "payUrl",
     },
   },
+  {
+    workflowId: W.ORG_CONTRACT_STATUS_CHANGED,
+    name: "Enterprise contract updated",
+    description:
+      "Org owners and operators, when an enterprise contract activates, renews or ends.",
+    category: "orgBilling",
+    inApp: {
+      subject: "Contract status updated",
+      body: "{{payload.orgName}}'s enterprise contract is now {{payload.status | downcase | replace: '_', ' '}}{% if payload.effectiveDate %} ({{payload.effectiveDate}}){% endif %}.",
+      redirect: "dashboardUrl",
+    },
+  },
 
   // ── Membership ──────────────────────────────────────────────────────────
+  {
+    workflowId: W.ORG_CREATED,
+    name: "Organisation created",
+    description: "The organisation owner upon workspace creation.",
+    category: "orgMembership",
+    inApp: {
+      subject: "Organisation ready",
+      body: "{{payload.orgName}} has been created. Open your workspace settings to invite your team.",
+      redirect: "dashboardUrl",
+    },
+  },
   {
     workflowId: W.ORG_INVITE_SENT,
     name: "Org invite",
@@ -149,6 +172,28 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.ORG_ROLE_CHANGED,
+    name: "Member role changed",
+    description: "The affected organisation member when their role changes.",
+    category: "orgMembership",
+    inApp: {
+      subject: "Role updated",
+      body: "Your role in {{payload.orgName}} was updated{% if payload.newRole %} to {{payload.newRole | downcase | replace: '_', ' '}}{% endif %}{% if payload.changedByName %} by {{payload.changedByName}}{% endif %}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.ORG_MEMBER_REMOVED,
+    name: "Removed from organisation",
+    description: "The removed non-expert member of an organisation.",
+    category: "orgMembership",
+    inApp: {
+      subject: "Removed from organisation",
+      body: "You are no longer a member of {{payload.orgName}}{% if payload.removedByName %} (removed by {{payload.removedByName}}){% endif %}{% if payload.reason %}: {{payload.reason}}{% endif %}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.ORG_EXPERT_REMOVED,
     name: "Removed from org",
     description: "The consultant whose EXPERT membership was removed.",
@@ -156,6 +201,31 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Membership ended",
       body: "You were removed from {{payload.orgName}} by {{payload.removedByName}}{% if payload.reason %}: {{payload.reason}}{% endif %}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.ORG_SSO_PROVIDER_SUBMITTED,
+    name: "SSO provider submitted",
+    description:
+      "Platform admins when an organisation submits an OIDC/SSO provider.",
+    category: "orgMembership",
+    inApp: {
+      subject: "SSO provider submitted",
+      body: "{{payload.orgName}} registered SSO provider {{payload.providerId}} for review.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.ORG_SSO_PROVIDER_DECIDED,
+    name: "SSO provider reviewed",
+    description:
+      "Org owners when staff approve, reject or revoke their SSO provider.",
+    category: "orgMembership",
+    inApp: {
+      subject:
+        "{% if payload.decision == 'APPROVED' %}SSO provider approved{% elsif payload.decision == 'REJECTED' %}SSO provider not approved{% else %}SSO provider revoked{% endif %}",
+      body: "{% if payload.decision == 'APPROVED' %}SSO provider {{payload.providerId}} for {{payload.orgName}} is approved and ready to use.{% elsif payload.decision == 'REJECTED' %}SSO provider {{payload.providerId}} for {{payload.orgName}} was not approved{% if payload.reason %}: {{payload.reason}}{% endif %}.{% else %}SSO provider {{payload.providerId}} for {{payload.orgName}} was revoked{% if payload.reason %}: {{payload.reason}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -173,6 +243,29 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
 
   // ── Programmes ──────────────────────────────────────────────────────────
   {
+    workflowId: W.ORG_SEAT_ASSIGNED,
+    name: "Programme seat assigned",
+    description: "The member assigned a seat in an enterprise programme.",
+    category: "orgProgram",
+    inApp: {
+      subject: "Programme seat assigned",
+      body: "You have been assigned a seat in {{payload.programName}} at {{payload.orgName}}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.ORG_SEAT_REVOKED,
+    name: "Programme seat removed",
+    description:
+      "The member whose seat in an enterprise programme was removed.",
+    category: "orgProgram",
+    inApp: {
+      subject: "Programme seat removed",
+      body: "Your seat in {{payload.programName}} at {{payload.orgName}} has ended{% if payload.reason %}: {{payload.reason}}{% endif %}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.ORG_PROGRAM_EXHAUSTED,
     name: "Programme cap reached",
     description: "Org admins, when an assignee hits 100% of their cap.",
@@ -186,7 +279,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.ORG_PROGRAM_CAP_NEAR,
     name: "Programme cap near",
-    description: "Org admins, on the 80% crossing (#768).",
+    description: "Org admins, on the 80% crossing.",
     category: "orgProgram",
     inApp: {
       subject: "Programme nearly used up",

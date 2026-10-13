@@ -23,6 +23,10 @@ import {
   restoreStreamAccess,
   type SideEffectSummary,
 } from "@/lib/moderation/side-effects";
+import { goHref } from "@/lib/dashboard/go";
+import { notifyAccountSecurityNotice } from "@/lib/novu";
+import { stageAccountModerationEmail } from "@/lib/email/senders/people";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 
 interface RouteParams {
   params: Promise<{ reportId: string }>;
@@ -66,23 +70,80 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     // Clearing the columns and recording who cleared them commit together, so
     // a reinstated account can never be missing its audit row.
-    const action = await prisma.$transaction(async (tx) => {
-      await tx.user.updateMany({
-        where: { id: report.targetUserId, banned: true },
-        data: { banned: false, banReason: null, banExpires: null },
+    const { action, stagedBells, dashboardUrl } = await prisma.$transaction(
+      async (tx) => {
+        const lifted = await tx.user.updateMany({
+          where: { id: report.targetUserId, banned: true },
+          data: { banned: false, banReason: null, banExpires: null },
+        });
+        if (lifted?.count === 0) {
+          return {
+            action: null,
+            stagedBells: [],
+            dashboardUrl: null,
+          };
+        }
+        const createdAction = await tx.moderationAction.create({
+          data: {
+            reportId: report.id,
+            actionType: "USER_REINSTATED",
+            notes,
+            takenById: session.user.id,
+          },
+          include: {
+            takenBy: { select: { id: true, name: true, email: true } },
+          },
+        });
+        const resolvedUrl = goHref("auto", "home");
+        const bellResults = await notifyAccountSecurityNotice(
+          report.targetUserId,
+          {
+            kind: "ACCOUNT_REINSTATED",
+            dashboardUrl: resolvedUrl,
+          },
+          `moderation-unban:${createdAction.id}`,
+          { tx },
+        );
+        return {
+          action: createdAction,
+          stagedBells: bellResults.map((r) => r.staged),
+          dashboardUrl: resolvedUrl,
+        };
+      },
+    );
+
+    if (!action) {
+      const repair: SideEffectSummary = {};
+      try {
+        await restoreStreamAccess(report.targetUserId);
+        repair.stream = "ok";
+      } catch (error) {
+        repair.stream = "failed";
+        repair.errors = [
+          `stream: ${error instanceof Error ? error.message : String(error)}`,
+        ];
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "moderation" } },
+        );
+      }
+      return NextResponse.json({
+        action: null,
+        sideEffects: repair,
+        message: "User is not currently banned; Stream access re-applied",
       });
-      return tx.moderationAction.create({
-        data: {
-          reportId: report.id,
-          actionType: "USER_REINSTATED",
-          notes,
-          takenById: session.user.id,
-        },
-        include: {
-          takenBy: { select: { id: true, name: true, email: true } },
-        },
-      });
-    });
+    }
+
+    const stagedEmails = dashboardUrl
+      ? await stageAccountModerationEmail(prisma, {
+          userId: report.targetUserId,
+          kind: "REINSTATED",
+          dashboardUrl,
+        }).catch((err) => {
+          console.error("[moderation.unban] email stage failed:", err);
+          return [];
+        })
+      : [];
 
     const sideEffects: SideEffectSummary = {};
     try {
@@ -103,6 +164,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
     await persistActionSideEffects(action.id, sideEffects);
+    await flushNotificationsAfter(
+      {
+        bells: stagedBells,
+        emails: [{ rows: stagedEmails, emailType: "ACCOUNT_REINSTATED" }],
+      },
+      "moderation.unban",
+    );
 
     return NextResponse.json({
       action,

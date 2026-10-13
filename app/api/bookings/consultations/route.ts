@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import { requestListOrderBy } from "@/lib/booking/list-query";
+import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   parseRequestListQueryOrRespond,
   releaseDeclinedRequestHold,
@@ -285,14 +286,19 @@ export async function PATCH(request: NextRequest) {
 
     // #836 — allowed-from guard rides the WHERE; updateMany returns no row,
     // so re-read for the heavy include.
-    await prisma.$transaction(async (tx) => {
+    const holdNotices = await prisma.$transaction(async (tx) => {
       await transitionConsultationRequest(tx, {
         where: { id },
         to: status,
         data: { pendingPaymentUrl: null },
       });
-      await releaseDeclinedRequestHold(tx, { consultationId: id }, session.user.id);
+      return releaseDeclinedRequestHold(
+        tx,
+        { consultationId: id },
+        session.user.id,
+      );
     });
+    await flushBackupInterestNotices(holdNotices);
 
     // #1004 — a rejected request that was already paid has to give the money
     // back. Direct checkout captures BEFORE the request exists, so a

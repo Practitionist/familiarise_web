@@ -318,6 +318,8 @@ export async function runDunning(): Promise<DunningStats> {
         invoiceNumber: true,
         totalPaise: true,
         displayCurrency: true,
+        dueDate: true,
+        organization: { select: { name: true } },
       },
       orderBy: { lastDunningReminderAt: "asc" },
       take: MAX_SUSPENSIONS_PER_RUN,
@@ -365,6 +367,24 @@ export async function runDunning(): Promise<DunningStats> {
 
       if (!claimed) continue;
       stats.suspended += 1;
+
+      const dueDate = inv.dueDate ?? now;
+      const orgName = inv.organization?.name ?? "Organization";
+      const suspensionStage = MAX_REMINDERS + 1;
+      await notifyOrgInvoiceOverdue(inv.organizationId, {
+        invoiceNumber: inv.invoiceNumber,
+        orgName,
+        totalPaise: inv.totalPaise,
+        currency: inv.displayCurrency,
+        daysLate: daysBetween(dueDate, now),
+        reminderStage: suspensionStage,
+        payUrl: `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`,
+      }).catch((err) => console.error("[dunning] stage-3 notify failed:", err));
+      await emailInvoiceOverdue(
+        { ...inv, dueDate, organization: { name: orgName } },
+        suspensionStage,
+        now,
+      );
     }
   }
 

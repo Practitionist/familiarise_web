@@ -56,7 +56,10 @@ export async function runConsentRetentionSweeper(): Promise<{
     } else {
       console.log("[DPDP] consent retention clean — no expired artifacts");
     }
-    Sentry.logger.info("job:consent-retention-sweeper finished", { expired, deleted: 0 });
+    Sentry.logger.info("job:consent-retention-sweeper finished", {
+      expired,
+      deleted: 0,
+    });
     return { expired, deleted: 0, deleteMode: false };
   }
 
@@ -89,7 +92,10 @@ export async function runConsentRetentionSweeper(): Promise<{
     `[DPDP] consent retention sweeper finished — deleted=${deleted} of expired=${expired}`,
   );
 
-  Sentry.logger.info("job:consent-retention-sweeper finished", { expired, deleted });
+  Sentry.logger.info("job:consent-retention-sweeper finished", {
+    expired,
+    deleted,
+  });
   return { expired, deleted, deleteMode: true };
 }
 
@@ -108,5 +114,7 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("consent-retention-sweeper", () => main().finally(() => prisma.$disconnect()));
+  runJob("consent-retention-sweeper", () =>
+    main().finally(() => prisma.$disconnect()),
+  );
 }

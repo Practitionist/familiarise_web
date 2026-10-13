@@ -21,17 +21,12 @@ import {
   applyTransactionalEffects,
   applyBestEffortEffects,
   persistActionSideEffects,
-  reportOutcomeCopy,
-  reporterIsNotifiedExpert,
   type ModerationReportRef,
   type SideEffectSummary,
 } from "@/lib/moderation/side-effects";
 import * as Sentry from "@sentry/nextjs";
 import { purgeReviewSurfaces } from "@/lib/data/public-cache";
-import { goHref } from "@/lib/dashboard/go";
-import { EMAIL_BUDGET_MS } from "@/lib/email";
-import { sendModerationReportOutcomeEmail } from "@/lib/email/senders/people";
-import { formatReportReference } from "@/lib/moderation/report-reference";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 interface RouteParams {
   params: Promise<{ reportId: string }>;
 }
@@ -340,28 +335,17 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         { tags: { subsystem: "moderation" } },
       );
     }
-    await persistActionSideEffects(action.id, sideEffects);
-
-    if (
-      report.reportedById &&
-      !reporterIsNotifiedExpert(input, transactional)
-    ) {
-      await sendModerationReportOutcomeEmail(
-        {
-          reporterUserId: report.reportedById,
-          reportId: report.id,
-          reference: formatReportReference(report.id),
-          ...reportOutcomeCopy(actionType, report.id, report.reason),
-          dashboardUrl: goHref("auto", "feedbacks"),
-        },
-        EMAIL_BUDGET_MS.REQUEST,
-      );
-    }
+    const { stagedBells, stagedEmails, ...persistedSideEffects } = sideEffects;
+    await persistActionSideEffects(action.id, persistedSideEffects);
+    await flushNotificationsAfter(
+      { bells: stagedBells, emails: stagedEmails },
+      "moderation.action",
+    );
 
     return NextResponse.json({
       action,
       report: updatedReport,
-      sideEffects,
+      sideEffects: persistedSideEffects,
       message: `Action '${actionType}' taken successfully`,
     });
   } catch (error) {

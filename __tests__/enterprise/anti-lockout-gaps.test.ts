@@ -133,6 +133,8 @@ function wireTxShim() {
       organizationInvoice: mockedPrisma.organizationInvoice,
       billingSubscription: mockedPrisma.billingSubscription,
       orgAuditLog: mockedPrisma.orgAuditLog,
+      notificationOutbox: { upsert: jest.fn().mockResolvedValue(null) },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
     };
     return (fn as (tx: unknown) => unknown)(tx);
   });
@@ -154,12 +156,15 @@ describe("/api/organizations/[orgId]/members/bulk — explicit 405", () => {
     ["POST", bulkPOST],
     ["PATCH", bulkPATCH],
     ["DELETE", bulkDELETE],
-  ] as const)("%s returns 405 with BULK_REMOVAL_NOT_SUPPORTED", async (_, h) => {
-    const res = (await h()) as Response;
-    expect(res.status).toBe(405);
-    const body = await res.json();
-    expect(body.error).toBe("BULK_REMOVAL_NOT_SUPPORTED");
-  });
+  ] as const)(
+    "%s returns 405 with BULK_REMOVAL_NOT_SUPPORTED",
+    async (_, h) => {
+      const res = (await h()) as Response;
+      expect(res.status).toBe(405);
+      const body = await res.json();
+      expect(body.error).toBe("BULK_REMOVAL_NOT_SUPPORTED");
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -176,11 +181,12 @@ describe("PATCH /api/organizations/[orgId]/contracts/[contractId] — terminatio
     mockedPrisma.programAssignment.count.mockResolvedValueOnce(3);
 
     const res = (await contractPATCH(
-      makeRequest(
-        "http://localhost/api/organizations/org-1/contracts/c-1",
-        { status: "TERMINATED" },
-      ) as never,
-      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as never,
+      makeRequest("http://localhost/api/organizations/org-1/contracts/c-1", {
+        status: "TERMINATED",
+      }) as never,
+      {
+        params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }),
+      } as never,
     )) as Response;
 
     expect(res.status).toBe(409);
@@ -203,11 +209,12 @@ describe("PATCH /api/organizations/[orgId]/contracts/[contractId] — terminatio
     });
 
     const res = (await contractPATCH(
-      makeRequest(
-        "http://localhost/api/organizations/org-1/contracts/c-1",
-        { status: "TERMINATED" },
-      ) as never,
-      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as never,
+      makeRequest("http://localhost/api/organizations/org-1/contracts/c-1", {
+        status: "TERMINATED",
+      }) as never,
+      {
+        params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }),
+      } as never,
     )) as Response;
 
     expect(res.status).toBe(200);
@@ -235,11 +242,12 @@ describe("PATCH /api/organizations/[orgId]/contracts/[contractId] — terminatio
     });
 
     const res = (await contractPATCH(
-      makeRequest(
-        "http://localhost/api/organizations/org-1/contracts/c-1",
-        { status: "ACTIVE" },
-      ) as never,
-      { params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }) } as never,
+      makeRequest("http://localhost/api/organizations/org-1/contracts/c-1", {
+        status: "ACTIVE",
+      }) as never,
+      {
+        params: Promise.resolve({ orgId: "org-1", contractId: "c-1" }),
+      } as never,
     )) as Response;
 
     expect(res.status).toBe(200);
@@ -263,7 +271,9 @@ describe("DELETE /api/organizations/[orgId]/programs/[programId] — utilization
       new Request("http://localhost/api/organizations/org-1/programs/p-1", {
         method: "DELETE",
       }) as never,
-      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as never,
+      {
+        params: Promise.resolve({ orgId: "org-1", programId: "p-1" }),
+      } as never,
     )) as Response;
 
     expect(res.status).toBe(409);
@@ -284,7 +294,9 @@ describe("DELETE /api/organizations/[orgId]/programs/[programId] — utilization
       new Request("http://localhost/api/organizations/org-1/programs/p-1", {
         method: "DELETE",
       }) as never,
-      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as never,
+      {
+        params: Promise.resolve({ orgId: "org-1", programId: "p-1" }),
+      } as never,
     )) as Response;
 
     expect(res.status).toBe(409);
@@ -306,7 +318,9 @@ describe("DELETE /api/organizations/[orgId]/programs/[programId] — utilization
       new Request("http://localhost/api/organizations/org-1/programs/p-1", {
         method: "DELETE",
       }) as never,
-      { params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as never,
+      {
+        params: Promise.resolve({ orgId: "org-1", programId: "p-1" }),
+      } as never,
     )) as Response;
 
     expect(res.status).toBe(204);

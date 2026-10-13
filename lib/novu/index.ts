@@ -54,31 +54,66 @@ export {
   notifyTrialCancelled,
   // Subscriptions
   notifySubscriptionStarted,
-  notifySubscriptionCancelled,
+  notifySubscriptionRenewed,
   // Consultant
   notifyNewBookingRequest,
+  notifyUnscheduledSubscriptionNudge,
   notifyVerificationStatusChanged,
   notifyPayoutProcessed,
   notifyPayoutFailed,
-  // Moderation (#693)
+  // Account Security & Moderation
+  notifyAccountSecurityNotice,
   notifyModerationWarning,
   notifyAccountSuspended,
   notifyAccountBanned,
-  // Admin
+  // Admin & Compliance
   notifyGeneralAnnouncement,
   notifyNewConsultantApplication,
+  notifyComplianceAlert,
   // Disputes
   notifyDisputeCreated,
   notifyDisputeResolved,
   // Recordings
   notifyRecordingAvailable,
+  notifyRecordingFailed,
   // Documents
   notifyDocumentUploaded,
   notifyDocumentReviewed,
   // Referrals
+  notifyReferralBonusEarned,
+  notifyRefereeWelcomeBonus,
   notifyReferralCreditsApplied,
   // Collaborators
   notifyCollaboratorInvited,
   notifyCollaboratorAccepted,
+  notifyCollaboratorDeclined,
   notifyCollaboratorRemoved,
+  notifyCollaboratorWithdrawn,
+  notifyCollaboratorInviteExpired,
 } from "./service";
+export {
+  notifyOrgCreated,
+  notifyOrgInviteSent,
+  notifyOrgInviteAccepted,
+  notifyOrgRoleChanged,
+  notifyOrgMemberRemoved,
+  notifyOrgInvoiceIssued,
+  notifyOrgInvoicePaid,
+  notifyOrgInvoiceOverdue,
+  notifyMemberOverageTimedOut,
+  notifyOrgLicenseRenewalUpcoming,
+  notifyOrgDataExportReady,
+  notifyOrgWalletTopupConfirmed,
+  notifyOrgWalletLow,
+  notifyOrgPayoutCompleted,
+  notifyOrgPayoutFailed,
+  notifyOrgProgramExhausted,
+  notifyOrgProgramCapNear,
+  notifyOrgProgramOverageDue,
+  notifyOrgSeatAssigned,
+  notifyOrgSeatRevoked,
+  notifyOrgContractStatusChanged,
+  notifyOrgSsoProviderSubmitted,
+  notifyOrgSsoProviderDecided,
+  notifyOrgSsoProviderDeleted,
+} from "./org-workflows";

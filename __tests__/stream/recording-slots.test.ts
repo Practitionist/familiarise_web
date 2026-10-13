@@ -10,7 +10,6 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     appointment: { findMany: jest.fn(), findFirst: jest.fn() },
-    recording: { count: jest.fn(async () => 0) },
     recordingPurchase: { count: jest.fn(async () => 0) },
     consultantProfile: { findUnique: jest.fn(async () => null) },
     consulteeProfile: { findUnique: jest.fn(async () => ({ id: "cp-l" })) },
@@ -324,7 +323,10 @@ describe("playback follows the list", () => {
       payment: [],
       occurrences,
     });
-    const source = session(1, 20, [{ id: "b1-rec" }]);
+    const source = session(1, 20, [
+      { id: "b1-part-1" },
+      { id: "b1-part-2", minute: 30 },
+    ]);
     const bookings = {
       b1: row("b1", 10, [source]),
       b2: row("b2", 30, [session(1, 5)]),
@@ -343,27 +345,27 @@ describe("playback follows the list", () => {
     (prisma.appointmentOccurrence.findMany as jest.Mock).mockResolvedValue([
       otherRun("b1", source),
     ]);
-    (prisma.recording.count as jest.Mock).mockResolvedValue(1);
+    const play = (id: string) =>
+      viewerPlaybackAccess("learner", {
+        id,
+        appointmentId: "b1",
+        ordinal: 1,
+        expired: false,
+      });
 
     const listed = await loadRecordingViews(["b2"], "learner", NOW);
-    expect(listed.get("b2")!.view.slots[0]!.state).toBe("catch_up");
-    await expect(
-      viewerPlaybackAccess("learner", {
-        id: "b1-rec",
-        appointmentId: "b1",
-        ordinal: 1,
-        expired: false,
-      }),
-    ).resolves.toEqual({ allowed: true });
-
-    (prisma.recording.count as jest.Mock).mockResolvedValue(0);
-    await expect(
-      viewerPlaybackAccess("learner", {
-        id: "b1-rec",
-        appointmentId: "b1",
-        ordinal: 1,
-        expired: false,
-      }),
-    ).resolves.toEqual({ allowed: false, code: "LATE_JOIN_HIDDEN" });
+    const slot = listed.get("b2")!.view.slots[0]!;
+    expect(slot.state).toBe("catch_up");
+    expect(slot.parts.map((p) => p.recordingId)).toEqual([
+      "b1-part-1",
+      "b1-part-2",
+    ]);
+    await expect(play("b1-part-1")).resolves.toEqual({ allowed: true });
+    await expect(play("b1-part-2")).resolves.toEqual({ allowed: true });
+    // Same source run and ordinal, but not a part the catch-up slot lists.
+    await expect(play("b1-unlisted")).resolves.toEqual({
+      allowed: false,
+      code: "LATE_JOIN_HIDDEN",
+    });
   });
 });

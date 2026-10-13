@@ -10,6 +10,8 @@
 import * as Sentry from "@sentry/nextjs";
 
 import { notifyAppointmentCancelled } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
@@ -715,15 +717,36 @@ export async function freezeAppointments(
 
   // Send all notifications AFTER the transaction commits.
   // Fire-and-forget: notification failures don't affect the freeze result.
+  const notificationFailures: Array<{ appointmentId?: string; err: unknown }> =
+    [];
   for (const { userIds, data } of pendingNotifications) {
     try {
-      await notifyAppointmentCancelled(userIds, data);
+      const [bellResults, emailRows] = await Promise.all([
+        Promise.resolve(
+          notifyAppointmentCancelled(userIds, data, {
+            deferAttempt: true,
+          }),
+        ).catch(() => []),
+        stageAppointmentCancelledEmail(prisma, {
+          appointmentId: data.appointmentId ?? "",
+          userIds,
+          startsAt: data.dateTime ? new Date(data.dateTime) : undefined,
+          cancelledBy: "Familiarise",
+          reason: data.reason,
+          dashboardUrl:
+            data.dashboardUrl ?? notificationHref(null, "appointments"),
+        }).catch(() => []),
+      ]);
+      await flushNotificationsAfter(
+        {
+          bells: (bellResults ?? []).map((r) => r?.staged),
+          emails: [{ rows: emailRows, emailType: "APPOINTMENT_CANCELLED" }],
+        },
+        "freeze-appointments",
+      );
       notified += userIds.length;
     } catch (err) {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "maintenance" }, level: "warning" },
-      );
+      notificationFailures.push({ appointmentId: data.appointmentId, err });
       console.error(
         JSON.stringify({
           event: "maintenance_freeze_notification_failed",
@@ -733,6 +756,20 @@ export async function freezeAppointments(
         }),
       );
     }
+  }
+  if (notificationFailures.length > 0) {
+    const first = notificationFailures[0].err;
+    Sentry.captureException(
+      first instanceof Error ? first : new Error(String(first)),
+      {
+        tags: { subsystem: "maintenance" },
+        level: "warning",
+        extra: {
+          failureCount: notificationFailures.length,
+          appointmentIds: notificationFailures.map((f) => f.appointmentId),
+        },
+      },
+    );
   }
 
   console.log(

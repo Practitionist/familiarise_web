@@ -21,7 +21,13 @@ const mockContractFindMany = jest.fn();
 const mockContractFindFirst = jest.fn();
 const mockContractCreate = jest.fn();
 const mockContractUpdate = jest.fn(
-  async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => ({
+  async ({
+    where,
+    data,
+  }: {
+    where: { id: string };
+    data: Record<string, unknown>;
+  }) => ({
     id: where.id,
     ...data,
   }),
@@ -56,6 +62,8 @@ const mockTx = {
   program: { updateMany: mockProgramUpdateMany },
   purchaseOrder: { updateMany: mockPurchaseOrderUpdateMany },
   orgAuditLog: { create: mockOrgAuditLogCreate },
+  notificationOutbox: { upsert: jest.fn().mockResolvedValue(null) },
+  user: { findMany: jest.fn().mockResolvedValue([]) },
 };
 
 jest.mock("../../lib/prisma", () => ({

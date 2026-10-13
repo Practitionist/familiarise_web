@@ -2,7 +2,7 @@
 
 > End-to-end architecture for outbound transactional/lifecycle email (`lib/email/`) and multi-tenant Novu in-app feed orchestration (`lib/novu/`), including transactional outbox staging, 60-second inline lease protection, concurrent post-response flushing, stateless RFC 8058 unsubscribes, subscriber security, and scheduled relays.
 
-**Last Updated**: 2026-10-11
+**Last Updated**: 2026-10-13
 
 ---
 
@@ -49,17 +49,64 @@ graph LR
     NRELAY --> NOVU
 ```
 
+### High-Level Design (ASCII Architecture)
+
+```text
++=============================================================================================+
+|                 PRODUCERS (API Routes, Webhooks, Server Actions, Cron Jobs)                 |
++=============================================================================================+
+   |
+   |  Phase 0 (High-Contention Serializable Tx Only: Payment Webhooks & Invoice Rollup):
+   |  - Pre-render React Email HTML/Plaintext OUTSIDE tx (`prepare*Email` -> `renderEmail()`)
+   v
++---------------------------------------------------------------------------------------------+
+|                   PHASE 1: ATOMIC POSTGRES `$transaction(tx)` (`PG_POOL_MAX=1`)             |
+|                                                                                             |
+|  1. Domain State Mutation (CAS `updateMany` with expected prior status in `WHERE`)          |
+|  2. `stageBell(tx, ...)` -> `resolveRecipientBellPolicy(tx)` filters opted-out users,       |
+|     computes quiet-hours `notBefore`, and upserts `NotificationOutbox`:                     |
+|     - `status = 'PENDING'`, `nextRetryAt = notBefore ?? NOW() + 60s`                        |
+|     - Deterministic `transactionId = <workflowId>:<sha256[:32]>` + `NotificationScope`      |
+|  3. `stage*Email(tx, ...)` / `stagePreparedEmails(tx, ...)` writes `FailedEmail`:           |
+|     - Enforces `EMAIL_DELIVERY_MODE` guard + `EmailSuppression` + `NotificationPreference`  |
+|     - `status = 'PENDING'`, `nextRetryAt = NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`)         |
+|     - Row-scoped Resend key: `Idempotency-Key = <EMAIL_TYPE>/failed-email/<row.id>`         |
++---------------------------------------------------------------------------------------------+
+   |
+   +---------------------------------------------+--------------------------------------------+
+   | FAST PATH (0ms HTTP Latency Overhead)       | DURABLE FALLBACK RELAY (`cron-tick.mts`)   |
+   v                                             v
++------------------------------------------+  +-----------------------------------------------+
+| PHASE 2: `flushNotificationsAfter()`     |  | PHASE 3: Scheduled Outbox Drains              |
+| - Uses Next.js `after()` (`scheduleAfter`)|  | - `withCronLock` (`SystemJobExecution` lease) |
+|   after HTTP response is sent (or inline |  | - `drain-notification-outbox` (10m @ `:05`)   |
+|   in CLI/cron/Jest).                     |  | - `retry-failed-emails` (15m @ `:00`):        |
+| - Concurrent `Promise.allSettled`:       |  |   reconstructs RFC 8058 `List-Unsubscribe`    |
+|   `attemptTrigger` + `attemptStaged`     |  |   headers via `reconstructUnsubscribeHeaders` |
+| - Marks `SENT` on 2xx; leaves `PENDING`  |  | - Per-tick aggregated Sentry + `postOpsChat`  |
+|   or `RETRY` (backoff) on failure.       |  |   when rows enter `DEAD_LETTER`.              |
++------------------------------------------+  +-----------------------------------------------+
+                     \                                       /
+                      v                                     v
+        +----------------------------+       +-------------------------------+
+        | Novu Cloud (16 Families)   |       | Resend API (`mail.` / `news.`)|
+        | -> `<Inbox />` WebSocket   |       | -> Svix Webhook (`EmailEvent`)|
+        |    (`subscriberHash` HMAC) |       |    + `EmailSuppression` sync  |
+        +----------------------------+       +-------------------------------+
+```
+
 ### Channel Parity Across Lifecycle Flows
 
 Every multi-channel user lifecycle event maintains full channel parity across `lib/email/` and `lib/novu/`:
 
-| Domain                 | Events                                                                                                | Email Path (`lib/email/`)                                                 | In-App Bell Path (`lib/novu/`)                                           |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| **Auth & Security**    | Signup welcome, verification OTP, password reset/changed, 2FA/passkey changes, SSO provider lifecycle | Direct via `deliver()` (`senders/security.ts`, `senders/sso.ts`)          | N/A (Auth-only / pre-session notices)                                    |
-| **Bookings & Trials**  | Booked, cancelled, rescheduled, partially scheduled, booking requests, trial scheduled, reminders     | `senders/booking.ts` (`stageAppointmentBookedEmail`, etc.)                | `notifyAppointment*`, `notifyTrial*`, `notifyBookingRequest*`            |
-| **Payments & Payouts** | Payment link, payment success/failed, refund processed/failed, consultant payout status, disputes     | `lib/payments/webhooks/staged-emails.ts`, `senders/money.ts`              | `notifyPayment*`, `notifyRefund*`, `notifyPayout*`, `notifyDispute*`     |
-| **Organizations**      | Invitations, welcome, role changed/removed, billing receipts, overdue invoices, wallet low, overages  | `senders/onboarding.ts`, `senders/money.ts` (`ORG_BILLING_RECEIPT`, etc.) | `lib/novu/org-workflows.ts` (all 17 helpers stamp `NotificationScope`)   |
-| **Support & Trust**    | Ticket received/replied/updated, review received, moderation outcomes, account suspension/ban         | `senders/people.ts` (`SUPPORT_TICKET_*`, `ACCOUNT_SUSPENDED`/`BANNED`)    | `notifySupportTicket*`, `notifyReview*`, `notifyAccountSuspended/Banned` |
+| Domain                 | Events                                                                                               | Email Path (`lib/email/`)                                                 | In-App Bell Path (`lib/novu/`)                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **Auth & Security**    | Signup welcome, verification OTP, password reset/changed, 2FA/passkey/backup-code changes            | Direct via `deliver()` (`senders/security.ts`, `account-lifecycle.ts`)    | Novu (`account` family — `ACCOUNT_SECURITY_NOTICE`)                      |
+| **Enterprise SSO**     | SSO provider submitted, approved, rejected, revoked, or deleted                                      | `senders/sso.ts` (staged `SsoProviderEmail`)                              | `notifyOrgSso*` (`org_security` / `org-membership` family)               |
+| **Bookings & Trials**  | Booked, cancelled, rescheduled, partially scheduled, booking requests, trial scheduled, reminders    | `senders/booking.ts` (`stageAppointmentBookedEmail`, etc.)                | `notifyAppointment*`, `notifyTrial*`, `notifyBookingRequest*`            |
+| **Payments & Payouts** | Payment link, payment success/failed, refund processed/failed, consultant payout status, disputes    | `lib/payments/webhooks/staged-emails.ts`, `senders/money.ts`              | `notifyPayment*`, `notifyRefund*`, `notifyPayout*`, `notifyDispute*`     |
+| **Organizations**      | Created, invitations, welcome, role changed/removed, expert removed, billing, dunning, wallet, seats | `senders/onboarding.ts`, `senders/money.ts` (`ORG_BILLING_RECEIPT`, etc.) | `lib/novu/org-workflows.ts` (all 24 helpers stamp `NotificationScope`)   |
+| **Support & Trust**    | Ticket received/replied/updated, review received, moderation outcomes, account suspension/ban        | `senders/people.ts` (`SUPPORT_TICKET_*`, `ACCOUNT_SUSPENDED`/`BANNED`)    | `notifySupportTicket*`, `notifyReview*`, `notifyAccountSuspended/Banned` |
 
 ---
 
@@ -67,8 +114,9 @@ Every multi-channel user lifecycle event maintains full channel parity across `l
 
 To guarantee atomicity with domain writes while strictly respecting `PG_POOL_MAX=1` connection budgets, multi-channel producers execute in three phases:
 
-1. **Phase 0 — Pre-Render Outside `$transaction`**:
-   - Callers invoke `prepareRecipientEmails` / `prepareSpecEmails` (`lib/email/send-to-recipients.ts`) before entering `prisma.$transaction`. React Email rendering (`render(element)` + `toPlainText(html)` in `lib/email/render.ts`) runs strictly in memory so database locks are never held during template rendering.
+1. **Phase 0 — Pre-Render Outside `Serializable` `$transaction`**:
+   - High-contention `Serializable` money and billing transactions (`handlePaymentSuccess`, `handlePaymentFailure`, `invoice-rollup`) pre-render React Email payloads (`render(element)` + `toPlainText(html)` in `lib/email/render.ts`) via `prepare*` helpers (`prepareRecipientEmails` / `prepareSpecEmails` in `lib/email/send-to-recipients.ts`) before opening `prisma.$transaction`, then call `stagePreparedEmails(tx, ...)` inside `tx` so database locks are never held during CPU-bound rendering.
+   - Standard low-contention interactive routes stage directly inside `tx` via `stage*Email(tx, ...)` + `flushNotificationsAfter`, while bulk loops (`assignments`, `session-outcome-sweep`) stage and render after commit so per-item transactions stay short.
 2. **Phase 1 — Atomic Outbox Staging Inside `$transaction(tx)`**:
    - **Emails**: `stage()` / `stagePreparedEmails(tx, prepared)` (`lib/email/deliver.ts`) evaluates `EMAIL_DELIVERY_MODE` and `EmailSuppression` on `tx`, writes `FailedEmail` with `status: "PENDING"` and `nextRetryAt: new Date(Date.now() + 60_000)`, and generates a row-scoped `Idempotency-Key: <EMAIL_TYPE>/failed-email/<row.id>`.
    - **In-App Bells**: `stageBell(tx, args)` (`lib/novu/stage-bell.ts`) queries `tx.user.findMany` via `resolveRecipientBellPolicy`, filters out recipients who opted out (`EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, or muted category column), computes quiet-hours `notBefore`, and upserts `NotificationOutbox` with `status: "PENDING"` and `nextRetryAt: notBefore ?? NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`). If every recipient opted out, `stageBell` returns `null` without writing an outbox row.
@@ -95,6 +143,40 @@ sequenceDiagram
     Route->>Flush: flushNotificationsAfter({ bells, emails }, op)
     Flush->>Providers: Concurrent Promise.all(attemptTrigger + attemptStaged)
     Providers-->>Flush: Settle SENT / leave PENDING for relay on timeout
+```
+
+### Low-Level Design: 3-Phase Execution & Lease Timeline (ASCII)
+
+```text
+t = 0ms      [Phase 0: Outside Tx]  prepareRecipientEmails() renders React Email SSR HTML + text in memory
+t = 15ms     [Phase 1: Inside Tx]   BEGIN $transaction(tx)
+t = 20ms                            CAS domain write (e.g., Payment.updateMany WHERE status = PENDING)
+t = 28ms                            stageBell(tx) -> upsert NotificationOutbox (nextRetryAt = t + 60,000ms)
+t = 35ms                            stagePreparedEmails(tx) -> insert FailedEmail (nextRetryAt = t + 60,000ms)
+t = 40ms                            COMMIT $transaction(tx)
+t = 41ms     [HTTP Response Sent]   scheduleAfter() registers post-response callback; caller receives 200 OK
+t = 42ms     [Phase 2: Fast-Path]   Promise.allSettled([attemptTrigger(), attemptStaged()])
+t = 180ms                           2xx from Novu & Resend -> rows transition PENDING -> SENT (sentAt = now)
+             ...
+t > 60,000ms [Phase 3: Cron Relay]  If Phase 2 timed out or container froze before t = 180ms, inline lease
+                                    expires (nextRetryAt <= now) and cron-tick.mts claims & retries the row.
+```
+
+### Outbox Row State Machine (`NotificationOutbox`, `FailedEmail` & `FailedEmailBatch`)
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: Staged in $transaction(tx)<br/>(nextRetryAt = notBefore ?? now + 60s)
+    PENDING --> SENT: Fast-path flushNotificationsAfter()<br/>succeeds within 60s lease
+    PENDING --> SENT: Cron relay drain succeeds<br/>(after 60s lease or quiet-hours notBefore)
+    PENDING --> RETRY: Transient 429 / 5xx / timeout<br/>(attempts < 5, exponential backoff)
+    RETRY --> SENT: Subsequent cron relay tick succeeds
+    RETRY --> RETRY: Transient error (attempts < 5)
+    PENDING --> DEAD_LETTER: Terminal 4xx error or held:pre-launch
+    RETRY --> DEAD_LETTER: Exhausted (attempts >= 5) or terminal 4xx<br/>(1 aggregated Sentry + postOpsChat alert/tick)
+    SENT --> SCRUBBED: 7-day retention sweep<br/>(htmlBody/textBody/payload cleared)
+    SCRUBBED --> [*]: 30-day retention prune (sentAt < now - 30d)
+    DEAD_LETTER --> [*]: 90-day retention prune
 ```
 
 ---
@@ -174,6 +256,36 @@ Both `resolveRecipientBellPolicy` (for in-app bells) and `loadEmailRecipients` (
   - `NEITHER`: Suppresses both channels.
 - **Category Columns (`NotificationPreference`)**: `appointmentReminders` (`appointments`), `paymentNotifications` (`payments`), `subscriptionAlerts` (`subscriptions`), `trialNotifications` (`trials`), `supportUpdates` (`support`), `feedbackAlerts` (`feedback`), `orgBillingAlerts` (`orgBilling`), `orgMembershipAlerts` (`orgMembership`), and `orgProgramAlerts` (`orgProgram`).
 
+### Low-Level Policy, Routing & Delivery Guard Flowchart
+
+```mermaid
+flowchart TD
+    Start["Domain Event Triggered<br/>(User IDs + Payload + Category)"] --> Split{"Channel Path"}
+
+    Split -->|"In-App Bell (lib/novu/)"| BellPolicy["resolveRecipientBellPolicy(workflowId, userIds, tx)"]
+    BellPolicy --> CheckModeBell{"routingMode in<br/>EMAIL_ONLY | NEITHER?"}
+    CheckModeBell -->|"Yes"| DropBell["Drop Recipient"]
+    CheckModeBell -->|"No"| CheckMasterBell{"allNotifications && inAppEnabled<br/>&& categoryColumn !== false?"}
+    CheckMasterBell -->|"No (and not mandatory)"| DropBell
+    CheckMasterBell -->|"Yes"| QuietHours{"Quiet Hours Active?"}
+    QuietHours -->|"Yes"| StageDeferred["Upsert NotificationOutbox<br/>(notBefore = quietEnd, nextRetryAt = quietEnd)"]
+    QuietHours -->|"No"| StageImmediate["Upsert NotificationOutbox<br/>(nextRetryAt = now + 60s)"]
+
+    Split -->|"Email (lib/email/)"| EmailPolicy["loadEmailRecipients(userIds, category, db)"]
+    EmailPolicy --> CheckModeEmail{"routingMode in<br/>BELL_ONLY | NEITHER?"}
+    CheckModeEmail -->|"Yes (and category !== null)"| DropEmail["Drop Recipient"]
+    CheckModeEmail -->|"No"| CheckPrefEmail{"allNotifications && emailEnabled<br/>&& categoryColumn !== false?"}
+    CheckPrefEmail -->|"No (and category !== null)"| DropEmail
+    CheckPrefEmail -->|"Yes"| CheckSupp{"EmailSuppression<br/>or Guard Blocked?"}
+    CheckSupp -->|"Suppressed"| SkipSend["Skip Send (suppressed: true)"]
+    CheckSupp -->|"Disallowed in Allowlist Mode"| HoldRow["Insert FailedEmail<br/>(DEAD_LETTER: held:pre-launch)"]
+    CheckSupp -->|"Allowed"| StageEmail["Insert FailedEmail<br/>(PENDING, nextRetryAt = now + 60s,<br/>key = <TYPE>/failed-email/<row.id>)"]
+
+    StageDeferred --> Flush["flushNotificationsAfter({ bells, emails })"]
+    StageImmediate --> Flush
+    StageEmail --> Flush
+```
+
 ---
 
 ## 5. Scheduled Relays, Sidecar Indexes & Observability
@@ -204,7 +316,38 @@ To protect the 5,000/month Sentry error quota:
 
 ## Deprecated & Superseded Approaches
 
-- **Post-Commit Fire-and-Forget Notifications & In-Transaction React SSR**: Previously, routes rendered React Email inside `Serializable` transactions or fired un-awaited Novu calls post-commit that dropped silently on container freeze; superseded by `prepareRecipientEmails` pre-rendering outside `tx`, `stage()` + `stageBell(tx, ...)` inside `tx`, and `flushNotificationsAfter` concurrent post-response settlement.
-- **Immediate `nextRetryAt: NOW()` & Content-Hashed Resend Keys (`to + subject + html`)**: Previously allowed cron sweeps to race inline sends and caused Resend's 24-hour key deduplication to drop repeat identical transactional emails; superseded by 60-second inline leases (`nextRetryAt = now + 60s`) and `<EMAIL_TYPE>/failed-email/<row.id>` keys.
-- **Stripped `List-Unsubscribe` Retry Headers & Mutating `GET /api/waitlist/unsubscribe`**: Previously dropped RFC 8058 headers on retried rows and unsubscribed waitlist readers on `GET`; superseded by stateless `reconstructUnsubscribeHeaders(row)` and confirmation-only `GET /api/waitlist/unsubscribe`.
-- **Fail-Open `buildSubscriberCustomData` & Non-Idempotent Subscriber PATCH**: Previously caught DB errors during preference sync (reverting opted-out users to `masterEnabled: true`) and 404ed on unsynced users; superseded by fail-closed error propagation and idempotent `novu.subscribers.create(...)`.
+```text
++=======================================================================================+
+|                LEGACY ASYMMETRIC DUAL-PATH HLD (Pre-Outbox Unification)               |
++=======================================================================================+
+  [API Route / Webhook / Cron]
+     |
+     +---> PATH A: In-App Bell (`lib/novu/`)
+     |       - Some routes staged `NotificationOutbox`; `handlePaymentSuccess` called
+     |         `notify*` post-commit outside `tx` (lost on container freeze).
+     |       - `stageBell(tx)` bypassed `NotificationPreference` & `notificationRoutingMode`.
+     |       - `<Inbox />` connected without `subscriberHash` HMAC verification.
+     |
+     +---> PATH B: Email (`lib/email/` -> Resend)
+             - React SSR ran inside `Serializable` `tx` or blocked routes for 5-23s
+               while holding Redis `lockConsulteeBooking` / `lockSlotBooking` mutexes.
+             - `FailedEmail` stamped immediate `nextRetryAt: NOW()` (cron race) + hashed
+               `to+subject+html` (24h Resend idempotency cache dropped repeat notices).
+             - `retry-failed-emails` dropped RFC 8058 `List-Unsubscribe` headers on retry,
+               while `GET /api/waitlist/unsubscribe` mutated DB state on bot prefetch.
+```
+
+```mermaid
+flowchart LR
+    subgraph "Legacy Asymmetric Producer Path (Superseded)"
+        P["API Route / Webhook"] -->|"In-Tx or Floating .catch()"| B["Novu Bell Path<br/>(stageBell bypassed prefs;<br/>no subscriberHash HMAC)"]
+        P -->|"Inline Blocking await deliver()<br/>inside Tx / Redis Lock"| E["Resend Email Path<br/>(nextRetryAt = NOW() race;<br/>24h body-hash collision;<br/>dropped RFC 8058 retry headers)"]
+    end
+```
+
+- **Removed Accidental Operational Asymmetries**:
+  - **Post-Commit Fire-and-Forget vs. In-Tx SSR**: Replaced mixed staging with `prepareRecipientEmails` outside `tx`, atomic `stage()` + policy-aware `stageBell(tx, ...)` (`60s` inline lease) inside `tx`, and `flushNotificationsAfter` concurrent settlement.
+  - **24h Body-Hash Key Collisions & Stripped Retry Headers**: Replaced payload hashes with `<EMAIL_TYPE>/failed-email/<row.id>` keys, stateless `reconstructUnsubscribeHeaders(row)`, and confirmation-only `GET /api/waitlist/unsubscribe`.
+  - **Fail-Open Subscriber Sync**: Replaced catch-all defaults (`masterEnabled: true`) and 404-prone PATCH calls with fail-closed DB propagation and idempotent `novu.subscribers.create(...)`.
+- **Intentionally Retained Vendor-Plane Split (Novu In-App vs. Direct Resend Email)**:
+  - Outbound emails are **not** routed through Novu's email step so transactional notices never depend on a second vendor's multi-tenant queue availability, bypass Novu's 20-workflow plan cap across 45+ React Email templates, and preserve native `resend.batch.send` throughput and `EmailEvent` Svix telemetry.
