@@ -18,12 +18,8 @@ const BARE_INCLUDE = [
   /consultantProfile\s*:\s*\{\s*include\s*:/g,
 ];
 
-// Bare sites still allowed, by file. Both files are being rewritten elsewhere;
-// delete an entry when its file no longer has any.
-const KNOWN_BARE_SITES: Record<string, number> = {
-  "app/api/appointments/[appointmentId]/documents/route.ts": 4,
-  "app/api/dashboard/consultee/[consulteeId]/resources/route.ts": 7,
-};
+// Bare sites still allowed, as file path to count. None are.
+const KNOWN_BARE_SITES: Record<string, number> = {};
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
