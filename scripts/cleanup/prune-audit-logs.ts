@@ -103,52 +103,47 @@ async function pruneAuditLogsUnlocked(): Promise<AuditPruneResult> {
     _count: { _all: true },
   });
 
-  result.scanned = candidates.reduce(
-    (sum, c) => sum + (c._count._all ?? 0),
-    0,
-  );
+  result.scanned = candidates.reduce((sum, c) => sum + (c._count._all ?? 0), 0);
 
   for (const { organizationId } of candidates) {
     try {
-      const { deleted7y, deleted2y } = await prisma.$transaction(
-        async (tx) => {
-          const d7 = await tx.orgAuditLog.deleteMany({
-            where: {
+      const { deleted7y, deleted2y } = await prisma.$transaction(async (tx) => {
+        const d7 = await tx.orgAuditLog.deleteMany({
+          where: {
+            organizationId,
+            category: { in: KEEP_7Y_CATEGORIES },
+            createdAt: { lt: cutoff7y },
+          },
+        });
+        const d2 = await tx.orgAuditLog.deleteMany({
+          where: {
+            organizationId,
+            category: { in: KEEP_2Y_CATEGORIES },
+            createdAt: { lt: cutoff2y },
+          },
+        });
+        // Summary row outlives both deletes (it's SYSTEM, 2y window)
+        // — when the next prune fires, this row stays as long as
+        // it's within the 2y window, then gets pruned too.
+        if (d7.count + d2.count > 0) {
+          await tx.orgAuditLog.create({
+            data: {
               organizationId,
-              category: { in: KEEP_7Y_CATEGORIES },
-              createdAt: { lt: cutoff7y },
-            },
-          });
-          const d2 = await tx.orgAuditLog.deleteMany({
-            where: {
-              organizationId,
-              category: { in: KEEP_2Y_CATEGORIES },
-              createdAt: { lt: cutoff2y },
-            },
-          });
-          // Summary row outlives both deletes (it's SYSTEM, 2y window)
-          // — when the next prune fires, this row stays as long as
-          // it's within the 2y window, then gets pruned too.
-          if (d7.count + d2.count > 0) {
-            await tx.orgAuditLog.create({
-              data: {
-                organizationId,
-                category: "SYSTEM",
-                action: AUDIT_ACTIONS.SYSTEM.AUDIT_PRUNED,
-                description: `Pruned ${d7.count + d2.count} audit rows past retention`,
-                details: {
-                  deleted7y: d7.count,
-                  deleted2y: d2.count,
-                  cutoff7y: cutoff7y.toISOString(),
-                  cutoff2y: cutoff2y.toISOString(),
-                },
+              category: "SYSTEM",
+              action: AUDIT_ACTIONS.SYSTEM.AUDIT_PRUNED,
+              description: `Pruned ${d7.count + d2.count} audit rows past retention`,
+              details: {
+                deleted7y: d7.count,
+                deleted2y: d2.count,
+                cutoff7y: cutoff7y.toISOString(),
+                cutoff2y: cutoff2y.toISOString(),
               },
-            });
-            result.perOrgSummaries += 1;
-          }
-          return { deleted7y: d7.count, deleted2y: d2.count };
-        },
-      );
+            },
+          });
+          result.perOrgSummaries += 1;
+        }
+        return { deleted7y: d7.count, deleted2y: d2.count };
+      });
       result.deleted7y += deleted7y;
       result.deleted2y += deleted2y;
     } catch (err) {

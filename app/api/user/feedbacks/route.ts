@@ -2,6 +2,7 @@ import prisma from "lib/prisma";
 import { UserRole } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { notifyFeedbackReceived } from "@/lib/novu";
+import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateFeedbackSchema } from "@/schemas/feedbacks";
 import { spamLimiter, applyRateLimit } from "@/lib/rate-limit";
 
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    try {
+    await stageNowAttemptAfter("user.feedback.create", async () => {
       const adminUsers = await prisma.user.findMany({
         where: { role: { in: ["STAFF", "ADMIN"] } },
         select: { id: true, role: true },
@@ -93,21 +94,24 @@ export async function POST(req: NextRequest) {
         category: feedback.category || undefined,
         message: feedback.description || feedback.title || "New feedback",
       };
-      await Promise.allSettled(
+      const results = await Promise.all(
         adminUsers.map((u) => {
           const queue =
             u.role === UserRole.ADMIN
               ? "/dashboard/admin/feedback"
               : "/dashboard/staff/feedback";
-          return notifyFeedbackReceived([u.id], {
-            ...feedbackPayload,
-            dashboardUrl: queue,
-          });
+          return notifyFeedbackReceived(
+            [u.id],
+            {
+              ...feedbackPayload,
+              dashboardUrl: queue,
+            },
+            { deferAttempt: true },
+          );
         }),
       );
-    } catch (notifyError) {
-      console.error("Failed to dispatch feedback notifications:", notifyError);
-    }
+      return results.flat().filter(Boolean);
+    });
 
     return NextResponse.json(feedback, { status: 201 });
   } catch (error) {

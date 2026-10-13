@@ -327,7 +327,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "payments",
     inApp: {
       subject: "Welcome bonus",
-      body: "Welcome! {{payload.bonusAmount}} in credits from {{payload.referrerName}}'s referral has been added to your account.",
+      body: "Welcome! Your first-booking referral discount (up to {{payload.bonusAmount}}) from {{payload.referrerName}}'s referral is ready to use at checkout.",
       redirect: "dashboardUrl",
     },
   },
@@ -602,6 +602,19 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.ACCOUNT_SECURITY_NOTICE,
+    name: "Account security notice",
+    description:
+      "Mandatory account security notices for signup welcome, password changes, linked accounts, two-factor updates and account reinstatement.",
+    category: null,
+    inApp: {
+      subject:
+        "{% case payload.kind %}{% when 'WELCOME' %}Welcome to Familiarise{% when 'PASSWORD_CHANGED' %}Password changed{% when 'ACCOUNT_LINKED' %}Account linked{% when 'TWO_FACTOR_ENABLED' %}Two-factor authentication enabled{% when 'TWO_FACTOR_DISABLED' %}Two-factor authentication turned off{% when 'PASSKEY_ADDED' %}Passkey added{% when 'PASSKEY_REMOVED' %}Passkey removed{% when 'SECURITY_UPDATE' %}Account security update{% when 'ACCOUNT_REINSTATED' %}Account reinstated{% else %}Account security update{% endcase %}",
+      body: "{% case payload.kind %}{% when 'WELCOME' %}Welcome to Familiarise! Open your dashboard to explore experts and upcoming sessions.{% when 'PASSWORD_CHANGED' %}Your account password was changed. If this was not you, reset your password right away.{% when 'ACCOUNT_LINKED' %}Your account is now linked with {{payload.provider | default: 'a sign-in provider'}}.{% when 'TWO_FACTOR_ENABLED' %}Two-factor authentication is now enabled on your account.{% when 'TWO_FACTOR_DISABLED' %}Two-factor authentication was turned off on your account.{% when 'PASSKEY_ADDED' %}A passkey was added to your account.{% when 'PASSKEY_REMOVED' %}A passkey was removed from your account.{% when 'SECURITY_UPDATE' %}{{payload.message | default: 'Your account security settings were updated.'}}{% when 'ACCOUNT_REINSTATED' %}Your account access has been restored{% if payload.reason %}: {{payload.reason}}{% endif %}.{% else %}Your account security settings were updated.{% endcase %}",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.CONTENT_REMOVED_NOTICE,
     name: "Content removed",
     description: "The author, when moderation removes their content.",
@@ -609,12 +622,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Your content was removed",
       body: "Your content was removed because it did not align with our community guidelines{% if payload.reason %}: {{payload.reason}}{% endif %}.",
+      redirect: "supportUrl",
     },
   },
   {
     workflowId: W.ACCOUNT_SUSPENDED,
     name: "Account suspended",
-    description: "The suspended user (#693, #1604).",
+    description: "The suspended user.",
     category: null,
     inApp: {
       subject: "Account suspended",
@@ -625,7 +639,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.ACCOUNT_BANNED,
     name: "Account closed",
-    description: "The banned user (#693, #1604).",
+    description: "The banned user.",
     category: null,
     inApp: {
       subject: "Account closed",
@@ -675,6 +689,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
       subject: "Back online",
       body: "Maintenance is finished — everything is back to normal.",
       redirect: "statusUrl",
+    },
+  },
+  {
+    workflowId: W.COMPLIANCE_DEADLINE_ALERT,
+    name: "Compliance deadline alert",
+    description:
+      "Platform admins and operators ahead of a statutory compliance filing or action.",
+    category: null,
+    inApp: {
+      subject: "Compliance deadline approaching",
+      body: "{{payload.title | default: 'A statutory compliance obligation'}} is due{% if payload.dueDate %} on {{payload.dueDate}}{% endif %}{% if payload.orgName %} for {{payload.orgName}}{% endif %}.",
+      redirect: "dashboardUrl",
     },
   },
 
@@ -772,7 +798,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.COLLABORATOR_DECLINED,
     name: "Collaborator declined",
-    description: "The plan's owner, when an invitee declines (#1580 C-P1-5).",
+    description: "The plan's owner, when an invitee declines.",
     category: "appointments",
     inApp: {
       subject: "Invite declined",
@@ -783,12 +809,23 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.COLLABORATOR_WITHDRAWN,
     name: "Collaborator withdrew",
-    description:
-      "The plan's owner, when a collaborator withdraws (#1580 C-P1-7).",
+    description: "The plan's owner, when a collaborator withdraws.",
     category: "appointments",
     inApp: {
       subject: "Collaborator withdrew",
       body: "{{payload.collaboratorName}} withdrew from {{payload.planTitle}} ({{payload.planType | downcase}}).",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.COLLABORATOR_INVITE_EXPIRED,
+    name: "Collaborator invite expired",
+    description:
+      "Both plan owner and invitee, when a collaboration invite expires.",
+    category: "appointments",
+    inApp: {
+      subject: "Collaboration invite expired",
+      body: "The collaboration invitation for {{payload.planTitle}}{% if payload.collaboratorName %} ({{payload.collaboratorName}}){% endif %} expired without a response.",
       redirect: "dashboardUrl",
     },
   },

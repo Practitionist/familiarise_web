@@ -68,7 +68,8 @@ export const NOVU_WORKFLOWS = {
   GENERAL_ANNOUNCEMENT: "general-announcement",
   NEW_CONSULTANT_APPLICATION: "new-consultant-application",
 
-  // Moderation
+  // Moderation & Account Security
+  ACCOUNT_SECURITY_NOTICE: "account-security-notice",
   MODERATION_WARNING: "moderation-warning",
   CONTENT_REMOVED_NOTICE: "content-removed-notice",
   ACCOUNT_SUSPENDED: "account-suspended",
@@ -99,15 +100,20 @@ export const NOVU_WORKFLOWS = {
   COLLABORATOR_REMOVED: "collaborator-removed",
   COLLABORATOR_WITHDRAWN: "collaborator-withdrawn",
   COLLABORATOR_DECLINED: "collaborator-declined",
+  COLLABORATOR_INVITE_EXPIRED: "collaborator-invite-expired",
 
-  // Maintenance
+  // Maintenance & Platform Compliance
   MAINTENANCE_SCHEDULED: "maintenance-scheduled",
   MAINTENANCE_STARTED: "maintenance-started",
   MAINTENANCE_ENDED: "maintenance-ended",
+  COMPLIANCE_DEADLINE_ALERT: "compliance-deadline-alert",
 
   // Enterprise (org-scoped events)
+  ORG_CREATED: "org-created",
   ORG_INVITE_SENT: "org-invite-sent",
   ORG_INVITE_ACCEPTED: "org-invite-accepted",
+  ORG_ROLE_CHANGED: "org-role-changed",
+  ORG_MEMBER_REMOVED: "org-member-removed",
   ORG_INVOICE_ISSUED: "org-invoice-issued",
   ORG_INVOICE_PAID: "org-invoice-paid",
   ORG_INVOICE_OVERDUE: "org-invoice-overdue",
@@ -122,6 +128,11 @@ export const NOVU_WORKFLOWS = {
   ORG_PROGRAM_EXHAUSTED: "org-program-exhausted",
   ORG_PROGRAM_CAP_NEAR: "org-program-cap-near",
   ORG_PROGRAM_OVERAGE_DUE: "org-program-overage-due",
+  ORG_SEAT_ASSIGNED: "org-seat-assigned",
+  ORG_SEAT_REVOKED: "org-seat-revoked",
+  ORG_CONTRACT_STATUS_CHANGED: "org-contract-status-changed",
+  ORG_SSO_PROVIDER_SUBMITTED: "org-sso-provider-submitted",
+  ORG_SSO_PROVIDER_DECIDED: "org-sso-provider-decided",
   ORG_SSO_PROVIDER_DELETED: "org-sso-provider-deleted",
   ORG_EXPERT_REMOVED: "org-expert-removed",
 } as const;
@@ -638,6 +649,7 @@ export type OrgInvoiceOverduePayload = OrgNotificationScope & {
   invoiceNumber: string;
   orgName: string;
   total: string;
+  amount?: string;
   totalPaise: number;
   currency: string;
   daysLate: number;
@@ -645,7 +657,10 @@ export type OrgInvoiceOverduePayload = OrgNotificationScope & {
   payUrl: string;
 };
 
-export type OrgInvoiceOverdueInput = Omit<OrgInvoiceOverduePayload, "total">;
+export type OrgInvoiceOverdueInput = Omit<
+  OrgInvoiceOverduePayload,
+  "total" | "amount"
+>;
 
 export type OrgMemberOverageTimedOutPayload = OrgNotificationScope & {
   orgName: string;
@@ -796,5 +811,130 @@ export type OrgExpertRemovedPayload = OrgNotificationScope & {
   orgSlug: string;
   removedByName: string;
   reason: string | null;
+  dashboardUrl: string;
+};
+
+export type AccountSecurityNoticeKind =
+  | "WELCOME"
+  | "PASSWORD_CHANGED"
+  | "ACCOUNT_LINKED"
+  | "TWO_FACTOR_ENABLED"
+  | "TWO_FACTOR_DISABLED"
+  | "PASSKEY_ADDED"
+  | "PASSKEY_REMOVED"
+  | "SECURITY_UPDATE"
+  | "ACCOUNT_REINSTATED";
+
+export type AccountSecurityNoticePayload = {
+  kind: AccountSecurityNoticeKind;
+  provider?: string;
+  reason?: string;
+  message?: string;
+  dashboardUrl: string;
+};
+
+export type CollaboratorInviteExpiredPayload = {
+  planTitle: string;
+  planType?: string;
+  collaboratorName?: string;
+  role?: string;
+  dashboardUrl: string;
+};
+
+export type ComplianceAlertPayload = OrgNotificationScope & {
+  title?: string;
+  obligationType?: string;
+  dueDate?: string;
+  dueDateIso?: string;
+  daysRemaining?: number;
+  orgName?: string;
+  dashboardUrl: string;
+};
+
+export type ReferralBonusEarnedPayload = {
+  refereeName: string;
+  bonusAmount: string;
+  bonusAmountPaise: number;
+  currency?: string;
+  dashboardUrl: string;
+};
+
+export type ReferralBonusEarnedInput = {
+  refereeName: string;
+  bonusAmountPaise: number;
+  currency?: string;
+  dashboardUrl: string;
+};
+
+export type RefereeWelcomeBonusPayload = {
+  referrerName: string;
+  bonusAmount: string;
+  bonusAmountPaise: number;
+  currency?: string;
+  dashboardUrl: string;
+};
+
+export type RefereeWelcomeBonusInput = {
+  referrerName: string;
+  bonusAmountPaise: number;
+  currency?: string;
+  dashboardUrl: string;
+};
+
+export type OrgCreatedPayload = OrgNotificationScope & {
+  orgName: string;
+  orgSlug?: string;
+  dashboardUrl: string;
+};
+
+export type OrgRoleChangedPayload = OrgNotificationScope & {
+  orgName: string;
+  previousRole?: string;
+  newRole: string;
+  changedByName?: string;
+  dashboardUrl: string;
+};
+
+export type OrgMemberRemovedPayload = OrgNotificationScope & {
+  orgName: string;
+  removedByName?: string;
+  reason?: string | null;
+  dashboardUrl: string;
+};
+
+export type OrgSsoProviderSubmittedPayload = OrgNotificationScope & {
+  orgName: string;
+  providerId: string;
+  issuer?: string;
+  domains?: string | string[];
+  dashboardUrl: string;
+};
+
+export type OrgSsoProviderDecidedPayload = OrgNotificationScope & {
+  orgName: string;
+  providerId: string;
+  decision: "APPROVED" | "REVOKED" | "REJECTED";
+  reason?: string;
+  dashboardUrl: string;
+};
+
+export type OrgSeatAssignedPayload = OrgNotificationScope & {
+  orgName: string;
+  programName: string;
+  dashboardUrl: string;
+};
+
+export type OrgSeatRevokedPayload = OrgNotificationScope & {
+  orgName: string;
+  programName: string;
+  reason?: string | null;
+  dashboardUrl: string;
+};
+
+export type OrgContractStatusChangedPayload = OrgNotificationScope & {
+  orgName: string;
+  status: string;
+  effectiveDate?: string;
+  effectiveDateIso?: string;
   dashboardUrl: string;
 };

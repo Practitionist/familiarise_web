@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
 
     // Admin bells were staged inside the submission transaction; only the
     // vendor attempts run after the response.
-    attemptBellsAfterResponse(outcome.staged);
+    await attemptBellsAfterResponse(outcome.staged);
 
     const verification = await prisma.consultantProfileVerification.findUnique({
       where: { id: outcome.verificationId },

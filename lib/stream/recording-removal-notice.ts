@@ -1,6 +1,7 @@
 import "server-only";
 
 import prisma from "@/lib/prisma";
+import { stageDocumentAndRecordingEmail } from "@/lib/email/senders/booking";
 import { notifyRecordingRemoved } from "@/lib/novu/service";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { notificationScope } from "@/lib/novu/workflows";
@@ -41,16 +42,45 @@ export async function notifyAttendeesOfRemovedRecording(args: {
   const path = appointment.organizationId
     ? `/dashboard/organization/${appointment.organizationId}/appointments/${args.appointmentId}/recordings`
     : `/dashboard/go/auto/appointments/${args.appointmentId}/recordings`;
-  await stageNowAttemptAfter("recording-removed notice", () =>
-    notifyRecordingRemoved(
-      userIds,
-      {
-        ...notificationScope(appointment.organizationId),
-        recordingTitle: args.recordingTitle,
-        consultantName: args.removedBy,
-        dashboardUrl: `${getAppUrl()}${path}`,
-      },
-      { deferAttempt: true },
-    ),
-  );
+  const dashboardUrl = `${getAppUrl()}${path}`;
+  await stageNowAttemptAfter("recording-removed notice", async () => {
+    const [bellOutcome, emailOutcome] = await Promise.allSettled([
+      notifyRecordingRemoved(
+        userIds,
+        {
+          ...notificationScope(appointment.organizationId),
+          recordingTitle: args.recordingTitle,
+          consultantName: args.removedBy,
+          dashboardUrl,
+        },
+        { deferAttempt: true },
+      ),
+      stageDocumentAndRecordingEmail({
+        entityId: `${args.appointmentId}:${args.recordingTitle}`,
+        userIds,
+        kind: "RECORDING_REMOVED",
+        actorName: args.removedBy,
+        fileName: args.recordingTitle,
+        dashboardUrl,
+      }),
+    ]);
+    if (
+      bellOutcome.status === "rejected" &&
+      emailOutcome.status === "rejected"
+    ) {
+      throw bellOutcome.reason;
+    }
+    return {
+      bells:
+        bellOutcome.status === "fulfilled"
+          ? bellOutcome.value.map((r) => r.staged)
+          : [],
+      emails: [
+        {
+          list: emailOutcome.status === "fulfilled" ? emailOutcome.value : [],
+          emailType: "RECORDING_REMOVED",
+        },
+      ],
+    };
+  });
 }

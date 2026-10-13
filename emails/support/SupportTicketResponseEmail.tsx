@@ -8,76 +8,146 @@ import {
   paragraph,
 } from "@/emails/components/styles";
 
+export type SupportTicketEmailKind =
+  "RESPONSE" | "STATUS_UPDATED" | "FEEDBACK_UPDATED";
+
 export interface SupportTicketResponseEmailProps {
+  kind?: SupportTicketEmailKind;
   recipientName: string;
   /** The ticket's human reference, e.g. "ST-2026-0142"; absent on a legacy row. */
   reference?: string;
   title: string;
-  respondedBy: string;
+  respondedBy?: string;
   /** The reply as typed; line breaks are preserved. */
-  replyText: string;
+  replyText?: string;
+  statusLabel?: string;
+  nextStepText?: string;
   ticketUrl: string;
   unsubscribeUrl?: string | null;
 }
 
-// The in-app bell truncates the reply at 140 characters; the preview line
-// mirrors it so the inbox and the bell tell the same story.
 const PREVIEW_LENGTH = 140;
 
 export function supportTicketResponseSubject({
-  respondedBy,
+  kind = "RESPONSE",
+  respondedBy = "Support",
   reference,
-}: Pick<SupportTicketResponseEmailProps, "respondedBy" | "reference">): string {
+  statusLabel,
+}: Pick<
+  SupportTicketResponseEmailProps,
+  "kind" | "respondedBy" | "reference" | "statusLabel"
+>): string {
+  if (kind === "FEEDBACK_UPDATED") {
+    return statusLabel
+      ? `Your feedback is now ${statusLabel}`
+      : "Update on your product feedback";
+  }
+  if (kind === "STATUS_UPDATED") {
+    return reference
+      ? `Your ticket ${reference} is now ${statusLabel ?? "updated"}`
+      : `Your support ticket is now ${statusLabel ?? "updated"}`;
+  }
   return reference
     ? `${respondedBy} replied to your ticket ${reference}`
     : `${respondedBy} replied to your ticket`;
 }
 
-export default function SupportTicketResponseEmail({
-  recipientName,
-  reference,
-  title,
-  respondedBy,
-  replyText,
-  ticketUrl,
-  unsubscribeUrl,
-}: SupportTicketResponseEmailProps) {
-  const subject = supportTicketResponseSubject({ respondedBy, reference });
-  const preview =
-    replyText.length > PREVIEW_LENGTH
-      ? `${replyText.slice(0, PREVIEW_LENGTH)}…`
-      : replyText;
-  const lines = replyText.split(/\r?\n/);
-  return (
-    <EmailLayout preview={preview} unsubscribeUrl={unsubscribeUrl}>
-      <Text style={heading}>{subject}</Text>
-      <Text style={paragraph}>Hi {recipientName},</Text>
-      <Text style={paragraph}>
-        {respondedBy} replied on your ticket{" "}
-        {reference && (
-          <>
-            <strong>{reference}</strong>{" "}
-          </>
-        )}
-        ({title}):
-      </Text>
-      <Section style={quote}>
-        <Text style={quoteText}>
-          {lines.map((line, index) => (
-            <React.Fragment key={index}>
-              {index > 0 && <br />}
-              {line}
-            </React.Fragment>
-          ))}
-        </Text>
-      </Section>
+function renderFollowUpParagraph(
+  kind: SupportTicketEmailKind,
+  nextStepText?: string,
+): React.ReactNode {
+  if (kind === "RESPONSE") {
+    return (
       <Text style={paragraph}>
         To reply, open the ticket and write in the conversation. The support
         team sees your message as soon as it is sent.
       </Text>
+    );
+  }
+  if (nextStepText) {
+    return <Text style={paragraph}>{nextStepText}</Text>;
+  }
+  return null;
+}
+
+export default function SupportTicketResponseEmail({
+  kind = "RESPONSE",
+  recipientName,
+  reference,
+  title,
+  respondedBy = "Support",
+  replyText = "",
+  statusLabel,
+  nextStepText,
+  ticketUrl,
+  unsubscribeUrl,
+}: SupportTicketResponseEmailProps) {
+  const subject = supportTicketResponseSubject({
+    kind,
+    respondedBy,
+    reference,
+    statusLabel,
+  });
+  const previewSource = replyText || subject;
+  const preview =
+    previewSource.length > PREVIEW_LENGTH
+      ? `${previewSource.slice(0, PREVIEW_LENGTH)}…`
+      : previewSource;
+  const lines = replyText ? replyText.split(/\r?\n/) : [];
+  return (
+    <EmailLayout preview={preview} unsubscribeUrl={unsubscribeUrl}>
+      <Text style={heading}>{subject}</Text>
+      <Text style={paragraph}>Hi {recipientName},</Text>
+
+      {kind === "RESPONSE" ? (
+        <Text style={paragraph}>
+          {respondedBy} replied on your ticket{" "}
+          {reference && (
+            <>
+              <strong>{reference}</strong>{" "}
+            </>
+          )}
+          ({title}):
+        </Text>
+      ) : null}
+
+      {kind === "STATUS_UPDATED" ? (
+        <Text style={paragraph}>
+          Your support ticket{" "}
+          {reference && (
+            <>
+              <strong>{reference}</strong>{" "}
+            </>
+          )}
+          ({title}) is now <strong>{statusLabel ?? "updated"}</strong>.
+        </Text>
+      ) : null}
+
+      {kind === "FEEDBACK_UPDATED" ? (
+        <Text style={paragraph}>
+          Your product feedback ({title}) is now{" "}
+          <strong>{statusLabel ?? "updated"}</strong>.
+        </Text>
+      ) : null}
+
+      {lines.length > 0 ? (
+        <Section style={quote}>
+          <Text style={quoteText}>
+            {lines.map((line, index) => (
+              <React.Fragment key={index}>
+                {index > 0 && <br />}
+                {line}
+              </React.Fragment>
+            ))}
+          </Text>
+        </Section>
+      ) : null}
+
+      {renderFollowUpParagraph(kind, nextStepText)}
+
       <Section style={buttonContainer}>
         <Button style={button} href={ticketUrl}>
-          View ticket
+          {kind === "FEEDBACK_UPDATED" ? "Open dashboard" : "View ticket"}
         </Button>
       </Section>
     </EmailLayout>

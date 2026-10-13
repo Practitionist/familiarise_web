@@ -23,52 +23,70 @@ export interface CollaboratorLifecycleEmailArgs {
   collaboratorId: string;
 }
 
-function buildLifecycleSender(event: CollaborationLifecycleEvent) {
-  return defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) => {
-    const roleLabel = collaboratorRoleLabel(args.role);
-    const planKindLabel = args.planType === "webinar" ? "Webinar" : "Class";
-    const revenueSharePct =
-      typeof args.revenueShareBps === "number"
-        ? Math.round(args.revenueShareBps) / 100
-        : undefined;
-    const dashboardUrl = absolute(goHref("expert", "collaborations"));
+function buildCollaboratorSpec(
+  event: CollaborationLifecycleEvent,
+  args: CollaboratorLifecycleEmailArgs,
+): { userIds: string[]; spec: RecipientEmailSpec } {
+  const roleLabel = collaboratorRoleLabel(args.role);
+  const planKindLabel = args.planType === "webinar" ? "Webinar" : "Class";
+  const revenueSharePct =
+    typeof args.revenueShareBps === "number"
+      ? Math.round(args.revenueShareBps) / 100
+      : undefined;
+  const dashboardUrl = absolute(goHref("expert", "collaborations"));
 
-    const spec: RecipientEmailSpec = {
-      emailType: `collaborator_${event.toLowerCase()}`,
-      category: null,
-      entityRef: `collaborator:${args.collaboratorId}:${event.toLowerCase()}`,
-      subject: () =>
-        collaborationLifecycleSubject({
-          event,
-          planTitle: args.planTitle,
-          collaboratorName: args.collaboratorName,
-          roleLabel,
-        }),
-      render: (r) =>
-        React.createElement(CollaborationLifecycleEmail, {
-          recipientName: greet(r),
-          event,
-          actorName: args.actorName,
-          collaboratorName: args.collaboratorName,
-          planTitle: args.planTitle,
-          planKindLabel,
-          roleLabel,
-          revenueSharePct,
-          dashboardUrl,
-        }),
-    };
+  const spec: RecipientEmailSpec = {
+    emailType: `collaborator_${event.toLowerCase()}`,
+    category: null,
+    entityRef: `collaborator:${args.collaboratorId}:${event.toLowerCase()}`,
+    subject: () =>
+      collaborationLifecycleSubject({
+        event,
+        planTitle: args.planTitle,
+        collaboratorName: args.collaboratorName,
+        roleLabel,
+      }),
+    render: (r) =>
+      React.createElement(CollaborationLifecycleEmail, {
+        recipientName: greet(r),
+        event,
+        actorName: args.actorName,
+        collaboratorName: args.collaboratorName,
+        planTitle: args.planTitle,
+        planKindLabel,
+        roleLabel,
+        revenueSharePct,
+        dashboardUrl,
+      }),
+  };
 
-    return {
-      userIds: [args.recipientUserId],
-      spec,
-    };
-  });
+  return {
+    userIds: [args.recipientUserId],
+    spec,
+  };
 }
 
-export const sendCollaboratorInvitedEmail = buildLifecycleSender("INVITED");
-export const sendCollaboratorAcceptedEmail = buildLifecycleSender("ACCEPTED");
-export const sendCollaboratorDeclinedEmail = buildLifecycleSender("DECLINED");
-export const sendCollaboratorRemovedEmail = buildLifecycleSender("REMOVED");
-export const sendCollaboratorWithdrawnEmail = buildLifecycleSender("WITHDRAWN");
+export const sendCollaboratorInvitedEmail =
+  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
+    buildCollaboratorSpec("INVITED", args),
+  );
+export const sendCollaboratorAcceptedEmail =
+  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
+    buildCollaboratorSpec("ACCEPTED", args),
+  );
+export const sendCollaboratorDeclinedEmail =
+  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
+    buildCollaboratorSpec("DECLINED", args),
+  );
+export const sendCollaboratorRemovedEmail =
+  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
+    buildCollaboratorSpec("REMOVED", args),
+  );
+export const sendCollaboratorWithdrawnEmail =
+  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
+    buildCollaboratorSpec("WITHDRAWN", args),
+  );
 export const sendCollaboratorInviteExpiredEmail =
-  buildLifecycleSender("EXPIRED");
+  defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
+    buildCollaboratorSpec("EXPIRED", args),
+  );

@@ -19,6 +19,7 @@ const mockConsultantReview = {
 };
 const mockUser = {
   findUnique: jest.fn().mockResolvedValue({ id: "user-1" }),
+  findMany: jest.fn().mockResolvedValue([]),
 };
 const mockMember = {
   findFirst: jest.fn(),

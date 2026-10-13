@@ -5,6 +5,7 @@
  * dependency-light); this module carries the heavier graph (computeOverage +
  * the Novu member-due notification).
  */
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import {
@@ -937,31 +938,34 @@ async function recordWalletCollectedOrgOverage(
  * that is already paid for must not fail because a notification did not go out.
  * #1653 — the email twin is awaited inside the same chain, after the bell.
  */
-export function notifyOverageDueAfterCommit(
+export async function notifyOverageDueAfterCommit(
   pending: PendingOverageNotification,
-): void {
-  void prisma.programAssignment
-    .findUnique({
-      where: { id: pending.programAssignmentId },
-      select: {
-        program: {
-          select: {
-            name: true,
-            contract: {
-              select: { organization: { select: { name: true } } },
+): Promise<void> {
+  await scheduleAfter(async () => {
+    try {
+      const ctx = await prisma.programAssignment.findUnique({
+        where: { id: pending.programAssignmentId },
+        select: {
+          program: {
+            select: {
+              name: true,
+              contract: {
+                select: {
+                  organization: { select: { id: true, name: true } },
+                },
+              },
             },
           },
         },
-      },
-    })
-    .then(async (ctx) => {
+      });
       if (!ctx) return;
       const orgName = ctx.program.contract.organization.name;
       await notifyOrgProgramOverageDue(pending.userId, {
+        organizationId: ctx.program.contract.organization.id,
         orgName,
         programName: ctx.program.name,
         amountPaise: pending.marginalPaise,
-        payUrl: `/dashboard/overage?charge=${pending.overageEventId}`,
+        payUrl: `${getAppUrl()}/dashboard/overage?charge=${pending.overageEventId}`,
       });
       await sendOrgOverageDueEmail({
         userId: pending.userId,
@@ -972,12 +976,12 @@ export function notifyOverageDueAfterCommit(
         currency: pending.currency,
         payUrl: `${getAppUrl()}/dashboard/overage?charge=${pending.overageEventId}`,
       });
-    })
-    .catch((notifyErr) => {
+    } catch (notifyErr) {
       console.error("[notifyOrgProgramOverageDue] failed:", notifyErr);
       reportSentryError(notifyErr, {
         subsystem: "payments",
         level: "warning",
       });
-    });
+    }
+  }, "notifyOrgProgramOverageDue");
 }

@@ -37,6 +37,9 @@ jest.mock("../../lib/prisma", () => {
     appointmentParticipant: {
       updateMany: (...a: unknown[]) => seatUpdate(...a),
     },
+    user: { findMany: jest.fn().mockResolvedValue([]) },
+    failedEmail: { create: jest.fn().mockResolvedValue({ id: "fe-1" }) },
+    emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
   };
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };

@@ -10,6 +10,7 @@ import {
   type TransactionalEffectResult,
 } from "@/lib/moderation/side-effects";
 import { isOperatorRole } from "@/lib/auth/operator-session-policy";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { reportSentryError } from "@/lib/observability/report";
 
 /**
@@ -223,6 +224,13 @@ async function runBestEffort(
 ): Promise<void> {
   try {
     const summary = await applyBestEffortEffects(input, transactional);
+    await flushNotificationsAfter(
+      {
+        bells: summary.stagedBells,
+        emails: summary.stagedEmails,
+      },
+      "admin.moderation",
+    );
     if (summary.errors?.length) {
       reportSentryError(new Error(summary.errors.join("; ")), {
         subsystem: "moderation",

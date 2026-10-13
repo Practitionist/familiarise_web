@@ -36,7 +36,11 @@ import {
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 
-import { stageNoticesForAppointmentHolds } from "./backup-interest";
+import {
+  flushBackupInterestNotices,
+  stageNoticesForAppointmentHolds,
+  type StagedBackupInterestNotices,
+} from "./backup-interest";
 import { releaseParticipant } from "./participants";
 import { declineOpenReschedules } from "./reschedule-decline";
 import {
@@ -48,11 +52,7 @@ import {
 } from "./transitions";
 
 export type AbandonKind =
-  | "consultation"
-  | "subscription"
-  | "trial"
-  | "webinar"
-  | "class";
+  "consultation" | "subscription" | "trial" | "webinar" | "class";
 
 export type AbandonResult =
   | {
@@ -115,6 +115,7 @@ type TxOutcome =
       // aborted Serializable attempt cannot leave a stale gateway cancel for
       // an order this run did not expire (the cancel-pending posture).
       gatewayCancels: GatewayCancel[];
+      holdNotices?: StagedBackupInterestNotices | null;
     };
 
 /**
@@ -215,7 +216,10 @@ async function abandonRequest(
   );
   // Anyone waiting on these times hears they are free (#1778), read before the
   // release below stops them counting as held.
-  await stageNoticesForAppointmentHolds(tx, target.appointmentId);
+  const holdNotices = await stageNoticesForAppointmentHolds(
+    tx,
+    target.appointmentId,
+  );
   const slotsReleased = await transitionOccurrenceCompletion(tx, {
     ...audit,
     where: { appointmentId: target.appointmentId, deletedAt: null },
@@ -232,6 +236,7 @@ async function abandonRequest(
     paymentsExpired: expired,
     slotsReleased,
     gatewayCancels,
+    holdNotices,
   };
 }
 
@@ -425,6 +430,7 @@ export async function abandonBooking(args: {
       }),
   );
   if (!outcome.ok) return outcome;
+  await flushBackupInterestNotices(outcome.holdNotices);
 
   // Best-effort and post-commit, as in cancel-pending: a gateway that refuses
   // to cancel never un-abandons the booking. A capture that still lands is

@@ -22,6 +22,16 @@ import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import type { StagedTrigger } from "@/lib/novu";
+import { notifyOrgContractStatusChanged } from "@/lib/novu/org-workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 
 const BodySchema = z
   .object({
@@ -173,7 +183,11 @@ export async function POST(
   const body = parsed.data;
 
   try {
+    let stagedBells: StagedTrigger[] = [];
+    let stagedEmails: StagedEmail[] = [];
     const result = await prisma.$transaction(async (tx) => {
+      stagedBells = [];
+      stagedEmails = [];
       const old = await tx.contract.findFirst({
         where: { id: contractId, organizationId: orgId },
       });
@@ -366,8 +380,64 @@ export async function POST(
         },
       });
 
+      const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/billing`;
+      const kind =
+        body.reason === "RENEWAL" ? "CONTRACT_RENEWED" : "CONTRACT_ACTIVATED";
+      const effectiveDateVal = successor.effectiveFrom ?? new Date();
+      const operatorRows = tx.membership?.findMany
+        ? await tx.membership.findMany({
+            where: {
+              organizationId: orgId,
+              status: "ACTIVE",
+              role: { in: ["OWNER", "MAINTAINER"] },
+            },
+            select: { userId: true },
+          })
+        : [];
+      stagedBells =
+        (await notifyOrgContractStatusChanged(
+          orgId,
+          {
+            orgName: access.org.name,
+            status: body.reason === "RENEWAL" ? "RENEWED" : "ACTIVE",
+            effectiveDate: effectiveDateVal.toISOString(),
+            dashboardUrl,
+          },
+          { tx },
+        )) ?? [];
+      stagedEmails =
+        (await stageOrgContractAndSeatEmail(tx, {
+          recipientUserIds: operatorRows.map((r) => r.userId),
+          entityId: successor.id,
+          kind,
+          orgName: access.org.name,
+          effectiveDate: effectiveDateVal,
+          dashboardUrl,
+        })) ?? [];
+
       return successor;
     });
+
+    try {
+      await flushNotificationsAfter(
+        {
+          bells: stagedBells,
+          emails:
+            stagedEmails.length > 0
+              ? [
+                  {
+                    rows: stagedEmails,
+                    emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                    budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                  },
+                ]
+              : [],
+        },
+        "org.contract.superseded",
+      );
+    } catch (notifyErr) {
+      console.error("[org.contract.superseded] notify failed:", notifyErr);
+    }
 
     if (
       body.reason === "AMENDMENT" &&

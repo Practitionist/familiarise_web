@@ -13,7 +13,9 @@ import { persistTrialPayLink } from "@/lib/trials/pay-link";
 import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
+import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
 import { notifyTrialRequested } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
@@ -21,6 +23,7 @@ import { resolveOrgScope, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { planSaleRefusal } from "@/lib/api/plans/visibility";
+import { getAppUrl } from "@/lib/url";
 
 /**
  * GET /api/trials
@@ -503,16 +506,42 @@ export async function POST(request: NextRequest) {
       subscriptionPlan.title,
     );
 
-    // Notify the consultant about the new trial request. The trials
-    // console does not exist as a route — the request lives in their
-    // requests queue, which is where the bell points.
-    await notifyTrialRequested(trial.consultantProfile.user.id, {
-      consultantName: trial.consultantProfile.user.name || "Consultant",
-      consulteeName: trial.consulteeProfile.user.name || "A new user",
-      planTitle: subscriptionPlan.title,
-      status: trial.status,
-      dashboardUrl: `/dashboard/consultant/${consultantProfileId}/requests`,
-    });
+    const consultantUserId = trial.consultantProfile.user.id;
+    const consultantName = trial.consultantProfile.user.name || "Consultant";
+    const consulteeName = trial.consulteeProfile.user.name || "A new user";
+    const dashboardUrl = `/dashboard/consultant/${consultantProfileId}/requests`;
+    const [bellResult, emailRows] = await Promise.all([
+      Promise.resolve(
+        notifyTrialRequested(
+          consultantUserId,
+          {
+            consultantName,
+            consulteeName,
+            planTitle: subscriptionPlan.title,
+            status: trial.status,
+            dashboardUrl,
+          },
+          undefined,
+          { deferAttempt: true },
+        ),
+      ).catch(() => null),
+      stageTrialLifecycleEmail(prisma, {
+        trialId: trial.id,
+        userIds: [consultantUserId],
+        kind: "TRIAL_REQUESTED",
+        planTitle: subscriptionPlan.title,
+        consultantName,
+        consulteeName,
+        dashboardUrl: `${getAppUrl()}${dashboardUrl}`,
+      }).catch(() => []),
+    ]);
+    await flushNotificationsAfter(
+      {
+        bells: [bellResult?.staged],
+        emails: [{ rows: emailRows, emailType: "TRIAL_REQUESTED" }],
+      },
+      "trials.requested",
+    );
 
     return NextResponse.json({ data: trial, checkoutUrl }, { status: 201 });
   } catch (error) {

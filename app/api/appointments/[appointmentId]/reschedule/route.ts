@@ -1071,19 +1071,27 @@ export async function POST(
             appointment.organizationId,
             "appointments",
           );
-          const [, emailRows] = await Promise.all([
-            notifyAppointmentRescheduled(uniqueUserIds, {
-              ...notificationScope(appointment.organizationId),
-              ...variant,
-              appointmentType,
-              consultantName:
-                plan?.consultantProfile?.user?.name ?? "Consultant",
-              consulteeName: requestedBy?.user?.name ?? "Participant",
-              planTitle: planTitleOrSessionLabel(plan?.title, appointmentType),
-              dashboardUrl,
-            }).catch((err) =>
-              console.error("[reschedule] Failed to send notification:", err),
-            ),
+          const [bellResults, emailRows] = await Promise.all([
+            notifyAppointmentRescheduled(
+              uniqueUserIds,
+              {
+                ...notificationScope(appointment.organizationId),
+                ...variant,
+                appointmentType,
+                consultantName:
+                  plan?.consultantProfile?.user?.name ?? "Consultant",
+                consulteeName: requestedBy?.user?.name ?? "Participant",
+                planTitle: planTitleOrSessionLabel(
+                  plan?.title,
+                  appointmentType,
+                ),
+                dashboardUrl,
+              },
+              { deferAttempt: true },
+            ).catch((err) => {
+              console.error("[reschedule] Failed to send notification:", err);
+              return [];
+            }),
             stageAppointmentRescheduledEmail(prisma, {
               appointmentId,
               userIds: uniqueUserIds,
@@ -1098,6 +1106,7 @@ export async function POST(
           ]);
           await flushNotificationsAfter(
             {
+              bells: (bellResults ?? []).map((r) => r?.staged),
               emails: [
                 { rows: emailRows, emailType: "APPOINTMENT_RESCHEDULED" },
               ],

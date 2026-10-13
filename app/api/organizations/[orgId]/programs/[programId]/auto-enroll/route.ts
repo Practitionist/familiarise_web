@@ -47,6 +47,16 @@ import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatc
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUTO_ENROLL_BATCH_DEADLINE_MS } from "@/lib/api/organizations/auto-enroll-config";
 import { applyRateLimit, orgAutoEnrollLimiter } from "@/lib/rate-limit";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import type { StagedTrigger } from "@/lib/novu";
+import { notifyOrgSeatAssigned } from "@/lib/novu/org-workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 
 const BodySchema = z.object({
   membershipIds: z.array(z.string().min(1)).min(1).max(200),
@@ -107,10 +117,12 @@ function parseAutoEnrollBody(
 async function resolveTargetProgram(
   orgId: string,
   programId: string,
-): Promise<{ ok: true } | { ok: false; error: NextResponse }> {
+): Promise<
+  { ok: true; programName: string } | { ok: false; error: NextResponse }
+> {
   const program = await prisma.program.findFirst({
     where: { id: programId, contract: { organizationId: orgId } },
-    select: { id: true, status: true },
+    select: { id: true, name: true, status: true },
   });
   if (!program) {
     return {
@@ -127,7 +139,7 @@ async function resolveTargetProgram(
       ),
     };
   }
-  return { ok: true };
+  return { ok: true, programName: program.name ?? "Program" };
 }
 
 export async function POST(
@@ -172,6 +184,7 @@ export async function POST(
 
   const targetProgram = await resolveTargetProgram(orgId, programId);
   if (!targetProgram.ok) return targetProgram.error;
+  const { programName } = targetProgram;
 
   const results: RowResult[] = [];
   let enrolled = 0;
@@ -189,12 +202,30 @@ export async function POST(
     try {
       const outcome = await enrollOne({
         orgId,
+        orgName: access.org.name,
         programId,
+        programName,
         membershipId,
         actorMembershipId: access.member.id,
         periodStart: body.periodStart,
         periodEnd: body.periodEnd,
       });
+      await flushNotificationsAfter(
+        {
+          bells: outcome.stagedBells,
+          emails:
+            outcome.stagedEmails.length > 0
+              ? [
+                  {
+                    rows: outcome.stagedEmails,
+                    emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                    budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                  },
+                ]
+              : [],
+        },
+        "org.program.auto-enroll-seat",
+      );
       results.push({
         membershipId,
         ok: true,
@@ -234,15 +265,23 @@ export async function POST(
 
 async function enrollOne(params: {
   orgId: string;
+  orgName: string;
   programId: string;
+  programName: string;
   membershipId: string;
   actorMembershipId: string;
   periodStart: Date;
   periodEnd: Date;
-}): Promise<{ created: boolean }> {
+}): Promise<{
+  created: boolean;
+  stagedBells: StagedTrigger[];
+  stagedEmails: StagedEmail[];
+}> {
   const {
     orgId,
+    orgName,
     programId,
+    programName,
     membershipId,
     actorMembershipId,
     periodStart,
@@ -271,7 +310,11 @@ async function enrollOne(params: {
           periodEnd,
         });
 
+        let stagedBells: StagedTrigger[] = [];
+        let stagedEmails: StagedEmail[] = [];
+
         if (created) {
+          const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}`;
           await adjustActiveSeatCount(tx, { programId, delta: +1 });
           await tx.program.updateMany({
             where: { id: programId, configLockedAt: null },
@@ -290,6 +333,25 @@ async function enrollOne(params: {
               periodEnd: periodEnd.toISOString(),
               source: "auto_enroll",
             },
+          });
+          stagedBells =
+            (await notifyOrgSeatAssigned(
+              membership.userId,
+              {
+                organizationId: orgId,
+                orgName,
+                programName,
+                dashboardUrl,
+              },
+              { tx },
+            )) ?? [];
+          stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+            recipientUserIds: [membership.userId],
+            entityId: assignment.id,
+            kind: "SEAT_ASSIGNED",
+            orgName,
+            programName,
+            dashboardUrl,
           });
         }
 
@@ -314,7 +376,7 @@ async function enrollOne(params: {
           },
         });
 
-        return { created };
+        return { created, stagedBells, stagedEmails };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),

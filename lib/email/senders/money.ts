@@ -9,7 +9,10 @@ import {
   OrgBillingReceiptEmail,
   type OrgBillingReceiptKind,
 } from "@/emails/orgs/OrgBillingReceiptEmail";
-import { OrgInvoiceOverdueEmail } from "@/emails/orgs/OrgInvoiceOverdueEmail";
+import {
+  OrgInvoiceOverdueEmail,
+  orgInvoiceOverdueSubject,
+} from "@/emails/orgs/OrgInvoiceOverdueEmail";
 import { OrgOverageDueEmail } from "@/emails/orgs/OrgOverageDueEmail";
 import { OrgPayoutFailedEmail } from "@/emails/orgs/OrgPayoutFailedEmail";
 import { OrgWalletLowEmail } from "@/emails/orgs/OrgWalletLowEmail";
@@ -17,10 +20,18 @@ import {
   DisputeNoticeEmail,
   type DisputeNoticeKind,
 } from "@/emails/payments/DisputeNoticeEmail";
+import OrgDunningEmail, {
+  orgOperationalEmailSubject,
+  type OrgOperationalEmailKind,
+} from "@/emails/payments/OrgDunningEmail";
 import {
   PayoutStatusEmail,
   type PayoutStatusKind,
 } from "@/emails/payments/PayoutStatusEmail";
+import ReferralBonusEmail, {
+  referralBonusSubject,
+  type ReferralBonusEmailKind,
+} from "@/emails/payments/ReferralBonusEmail";
 import { RefundFailedEmail } from "@/emails/payments/RefundFailedEmail";
 import { RefundProcessedEmail } from "@/emails/payments/RefundProcessedEmail";
 import { getAppUrl } from "@/lib/url";
@@ -32,6 +43,7 @@ import type {
   StagedRecipientEmail,
 } from "../send-to-recipients";
 import {
+  absolute,
   dateText,
   defineBudgetedEmailSender,
   defineFixedBudgetEmailSender,
@@ -94,8 +106,8 @@ function refundProcessedSpec(
         amountText,
         planTitle: args.planTitle,
         creditNoteNumber: args.creditNoteNumber,
-        refundPolicyUrl: `${appUrl}/refund`,
-        dashboardUrl: `${appUrl}${goHref("client", "payments")}`,
+        refundPolicyUrl: absolute(`${appUrl}/refund`),
+        dashboardUrl: absolute(goHref("client", "payments")),
         unsubscribeUrl: r.unsubscribeUrl,
       }),
   };
@@ -190,7 +202,7 @@ export const sendOrgPayoutFailedEmail =
               orgName: args.orgName,
               amountText,
               reason: args.reason,
-              dashboardUrl: args.dashboardUrl,
+              dashboardUrl: absolute(args.dashboardUrl),
               unsubscribeUrl: r.unsubscribeUrl,
               withheldText: args.withheldText,
             }),
@@ -220,7 +232,6 @@ export const sendOrgInvoiceOverdueEmail =
     EMAIL_BUDGET_MS.JOB,
     (args) => {
       const amountText = money(args.totalPaise, args.currency);
-      const dayWord = args.daysLate === 1 ? "day" : "days";
       return {
         userIds: args.recipientUserIds,
         spec: {
@@ -229,7 +240,11 @@ export const sendOrgInvoiceOverdueEmail =
           from: SENDERS.finance,
           entityRef: `orgInvoice:${args.invoiceId}`,
           subject: () =>
-            `Invoice ${args.invoiceNumber} is ${args.daysLate} ${dayWord} overdue`,
+            orgInvoiceOverdueSubject({
+              invoiceNumber: args.invoiceNumber,
+              daysLate: args.daysLate,
+              reminderStage: args.reminderStage,
+            }),
           render: (r) =>
             OrgInvoiceOverdueEmail({
               orgName: args.orgName,
@@ -238,7 +253,7 @@ export const sendOrgInvoiceOverdueEmail =
               dueDateText: dateText(args.dueDate, r.zone),
               daysLate: args.daysLate,
               reminderStage: args.reminderStage,
-              payUrl: args.payUrl,
+              payUrl: absolute(args.payUrl),
               unsubscribeUrl: r.unsubscribeUrl,
             }),
         },
@@ -278,7 +293,7 @@ export const sendOrgWalletLowEmail =
               orgName: args.orgName,
               balanceText,
               floorText,
-              topUpUrl: args.topUpUrl,
+              topUpUrl: absolute(args.topUpUrl),
               unsubscribeUrl: r.unsubscribeUrl,
             }),
         },
@@ -320,7 +335,7 @@ export const sendOrgOverageDueEmail =
               programTitle: args.programTitle,
               amountText,
               dueByText: args.dueBy ? dateText(args.dueBy, r.zone) : undefined,
-              payUrl: args.payUrl,
+              payUrl: absolute(args.payUrl),
               unsubscribeUrl: r.unsubscribeUrl,
             }),
         },
@@ -345,6 +360,21 @@ export interface PayoutStatusEmailArgs {
   dashboardUrl?: string;
 }
 
+function payoutStatusSubject(
+  status: PayoutStatusKind,
+  amountText: string,
+  target: string,
+): string {
+  switch (status) {
+    case "COMPLETED":
+      return `Your payout of ${amountText}${target} is complete`;
+    case "REVERSED":
+      return `Your payout${target} was reversed`;
+    case "FAILED":
+      return `Your payout${target} could not be completed`;
+  }
+}
+
 function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
   userIds: string[];
   spec: RecipientEmailSpec;
@@ -352,14 +382,10 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
   const userIds = args.recipientUserIds ?? (args.userId ? [args.userId] : []);
   const amountText = money(args.amountPaise, args.currency);
   const target = args.orgName ? ` to ${args.orgName}` : "";
-  const subject =
-    args.status === "COMPLETED"
-      ? `Your payout of ${amountText}${target} is complete`
-      : args.status === "REVERSED"
-        ? `Your payout${target} was reversed`
-        : `Your payout${target} could not be completed`;
-  const resolvedDashboardUrl =
-    args.dashboardUrl ?? `${getAppUrl()}${goHref("expert", "earnings")}`;
+  const subject = payoutStatusSubject(args.status, amountText, target);
+  const resolvedDashboardUrl = absolute(
+    args.dashboardUrl ?? goHref("expert", "earnings"),
+  );
 
   return {
     userIds,
@@ -387,20 +413,6 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
     },
   };
 }
-
-export async function preparePayoutStatusEmail(
-  args: PayoutStatusEmailArgs,
-): Promise<PreparedRecipientEmails> {
-  const { userIds, spec } = buildPayoutStatusEmail(args);
-  return prepareSpecEmails(spec, userIds);
-}
-
-export const sendPayoutStatusEmail =
-  defineBudgetedEmailSender<PayoutStatusEmailArgs>(
-    buildPayoutStatusEmail,
-    NOTHING_SENT,
-    EMAIL_BUDGET_MS.WEBHOOK,
-  );
 
 export const stagePayoutStatusEmail =
   defineLifecycleStager<PayoutStatusEmailArgs>(buildPayoutStatusEmail);
@@ -431,8 +443,9 @@ function buildDisputeNoticeEmail(args: DisputeNoticeEmailArgs): {
     args.kind === "OPENED"
       ? `Payment dispute opened (${amountText})`
       : `Payment dispute resolved (${amountText})`;
-  const resolvedDashboardUrl =
-    args.dashboardUrl ?? `${getAppUrl()}${goHref("expert", "earnings")}`;
+  const resolvedDashboardUrl = absolute(
+    args.dashboardUrl ?? goHref("expert", "earnings"),
+  );
 
   return {
     userIds,
@@ -460,13 +473,6 @@ function buildDisputeNoticeEmail(args: DisputeNoticeEmailArgs): {
   };
 }
 
-export const sendDisputeNoticeEmail =
-  defineBudgetedEmailSender<DisputeNoticeEmailArgs>(
-    buildDisputeNoticeEmail,
-    NOTHING_SENT,
-    EMAIL_BUDGET_MS.WEBHOOK,
-  );
-
 export const stageDisputeNoticeEmail =
   defineLifecycleStager<DisputeNoticeEmailArgs>(buildDisputeNoticeEmail);
 
@@ -486,18 +492,28 @@ export interface OrgBillingEmailArgs {
   dashboardUrl: string;
 }
 
+function orgBillingSubject(
+  kind: OrgBillingReceiptKind,
+  invLabel: string,
+  orgName: string,
+): string {
+  switch (kind) {
+    case "INVOICE_ISSUED":
+      return `Invoice${invLabel} issued for ${orgName}`;
+    case "INVOICE_PAID":
+      return `Invoice${invLabel} paid for ${orgName}`;
+    case "WALLET_TOPUP_CONFIRMED":
+      return `Wallet top-up confirmed for ${orgName}`;
+  }
+}
+
 function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
   userIds: string[];
   spec: RecipientEmailSpec;
 } {
   const amountText = money(args.amountPaise, args.currency);
   const invLabel = args.invoiceNumber ? ` ${args.invoiceNumber}` : "";
-  const subject =
-    args.kind === "INVOICE_ISSUED"
-      ? `Invoice${invLabel} issued for ${args.orgName}`
-      : args.kind === "INVOICE_PAID"
-        ? `Invoice${invLabel} paid for ${args.orgName}`
-        : `Wallet top-up confirmed for ${args.orgName}`;
+  const subject = orgBillingSubject(args.kind, invLabel, args.orgName);
   const entityRef = args.invoiceId
     ? `orgInvoice:${args.invoiceId}`
     : `org:${args.organizationId}`;
@@ -523,11 +539,21 @@ function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
           invoiceNumber: args.invoiceNumber,
           dueDateText: args.dueDate ? dateText(args.dueDate, r.zone) : null,
           newBalanceText,
-          dashboardUrl: args.dashboardUrl,
+          dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
   };
+}
+
+export function prepareOrgBillingEmail(
+  args: OrgBillingEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildOrgBillingEmail({
+    ...args,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+  return prepareSpecEmails(spec, userIds);
 }
 
 export const sendOrgBillingEmail =
@@ -539,3 +565,143 @@ export const sendOrgBillingEmail =
 
 export const stageOrgBillingEmail =
   defineLifecycleStager<OrgBillingEmailArgs>(buildOrgBillingEmail);
+
+// ── Org operational & dunning threshold notices ─────────────────────────────
+
+export interface OrgOperationalEmailArgs {
+  recipientUserIds: string[];
+  organizationId: string;
+  orgName: string;
+  kind: OrgOperationalEmailKind;
+  programName?: string;
+  assigneeName?: string;
+  amountPaise?: Paise;
+  expectedTotalPaise?: Paise;
+  currency?: string;
+  renewalDate?: Date | string;
+  expiresAt?: Date | string;
+  daysUntilRenewal?: number;
+  cycle?: string;
+  engagementsUsed?: number;
+  cap?: number;
+  usedPct?: number;
+  actionUrl: string;
+}
+
+function buildOrgOperationalEmail(args: OrgOperationalEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const currency = args.currency ?? "INR";
+  const amountText =
+    args.amountPaise !== undefined && args.amountPaise !== null
+      ? money(args.amountPaise, currency)
+      : undefined;
+  const expectedTotalText =
+    args.expectedTotalPaise !== undefined && args.expectedTotalPaise !== null
+      ? money(args.expectedTotalPaise, currency)
+      : undefined;
+  const category =
+    args.kind === "MEMBER_OVERAGE_TIMED_OUT" ? "orgBilling" : "orgProgram";
+
+  return {
+    userIds: args.recipientUserIds,
+    spec: {
+      emailType: `ORG_${args.kind}`,
+      category,
+      from: SENDERS.finance,
+      entityRef: `org:${args.organizationId}:${args.kind.toLowerCase()}`,
+      subject: () =>
+        orgOperationalEmailSubject({
+          kind: args.kind,
+          orgName: args.orgName,
+          programName: args.programName,
+          daysUntilRenewal: args.daysUntilRenewal,
+        }),
+      render: (r: EmailRecipient): ReactElement =>
+        OrgDunningEmail({
+          kind: args.kind,
+          recipientName: greet(r),
+          orgName: args.orgName,
+          programName: args.programName,
+          assigneeName: args.assigneeName,
+          amountText,
+          expectedTotalText,
+          renewalDateText: args.renewalDate
+            ? dateText(args.renewalDate, r.zone)
+            : undefined,
+          expiresAtText: args.expiresAt
+            ? dateText(args.expiresAt, r.zone)
+            : undefined,
+          daysUntilRenewal: args.daysUntilRenewal,
+          cycle: args.cycle,
+          engagementsUsed: args.engagementsUsed,
+          cap: args.cap,
+          usedPct: args.usedPct,
+          actionUrl: absolute(args.actionUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const sendOrgOperationalEmail =
+  defineBudgetedEmailSender<OrgOperationalEmailArgs>(
+    buildOrgOperationalEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.JOB,
+  );
+
+// ── Referral bonus & welcome credits ────────────────────────────────────────
+
+export interface ReferralBonusEmailArgs {
+  userId: string;
+  referralId: string;
+  kind: ReferralBonusEmailKind;
+  counterpartyName?: string;
+  amountPaise: Paise;
+  remainingPaise?: Paise;
+  currency?: string;
+  appointmentType?: string;
+  dashboardUrl?: string;
+}
+
+function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const currency = args.currency ?? "INR";
+  const amountText = money(args.amountPaise, currency);
+  const remainingText =
+    args.remainingPaise !== undefined && args.remainingPaise !== null
+      ? money(args.remainingPaise, currency)
+      : undefined;
+  const dashboardUrl = absolute(
+    args.dashboardUrl ?? goHref("client", "payments"),
+  );
+
+  return {
+    userIds: [args.userId],
+    spec: {
+      emailType: `REFERRAL_${args.kind}`,
+      category: "payments",
+      from: SENDERS.payments,
+      entityRef: `referral:${args.referralId}:${args.kind.toLowerCase()}`,
+      subject: () => referralBonusSubject({ kind: args.kind, amountText }),
+      render: (r: EmailRecipient): ReactElement =>
+        ReferralBonusEmail({
+          kind: args.kind,
+          recipientName: greet(r),
+          counterpartyName: args.counterpartyName,
+          amountText,
+          remainingText,
+          appointmentType: args.appointmentType,
+          dashboardUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const stageReferralBonusEmail =
+  defineLifecycleStager<ReferralBonusEmailArgs>(buildReferralBonusEmail);

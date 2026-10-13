@@ -18,6 +18,7 @@ import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { sendSsoProviderDecisionEmail } from "@/lib/email";
+import { notifyOrgSsoProviderDecided } from "@/lib/novu/org-workflows";
 import { providerDomains } from "@/lib/sso/domains";
 
 export const POST = withOpsAction(
@@ -112,16 +113,27 @@ export const POST = withOpsAction(
           providerId: params.providerId,
           domainVerified: body.approve,
         },
-        afterCommit: () =>
-          sendSsoProviderDecisionEmail({
-            organizationId: params.orgId,
-            orgName: provider.organization?.name ?? "your organisation",
-            providerId: params.providerId,
-            domains,
-            issuer: provider.issuer,
-            reason: body.reason,
-            approved: body.approve,
-          }),
+        afterCommit: async () => {
+          const orgName = provider.organization?.name ?? "your organisation";
+          await Promise.all([
+            sendSsoProviderDecisionEmail({
+              organizationId: params.orgId,
+              orgName,
+              providerId: params.providerId,
+              domains,
+              issuer: provider.issuer,
+              reason: body.reason,
+              approved: body.approve,
+            }),
+            notifyOrgSsoProviderDecided(params.orgId, {
+              orgName,
+              providerId: params.providerId,
+              decision: body.approve ? "APPROVED" : "REVOKED",
+              reason: body.reason,
+              dashboardUrl: `/dashboard/organization/${params.orgId}/settings/sso`,
+            }),
+          ]);
+        },
       };
     },
   },

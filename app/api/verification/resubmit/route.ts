@@ -93,7 +93,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Admin bells were staged inside the submission transaction.
-    attemptBellsAfterResponse(outcome.staged);
+    await attemptBellsAfterResponse(outcome.staged);
 
     return NextResponse.json({
       success: true,

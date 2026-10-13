@@ -23,7 +23,11 @@ import {
   OccurrenceCompletionStatus,
   type Prisma,
 } from "@prisma/client";
-import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
+import {
+  flushBackupInterestNotices,
+  stageNoticesForAppointmentHolds,
+  type StagedBackupInterestNotices,
+} from "@/lib/booking/backup-interest";
 import {
   cancelRazorpayOrder,
   type RazorpayOrderCancelResult,
@@ -49,6 +53,8 @@ import {
   PAYMENT_LINK_REMINDER_EMAIL_TYPE,
   sendPaymentLinkEmail,
 } from "@/lib/email";
+import { notifyPaymentLink } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { APPROVAL_PAYMENT_REMINDER_MS } from "@/lib/payments/constants";
 
 /**
@@ -574,7 +580,10 @@ async function releaseGroupSeats(
 async function expireRequestAndReleaseSlots(
   tx: Tx,
   appointment: AbandonedAppointment,
-): Promise<RequestExpiredNotice | null> {
+): Promise<{
+  notice: RequestExpiredNotice | null;
+  holdNotices: StagedBackupInterestNotices;
+}> {
   const kind = appointment.consultation ? "consultation" : "subscription";
   const confirmedSlots = await tx.appointmentOccurrence.count({
     where: {
@@ -587,7 +596,10 @@ async function expireRequestAndReleaseSlots(
 
   if (confirmedSlots > 0) {
     // #1778 — the released holds tell anyone waiting on those times.
-    await stageNoticesForAppointmentHolds(tx, appointment.id);
+    const holdNotices = await stageNoticesForAppointmentHolds(
+      tx,
+      appointment.id,
+    );
     // Only release the tentative slots; confirmed history stays.
     const released = await transitionOccurrenceCompletion(tx, {
       where: {
@@ -602,7 +614,10 @@ async function expireRequestAndReleaseSlots(
     console.log(
       `🗑️ Released ${released} tentative slot(s) for ${kind} appointment: ${appointment.id}`,
     );
-    return null;
+    return {
+      notice: null,
+      holdNotices: holdNotices ?? { bells: [], emails: [] },
+    };
   }
 
   // #1703 D2 — a lapsed pay-link is claimed by the narrow CAS first, so the
@@ -649,7 +664,7 @@ async function expireRequestAndReleaseSlots(
   }
 
   // #1778 — the dead hold's times free: tell anyone waiting (same tx).
-  await stageNoticesForAppointmentHolds(tx, appointment.id);
+  const holdNotices = await stageNoticesForAppointmentHolds(tx, appointment.id);
   await transitionOccurrenceCompletion(tx, {
     where: { appointmentId: appointment.id, deletedAt: null },
     to: OccurrenceCompletionStatus.CANCELLED,
@@ -664,7 +679,10 @@ async function expireRequestAndReleaseSlots(
   console.log(
     `🗑️ Expired abandoned ${kind} appointment (soft): ${appointment.id}`,
   );
-  return notice;
+  return {
+    notice,
+    holdNotices: holdNotices ?? { bells: [], emails: [] },
+  };
 }
 
 /**
@@ -695,9 +713,13 @@ async function cleanupAbandonedAppointment(
   }
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const txOut = await prisma.$transaction(async (tx) => {
       if (await anyPaymentSucceeded(tx, appointment)) {
-        return { outcome: "skipped" as const, notice: null };
+        return {
+          outcome: "skipped" as const,
+          notice: null,
+          holdNotices: null,
+        };
       }
 
       await expirePendingPayments(tx, appointment.payment);
@@ -705,14 +727,23 @@ async function cleanupAbandonedAppointment(
 
       if (appointment.webinar || appointment.class) {
         await releaseGroupSeats(tx, appointment);
-        return { outcome: "cleaned" as const, notice: null };
+        return {
+          outcome: "cleaned" as const,
+          notice: null,
+          holdNotices: null,
+        };
       }
       let notice: RequestExpiredNotice | null = null;
+      let holdNotices: StagedBackupInterestNotices | null = null;
       if (appointment.consultation || appointment.subscription) {
-        notice = await expireRequestAndReleaseSlots(tx, appointment);
+        const expired = await expireRequestAndReleaseSlots(tx, appointment);
+        notice = expired.notice;
+        holdNotices = expired.holdNotices;
       }
-      return { outcome: "cleaned" as const, notice };
+      return { outcome: "cleaned" as const, notice, holdNotices };
     });
+    await flushBackupInterestNotices(txOut.holdNotices);
+    return { outcome: txOut.outcome, notice: txOut.notice };
   } catch (error) {
     // Raced a capture or an approval: the row moved out of the expirable set,
     // or its payment succeeded, since the cohort read. The transaction is
@@ -1033,7 +1064,7 @@ async function expireOneLapsedRequest(
 ): Promise<void> {
   try {
     const outcome = await prisma.$transaction(async (tx) => {
-      const { moved } = await lapseApprovedRequest(tx, {
+      const { moved, holdNotices } = await lapseApprovedRequest(tx, {
         kind,
         id: request.id,
         reason: "PAYMENT_LAPSED",
@@ -1043,19 +1074,20 @@ async function expireOneLapsedRequest(
         console.log(
           `⏭️ Skipped ${kind} ${request.id} — status changed since the sweep read`,
         );
-        return "skipped" as const;
+        return { status: "skipped" as const, holdNotices: undefined };
       }
       console.log(
         `✅ Reset ${kind} ${request.id} from APPROVED_PENDING_PAYMENT to EXPIRED`,
       );
-      return "cleaned" as const;
+      return { status: "cleaned" as const, holdNotices };
     });
 
-    if (outcome === "skipped") {
+    if (outcome.status === "skipped") {
       result.skippedCount++;
       return;
     }
     result.cleanedCount++;
+    await flushBackupInterestNotices(outcome.holdNotices);
     // #1703 D2 — after the commit: the consultee learns the link lapsed.
     const notice = request.appointment
       ? lapsedLinkNotice(kind, request, plan, request.appointment)
@@ -1287,6 +1319,29 @@ async function remindApprovalPaymentsDueUnlocked(
           // Sent or awaiting the relay: the row exists, so the once-guard
           // holds. A send with no row would repeat next pass, so it is not
           // counted as done.
+          const bellResult = await notifyPaymentLink(
+            candidate.consultee.id,
+            {
+              paymentId: candidate.payment.id,
+              appointmentId: candidate.requestId,
+              amount: candidate.payment.amount,
+              currency: candidate.payment.currency,
+              consultantName: candidate.consultantName,
+              appointmentType:
+                candidate.kind === "consultation"
+                  ? "CONSULTATION"
+                  : "SUBSCRIPTION",
+              paymentUrl: candidate.pendingPaymentUrl,
+              expiresAt: candidate.payment.expiresAt,
+              reminder: true,
+            },
+            `payment-link-remind:${candidate.payment.id}:auto`,
+            { deferAttempt: true },
+          ).catch(() => null);
+          await flushNotificationsAfter(
+            { bells: [bellResult?.staged] },
+            "cleanup-abandoned-payments.remind",
+          );
           result.cleanedCount++;
         } else {
           result.errorCount++;

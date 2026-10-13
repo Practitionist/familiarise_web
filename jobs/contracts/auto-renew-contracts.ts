@@ -38,6 +38,18 @@ import { runJob } from "@/lib/observability/job-sentry";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import {
+  attemptStaged,
+  type StagedRecipientEmail as StagedEmail,
+} from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import { notifyOrgContractStatusChanged } from "@/lib/novu/org-workflows";
+import { getAppUrl } from "@/lib/url";
 
 const BATCH_SIZE = 500;
 
@@ -45,6 +57,76 @@ interface RenewStats {
   scanned: number;
   renewed: number;
   skipped: number;
+}
+
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+async function stageAutoRenewedNotifications(
+  tx: TxClient,
+  args: {
+    organizationId: string;
+    orgName: string;
+    successorId: string;
+    oldTo: Date;
+  },
+): Promise<{
+  stagedBells: StagedTrigger[];
+  stagedEmails: StagedEmail[];
+}> {
+  const { organizationId, orgName, successorId, oldTo } = args;
+  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${organizationId}/billing`;
+  const operatorRows = tx.membership?.findMany
+    ? await tx.membership.findMany({
+        where: {
+          organizationId,
+          status: "ACTIVE",
+          role: { in: ["OWNER", "MAINTAINER"] },
+        },
+        select: { userId: true },
+      })
+    : [];
+  const stagedBells =
+    (await notifyOrgContractStatusChanged(
+      organizationId,
+      {
+        orgName,
+        status: "RENEWED",
+        effectiveDate: oldTo.toISOString(),
+        dashboardUrl,
+      },
+      { tx },
+    )) ?? [];
+  const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+    recipientUserIds: operatorRows.map((r) => r.userId),
+    entityId: successorId,
+    kind: "CONTRACT_RENEWED",
+    orgName,
+    effectiveDate: oldTo,
+    dashboardUrl,
+  });
+  return { stagedBells, stagedEmails };
+}
+
+async function notifyAutoRenewedContract(
+  contractId: string,
+  stagedBells: StagedTrigger[],
+  stagedEmails: StagedEmail[],
+): Promise<void> {
+  try {
+    for (const bell of stagedBells) await attemptTrigger(bell);
+    if (stagedEmails.length > 0) {
+      await attemptStaged(
+        stagedEmails,
+        ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+        EMAIL_BUDGET_MS.JOB,
+      );
+    }
+  } catch (notifyErr) {
+    console.error(
+      `[auto-renew-contracts] notify failed for contract ${contractId}:`,
+      notifyErr,
+    );
+  }
 }
 
 export async function runAutoRenewContracts(): Promise<RenewStats> {
@@ -69,6 +151,7 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
       paymentTermsDays: true,
       autoRenew: true,
       rateCardId: true,
+      organization: { select: { name: true } },
     },
   });
   stats.scanned = due.length;
@@ -188,14 +271,35 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
               },
             });
 
-            return { renewed: true as const, successorId: successor.id };
+            const { stagedBells, stagedEmails } =
+              await stageAutoRenewedNotifications(tx, {
+                organizationId: c.organizationId,
+                orgName: c.organization?.name ?? "Organization",
+                successorId: successor.id,
+                oldTo,
+              });
+
+            return {
+              renewed: true as const,
+              successorId: successor.id,
+              stagedBells,
+              stagedEmails,
+            };
           },
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
         ),
       );
 
-      if (result.renewed) stats.renewed += 1;
-      else stats.skipped += 1;
+      if (result.renewed) {
+        stats.renewed += 1;
+        await notifyAutoRenewedContract(
+          c.id,
+          result.stagedBells,
+          result.stagedEmails,
+        );
+      } else {
+        stats.skipped += 1;
+      }
     } catch (err) {
       // supersededByContractId @unique tripped — another replica already
       // renewed this contract. Idempotent; skip cleanly.

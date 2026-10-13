@@ -3,7 +3,11 @@
  * Handles the complete checkout flow for all appointment types
  */
 
-import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
+import {
+  flushBackupInterestNotices,
+  stageNoticesForAppointmentHolds,
+  type StagedBackupInterestNotices,
+} from "@/lib/booking/backup-interest";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -129,6 +133,8 @@ import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
 } from "@/lib/novu/org-workflows";
+import { sendOrgOperationalEmail } from "@/lib/email/senders/money";
+import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   MARKETPLACE_VISIBILITY,
@@ -657,7 +663,7 @@ async function releaseSupersededHolds(params: {
   paymentIds: string[];
   userId: string;
 }): Promise<void> {
-  await prisma.$transaction(async (tx: Tx) => {
+  const holdNotices = await prisma.$transaction(async (tx: Tx) => {
     const claimWhere = {
       id: { in: params.paymentIds },
       userId: params.userId,
@@ -680,7 +686,7 @@ async function releaseSupersededHolds(params: {
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
       .filter((id): id is string => id !== null);
-    if (appointmentIds.length === 0) return;
+    if (appointmentIds.length === 0) return { bells: [], emails: [] };
 
     const appointments = await tx.appointment.findMany({
       where: { id: { in: appointmentIds }, deletedAt: null },
@@ -693,6 +699,7 @@ async function releaseSupersededHolds(params: {
       },
     });
 
+    const notices: StagedBackupInterestNotices = { bells: [], emails: [] };
     for (const appointment of appointments) {
       if (appointment.webinarId || appointment.classId) {
         // The seat, not an occurrence, is what this buyer gave up. Scoped to
@@ -707,7 +714,9 @@ async function releaseSupersededHolds(params: {
       }
 
       // #1778 — the superseded hold frees its times: tell anyone waiting.
-      await stageNoticesForAppointmentHolds(tx, appointment.id);
+      const staged = await stageNoticesForAppointmentHolds(tx, appointment.id);
+      notices.bells.push(...(staged?.bells ?? []));
+      notices.emails.push(...(staged?.emails ?? []));
       // Doctrine rule 2: a slot is freed by status, never by DELETE — the
       // buyer keeps the record of the attempt they abandoned.
       await transitionOccurrenceCompletion(tx, {
@@ -763,7 +772,9 @@ async function releaseSupersededHolds(params: {
         });
       }
     }
+    return notices;
   });
+  await flushBackupInterestNotices(holdNotices);
 }
 
 // ============================================================================
@@ -3510,7 +3521,7 @@ export async function handleClassCheckout(
  * out. `Program.organizationId` lives on its parent Contract, not on Program
  * itself, so the select chain hops Program → Contract → Organization.
  */
-function dispatchProgramBell(
+async function dispatchProgramBell(
   programAssignmentId: string,
   bell:
     | { kind: "EXHAUSTED" }
@@ -3520,49 +3531,111 @@ function dispatchProgramBell(
         cap: number;
         usedPct: number;
       },
-): void {
-  void prisma.programAssignment
-    .findUnique({
-      where: { id: programAssignmentId },
-      select: {
-        membership: {
-          select: {
-            userId: true,
-            user: { select: { name: true, email: true } },
+): Promise<void> {
+  const label =
+    bell.kind === "EXHAUSTED"
+      ? "notifyOrgProgramExhausted"
+      : "notifyOrgProgramCapNear";
+  await scheduleAfter(async () => {
+    try {
+      const ctx = await prisma.programAssignment.findUnique({
+        where: { id: programAssignmentId },
+        select: {
+          membership: {
+            select: {
+              userId: true,
+              user: { select: { name: true, email: true } },
+            },
           },
-        },
-        program: {
-          select: {
-            name: true,
-            contract: {
-              select: {
-                organizationId: true,
-                organization: { select: { name: true } },
+          program: {
+            select: {
+              name: true,
+              contract: {
+                select: {
+                  organizationId: true,
+                  organization: { select: { name: true } },
+                },
               },
             },
           },
         },
-      },
-    })
-    .then((ctx) => {
+      });
       if (!ctx) return;
       const orgId = ctx.program.contract.organizationId;
+      const orgName = ctx.program.contract.organization.name;
+      const programName = ctx.program.name;
+      const assigneeName =
+        ctx.membership.user.name ?? ctx.membership.user.email;
+      const dashboardUrl = `/dashboard/organization/${orgId}/programs`;
+      const actionUrl = `${getAppUrl()}${dashboardUrl}`;
+      const operatorRows = prisma.membership?.findMany
+        ? await prisma.membership.findMany({
+            where: {
+              organizationId: orgId,
+              status: "ACTIVE",
+              role: { in: ["OWNER", "MAINTAINER"] },
+            },
+            select: { userId: true },
+          })
+        : [];
+      const recipientUserIds = Array.from(
+        new Set([ctx.membership.userId, ...operatorRows.map((r) => r.userId)]),
+      );
       const common = {
-        orgName: ctx.program.contract.organization.name,
-        programName: ctx.program.name,
-        assigneeName: ctx.membership.user.name ?? ctx.membership.user.email,
-        dashboardUrl: `/dashboard/organization/${orgId}/programs`,
+        orgName,
+        programName,
+        assigneeName,
+        dashboardUrl,
       };
-      return bell.kind === "EXHAUSTED"
-        ? notifyOrgProgramExhausted(orgId, ctx.membership.userId, common)
-        : notifyOrgProgramCapNear(orgId, ctx.membership.userId, {
-            ...common,
-            engagementsUsed: bell.engagementsUsed,
-            cap: bell.cap,
-            usedPct: bell.usedPct,
+      const settled =
+        bell.kind === "EXHAUSTED"
+          ? await Promise.allSettled([
+              notifyOrgProgramExhausted(orgId, ctx.membership.userId, common),
+              sendOrgOperationalEmail({
+                recipientUserIds,
+                organizationId: orgId,
+                orgName,
+                kind: "PROGRAM_EXHAUSTED",
+                programName,
+                assigneeName,
+                actionUrl,
+              }),
+            ])
+          : await Promise.allSettled([
+              notifyOrgProgramCapNear(orgId, ctx.membership.userId, {
+                ...common,
+                engagementsUsed: bell.engagementsUsed,
+                cap: bell.cap,
+                usedPct: bell.usedPct,
+              }),
+              sendOrgOperationalEmail({
+                recipientUserIds,
+                organizationId: orgId,
+                orgName,
+                kind: "PROGRAM_CAP_NEAR",
+                programName,
+                assigneeName,
+                engagementsUsed: bell.engagementsUsed,
+                cap: bell.cap,
+                usedPct: bell.usedPct,
+                actionUrl,
+              }),
+            ]);
+      for (const outcome of settled) {
+        if (outcome.status === "rejected") {
+          console.error(
+            bell.kind === "EXHAUSTED"
+              ? "[notifyOrgProgramExhausted] failed:"
+              : "[notifyOrgProgramCapNear] failed:",
+            outcome.reason,
+          );
+          reportSentryError(outcome.reason, {
+            subsystem: "payments",
+            level: "warning",
           });
-    })
-    .catch((notifyErr) => {
+        }
+      }
+    } catch (notifyErr) {
       console.error(
         bell.kind === "EXHAUSTED"
           ? "[notifyOrgProgramExhausted] failed:"
@@ -3573,7 +3646,8 @@ function dispatchProgramBell(
         subsystem: "payments",
         level: "warning",
       });
-    });
+    }
+  }, label);
 }
 
 /**
@@ -4913,11 +4987,11 @@ export async function handleCheckout(
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
           },
         );
-      }).catch((err) => {
+      }).catch(async (err) => {
         // #1435 — post-rollback delivery for the one bell whose news IS the
         // refusal. Nothing else below is reached when the transaction fails.
         if (exhaustedBell.programAssignmentId) {
-          dispatchProgramBell(exhaustedBell.programAssignmentId, {
+          await dispatchProgramBell(exhaustedBell.programAssignmentId, {
             kind: "EXHAUSTED",
           });
         }
@@ -4928,7 +5002,7 @@ export async function handleCheckout(
       // actually happened. See dispatchProgramBell for why neither lookup can
       // run inside the transaction.
       if (result.capNearBell) {
-        dispatchProgramBell(result.capNearBell.programAssignmentId, {
+        await dispatchProgramBell(result.capNearBell.programAssignmentId, {
           kind: "CAP_NEAR",
           engagementsUsed: result.capNearBell.engagementsUsed,
           cap: result.capNearBell.cap,
@@ -4936,7 +5010,7 @@ export async function handleCheckout(
         });
       }
       if (result.overageBell) {
-        notifyOverageDueAfterCommit(result.overageBell);
+        await notifyOverageDueAfterCommit(result.overageBell);
       }
 
       const logMessage = isZeroAmountPayment
@@ -4961,7 +5035,7 @@ export async function handleCheckout(
       if (isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment) {
         // applyCreditsToPayment committed above, so this post-commit bell reads settled state.
         if (result.creditsApplied > 0) {
-          scheduleAfter(
+          await scheduleAfter(
             () =>
               notifyCreditsAppliedBestEffort({
                 userId,
@@ -4984,7 +5058,7 @@ export async function handleCheckout(
 
         const appointmentIdForChannels = result.appointmentId;
         if (appointmentIdForChannels) {
-          scheduleAfter(async () => {
+          await scheduleAfter(async () => {
             try {
               const { ensureChannelsForAppointment } =
                 await import("@/lib/payments/webhooks/ensure-channels");

@@ -1,9 +1,8 @@
 /**
- * The Novu plan caps an environment at 20 workflows and the app has 69 events,
+ * The Novu plan caps an environment at 20 workflows and the app has 80 events,
  * so each Novu workflow is a FAMILY — one per audience-and-opt-out — and the
  * event travels as `payload.event`. The app still triggers by event id; the
- * wire layer (`toWire`) maps it to the family. One id with a discriminator
- * is the idiom #1085 established for `outcome`; this applies it one level up.
+ * wire layer (`toWire`) maps it to the family.
  *
  * Splitting a family back out later is a change to this map and a sync.
  */
@@ -88,12 +87,12 @@ const FAMILY_DESCRIPTION: Record<FamilyId, string> = {
   trial: "Free-trial lifecycle.",
   "support-ticket": "Ops-facing and owner-facing ticket events.",
   feedback: "Product feedback to admins; reviews to consultants.",
-  account: "Verification, moderation and applications. No opt-out.",
+  account: "Verification, security, moderation and applications. No opt-out.",
   collaborator: "Co-hosting invitations on a plan.",
-  platform: "Announcements and maintenance. No opt-out.",
-  "org-billing": "Invoices, wallet, payouts and member overages.",
+  platform: "Announcements, compliance and maintenance. No opt-out.",
+  "org-billing": "Invoices, contracts, wallet, payouts and member overages.",
   "org-membership": "Roster and single sign-on.",
-  "org-program": "Entitlement, capacity, renewals and exports.",
+  "org-program": "Entitlement, seats, capacity, renewals and exports.",
 };
 
 export const FAMILIES: readonly Family[] = (
@@ -170,6 +169,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "new-review-received": "feedback",
   "review-excluded-from-rating": "feedback",
 
+  "account-security-notice": "account",
   "verification-status-changed": "account",
   "new-consultant-application": "account",
   "moderation-warning": "account",
@@ -182,11 +182,13 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "collaborator-removed": "collaborator",
   "collaborator-declined": "collaborator",
   "collaborator-withdrawn": "collaborator",
+  "collaborator-invite-expired": "collaborator",
 
   "general-announcement": "platform",
   "maintenance-scheduled": "platform",
   "maintenance-started": "platform",
   "maintenance-ended": "platform",
+  "compliance-deadline-alert": "platform",
 
   "org-invoice-issued": "org-billing",
   "org-invoice-paid": "org-billing",
@@ -198,12 +200,20 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "org-payout-reversed": "org-billing",
   "org-member-overage-timed-out": "org-billing",
   "org-program-overage-due": "org-billing",
+  "org-contract-status-changed": "org-billing",
 
+  "org-created": "org-membership",
   "org-invite-sent": "org-membership",
   "org-invite-accepted": "org-membership",
+  "org-role-changed": "org-membership",
+  "org-member-removed": "org-membership",
   "org-expert-removed": "org-membership",
+  "org-sso-provider-submitted": "org-membership",
+  "org-sso-provider-decided": "org-membership",
   "org-sso-provider-deleted": "org-membership",
 
+  "org-seat-assigned": "org-program",
+  "org-seat-revoked": "org-program",
   "org-program-exhausted": "org-program",
   "org-program-cap-near": "org-program",
   "org-license-renewal-upcoming": "org-program",

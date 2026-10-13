@@ -13,6 +13,8 @@ import prisma, {
   type Tx,
 } from "@/lib/prisma";
 import { notifySupportTicketResponse } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { stageSupportTicketResponseEmail } from "@/lib/email/senders/people";
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "@/lib/support/case-key";
@@ -229,21 +231,45 @@ async function dispatchPublicTicketReplyNotice(params: {
   message: string;
 }): Promise<void> {
   const { ticket, responseId, responderName, message } = params;
-  await notifySupportTicketResponse(
-    ticket.userId,
-    {
+  const orgId =
+    ticket.organizationId ?? ticket.appointmentSupportThread?.organizationId;
+  const ticketUrl = supportRequestHref(
+    caseKeyOf({ kind: "ticket", id: ticket.id }),
+    orgId,
+  );
+  const respondedBy = responderName ?? "Support";
+  const ticketTitle = ticket.title || "Support Ticket";
+  const [bellResult, emailRows] = await Promise.all([
+    notifySupportTicketResponse(
+      ticket.userId,
+      {
+        ticketId: ticket.id,
+        reference: ticket.referenceNumber ?? undefined,
+        ticketTitle,
+        message,
+        respondedBy,
+        dashboardUrl: ticketUrl,
+        ...notificationScope(orgId),
+      },
+      `ticket-resp:${responseId}`,
+      { deferAttempt: true },
+    ).catch(() => null),
+    stageSupportTicketResponseEmail(prisma, {
       ticketId: ticket.id,
+      ownerUserId: ticket.userId,
       reference: ticket.referenceNumber ?? undefined,
-      ticketTitle: ticket.title || "Support Ticket",
-      message,
-      respondedBy: responderName ?? "Support",
-      dashboardUrl: supportRequestHref(
-        caseKeyOf({ kind: "ticket", id: ticket.id }),
-        ticket.appointmentSupportThread?.organizationId,
-      ),
-      ...notificationScope(ticket.organizationId),
+      title: ticketTitle,
+      respondedBy,
+      replyText: message,
+      ticketUrl,
+    }).catch(() => []),
+  ]);
+  await flushNotificationsAfter(
+    {
+      bells: bellResult?.staged ? [bellResult.staged] : [],
+      emails: [{ rows: emailRows, emailType: "SUPPORT_TICKET_RESPONSE" }],
     },
-    `ticket-resp:${responseId}`,
+    "staff.support-tickets.responses",
   );
 }
 

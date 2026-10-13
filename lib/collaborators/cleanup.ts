@@ -1,7 +1,11 @@
 import prisma from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import { sendCollaboratorInviteExpiredEmail } from "@/lib/email/senders/collaborators";
+import { collaboratorRoleLabel } from "@/lib/novu/humanize";
+import { notifyCollaboratorInviteExpired } from "@/lib/novu/service";
+import { getAppUrl } from "@/lib/url";
 
 const STALE_INVITE_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -90,8 +94,23 @@ export async function expireStaleCollaboratorInvites(
         const inviteeUser = c.consultantProfile.user;
         const inviterUser =
           c.invitedBy?.user ?? plan?.consultantProfile?.user ?? null;
+        const recipientUserIds = [inviteeUser.id];
+        if (inviterUser?.id && inviterUser.id !== inviteeUser.id) {
+          recipientUserIds.push(inviterUser.id);
+        }
 
-        const emailSends: Promise<unknown>[] = [
+        await Promise.all([
+          notifyCollaboratorInviteExpired(
+            recipientUserIds,
+            {
+              planTitle,
+              planType,
+              collaboratorName: inviteeUser.name ?? "Collaborator",
+              role: collaboratorRoleLabel(c.role),
+              dashboardUrl: `${getAppUrl()}${goHref("expert", "collaborations")}`,
+            },
+            `collaborator.expired:${c.id}`,
+          ).catch(() => []),
           sendCollaboratorInviteExpiredEmail(
             {
               recipientUserId: inviteeUser.id,
@@ -104,28 +123,23 @@ export async function expireStaleCollaboratorInvites(
               collaboratorId: c.id,
             },
             EMAIL_BUDGET_MS.JOB,
-          ),
-        ];
-
-        if (inviterUser?.id && inviterUser.id !== inviteeUser.id) {
-          emailSends.push(
-            sendCollaboratorInviteExpiredEmail(
-              {
-                recipientUserId: inviterUser.id,
-                actorName: inviteeUser.name ?? "Collaborator",
-                collaboratorName: inviteeUser.name ?? "Collaborator",
-                planTitle,
-                planType,
-                role: c.role,
-                revenueShareBps: c.revenueShareBps,
-                collaboratorId: c.id,
-              },
-              EMAIL_BUDGET_MS.JOB,
-            ),
-          );
-        }
-
-        await Promise.allSettled(emailSends);
+          ).catch(() => undefined),
+          inviterUser?.id && inviterUser.id !== inviteeUser.id
+            ? sendCollaboratorInviteExpiredEmail(
+                {
+                  recipientUserId: inviterUser.id,
+                  actorName: inviteeUser.name ?? "Collaborator",
+                  collaboratorName: inviteeUser.name ?? "Collaborator",
+                  planTitle,
+                  planType,
+                  role: c.role,
+                  revenueShareBps: c.revenueShareBps,
+                  collaboratorId: c.id,
+                },
+                EMAIL_BUDGET_MS.JOB,
+              ).catch(() => undefined)
+            : Promise.resolve(),
+        ]);
       }
 
       return { expired, scanned: candidates.length };

@@ -28,6 +28,13 @@ import {
   type StageOptions,
 } from "./deliver";
 import { renderEmail } from "./render";
+import type { StagedRecipientEmail } from "./send-to-recipients";
+import {
+  absolute,
+  greet,
+  stageSpecGuarded,
+  type StagingTx,
+} from "./senders/shared";
 
 export { DEFAULT_FROM_ADDRESS, EMAIL_BUDGET_MS, SENDERS } from "./config";
 export {
@@ -45,17 +52,13 @@ export {
 } from "./deliver";
 export * from "./send-to-recipients";
 export * from "./senders/booking";
+export * from "./senders/collaborators";
 export * from "./senders/money";
 export * from "./senders/onboarding";
 export * from "./senders/people";
 export * from "./senders/security";
 export * from "./senders/sso";
-export {
-  defineLifecycleStager,
-  prepareSpecEmails,
-  stageSpecGuarded,
-  type StagingTx,
-} from "./senders/shared";
+export { absolute, stageSpecGuarded, type StagingTx };
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
 
@@ -152,9 +155,9 @@ export const sendWelcomeEmail = defineDirectEmailSender<{
   name: string;
   userId?: string;
   dashboardUrl?: string;
-}>(({ email, name, userId, dashboardUrl = `${getAppUrl()}/dashboard` }) => ({
+}>(({ email, name, userId, dashboardUrl = "/dashboard" }) => ({
   emailType: "WELCOME",
-  element: WelcomeEmail({ name, dashboardUrl }),
+  element: WelcomeEmail({ name, dashboardUrl: absolute(dashboardUrl) }),
   envelope: {
     from: SENDERS.onboarding,
     to: email,
@@ -247,24 +250,20 @@ export const sendAccountLinkedEmail = defineDirectEmailSender<{
   provider: string;
   userId?: string;
   dashboardUrl?: string;
-}>(
-  ({
-    email,
+}>(({ email, name, provider, userId, dashboardUrl = "/dashboard" }) => ({
+  emailType: "ACCOUNT_LINKED",
+  element: AccountLinkedEmail({
     name,
     provider,
-    userId,
-    dashboardUrl = `${getAppUrl()}/dashboard`,
-  }) => ({
-    emailType: "ACCOUNT_LINKED",
-    element: AccountLinkedEmail({ name, provider, dashboardUrl }),
-    envelope: {
-      from: SENDERS.security,
-      to: email,
-      subject: `Your Familiarise account is now linked with ${provider}`,
-    },
-    defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+    dashboardUrl: absolute(dashboardUrl),
   }),
-);
+  envelope: {
+    from: SENDERS.security,
+    to: email,
+    subject: `Your Familiarise account is now linked with ${provider}`,
+  },
+  defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
+}));
 
 // ── Payment Senders ─────────────────────────────────────────────────────────
 
@@ -276,7 +275,7 @@ export function emailPayUrl(
 ): string {
   const href =
     payLinkHref({ paymentId, checkoutUrl: paymentUrl }) ?? paymentUrl;
-  return href.startsWith("/") ? `${getAppUrl()}${href}` : href;
+  return absolute(href);
 }
 
 export const sendPaymentLinkEmail = defineDirectEmailSender<{
@@ -328,6 +327,99 @@ export const sendPaymentLinkEmail = defineDirectEmailSender<{
   }),
 );
 
+export interface StagePaymentLinkEmailArgs {
+  email?: string;
+  name?: string;
+  userId?: string;
+  consultantName: string;
+  appointmentType: AppointmentType;
+  amount: number;
+  currency: string;
+  paymentUrl: string;
+  expiresAt: Date;
+  paymentId?: string;
+  reminder?: boolean;
+}
+
+export async function stagePaymentLinkEmail(
+  args: StagePaymentLinkEmailArgs,
+  tx?: StagingTx,
+): Promise<StagedRecipientEmail[]> {
+  const {
+    email,
+    name = "there",
+    userId,
+    consultantName,
+    appointmentType,
+    amount,
+    currency,
+    paymentUrl,
+    expiresAt,
+    paymentId,
+    reminder = false,
+  } = args;
+  const emailType = reminder
+    ? PAYMENT_LINK_REMINDER_EMAIL_TYPE
+    : "PAYMENT_LINK";
+  const subject = reminder
+    ? `Reminder: payment due - ${capitalize(appointmentType)} with ${consultantName}`
+    : `Payment Required - ${capitalize(appointmentType)} with ${consultantName}`;
+  const resolvedPayUrl = emailPayUrl(paymentId, paymentUrl);
+  const expiresAtIso = expiresAt.toISOString();
+
+  if (userId && !email) {
+    return stageSpecGuarded(
+      {
+        emailType,
+        category: "payments",
+        from: SENDERS.payments,
+        entityRef: paymentRef(paymentId) ?? `user:${userId}`,
+        subject: () => subject,
+        render: (r) =>
+          PaymentLinkEmail({
+            name: greet(r),
+            consultantName,
+            appointmentType,
+            amount,
+            currency,
+            paymentUrl: resolvedPayUrl,
+            expiresAt: expiresAtIso,
+            reminder,
+          }),
+      },
+      [userId],
+      tx,
+    );
+  }
+
+  if (!email) return [];
+
+  const stagedSend = await stageSend(
+    emailType,
+    PaymentLinkEmail({
+      name,
+      consultantName,
+      appointmentType,
+      amount,
+      currency,
+      paymentUrl: resolvedPayUrl,
+      expiresAt: expiresAtIso,
+      reminder,
+    }),
+    {
+      from: SENDERS.payments,
+      to: email,
+      subject,
+    },
+    {
+      tx,
+      entityRef: paymentRef(paymentId),
+    },
+  );
+  if (!stagedSend) return [];
+  return [{ staged: stagedSend.staged, message: stagedSend.message }];
+}
+
 export interface PaymentSuccessEmailArgs {
   email: string;
   name: string;
@@ -348,7 +440,7 @@ export async function renderPaymentSuccessEmail({
   amount,
   currency,
   receiptUrl,
-  dashboardUrl = `${getAppUrl()}/dashboard`,
+  dashboardUrl = "/dashboard",
   paymentReference,
 }: PaymentSuccessEmailArgs): Promise<RenderedEmail> {
   const rendered = await renderEmail(
@@ -358,8 +450,8 @@ export async function renderPaymentSuccessEmail({
       appointmentType,
       amount,
       currency,
-      receiptUrl,
-      dashboardUrl,
+      receiptUrl: receiptUrl ? absolute(receiptUrl) : undefined,
+      dashboardUrl: absolute(dashboardUrl),
       paymentReference,
     }),
   );
@@ -402,7 +494,7 @@ export async function renderPaymentFailedEmail({
       appointmentType,
       amount,
       currency,
-      retryUrl,
+      retryUrl: absolute(retryUrl),
       failureReason,
       expiresAt: expiresAt?.toISOString(),
     }),
@@ -435,7 +527,13 @@ export async function stageOrgInvitationEmail(
 ): Promise<StagedSend | null> {
   return stageSend(
     "ORG_INVITATION",
-    OrgInvitationEmail({ inviterName, orgName, role, inviteUrl, expiresAt }),
+    OrgInvitationEmail({
+      inviterName,
+      orgName,
+      role,
+      inviteUrl: absolute(inviteUrl),
+      expiresAt,
+    }),
     {
       from: SENDERS.notifications,
       to: email,
