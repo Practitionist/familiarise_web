@@ -409,7 +409,7 @@ SESSION          RECORDING                              LENGTH
 | Class               | Catch-up always, plus "Before you joined" rows             |
 | Purchased replays   | Their own group, "Never expires"                           |
 
-The header carries one retention line; a row repeats its own only when it differs or ends within 30 days. In the expert Library the per-row Manage is a link to the booking's Recordings page.
+The header carries one retention line; a row repeats its own only when it differs or ends within 30 days. In the expert Library the per-row Manage is a link to the booking's Recordings page, and it appears only on a session that still has a part.
 
 ### Rendering, data fetching and URL state
 
@@ -427,7 +427,7 @@ Every API response carrying file metadata sends `Cache-Control: private, no-stor
 
 **Display zone.** All six library pages format times and dates in the same display zone as the booking pages (`useLibraryDay`, built on `useZonedFormat`), and date-only values such as retention dates are computed in that zone.
 
-**Status filter labels.** `libraryStatusLabel` (`lib/documents/thread-copy.ts`) takes its words from the same copy as the row chips for the viewer's side. A learner sees "Waiting for review" and "Your turn", an expert sees "Waiting for learner" and "Your turn", and a mixed or organisation view uses neutral labels.
+**Status filter labels and row chips.** One rule in `lib/documents/thread-copy.ts` drives both. `libraryBucket` places a thread under Your turn, the waiting status, Done or Shared, and the Library query filters on it. `libraryChip` gives the row the words of that filter while the thread is open, and its outcome ("Approved", "Not accepted", "Shared") once it is done, so a row always carries the chip of the filter that returns it. A learner sees "Waiting for review" and "Your turn", which makes a learner's in-review row read "Waiting for review". An expert sees "Waiting for learner" and "Your turn", and a mixed or organisation view lists both waiting words ("Waiting for review / Waiting for learner").
 
 **Page-1 seeding.** All six library pages (documents and recordings for consultant, consultee and organisation) prefetch page 1 on the server through `seedLibraryPage` (`lib/library/library-seed.ts`) when the URL has no filters, so the list renders without a client round trip. A URL with `q`, `page` or any filter, and an operator inspecting another profile, fetch on the client.
 

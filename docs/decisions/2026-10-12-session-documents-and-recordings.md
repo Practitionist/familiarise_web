@@ -168,7 +168,7 @@ This record holds nineteen decisions about the files attached to a booking: how 
   - Document `files` are threads, not file rows. Each carries `versions[]` (newest first) and `latest`, and the UI shows one expandable row per thread: title, "Latest: <name>", a "vN · N versions" chip, Started by, status, Updated and Open latest. The expanded panel marks earlier learner versions "Superseded" and expert files "Expert reply".
   - Plan materials are a separate per-group `materials` array shown in their own table, and recording `files` are sessions with `parts[]`.
   - Threads sort needs-you first, then newest, then id. The kind chips are All, Consultation, Subscription and Trial, and the source filter reads "Started by anyone", "you" or "the expert", plus "Plan materials only".
-  - Filters are the other person, kind, status (including "Your turn"), date and search, all in the URL. Status labels use the row chips' words for the viewer's side, and neutral labels for mixed or organisation views.
+  - Filters are the other person, kind, status (including "Your turn"), date and search, all in the URL. One rule (`libraryBucket`) places a thread under a status filter and gives its row chip the same words for the viewer's side; mixed or organisation views list both waiting words.
   - All six library pages format times and dates in the booking pages' display zone, and cards are ordered by latest session.
   - Collaborators and co-hosts see only appointments they are a party to.
 - **Alternatives considered:**

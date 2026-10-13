@@ -88,7 +88,7 @@ All six library routes run inside `timedLibraryRead` (`lib/library/timed-read.ts
 
 - **Personal libraries**: `GET /api/dashboard/{consultant,consultee}/[profileId]/documents`, resolved by `lib/library/personal-library-route.ts`.
 - **Organisation library**: `GET /api/organizations/[orgId]/documents?scope=mine|everyone`; the `everyone` scope returns counts only.
-- **UI**: `LibraryBrowser` renders `ThreadTable` and `MaterialsTable` (`components/dashboard/library/DocumentTables.tsx`); expanding a thread lists its versions with "Superseded" and "Expert reply" labels. The status filter options come from `libraryStatusLabel` in the viewer's side words (learner: "Waiting for review", "Your turn"; expert: "Waiting for learner", "Your turn"; mixed or organisation views: neutral labels), and every date renders in the booking pages' display zone through `useLibraryDay`.
+- **UI**: `LibraryBrowser` renders `ThreadTable` and `MaterialsTable` (`components/dashboard/library/DocumentTables.tsx`); expanding a thread lists its versions with "Superseded" and "Expert reply" labels. One rule places a thread under a status filter and words its row chip: `libraryBucket` in `lib/documents/thread-copy.ts` picks Your turn, the waiting status, Done or Shared, and `libraryChip` labels the row with that filter's words while the thread is open and with its outcome ("Approved", "Not accepted", "Shared") once it is done. The words are the viewer's side (learner: "Waiting for review", "Your turn"; expert: "Waiting for learner", "Your turn"; mixed or organisation views list both waiting words), so a learner's in-review row reads "Waiting for review". Every date renders in the booking pages' display zone through `useLibraryDay`.
 
 ## 4. Error Model
 

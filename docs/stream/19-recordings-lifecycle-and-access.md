@@ -272,22 +272,22 @@ SESSION          RECORDING                              LENGTH
 - The header carries one retention line, phrased by type (`retentionText`): "Available until <date>", "Never expires", "Kept while your subscription is active, then 90 days" ("Kept while the subscription is active, then 90 days" for a host), or for a running class "Kept until 1 year after the last session".
 - A row shows its own retention only when it differs from the header or ends within 30 days (`rowRetention`).
 
-**Rows.** There is one row per session of the viewer's own booking, in session order. The columns are Session (number and the viewer's own date), Recording (title plus a state badge), Length and Play. Parts expand under the same columns, and Play on the parent row starts part 1. A removed part appears as a "Part k of n · Removed by … on <date>" row among its siblings.
+**Rows.** There is one row per session of the viewer's own booking, in session order. The columns are Session (number and the viewer's own date), Recording (title plus a state badge), Length and Play. Parts expand under the same columns, and Play on the parent row starts part 1. A removed part appears as a "Part k of n · Removed by … on <date>" row among its siblings. When every part of a session is gone, the session row reads "Removed by <name> on <date>" for a single remover. When different people removed the parts, it names all of them without a date, for example "Removed by LearnPro Academy and Angela Anderson", and each part row keeps its own remover and date.
 
 **States.** A row's badge comes from `rowBadge` in `lib/stream/recording-copy.ts`.
 
-| State             | Badge                                                                                                                                                                 |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Recorded          | None                                                                                                                                                                  |
-| Catch-up          | "Catch-up · recorded <source session date> with another batch" (or "run"), with a tooltip explaining that the viewer's own session wasn't recorded                    |
-| Removed           | "Removed by <expert name> on <date>", "Removed by <organisation name> on <date>" for `ORG_ACTION`, or "Removed by Familiarise support on <date>" for `SUPPORT_ACTION` |
-| Cancelled         | "Cancelled" (every session of that ordinal was cancelled or moved and nothing was recorded); the row is muted                                                         |
-| Declined          | "Not recorded · <name> declined recording" (1:1 only)                                                                                                                 |
-| Not recorded      | "Not recorded"                                                                                                                                                        |
-| Being prepared    | "Being prepared"                                                                                                                                                      |
-| Upcoming          | "Upcoming"                                                                                                                                                            |
-| Before you joined | "Before you joined"                                                                                                                                                   |
-| Expired           | "Expired"                                                                                                                                                             |
+| State             | Badge                                                                                                                                                                                                                                                                       |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recorded          | None                                                                                                                                                                                                                                                                        |
+| Catch-up          | "Catch-up · recorded <source session date> with another batch" (or "run"), with a tooltip explaining that the viewer's own session wasn't recorded                                                                                                                          |
+| Removed           | "Removed by <expert name> on <date>", "Removed by <organisation name> on <date>" for `ORG_ACTION`, or "Removed by Familiarise support on <date>" for `SUPPORT_ACTION`; several removers are listed by name with no date ("Removed by LearnPro Academy and Angela Anderson") |
+| Cancelled         | "Cancelled" (every session of that ordinal was cancelled or moved and nothing was recorded); the row is muted                                                                                                                                                               |
+| Declined          | "Not recorded · <name> declined recording" (1:1 only)                                                                                                                                                                                                                       |
+| Not recorded      | "Not recorded"                                                                                                                                                                                                                                                              |
+| Being prepared    | "Being prepared"                                                                                                                                                                                                                                                            |
+| Upcoming          | "Upcoming"                                                                                                                                                                                                                                                                  |
+| Before you joined | "Before you joined"                                                                                                                                                                                                                                                         |
+| Expired           | "Expired"                                                                                                                                                                                                                                                                   |
 
 **Upcoming sessions.** The timeline lists every past session, then the next upcoming one, then "<n> more upcoming sessions" (`moreUpcoming`).
 
@@ -307,7 +307,7 @@ SESSION          RECORDING                              LENGTH
 
 **Catch-up dates.** A catch-up is dated by the source session's own recording (`slot.source.recordedAt`), not by the start of the source batch or run.
 
-**Hosts.** A host sees their own batch with no catch-up rows. In the expert Library the per-row Manage is a link to the booking's Recordings page; the manage sheet itself (`RecordingManageSheet`) opens from the booking page.
+**Hosts.** A host sees their own batch with no catch-up rows. In the expert Library the per-row Manage is a link to the booking's Recordings page, shown only on a session that still has a part; the manage sheet itself (`RecordingManageSheet`) opens from the booking page.
 
 "Play" opens the player modal (`RecordingPlayerModal`), which mints the playback link on open and offers "Next part" within a session; there is no download action. The player offers Retry only for failures a retry can change (server, network, storage, vendor or rate-limit errors); access refusals and removals show no Retry. The Library paginates by booking, a "Purchased" group follows the bookings, and other batches never appear as groups.
 
