@@ -49,6 +49,52 @@ graph LR
     NRELAY --> NOVU
 ```
 
+### High-Level Design (ASCII Architecture)
+
+```text
++=============================================================================================+
+|                 PRODUCERS (API Routes, Webhooks, Server Actions, Cron Jobs)                 |
++=============================================================================================+
+   |
+   |  Phase 0 (High-Contention Serializable Tx Only: Payment Webhooks & Invoice Rollup):
+   |  - Pre-render React Email HTML/Plaintext OUTSIDE tx (`prepare*Email` -> `renderEmail()`)
+   v
++---------------------------------------------------------------------------------------------+
+|                   PHASE 1: ATOMIC POSTGRES `$transaction(tx)` (`PG_POOL_MAX=1`)             |
+|                                                                                             |
+|  1. Domain State Mutation (CAS `updateMany` with expected prior status in `WHERE`)          |
+|  2. `stageBell(tx, ...)` -> `resolveRecipientBellPolicy(tx)` filters opted-out users,       |
+|     computes quiet-hours `notBefore`, and upserts `NotificationOutbox`:                     |
+|     - `status = 'PENDING'`, `nextRetryAt = notBefore ?? NOW() + 60s`                        |
+|     - Deterministic `transactionId = <workflowId>:<sha256[:32]>` + `NotificationScope`      |
+|  3. `stage*Email(tx, ...)` / `stagePreparedEmails(tx, ...)` writes `FailedEmail`:           |
+|     - Enforces `EMAIL_DELIVERY_MODE` guard + `EmailSuppression` + `NotificationPreference`  |
+|     - `status = 'PENDING'`, `nextRetryAt = NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`)         |
+|     - Row-scoped Resend key: `Idempotency-Key = <EMAIL_TYPE>/failed-email/<row.id>`         |
++---------------------------------------------------------------------------------------------+
+   |
+   +---------------------------------------------+--------------------------------------------+
+   | FAST PATH (0ms HTTP Latency Overhead)       | DURABLE FALLBACK RELAY (`cron-tick.mts`)   |
+   v                                             v
++------------------------------------------+  +-----------------------------------------------+
+| PHASE 2: `flushNotificationsAfter()`     |  | PHASE 3: Scheduled Outbox Drains              |
+| - Uses Next.js `after()` (`scheduleAfter`)|  | - `withCronLock` (`SystemJobExecution` lease) |
+|   after HTTP response is sent (or inline |  | - `drain-notification-outbox` (10m @ `:05`)   |
+|   in CLI/cron/Jest).                     |  | - `retry-failed-emails` (15m @ `:00`):        |
+| - Concurrent `Promise.allSettled`:       |  |   reconstructs RFC 8058 `List-Unsubscribe`    |
+|   `attemptTrigger` + `attemptStaged`     |  |   headers via `reconstructUnsubscribeHeaders` |
+| - Marks `SENT` on 2xx; leaves `PENDING`  |  | - Per-tick aggregated Sentry + `postOpsChat`  |
+|   or `RETRY` (backoff) on failure.       |  |   when rows enter `DEAD_LETTER`.              |
++------------------------------------------+  +-----------------------------------------------+
+                     \                                       /
+                      v                                     v
+        +----------------------------+       +-------------------------------+
+        | Novu Cloud (16 Families)   |       | Resend API (`mail.` / `news.`)|
+        | -> `<Inbox />` WebSocket   |       | -> Svix Webhook (`EmailEvent`)|
+        |    (`subscriberHash` HMAC) |       |    + `EmailSuppression` sync  |
+        +----------------------------+       +-------------------------------+
+```
+
 ### Channel Parity Across Lifecycle Flows
 
 Every multi-channel user lifecycle event maintains full channel parity across `lib/email/` and `lib/novu/`:
@@ -97,6 +143,40 @@ sequenceDiagram
     Route->>Flush: flushNotificationsAfter({ bells, emails }, op)
     Flush->>Providers: Concurrent Promise.all(attemptTrigger + attemptStaged)
     Providers-->>Flush: Settle SENT / leave PENDING for relay on timeout
+```
+
+### Low-Level Design: 3-Phase Execution & Lease Timeline (ASCII)
+
+```text
+t = 0ms      [Phase 0: Outside Tx]  prepareRecipientEmails() renders React Email SSR HTML + text in memory
+t = 15ms     [Phase 1: Inside Tx]   BEGIN $transaction(tx)
+t = 20ms                            CAS domain write (e.g., Payment.updateMany WHERE status = PENDING)
+t = 28ms                            stageBell(tx) -> upsert NotificationOutbox (nextRetryAt = t + 60,000ms)
+t = 35ms                            stagePreparedEmails(tx) -> insert FailedEmail (nextRetryAt = t + 60,000ms)
+t = 40ms                            COMMIT $transaction(tx)
+t = 41ms     [HTTP Response Sent]   scheduleAfter() registers post-response callback; caller receives 200 OK
+t = 42ms     [Phase 2: Fast-Path]   Promise.allSettled([attemptTrigger(), attemptStaged()])
+t = 180ms                           2xx from Novu & Resend -> rows transition PENDING -> SENT (sentAt = now)
+             ...
+t > 60,000ms [Phase 3: Cron Relay]  If Phase 2 timed out or container froze before t = 180ms, inline lease
+                                    expires (nextRetryAt <= now) and cron-tick.mts claims & retries the row.
+```
+
+### Outbox Row State Machine (`NotificationOutbox`, `FailedEmail` & `FailedEmailBatch`)
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: Staged in $transaction(tx)<br/>(nextRetryAt = notBefore ?? now + 60s)
+    PENDING --> SENT: Fast-path flushNotificationsAfter()<br/>succeeds within 60s lease
+    PENDING --> SENT: Cron relay drain succeeds<br/>(after 60s lease or quiet-hours notBefore)
+    PENDING --> RETRY: Transient 429 / 5xx / timeout<br/>(attempts < 5, exponential backoff)
+    RETRY --> SENT: Subsequent cron relay tick succeeds
+    RETRY --> RETRY: Transient error (attempts < 5)
+    PENDING --> DEAD_LETTER: Terminal 4xx error or held:pre-launch
+    RETRY --> DEAD_LETTER: Exhausted (attempts >= 5) or terminal 4xx<br/>(1 aggregated Sentry + postOpsChat alert/tick)
+    SENT --> SCRUBBED: 7-day retention sweep<br/>(htmlBody/textBody/payload cleared)
+    SCRUBBED --> [*]: 30-day retention prune (sentAt < now - 30d)
+    DEAD_LETTER --> [*]: 90-day retention prune
 ```
 
 ---
@@ -176,6 +256,36 @@ Both `resolveRecipientBellPolicy` (for in-app bells) and `loadEmailRecipients` (
   - `NEITHER`: Suppresses both channels.
 - **Category Columns (`NotificationPreference`)**: `appointmentReminders` (`appointments`), `paymentNotifications` (`payments`), `subscriptionAlerts` (`subscriptions`), `trialNotifications` (`trials`), `supportUpdates` (`support`), `feedbackAlerts` (`feedback`), `orgBillingAlerts` (`orgBilling`), `orgMembershipAlerts` (`orgMembership`), and `orgProgramAlerts` (`orgProgram`).
 
+### Low-Level Policy, Routing & Delivery Guard Flowchart
+
+```mermaid
+flowchart TD
+    Start["Domain Event Triggered<br/>(User IDs + Payload + Category)"] --> Split{"Channel Path"}
+
+    Split -->|"In-App Bell (lib/novu/)"| BellPolicy["resolveRecipientBellPolicy(workflowId, userIds, tx)"]
+    BellPolicy --> CheckModeBell{"routingMode in<br/>EMAIL_ONLY | NEITHER?"}
+    CheckModeBell -->|"Yes"| DropBell["Drop Recipient"]
+    CheckModeBell -->|"No"| CheckMasterBell{"allNotifications && inAppEnabled<br/>&& categoryColumn !== false?"}
+    CheckMasterBell -->|"No (and not mandatory)"| DropBell
+    CheckMasterBell -->|"Yes"| QuietHours{"Quiet Hours Active?"}
+    QuietHours -->|"Yes"| StageDeferred["Upsert NotificationOutbox<br/>(notBefore = quietEnd, nextRetryAt = quietEnd)"]
+    QuietHours -->|"No"| StageImmediate["Upsert NotificationOutbox<br/>(nextRetryAt = now + 60s)"]
+
+    Split -->|"Email (lib/email/)"| EmailPolicy["loadEmailRecipients(userIds, category, db)"]
+    EmailPolicy --> CheckModeEmail{"routingMode in<br/>BELL_ONLY | NEITHER?"}
+    CheckModeEmail -->|"Yes (and category !== null)"| DropEmail["Drop Recipient"]
+    CheckModeEmail -->|"No"| CheckPrefEmail{"allNotifications && emailEnabled<br/>&& categoryColumn !== false?"}
+    CheckPrefEmail -->|"No (and category !== null)"| DropEmail
+    CheckPrefEmail -->|"Yes"| CheckSupp{"EmailSuppression<br/>or Guard Blocked?"}
+    CheckSupp -->|"Suppressed"| SkipSend["Skip Send (suppressed: true)"]
+    CheckSupp -->|"Disallowed in Allowlist Mode"| HoldRow["Insert FailedEmail<br/>(DEAD_LETTER: held:pre-launch)"]
+    CheckSupp -->|"Allowed"| StageEmail["Insert FailedEmail<br/>(PENDING, nextRetryAt = now + 60s,<br/>key = <TYPE>/failed-email/<row.id>)"]
+
+    StageDeferred --> Flush["flushNotificationsAfter({ bells, emails })"]
+    StageImmediate --> Flush
+    StageEmail --> Flush
+```
+
 ---
 
 ## 5. Scheduled Relays, Sidecar Indexes & Observability
@@ -225,6 +335,14 @@ To protect the 5,000/month Sentry error quota:
                `to+subject+html` (24h Resend idempotency cache dropped repeat notices).
              - `retry-failed-emails` dropped RFC 8058 `List-Unsubscribe` headers on retry,
                while `GET /api/waitlist/unsubscribe` mutated DB state on bot prefetch.
+```
+
+```mermaid
+flowchart LR
+    subgraph "Legacy Asymmetric Producer Path (Superseded)"
+        P["API Route / Webhook"] -->|"In-Tx or Floating .catch()"| B["Novu Bell Path<br/>(stageBell bypassed prefs;<br/>no subscriberHash HMAC)"]
+        P -->|"Inline Blocking await deliver()<br/>inside Tx / Redis Lock"| E["Resend Email Path<br/>(nextRetryAt = NOW() race;<br/>24h body-hash collision;<br/>dropped RFC 8058 retry headers)"]
+    end
 ```
 
 - **Removed Accidental Operational Asymmetries**:

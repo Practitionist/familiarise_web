@@ -16,14 +16,115 @@ Resend sends every transactional, operational, and newsletter email on the platf
 
 ```mermaid
 flowchart LR
-    App["App Routes / Cron Jobs"] -->|"stage() inside tx or deliver()"| Guard["Pre-Launch Guard (EMAIL_DELIVERY_MODE)"]
-    Guard -->|"Allowlisted / Live"| Outbox["FailedEmail Outbox (nextRetryAt = now + 60s)"]
+    App["App Routes / Cron Jobs"] -->|"1. prepareRecipientEmails() outside tx"| Render["Pre-Render HTML + PlainText + RFC 8058 Headers"]
+    Render -->|"2. stage() / stagePreparedEmails(tx)"| Guard["Pre-Launch Guard (EMAIL_DELIVERY_MODE)"]
+    Guard -->|"Allowlisted / Live"| Outbox["FailedEmail / FailedEmailBatch (nextRetryAt = NOW() + 60s)"]
     Guard -->|"Outside Allowlist"| Held["Held in Outbox (DEAD_LETTER: held:pre-launch)"]
-    Outbox -->|"Fast-Path (flushNotificationsAfter / attempt)"| Resend["Resend API (Idempotency-Key: <TYPE>/failed-email/<id>)"]
-    Outbox -->|"Relay (retry-failed-emails: every 15m at :00)"| Resend
-    Resend -->|"Svix Signed Webhook (whsec_)"| Webhook["POST /api/webhooks/resend"]
-    Webhook -->|"Single Atomic $transaction(tx)"| Tables["EmailEvent + EmailSuppression + Waitlist"]
-    Webhook -->|"Post-Commit Domain Health Check"| SystemEvent["SystemEvent (recordSystemErrorSafe)"]
+    Outbox -->|"3a. Fast-Path (flushNotificationsAfter / attempt)"| Resend["Resend API (Idempotency-Key: <TYPE>/failed-email/<id>)"]
+    Outbox -->|"3b. Relay (retry-failed-emails: every 15m at :00)"| Resend
+    Resend -->|"4. Svix Signed Webhook (whsec_)"| Webhook["POST /api/webhooks/resend"]
+    Webhook -->|"5. Single Atomic $transaction(tx)"| Tables["EmailEvent + EmailSuppression + Waitlist"]
+    Webhook -->|"6. Post-Commit Domain Health Check"| SystemEvent["SystemEvent (recordSystemErrorSafe)"]
+```
+
+### ASCII High-Level & Low-Level Email Outbox Pipeline
+
+```text
++===================================================================================================+
+|                      PRODUCERS (API Routes, Webhooks, Server Actions, Cron)                       |
++===================================================================================================+
+   |
+   | [Phase 0 — Pre-Render Outside Serializable $transaction(tx)]
+   |  prepareRecipientEmails() / preparePaymentSuccessEmail() / prepareOrgBillingEmail()
+   |  - Batch-loads User preference rows (`allNotifications`, `emailEnabled`, `notificationRouting`,
+   |    category column) + `EmailSuppression` (`HARD_BOUNCE`, `COMPLAINT`, `MANUAL`)
+   |  - Renders React Email JSX -> HTML + `toPlainText(html)` + HMAC-SHA256 RFC 8058 `List-Unsubscribe`
+   v
++---------------------------------------------------------------------------------------------------+
+| [Phase 1 — Atomic Outbox Staging (`stage()` / `stagePreparedEmails(tx)`)]                         |
+|  - `EMAIL_DELIVERY_MODE` Guard: non-allowlisted recipients -> `DEAD_LETTER ("held:pre-launch")`   |
+|  - Credential Emails (`EMAIL_VERIFICATION`, `PASSWORD_RESET`): `htmlBody = "[REDACTED]"`          |
+|  - Standard Lifecycle Emails: `status = "PENDING"`, `nextRetryAt = NOW() + 60s` (60s lease)       |
+|  - Waitlist Broadcasts: chunked `FailedEmailBatch` (`<= 100` recipients, `nextRetryAt = +60s`)    |
++---------------------------------------------------------------------------------------------------+
+   |                                                          |
+   | [Phase 2a — Fast-Path (`flushNotificationsAfter`)]       | [Phase 2b — Relay (`retry-failed-emails`)]
+   |  `scheduleAfter` -> `attemptStaged()`                    |  Every 15m at `:00` (`limit=20`, `125ms` gap)
+   |  Sends `<EMAIL_TYPE>/failed-email/<row.id>`              |  Reconstructs RFC 8058 headers statelessly via
+   |  Updates `status = "SENT"`, `sentAt = NOW()`             |  `reconstructUnsubscribeHeaders(row)`
+   v                                                          v
++===================================================================================================+
+|            RESEND API (`mail.familiarisenow.com` & `news.familiarisenow.com`)                     |
+|  - Single-row idempotency (`Idempotency-Key: <TYPE>/failed-email/<row.id>`)                       |
+|  - Batch sends with `batchValidation: "permissive"` (`partial` vs `sent` tracking)                |
++===================================================================================================+
+   |
+   | Svix Signed Webhook (`svix-id`, `svix-timestamp`, `svix-signature`, 300s replay window)
+   v
++---------------------------------------------------------------------------------------------------+
+| [Phase 3 — Inbound Webhook (`POST /api/webhooks/resend`)]                                         |
+|  - Single atomic `prisma.$transaction(async (tx) => ...)` (`PG_POOL_MAX=1` safe):                 |
+|    1. Insert `EmailEvent` (`@unique svixId`)                                                      |
+|    2. Upsert `EmailSuppression` + transition `Waitlist` on bounce/complaint/suppressed/unsub      |
+|  - Post-commit: `prune-system-job-executions` scrubs `SENT` bodies at 7d & prunes rows at 30d/90d |
++---------------------------------------------------------------------------------------------------+
+```
+
+### Low-Level End-to-End Sequence Diagram (`prepare` → `stage` → `flush` → `Resend` → `Svix Webhook`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Caller as Domain Route / Webhook
+    participant Prep as prepareRecipientEmails()
+    participant DB as Postgres (PG_POOL_MAX=1)
+    participant After as flushNotificationsAfter (after())
+    participant Cron as retry-failed-emails (:00/15m)
+    participant Resend as Resend REST API
+    participant Hook as POST /api/webhooks/resend
+
+    Caller->>Prep: Pre-render React Email outside Serializable tx
+    Prep->>DB: Batch SELECT User prefs + EmailSuppression
+    Prep-->>Caller: Prepared HTML, textBody, RFC 8058 List-Unsubscribe headers
+    Caller->>DB: BEGIN $transaction(tx)
+    Caller->>DB: Domain CAS updateMany + stagePreparedEmails(tx) (PENDING, nextRetryAt = +60s)
+    Caller->>DB: COMMIT
+    Caller->>After: Register post-response flush (returns HTTP 200 immediately)
+    par Fast-Path Inline Attempt (within 60s lease)
+        After->>Resend: POST /emails (Idempotency-Key: <TYPE>/failed-email/<row.id>)
+        Resend-->>After: 200 OK (providerMessageId)
+        After->>DB: UPDATE FailedEmail SET status = 'SENT', sentAt = NOW()
+    and Scheduled Relay Sweep (only rows with nextRetryAt <= NOW())
+        Cron->>DB: SELECT PENDING/RETRY WHERE nextRetryAt <= NOW() LIMIT 20
+        Cron->>Cron: reconstructUnsubscribeHeaders(row)
+        Cron->>Resend: POST /emails (same <TYPE>/failed-email/<row.id> key)
+        Cron->>DB: UPDATE status = 'SENT' | 'RETRY' (backoff) | 'DEAD_LETTER'
+    end
+    Resend->>Hook: POST Svix event (email.delivered / email.bounced / email.complained)
+    Hook->>DB: Atomic $transaction(tx): INSERT EmailEvent + UPSERT EmailSuppression
+```
+
+### `FailedEmail` & `FailedEmailBatch` Outbox State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> GuardCheck: stage() / stagePreparedEmails(tx)
+    GuardCheck --> DEAD_LETTER_HELD: Disallowed by EMAIL_DELIVERY_MODE != live ("held:pre-launch")
+    GuardCheck --> PENDING: Allowed (nextRetryAt = NOW() + 60s inline lease)
+
+    PENDING --> SENT: Fast-path attemptStaged() succeeds (providerMessageId recorded)
+    PENDING --> RETRY: Fast-path transient 5xx / 429 / network timeout
+    PENDING --> DEAD_LETTER: Fast-path terminal 4xx or credential email ("not replayed")
+    PENDING --> RelayClaim: 60s inline lease expires (nextRetryAt <= NOW())
+
+    RelayClaim --> SENT: retry-failed-emails succeeds (with reconstructed RFC 8058 headers)
+    RelayClaim --> RETRY: Transient failure & attempts < 5 (exponential backoff 5m..4h)
+    RETRY --> RelayClaim: nextRetryAt <= NOW()
+    RelayClaim --> DEAD_LETTER: Terminal Resend error or attempts >= 5 (1 aggregated Sentry + Ops alert)
+
+    SENT --> SENT_SCRUBBED: 7 days after sentAt (htmlBody/textBody/batch payload scrubbed)
+    SENT_SCRUBBED --> [*]: Pruned 30 days after sentAt
+    DEAD_LETTER --> [*]: Pruned 90 days after updatedAt
 ```
 
 ---
@@ -146,6 +247,16 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 Legacy Asymmetric Dual-Path (Superseded):
   Mutation ─▶ stageBell(tx) ─▶ NotificationOutbox ─▶ sequential for..await attemptTrigger()
            └─ inline send*Email() in request body or fire-and-forget post-tx (unpaired channels, blocking 502s)
+              ├─ FailedEmail created with nextRetryAt = NOW() (cron raced in-flight inline sends)
+              ├─ Resend Idempotency-Key = SHA256(to + subject + html) (dropped repeat emails for 24h)
+              └─ Retry relay stripped RFC 8058 List-Unsubscribe headers & fired per-row Sentry alerts
+```
+
+```mermaid
+flowchart LR
+    Mut["Legacy Route / Webhook"] -->|"Inline await render() + deliver()"| Block["Blocked HTTP Response & Redis Slot Locks"]
+    Block -->|"nextRetryAt = NOW()"| Race["Cron Relay Raced Inline Attempt"]
+    Race -->|"Content-Hash Key"| Drop["Dropped Repeat Emails Within 24h & Stripped RFC 8058 Headers"]
 ```
 
 - **Asymmetric Bell-Only or Email-Only Producers & Inline Request-Blocking Sends**: Superseded by atomic dual-channel staging (`stageBell` / `notify*({ tx | deferAttempt: true })` + `defineLifecycleStager` / `stage*Email(tx, ...)`) paired with unified post-commit concurrent flushing via `flushNotificationsAfter` (`lib/novu/stage-then-attempt.ts`).

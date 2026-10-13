@@ -88,8 +88,92 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
   Netlify `cron-tick.mts` (`*/5 * * * *`, max 8 concurrent targets per tick):
   - `retry-failed-emails`: every 15m at offset `:00` (`limit=20`, `20s` timeout, `SEND_GAP_MS = 125ms`)
   - `drain-notification-outbox`: every 10m at offset `:05` (`limit=20`, `20s` timeout, `DRAIN_CONCURRENCY = 5`)
-  - Atomic Postgres lease lock (`SystemJobExecution_running_jobName_key` in `prisma/sql/check-constraints.sql`)
-  - Per-tick aggregated Sentry alerts + `*.outbox.dead_letter` gauges + `postOpsChat` fallback alerts
+   - Atomic Postgres lease lock (`SystemJobExecution_running_jobName_key` in `prisma/sql/check-constraints.sql`)
+   - Per-tick aggregated Sentry alerts + `*.outbox.dead_letter` gauges + `postOpsChat` fallback alerts
+```
+
+### Mermaid Phase-Staggered Ticker & Outbox Architecture Flowchart
+
+```mermaid
+flowchart TD
+    subgraph Producers["1. Transactional Producers (Next.js Routes, Webhooks, Jobs)"]
+        Prep["Pre-Render Outside Serializable tx (prepareRecipientEmails)"]
+        Tx["Atomic $transaction(tx): Domain CAS + stageBell(tx) + stagePreparedEmails(tx)"]
+        FastPath["Post-Commit Fast-Path: flushNotificationsAfter({ bells, emails }) via scheduleAfter"]
+        Prep --> Tx --> FastPath
+    end
+
+    subgraph OutboxTables["2. Consolidated Postgres Outbox Tables (nextRetryAt = NOW() + 60s)"]
+        FE["FailedEmail & FailedEmailBatch (FailedEmail_active_outbox_idx)"]
+        NO["NotificationOutbox (NotificationOutbox_active_outbox_idx)"]
+        OW["OutboundWebhookDelivery & Domain Row Stamps"]
+    end
+
+    subgraph Ticker["3. Phase-Staggered Ticker (netlify/functions/cron-tick.mts — */5 * * * *)"]
+        Gate["Check ops:active_cron_platform & TARGET_OFFSET_MINUTES (<= 8 targets/tick)"]
+        Lock["Acquire Fail-Closed Lease (withCronLock -> SystemJobExecution_running_jobName_key)"]
+        Offset00["Offset :00 (15m): retry-failed-emails & dispatch-outbound-webhooks"]
+        Offset05["Offset :05 (10m/15m): drain-notification-outbox & reconcile-orphaned-confirmations"]
+        Offset10["Offset :10 (15m): retry-auto-refunds & domain sweepers"]
+        Gate --> Lock
+        Lock --> Offset00 & Offset05 & Offset10
+    end
+
+    Tx --> FE & NO & OW
+    FastPath -.->|"0ms..60s Inline Attempt"| FE & NO
+    Offset00 -->|"nextRetryAt <= NOW()"| FE & OW
+    Offset05 -->|"nextRetryAt <= NOW() & notBefore <= NOW()"| NO
+```
+
+### Mermaid End-to-End Outbox Lease & Ticker Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Route as Producer Route / Webhook
+    participant DB as Postgres (Outbox + SystemJobExecution)
+    participant After as flushNotificationsAfter (after())
+    participant Ticker as cron-tick.mts (*/5 * * * *)
+    participant Lock as withCronLock (Fail-Closed Lease)
+    participant Vendor as External Vendor (Resend / Novu / Webhook)
+
+    Route->>DB: BEGIN $transaction(tx): Domain write + INSERT Outbox (PENDING, nextRetryAt = +60s)
+    Route->>DB: COMMIT
+    Route->>After: scheduleAfter(flushNotificationsAfter)
+    par Inline Fast-Path (within 60s grace window)
+        After->>Vendor: Deliver with deterministic row-scoped Idempotency-Key
+        Vendor-->>After: 200 OK
+        After->>DB: UPDATE Outbox SET status = 'SENT'
+    and Phase-Staggered Cron Tick (at offset :00 or :05)
+        Ticker->>Lock: POST /api/cleanup/[job] (X-Cron-Secret)
+        Lock->>DB: INSERT SystemJobExecution (status = 'RUNNING') or CAS expired lease
+        Lock->>DB: SELECT Outbox WHERE status IN ('PENDING','RETRY') AND nextRetryAt <= NOW()
+        Note over Lock,DB: Skips any row still inside its 60s inline lease window
+        Lock->>Vendor: Retry eligible rows (with reconstructed RFC 8058 headers for Email)
+        Lock->>DB: UPDATE Outbox SET status = 'SENT' | 'RETRY' | 'DEAD_LETTER'
+        Lock->>DB: UPDATE SystemJobExecution SET status = 'COMPLETED'
+    end
+```
+
+### Mermaid `withCronLock` & Outbox Row Lifecycle State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING_LEASED: Staged in tx (status = PENDING, nextRetryAt = NOW() + 60s)
+    PENDING_LEASED --> SENT: Fast-path flushNotificationsAfter succeeds within 60s
+    PENDING_LEASED --> RETRY_BACKOFF: Fast-path transient failure
+    PENDING_LEASED --> DEAD_LETTER: Fast-path permanent 4xx / unrecoverable error
+    PENDING_LEASED --> CRON_ELIGIBLE: 60s inline lease expires (nextRetryAt <= NOW())
+
+    CRON_ELIGIBLE --> CRON_LOCKED: withCronLock acquires SystemJobExecution RUNNING lease
+    CRON_LOCKED --> SENT: Scheduled relay delivery succeeds
+    CRON_LOCKED --> RETRY_BACKOFF: Transient error & attempts < max (exponential backoff)
+    RETRY_BACKOFF --> CRON_ELIGIBLE: nextRetryAt <= NOW()
+    CRON_LOCKED --> DEAD_LETTER: Attempts exhausted (1 aggregated Sentry + Ops alert per tick)
+
+    SENT --> SCRUBBED_7D: 7 days after sentAt (PII htmlBody/textBody/payload cleared)
+    SCRUBBED_7D --> [*]: Pruned after 30 days
+    DEAD_LETTER --> [*]: Pruned after 90 days
 ```
 
 ---
@@ -115,6 +199,12 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
      └── Path B (Email): inline `await deliver()` blocking HTTP + Redis slot locks,
                          `FailedEmail` due at `NOW()` (racing cron), body-hash Resend key,
                          and retried rows stripped of RFC 8058 `List-Unsubscribe` headers.
+```
+
+```mermaid
+flowchart LR
+    Tick["Legacy Unstaggered Ticker (minute % every < 5)"] -->|":00 & :30 Thundering Herd"| Herd["18+ Concurrent Targets Exhausted PG_POOL_MAX=1"]
+    Prod["Legacy Producer"] -->|"nextRetryAt = NOW()"| Race["Cron Sweeper Raced Inline Fast-Path Delivery"]
 ```
 
 - **Unstaggered Ticker Thundering Herd (`minute % every < 5` without offsets)**: Previously fired 18+ targets simultaneously at `:00`/`:30` while leaving `:05, :25, :35, :55` idle, exhausting `PG_POOL_MAX=1` connections; superseded by deterministic `TARGET_OFFSET_MINUTES` capping concurrent targets at `<= 8` per 5-minute tick.
