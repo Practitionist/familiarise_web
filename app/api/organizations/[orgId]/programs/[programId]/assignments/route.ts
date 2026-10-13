@@ -513,27 +513,35 @@ export async function POST(
     if (outcome.newlyAssignedTargets.length > 0) {
       const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}`;
       for (const target of outcome.newlyAssignedTargets) {
-        const bells =
-          (await notifyOrgSeatAssigned(
-            target.userId,
-            {
-              organizationId: orgId,
-              orgName: access.org.name,
-              programName,
-              dashboardUrl,
-            },
-            { deferAttempt: true },
-          )) ?? [];
-        const emails = await stageOrgContractAndSeatEmail(prisma, {
-          recipientUserIds: [target.userId],
-          entityId: target.assignmentId,
-          kind: "SEAT_ASSIGNED",
-          orgName: access.org.name,
-          programName,
-          dashboardUrl,
-        });
-        stagedBells.push(...bells);
-        stagedEmails.push(...emails);
+        try {
+          const bells =
+            (await notifyOrgSeatAssigned(
+              target.userId,
+              {
+                organizationId: orgId,
+                orgName: access.org.name,
+                programName,
+                dashboardUrl,
+              },
+              { deferAttempt: true },
+            )) ?? [];
+          const emails = await stageOrgContractAndSeatEmail(prisma, {
+            recipientUserIds: [target.userId],
+            entityId: target.assignmentId,
+            kind: "SEAT_ASSIGNED",
+            orgName: access.org.name,
+            programName,
+            dashboardUrl,
+          });
+          stagedBells.push(...bells);
+          stagedEmails.push(...emails);
+        } catch (err) {
+          console.error(
+            "[assignments] seat-assigned staging failed",
+            target.assignmentId,
+            err,
+          );
+        }
       }
     }
 

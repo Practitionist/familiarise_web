@@ -98,7 +98,7 @@ function renderContractAndSeatBody(args: {
           {effectiveDateText ? (
             <>
               {" "}
-              through <strong>{effectiveDateText}</strong>
+              effective <strong>{effectiveDateText}</strong>
             </>
           ) : null}
           .

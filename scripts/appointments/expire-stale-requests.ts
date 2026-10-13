@@ -37,6 +37,7 @@ import {
   SLOT_TRANSITION_TX_OPTIONS,
   transitionSlotsInChunks,
 } from "@/lib/booking/slot-release";
+import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
   notifyConsulteeRequestExpired,
@@ -1412,7 +1413,7 @@ async function expirePaymentPendingRequests(
     for (const consultation of staleConsultations) {
       // #1775 — the per-row lapse is the shared core the consultant's
       // Withdraw also calls; a lost CAS is `moved: 0`, never a throw.
-      const { moved } = await prisma.$transaction(
+      const { moved, holdNotices } = await prisma.$transaction(
         (tx) =>
           lapseApprovedRequest(tx, {
             kind: "consultation",
@@ -1430,6 +1431,7 @@ async function expirePaymentPendingRequests(
         continue;
       }
       consultationsExpired += 1;
+      await flushBackupInterestNotices(holdNotices);
       // #1589 N-P0-03 — the fallback lapse notifies like the 24 h sweep.
       const notice = expiryNoticeFor(
         "consultation",
@@ -1465,7 +1467,7 @@ async function expirePaymentPendingRequests(
     let subscriptionsExpired = 0;
     let subscriptionsSkipped = 0;
     for (const subscription of staleSubscriptions) {
-      const { moved } = await prisma.$transaction(
+      const { moved, holdNotices } = await prisma.$transaction(
         (tx) =>
           lapseApprovedRequest(tx, {
             kind: "subscription",
@@ -1483,6 +1485,7 @@ async function expirePaymentPendingRequests(
         continue;
       }
       subscriptionsExpired += 1;
+      await flushBackupInterestNotices(holdNotices);
       const notice = expiryNoticeFor(
         "subscription",
         subscription,

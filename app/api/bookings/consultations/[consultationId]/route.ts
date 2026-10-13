@@ -17,6 +17,7 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
@@ -637,13 +638,14 @@ export async function PATCH(
                   : undefined,
             });
             // #1778 — a decline frees the held times: tell anyone waiting and release holds.
-            if (status === AppointmentStatus.REJECTED) {
-              await releaseDeclinedRequestHold(
-                tx,
-                { consultationId },
-                session.user.id,
-              );
-            }
+            const holdNotices =
+              status === AppointmentStatus.REJECTED
+                ? await releaseDeclinedRequestHold(
+                    tx,
+                    { consultationId },
+                    session.user.id,
+                  )
+                : null;
             const consultation = await tx.consultation.findUniqueOrThrow({
               where: { id: consultationId },
               include: {
@@ -669,7 +671,7 @@ export async function PATCH(
               },
             });
 
-            return { data: consultation, duplicate: false };
+            return { data: consultation, duplicate: false, holdNotices };
           },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
@@ -678,6 +680,9 @@ export async function PATCH(
           },
         );
       });
+      await flushBackupInterestNotices(
+        "holdNotices" in result ? result.holdNotices : null,
+      );
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
       // pay-link mint previously failed (#1169 PR 2): fall through so a

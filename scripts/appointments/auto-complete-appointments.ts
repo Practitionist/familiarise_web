@@ -55,7 +55,7 @@ import {
   transitionTrial,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
-import { settleSubscriptionCycle } from "@/lib/booking/subscription-cycle";
+import { settleSubscriptionCycleWithNotice } from "@/lib/booking/subscription-cycle";
 import {
   sessionsTotalOf,
   subscriptionEntitlement,
@@ -939,47 +939,23 @@ async function settleMenteesHelped(hostUserIds: Set<string>): Promise<void> {
  */
 async function settleCycleBells(wrappers: Set<string>): Promise<void> {
   for (const appointmentId of wrappers) {
-    const staged = await prisma.$transaction((tx) =>
-      settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+    const settled = await prisma.$transaction((tx) =>
+      settleSubscriptionCycleWithNotice(tx, { appointmentId, now: new Date() }),
     );
-    const firstBell = staged?.[0];
-    const payload = firstBell?.payload as
-      | {
-          subscriptionId?: string;
-          planTitle?: string;
-          consultantName?: string;
-          cycleOrdinal?: number;
-          nextBatch?: number;
-          remainingSessions?: number;
-          dashboardUrl?: string;
-        }
-      | undefined;
-    const emailRows =
-      firstBell &&
-      payload?.subscriptionId &&
-      payload.planTitle &&
-      payload.dashboardUrl
-        ? await stageSubscriptionLifecycleEmail(prisma, {
-            subscriptionId: payload.subscriptionId,
-            userIds: firstBell.recipients,
-            kind: "SUBSCRIPTION_RENEWED",
-            planTitle: payload.planTitle,
-            consultantName: payload.consultantName,
-            cycleOrdinal: payload.cycleOrdinal,
-            nextBatch: payload.nextBatch,
-            remainingSessions: payload.remainingSessions,
-            dashboardUrl: payload.dashboardUrl,
-          }).catch((err) => {
+    const emailRows = settled?.emailArgs
+      ? await stageSubscriptionLifecycleEmail(prisma, settled.emailArgs).catch(
+          (err) => {
             console.error(
               "[auto-complete-appointments] subscription cycle email stage failed:",
               err,
             );
             return [];
-          })
-        : [];
+          },
+        )
+      : [];
     await flushNotificationsAfter(
       {
-        bells: staged ?? [],
+        bells: settled?.bells ?? [],
         emails: emailRows.length
           ? [{ rows: emailRows, emailType: "SUBSCRIPTION_RENEWED" }]
           : [],

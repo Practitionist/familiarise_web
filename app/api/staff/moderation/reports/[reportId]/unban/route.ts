@@ -113,10 +113,24 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     );
 
     if (!action) {
+      const repair: SideEffectSummary = {};
+      try {
+        await restoreStreamAccess(report.targetUserId);
+        repair.stream = "ok";
+      } catch (error) {
+        repair.stream = "failed";
+        repair.errors = [
+          `stream: ${error instanceof Error ? error.message : String(error)}`,
+        ];
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "moderation" } },
+        );
+      }
       return NextResponse.json({
         action: null,
-        sideEffects: {},
-        message: "User is not currently banned",
+        sideEffects: repair,
+        message: "User is not currently banned; Stream access re-applied",
       });
     }
 

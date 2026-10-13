@@ -3,7 +3,11 @@
  * Handles the complete checkout flow for all appointment types
  */
 
-import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
+import {
+  flushBackupInterestNotices,
+  stageNoticesForAppointmentHolds,
+  type StagedBackupInterestNotices,
+} from "@/lib/booking/backup-interest";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -659,7 +663,7 @@ async function releaseSupersededHolds(params: {
   paymentIds: string[];
   userId: string;
 }): Promise<void> {
-  await prisma.$transaction(async (tx: Tx) => {
+  const holdNotices = await prisma.$transaction(async (tx: Tx) => {
     const claimWhere = {
       id: { in: params.paymentIds },
       userId: params.userId,
@@ -682,7 +686,7 @@ async function releaseSupersededHolds(params: {
     const appointmentIds = claimed
       .map((row) => row.appointmentId)
       .filter((id): id is string => id !== null);
-    if (appointmentIds.length === 0) return;
+    if (appointmentIds.length === 0) return { bells: [], emails: [] };
 
     const appointments = await tx.appointment.findMany({
       where: { id: { in: appointmentIds }, deletedAt: null },
@@ -695,6 +699,7 @@ async function releaseSupersededHolds(params: {
       },
     });
 
+    const notices: StagedBackupInterestNotices = { bells: [], emails: [] };
     for (const appointment of appointments) {
       if (appointment.webinarId || appointment.classId) {
         // The seat, not an occurrence, is what this buyer gave up. Scoped to
@@ -709,7 +714,9 @@ async function releaseSupersededHolds(params: {
       }
 
       // #1778 — the superseded hold frees its times: tell anyone waiting.
-      await stageNoticesForAppointmentHolds(tx, appointment.id);
+      const staged = await stageNoticesForAppointmentHolds(tx, appointment.id);
+      notices.bells.push(...(staged?.bells ?? []));
+      notices.emails.push(...(staged?.emails ?? []));
       // Doctrine rule 2: a slot is freed by status, never by DELETE — the
       // buyer keeps the record of the attempt they abandoned.
       await transitionOccurrenceCompletion(tx, {
@@ -765,7 +772,9 @@ async function releaseSupersededHolds(params: {
         });
       }
     }
+    return notices;
   });
+  await flushBackupInterestNotices(holdNotices);
 }
 
 // ============================================================================

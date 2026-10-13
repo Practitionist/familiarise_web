@@ -10,6 +10,8 @@ import { OccurrenceCompletionStatus, type Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import {
+  stageAppointmentCancelledEmail,
+  stageClassExitAvailableEmails,
   stageSessionOutcomeEmails,
   type SessionOutcomeEmailArgs,
 } from "@/lib/email/senders/booking";
@@ -270,29 +272,60 @@ async function writeSlotOutcomeTransaction(
     },
     { timeout: 15_000 },
   );
-  const noShowEmails = txResult.noShow?.emailArgs
-    ? await stageSessionOutcomeEmails(prisma, txResult.noShow.emailArgs).catch(
-        (err) => {
+  const [
+    noShowEmails,
+    missedRecordingEmails,
+    voidedCancelEmails,
+    voidedExitEmails,
+  ] = await Promise.all([
+    txResult.noShow?.emailArgs
+      ? stageSessionOutcomeEmails(prisma, txResult.noShow.emailArgs).catch(
+          (err) => {
+            console.error(
+              "[session-outcome-sweep] Failed to stage NO_SHOW emails:",
+              err,
+            );
+            return [];
+          },
+        )
+      : Promise.resolve([]),
+    txResult.missedRecording?.emailArgs
+      ? stageSessionOutcomeEmails(
+          prisma,
+          txResult.missedRecording.emailArgs,
+        ).catch((err) => {
           console.error(
-            "[session-outcome-sweep] Failed to stage NO_SHOW emails:",
+            "[session-outcome-sweep] Failed to stage MISSED_RECORDING emails:",
             err,
           );
           return [];
-        },
-      )
-    : [];
-  const missedRecordingEmails = txResult.missedRecording?.emailArgs
-    ? await stageSessionOutcomeEmails(
-        prisma,
-        txResult.missedRecording.emailArgs,
-      ).catch((err) => {
-        console.error(
-          "[session-outcome-sweep] Failed to stage MISSED_RECORDING emails:",
-          err,
-        );
-        return [];
-      })
-    : [];
+        })
+      : Promise.resolve([]),
+    txResult.voided?.cancelEmailArgs
+      ? stageAppointmentCancelledEmail(
+          prisma,
+          txResult.voided.cancelEmailArgs,
+        ).catch((err) => {
+          console.error(
+            "[session-outcome-sweep] Failed to stage VOIDED cancel emails:",
+            err,
+          );
+          return [];
+        })
+      : Promise.resolve([]),
+    txResult.voided?.exitEmailArgs
+      ? stageClassExitAvailableEmails(
+          prisma,
+          txResult.voided.exitEmailArgs,
+        ).catch((err) => {
+          console.error(
+            "[session-outcome-sweep] Failed to stage VOIDED exit emails:",
+            err,
+          );
+          return [];
+        })
+      : Promise.resolve([]),
+  ]);
   await flushNotificationsAfter(
     {
       bells: [
@@ -310,11 +343,11 @@ async function writeSlotOutcomeTransaction(
           emailType: "CLASS_SESSION_MISSED_RECORDING",
         },
         {
-          rows: txResult.voided?.emails ?? [],
+          rows: voidedCancelEmails,
           emailType: "APPOINTMENT_CANCELLED",
         },
         {
-          rows: txResult.voided?.exitEmails ?? [],
+          rows: voidedExitEmails,
           emailType: "CLASS_SESSION_EXIT_AVAILABLE",
         },
       ],

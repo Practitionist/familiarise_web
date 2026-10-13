@@ -155,17 +155,38 @@ function bookHref(row: {
   return `/explore/experts/${row.consultantProfileId}`;
 }
 
+export interface StagedBackupInterestNotices {
+  bells: StagedTrigger[];
+  emails: StagedRecipientEmail[];
+}
+
+export async function flushBackupInterestNotices(
+  bundle?: StagedBackupInterestNotices | null,
+): Promise<void> {
+  const bells = bundle?.bells ?? [];
+  const emails = bundle?.emails ?? [];
+  if (bells.length === 0 && emails.length === 0) return;
+  await flushNotificationsAfter(
+    {
+      bells,
+      emails:
+        emails.length > 0 ? [{ rows: emails, emailType: "WINDOW_OPENED" }] : [],
+    },
+    "backup-interest.window-opened",
+  );
+}
+
 /**
  * F-3 — a held window was released: every WAITING row overlapping it flips to
  * NOTIFIED (the status in the WHERE) and a bell and an email are staged per
  * row, keyed on the row, so a second call stages nothing. Run it inside the
- * releasing transaction; attempt the returned emails after the commit.
+ * releasing transaction; flush the returned bundle after the commit.
  */
 export async function stageBackupInterestNotices(
   tx: Tx,
   window: BackupWindow,
   now = new Date(),
-): Promise<StagedRecipientEmail[]> {
+): Promise<StagedBackupInterestNotices> {
   const rows = await tx.windowBackupInterest.findMany({
     where: { ...overlapping(window), status: BackupInterestStatus.WAITING },
     select: {
@@ -218,19 +239,7 @@ export async function stageBackupInterestNotices(
       })),
     );
   }
-  if (bells.length > 0 || emails.length > 0) {
-    await flushNotificationsAfter(
-      {
-        bells,
-        emails:
-          emails.length > 0
-            ? [{ rows: emails, emailType: "WINDOW_OPENED" }]
-            : [],
-      },
-      "backup-interest.window-opened",
-    );
-  }
-  return emails;
+  return { bells, emails };
 }
 
 /** F-4 — the booking user's own overlapping row is BOOKED; nobody else's. */
@@ -265,7 +274,7 @@ export async function stageNoticesForAppointmentHolds(
   appointmentId: string,
   opts: { includeConfirmed?: boolean } = {},
   now = new Date(),
-): Promise<void> {
+): Promise<StagedBackupInterestNotices> {
   const held = await tx.appointmentOccurrence.findMany({
     where: {
       appointmentId,
@@ -277,9 +286,11 @@ export async function stageNoticesForAppointmentHolds(
     },
     select: { consultantProfileId: true, startsAt: true, endsAt: true },
   });
+  const bells: StagedTrigger[] = [];
+  const emails: StagedRecipientEmail[] = [];
   for (const row of held) {
     if (!row.consultantProfileId) continue;
-    await stageBackupInterestNotices(
+    const staged = await stageBackupInterestNotices(
       tx,
       {
         consultantProfileId: row.consultantProfileId,
@@ -288,5 +299,8 @@ export async function stageNoticesForAppointmentHolds(
       },
       now,
     );
+    bells.push(...(staged?.bells ?? []));
+    emails.push(...(staged?.emails ?? []));
   }
+  return { bells, emails };
 }

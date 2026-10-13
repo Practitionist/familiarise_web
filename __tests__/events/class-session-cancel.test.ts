@@ -70,10 +70,16 @@ jest.mock("../../lib/prisma", () => {
     },
     appointmentParticipant: { findMany: async () => [{ userId: "u-1" }] },
     systemEvent: { findFirst: async () => db.flagged },
+    user: { findMany: async () => [] },
+    failedEmail: { create: async () => ({ id: "fe-1" }) },
   };
   return {
     __esModule: true,
-    default: { $transaction: async (fn: (t: unknown) => unknown) => fn(tx) },
+    default: {
+      $transaction: async (fn: (t: unknown) => unknown) => fn(tx),
+      user: { findMany: async () => [] },
+      failedEmail: { create: async () => ({ id: "fe-1" }) },
+    },
   };
 });
 

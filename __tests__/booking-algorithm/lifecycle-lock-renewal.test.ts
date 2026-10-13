@@ -81,6 +81,7 @@ jest.mock("../../scripts/payments/cleanup-abandoned-payments", () => ({
 // not defined` before a single test runs. The shared `./setup` mock of the
 // `lib/novu` barrel is not enough: these chains import the leaves directly.
 jest.mock("../../lib/booking/backup-interest", () => ({
+  flushBackupInterestNotices: jest.fn().mockResolvedValue(undefined),
   stageNoticesForAppointmentHolds: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("../../lib/booking/expiry-notices", () => ({

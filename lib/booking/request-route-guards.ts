@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { AppointmentStatus, PaymentStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { forbiddenResponse } from "@/lib/auth-helpers";
-import { stageNoticesForAppointmentHolds } from "./backup-interest";
+import {
+  stageNoticesForAppointmentHolds,
+  type StagedBackupInterestNotices,
+} from "./backup-interest";
 import { transitionParticipant } from "./participants";
 import { declineOpenReschedules } from "./reschedule-decline";
 import { transitionOccurrenceCompletion } from "./transitions";
@@ -189,13 +192,13 @@ export async function releaseDeclinedRequestHold(
   tx: Tx,
   where: { consultationId: string } | { subscriptionId: string },
   actorUserId?: string | null,
-): Promise<void> {
+): Promise<StagedBackupInterestNotices> {
   const held = await tx.appointment?.findFirst?.({
     where: { ...where, deletedAt: null },
     select: { id: true },
   });
-  if (!held) return;
-  await stageNoticesForAppointmentHolds(tx, held.id);
+  if (!held) return { bells: [], emails: [] };
+  const holdNotices = await stageNoticesForAppointmentHolds(tx, held.id);
   await transitionOccurrenceCompletion(tx, {
     actorUserId: actorUserId ?? null,
     reason: "Request declined by consultant",
@@ -213,6 +216,7 @@ export async function releaseDeclinedRequestHold(
     where: { appointmentId: held.id, paymentStatus: PaymentStatus.PENDING },
     data: { paymentStatus: PaymentStatus.EXPIRED },
   });
+  return holdNotices ?? { bells: [], emails: [] };
 }
 
 /** What the two PUT routes read off the plan a `planId` names. */

@@ -18,6 +18,7 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
@@ -504,13 +505,14 @@ export async function PATCH(
                   : undefined,
             });
             // #1778 — a decline frees the held times: tell anyone waiting and release holds.
-            if (status === AppointmentStatus.REJECTED) {
-              await releaseDeclinedRequestHold(
-                tx,
-                { subscriptionId },
-                session.user.id,
-              );
-            }
+            const holdNotices =
+              status === AppointmentStatus.REJECTED
+                ? await releaseDeclinedRequestHold(
+                    tx,
+                    { subscriptionId },
+                    session.user.id,
+                  )
+                : null;
             const subscription = await tx.subscription.findUniqueOrThrow({
               where: { id: subscriptionId },
               include: {
@@ -568,10 +570,10 @@ export async function PATCH(
                   data: { isTentative: false },
                 });
               }
-              return { data: subscription, duplicate: false };
+              return { data: subscription, duplicate: false, holdNotices };
             }
 
-            return { data: subscription, duplicate: false };
+            return { data: subscription, duplicate: false, holdNotices };
           },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
@@ -580,6 +582,9 @@ export async function PATCH(
           },
         );
       });
+      await flushBackupInterestNotices(
+        "holdNotices" in result ? result.holdNotices : null,
+      );
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
       // pay-link mint previously failed (#1169 PR 2): fall through so a
