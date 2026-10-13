@@ -1,6 +1,11 @@
 "use client";
 
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
 import { motion } from "framer-motion";
 
 import { reveal, revealTransition, revealViewport } from "@/lib/motion";
@@ -31,17 +36,23 @@ export function Reveal({
   className,
   delay = 0,
   as = "div",
-}: {
+}: Readonly<{
   children: ReactNode;
   className?: string;
   delay?: number;
   as?: "div" | "li";
-}) {
+}>) {
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
   const Component = as === "li" ? motion.li : motion.div;
   return (
     <Component
       variants={reveal}
-      initial="hidden"
+      initial={hydrated ? "hidden" : false}
       whileInView="visible"
       viewport={revealViewport}
       transition={revealTransition(delay)}
@@ -57,7 +68,7 @@ export function Section({
   className,
   bordered = true,
   ...props
-}: ComponentPropsWithoutRef<"section"> & { bordered?: boolean }) {
+}: Readonly<ComponentPropsWithoutRef<"section"> & { bordered?: boolean }>) {
   return (
     <section
       className={cn(
@@ -72,7 +83,7 @@ export function Section({
   );
 }
 
-export function Eyebrow({ children }: { children: ReactNode }) {
+export function Eyebrow({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <p className="mb-5 inline-flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em] text-zinc-400">
       <span aria-hidden className="h-px w-6 bg-zinc-600" />
@@ -92,14 +103,14 @@ export function SectionHeading({
   action,
   align = "left",
   className,
-}: {
+}: Readonly<{
   eyebrow: string;
   title: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
   align?: "left" | "center";
   className?: string;
-}) {
+}>) {
   const centered = align === "center";
   return (
     <Reveal
@@ -127,6 +138,6 @@ export function SectionHeading({
 }
 
 /** Italic, slightly dimmed emphasis inside a serif heading. */
-export function Em({ children }: { children: ReactNode }) {
+export function Em({ children }: Readonly<{ children: ReactNode }>) {
   return <em className="italic text-zinc-400">{children}</em>;
 }

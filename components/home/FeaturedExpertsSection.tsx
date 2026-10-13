@@ -18,12 +18,22 @@ import {
 /** Enough for two full rows at the widest breakpoint. */
 const MAX_EXPERTS = 8;
 
-function ExpertCard({ expert }: { expert: IConsultantCardData }) {
+function ExpertCard({
+  expert,
+}: Readonly<{
+  expert: IConsultantCardData;
+}>) {
   const subtitle = expert.headline || expert.domain?.name;
+  const hasRatingMeta =
+    expert.rating !== null || typeof expert.reviewCount === "number";
   return (
     <Link
       href={`/explore/experts/${expert.id}`}
-      className={cn(surface, surfaceInteractive, "group flex h-full flex-col p-6")}
+      className={cn(
+        surface,
+        surfaceInteractive,
+        "group flex h-full flex-col p-6",
+      )}
     >
       <Avatar className="h-14 w-14 border border-white/10">
         <AvatarImage
@@ -54,11 +64,16 @@ function ExpertCard({ expert }: { expert: IConsultantCardData }) {
       <div className="mt-auto flex items-center gap-3 pt-5 text-xs text-zinc-400">
         {expert.rating !== null && (
           <span className="inline-flex items-center gap-1 text-zinc-200">
-            <Star className="h-3.5 w-3.5 fill-current" />
+            <Star aria-hidden className="h-3.5 w-3.5 fill-current" />
             {expert.rating.toFixed(1)}
           </span>
         )}
-        {expert.rating !== null && expert.experience !== null && (
+        {typeof expert.reviewCount === "number" && (
+          <span>
+            {expert.reviewCount} review{expert.reviewCount === 1 ? "" : "s"}
+          </span>
+        )}
+        {hasRatingMeta && expert.experience !== null && (
           <span aria-hidden className="h-3 w-px bg-white/10" />
         )}
         {expert.experience !== null && (
@@ -84,9 +99,9 @@ function ExpertCard({ expert }: { expert: IConsultantCardData }) {
 
 export function FeaturedExpertsSection({
   experts,
-}: {
+}: Readonly<{
   experts: IConsultantCardData[];
-}) {
+}>) {
   return (
     <Section id="experts">
       <SectionHeading

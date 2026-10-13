@@ -8,10 +8,10 @@ import { Em, Reveal, Section, SectionHeading } from "./primitives";
 
 export function CategoriesSection({
   consultantsByDomain,
-}: {
+}: Readonly<{
   /** Verified consultant counts keyed by lowercased domain name (#1490). */
   consultantsByDomain: Record<string, number>;
-}) {
+}>) {
   return (
     <Section id="categories">
       <SectionHeading

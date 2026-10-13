@@ -53,6 +53,11 @@ function ProductPreview() {
       <div
         className={cn(surface, "relative bg-zinc-950/80 p-6 backdrop-blur-xl")}
       >
+        <div className="mb-4 flex items-center justify-between">
+          <span className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-0.5 text-[11px] uppercase tracking-wider text-zinc-400">
+            Illustrative preview
+          </span>
+        </div>
         <div className="flex items-start gap-4">
           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-200 to-zinc-500 text-base font-semibold text-zinc-950">
             {PREVIEW_EXPERT.initials}
@@ -169,9 +174,9 @@ function ProductPreview() {
 
 export function HeroSection({
   stats,
-}: {
+}: Readonly<{
   stats: IPublicStat<ExpertStatKey>[];
-}) {
+}>) {
   return (
     // `/` is a transparent-navbar route (lib/navigation/public-chrome.ts), so
     // the hero supplies its own clearance for the fixed header.
@@ -195,7 +200,7 @@ export function HeroSection({
               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10">
                 <BadgeCheck className="h-3.5 w-3.5" />
               </span>
-              Every expert is verified before they are listed
+              <span>Every expert is verified before they are listed</span>
             </div>
 
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl lg:text-7xl">

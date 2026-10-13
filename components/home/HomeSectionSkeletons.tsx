@@ -5,6 +5,9 @@ const block = "rounded bg-white/[0.06] animate-pulse";
 const card =
   "rounded-2xl border border-white/[0.08] bg-white/[0.02] animate-pulse";
 
+const FOUR_SLOTS = [1, 2, 3, 4] as const;
+const THREE_SLOTS = [1, 2, 3] as const;
+
 function HeadingSkeleton() {
   return (
     <div className="mb-14 space-y-4 md:mb-16">
@@ -21,8 +24,8 @@ export function FeaturedExpertsSkeleton() {
       <div className="mx-auto w-full max-w-6xl px-6 lg:px-8">
         <HeadingSkeleton />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className={`${card} h-[260px]`} />
+          {FOUR_SLOTS.map((slot) => (
+            <div key={slot} className={`${card} h-[260px]`} />
           ))}
         </div>
       </div>
@@ -37,8 +40,8 @@ export function TestimonialsSkeleton() {
         <HeadingSkeleton />
         <div className={`${card} h-[280px]`} />
         <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {[...Array(3)].map((_, i) => (
-            <div key={i} className={`${card} h-[180px]`} />
+          {THREE_SLOTS.map((slot) => (
+            <div key={slot} className={`${card} h-[180px]`} />
           ))}
         </div>
       </div>

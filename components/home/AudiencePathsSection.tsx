@@ -19,7 +19,7 @@ function PathCard({
   secondary,
   highlighted = false,
   delay = 0,
-}: {
+}: Readonly<{
   icon: ReactNode;
   eyebrow: string;
   title: ReactNode;
@@ -29,7 +29,7 @@ function PathCard({
   secondary: { href: string; label: string };
   highlighted?: boolean;
   delay?: number;
-}) {
+}>) {
   return (
     <Reveal
       delay={delay}
@@ -51,7 +51,10 @@ function PathCard({
 
       <ul className="mt-8 space-y-3">
         {points.map((point) => (
-          <li key={point} className="flex items-start gap-3 text-sm text-zinc-300">
+          <li
+            key={point}
+            className="flex items-start gap-3 text-sm text-zinc-300"
+          >
             <Check className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" />
             {point}
           </li>

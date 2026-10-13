@@ -10,7 +10,11 @@ import { Em, Reveal, Section, SectionHeading, surface } from "./primitives";
 /** One featured quote plus a short wall — enough to read, not to scroll past. */
 const MAX_WALL = 6;
 
-function Reviewer({ review }: { review: TPublicConsultantReview }) {
+function Reviewer({
+  review,
+}: Readonly<{
+  review: TPublicConsultantReview;
+}>) {
   const name = review.consulteeProfile?.user?.name || "Anonymous";
   return (
     <div className="flex items-center gap-3">
@@ -35,13 +39,15 @@ function Reviewer({ review }: { review: TPublicConsultantReview }) {
   );
 }
 
-function Stars({ rating }: { rating: number }) {
+const STAR_INDICES = [0, 1, 2, 3, 4] as const;
+
+function Stars({ rating }: Readonly<{ rating: number }>) {
   return (
     <div
       className="flex items-center gap-0.5"
       aria-label={`${rating} out of 5 stars`}
     >
-      {Array.from({ length: 5 }).map((_, i) => (
+      {STAR_INDICES.map((i) => (
         <Star
           key={i}
           aria-hidden
@@ -64,9 +70,9 @@ function Stars({ rating }: { rating: number }) {
  */
 export function TestimonialsSection({
   reviews,
-}: {
+}: Readonly<{
   reviews: TPublicConsultantReview[];
-}) {
+}>) {
   const withText = reviews.filter((r) => r.reviewDescription?.trim());
   const [featured, ...rest] = withText.length > 0 ? withText : reviews;
   if (!featured) return null;

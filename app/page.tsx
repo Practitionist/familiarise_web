@@ -83,7 +83,7 @@ export default async function Home() {
   // Footer below is also bg-black, so the page ends without a seam.
   return (
     <LandingMotion>
-      <main className="flex-1 w-full overflow-hidden bg-black text-white antialiased">
+      <main className="flex-1 w-full overflow-x-clip bg-black text-white antialiased">
         <HeroSection stats={buildExpertHeroStats(stats)} />
 
         <TrustedBySection />
