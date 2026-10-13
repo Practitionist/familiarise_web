@@ -1270,10 +1270,11 @@ export type CatchUpRefusal =
 
 /**
  * Playback's cross-run arm: the viewer is entitled to another run of the
- * recording's plan, and that run's same session is a catch-up slot whose
- * chosen source is this recording's run.
+ * recording's plan, and that run's same session is a catch-up slot listing
+ * exactly this recording.
  */
 export async function catchUpPlaybackAccess(
+  recordingId: string,
   recordingAppointmentId: string,
   ordinal: number,
   userId: string,
@@ -1311,16 +1312,7 @@ export async function catchUpPlaybackAccess(
   const catchUpPartIds = slots.flatMap((slot) =>
     slot.state === "catch_up" ? slot.parts.map((p) => p.recordingId) : [],
   );
-  const fromThisRun =
-    catchUpPartIds.length > 0
-      ? await prisma.recording.count({
-          where: {
-            id: { in: catchUpPartIds },
-            meeting: { occurrence: { appointmentId: recordingAppointmentId } },
-          },
-        })
-      : 0;
-  if (fromThisRun > 0) return { allowed: true };
+  if (catchUpPartIds.includes(recordingId)) return { allowed: true };
 
   const last = slots.at(-1);
   if (!last) return { allowed: false, code: "FORBIDDEN" };
@@ -1369,6 +1361,7 @@ export async function viewerPlaybackAccess(
   });
   if (purchase > 0) return { allowed: true };
   const catchUp = await catchUpPlaybackAccess(
+    recording.id,
     recording.appointmentId,
     recording.ordinal,
     userId,
