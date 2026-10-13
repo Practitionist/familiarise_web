@@ -12,7 +12,7 @@ import {
   useInfiniteScroll,
   useExpertFilterChips,
 } from "./hooks";
-import type { IExpertsMetaData } from "./utils";
+import type { IExpertFilters, IExpertsMetaData } from "./utils";
 import StickyFilterBar from "./components/StickyFilterBar";
 import StaticTopRows from "./components/StaticTopRows";
 import ExpertResults from "./components/ExpertResults";
@@ -115,6 +115,70 @@ export default function ExpertsInteractiveContent({
     [updateFilters],
   );
 
+  // Resolve human-readable domain/subdomain names from URL query params
+  // (e.g., ?domain=Technology&subdomain=Marketing from Hero/Category/Footer links)
+  // to their canonical metadata IDs so FilterPanel and groupByDomainId match.
+  useEffect(() => {
+    if (!metadata) return;
+    const updates: Partial<IExpertFilters> = {};
+    if (filters.domain) {
+      const matchedDomain = metadata.domains.find(
+        (d) =>
+          d.id === filters.domain ||
+          d.name.toLowerCase() === filters.domain?.toLowerCase(),
+      );
+      if (matchedDomain && matchedDomain.id !== filters.domain) {
+        updates.domain = matchedDomain.id;
+      }
+    }
+    if (filters.subdomain) {
+      const matchedSubdomain = metadata.subdomains.find(
+        (s) =>
+          s.id === filters.subdomain ||
+          s.name.toLowerCase() === filters.subdomain?.toLowerCase(),
+      );
+      if (matchedSubdomain && matchedSubdomain.id !== filters.subdomain) {
+        updates.subdomain = matchedSubdomain.id;
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      updateFilters(updates);
+    }
+  }, [metadata, filters.domain, filters.subdomain, updateFilters]);
+
+  // Auto-scroll to #all-experts when landing on /explore/experts from a hero
+  // search/selection, domain card, or #all-experts deep-link.
+  const hasInitialScrollRef = useRef(false);
+  useEffect(() => {
+    if (hasInitialScrollRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const hasFilterParam = [
+      "search",
+      "domain",
+      "subdomain",
+      "tags",
+      "sort",
+      "affiliationType",
+      "orgKind",
+      "orgSlug",
+      "minPrice",
+      "maxPrice",
+      "minRating",
+      "experience",
+      "language",
+      "companies",
+    ].some((key) => params.has(key));
+    if (window.location.hash === "#all-experts" || hasFilterParam) {
+      hasInitialScrollRef.current = true;
+      requestAnimationFrame(() => {
+        browseSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    }
+  }, []);
+
   const resultSummary = useMemo(() => {
     const total = metadata?.consultantMetadata.totalConsultants;
     // The global total is only honest when NO filter is active — affiliation
@@ -158,11 +222,9 @@ export default function ExpertsInteractiveContent({
         <div
           ref={browseSectionRef}
           id="all-experts"
-          // Deep-links must land below the fixed header AND the sticky filter
-          // bar (~3 rows); same banner-aware formula as the bar itself.
           style={{
             scrollMarginTop:
-              "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 13rem)",
+              "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 1.5rem)",
           }}
         >
           <SectionHeader

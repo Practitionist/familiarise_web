@@ -15,6 +15,8 @@ function CategoryCard({
   category: {
     icon: LucideIcon;
     name: string;
+    domainKey?: string;
+    href?: string;
     description?: string;
     color: string;
   };
@@ -24,6 +26,9 @@ function CategoryCard({
   index: number;
 }) {
   const Icon = category.icon;
+  const href =
+    category.href ??
+    `/explore/experts?domain=${encodeURIComponent(category.name)}#all-experts`;
 
   return (
     <motion.div
@@ -33,7 +38,7 @@ function CategoryCard({
       viewport={{ once: true }}
     >
       <Link
-        href={`/explore/experts?domain=${encodeURIComponent(category.name.toLowerCase())}`}
+        href={href}
         className="group block h-full rounded-2xl border border-border bg-card p-6 shadow-elevation-1 hover:border-foreground/30 hover:shadow-elevation-2 transition-all duration-200"
       >
         <div className="flex items-start justify-between gap-4 mb-4">
@@ -91,7 +96,7 @@ export function CategoriesSection({
             variant="outline"
             className="h-11 px-5 rounded-xl border-border hover:bg-muted shrink-0 self-start md:self-auto"
           >
-            <Link href="/explore/experts">
+            <Link href="/explore/experts#all-experts">
               View All Domains
               <ArrowRight className="ml-2 w-4 h-4" />
             </Link>
@@ -104,7 +109,9 @@ export function CategoriesSection({
               key={category.name}
               category={category}
               consultantCount={
-                consultantsByDomain[category.name.toLowerCase()] ?? 0
+                consultantsByDomain[
+                  (category.domainKey ?? category.name).toLowerCase()
+                ] ?? 0
               }
               index={index}
             />

@@ -1,7 +1,7 @@
 "use client";
 
 import { PlanLevel } from "@prisma/client";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   GraduationCap,
@@ -159,6 +159,32 @@ export default function ProgramsInteractiveContent({
     [trendingPrograms],
   );
 
+  const allProgramsRef = useRef<HTMLDivElement>(null);
+  const hasInitialScrollRef = useRef(false);
+
+  useEffect(() => {
+    if (hasInitialScrollRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const hasFilterParam = [
+      "type",
+      "search",
+      "topicIds",
+      "level",
+      "sort",
+      "minPrice",
+      "maxPrice",
+    ].some((key) => params.has(key));
+    if (window.location.hash === "#all-programs" || hasFilterParam) {
+      hasInitialScrollRef.current = true;
+      requestAnimationFrame(() => {
+        allProgramsRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    }
+  }, []);
+
   const handleTopicSelect = useCallback(
     (topicId: string) => {
       updateFilters({
@@ -166,9 +192,7 @@ export default function ProgramsInteractiveContent({
           ? filters.topicIds
           : [...(filters.topicIds || []), topicId],
       });
-      document
-        .getElementById("all-programs")
-        ?.scrollIntoView({ behavior: "smooth" });
+      allProgramsRef.current?.scrollIntoView({ behavior: "smooth" });
     },
     [filters.topicIds, updateFilters],
   );
@@ -268,7 +292,14 @@ export default function ProgramsInteractiveContent({
           />
 
           {/* All Programs Section */}
-          <div id="all-programs">
+          <div
+            ref={allProgramsRef}
+            id="all-programs"
+            style={{
+              scrollMarginTop:
+                "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 1.5rem)",
+            }}
+          >
             <SectionHeader title="All Programs" />
 
             {/* Advanced Filters */}
