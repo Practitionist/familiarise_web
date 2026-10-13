@@ -16,4 +16,17 @@ describe("file policy", () => {
       validateUploadFile({ size: 1000, type: "", name: "sheet.xlsx" }).ok,
     ).toBe(true);
   });
+
+  it("reads a CSV reported as Excel by its extension", () => {
+    const excel = { size: 1000, type: "application/vnd.ms-excel" };
+    expect(validateUploadFile({ ...excel, name: "marks.csv" })).toEqual({
+      ok: true,
+      mimeType: "text/csv",
+    });
+    expect(validateUploadFile({ ...excel, name: "marks.xls" })).toEqual({
+      ok: true,
+      mimeType: "application/vnd.ms-excel",
+    });
+    expect(validateUploadFile({ ...excel, name: "marks.txt" }).ok).toBe(false);
+  });
 });

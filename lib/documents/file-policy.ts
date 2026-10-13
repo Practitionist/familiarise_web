@@ -75,7 +75,15 @@ function extensionOf(name: string | undefined): string | null {
   return dot === -1 ? null : name.slice(dot).toLowerCase();
 }
 
+/** Types some systems report for another allowed type; Windows with Excel reports a CSV as Excel. */
+const MIME_ALIASES: ReadonlyMap<string, readonly string[]> = new Map([
+  ["application/vnd.ms-excel", [".csv"]],
+]);
+
 function resolveMimeType(type: string, ext: string | null): string | undefined {
+  if (ext && MIME_ALIASES.get(type)?.includes(ext)) {
+    return MIME_BY_EXTENSION.get(ext);
+  }
   if (ALLOWED_MIME_SET.has(type)) return type;
   const generic = type === "" || type === "application/octet-stream";
   return generic && ext ? MIME_BY_EXTENSION.get(ext) : undefined;
