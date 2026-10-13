@@ -59,8 +59,8 @@ describe("infraThrottleKey", () => {
     ).toBeNull(); // other Upstash failures still page normally
   });
 
-  test("window is ten minutes", () => {
-    expect(INFRA_THROTTLE_MS).toBe(10 * 60 * 1000);
+  test("window is one hour", () => {
+    expect(INFRA_THROTTLE_MS).toBe(60 * 60 * 1000);
     /**
      * Pinned so growing this list is a conscious act rather than an accident.
      * Each entry is a separate throttle class with its own window, so adding

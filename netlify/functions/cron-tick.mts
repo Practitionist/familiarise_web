@@ -69,19 +69,11 @@ const TARGETS = [
   "alert-orphaned-payments",
   // Heals the stranded cohort: links late appointments, refunds the rest.
   "reconcile-orphaned-payments",
-  // #1868 — the Sentry ingest canary. The failure it detects is SILENT: Sentry
-  // answers 200 for sessions and transactions while discarding error events
-  // once the organisation's error allowance is spent, so nothing else in the
-  // system notices. On 2026-09-22 that condition went live and the error
-  // stream stayed empty for six days.
-  //
-  // It runs on a 30-minute slot, NOT this ticker's five-minute default, and the
-  // reason is quota rather than latency: it posts a real stored event every run,
-  // so five minutes is 8,640 events a month — 173% of the Developer plan's
-  // 5,000 allowance, i.e. the health check would exhaust the budget it exists
-  // to protect. 30 minutes is 1,440/month. See TARGET_EVERY_MINUTES, and
-  // 06-ingest-canary.md. It costs one HTTPS round trip to a vendor and no
-  // Redis, so unlike the other targets it has no per-tick lock cost to amortise.
+  // The Sentry ingest canary. Sentry answers 200 for sessions and transactions
+  // while discarding error events once the error allowance is spent, so nothing
+  // else in the system notices. It runs every 6 hours, not every tick: each run
+  // posts a real stored event, so cadence is a line item on the 5,000/month
+  // allowance (6 h = 120/month). See TARGET_EVERY_MINUTES and 06-ingest-canary.md.
   "sentry-ingest-canary",
   // Drains OrgDataExportJob (DPDP data export); every 10 minutes.
   "process-data-exports",
@@ -154,9 +146,10 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
 };
 
 /**
- * #1654 — targets that run on a multiple of the five-minute tick. A missing
- * entry means every tick. The check is on the wall-clock minute, so a late
- * tick (Netlify fires within the minute) still counts as its slot.
+ * Targets that run on a multiple of the five-minute tick. A missing entry means
+ * every tick. The check is on the minute of the UTC day, so an interval must
+ * divide 1,440 and a late tick (Netlify fires within the minute) still counts
+ * as its slot.
  */
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "sweep-stuck-webhook-events": 15,
@@ -164,7 +157,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "dispatch-outbound-webhooks": 15,
   "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
-  "sentry-ingest-canary": 30,
+  "sentry-ingest-canary": 360,
   "sync-payment-earnings": 15,
   "release-earnings": 15,
   "reconcile-refunds": 15,
@@ -201,7 +194,7 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
  * stagger 10m, 15m, and 30m sweeps so no 5-minute tick fires more than 8 targets.
  */
 export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
-  // Phase 0 (:00, :15, :30, :45) — 6 targets + sentry-ingest-canary (:00, :30)
+  // Phase 0 (:00, :15, :30, :45) — 6 targets + sentry-ingest-canary (00:00, 06:00, 12:00, 18:00 UTC)
   "sweep-stuck-webhook-events": 0,
   "sweep-orphaned-topup-captures": 0,
   "dispatch-outbound-webhooks": 0,
@@ -237,12 +230,12 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
 export function dueTargets(now: Date): Target[] {
-  const minute = now.getUTCMinutes();
+  const minuteOfDay = now.getUTCHours() * 60 + now.getUTCMinutes();
   return TARGETS.filter((name) => {
     const every = TARGET_EVERY_MINUTES[name];
     if (every === undefined) return true;
     const offset = TARGET_OFFSET_MINUTES[name] ?? 0;
-    return (((minute - offset) % every) + every) % every < 5;
+    return (((minuteOfDay - offset) % every) + every) % every < 5;
   });
 }
 
@@ -516,7 +509,7 @@ export function isFirstDueTickOfHour(name: string, now: Date): boolean {
 /**
  * Report each failing target to Sentry, once an hour per target. `statusFor`
  * answers 200 regardless, so without this a broken sweep only shows in the log;
- * a total outage is bounded by the shared 30/hour breaker.
+ * a total outage is bounded by the shared 10/hour breaker.
  */
 async function alertFailedTargets(
   failed: { name: string; status: number; errorBody?: string }[],

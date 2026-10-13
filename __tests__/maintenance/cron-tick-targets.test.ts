@@ -242,7 +242,7 @@ describe("cron-tick dueTargets cadence", () => {
   // measured in tens of minutes, so a 15-minute slot would buy detection
   // latency neither deadline is sensitive to while doubling the Stream
   // call-report volume. The #1792 Upstash budget is the line item.
-  // Their phases keep them off the canary's :00/:30 ticks and off each other.
+  // Their phases keep them off the canary's :00 tick and off each other.
   it("fires the earnings release and the no-show refund on staggered 30-minute slots", () => {
     const firing = (name: Target) =>
       [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].filter((minute) =>
@@ -252,14 +252,24 @@ describe("cron-tick dueTargets cadence", () => {
     expect(firing("detect-consultant-no-shows")).toEqual([20, 50]);
   });
 
-  it("fires the Sentry ingest canary every 30 minutes, not every tick", () => {
+  it("fires the Sentry ingest canary every 6 hours, not every tick", () => {
     const name = "sentry-ingest-canary";
+    const ticks = Array.from({ length: 24 * 12 }, (_, i) => i * 5).filter(
+      (minuteOfDay) =>
+        dueTargets(
+          new Date(
+            Date.UTC(
+              2026,
+              8,
+              17,
+              Math.floor(minuteOfDay / 60),
+              minuteOfDay % 60,
+            ),
+          ),
+        ).includes(name),
+    );
 
-    for (const minute of [5, 10, 15, 20, 25]) {
-      expect(dueTargets(at(minute))).not.toContain(name);
-    }
-    expect(dueTargets(at(30))).toContain(name);
-    expect(dueTargets(at(60))).toContain(name);
+    expect(ticks).toEqual([0, 360, 720, 1080]);
   });
   it("never reports the Sentry ingest canary's failure TO Sentry", () => {
     /**
