@@ -339,9 +339,16 @@ export function durationDayMark(
     (slot) =>
       consultationCtaFor(bookingMode, slot.isAllocated).action === "checkout",
   );
+  const hasActionableWindow = actionableWindows.length > 0;
+  let state: DayState;
+  if (isSameDay(date, now)) {
+    state = hasActionableWindow ? "today+bookable" : "today+none";
+  } else {
+    state = hasActionableWindow ? "bookable" : "none";
+  }
 
   return {
-    state: dayState(date, now, actionableWindows),
-    kind: resolveDayBookingKind(hasInstantWindow, actionableWindows.length > 0),
+    state,
+    kind: resolveDayBookingKind(hasInstantWindow, hasActionableWindow),
   };
 }

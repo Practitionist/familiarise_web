@@ -377,18 +377,20 @@ function SignUpContent() {
           <p className="mb-6 text-sm text-zinc-400 md:text-base">
             Enter your details below to get started.
           </p>
-          {referralCode && !ssoCheck?.enforceSSO && (
-            <div className="mb-6 flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/40 px-3.5 py-2.5 text-sm text-emerald-300">
-              <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
-              <p>
-                Referral code{" "}
-                <span className="font-semibold text-emerald-200">
-                  {referralCode}
-                </span>{" "}
-                applied! You&apos;ll receive a welcome bonus after signing up.
-              </p>
-            </div>
-          )}
+          {referralCode &&
+            refParamCheck.state === "valid" &&
+            !ssoCheck?.enforceSSO && (
+              <div className="mb-6 flex items-center gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/40 px-3.5 py-2.5 text-sm text-emerald-300">
+                <span className="inline-flex h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+                <p>
+                  Referral code{" "}
+                  <span className="font-semibold text-emerald-200">
+                    {referralCode}
+                  </span>{" "}
+                  applied! You&apos;ll receive a welcome bonus after signing up.
+                </p>
+              </div>
+            )}
           <form onSubmit={handleSignUp}>
             <div className="grid gap-2">
               <Label htmlFor="name">Name</Label>

@@ -709,7 +709,7 @@ export default function SubscriptionCheckoutPage({
       <div className="flex flex-col gap-6 p-6 sm:p-8 bg-card lg:sticky lg:top-6 lg:self-start">
         <CheckoutPricingBreakdown
           title="Subscription Pricing"
-          feeLabel="Monthly Fee"
+          feeLabel={`Plan Fee (${planData?.data?.durationInMonths || 1} month${(planData?.data?.durationInMonths || 1) === 1 ? "" : "s"})`}
           feeAmountPaise={planData?.data?.price ?? 0}
           includes={[
             `${

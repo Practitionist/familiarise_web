@@ -39,8 +39,7 @@ const TERMS_HIGHLIGHTS: readonly LegalHighlight[] = [
     icon: Scale,
     label: "Disputes & Law",
     title: "Good-faith resolution",
-    description:
-      "Disputes start with informal resolution and mediation, governed by the laws and courts of Bengaluru, Karnataka, India.",
+    description: `Disputes start with informal resolution and mediation, governed by the laws and courts of ${COMPANY_INFO.jurisdiction}.`,
   },
 ];
 
@@ -128,9 +127,7 @@ const TERMS_SECTIONS: readonly LegalSection[] = [
         <ul>
           <li>Provide accurate, current, and complete information</li>
           <li>Update your information to keep it accurate and current</li>
-          <li>
-            Notify us immediately of any unauthorized use of your account
-          </li>
+          <li>Notify us immediately of any unauthorized use of your account</li>
           <li>Not share your account with others</li>
           <li>Not create multiple accounts for fraudulent purposes</li>
         </ul>
@@ -138,9 +135,7 @@ const TERMS_SECTIONS: readonly LegalSection[] = [
         <h3 className="text-xl font-semibold mt-4 mb-2">
           3.3 Account Termination
         </h3>
-        <p>
-          We reserve the right to suspend or terminate your account if you:
-        </p>
+        <p>We reserve the right to suspend or terminate your account if you:</p>
         <ul>
           <li>Violate these Terms &amp; Conditions</li>
           <li>Engage in fraudulent or illegal activities</li>
@@ -175,10 +170,10 @@ const TERMS_SECTIONS: readonly LegalSection[] = [
             specified
           </li>
           <li>The platform charges a commission on each transaction</li>
+          <li>Prices displayed to Students include the platform commission</li>
           <li>
-            Prices displayed to Students include the platform commission
+            Prices are subject to change at the Consultant&apos;s discretion
           </li>
-          <li>Prices are subject to change at the Consultant&apos;s discretion</li>
         </ul>
 
         <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -190,13 +185,9 @@ const TERMS_SECTIONS: readonly LegalSection[] = [
           represent that:
         </p>
         <ul>
-          <li>
-            You have the legal right to use the payment method provided
-          </li>
+          <li>You have the legal right to use the payment method provided</li>
           <li>The payment information is accurate and current</li>
-          <li>
-            You will notify us of any changes to your payment information
-          </li>
+          <li>You will notify us of any changes to your payment information</li>
         </ul>
 
         <h3 className="text-xl font-semibold mt-4 mb-2">
@@ -319,9 +310,7 @@ const TERMS_SECTIONS: readonly LegalSection[] = [
           <li>Attempt to circumvent payment systems</li>
           <li>Share account credentials with others</li>
           <li>Submit fraudulent payment information</li>
-          <li>
-            Engage in activities that disrupt the platform or other users
-          </li>
+          <li>Engage in activities that disrupt the platform or other users</li>
         </ul>
       </>
     ),
@@ -387,8 +376,8 @@ const TERMS_SECTIONS: readonly LegalSection[] = [
           <li>Refunds are processed based on timing of cancellation</li>
           <li>Platform may charge cancellation fees in certain cases</li>
           <li>
-            Refunds typically reach your account within 7–14 business days
-            total (2–3 business days review, initiation within 24–48 hours of
+            Refunds typically reach your account within 7–14 business days total
+            (2–3 business days review, initiation within 24–48 hours of
             approval, and 5–7 business days bank processing)
           </li>
         </ul>

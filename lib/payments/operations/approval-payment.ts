@@ -548,7 +548,7 @@ async function priceWithTax(
 function assertConsultantVerified(
   consultantProfile: { verificationStatus: string } | null | undefined,
 ): void {
-  if (consultantProfile && consultantProfile.verificationStatus !== "VERIFIED") {
+  if (consultantProfile?.verificationStatus !== "VERIFIED") {
     throw new Error("This expert isn't accepting paid bookings yet");
   }
 }
