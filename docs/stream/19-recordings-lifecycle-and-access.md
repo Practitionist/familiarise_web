@@ -160,7 +160,7 @@ A class plan runs batches B1, B2 and B3, each with sessions 1 to N, and any sess
    - Never before the learner's late-join floor unless the plan sets `lateJoinersGetPastRecordings`.
    - Missing one's own live session is not a reason for catch-up: if the learner's batch recorded it, they watch that recording.
    - The candidate batch is the one whose same-ordinal session ended most recently and has a playable recording; ties break on batch id so the choice is deterministic.
-4. **One server rule** decides both what the list shows and what playback signs, so whatever the list offers plays. Catch-up playback takes precedence over the late-join refusal: a learner whose seat on the source batch came late can still play the catch-up that their other batch offers, and the source batch's late-join rule applies only when no catch-up covers the session.
+4. **One server rule** decides both what the list shows and what playback signs, so whatever the list offers plays. Catch-up playback takes precedence over the late-join refusal: a learner whose seat on the source batch came late can still play the catch-up that their other batch offers, and the source batch's late-join rule applies only when no catch-up covers the session. Catch-up playback is exact: it plays only the recordings the catch-up slot lists, which are every playable part of the chosen source session.
 5. **"Session details" always opens the learner's own booking**, focused on the slot (`.../appointments/<ownAppointmentId>/recordings?slot=<k>`). A purchased replay with no own appointment links to the public listing when published, otherwise has no link. Hosts and co-hosts open their batch's appointment.
 
 The rule lives in `lib/stream/recording-slots.ts` as one pure core and one batched loader:
@@ -427,7 +427,7 @@ The recording playback, manage, publish, preview, start, stop and sync routes, t
 - **Statement budget.** A library page costs a fixed number of statements, independent of how many bookings it shows, because the loader batches every relation arm. It skips arms for booking kinds that are not on the page, and retention labels walk each subscription renewal chain once per call.
 - **Round-trip cost.** With `PG_POOL_MAX=1` every statement is serial, and one round trip costs about 95 ms from the function to the database, so cost tracks statement count rather than query speed. The per-booking loop this loader replaced issued about 495 statements for one learner's page (about 20 s locally, and a gateway timeout on the deploy preview), while the batched loader issues about 40.
 - **Late-join floor.** The loader reads a learner's late-join floor from the seat row it already loads, takes the booking kinds from the library's candidates, and skips host-only and catch-up relations the viewer cannot use.
-- **Pattern.** Do not call a per-booking resolver in a loop. Load every input for the page in one batched read, then run the pure core over the rows in memory. Catch-up playback access likewise checks the chosen source in one grouped read.
+- **Pattern.** Do not call a per-booking resolver in a loop. Load every input for the page in one batched read, then run the pure core over the rows in memory. Catch-up playback access likewise reuses the loaded views and plays a recording only when its id is among the parts the learner's catch-up slot lists, with no further read.
 
 ## Replay sales
 
