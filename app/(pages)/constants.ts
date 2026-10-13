@@ -20,9 +20,6 @@ export const COMPANY_INFO = {
   email: resolveLiveMailbox(),
   supportEmail: resolveLiveMailbox(),
   phone: process.env.NEXT_PUBLIC_SUPPORT_PHONE?.trim() || "",
-  address:
-    process.env.NEXT_PUBLIC_COMPANY_ADDRESS?.trim() ||
-    "Bengaluru, Karnataka, India",
   jurisdiction:
     process.env.NEXT_PUBLIC_COMPANY_JURISDICTION?.trim() || "Haryana, India",
 } as const;

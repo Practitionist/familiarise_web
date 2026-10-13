@@ -42,7 +42,7 @@ export function useScrollSpy(sectionIds: readonly string[]) {
         window.innerHeight + window.scrollY >=
         document.documentElement.scrollHeight - 32
       ) {
-        currentId = elements[elements.length - 1]?.id ?? currentId;
+        currentId = elements.at(-1)?.id ?? currentId;
       }
 
       setActiveSectionId((prev) => (prev === currentId ? prev : currentId));
@@ -53,15 +53,11 @@ export function useScrollSpy(sectionIds: readonly string[]) {
         if (Date.now() < clickLockUntilRef.current) return;
         const intersecting = entries
           .filter((entry) => entry.isIntersecting)
-          .sort(
-            (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
-          );
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
         if (intersecting.length > 0) {
           const targetId = intersecting[0].target.id;
           if (targetId) {
-            setActiveSectionId((prev) =>
-              prev === targetId ? prev : targetId,
-            );
+            setActiveSectionId((prev) => (prev === targetId ? prev : targetId));
             return;
           }
         }
@@ -113,7 +109,10 @@ export function useScrollSpy(sectionIds: readonly string[]) {
 
     const navRect = nav.getBoundingClientRect();
     const linkRect = activeLink.getBoundingClientRect();
-    if (linkRect.top < navRect.top + 8 || linkRect.bottom > navRect.bottom - 8) {
+    if (
+      linkRect.top < navRect.top + 8 ||
+      linkRect.bottom > navRect.bottom - 8
+    ) {
       const targetScrollTop =
         linkRect.top -
         navRect.top +

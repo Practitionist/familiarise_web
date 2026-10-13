@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
+import { useInitialFilterScroll } from "@/hooks/use-initial-filter-scroll";
 import { pushUrl } from "@/lib/navigation/history";
 import SectionHeader from "@/app/explore/components/SectionHeader";
 import {
@@ -24,6 +25,23 @@ interface ExpertsInteractiveContentProps {
   trendingExperts: IConsultantCardData[];
   newestExperts: IConsultantCardData[];
 }
+
+const EXPERT_FILTER_SCROLL_KEYS = [
+  "search",
+  "domain",
+  "subdomain",
+  "tags",
+  "sort",
+  "affiliationType",
+  "orgKind",
+  "orgSlug",
+  "minPrice",
+  "maxPrice",
+  "minRating",
+  "experience",
+  "language",
+  "companies",
+] as const;
 
 export default function ExpertsInteractiveContent({
   metadata,
@@ -146,38 +164,11 @@ export default function ExpertsInteractiveContent({
     }
   }, [metadata, filters.domain, filters.subdomain, updateFilters]);
 
-  // Auto-scroll to #all-experts when landing on /explore/experts from a hero
-  // search/selection, domain card, or #all-experts deep-link.
-  const hasInitialScrollRef = useRef(false);
-  useEffect(() => {
-    if (hasInitialScrollRef.current) return;
-    const params = new URLSearchParams(window.location.search);
-    const hasFilterParam = [
-      "search",
-      "domain",
-      "subdomain",
-      "tags",
-      "sort",
-      "affiliationType",
-      "orgKind",
-      "orgSlug",
-      "minPrice",
-      "maxPrice",
-      "minRating",
-      "experience",
-      "language",
-      "companies",
-    ].some((key) => params.has(key));
-    if (window.location.hash === "#all-experts" || hasFilterParam) {
-      hasInitialScrollRef.current = true;
-      requestAnimationFrame(() => {
-        browseSectionRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      });
-    }
-  }, []);
+  useInitialFilterScroll(
+    browseSectionRef,
+    "#all-experts",
+    EXPERT_FILTER_SCROLL_KEYS,
+  );
 
   const resultSummary = useMemo(() => {
     const total = metadata?.consultantMetadata.totalConsultants;

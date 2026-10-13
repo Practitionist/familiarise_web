@@ -126,7 +126,9 @@ function getDefaultSubscriptionInclusions(
     );
   }
   if (plan.emailSupport) {
-    items.push(`${plan.emailSupport.toLowerCase()} async support between calls`);
+    items.push(
+      `${plan.emailSupport.toLowerCase()} async support between calls`,
+    );
   }
   if (plan.materialProvided) {
     items.push(plan.materialProvided);
@@ -170,7 +172,8 @@ function buildSubscriptionMetrics(
   const durationLabel = `${plan.durationInMonths} ${plan.durationInMonths === 1 ? "month" : "months"}`;
   const callsPerWeek = plan.sessionsPerWeek ?? 1;
   const sessionHours = plan.sessionDurationInHours ?? 1;
-  const totalSessions = plan.totalSessions ?? callsPerWeek * plan.durationInMonths * 4;
+  const totalSessions =
+    plan.totalSessions ?? callsPerWeek * plan.durationInMonths * 4;
   const totalHours = plan.totalHours ?? totalSessions * sessionHours;
   const supportLabel = plan.emailSupport
     ? `${plan.emailSupport.charAt(0).toUpperCase()}${plan.emailSupport.slice(1).toLowerCase()}`
@@ -273,9 +276,8 @@ function SnapshotSwitcherBar({
       )}
 
       {showPlanPills && (
-        <div
-          className="flex flex-wrap items-center gap-1.5"
-          role="group"
+        <fieldset
+          className="m-0 flex flex-wrap items-center gap-1.5 border-0 p-0"
           aria-label="Select plan option"
         >
           {effectiveTab === "consultations"
@@ -317,7 +319,7 @@ function SnapshotSwitcherBar({
                   </button>
                 );
               })}
-        </div>
+        </fieldset>
       )}
     </div>
   );
@@ -524,6 +526,56 @@ function SnapshotRoadmapPreview({
   );
 }
 
+function resolveEffectiveSnapshotTab(
+  requestedTab: "consultations" | "subscriptions",
+  hasConsultations: boolean,
+  hasSubscriptions: boolean,
+): "consultations" | "subscriptions" {
+  if (requestedTab === "consultations" && hasConsultations) {
+    return "consultations";
+  }
+  if (requestedTab === "subscriptions" && hasSubscriptions) {
+    return "subscriptions";
+  }
+  return hasConsultations ? "consultations" : "subscriptions";
+}
+
+function resolveActiveSnapshotPlanId(
+  plans: readonly { id: string }[],
+  controlledId: string | undefined,
+  internalId: string,
+): string {
+  if (controlledId && plans.some((p) => p.id === controlledId)) {
+    return controlledId;
+  }
+  if (plans.some((p) => p.id === internalId)) {
+    return internalId;
+  }
+  return plans[0]?.id ?? "";
+}
+
+function formatSubscriptionDurationUnit(months: number): string {
+  const unit = months === 1 ? "month" : "months";
+  return `for ${months} ${unit}`;
+}
+
+function resolveSnapshotInclusions(
+  rawIncluded: readonly string[],
+  isConsultationActive: boolean,
+  selectedConsultation: SnapshotConsultationPlan,
+  selectedSubscription: SnapshotSubscriptionPlan,
+): readonly string[] {
+  if (rawIncluded.length > 0) {
+    return rawIncluded;
+  }
+  if (isConsultationActive) {
+    return getDefaultConsultationInclusions(
+      selectedConsultation.durationInHours,
+    );
+  }
+  return getDefaultSubscriptionInclusions(selectedSubscription);
+}
+
 export function PlanDetailsSnapshot({
   consultationPlans,
   subscriptionPlans,
@@ -568,31 +620,23 @@ export function PlanDetailsSnapshot({
     return null;
   }
 
-  const requestedTab = activeServiceTab ?? internalTab;
-  const effectiveTab: "consultations" | "subscriptions" =
-    requestedTab === "consultations" && hasConsultations
-      ? "consultations"
-      : requestedTab === "subscriptions" && hasSubscriptions
-        ? "subscriptions"
-        : hasConsultations
-          ? "consultations"
-          : "subscriptions";
+  const effectiveTab = resolveEffectiveSnapshotTab(
+    activeServiceTab ?? internalTab,
+    hasConsultations,
+    hasSubscriptions,
+  );
 
-  const activeConsultationId =
-    selectedConsultationPlanId &&
-    sortedConsultations.some((p) => p.id === selectedConsultationPlanId)
-      ? selectedConsultationPlanId
-      : sortedConsultations.some((p) => p.id === internalConsultationId)
-        ? internalConsultationId
-        : (sortedConsultations[0]?.id ?? "");
+  const activeConsultationId = resolveActiveSnapshotPlanId(
+    sortedConsultations,
+    selectedConsultationPlanId,
+    internalConsultationId,
+  );
 
-  const activeSubscriptionId =
-    selectedSubscriptionPlanId &&
-    sortedSubscriptions.some((p) => p.id === selectedSubscriptionPlanId)
-      ? selectedSubscriptionPlanId
-      : sortedSubscriptions.some((p) => p.id === internalSubscriptionId)
-        ? internalSubscriptionId
-        : (sortedSubscriptions[0]?.id ?? "");
+  const activeSubscriptionId = resolveActiveSnapshotPlanId(
+    sortedSubscriptions,
+    selectedSubscriptionPlanId,
+    internalSubscriptionId,
+  );
 
   const handleSelectTab = (tab: "consultations" | "subscriptions") => {
     setInternalTab(tab);
@@ -631,18 +675,18 @@ export function PlanDetailsSnapshot({
     : `/explore/programs/plans/subscriptions/${activePlan.id}`;
   const priceUnitLabel = isConsultationActive
     ? "per session"
-    : `for ${selectedSubscription.durationInMonths} ${selectedSubscription.durationInMonths === 1 ? "month" : "months"}`;
+    : formatSubscriptionDurationUnit(selectedSubscription.durationInMonths);
   const metrics = isConsultationActive
     ? buildConsultationMetrics(selectedConsultation)
     : buildSubscriptionMetrics(selectedSubscription);
   const learningOutcomes = (activePlan.learningOutcomes ?? []).filter(Boolean);
   const rawIncluded = (activePlan.whatsIncluded ?? []).filter(Boolean);
-  const whatsIncluded =
-    rawIncluded.length > 0
-      ? rawIncluded
-      : isConsultationActive
-        ? getDefaultConsultationInclusions(selectedConsultation.durationInHours)
-        : getDefaultSubscriptionInclusions(selectedSubscription);
+  const whatsIncluded = resolveSnapshotInclusions(
+    rawIncluded,
+    isConsultationActive,
+    selectedConsultation,
+    selectedSubscription,
+  );
   const fullDescription = activePlan.description || activePlan.subtitle;
 
   return (

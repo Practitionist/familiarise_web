@@ -143,7 +143,7 @@ export default function ContactUsPage() {
                 <p>{BUSINESS_HOURS.sunday}</p>
                 <p className="flex items-center gap-2 pt-2 text-foreground">
                   <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span>{COMPANY_INFO.address}</span>
+                  <span>{COMPANY_INFO.jurisdiction}</span>
                 </p>
               </div>
             </div>

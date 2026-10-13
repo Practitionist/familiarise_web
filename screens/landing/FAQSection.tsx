@@ -46,7 +46,7 @@ export function FAQSection() {
           <Accordion type="single" collapsible className="space-y-4">
             {FAQ_ITEMS.map((item, index) => (
               <AccordionItem
-                key={index}
+                key={item.question}
                 value={`item-${index}`}
                 className="border border-border rounded-xl px-6 bg-card shadow-elevation-1 hover:shadow-elevation-2 transition-shadow"
               >

@@ -1,3 +1,6 @@
+const FOUR_SLOTS = [0, 1, 2, 3] as const;
+const THREE_SLOTS = [0, 1, 2] as const;
+
 export function BenefitsSkeleton() {
   return (
     <section className="py-20 md:py-32 bg-gradient-to-b from-zinc-100 to-white">
@@ -7,11 +10,11 @@ export function BenefitsSkeleton() {
             <div className="h-6 w-24 bg-muted/50 rounded animate-pulse" />
             <div className="h-10 w-3/4 bg-muted/50 rounded animate-pulse" />
             <div className="space-y-3">
-              {[...Array(4)].map((_, i) => (
+              {FOUR_SLOTS.map((slot) => (
                 <div
-                  key={i}
+                  key={slot}
                   className="h-5 bg-muted/50 rounded animate-pulse"
-                  style={{ width: `${70 + i * 5}%` }}
+                  style={{ width: `${70 + slot * 5}%` }}
                 />
               ))}
             </div>
@@ -37,9 +40,9 @@ export function FeaturedExpertsSkeleton() {
           <div className="h-5 w-96 bg-muted/50 rounded animate-pulse mx-auto" />
         </div>
         <div className="flex gap-6 overflow-hidden">
-          {[...Array(4)].map((_, i) => (
+          {FOUR_SLOTS.map((slot) => (
             <div
-              key={i}
+              key={slot}
               className="flex-shrink-0 w-[300px] h-[220px] bg-muted/50 rounded-xl animate-pulse"
             />
           ))}
@@ -59,9 +62,9 @@ export function TestimonialsSkeleton() {
             <div className="h-10 w-72 bg-zinc-800 rounded animate-pulse mx-auto" />
           </div>
           <div className="flex gap-6 overflow-hidden">
-            {[...Array(3)].map((_, i) => (
+            {THREE_SLOTS.map((slot) => (
               <div
-                key={i}
+                key={slot}
                 className="flex-shrink-0 w-[350px] h-[180px] bg-zinc-800 rounded-xl animate-pulse"
               />
             ))}

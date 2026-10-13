@@ -110,10 +110,7 @@ export default function AboutPage() {
                   >
                     <div className="mb-4 flex items-center justify-between">
                       <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted">
-                        <Icon
-                          className="h-5 w-5 text-foreground"
-                          aria-hidden
-                        />
+                        <Icon className="h-5 w-5 text-foreground" aria-hidden />
                       </div>
                       <Badge variant="outline">{offering.title}</Badge>
                     </div>
@@ -234,10 +231,10 @@ export default function AboutPage() {
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Headquarters
+                  Jurisdiction
                 </p>
                 <p className="mt-1 text-sm text-foreground">
-                  {COMPANY_INFO.address}
+                  {COMPANY_INFO.jurisdiction}
                 </p>
               </div>
             </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { PlanLevel } from "@prisma/client";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   GraduationCap,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
+import { useInitialFilterScroll } from "@/hooks/use-initial-filter-scroll";
 import { type Program, type TopicWithCount } from "@/lib/explore/programs";
 import {
   buildProgramHeroStats,
@@ -59,6 +60,16 @@ const PROGRAM_STAT_ICONS: Record<ProgramStatKey, LucideIcon> = {
   webinars: Video,
   learners: Users,
 };
+
+const PROGRAM_FILTER_SCROLL_KEYS = [
+  "type",
+  "search",
+  "topicIds",
+  "level",
+  "sort",
+  "minPrice",
+  "maxPrice",
+] as const;
 
 export default function ProgramsInteractiveContent({
   initialTrending,
@@ -160,30 +171,11 @@ export default function ProgramsInteractiveContent({
   );
 
   const allProgramsRef = useRef<HTMLDivElement>(null);
-  const hasInitialScrollRef = useRef(false);
-
-  useEffect(() => {
-    if (hasInitialScrollRef.current) return;
-    const params = new URLSearchParams(window.location.search);
-    const hasFilterParam = [
-      "type",
-      "search",
-      "topicIds",
-      "level",
-      "sort",
-      "minPrice",
-      "maxPrice",
-    ].some((key) => params.has(key));
-    if (window.location.hash === "#all-programs" || hasFilterParam) {
-      hasInitialScrollRef.current = true;
-      requestAnimationFrame(() => {
-        allProgramsRef.current?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      });
-    }
-  }, []);
+  useInitialFilterScroll(
+    allProgramsRef,
+    "#all-programs",
+    PROGRAM_FILTER_SCROLL_KEYS,
+  );
 
   const handleTopicSelect = useCallback(
     (topicId: string) => {

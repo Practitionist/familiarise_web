@@ -303,13 +303,6 @@ export function ExpertProfileClient({
   const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
     null,
   );
-  const [_selectedDuration, setSelectedDuration] = useState<number>(() =>
-    consultantDetails.consultationPlans.length > 0
-      ? Math.min(
-          ...consultantDetails.consultationPlans.map((p) => p.durationInHours),
-        )
-      : 1,
-  );
 
   const timezone = browserTimezone || userDetails?.timezone;
   const consulteeUserId =
@@ -643,7 +636,6 @@ export function ExpertProfileClient({
                 slotsLoading={dayQuery.isFetching || isTimezoneLoading}
                 slotsError={dayQuery.isError}
                 onRefreshSlots={refreshSlots}
-                onDurationChange={setSelectedDuration}
               />
             ) : (
               <div className="rounded-2xl border border-border bg-card p-6 shadow-elevation-1 xl:sticky xl:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)]">

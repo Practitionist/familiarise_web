@@ -4,10 +4,7 @@ import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 export type BrochurePlanType =
-  | "classes"
-  | "webinars"
-  | "consultations"
-  | "subscriptions";
+  "classes" | "webinars" | "consultations" | "subscriptions";
 
 export interface BrochureFaqItem {
   question: string;
@@ -81,13 +78,19 @@ const CURRICULUM_HEADING: Record<BrochurePlanType, string> = {
   subscriptions: "Your roadmap",
 };
 
-function pluralise(count: number, singular: string, plural = `${singular}s`): string {
+function pluralise(
+  count: number,
+  singular: string,
+  plural = `${singular}s`,
+): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
-function buildPlanFacts(source: BrochureSource, type: BrochurePlanType): string[] {
-  const facts: string[] = [];
-
+function appendCadenceFacts(
+  facts: string[],
+  source: BrochureSource,
+  type: BrochurePlanType,
+) {
   if (type === "classes" || type === "subscriptions") {
     if (source.durationInMonths) {
       facts.push(pluralise(source.durationInMonths, "month"));
@@ -96,25 +99,41 @@ function buildPlanFacts(source: BrochureSource, type: BrochurePlanType): string[
       facts.push(`${pluralise(source.sessionsPerWeek, "session")} per week`);
     }
   }
-
-  if (type === "webinars" || type === "consultations") {
-    if (source.durationInHours) {
-      facts.push(pluralise(source.durationInHours, "hour"));
-    }
+  if (
+    (type === "webinars" || type === "consultations") &&
+    source.durationInHours
+  ) {
+    facts.push(pluralise(source.durationInHours, "hour"));
   }
+}
+
+function appendSubscriptionTotalFacts(
+  facts: string[],
+  source: BrochureSource,
+  type: BrochurePlanType,
+) {
+  if (type !== "subscriptions") return;
+  if (source.totalSessions) {
+    facts.push(`${pluralise(source.totalSessions, "session")} total`);
+  }
+  if (source.totalHours) {
+    facts.push(`${source.totalHours}h total`);
+  }
+}
+
+function buildPlanFacts(
+  source: BrochureSource,
+  type: BrochurePlanType,
+): string[] {
+  const facts: string[] = [];
+
+  appendCadenceFacts(facts, source, type);
 
   if (type === "consultations") {
     facts.push("One-to-one");
   }
 
-  if (type === "subscriptions") {
-    if (source.totalSessions) {
-      facts.push(`${pluralise(source.totalSessions, "session")} total`);
-    }
-    if (source.totalHours) {
-      facts.push(`${source.totalHours}h total`);
-    }
-  }
+  appendSubscriptionTotalFacts(facts, source, type);
 
   if ((type === "classes" || type === "webinars") && source.maxParticipants) {
     facts.push(`Up to ${source.maxParticipants} participants`);
@@ -133,7 +152,9 @@ function buildPlanFacts(source: BrochureSource, type: BrochurePlanType): string[
   return facts;
 }
 
-function normaliseOptionalText(value: string | null | undefined): string | null {
+function normaliseOptionalText(
+  value: string | null | undefined,
+): string | null {
   if (!value || value === "None") return null;
   return value;
 }

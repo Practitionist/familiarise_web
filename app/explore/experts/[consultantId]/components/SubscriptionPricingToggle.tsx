@@ -500,6 +500,24 @@ function SubscriptionOptionDetails({
   );
 }
 
+function resolveInitialSubscriptionPlanId(
+  subscriptionOptions: readonly PricingOption[],
+  initialPlanId?: string | null,
+): string {
+  if (
+    initialPlanId &&
+    subscriptionOptions.some((o) => o.id === initialPlanId)
+  ) {
+    return initialPlanId;
+  }
+  return subscriptionOptions[0]?.id ?? "";
+}
+
+function isNonConsulteeRole(role?: string | null): boolean {
+  if (!role) return false;
+  return ["consultant", "staff"].includes(role.toLowerCase());
+}
+
 export default function SubscriptionPricingToggle({
   subscriptionOptions,
   handleSubscriptionBooking,
@@ -515,9 +533,7 @@ export default function SubscriptionPricingToggle({
   const { toast } = useToast();
   const [internalSubscriptionOption, setInternalSubscriptionOption] =
     useState<string>(() =>
-      initialPlanId && subscriptionOptions.some((o) => o.id === initialPlanId)
-        ? initialPlanId
-        : (subscriptionOptions[0]?.id ?? ""),
+      resolveInitialSubscriptionPlanId(subscriptionOptions, initialPlanId),
     );
   const activeSubscriptionOption =
     selectedPlanId && subscriptionOptions.some((o) => o.id === selectedPlanId)
@@ -701,10 +717,7 @@ export default function SubscriptionPricingToggle({
     );
   }
 
-  if (
-    session?.user?.role &&
-    ["consultant", "staff"].includes(session.user.role.toLowerCase())
-  ) {
+  if (isNonConsulteeRole(session?.user?.role)) {
     return (
       <div className="w-full p-8 text-center space-y-3">
         <h3 className="text-2xl font-medium tracking-tight text-foreground">
