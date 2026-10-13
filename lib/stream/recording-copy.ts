@@ -152,10 +152,11 @@ export function removedPartBadge(
   return `Part ${part.partNo} of ${part.partCount} · Removed by ${by}${when}`;
 }
 
-const yearsOrDays = (days: number) =>
-  days % 365 === 0
-    ? `${days / 365} year${days === 365 ? "" : "s"}`
-    : `${days} days`;
+function yearsOrDays(days: number): string {
+  if (days % 365 !== 0) return `${days} days`;
+  const years = days / 365;
+  return years === 1 ? "1 year" : `${years} years`;
+}
 
 /** The header's one retention line. */
 export function retentionText(

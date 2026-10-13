@@ -250,7 +250,11 @@ export function RecordingTimelineTable({
                                 ? `Play ${first.partLabel.split(" of ")[0]!.toLowerCase()}`
                                 : "Play"
                             }
-                            srLabel={`Play ${row.title}${multi && first.partLabel ? `, ${first.partLabel}` : ""}`}
+                            srLabel={
+                              multi && first.partLabel
+                                ? `Play ${row.title}, ${first.partLabel}`
+                                : `Play ${row.title}`
+                            }
                             onPlay={() => onPlay(first, row)}
                           />
                         )}
