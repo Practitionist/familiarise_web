@@ -2,35 +2,28 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { validateReferralCode } from "@/lib/referrals/service";
 import prisma from "@/lib/prisma";
-import { Ratelimit } from "@upstash/ratelimit";
-import redis from "@/lib/redis";
-
-// Rate limit: 10 requests per minute per IP to prevent brute-force enumeration
-const ratelimit = new Ratelimit({
-  redis: redis as ConstructorParameters<typeof Ratelimit>[0]["redis"],
-  limiter: Ratelimit.slidingWindow(10, "1 m"),
-  prefix: "ratelimit:referral-check",
-});
+import {
+  readReferralProgramConfig,
+  referralTerms,
+} from "@/lib/referrals/program-config";
+import {
+  applyRateLimit,
+  getClientIp,
+  referralCheckLimiter,
+} from "@/lib/rate-limit";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> },
 ) {
   try {
-    // Rate limit by IP
-    const ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-    const { success, remaining } = await ratelimit.limit(ip);
-
-    if (!success) {
-      return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
-        {
-          status: 429,
-          headers: { "X-RateLimit-Remaining": String(remaining) },
-        },
-      );
-    }
+    // Keyed on Netlify's client IP: the first x-forwarded-for hop is client-set.
+    const limited = await applyRateLimit(
+      referralCheckLimiter,
+      getClientIp(req),
+      "referral-check",
+    );
+    if (limited) return limited;
 
     const { code } = await params;
 
@@ -49,23 +42,25 @@ export async function GET(
       });
     }
 
-    // Fetch referrer's name for the signup page banner
+    // First name only: codes are guessable, so the banner must not leak a full name.
     const user = await prisma.user.findUnique({
       where: { id: referralCode.userId },
       select: { name: true },
     });
+    const firstName = user?.name.trim().split(/\s+/)[0] || null;
 
     return NextResponse.json({
       data: {
         valid: true,
-        referrerName: user?.name ?? null,
-        refereeReward: referralCode.refereeReward,
-        // FIX #437: Credits are now given after first booking, not on signup
-        rewardTiming: "after_first_booking",
+        referrerName: firstName,
+        terms: referralTerms(await readReferralProgramConfig()),
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error checking referral code:", error);
     return NextResponse.json(
       { error: "Failed to check referral code" },

@@ -15,7 +15,7 @@
     --secondary: 0 0% 96%;
     --secondary-foreground: 0 0% 9%;
     --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 45%;
+    --muted-foreground: 0 0% 40%;
     --accent: 0 0% 96%;
     --accent-foreground: 0 0% 9%;
     --destructive: 0 84.2% 60.2%;
@@ -730,7 +730,7 @@ body:not(:has(.h-screen-maintenance)) {
   background-clip: text;
 }
 
-/* Silver shimmer text */
+/* Silver gradient text (static to avoid non-composited background-position animation on LCP/headings) */
 .silver-text {
   background: linear-gradient(
     90deg,
@@ -743,18 +743,12 @@ body:not(:has(.h-screen-maintenance)) {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  background-size: 200% 100%;
-  animation: silver-shimmer 4s linear infinite;
 }
 
-@keyframes silver-shimmer {
-  0% {
-    background-position: 200% 0;
-  }
-
-  100% {
-    background-position: -200% 0;
-  }
+/* Below-the-fold layout/paint containment for long marketing pages */
+.cv-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px;
 }
 
 /* Gradient border - Silver */

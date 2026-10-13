@@ -20,6 +20,12 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { WebinarPlanSchema } from "@/schemas/plans";
+
+const WebinarRecordingFlagsSchema = WebinarPlanSchema.pick({
+  recordingEnabled: true,
+  shareRecordingsWithAllAttendees: true,
+}).partial();
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,8 +37,7 @@ export async function GET(request: NextRequest) {
     const { sort, page, limit, skip } = filters;
     const where = buildPlanWhereClause(filters) as Prisma.WebinarPlanWhereInput;
     const orderBy = buildPlanOrderBy(sort) as
-      | Prisma.WebinarPlanOrderByWithRelationInput
-      | undefined;
+      Prisma.WebinarPlanOrderByWithRelationInput | undefined;
 
     // Build include object based on whether registration data is requested
     const include: Record<string, unknown> = {
@@ -125,9 +130,14 @@ export async function POST(request: NextRequest) {
       materialProvided,
       learningOutcomes,
       topicIds,
-      recordingEnabled,
-      recordingStoragePolicy,
     } = body;
+    const recordingFlags = WebinarRecordingFlagsSchema.safeParse(body);
+    if (!recordingFlags.success) {
+      return NextResponse.json(
+        { error: "Invalid recording settings" },
+        { status: 400 },
+      );
+    }
 
     // Ownership: non-privileged users can only create plans for themselves
     const consultantProfileId = isPrivileged(session.user.role)
@@ -167,8 +177,9 @@ export async function POST(request: NextRequest) {
         prerequisites,
         materialProvided,
         learningOutcomes,
-        recordingEnabled: recordingEnabled ?? false,
-        recordingStoragePolicy: recordingStoragePolicy ?? "STREAM_ONLY",
+        recordingEnabled: recordingFlags.data.recordingEnabled ?? false,
+        shareRecordingsWithAllAttendees:
+          recordingFlags.data.shareRecordingsWithAllAttendees ?? false,
         consultantProfile: { connect: { id: consultantProfileId } },
         topics: topicIds
           ? { connect: topicIds.map((id: string) => ({ id })) }

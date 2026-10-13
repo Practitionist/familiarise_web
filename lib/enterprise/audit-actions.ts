@@ -41,6 +41,7 @@ export const AUDIT_ACTIONS = {
     APPOINTMENT_CANCELLED_FOR_ORG: "APPOINTMENT_CANCELLED_FOR_ORG",
     APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG:
       "APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG",
+    APPOINTMENT_ALLOCATED_FOR_ORG: "APPOINTMENT_ALLOCATED_FOR_ORG",
   },
   CONTRACT: {
     CONTRACT_CREATED: "CONTRACT_CREATED",
@@ -75,6 +76,7 @@ export const AUDIT_ACTIONS = {
     // #1846 SM-C14 — one row per seat a terminated or expired contract closed.
     ASSIGNMENT_CLOSED_BY_CONTRACT: "ASSIGNMENT_CLOSED_BY_CONTRACT",
     RATE_CARD_BUMPED: "RATE_CARD_BUMPED",
+    PROGRAM_SUPERSEDED: "PROGRAM_SUPERSEDED",
   },
   WALLET: {
     WALLET_TOPUP: "WALLET_TOPUP",
@@ -157,6 +159,11 @@ export const AUDIT_ACTIONS = {
     ORG_SOFT_DELETED: "ORG_SOFT_DELETED",
     SSO_ENABLED: "SSO_ENABLED",
     SSO_DISABLED: "SSO_DISABLED",
+    // Client secret rotated or covered domains changed in place.
+    SSO_PROVIDER_UPDATED: "SSO_PROVIDER_UPDATED",
+    // A sign-in refused for SSO_REQUIRED or SSO_EMAIL_DOMAIN_MISMATCH; at most
+    // one row per email, code and hour.
+    SSO_SIGN_IN_REFUSED: "SSO_SIGN_IN_REFUSED",
     DOMAIN_CLAIMED: "DOMAIN_CLAIMED",
     // Emitted by POST /organizations/[orgId]/domain-claims/[domain]/verify
     // after the DNS TXT record at `_familiarise-verify.<domain>` matches
@@ -169,11 +176,6 @@ export const AUDIT_ACTIONS = {
     // carries the filter params + row-count as evidence.
     AUDIT_LOG_EXPORTED: "AUDIT_LOG_EXPORTED",
     DOMAIN_RELEASED: "DOMAIN_RELEASED",
-    // Emitted by the SSO cert expiry cron at 30-day WARN and 7-day
-    // CRITICAL thresholds. `details.daysRemaining` + `details.providerId`
-    // carry the context so an OWNER scanning the audit log can tell which
-    // provider's cert is about to lapse.
-    SSO_CERT_EXPIRING: "SSO_CERT_EXPIRING",
     // #1499 — emitted by PUT /api/organizations/[orgId]/cancellation-policy. A
     // published version is immutable, so the audit row plus the version number is
     // the whole change history: `details` carries the ladder that was published.
@@ -225,8 +227,7 @@ export const AUDIT_ACTIONS = {
     // in `details`. Pinned under SYSTEM because the operator is the
     // platform, not a human member.
     AUDIT_PRUNED: "AUDIT_PRUNED",
-    // Emitted by the Stream recording retention cron when it tombstones
-    // a recording older than the org's `streamRecordingRetentionDays`.
+    // Emitted by the expire-recordings job for each run that expires org recordings.
     STREAM_RECORDING_DELETED: "STREAM_RECORDING_DELETED",
     // #1270 — emitted whenever a platform operator (ADMIN or STAFF) reads a
     // recording they have no participation in. The operator path used to be
@@ -259,18 +260,6 @@ export const AUDIT_ACTIONS = {
     DATA_EXPORT_GENERATED: "DATA_EXPORT_GENERATED",
     DATA_EXPORT_FAILED: "DATA_EXPORT_FAILED",
     DATA_EXPORT_DOWNLOADED: "DATA_EXPORT_DOWNLOADED",
-    // PR #655 Batch 4 — SCIM 2.0 provisioning events that don't map
-    // cleanly to MEMBER (because the actor is an IdP token, not a
-    // human). Grouped here so the SCIM trail is filterable as a unit.
-    SCIM_USER_CREATED: "SCIM_USER_CREATED",
-    SCIM_USER_UPDATED: "SCIM_USER_UPDATED",
-    SCIM_USER_DEPROVISIONED: "SCIM_USER_DEPROVISIONED",
-    SCIM_USER_REPROVISIONED: "SCIM_USER_REPROVISIONED",
-    SCIM_GROUP_MAPPED: "SCIM_GROUP_MAPPED",
-    SCIM_GROUP_UNMAPPED: "SCIM_GROUP_UNMAPPED",
-    SCIM_TOKEN_CREATED: "SCIM_TOKEN_CREATED",
-    SCIM_TOKEN_REVOKED: "SCIM_TOKEN_REVOKED",
-    SCIM_TOKEN_USED_AFTER_REVOKE: "SCIM_TOKEN_USED_AFTER_REVOKE",
   },
   // PR #655 Batch 3 — outbound webhook subsystem audit trail. One
   // category for both endpoint configuration (CRUD) and delivery

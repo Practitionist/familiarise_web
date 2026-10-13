@@ -8,9 +8,9 @@ last-reviewed: 2026-06-12
 
 # Familiarise Enterprise — documentation
 
-The **enterprise layer** is a capability-driven B2B surface on top of the marketplace: organizations sponsor and/or host, fund sessions through wallets, invoices, or licenses, run programs with seat or credit caps, and settle money through a double-entry ledger. This folder is the engineer's map of that layer. The **banded folders** are written to be read **in order, as one continuous story**, with each band building on the last: `00-foundations/` → `10-money-and-ledger/` → `20-iam-and-security/` → `30-programs-and-lifecycle/` → `40-compliance-and-data/` → `50-operations/` → `60-scenarios-and-verdicts/`. Two bands sit outside the story line: `70-design-decisions/` collects the architecture decision records that explain _why_ the system is shaped the way it is, and `90-audits/` is the annex of audit artifacts. [`explainers/complete-guide`](explainers/complete-guide.md) is the parallel connective narrative that walks every concept end to end.
+The **enterprise layer** is a capability-driven B2B surface on top of the marketplace: organizations sponsor and/or host, fund sessions through wallets, invoices, or licenses, run programs with seat or credit caps, and settle money through a double-entry ledger. This folder is the engineer's map of that layer. The **banded folders** are written to be read **in order, as one continuous story**, with each band building on the last: `00-foundations/` → `10-money-and-ledger/` → `20-iam-and-security/` → `30-programs-and-lifecycle/` → `40-compliance-and-data/` → `50-operations/` → `60-scenarios-and-verdicts/`. Two bands sit outside the story line: `70-design-decisions/` collects the architecture decision records that explain _why_ the system is shaped the way it is, and `90-audits/` is the annex of audit artifacts.
 
-> **New here?** Read the [overview](00-foundations/01-overview.md) for the system shape, then the [complete guide](explainers/complete-guide.md) for the end-to-end narrative. For money specifically, read [money-machinery](explainers/money-machinery.md) first — the cross-rail map of B2C and B2B on one spine, with the data model, sequence, state and posting diagrams — then start at [money-model-overview](10-money-and-ledger/01-money-model-overview.md) and walk the `10-money-and-ledger/` band in order. If you want a curated path matched to your experience level, use the [reading paths](#reading-paths-by-level) below.
+> **New here?** Read the [overview](00-foundations/01-overview.md) for the system shape. For the end-to-end booking, organizational scoping, and money narrative across B2C and B2B, read [01-booking-and-money-machinery](../start-here/01-booking-and-money-machinery.md) first — the cross-rail visual guide with the data model, sequence, state, permission, and 20 double-entry ledger permutation tables — then start at [money-model-overview](10-money-and-ledger/01-money-model-overview.md) and walk the `10-money-and-ledger/` band in order. If you want a curated path matched to your experience level, use the [reading paths](#reading-paths-by-level) below.
 
 ---
 
@@ -23,10 +23,10 @@ flowchart LR
   START([new developer]) --> OV["00-foundations/<br/>overview · org-types · funding-and-programs"]
   OV --> PATH{your area?}
   PATH -->|money / ledger| MONEY["10-money-and-ledger/<br/>money-model · chart-of-accounts · postings · wallet<br/>booking→earnings · earnings-lifecycle · payouts · invoicing<br/>payment-legs · refunds · disputes · payment-webhooks · integrity"]
-  PATH -->|identity / SSO| IAM["roles-and-permissions (00-foundations/)<br/>20-iam-and-security/<br/>sso · jit · scim · rate-limiting · security-headers"]
+  PATH -->|identity / SSO| IAM["roles-and-permissions (00-foundations/)<br/>20-iam-and-security/<br/>sso · jit · rate-limiting · security-headers"]
   PATH -->|programs / app| PROG["30-programs-and-lifecycle/<br/>concurrency · programs · expert-lifecycle<br/>dashboard · discovery · feature-flags<br/>contract-lifecycle · cycle-engine"]
   PATH -->|compliance / data| COMP["40-compliance-and-data/<br/>compliance · deletion · data-export<br/>webhooks · workspace-prefs · integrations"]
-  PATH -->|on-call / ops| OPS["50-operations/<br/>api-reference · route-migration · runbooks<br/>monitoring · system-events · payout-go-live"]
+  PATH -->|on-call / ops| OPS["50-operations/<br/>api-reference · runbooks<br/>monitoring · system-events · payout-go-live"]
   PATH -->|sales / partners| SALES["60-scenarios-and-verdicts/<br/>scenarios · harness-verdict · design-partners"]
   PATH -->|architecture / why| ADR["70-design-decisions/<br/>ADRs: ledger · money · payouts · auth · webhooks"]
 ```
@@ -54,7 +54,7 @@ This path makes you productive inside any one band and safe at its boundaries wi
 
 1. Everything in the SDE1 path.
 2. All of [`10-money-and-ledger/`](10-money-and-ledger/01-money-model-overview.md) in order — the money story only makes sense read front to back.
-3. All of [`20-iam-and-security/`](20-iam-and-security/01-sso-and-authentication.md) — SSO, JIT, SCIM, rate limiting, headers.
+3. All of [`20-iam-and-security/`](20-iam-and-security/01-sso-and-authentication.md) — SSO, JIT, rate limiting, headers.
 4. All of [`30-programs-and-lifecycle/`](30-programs-and-lifecycle/01-concurrency-and-idempotency.md) — programs are where the commercial terms live.
 5. [compliance map](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md), [deletion-policy](40-compliance-and-data/02-deletion-policy.md), [data-export](40-compliance-and-data/03-data-export.md), and [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md).
 6. Re-read [concurrency-and-idempotency](30-programs-and-lifecycle/01-concurrency-and-idempotency.md) after the money band — the idempotency keys will mean more the second time.
@@ -67,19 +67,17 @@ This path adds the _why_ behind the design and the integrity machinery you must 
 2. All of [`70-design-decisions/`](70-design-decisions/00-README.md) — the ADRs; read these before proposing structural changes.
 3. [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md) — the wired/partial/skipped map of all eight subsystems.
 4. [ledger-integrity](10-money-and-ledger/13-ledger-integrity.md) — the nightly reconciler and the invariants your change must not break.
-5. [monitoring](50-operations/04-monitoring.md) and [system-events](50-operations/05-system-events.md) — how a change announces itself in production.
-6. [subsystem-checklist](90-audits/02-subsystem-checklist.md) and [verification-guide](90-audits/03-verification-guide.md) — how shipped work gets verified here.
+5. [monitoring](50-operations/03-monitoring.md) and [system-events](50-operations/04-system-events.md) — how a change announces itself in production.
 
 ### SDE4 — architecture and regulatory sign-off
 
-This path covers the whole surface, the audit history, and the regulatory rails the money flows must satisfy.
+This path covers the whole surface and the regulatory rails the money flows must satisfy.
 
 1. Everything in the SDE3 path.
-2. [complete-guide](explainers/complete-guide.md) — the full narrative, front to back.
+2. [01-booking-and-money-machinery](../start-here/01-booking-and-money-machinery.md) — the canonical cross-rail booking, org-scoping, and money narrative.
 3. [compliance map](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) together with the authoritative rule set in [`docs/compliance/`](../compliance/00-overview.md).
-4. [live-payout-go-live-runbook](50-operations/06-live-payout-go-live-runbook.md) — the one flag flip with real-money consequences.
-5. All of [`60-scenarios-and-verdicts/`](60-scenarios-and-verdicts/01-scenarios-and-examples.md) — the worked scenarios and the honest ✅/🟡/🔴 verdict grid.
-6. [readiness-audit](90-audits/01-readiness-audit.md) and [simplification-proposal](90-audits/04-simplification-proposal.md) — where the system stands and what could be cut.
+4. [live-payout-go-live-runbook](50-operations/05-live-payout-go-live-runbook.md) — the one flag flip with real-money consequences.
+5. [scenarios-and-examples](60-scenarios-and-verdicts/01-scenarios-and-examples.md) — worked end-to-end enterprise scenarios.
 
 ---
 
@@ -87,17 +85,16 @@ This path covers the whole surface, the audit history, and the regulatory rails 
 
 The table below lists every band in reading order, with the documents each one contains.
 
-| Band folder                  | Section                                          | Docs                                                                                                                                                                                |
-| ---------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `00-foundations/`            | **Foundations**                                  | overview, org types, funding & programs, roles, lifecycle, hierarchy                                                                                                                |
-| `10-money-and-ledger/`       | **Money & ledger**                               | money model, chart of accounts, postings, wallet, booking→earnings, earnings lifecycle, payouts, invoicing, payment legs, refunds, disputes, payment webhooks, integrity            |
-| `20-iam-and-security/`       | **IAM / SSO / security**                         | SSO, JIT, SCIM, rate-limiting, security headers                                                                                                                                     |
-| `30-programs-and-lifecycle/` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover                                                      |
-| `40-compliance-and-data/`    | **Compliance / integrations / data**             | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations                                                                               |
-| `50-operations/`             | **Operations**                                   | API reference, route migration, runbooks, monitoring, system events, live-payout go-live                                                                                            |
-| `60-scenarios-and-verdicts/` | **Scenarios / verdict / partners**               | worked scenarios, harness verdict, design-partner set                                                                                                                               |
-| `70-design-decisions/`       | **Design decisions (ADRs)**                      | why the ledger, money representation, payouts, auth, and webhook designs are what they are                                                                                          |
-| `90-audits/`                 | **Audit artifacts (annex)**                      | readiness audit, subsystem checklist, verification guide, simplification proposal, superseded 2026-05-02 production-grade checklist, 2026-06-12 backlog triage + residuals register |
+| Band folder                  | Section                                          | Docs                                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `00-foundations/`            | **Foundations**                                  | overview, org types, funding & programs, roles, lifecycle, scheduling glossary                                                                                           |
+| `10-money-and-ledger/`       | **Money & ledger**                               | money model, chart of accounts, postings, wallet, booking→earnings, earnings lifecycle, payouts, invoicing, payment legs, refunds, disputes, payment webhooks, integrity |
+| `20-iam-and-security/`       | **IAM / SSO / security**                         | SSO, JIT, rate-limiting, security headers                                                                                                                                |
+| `30-programs-and-lifecycle/` | **Programs / dashboard / discovery / lifecycle** | concurrency & idempotency, programs, experts, dashboard, discovery, feature flags, contract lifecycle, cycle engine & rollover                                           |
+| `40-compliance-and-data/`    | **Compliance / integrations / data**             | compliance map, deletion, data export, outbound webhooks, workspace prefs, cross-cutting integrations, RBI payment aggregator posture                                    |
+| `50-operations/`             | **Operations**                                   | API reference, runbooks, monitoring, system events, live-payout go-live, chaos test, required secrets, capacity ladder, load gate, Novu console conditions               |
+| `60-scenarios-and-verdicts/` | **Scenarios**                                    | worked end-to-end scenarios                                                                                                                                              |
+| `70-design-decisions/`       | **Design decisions (ADRs)**                      | why the ledger, money representation, payouts, auth, and webhook designs are what they are                                                                               |
 
 ---
 
@@ -107,14 +104,14 @@ The table below lists every band in reading order, with the documents each one c
 
 These six docs define the primitives every other band assumes: what an organization is, who its members are, and how its lifecycle runs.
 
-| #   | Doc                                                                   | Focus                                                     |
-| --- | --------------------------------------------------------------------- | --------------------------------------------------------- |
-| 01  | [overview](00-foundations/01-overview.md)                             | system shape, master ER, capability model                 |
-| 02  | [organization-types](00-foundations/02-organization-types.md)         | `canSponsor`/`canHost` → BUYER/HOST/HYBRID/INERT          |
-| 03  | [funding-and-programs](00-foundations/03-funding-and-programs.md)     | `FundingSource` enum + program subtypes                   |
-| 04  | [roles-and-permissions](00-foundations/04-roles-and-permissions.md)   | `MemberRole` ladder + every API gate                      |
-| 05  | [organization-lifecycle](00-foundations/05-organization-lifecycle.md) | `OrgStatus` + contract/program state machines             |
-| 06  | [hierarchy](00-foundations/06-hierarchy.md)                           | `parentOrganizationId`/`rootOrganizationId` (UI deferred) |
+| #   | Doc                                                                   | Focus                                            |
+| --- | --------------------------------------------------------------------- | ------------------------------------------------ |
+| 01  | [overview](00-foundations/01-overview.md)                             | system shape, master ER, capability model        |
+| 02  | [organization-types](00-foundations/02-organization-types.md)         | `canSponsor`/`canHost` → BUYER/HOST/HYBRID/INERT |
+| 03  | [funding-and-programs](00-foundations/03-funding-and-programs.md)     | `FundingSource` enum + program subtypes          |
+| 04  | [roles-and-permissions](00-foundations/04-roles-and-permissions.md)   | `MemberRole` ladder + every API gate             |
+| 05  | [organization-lifecycle](00-foundations/05-organization-lifecycle.md) | `OrgStatus` + contract/program state machines    |
+| 06  | [scheduling-glossary](00-foundations/06-scheduling-glossary.md)       | canonical booking and scheduling terminology     |
 
 ### Money & ledger — `10-money-and-ledger/`
 
@@ -122,8 +119,8 @@ This band tells the money story front to back: how value enters (wallet, invoice
 
 | #   | Doc                                                                    | Focus                                                               |
 | --- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 01  | [money-model-overview](10-money-and-ledger/01-money-model-overview.md) | integer paise, double-entry, derived balances, what #772 changed    |
-| 02  | [chart-of-accounts](10-money-and-ledger/02-chart-of-accounts.md)       | the 10 accounts, normal sides, deterministic ids                    |
+| 01  | [money-model-overview](10-money-and-ledger/01-money-model-overview.md) | integer paise, double-entry, derived balances                       |
+| 02  | [chart-of-accounts](10-money-and-ledger/02-chart-of-accounts.md)       | the 13 accounts, normal sides, deterministic ids                    |
 | 03  | [ledger-and-postings](10-money-and-ledger/03-ledger-and-postings.md)   | `postLedgerTxn`, the balance invariant, every flow's legs           |
 | 04  | [wallet-and-topups](10-money-and-ledger/04-wallet-and-topups.md)       | `WalletTopUp` lifecycle, wallet-as-cache                            |
 | 05  | [booking-to-earnings](10-money-and-ledger/05-booking-to-earnings.md)   | booking → earnings → bps split, rate cards                          |
@@ -134,19 +131,18 @@ This band tells the money story front to back: how value enters (wallet, invoice
 | 10  | [refunds](10-money-and-ledger/10-refunds.md)                           | `applyRefundCascade`, gateway refund mechanics, credit notes        |
 | 11  | [disputes](10-money-and-ledger/11-disputes.md)                         | `DisputeStatus` machine, evidence/contest, lost-dispute reversal    |
 | 12  | [payment-webhooks](10-money-and-ledger/12-payment-webhooks.md)         | inbound gateway events, signature verify, idempotency               |
-| 13  | [ledger-integrity](10-money-and-ledger/13-ledger-integrity.md)         | the reconciler: 7 checks + report                                   |
+| 13  | [ledger-integrity](10-money-and-ledger/13-ledger-integrity.md)         | the reconciler: set-based checks + report                           |
 
 ### IAM / SSO / security — `20-iam-and-security/`
 
-These five docs cover how people get into orgs (SSO, JIT, SCIM) and the protective layers around those entry points.
+These four docs cover how people get into orgs (OIDC SSO and JIT) and the protective layers around those entry points. Platform sign-in itself (passwords, 2FA, sessions, staff accounts) is documented in [`docs/authentication/`](../authentication/README.md).
 
 | #   | Doc                                                                          | Focus                                                   |
 | --- | ---------------------------------------------------------------------------- | ------------------------------------------------------- |
 | 01  | [sso-and-authentication](20-iam-and-security/01-sso-and-authentication.md)   | `OrganizationSSOSettings`, `SsoProvider`, domain claims |
-| 02  | [jit-and-session-refresh](20-iam-and-security/02-jit-and-session-refresh.md) | JIT auto-join, `sessionGeneration`, role-change refresh |
-| 03  | [scim-provisioning](20-iam-and-security/03-scim-provisioning.md)             | SCIM tokens + provisioning                              |
-| 04  | [rate-limiting](20-iam-and-security/04-rate-limiting.md)                     | coverage matrix; why BetterAuth's limiter is off        |
-| 05  | [security-headers](20-iam-and-security/05-security-headers.md)               | CSP + header posture                                    |
+| 02  | [jit-and-session-refresh](20-iam-and-security/02-jit-and-session-refresh.md) | JIT auto-join, role-change refresh                      |
+| 03  | [rate-limiting](20-iam-and-security/03-rate-limiting.md)                     | BetterAuth limiter on Upstash + edge rules              |
+| 04  | [security-headers](20-iam-and-security/04-security-headers.md)               | CSP + header posture                                    |
 
 ### Programs / dashboard / discovery / lifecycle — `30-programs-and-lifecycle/`
 
@@ -167,63 +163,50 @@ This band holds the commercial logic (programs, contracts, cycles) and the app s
 
 These docs map the regulatory rails (DPDP, GST, TDS, MSME) onto the models and crons that implement them, plus the org-facing data plumbing.
 
-| #   | Doc                                                                                       | Focus                                      |
-| --- | ----------------------------------------------------------------------------------------- | ------------------------------------------ |
-| 01  | [compliance-dpdp-gst-tds-msme](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md) | enterprise touchpoints → `../compliance/*` |
-| 02  | [deletion-policy](40-compliance-and-data/02-deletion-policy.md)                           | erasure, retention, immutable ledger       |
-| 03  | [data-export](40-compliance-and-data/03-data-export.md)                                   | `OrgDataExportJob`                         |
-| 04  | [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md)                       | `WebhookEndpoint`, delivery, signing       |
-| 05  | [workspace-preferences](40-compliance-and-data/05-workspace-preferences.md)               | `OrgWorkspaceProfile` prefs                |
-| 06  | [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md)     | per-subsystem wired/skipped map            |
+| #   | Doc                                                                                           | Focus                                      |
+| --- | --------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| 01  | [compliance-dpdp-gst-tds-msme](40-compliance-and-data/01-compliance-dpdp-gst-tds-msme.md)     | enterprise touchpoints → `../compliance/*` |
+| 02  | [deletion-policy](40-compliance-and-data/02-deletion-policy.md)                               | erasure, retention, immutable ledger       |
+| 03  | [data-export](40-compliance-and-data/03-data-export.md)                                       | `OrgDataExportJob`                         |
+| 04  | [outbound-webhooks](40-compliance-and-data/04-outbound-webhooks.md)                           | `WebhookEndpoint`, delivery, signing       |
+| 05  | [workspace-preferences](40-compliance-and-data/05-workspace-preferences.md)                   | `OrgWorkspaceProfile` prefs                |
+| 06  | [cross-cutting-integrations](40-compliance-and-data/06-cross-cutting-integrations.md)         | per-subsystem wired/skipped map            |
+| 07  | [rbi-payment-aggregator-posture](40-compliance-and-data/07-rbi-payment-aggregator-posture.md) | RBI PA-CB regulatory posture               |
 
 ### Operations — `50-operations/`
 
-This band is the on-call surface: every route, cron, alert, and the one go-live runbook.
+This band is the on-call surface: every route, cron, alert, and go-live runbook.
 
 | #   | Doc                                                                            | Focus                                                        |
 | --- | ------------------------------------------------------------------------------ | ------------------------------------------------------------ |
 | 01  | [api-reference](50-operations/01-api-reference.md)                             | exhaustive route table (roles + audit actions)               |
-| 02  | [route-migration-table](50-operations/02-route-migration-table.md)             | old-route → new-route map                                    |
-| 03  | [runbooks](50-operations/03-runbooks.md)                                       | incident response + scheduled tasks                          |
-| 04  | [monitoring](50-operations/04-monitoring.md)                                   | log taxonomy, alerts, dashboards                             |
-| 05  | [system-events](50-operations/05-system-events.md)                             | system-event / audit-action taxonomy                         |
-| 06  | [live-payout-go-live-runbook](50-operations/06-live-payout-go-live-runbook.md) | flip `ENABLE_LIVE_PAYOUTS` safely (sandbox proof + rollback) |
+| 02  | [runbooks](50-operations/02-runbooks.md)                                       | incident response + scheduled tasks                          |
+| 03  | [monitoring](50-operations/03-monitoring.md)                                   | log taxonomy, alerts, dashboards                             |
+| 04  | [system-events](50-operations/04-system-events.md)                             | system-event / audit-action taxonomy                         |
+| 05  | [live-payout-go-live-runbook](50-operations/05-live-payout-go-live-runbook.md) | flip `ENABLE_LIVE_PAYOUTS` safely (sandbox proof + rollback) |
+| 06  | [chaos-test-runbook](50-operations/06-chaos-test-runbook.md)                   | chaos and fault-injection drills                             |
+| 07  | [required-secrets](50-operations/07-required-secrets.md)                       | production and CI secret inventory                           |
+| 08  | [capacity-ladder](50-operations/08-capacity-ladder.md)                         | infrastructure scaling thresholds                            |
+| 09  | [load-gate-runbook](50-operations/09-load-gate-runbook.md)                     | k6 load gate verification                                    |
+| 10  | [novu-console-conditions](50-operations/10-novu-console-conditions.md)         | Novu workflow step conditions                                |
 
-### Scenarios / verdict / partners — `60-scenarios-and-verdicts/`
+### Scenarios — `60-scenarios-and-verdicts/`
 
-These docs validate the system against worked end-to-end examples and state honestly which scenarios are live, partial, or missing.
+This doc validates the system against worked end-to-end enterprise scenarios.
 
-| #   | Doc                                                                                        | Focus                         |
-| --- | ------------------------------------------------------------------------------------------ | ----------------------------- |
-| 01  | [scenarios-and-examples](60-scenarios-and-verdicts/01-scenarios-and-examples.md)           | worked end-to-end scenarios   |
-| 02  | [harness-verdict](60-scenarios-and-verdicts/02-harness-verdict.md)                         | scenario-by-scenario verdict  |
-| 03  | [design-partner-customer-set](60-scenarios-and-verdicts/03-design-partner-customer-set.md) | seed cohort / design partners |
+| #   | Doc                                                                              | Focus                       |
+| --- | -------------------------------------------------------------------------------- | --------------------------- |
+| 01  | [scenarios-and-examples](60-scenarios-and-verdicts/01-scenarios-and-examples.md) | worked end-to-end scenarios |
 
 ### Design decisions — `70-design-decisions/`
 
-This band collects the architecture decision records: each one states a decision the system embodies, the alternatives that were rejected, and the consequences we live with. Start at the [band index](70-design-decisions/00-README.md), which lists every ADR and the format they follow.
+This band collects the architecture decision records (`01` through `36`): each one states a decision the system embodies, the alternatives that were rejected, and the consequences we live with. Start at the [band index](70-design-decisions/00-README.md), which lists every ADR and the format they follow.
 
-### Audit artifacts (annex) — `90-audits/`
+### Cross-Rail Explainers — `docs/start-here/`
 
-These are point-in-time audit artifacts; their `last-reviewed` dates intentionally reflect when each audit was performed, not the latest doc sweep.
-
-| #   | Doc                                                                                            | Focus                                                                               |
-| --- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| 01  | [readiness-audit](90-audits/01-readiness-audit.md)                                             | enterprise readiness audit                                                          |
-| 02  | [subsystem-checklist](90-audits/02-subsystem-checklist.md)                                     | per-subsystem completeness checklist                                                |
-| 03  | [verification-guide](90-audits/03-verification-guide.md)                                       | how to verify the enterprise subsystem                                              |
-| 04  | [simplification-proposal](90-audits/04-simplification-proposal.md)                             | scope-simplification proposal                                                       |
-| 05  | [production-grade-checklist-2026-05-02](90-audits/05-production-grade-checklist-2026-05-02.md) | superseded 2026-05-02 production-grade checklist                                    |
-| 06  | [backlog-triage-2026-06-12](90-audits/06-backlog-triage-2026-06-12.md)                         | 61-issue backlog triage — dispositions, evidence, and the launch-residuals register |
-
-### The complete guide
-
-One document sits outside the bands and walks the whole system as a single story.
-
-| File                                                        | Purpose                                                                                                                                                                                                                                               |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [explainers/complete-guide](explainers/complete-guide.md)   | the single end-to-end narrative walkthrough across every enterprise concept — read it alongside the banded folders above                                                                                                                              |
-| [explainers/money-machinery](explainers/money-machinery.md) | how money moves on both rails — one checkout, one writer, one ledger; B2C confirmation and refunds, B2B funding seam, overage, invoicing and org payouts; the concurrency posture and the architecture verdict, with the divergences tracked in #1564 |
+| File                                                                                         | Purpose                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [start-here/01-booking-and-money-machinery](../start-here/01-booking-and-money-machinery.md) | Canonical end-to-end visual guide combining booking lifecycle, organizational scoping (`?orgScope=`), role & permission matrices, funding/program/overage permutations, all 20 double-entry ledger permutations, and worked numeric examples with seeded cast |
 
 ---
 
@@ -268,7 +251,7 @@ Docs **defer to code** when prose drifts. The load-bearing sources:
 
 ## Post-v2 note
 
-> **The v2 mega-audit (#777/#778/#779) was absorbed into these docs on 2026-06-05.** It closed the "silent stuck money / zombie row" gaps: the `Contract` lifecycle (auto-renew, supersede, end-early) → [contract-lifecycle](30-programs-and-lifecycle/07-contract-lifecycle.md); the cycle engine + assignment rollover (nightly cycle-advance, successor mint) → [cycle-engine-and-rollover](30-programs-and-lifecycle/08-cycle-engine-and-rollover.md); the `OverageEvent` system (breaker / surcharge / `CHARGE_MEMBER` timeout); dunning; wallet auto-top-up (**notify-only today** — the cron warns, it does not charge); SSO break-glass; verification resubmit; webhook secret-rotation grace; field-level RBAC on org/contract/program edits; and the IRN payload mapper behind `ENABLE_IRP_UPLOADER`. Refund-driven TDS reversal is now wired via a negative `TDSRecord` (`recordTdsReversal`, #813); the richer `TdsAdjustment` consolidation model remains schema-only. New idempotency anchors: `rolledAt` (cycle mint), `autoRenewedAt` (contract renew), `autoTopUpLastFiredAt` (auto-top-up).
+> **The v2 mega-audit (#777/#778/#779) was absorbed into these docs on 2026-06-05.** It closed the "silent stuck money / zombie row" gaps: the `Contract` lifecycle (auto-renew, supersede, end-early) → [contract-lifecycle](30-programs-and-lifecycle/07-contract-lifecycle.md); the cycle engine + assignment rollover (nightly cycle-advance, successor mint) → [cycle-engine-and-rollover](30-programs-and-lifecycle/08-cycle-engine-and-rollover.md); the `OverageEvent` system (breaker / surcharge / `CHARGE_MEMBER` timeout); dunning; wallet auto-top-up (**notify-only today** — the cron warns, it does not charge); verification resubmit; webhook secret-rotation grace; field-level RBAC on org/contract/program edits; and the IRN payload mapper behind `ENABLE_IRP_UPLOADER`. Refund-driven TDS reversal is now wired via a negative `TDSRecord` (`recordTdsReversal`, #813); the richer `TdsAdjustment` consolidation model remains schema-only. New idempotency anchors: `rolledAt` (cycle mint), `autoRenewedAt` (contract renew), `autoTopUpLastFiredAt` (auto-top-up).
 
 ## Conventions
 

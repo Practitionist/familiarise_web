@@ -1,7 +1,7 @@
 /**
  * Abandoned CHARGE_MEMBER overage-charge sweeper (#785, task #25).
  *
- * cycleOverageSoFarPaise (overage-settlement.ts) sums marginalPaise over
+ * cycleOverageSoFarPaise (overage-settlement.ts) sums basePaise + surchargePaise over
  * chargeStatus NOT IN (REVERSED, BLOCKED, FAILED) — so a never-paid PENDING
  * CHARGE_MEMBER side-charge COUNTS toward maxOveragePerCyclePaise and can
  * hard-block (402 PROGRAM_CAP_EXHAUSTED) the next legitimate booking even though
@@ -94,7 +94,7 @@ async function sweepAbandonedOverageChargesUnlocked(
   for (const a of abandoned) {
     const outcome = await prisma.$transaction(async (tx) => {
       const moved = await transitionOverage(tx, { id: a.id }, "FAILED", {
-        chargeFailureReason: `Abandoned before payment started (swept at ${ageDays}d)`,
+        chargeFailureReason: `Payment not started within ${ageDays} days`,
       });
       if (moved === 0) return null;
       // FAILing the side-charge means the member never pays basePaise — give

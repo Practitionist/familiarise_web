@@ -68,9 +68,34 @@ describe("reduced 2-screen consultee flow", () => {
       skillsToDevelop: [],
       budgetPreference: undefined,
     });
-    // Consent timestamps are stamped from the booleans.
-    expect(validated.data.termsAcceptedAt).toBeInstanceOf(Date);
-    expect(validated.data.privacyAcceptedAt).toBeInstanceOf(Date);
+    // Only the two literals travel; the server stamps the timestamps.
+    expect(validated.data.termsAccepted).toBe(true);
+    expect(validated.data.privacyAccepted).toBe(true);
+    expect(validated.data).not.toHaveProperty("termsAcceptedAt");
+  });
+
+  it("refuses a server payload without consent, routed to the agreement field", () => {
+    const formData = OnboardingFormDataSchema.parse(MINIMAL_CONSULTEE_FORM);
+    const validated = validateOnboardingData(
+      transformOnboardingFormToServerData(formData),
+    );
+    expect(validated.success).toBe(false);
+    if (validated.success) throw new Error("unreachable");
+    expect(validated.issues.map((i) => i.path[0])).toEqual(
+      expect.arrayContaining(["termsAccepted", "privacyAccepted"]),
+    );
+  });
+
+  it("refuses a client-forged consent timestamp in place of the literal", () => {
+    const formData = OnboardingFormDataSchema.parse(MINIMAL_CONSULTEE_FORM);
+    const forged = {
+      ...transformOnboardingFormToServerData(formData),
+      termsAccepted: undefined,
+      privacyAccepted: undefined,
+      termsAcceptedAt: "2001-01-01T00:00:00.000Z",
+      privacyAcceptedAt: "2001-01-01T00:00:00.000Z",
+    };
+    expect(validateOnboardingData(forged).success).toBe(false);
   });
 
   it("still rejects a consultee form missing the age gate", () => {

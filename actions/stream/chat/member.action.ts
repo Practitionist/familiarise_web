@@ -22,7 +22,11 @@ import { streamLogger } from "@/lib/stream-logger";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { getChannelTypeFromId, isDMChannel } from "@/lib/stream-channel-ids";
+import { upsertUserToStream } from "./user.action";
+import { isUpsertRefusal } from "@/lib/stream/connect-failure";
 import * as Sentry from "@sentry/nextjs";
+
+const STREAM_SERVER_TRUSTED = Symbol.for("familiarise.stream.serverTrusted");
 
 const channelIdSchema = z.string().min(1, "Channel ID is required");
 const memberIdSchema = z.string().min(1, "Member ID is required");
@@ -30,14 +34,17 @@ const memberIdSchema = z.string().min(1, "Member ID is required");
 export async function addMemberToChannel(
   channelId: string,
   userId: string,
-  channelType?: "messaging" | "team",
+  _channelType?: "messaging" | "team",
 ) {
   channelIdSchema.parse(channelId);
   memberIdSchema.parse(userId);
 
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to manage channel members");
+  }
+  if (session.user.banned) {
+    throw new Error("Forbidden: account suspended");
   }
 
   // DM membership is pair-derived (`getDmChannelId` + `canDirectMessage`).
@@ -45,14 +52,14 @@ export async function addMemberToChannel(
   // eligibility gate with server credentials — so direct-message channels are
   // out of scope for this action entirely.
   if (isDMChannel(channelId)) {
-    throw new Error(
-      "Forbidden: members cannot be added to direct messages",
-    );
+    throw new Error("Forbidden: members cannot be added to direct messages");
   }
 
   const client = getStreamChatClient();
 
-  const resolvedChannelType = channelType ?? getChannelTypeFromId(channelId);
+  // Always derive channel type from the canonical channel ID prefix rather than
+  // trusting a client-supplied channelType argument.
+  const resolvedChannelType = getChannelTypeFromId(channelId);
 
   streamLogger.debug("Adding member to channel", {
     channelId,
@@ -73,6 +80,13 @@ export async function addMemberToChannel(
           "Forbidden: only the channel creator or staff may add members",
         );
       }
+    }
+
+    const upsertOutcome = await upsertUserToStream(userId, {
+      serverTrusted: STREAM_SERVER_TRUSTED,
+    });
+    if (isUpsertRefusal(upsertOutcome)) {
+      throw new Error("Forbidden: target user cannot be synced to Stream");
     }
 
     const response = await channel.addMembers([userId]);

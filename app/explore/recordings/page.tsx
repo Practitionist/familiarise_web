@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { PlayCircle, Clock } from "lucide-react";
 import { listPublicRecordings } from "@/lib/data/recordings-explore";
@@ -33,7 +34,8 @@ async function RecordingsGrid() {
         <PlayCircle className="mx-auto mb-4 h-12 w-12 opacity-40" />
         <p className="text-lg font-medium">No published recordings yet</p>
         <p className="mt-1 text-sm">
-          Consultants can publish webinar and class replays from their dashboard.
+          Consultants can publish webinar and class replays from their
+          dashboard.
         </p>
       </div>
     );
@@ -44,16 +46,21 @@ async function RecordingsGrid() {
       {items.map((rec) => (
         <Link
           key={rec.id}
-          href={rec.slug ? `/explore/recordings/${rec.slug}` : `/explore/recordings`}
+          href={
+            rec.slug ? `/explore/recordings/${rec.slug}` : `/explore/recordings`
+          }
           className="group rounded-xl border bg-card overflow-hidden hover:shadow-md transition-shadow"
         >
           <div className="aspect-video relative bg-muted">
             {rec.thumbnailUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              // `unoptimized`: the thumbnail host is not allow-listed in
+              // next.config, so the image is served as-is.
+              <Image
                 src={rec.thumbnailUrl}
                 alt={rec.listingTitle}
-                className="h-full w-full object-cover"
+                fill
+                unoptimized
+                className="object-cover"
               />
             ) : (
               <div className="flex h-full items-center justify-center">
@@ -92,13 +99,21 @@ export default function ExploreRecordingsPage() {
   return (
     <div className="container mx-auto px-4 py-10 space-y-8">
       <header className="space-y-2 text-center">
-        <h1 className="text-3xl font-bold tracking-tight">Recordings Library</h1>
+        <h1 className="text-3xl font-bold tracking-tight">
+          Recordings Library
+        </h1>
         <p className="text-muted-foreground max-w-2xl mx-auto">
-          Replays of paid webinars and classes, published by their consultants.
-          Buy once, watch anytime.
+          Replays of webinars and classes, published by their consultants.
+          Replay sales are coming soon.
         </p>
       </header>
-      <Suspense fallback={<div className="py-24 text-center text-muted-foreground">Loading recordings…</div>}>
+      <Suspense
+        fallback={
+          <div className="py-24 text-center text-muted-foreground">
+            Loading recordings…
+          </div>
+        }
+      >
         <RecordingsGrid />
       </Suspense>
     </div>

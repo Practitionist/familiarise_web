@@ -17,6 +17,7 @@
  * cache and drives Load-more client-side.
  */
 
+import { useMemo, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Activity as ActivityIcon, Building2 } from "lucide-react";
@@ -25,6 +26,7 @@ import {
   DashboardHeader,
   DashboardContent,
 } from "@/components/dashboard/PageScaffold";
+import { FilterBar } from "@/components/dashboard/FilterBar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,8 +46,14 @@ interface ActivityRow {
   actorName: string | null;
 }
 
+interface ActivityOrgOption {
+  id: string;
+  name: string;
+}
+
 interface ActivityResponse {
   data: ActivityRow[];
+  organizations?: ActivityOrgOption[];
   pagination: {
     hasMore: boolean;
     nextCursor: string | null;
@@ -56,12 +64,17 @@ interface ActivityResponse {
 async function fetchActivity(
   orgWorkspaceId: string,
   cursor: string | null,
+  orgFilter: string,
+  categoryFilter: string,
 ): Promise<ActivityResponse> {
   const url = new URL(
     `/api/org-workspace/${orgWorkspaceId}/activity`,
     window.location.origin,
   );
   if (cursor) url.searchParams.set("cursor", cursor);
+  if (orgFilter !== "all") url.searchParams.set("organizationId", orgFilter);
+  if (categoryFilter !== "all")
+    url.searchParams.set("category", categoryFilter);
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error("Failed to load activity");
   return res.json();
@@ -77,6 +90,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   SETTINGS: "Settings",
   CONSENT: "Consent",
   CATALOG: "Catalog",
+  WEBHOOK: "Webhook",
   SYSTEM: "System",
 };
 
@@ -100,19 +114,169 @@ function timeAgo(iso: string): string {
 
 export function ActivityPageClient({
   orgWorkspaceId,
-}: {
+}: Readonly<{
   orgWorkspaceId: string;
-}) {
+}>) {
+  const [orgFilter, setOrgFilter] = useState<string>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+
   const query = useInfiniteQuery({
-    queryKey: ["org-workspace-activity", orgWorkspaceId],
+    queryKey: [
+      "org-workspace-activity",
+      orgWorkspaceId,
+      orgFilter,
+      categoryFilter,
+    ],
     queryFn: ({ pageParam }) =>
-      fetchActivity(orgWorkspaceId, pageParam as string | null),
+      fetchActivity(
+        orgWorkspaceId,
+        pageParam as string | null,
+        orgFilter,
+        categoryFilter,
+      ),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) =>
       lastPage.pagination.hasMore ? lastPage.pagination.nextCursor : undefined,
   });
 
-  const rows = query.data?.pages.flatMap((p) => p.data) ?? [];
+  const rows = useMemo(
+    () => query.data?.pages.flatMap((p) => p.data) ?? [],
+    [query.data],
+  );
+
+  const orgOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const org of query.data?.pages[0]?.organizations ?? []) {
+      seen.set(org.id, org.name);
+    }
+    for (const r of rows) {
+      if (r.organizationId && !seen.has(r.organizationId)) {
+        seen.set(r.organizationId, r.organizationName ?? r.organizationId);
+      }
+    }
+    return [
+      { value: "all", label: "All organizations" },
+      ...Array.from(seen.entries()).map(([value, label]) => ({ value, label })),
+    ];
+  }, [query.data, rows]);
+
+  const categoryOptions = useMemo(
+    () => [
+      { value: "all", label: "All categories" },
+      ...Object.entries(CATEGORY_LABEL).map(([value, label]) => ({
+        value,
+        label,
+      })),
+    ],
+    [],
+  );
+
+  const filteredRows = useMemo(
+    () =>
+      rows.filter(
+        (r) =>
+          (orgFilter === "all" || r.organizationId === orgFilter) &&
+          (categoryFilter === "all" || r.category === categoryFilter),
+      ),
+    [rows, orgFilter, categoryFilter],
+  );
+
+  const hasActiveFilters = orgFilter !== "all" || categoryFilter !== "all";
+
+  const renderFeedBody = () => {
+    if (query.isLoading) {
+      return (
+        <Card>
+          <CardContent className="p-0">
+            <ul className="divide-y">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <li key={i} className="p-4">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="mt-2 h-4 w-3/4" />
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    if (query.isError) {
+      return (
+        <Card>
+          <CardContent className="py-10">
+            <EmptyState
+              icon={ActivityIcon}
+              title="Couldn't load activity"
+              description="We hit an error fetching your cross-org activity feed."
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => query.refetch()}
+                >
+                  Retry
+                </Button>
+              }
+            />
+          </CardContent>
+        </Card>
+      );
+    }
+
+    if (filteredRows.length === 0) {
+      return (
+        <Card>
+          <CardContent className="py-10 text-center">
+            <ActivityIcon className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              {hasActiveFilters
+                ? "No activity matches the selected filters."
+                : "No activity yet. As your members invite, book, and bill, events will appear here."}
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <Card>
+        <CardContent className="p-0">
+          <ul className="divide-y">
+            {filteredRows.map((r) => (
+              <li key={r.id} className="p-4 hover:bg-muted/30">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Badge variant="outline" className="font-mono">
+                        {CATEGORY_LABEL[r.category] ?? r.category}
+                      </Badge>
+                      {r.organizationName && (
+                        <Link
+                          href={`/dashboard/organization/${r.organizationId}/audit`}
+                          className="inline-flex items-center gap-1 hover:underline"
+                        >
+                          <Building2 className="w-3 h-3" />
+                          {r.organizationName}
+                        </Link>
+                      )}
+                      <span>· {timeAgo(r.createdAt)}</span>
+                    </div>
+                    <p className="text-sm mt-1">{r.description}</p>
+                    {r.actorName && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        by {r.actorName}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <>
@@ -121,85 +285,30 @@ export function ActivityPageClient({
         subtitle="Recent changes across all the organisations you operate"
       />
       <DashboardContent>
-        {query.isLoading ? (
-          <Card>
-            <CardContent className="p-0">
-              <ul className="divide-y">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <li key={i} className="p-4">
-                    <Skeleton className="h-4 w-40" />
-                    <Skeleton className="mt-2 h-4 w-3/4" />
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        ) : query.isError ? (
-          <Card>
-            <CardContent className="py-10">
-              <EmptyState
-                icon={ActivityIcon}
-                title="Couldn't load activity"
-                description="We hit an error fetching your cross-org activity feed."
-                action={
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => query.refetch()}
-                  >
-                    Retry
-                  </Button>
-                }
-              />
-            </CardContent>
-          </Card>
-        ) : rows.length === 0 ? (
-          <Card>
-            <CardContent className="py-10 text-center">
-              <ActivityIcon className="w-10 h-10 mx-auto mb-3 text-zinc-400" />
-              <p className="text-sm text-zinc-600">
-                No activity yet. As your members invite, book, and bill,
-                events will appear here.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardContent className="p-0">
-              <ul className="divide-y">
-                {rows.map((r) => (
-                  <li key={r.id} className="p-4 hover:bg-muted/30">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <Badge variant="outline" className="font-mono">
-                            {CATEGORY_LABEL[r.category] ?? r.category}
-                          </Badge>
-                          {r.organizationName && (
-                            <Link
-                              href={`/dashboard/organization/${r.organizationId}/audit`}
-                              className="inline-flex items-center gap-1 hover:underline"
-                            >
-                              <Building2 className="w-3 h-3" />
-                              {r.organizationName}
-                            </Link>
-                          )}
-                          <span>· {timeAgo(r.createdAt)}</span>
-                        </div>
-                        <p className="text-sm mt-1">{r.description}</p>
-                        {r.actorName && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            by {r.actorName}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        )}
+        <FilterBar
+          selects={[
+            {
+              key: "organization",
+              label: "Organization",
+              value: orgFilter,
+              options: orgOptions,
+              onChange: setOrgFilter,
+            },
+            {
+              key: "category",
+              label: "Category",
+              value: categoryFilter,
+              options: categoryOptions,
+              onChange: setCategoryFilter,
+            },
+          ]}
+          canClear={hasActiveFilters}
+          onClear={() => {
+            setOrgFilter("all");
+            setCategoryFilter("all");
+          }}
+        />
+        {renderFeedBody()}
 
         {query.hasNextPage && (
           <div className="mt-4 flex justify-center">

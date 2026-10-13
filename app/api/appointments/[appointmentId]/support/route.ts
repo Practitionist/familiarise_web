@@ -19,6 +19,8 @@ import { MESSAGE_ORDER } from "@/lib/support/message-seq";
 import { AppointmentIdParams } from "@/schemas/support";
 import { SupportThreadCategoryEnum } from "@/schemas/enums";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
+import { assertBodySize } from "@/lib/validation/limits";
+import { stripCallbackTags } from "@/lib/validation/phone";
 import {
   authorizeAppointment,
   appointmentAuthzError,
@@ -32,7 +34,12 @@ const turnSchema = z
   .object({
     category: CATEGORY.optional(),
     chosenOptionId: z.string().max(200).optional(),
-    userMessage: z.string().trim().max(2000).optional(),
+    userMessage: z
+      .string()
+      .transform((s) => stripCallbackTags(s).trim())
+      .pipe(z.string().max(2000))
+      .optional(),
+    urgent: z.boolean().optional(),
   })
   .refine((v) => v.category || v.chosenOptionId || v.userMessage, {
     message: "A turn needs a category, a chosen option, or a message",
@@ -48,7 +55,6 @@ export async function GET(
   if (!id.ok) return id.response;
   const { appointmentId } = id.data;
   try {
-    // orgParty: true — an operator may open their OWN thread (ADR 20).
     const auth = await authorizeAppointment(appointmentId, true);
     if ("code" in auth)
       return appointmentAuthzError(auth, {
@@ -60,30 +66,19 @@ export async function GET(
       where: { appointmentId_userId: { appointmentId, userId: auth.userId } },
       include: {
         messages: { orderBy: MESSAGE_ORDER },
-        // #705 — an escalated thread is ASYNCHRONOUS: nobody is composing a
-        // reply, and a typing indicator promised otherwise. The drawer shows
-        // this deadline instead, which we already committed to at intake.
         supportTicket: { select: { referenceNumber: true, ackDueAt: true } },
       },
     });
 
-    // #support-hub — the intents the SERVER offers for this appointment
-    // (stage/provider/org gating is server truth; the sheet renders exactly
-    // this list instead of a hardcoded menu).
-    let intents: { category: string; title: string }[] = [];
-    // #1527 — the booking card on the request page, from the same context.
+    let intents: { category: string; title: string; escalates?: boolean }[] =
+      [];
     let booking: {
       title: string | null;
       kind: string;
       startsAt: Date | null;
-      paymentId: string | null;
       organizationId: string | null;
     } | null = null;
     try {
-      // Deliberately UNSCOPED: this context decides which intents to OFFER,
-      // so it must describe the current-or-next session. Scoping it to the
-      // thread's stored category would let a resolved no-show thread keep
-      // gating the menu on a session that finished weeks ago.
       const ctx = await buildSupportContext(
         thread?.id ?? "unstarted",
         appointmentId,
@@ -94,22 +89,22 @@ export async function GET(
           title: ctx.planTitle,
           kind: ctx.appointmentType,
           startsAt: ctx.startsAt,
-          // An org party is not the payer (ADR 20): no payment handle.
-          paymentId: auth.isOrgParty ? null : ctx.paymentId,
           organizationId: ctx.organizationId,
         };
-        // An org party sees only the intents the POST will accept from it; the
-        // sheet used to offer "Recording access" to an operator and then fail.
         intents = flowsForContext(ctx)
           .filter(
             (f) => !auth.isOrgParty || ORG_PARTY_CATEGORIES.has(f.category),
           )
           .map((f) => ({ category: f.category, title: f.title }));
+        if (!auth.isOrgParty) {
+          intents.push({
+            category: "OTHER",
+            title: "Talk to a person",
+            escalates: true,
+          });
+        }
       }
     } catch (cause) {
-      // Intent resolution is an optimization — the sheet falls back to its
-      // static list and the POST path still gates authoritatively. But a
-      // persistent regression here would be invisible, so record it.
       Sentry.captureException(cause, {
         tags: { subsystem: "support", code: "INTENTS_DEGRADED" },
         extra: { route: SUPPORT_ROUTE, appointmentId },
@@ -138,7 +133,6 @@ export async function POST(
   if (!id.ok) return id.response;
   const { appointmentId } = id.data;
   try {
-    // orgParty: true — an operator may open their OWN thread (ADR 20).
     const auth = await authorizeAppointment(appointmentId, true);
     if ("code" in auth)
       return appointmentAuthzError(auth, {
@@ -146,12 +140,15 @@ export async function POST(
         appointmentId,
       });
 
-    const body = turnSchema.safeParse(await req.json().catch(() => ({})));
-    if (!body.success) {
+    const tooLarge = assertBodySize(req);
+    if (tooLarge) return tooLarge;
+
+    const parsed = turnSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
       return supportError({
         status: 400,
         code: "VALIDATION_FAILED",
-        detail: body.error.flatten(),
+        detail: parsed.error.flatten(),
         context: {
           route: "appointments.support",
           action: "turn",
@@ -159,11 +156,11 @@ export async function POST(
         },
       });
     }
-    // Org parties raise only the org-party intents on someone else's session.
+
     if (
       auth.isOrgParty &&
-      body.data.category &&
-      !ORG_PARTY_CATEGORIES.has(body.data.category)
+      parsed.data.category &&
+      !ORG_PARTY_CATEGORIES.has(parsed.data.category)
     ) {
       return supportError({
         status: 403,
@@ -172,13 +169,13 @@ export async function POST(
           route: "appointments.support",
           action: "turn",
           appointmentId,
-          attemptedCategory: body.data.category,
+          attemptedCategory: parsed.data.category,
         },
       });
     }
 
     const result = await runSupportTurn(appointmentId, auth.userId, {
-      ...body.data,
+      ...parsed.data,
       isOrgParty: auth.isOrgParty,
     });
     if (!result) {
@@ -192,7 +189,26 @@ export async function POST(
         },
       });
     }
-    return NextResponse.json({ data: result });
+
+    const linkedTicket = result.supportTicketId
+      ? await prisma.supportTicket.findUnique({
+          where: { id: result.supportTicketId },
+          select: { ackDueAt: true },
+        })
+      : null;
+
+    const replyByAt = linkedTicket?.ackDueAt
+      ? linkedTicket.ackDueAt.toISOString()
+      : null;
+    const outcomeId = result.outcomeId ?? null;
+
+    return NextResponse.json({
+      data: {
+        ...result,
+        outcomeId,
+        replyByAt,
+      },
+    });
   } catch (cause) {
     return supportError({
       status: 500,

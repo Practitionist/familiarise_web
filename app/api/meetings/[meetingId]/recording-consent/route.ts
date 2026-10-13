@@ -1,14 +1,19 @@
 import { RecordingConsentDecision } from "@prisma/client";
-import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { auth } from "@/lib/auth";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { resolveMeetingAccess } from "@/lib/meetings/access";
+import prisma from "@/lib/prisma";
+import { streamLogger } from "@/lib/stream-logger";
 import {
+  consentRegimeFor,
   getRecordingNotice,
+  RECORDING_NOTICE_VERSION,
   recordRecordingConsent,
+  type RecordingNotice,
 } from "@/lib/stream/recording-consent";
+import { RecordingService } from "@/lib/stream/recording-service";
 import { reportSentryError } from "@/lib/observability/report";
 
 /**
@@ -27,28 +32,44 @@ const bodySchema = z.object({
   decision: z.nativeEnum(RecordingConsentDecision),
 });
 
+/** Authenticates the caller and resolves their access to the meeting. */
+async function resolveConsentAccess(params: Promise<{ meetingId: string }>) {
+  const authResult = await requireApiAuth();
+  if (authResult.error) return { response: authResult.error };
+  const { session } = authResult;
+
+  const { meetingId } = await params;
+  const access = await resolveMeetingAccess(meetingId, session.user.id);
+  if (!access.hasAccess) {
+    return {
+      response: NextResponse.json(
+        { error: access.message },
+        { status: access.reason === "not_found" ? 404 : 403 },
+      ),
+    };
+  }
+  return { response: null, session, access };
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 },
-      );
-    }
+    const gate = await resolveConsentAccess(params);
+    if (gate.response) return gate.response;
+    const { session, access } = gate;
 
-    const { meetingId } = await params;
-    const access = await resolveMeetingAccess(meetingId, session.user.id);
-    if (!access.hasAccess) {
-      return NextResponse.json(
-        { error: access.message },
-        { status: access.reason === "not_found" ? 404 : 403 },
-      );
+    // Hosts and co-presenters start the recording; only attendees are asked.
+    if (access.role === "host") {
+      const hostNotice: RecordingNotice = {
+        required: false,
+        regime: consentRegimeFor(access.appointment),
+        noticeVersion: RECORDING_NOTICE_VERSION,
+        decision: null,
+      };
+      return NextResponse.json(hostNotice);
     }
-
 
     const notice = await getRecordingNotice(
       access.meetingId,
@@ -69,25 +90,115 @@ export async function GET(
   }
 }
 
+/** Stops an active recording; `stopped` tells the decliner theirs was discarded. */
+async function stopRecordingOnConsentDecline(
+  access: {
+    meetingId: string;
+    streamCallId?: string | null;
+    isRecording?: boolean;
+  },
+  userId: string,
+): Promise<{ errorResponse: NextResponse } | { stopped: boolean }> {
+  let isRecording = access.isRecording;
+  let targetCallId = access.streamCallId ?? null;
+
+  if (isRecording === undefined || !targetCallId) {
+    const meetingRow = await prisma.meeting?.findUnique?.({
+      where: { id: access.meetingId },
+      select: { isRecording: true, streamCallId: true },
+    });
+    if (meetingRow) {
+      isRecording ??= meetingRow.isRecording;
+      targetCallId ||= meetingRow.streamCallId;
+    }
+  }
+
+  if (!isRecording) return { stopped: false };
+
+  if (!targetCallId) {
+    const missingCallError = new Error(
+      `Missing streamCallId while stopping active recording for meeting ${access.meetingId}`,
+    );
+    streamLogger.warn(
+      "Cannot stop active recording after consent withdrawal — streamCallId missing",
+      { meetingId: access.meetingId, userId },
+    );
+    reportSentryError(missingCallError, {
+      subsystem: "stream",
+      op: "recordingConsent.stop",
+      extra: { meetingId: access.meetingId, userId },
+    });
+    return {
+      errorResponse: NextResponse.json(
+        {
+          error:
+            "Recording could not be stopped — please leave the call while we investigate.",
+        },
+        { status: 502 },
+      ),
+    };
+  }
+
+  const stopResult = await RecordingService.stopRecording(targetCallId, userId);
+  if (stopResult.success) {
+    await prisma.meeting.update({
+      where: { id: access.meetingId },
+      data: { isRecording: false },
+    });
+    return { stopped: true };
+  }
+
+  streamLogger.warn(
+    "Failed to stop active recording after consent withdrawal",
+    {
+      meetingId: access.meetingId,
+      streamCallId: targetCallId,
+      userId,
+      error: stopResult.error,
+    },
+  );
+  reportSentryError(
+    new Error(
+      stopResult.error ??
+        "Failed to stop active recording after consent withdrawal",
+    ),
+    {
+      subsystem: "stream",
+      op: "recordingConsent.stop",
+      extra: {
+        meetingId: access.meetingId,
+        streamCallId: targetCallId,
+        userId,
+      },
+    },
+  );
+  return {
+    errorResponse: NextResponse.json(
+      {
+        error:
+          "Recording could not be stopped — please leave the call while we investigate.",
+      },
+      { status: 502 },
+    ),
+  };
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ meetingId: string }> },
 ) {
   try {
-    const session = await auth.api.getSession({ headers: await headers() });
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 },
-      );
-    }
+    const gate = await resolveConsentAccess(params);
+    if (gate.response) return gate.response;
+    const { session, access } = gate;
 
-    const { meetingId } = await params;
-    const access = await resolveMeetingAccess(meetingId, session.user.id);
-    if (!access.hasAccess) {
+    // A host decision would veto their own recording, so none is stored.
+    if (access.role === "host") {
       return NextResponse.json(
-        { error: access.message },
-        { status: access.reason === "not_found" ? 404 : 403 },
+        {
+          error: "Hosts do not record a consent decision for their own session",
+        },
+        { status: 403 },
       );
     }
 
@@ -98,7 +209,6 @@ export async function POST(
         { status: 400 },
       );
     }
-
 
     const appointment = access.appointment;
     const notice = await getRecordingNotice(
@@ -133,22 +243,27 @@ export async function POST(
       );
     }
 
-    // Records the decision; does NOT act on a recording already in progress.
-    // `getRecordingBlock` gates the START of a recording, so a decline lands
-    // before one begins in the ordinary lobby flow — but this is an upsert, and
-    // a participant can switch to DECLINED after the host has started. See the
-    // SCOPE note on `getRecordingBlock`: stopping a live recording on decline is
-    // a product decision and is deliberately not done here.
     await recordRecordingConsent(
       access.meetingId,
       session.user.id,
       parsed.data.decision,
     );
 
+    // When a participant in a 1:1 session withdraws consent mid-call while a
+    // recording is active, immediately stop the recording so withdrawal takes
+    // effect in real time.
+    let recordingStopped = false;
+    if (parsed.data.decision === RecordingConsentDecision.DECLINED) {
+      const stop = await stopRecordingOnConsentDecline(access, session.user.id);
+      if ("errorResponse" in stop) return stop.errorResponse;
+      recordingStopped = stop.stopped;
+    }
+
     return NextResponse.json({
       decision: parsed.data.decision,
       regime: notice.regime,
       noticeVersion: notice.noticeVersion,
+      recordingStopped,
     });
   } catch (error) {
     reportSentryError(error, {

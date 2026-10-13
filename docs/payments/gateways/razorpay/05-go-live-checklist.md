@@ -1,115 +1,122 @@
-# Razorpay Go-Live Checklist
+# Razorpay & RazorpayX Go-Live Checklist & Live-Key Verification Matrix
 
-> What has to be true before the platform accepts its first rupee of real money through Razorpay, and what has to be verified in the Razorpay dashboard rather than in this repository.
+> What must be true in the Razorpay / RazorpayX dashboards, production environment variables, and live PostgreSQL database before accepting real money or disbursing real payouts — plus the complete **Test Key (`rzp_test_*`) vs Live Key (`rzp_live_*`) Verification Matrix** so zero paise is ever lost in flight or over/under-settled.
 
-**Last Updated**: 2026-09-05 · **Tracking issue**: #1377
+**Last Updated**: 2026-10-11 · **Tracking Issues**: #1377, #2088
 
 ---
 
 ## How to read this page
 
-This checklist covers the payments product only. Consultant and organisation disbursement through RazorpayX is gated separately by `ENABLE_LIVE_PAYOUTS` and has its own runbook at [docs/enterprise/50-operations/06-live-payout-go-live-runbook.md](../../../enterprise/50-operations/06-live-payout-go-live-runbook.md); do not treat the two as one cutover, because accepting money and disbursing money can safely go live weeks apart.
+Accepting money (**Razorpay Payments**, gated by `RAZORPAY_KEY_ID` / `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION`) and disbursing money (**RazorpayX Payouts**, gated by `ENABLE_LIVE_PAYOUTS` — see [docs/enterprise/50-operations/05-live-payout-go-live-runbook.md](../../../enterprise/50-operations/05-live-payout-go-live-runbook.md)) can cut over independently or together, **provided the pre-cutover database purge of Test-Mode gateway IDs in [Section 8](#8-complete-test-key-vs-live-key-verification-matrix--blind-spots) is executed before flipping either product to live keys**.
 
-Several items below cannot be verified from the codebase at all. Auto-capture, the settlement cycle and the uncaptured-payment refund window are account settings that live in the Razorpay dashboard, and no amount of reading `lib/payments/core/razorpay.ts` will tell you how they are configured. Those items are marked as dashboard checks, and they need a screenshot or a dashboard link recorded against the issue rather than a code reference.
+Several items below live in the Razorpay / RazorpayX dashboards rather than in code (auto-capture window, settlement cycle, uncaptured-payment expiry, webhook alert inbox, and separate live webhook secrets). Record dashboard screenshots or signed delivery logs against the cutover issue before opening traffic.
 
 ---
 
 ## 1. Account activation
 
-The account has to be activated before live keys do anything at all, and activation is not instantaneous.
-
-- [ ] KYC is submitted and approved, and the dashboard shows the account as activated. Razorpay quotes one to three business days for this, and a rejection restarts the clock.
-- [ ] The settlement bank account on the Razorpay account is the platform's current account, and the account holder name matches the registered business name exactly.
-- [ ] GSTIN is recorded on the Razorpay account. This is what lets Razorpay issue us a compliant invoice for its own fees, which we need for input tax credit; it is unrelated to the tax invoices this platform issues to consumers, which are minted in-house (see [../../07-b2c-tax-invoice.md](../../07-b2c-tax-invoice.md)).
-- [ ] If international cards are ever to be accepted, domestic acceptance is activated first and video KYC is complete. International acceptance is a separate approval, not a toggle.
-
----
-
-## 2. Keys and the test-key guard
-
-The platform holds two unrelated Razorpay credential pairs and one webhook secret per mode, and confusing any two of them is the most common cause of a silent outage.
-
-- [ ] `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` hold the **live** key pair, with `rzp_live_` as the key id prefix. Note that the secret's variable name is `RAZORPAY_SECRET` in this repository and not `RAZORPAY_KEY_SECRET`; only the legacy readers under `scripts/` accept the second name.
-- [ ] `NEXT_PUBLIC_RAZORPAY_KEY_ID` holds the same live key **id**. It is the only Razorpay value that may ever be public, and neither secret may ever be given a `NEXT_PUBLIC_` prefix.
-- [ ] `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` has been **deleted** from the production environment. While it is set to `true`, a test key under `NODE_ENV=production` only logs a loud error instead of throwing, which is deliberate for the pre-launch period when signup is closed and checkout is exercised with test cards. Once live keys are in place the variable has no legitimate use, and leaving it behind removes the guard that would otherwise catch a future accidental rollback to test keys.
-- [ ] A production boot has been observed after the change. The test-key guard in `lib/payments/core/razorpay.ts` runs at module load, so a misconfigured production posture fails at require time rather than at the first customer — which means the deploy either comes up clean or does not come up at all.
+- [ ] **Razorpay Payments KYC approved** and dashboard badge shows **Activated** (1–3 business days; any KYC query resets SLA).
+- [ ] **Settlement bank account** is the platform's current account and the beneficiary name matches the registered entity exactly.
+- [ ] **Platform GSTIN** is recorded on Razorpay so monthly merchant fee invoices carry B2B input tax credit (separate from consumer/org tax invoices minted in-house — see [../../06-b2c-tax-invoice.md](../../06-b2c-tax-invoice.md)).
+- [ ] **International / PA-CB acceptance** (if accepting foreign cards): domestic activation + Video KYC completed first; verify `₹25,00,000` per-invoice PA-CB ceiling and automated FIRS / e-FIRA issuance.
+- [ ] **RazorpayX Business Banking current/escrow account** activated and funded before turning on `ENABLE_LIVE_PAYOUTS=true`.
 
 ---
 
-## 3. Webhooks
+## 2. Keys, secrets, and the test-key boot guard
 
-Webhook delivery is how the platform learns that money moved. Everything else is best effort.
-
-- [ ] A webhook is registered in **live** mode pointing at `https://<production-host>/api/webhooks/razorpay` over HTTPS on port 443.
-- [ ] `RAZORPAY_WEBHOOK_SECRET` in the production environment holds the **live** webhook secret, which is a third value distinct from both the API secret and the test-mode webhook secret. A test-mode secret in production rejects every live delivery with a 400.
-- [ ] The selected events are exactly the ones the dispatcher handles: `payment.captured`, `order.paid`, `payment.failed`, `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`, the six `payment.dispute.*` events, and the seven `payout.*` events. Selecting an event the dispatcher does not handle is harmless because unknown events are logged and acknowledged with a 200, but omitting a handled one loses the state transition entirely.
-- [ ] The Alert Email Address on the webhook is a monitored inbox. Razorpay emails it when it disables a webhook, and that email is the only notification of the failure mode described below.
-- [ ] A signed test delivery has reached production and produced a `WebhookEvent` row. The recipe lives in the Razorpay skill at `.claude/skills/finance/references/razorpay/references/local-testing.md`; the signature is an HMAC-SHA256 of the exact bytes posted, so it must be generated from the same string that is sent.
-
-### Why a non-2xx is dangerous here
-
-Razorpay treats every non-2xx response as a delivery failure, retries on an exponential backoff for 24 hours, and then **disables the webhook** ([webhook FAQs](https://razorpay.com/docs/webhooks/faqs/)). A disabled webhook is not merely paused: events that fire while it is disabled are never delivered, and Razorpay has no self-serve replay. Recovering them means a support ticket, only works for events under 15 days old, and only works if the webhook was enabled when the event fired. This is why the route returns 200 for events it does not handle and reserves 503 for the single case where a retry is genuinely wanted, namely an unreachable database.
-
-### Rotating the webhook secret
-
-Rotating `RAZORPAY_WEBHOOK_SECRET` is a two-sided change that cannot be made atomically, because the operator saves the new secret in the Razorpay dashboard and the platform picks it up only on the next deploy. Every event signed in that gap would be rejected, and a long enough gap ends in the disabled webhook described above.
-
-`RAZORPAY_WEBHOOK_SECRET_PREVIOUS` exists to close that window, mirroring for inbound deliveries what [ADR 09](../../../enterprise/70-design-decisions/09-webhook-rotation-grace.md) does for outbound ones. The procedure is:
-
-1. Set `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` to the current secret and deploy. Nothing changes yet, because the current secret still verifies everything.
-2. Generate the new secret in the Razorpay dashboard, set `RAZORPAY_WEBHOOK_SECRET` to it, and deploy. Deliveries signed with either secret now verify.
-3. Watch the operations timeline. Every delivery that only the previous secret can verify writes a `WEBHOOK`/`WARN` system event naming the variable, so the rotation is visibly finished when those stop.
-4. Delete `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` and deploy. The old secret stops being honoured.
-
-Leaving the variable set indefinitely defeats the purpose of rotating a leaked secret, which is why step 4 is part of the procedure rather than optional cleanup.
-
-### RazorpayX payout deliveries
-
-RazorpayX payout events arrive at the same endpoint but are signed with `RAZORPAYX_WEBHOOK_SECRET`, a different value again. The route verifies against the payment-side secrets first and only consults the RazorpayX secret when that fails **and** the event name begins with `payout.`. That ordering is the safety property rather than an optimisation: because a non-payout event can never be accepted by the RazorpayX secret, holding a second secret cannot be used to smuggle a forged `payment.captured` through.
+- [ ] `RAZORPAY_KEY_ID` and `RAZORPAY_SECRET` hold the **live** key pair (`rzp_live_*`).
+- [ ] `NEXT_PUBLIC_RAZORPAY_KEY_ID` holds the identical `rzp_live_*` key ID. Never prefix any secret with `NEXT_PUBLIC_`.
+- [ ] `RAZORPAY_ALLOW_TEST_KEYS_IN_PRODUCTION` is **deleted** from production env vars so [`lib/payments/core/razorpay.ts`](../../../../lib/payments/core/razorpay.ts) fails fast at boot if a test key ever re-enters production.
+- [ ] If enabling live payouts (`ENABLE_LIVE_PAYOUTS=true`), `RAZORPAYX_KEY_ID`, `RAZORPAYX_KEY_SECRET`, and `RAZORPAYX_ACCOUNT_NUMBER` hold **live** RazorpayX credentials.
 
 ---
 
-## 4. Capture and settlement (dashboard checks)
+## 3. Dual-product webhooks & zero-downtime secret rotation
 
-- [ ] **Automatic capture is on.** Verify at Settings → Payments → payment capture. Auto-capture is on by default, but if it has been turned off, payments sit in `authorized`, `payment.captured` never fires, and no booking is ever confirmed. The `payment_capture` request field that older integrations used is deprecated and this repository correctly does not send it; per-order overrides are available through the `payment.capture` and `payment.capture_options` objects on the Orders API, and the platform deliberately does not use them so that one dashboard setting governs every order ([capture settings](https://razorpay.com/docs/payments/payments/capture-settings/)).
-- [ ] **The auto-refund window for uncaptured payments is understood.** A payment left in `authorized` past the account's `manual_expiry_period` is refunded automatically, at normal speed, so the customer sees it back in five to seven working days. Read the actual configured value off the dashboard rather than trusting a remembered default, because Razorpay's own pages have quoted three days and five days in different places.
-- [ ] **The settlement cycle is recorded.** The standard domestic cycle is T+2 working days from capture, where working days exclude Sundays, the second and fourth Saturdays, and bank holidays; T+7 is the international cycle rather than a new-merchant probation ([settlements](https://razorpay.com/docs/payments/settlements/)). The finance owner needs this number to reconcile the bank statement against the ledger.
-- [ ] **A real ₹1 payment has been taken end to end in live mode** and has produced a Payment row at SUCCEEDED, a confirmed appointment, balanced ledger entries and a consumer tax invoice.
-
----
-
-## 5. Refunds
-
-- [ ] A live refund has been issued against that ₹1 payment and has reached SUCCEEDED via the `refund.processed` webhook rather than by anyone editing a row.
-- [ ] The team understands that live refunds settle in five to seven business days at normal speed. Test-mode refunds usually appear instantly, which is not a guarantee and must never be built into a flow; the only correct trigger for "the customer has their money" is `refund.processed`.
-- [ ] Nobody has introduced a `speed` parameter. This platform always requests the default `normal` speed and never `optimum`, so it never pays the instant-refund fee and `refund.speed_changed` is informational only. Changing that is a pricing decision, not an engineering one.
-- [ ] Refund idempotency is intact: every refund carries `X-Refund-Idempotency` set to the `Refund` row's id, which is minted before the gateway call and unchanged on the error path. A key derived from the payment id and amount would make two legitimate partial refunds of equal value collide, and the second would silently return the first refund instead of paying the customer again.
+- [ ] **Razorpay Payments Live Webhook** points to `https://<production-host>/api/webhooks/razorpay` (HTTPS port 443) signed with live `RAZORPAY_WEBHOOK_SECRET`:
+  - Subscribed events: `payment.authorized`, `payment.captured`, `order.paid`, `payment.failed`, `refund.created`, `refund.processed`, `refund.failed`, `refund.speed_changed`, and all `payment.dispute.*` events.
+- [ ] **RazorpayX Live Webhook** points to the same `https://<production-host>/api/webhooks/razorpay` endpoint signed with live `RAZORPAYX_WEBHOOK_SECRET`:
+  - Subscribed events: `payout.initiated`, `payout.queued`, `payout.pending`, `payout.processing`, `payout.processed`, `payout.updated`, `payout.failed`, `payout.reversed`, `payout.rejected`, `payout.cancelled`, `fund_account.validation.completed`, and `fund_account.validation.failed`.
+- [ ] **Monitored Alert Email** set on both dashboards: Razorpay retries non-2xx responses with exponential backoff for **24 hours** and then **permanently disables** the webhook endpoint without self-serve replay.
+- [ ] **Zero-downtime secret rotation**:
+  - Payment webhook rotation uses `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` ([`resolveRazorpayPaymentSecrets`](../../../../app/api/webhooks/razorpay/signature.ts)).
+  - RazorpayX webhook rotation uses `RAZORPAYX_WEBHOOK_SECRET_PREVIOUS` ([`resolveRazorpayXSecrets`](../../../../app/api/webhooks/razorpay/signature.ts)), strictly isolated to `payout.*` and `fund_account.*` events so a RazorpayX secret can never forge `payment.captured`.
 
 ---
 
-## 6. Order metadata limits
+## 4. Capture, order metadata, and in-flight safety guards
 
-Razorpay caps order `notes` at **15 key-value pairs of at most 256 characters each**, and rejects the whole order with a `BAD_REQUEST_ERROR` when either limit is exceeded ([Orders API](https://razorpay.com/docs/api/orders/create/)). The receipt field is separately capped at 40 ASCII characters and must be unique per order.
-
-- [ ] Every producer of order notes has been counted against the 15-pair budget before any new key is added. `buildPaymentMetadata` in `lib/payments/operations/checkout.ts` already emits fifteen keys in the org-sponsored case, so it has no headroom left.
-- [ ] No unbounded user-supplied string reaches `notes`. This is an open gap at the time of writing: the free-text booking note is validated as `z.string().optional()` with no maximum and is forwarded verbatim, so a note longer than 256 characters fails order creation and the customer cannot pay. It is tracked for the multi-currency and checkout PR that owns those files.
-
----
-
-## 7. Operations and observability
-
-- [ ] Sentry is receiving events from the payments subsystem, and the webhook route's signature-failure and parse-failure paths have been seen at least once in a preview environment so the alerting is known to work.
-- [ ] The scheduled sweeps are running in production. Payment confirmation is durable because the `WebhookEvent` row is written before the 200 is returned, but recovery from a crashed handler depends on `sweep-stuck-webhook-events`, and recovery from an event that never arrived depends on `reconcile-payment-status`. Both are driven by the Netlify ticker every five minutes with GitHub Actions as a backstop; see [ADR 27](../../../enterprise/70-design-decisions/27-state-as-outbox-and-scheduled-ticker.md).
-- [ ] No secret is logged. Payloads are scrubbed by `scrubWebhookPayload` before anything is written, and no code path prints `RAZORPAY_SECRET` or either webhook secret.
-- [ ] Payment records are retained for at least eight years, as Indian tax law requires. Nothing in the money subsystem hard-deletes a Payment, Refund or invoice row, and that property must survive any future data-retention work.
+- [ ] **Automatic capture enabled** in Razorpay Dashboard (`Settings -> Payments -> Payment Capture`). Every order minted by [`createRazorpayOrder`](../../../../lib/payments/core/razorpay.ts) explicitly sets `payment: { capture: "automatic", capture_options: { automatic_expiry_period, manual_expiry_period, refund_speed: "normal" } }` bounded to `[12, 7200]` minutes.
+- [ ] **Order metadata & stale customer self-healing verified**:
+  - [`sanitizeRazorpayNotes`](../../../../lib/payments/core/razorpay.ts) caps every `orders.create` payload to `<= 15` keys and `<= 256` characters per value so long user booking notes can never trigger `400 BAD_REQUEST_ERROR`.
+  - [`createRazorpayOrder`](../../../../lib/payments/core/razorpay.ts) automatically clears stale `users.razorpayCustomerId` (`cust_*` minted in Test Mode) and retries order creation seamlessly if `orders.create` rejects a cross-mode `customer_id`.
+- [ ] **Out-of-order webhook deferral active**: `refund.*`, `payment.dispute.created`, `refund.speed_changed`, and contended RPD webhooks emit `DeferSignal` (`processed=false, error=null`) whenever the parent `Payment` is still `PENDING` or locked so `sweep-stuck-webhook-events` replays them after capture settles.
 
 ---
 
-## Related Documents
+## 5. Complete Test Key vs Live Key Verification Matrix & Blind Spots
 
-- [01-setup.md](./01-setup.md) — Account setup, keys, dashboard configuration and test credentials
-- [02-architecture-and-flow.md](./02-architecture-and-flow.md) — Payment flow and revenue split
-- [03-payout-flow.md](./03-payout-flow.md) — RazorpayX payout system and status mapping
-- [04-kyc-and-onboarding.md](./04-kyc-and-onboarding.md) — KYC requirements and timelines
-- [docs/payments/06-high-level-design.md](../../06-high-level-design.md) — Where money truth is written and which sweep closes each gap
-- [docs/enterprise/50-operations/07-required-secrets.md](../../../enterprise/50-operations/07-required-secrets.md) — The full secrets manifest and what breaks when each one is missing
+Switching from `rzp_test_*` to `rzp_live_*` does **far more** than charge real cards — Razorpay's Test Sandbox mocks entire banking subsystems that behave fundamentally differently against real NPCI, partner-bank IMPS/NEFT/RTGS switches, acquiring banks, and government tax portals:
+
+| #      | Financial Rail / Invariant                                          | What Test Key (`rzp_test_*`) Simulates                                                                            | What **ONLY Live Key (`rzp_live_*`)** Unlocks & Tests                                                                                                                                                                                                   | Code Guard & Live Verification Requirement                                                                                                                                                                                       |
+| ------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1**  | **Cross-Environment Gateway IDs (`cust_*`, `cont_*`, `fa_*`)**      | Accepts `cust_Test*`, `cont_Test*`, `fa_Test*` created in sandbox.                                                | **Hard-rejects every Test-Mode ID with `400 BAD_REQUEST_ERROR: The id provided does not exist`**. Live DB had `46` `PayoutAccount` rows + `1` `OrganizationPayoutAccount` row holding Test IDs.                                                         | Run pre-cutover SQL reset below before enabling live mode; [`createRazorpayOrder`](../../../../lib/payments/core/razorpay.ts) self-heals stale `users.razorpayCustomerId`.                                                       |
+| **2**  | **UPI Collect / Intent Latency & Late Capture Race**                | Instant synchronous success/failure click inside modal.                                                           | Real PSP app handoffs (GPay/PhonePe/Paytm), user closing browser mid-collect while bank settles 2–10 mins later, midnight NPCI cutoffs, and `automatic_expiry_period` auto-refunds.                                                                     | [`route.ts`](../../../../app/api/webhooks/razorpay/route.ts) + `reconcile-payment-status` + `48h` org top-up grace ([`cleanup-abandoned-org-top-ups.ts`](../../../../scripts/cleanup/cleanup-abandoned-org-top-ups.ts)).         |
+| **3**  | **Settlements (`T+2` / `T+7`) & Real MDR + 18% GST Fee Deductions** | ₹0 bank movement; no real MDR/GST deduction or bank statement UTR.                                                | Real `T+2` domestic (`T+7` international) bank settlements deducting actual Razorpay fee + 18% GST on fees and generating real bank NEFT/RTGS settlement UTRs.                                                                                          | Reconcile first live settlement batch against bank statement via [`reconcile-ledgers.ts`](../../../../scripts/reconcile/reconcile-ledgers.ts).                                                                                   |
+| **4**  | **Reverse Penny Drop (`upi_intent`) & Fuzzy Bank Holder Names**     | Mock holder `"Gaurav Kumar"` / `"100"` score; cannot test real mobile UPI Intent QR/deep-link bank holder lookup. | Real NPCI/bank holder strings with initials/titles (`"MR K G"` vs `"Kaustav G"`), string `"00"`–`"100"` `name_match_score` payloads, IFSC extraction, and real ₹1 auto-refund.                                                                          | Coerced numeric/string `name_match_score` in [`schemas/webhooks/razorpay.ts`](../../../../schemas/webhooks/razorpay.ts) & [`reverse-penny-drop.ts`](../../../../lib/payments/payouts/reverse-penny-drop.ts).                     |
+| **5**  | **RazorpayX Payout Rails, Limits & Post-Ack Bank Reversals**        | Virtual balance; instant `processed` state; never hits partner-bank queues or beneficiary bank rejections.        | Real current/escrow balance checks (`queue_if_low_balance`), `UPI <= ₹1L` / `IMPS <= ₹5L` / `RTGS >= ₹2L` mode selection, strict `30`-char `[A-Za-z0-9 ]` bank narration, **and `processed -> reversed` when beneficiary bank rejects after IMPS ack**. | Enforced in [`razorpay-payouts.ts`](../../../../lib/payments/payouts/razorpay-payouts.ts) & [`org-payout-service.ts`](../../../../lib/payments/payouts/org-payout-service.ts); verify `payout.reversed` restores ledger balance. |
+| **6**  | **Unlinked Stale `PROCESSING` Payout Redrive (>7d TTL)**            | Simulated responses never drop mid-flight after partner-bank submission.                                          | If HTTP response times out after RazorpayX accepted payout, `X-Payout-Idempotency` expires after **7 days** — blind retry double-pays real INR!                                                                                                         | [`redriveSingleOrgPayoutRow`](../../../../lib/payments/payouts/org-payout-service.ts) calls [`findRazorpayPayoutByReference`](../../../../lib/payments/payouts/payout-gateway-lookup.ts) before ever re-submitting.              |
+| **7**  | **Refund Speed Downgrades & Issuer Bank Rejections**                | Instant `processed` refund on every call.                                                                         | Acquiring bank downgrading `optimum -> normal` (`refund.speed_changed`, 5–7 business days), closed/frozen account `refund.failed`, and multi-leg paise conservation.                                                                                    | [`refund.ts`](../../../../lib/payments/operations/refund.ts) + `DeferSignal` on missing/pending parent rows.                                                                                                                     |
+| **8**  | **Card & UPI Chargebacks (`payment.dispute.*`, `deduct_at_onset`)** | Only synthetic dashboard mock payload.                                                                            | Real Visa/Mastercard/RuPay & NPCI UPI dispute codes (`U01`–`U99`), immediate `deduct_at_onset: true` settlement hold, and evidence upload validation.                                                                                                   | [`handleDisputeCreated`](../../../../app/api/webhooks/utils.ts) + `PENDING` capture deferral.                                                                                                                                    |
+| **9**  | **International Cards & RBI PA-CB (`₹25L` Cap & FIRS/e-FIRA)**      | Domestic sandbox mock only.                                                                                       | Real foreign-issued 3DS2 friction, Amex/Diners routing, FX conversion spread, `₹25,00,000` RBI PA-CB invoice cap, and automated FIRS / e-FIRA download.                                                                                                 | [`assertInrSettlement`](../../../../lib/payments/validation/currency-guards.ts) + export LUT invoicing.                                                                                                                          |
+| **10** | **CGST Rule 46(b) / Rule 53 IRP E-Invoicing (`<= 16` Chars)**       | Mock/skipped IRP in dev/test.                                                                                     | Live GSTN IRP hard-rejects any invoice or credit note number `> 16` chars or containing characters outside `[A-Za-z0-9/-]`.                                                                                                                             | Enforced at generation time by [`fitPrefixToRule46`](../../../../lib/payments/billing/invoice-numbering.ts) + live DB check (`rule46_breach_count = 0`).                                                                         |
+
+---
+
+## 6. Pre-Cutover SQL Purge & Live Penny-Test Protocol
+
+### Step 6.1 — Clear Test-Mode Razorpay / RazorpayX Entity Pointers Before Flipping Live Keys
+
+Run this transaction once during the cutover maintenance window **before** enabling live traffic so zero test `cust_*` / `cont_*` / `fa_*` pointers remain active in production:
+
+```sql
+BEGIN;
+
+UPDATE users
+SET "razorpayCustomerId" = NULL
+WHERE "razorpayCustomerId" IS NOT NULL;
+
+UPDATE "PayoutAccount"
+SET "razorpayContactId" = NULL,
+    "razorpayFundAccId" = NULL,
+    "isVerified" = false
+WHERE "razorpayContactId" IS NOT NULL
+   OR "razorpayFundAccId" IS NOT NULL;
+
+UPDATE "OrganizationPayoutAccount"
+SET "razorpayContactId" = NULL,
+    "razorpayFundAccountId" = NULL,
+    "isVerified" = false
+WHERE "razorpayContactId" IS NOT NULL
+   OR "razorpayFundAccountId" IS NOT NULL;
+
+COMMIT;
+```
+
+### Step 6.2 — Mandatory Live Penny-Test Verification Sequence (`₹1.00` = `100` Paise Net Cost)
+
+Execute and record each live check on the tracking GitHub issue before opening user signups:
+
+- [ ] **Live Smoke 1 — ₹1.00 B2C Standard Checkout (`order_*` -> `pay_*`)**: Complete a real ₹1 UPI payment -> verify `Payment.paymentStatus = SUCCEEDED`, `Appointment` confirmed, consumer tax invoice <= 16 chars minted, and `SELECT COALESCE(SUM(debit) - SUM(credit), 0) FROM "LedgerEntry"` equals `0`.
+- [ ] **Live Smoke 2 — ₹1.00 Full Refund (`rfnd_*`)**: Trigger full cancellation/refund on Smoke 1 -> verify `Refund.status = SUCCEEDED` via live `refund.processed` webhook, `ConsumerCreditNote` <= 16 chars minted, and ledger imbalance remains `0`.
+- [ ] **Live Smoke 3 — ₹1.00 Reverse Penny Drop (`upi_intent`)**: Onboard a real UPI payout account via mobile UPI Intent -> verify `fund_account.validation.completed` webhook verifies live HMAC under `RAZORPAYX_WEBHOOK_SECRET`, parses numeric `name_match_score`, marks `PayoutAccount.isVerified = true`, and refunds ₹1 automatically.
+- [ ] **Live Smoke 4 — ₹1.00 Live Consultant Payout (`pout_*`)**: With `ENABLE_LIVE_PAYOUTS=true`, disburse ₹1.00 IMPS/UPI payout -> verify live `payout.processed` webhook records non-null bank `gatewayUtr` and leaves net ledger imbalance at `0`.
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Deprecated top-level `payment_capture: 1` order parameter**: Older Razorpay examples passed top-level `payment_capture: 1` on `orders.create`. Superseded by nested `payment: { capture: "automatic", capture_options: { automatic_expiry_period, manual_expiry_period, refund_speed: "normal" } }` ([`holdCaptureSettings`](../../../../lib/payments/core/razorpay.ts)).
+- **Superseded single-secret `RAZORPAYX_WEBHOOK_SECRET` string check without rotation grace**: Previously only payment webhooks supported `_PREVIOUS` secret rotation and unsanitized order notes (>256 chars) reached `orders.create`. Superseded by [`resolveRazorpayXSecrets`](../../../../app/api/webhooks/razorpay/signature.ts) (`RAZORPAYX_WEBHOOK_SECRET_PREVIOUS`) and [`sanitizeRazorpayNotes`](../../../../lib/payments/core/razorpay.ts).

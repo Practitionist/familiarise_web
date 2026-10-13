@@ -84,7 +84,7 @@ it.each(["classes", "subscriptions"] as const)(
   async (type) => {
     const response = await request(type);
     expect(response.status).toBe(200);
-    expect(getSession).toHaveBeenCalledWith(true);
+    expect(getSession).toHaveBeenCalledWith();
     expect(canViewPlanDetail).toHaveBeenCalledWith(plan, null);
     expect(response.headers.get("Content-Type")).toBe("application/pdf");
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");

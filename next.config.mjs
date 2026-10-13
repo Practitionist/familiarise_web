@@ -1,4 +1,4 @@
-import { withSentryConfig } from "@sentry/nextjs";
+import { withSentryConfig } from "@sentry/nextjs/config";
 /** @type {import('next').NextConfig} */
 const withBundleAnalyzer =
   process.env.ANALYZE === "true"
@@ -9,32 +9,108 @@ const withBundleAnalyzer =
     : (config) => config;
 
 /**
- * Content Security Policy — report-only by default.
+ * The app's own origin, resolved at BUILD time.
  *
- * Why report-only first
- * ---------------------
- * A strict CSP can silently break Stream.io's call-widget script
- * injection or a Razorpay popup if any allow-list entry drifts. We
- * land in report-only so the dashboard surface stays functional while
- * we observe `Content-Security-Policy-Report-Only` violations at
- * `/api/csp-report` for a rollout window. Flip `ENABLE_CSP_ENFORCE=true`
- * once telemetry is clean to switch the header name to the enforcing
- * variant.
+ * `NEXT_PUBLIC_APP_URL` is set on Netlify with context `all`, pinned to
+ * https://familiarisenow.com. Because `NEXT_PUBLIC_*` is inlined into the
+ * client bundle, every deploy preview shipped a bundle whose auth client
+ * called PRODUCTION's `/api/auth/*`. The browser blocked it on CORS, which is
+ * the only reason previews failed loudly rather than quietly authenticating
+ * against production and mutating real data.
+ *
+ * Netlify sets `CONTEXT` (production | deploy-preview | branch-deploy) and
+ * `DEPLOY_PRIME_URL` (this deploy's own origin) on every build. Off
+ * production we prefer the per-deploy URL, so a preview talks to itself.
+ *
+ * This has to happen here rather than as an env var: Netlify env values are
+ * literal strings — it does NOT expand `$DEPLOY_PRIME_URL` inside a value —
+ * and `NEXT_PUBLIC_*` is baked at build, so a runtime fallback would come too
+ * late for the client bundle.
+ */
+const RESOLVED_APP_URL =
+  process.env.CONTEXT && process.env.CONTEXT !== "production"
+    ? (process.env.DEPLOY_PRIME_URL ?? process.env.NEXT_PUBLIC_APP_URL)
+    : process.env.NEXT_PUBLIC_APP_URL;
+
+/**
+ * Opt-in type-check and lint inside Netlify's `next build`. See the `eslint` /
+ * `typescript` keys below.
+ */
+const PDFKIT_FONT_FILES = [
+  "./node_modules/pdfkit/package.json",
+  "./node_modules/pdfkit/js/standard-fonts/**",
+];
+
+const STRICT_BUILD = process.env.STRICT_BUILD === "true";
+
+/**
+ * CSP violations go straight to Sentry's security-report endpoint, derived
+ * from the DSN (`https://<key>@<host>/<project>` →
+ * `https://<host>/api/<project>/security/?sentry_key=<key>`). Without a DSN
+ * (local dev) the policy simply carries no report directive.
+ */
+function sentryCspReportUrl() {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (!dsn) return undefined;
+  try {
+    const { username: key, host, pathname } = new URL(dsn);
+    const project = pathname.replace(/^\/+/, "");
+    if (!key || !project) return undefined;
+    const params = new URLSearchParams({ sentry_key: key });
+    if (process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT) {
+      params.set(
+        "sentry_environment",
+        process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+      );
+    }
+    return `https://${host}/api/${project}/security/?${params}`;
+  } catch {
+    return undefined;
+  }
+}
+const CSP_REPORT_URL = sentryCspReportUrl();
+const CSP_REPORT_GROUP = "csp-endpoint";
+
+/**
+ * Content Security Policy.
+ *
+ * Report-only at launch: a drifted allow-list entry would otherwise break
+ * Razorpay checkout or Stream calls for everyone at once. Violations land in
+ * Sentry; once they are triaged, set `ENABLE_CSP_ENFORCE=true` and redeploy
+ * (the value is read at build time).
  *
  * Allow-list rationale
  * --------------------
- *   - `script-src` includes Razorpay's checkout CDN + Stripe.js +
+ *   - `script-src` includes Razorpay's checkout CDN +
  *     Stream.io + Sentry + Supabase + 'unsafe-inline'/'unsafe-eval'
  *     (Next.js still emits inline runtime chunks; Next 15 hashing
  *     lands in 16).
- *   - `connect-src` opens WSS for Stream + HTTPS for the four payment
- *     gateways + Sentry + Resend + Upstash. Anything new must be
+ *   - `connect-src` opens WSS for Stream + HTTPS for the payment
+ *     gateway + Sentry + Resend + Upstash. Anything new must be
  *     added here AND in the matching client.
- *   - `frame-src` allows Razorpay's + Stripe's checkout iframes; Razorpay
+ *   - `frame-src` allows Razorpay's checkout iframes; Razorpay
  *     serves the live checkout iframe from `api.razorpay.com`, not just
  *     `checkout.razorpay.com` (report-only violation on a real checkout).
  *   - `media-src` is the load-bearing entry for Stream call audio /
  *     video / recording playback.
+ *
+ * `'unsafe-eval'` in `script-src` stays, and is not a pending cleanup. The
+ * Stream background-filter / noise-cancellation add-ons are WASM builds
+ * that `eval` their loader, and the worker-src note below is the companion
+ * half of that same constraint. Removing it would break those add-ons the
+ * day they are switched on, and until then it buys nothing that
+ * `script-src` does not already permit via `'unsafe-inline'`.
+ *
+ * Added without a compatibility cost
+ * ---------------------------------
+ * `object-src 'none'`, `base-uri 'self'` and `form-action 'self'` are the
+ * three directives that were simply absent, and all three are absent-by-
+ * accident rather than by decision — each is an explicit deny/allow that
+ * a real allow-list should have stated. None of them can break a
+ * functioning page here: the app ships no <object>/<embed>, no <base>, and
+ * every form action is same-origin (which is the point — `form-action`
+ * is the directive that makes an injected credential-stealing form
+ * structurally impossible). Each rationale is inline at its entry below.
  *
  * Stream.io does NOT run on getstream.io at runtime
  * -------------------------------------------------
@@ -61,23 +137,48 @@ const withBundleAnalyzer =
  */
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://js.stripe.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
-  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.upstash.io https://api.razorpay.com https://api.stripe.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://checkout.razorpay.com https://*.sentry.io https://*.getstream.io https://*.supabase.co",
+  "connect-src 'self' https://*.getstream.io wss://*.getstream.io https://*.stream-io-api.com wss://*.stream-io-api.com https://*.stream-io-video.com wss://*.stream-io-video.com https://*.stream-io-cdn.com https://*.supabase.co https://*.r2.cloudflarestorage.com https://*.upstash.io https://api.razorpay.com https://*.sentry.io https://api.resend.com https://*.novu.co wss://*.novu.co",
   "img-src 'self' data: https: blob:",
-  "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com",
+  "media-src 'self' blob: https://*.getstream.io https://*.stream-io-cdn.com https://*.stream-io-api.com https://*.supabase.co https://*.r2.cloudflarestorage.com",
   "style-src 'self' 'unsafe-inline'",
-  "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://js.stripe.com https://hooks.stripe.com",
+  "frame-src 'self' blob: https://*.supabase.co https://checkout.razorpay.com https://api.razorpay.com https://app.netlify.com",
   "font-src 'self' data:",
   // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
   // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
   "frame-ancestors 'none'",
-  "report-uri /api/csp-report",
+  // No <object>/<embed> anywhere in this app, and none of the allow-listed
+  // origins serve plugin content. `'none'` is a real control here: without
+  // object-src a plugin document inherits `default-src 'self'`, which still
+  // permits same-origin plugin content — and the classic payload for it is
+  // Flash-era, but the directive also covers <embed> and legacy <object>
+  // data: documents. Zero compatibility cost: the payment iframes are
+  // <iframe> (frame-src above), not <object>.
+  "object-src 'none'",
+  // Stops an injected <base href> from re-pointing every relative URL on the
+  // page — including form targets and lazy-loaded chunks — at an attacker's
+  // origin. `default-src 'self'` does NOT cover this: base-uri is one of the
+  // directives that does not fall back to default-src. Every route in this app
+  // uses absolute or root-relative URLs, so nothing here depends on a <base>.
+  "base-uri 'self'",
+  // Where a form without an explicit action may submit. `form-action` is also
+  // NOT covered by default-src. The auth surface is the reason this is not
+  // merely theoretical: the sign-in and SSO forms post to same-origin
+  // /api/auth/*, so 'self' permits every one of them, and the directive
+  // forecloses an injected form exfiltrating credentials to a third party.
+  "form-action 'self'",
+  // Both delivery mechanisms: report-uri is deprecated but is all some
+  // browsers implement; report-to is bound by the Reporting-Endpoints header.
+  ...(CSP_REPORT_URL
+    ? [`report-uri ${CSP_REPORT_URL}`, `report-to ${CSP_REPORT_GROUP}`]
+    : []),
 ].join("; ");
 
-const CSP_HEADER_KEY =
-  process.env.ENABLE_CSP_ENFORCE === "true"
-    ? "Content-Security-Policy"
-    : "Content-Security-Policy-Report-Only";
+const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE === "true";
+
+const CSP_HEADER_KEY = CSP_ENFORCE
+  ? "Content-Security-Policy"
+  : "Content-Security-Policy-Report-Only";
 
 /** @type {Array<{ key: string; value: string }>} */
 const securityHeaders = [
@@ -102,34 +203,16 @@ const securityHeaders = [
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
   },
-  // CSP (report-only by default; flipped to enforce via env flag — see
-  // CSP_HEADER_KEY above). Pre-req for any large-customer security review.
   { key: CSP_HEADER_KEY, value: CSP_DIRECTIVES },
+  ...(CSP_REPORT_URL
+    ? [
+        {
+          key: "Reporting-Endpoints",
+          value: `${CSP_REPORT_GROUP}="${CSP_REPORT_URL}"`,
+        },
+      ]
+    : []),
 ];
-
-/**
- * The app's own origin, resolved at BUILD time.
- *
- * `NEXT_PUBLIC_APP_URL` is set on Netlify with context `all`, pinned to
- * https://familiarisenow.com. Because `NEXT_PUBLIC_*` is inlined into the
- * client bundle, every deploy preview shipped a bundle whose auth client
- * called PRODUCTION's `/api/auth/*`. The browser blocked it on CORS, which is
- * the only reason previews failed loudly rather than quietly authenticating
- * against production and mutating real data.
- *
- * Netlify sets `CONTEXT` (production | deploy-preview | branch-deploy) and
- * `DEPLOY_PRIME_URL` (this deploy's own origin) on every build. Off
- * production we prefer the per-deploy URL, so a preview talks to itself.
- *
- * This has to happen here rather than as an env var: Netlify env values are
- * literal strings — it does NOT expand `$DEPLOY_PRIME_URL` inside a value —
- * and `NEXT_PUBLIC_*` is baked at build, so a runtime fallback would come too
- * late for the client bundle.
- */
-const RESOLVED_APP_URL =
-  process.env.CONTEXT && process.env.CONTEXT !== "production"
-    ? (process.env.DEPLOY_PRIME_URL ?? process.env.NEXT_PUBLIC_APP_URL)
-    : process.env.NEXT_PUBLIC_APP_URL;
 
 const nextConfig = {
   // Drop the `X-Powered-By: Next.js` fingerprinting header.
@@ -164,13 +247,16 @@ const nextConfig = {
       ? { NEXT_PUBLIC_SENTRY_BRANCH: process.env.BRANCH }
       : {}),
   },
-  // Only the Netlify deploy build OOM'd at the 4GB heap re-running ESLint + tsc.
-  // Skip them THERE (NETLIFY=true is set in Netlify's build env) to drop that memory
-  // hog — CI gates both independently anyway (ci.yaml runs `npx tsc --noEmit` +
-  // `npx eslint .` as their own steps). Local `npm run build` and CI's own build keep
-  // the checks on, so nothing loses its safety net off-Netlify. (#932)
-  eslint: { ignoreDuringBuilds: !!process.env.NETLIFY },
-  typescript: { ignoreBuildErrors: !!process.env.NETLIFY },
+  // Skipped on Netlify by default: with them on, the deploy preview was killed
+  // (exit 137) at "Linting and checking validity of types" on the 6144 MB
+  // heap. CI type-checks and lints every PR and every push to dev/staging/prod
+  // instead. STRICT_BUILD=true turns them back on for a Netlify build.
+  eslint: {
+    ignoreDuringBuilds: process.env.NETLIFY === "true" && !STRICT_BUILD,
+  },
+  typescript: {
+    ignoreBuildErrors: process.env.NETLIFY === "true" && !STRICT_BUILD,
+  },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
     // #1795 — Netlify deploy-preview OOM'd (exit 137, Killed at static page
@@ -197,6 +283,26 @@ const nextConfig = {
         }
       : {}),
     webpackMemoryOptimizations: true,
+    // Disables NextNodeServer's cold-start `unstable_preloadEntries()` and
+    // `preloadAppDocument()` loops (`next/dist/server/next-server.js`).
+    //
+    // Why this is critical on Netlify (`___netlify-server-handler`):
+    // - Unlike Vercel (`minimalMode: true`, which skips `unstable_preloadEntries`),
+    //   `@netlify/plugin-nextjs` instantiates `NextNodeServer` with
+    //   `minimalMode: false`.
+    // - With Next 15's default `preloadEntriesOnStart: true`, every cold Lambda
+    //   instance eagerly calls `loadComponents()` across all 606 routes
+    //   (1.67M `webpackRequire` calls) before/during the first request.
+    // - That eager preload caused both the #1124 ~24–32s cold-start event-loop
+    //   stall (even on zero-import `/api/perf/probe-bare`) and — once the
+    //   dependency upgrade in #1948 pushed peak preload heap past Node 22's
+    //   512 MB V8 old-space limit on 1024 MB Lambda containers — fatal V8 GC
+    //   thrashing / OOM (`504 Inactivity Timeout` on 100% of requests).
+    // - With both flags `false`, routes load on demand: cold-start `/api/perf/probe-bare`
+    //   completes in ~690ms at 33 MB heap (123 MB RSS) instead of ~20–34s at
+    //   512+ MB heap (642 MB RSS).
+    preloadEntriesOnStart: false,
+    appDocumentPreloading: false,
     // Only packages Next does NOT already optimize by default. Its built-in
     // list covers lucide-react, recharts and date-fns among others, so listing
     // those was inert config that read as if it were doing something.
@@ -262,6 +368,9 @@ const nextConfig = {
   // bundler (lib/pdf/react-runtime/jsx-runtime.ts), which the tracer cannot
   // see, and the only traced import of `react` is the reconciler's, which
   // reaches the package root rather than that entrypoint. Ship the package.
+  //
+  // pdfkit@0.20.1 loads font metrics via `createRequire()('#standard-fonts/*')`,
+  // a package `imports` subpath the tracer cannot follow; ship those files.
   outputFileTracingIncludes: {
     "/api/plans/classes/[classPlanId]/brochure": [
       "./public/fonts/**",
@@ -274,16 +383,20 @@ const nextConfig = {
     "/api/payments/[paymentId]/invoice/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/payments/[paymentId]/credit-note/[creditNoteId]/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/pdf": [
+      "./public/fonts/**",
       "./node_modules/react/**",
+      ...PDFKIT_FONT_FILES,
     ],
     "/api/organizations/[orgId]/billing-account/credit-notes/[creditNoteId]/pdf":
-      ["./node_modules/react/**"],
+      ["./public/fonts/**", "./node_modules/react/**", ...PDFKIT_FONT_FILES],
   },
 
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
@@ -298,11 +411,10 @@ const nextConfig = {
     "pg-pool",
     "pg-connection-string",
     "razorpay",
-    "stripe",
     "resend",
     "bcrypt",
     "@stream-io/node-sdk",
-    "libsodium-wrappers",
+    "@novu/api",
   ],
 
   images: {
@@ -318,17 +430,31 @@ const nextConfig = {
         hostname: "avatars.githubusercontent.com",
       },
       {
-        hostname: "picsum.photos",
-      },
-      {
-        hostname: "cdn.jsdelivr.net",
-      },
-      {
         hostname: "upload.wikimedia.org",
       },
       {
         hostname: "img.logo.dev",
       },
+      {
+        hostname: "cdn.jsdelivr.net",
+      },
+      // Dev/placeholder image hosts are never reachable from a production build.
+      ...(process.env.NODE_ENV === "production"
+        ? []
+        : [
+            {
+              hostname: "picsum.photos",
+            },
+            {
+              hostname: "fastly.picsum.photos",
+            },
+            {
+              hostname: "images.unsplash.com",
+            },
+            {
+              hostname: "plus.unsplash.com",
+            },
+          ]),
     ],
   },
 
@@ -346,6 +472,13 @@ const nextConfig = {
   // bundle saving the original comment was after. Note this cannot be recovered
   // with Sentry's consoleLoggingIntegration: that patches globalThis.console at
   // runtime, and this deletes the call expressions at compile time.
+  //
+  // HOUSE RULE (#1127): Because server-side `console.error` / `console.warn`
+  // output reaches Netlify function logs directly WITHOUT passing through
+  // Sentry's `beforeSend` / `beforeSendLog` PII scrubber, NEVER pass raw
+  // request bodies, full Prisma error objects (`err.meta`), session/user
+  // records, or raw emails/phones/payment IDs to `console.*`. Structured
+  // operational logs must go through `reportSentryError` or `Sentry.logger.*`.
   compiler: {
     removeConsole:
       process.env.NODE_ENV === "production"
@@ -354,10 +487,47 @@ const nextConfig = {
   },
 
   async headers() {
+    const inlinePreviewHeaders = [
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      {
+        key: CSP_HEADER_KEY,
+        value: CSP_DIRECTIVES.replace(
+          "frame-ancestors 'none'",
+          "frame-ancestors 'self'",
+        ).replace("object-src 'none'", "object-src 'self'"),
+      },
+    ];
     return [
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        source:
+          "/api/appointments/:appointmentId/documents/:documentId/download",
+        headers: inlinePreviewHeaders,
+      },
+      {
+        source: "/api/plans/materials/:materialId/download",
+        headers: inlinePreviewHeaders,
+      },
+      {
+        source: "/avif/(.*)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        source: "/fonts/(.*)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
       },
     ];
   },
@@ -402,18 +572,15 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // container RSS — not heap — is the constraint. The widened client upload
   // holds the full client source-map set in memory during the finalize phase;
   // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
+  // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
+  sourcemaps: {
+    disable:
+      process.env.NETLIFY === "true" && process.env.CONTEXT !== "production",
+  },
   widenClientFileUpload: process.env.NETLIFY !== "true",
 
-  // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
-  // tunnelRoute: "/monitoring",
-
   webpack: {
-    // Tree-shaking options for reducing bundle size
     treeshake: {
-      // Automatically tree-shake Sentry logger statements to reduce bundle size
       removeDebugLogging: true,
     },
   },

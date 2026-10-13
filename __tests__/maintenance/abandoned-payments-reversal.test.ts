@@ -55,17 +55,6 @@ jest.mock("../../lib/referrals/service", () => ({
 jest.mock("../../lib/payments/core/razorpay", () => ({
   cancelRazorpayOrder: jest.fn().mockResolvedValue("no_live_payment"),
 }));
-// #1464 — the sweep reaches Stripe only through the fenced core client, so
-// mocking the core is what proves the fence: a call to `getStripeClient` is a
-// gateway call, and with the fence shut there must not be one.
-const stripeClient = {
-  paymentIntents: { cancel: jest.fn() },
-  checkout: { sessions: { expire: jest.fn() } },
-};
-jest.mock("../../lib/payments/core/stripe", () => ({
-  __esModule: true,
-  getStripeClient: jest.fn(() => stripeClient),
-}));
 
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: jest.fn((_job: string, _opts: unknown, fn: () => unknown) =>
@@ -78,7 +67,6 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 import prisma from "../../lib/prisma";
 import { reverseCreditsForPayment } from "../../lib/referrals/service";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
-import { getStripeClient } from "../../lib/payments/core/stripe";
 import {
   cancelGatewayIntents,
   cleanupAbandonedPayments,
@@ -387,13 +375,6 @@ describe("cleanupAbandonedPayments gateway cancel concurrency (#1459)", () => {
  * next tick) rather than being expired over money the gateway may hold.
  */
 describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
-  const originalStripeEnabled = process.env.STRIPE_ENABLED;
-
-  afterEach(() => {
-    if (originalStripeEnabled === undefined) delete process.env.STRIPE_ENABLED;
-    else process.env.STRIPE_ENABLED = originalStripeEnabled;
-  });
-
   it("skips the unit on a live or unreadable order; only the unreadable one fails the run", async () => {
     (cancelRazorpayOrder as jest.Mock).mockResolvedValueOnce(
       "has_live_payment",
@@ -420,67 +401,18 @@ describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
     ]);
   });
 
-  it("makes no gateway call for a Stripe row while the fence is shut", async () => {
-    delete process.env.STRIPE_ENABLED;
+  it("expires a legacy STRIPE row without a gateway call", async () => {
     const appointment = abandonedConsultation();
     appointment.payment[0].paymentGateway = "STRIPE";
     db.appointment.findMany.mockResolvedValue([appointment]);
 
     const result = await cleanupAbandonedPayments();
 
-    expect(getStripeClient).not.toHaveBeenCalled();
-    // Fenced is "nothing to cancel", not a failure: the row still expires.
+    expect(cancelRazorpayOrder).not.toHaveBeenCalled();
     expect(tx.payment.updateMany).toHaveBeenCalledWith({
       where: { id: "pay_1", paymentStatus: "PENDING" },
       data: { paymentStatus: "EXPIRED" },
     });
-    expect(result.errorCount).toBe(0);
-    expect(result.success).toBe(true);
-  });
-
-  /**
-   * #1461 — `payment_intent_unexpected_state` used to be blanket-suppressed as
-   * "already gone". On a `processing` intent that is false: Stripe is still
-   * holding the buyer's money behind a payment this sweep has just marked
-   * EXPIRED, and the run reported itself healthy.
-   */
-  it("counts an uncancellable but still-live Stripe intent as a failure", async () => {
-    process.env.STRIPE_ENABLED = "true";
-    const appointment = abandonedConsultation();
-    appointment.payment[0].paymentGateway = "STRIPE";
-    appointment.payment[0].paymentIntent = "pi_live_1";
-    db.appointment.findMany.mockResolvedValue([appointment]);
-    stripeClient.paymentIntents.cancel.mockRejectedValue(
-      Object.assign(new Error("cannot cancel a processing PaymentIntent"), {
-        code: "payment_intent_unexpected_state",
-        payment_intent: { status: "processing" },
-      }),
-    );
-
-    const result = await cleanupAbandonedPayments();
-
-    // #1861 L2 — a live intent keeps its row PENDING; the run still fails.
-    expect(tx.payment.updateMany).not.toHaveBeenCalled();
-    expect(result.errorCount).toBe(1);
-    expect(result.success).toBe(false);
-  });
-
-  it("leaves a succeeded intent alone — that one really is nothing to cancel", async () => {
-    process.env.STRIPE_ENABLED = "true";
-    const appointment = abandonedConsultation();
-    appointment.payment[0].paymentGateway = "STRIPE";
-    appointment.payment[0].paymentIntent = "pi_done_1";
-    db.appointment.findMany.mockResolvedValue([appointment]);
-    stripeClient.paymentIntents.cancel.mockRejectedValue(
-      Object.assign(new Error("cannot cancel a succeeded PaymentIntent"), {
-        code: "payment_intent_unexpected_state",
-        // Nested under `raw`, the other shape the SDK wraps errors in.
-        raw: { payment_intent: { status: "succeeded" } },
-      }),
-    );
-
-    const result = await cleanupAbandonedPayments();
-
     expect(result.errorCount).toBe(0);
     expect(result.success).toBe(true);
   });

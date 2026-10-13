@@ -135,4 +135,40 @@ describe("GET /api/staff/moderation/reports — enforcement visibility", () => {
     const staff = await (await GET(req())).json();
     expect(staff.capabilities.canModerateUsers).toBe(false);
   });
+
+  it("filters by organizationId and includes organizationId on formatted reports", async () => {
+    findMany.mockResolvedValue([
+      { ...reportRow(null), organizationId: "org-enterprise-1" },
+    ]);
+
+    const orgRes = await GET(
+      new Request(
+        "http://localhost/api/staff/moderation/reports?status=PENDING&organizationId=org-enterprise-1",
+      ) as never,
+    );
+    const orgBody = await orgRes.json();
+
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: "PENDING",
+          organizationId: "org-enterprise-1",
+        }),
+      }),
+    );
+    expect(orgBody.reports[0].organizationId).toBe("org-enterprise-1");
+
+    await GET(
+      new Request(
+        "http://localhost/api/staff/moderation/reports?organizationId=personal",
+      ) as never,
+    );
+    expect(findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: null,
+        }),
+      }),
+    );
+  });
 });

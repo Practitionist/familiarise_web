@@ -15,13 +15,13 @@ This document includes comprehensive visual diagrams to illustrate the document 
 3. **[Document Upload Sequence Flow](#document-upload-sequence-flow)** - Detailed upload process interactions
 4. **[Document Review Sequence Flow](#document-review-sequence-flow)** - Consultant review workflow
 5. **[Automated Cleanup Process Flow](#automated-cleanup-process-flow)** - Maintenance and cleanup procedures
-6. **[Error Handling & Development Mode Scenarios](#error-handling--development-mode-scenarios)** - Error handling and testing scenarios
+6. **[Error Handling Scenarios](#error-handling-scenarios)** - Error handling scenarios
 
 ### 🎯 **Quick Navigation**
 
 - **For Developers**: See upload/review sequence diagrams for API integration
 - **For DevOps**: See cleanup process flow for maintenance understanding
-- **For Testing**: See error handling scenarios for development mode features
+- **For Testing**: See the error handling scenarios for failure and cleanup behaviour
 - **For Architecture**: See storage organization for infrastructure planning
 
 ## System Architecture Overview
@@ -79,12 +79,6 @@ graph TD
     J --> NN[Redirect to Login]
     S --> OO[Retry Upload Option]
     W --> PP[Show Database Error]
-
-    %% Development Mode
-    I --> QQ{Development Mode?}
-    QQ -->|Yes| RR[Bypass Access Control]
-    RR --> K
-    QQ -->|No| K
 
     style A fill:#e1f5fe
     style X fill:#c8e6c9
@@ -166,22 +160,28 @@ graph TD
 ### Folder Structure
 
 ```
-documents/                                    # Main bucket
-├── appointments/                            # Root folder for all appointments
-│   ├── {appointmentId}/                    # Individual appointment folder
-│   │   ├── consultee-{consulteeId}/        # Consultee-specific folder
-│   │   │   ├── {timestamp}_{filename}     # Actual documents
-│   │   │   └── ...
-│   │   └── consultant-{consultantId}/      # (Future: consultant materials)
-│   └── ...
-└── temp/                                   # (Future: temporary uploads)
+documents/                                              # Private bucket (signed URL access only)
+├── appointments/
+│   └── {appointmentId}/
+│       ├── consultee-{consulteeId}/
+│       │   └── {timestamp}_{sanitized_filename}        # Learner deliverables & revisions (v1..v10)
+│       └── consultant-{consultantProfileId}/
+│           └── {timestamp}_{sanitized_filename}        # Consultant feedback files & standalone handouts
+├── plans/
+│   └── {consultation|subscription|webinar|class}-plans/
+│       └── {planId}/
+│           └── {timestamp}_{sanitized_filename}        # Plan materials (max 25 per plan)
+└── verification/
+    └── {consultantProfileId}/
+        └── {timestamp}_{sanitized_filename}            # Consultant profile verification documents
 ```
 
 ### Naming Conventions
 
-- **Appointment Folders**: Use UUID format (e.g., `8b8f818e-a787-45e7-b20b-aee65cb750f9`)
-- **Consultee Folders**: Prefixed with `consultee-` followed by consultee profile ID
-- **Files**: `{timestamp}_{sanitized_filename}` format for uniqueness and traceability
+- **Appointment Folders**: UUID of the owning `Appointment` row (`appointments/{appointmentId}`).
+- **Role Subfolders**: `consultee-{consulteeProfileId}` for learner deliverables and revisions; `consultant-{consultantProfileId}` for expert replies and handouts.
+- **Plan Material Folders**: `plans/{planType}-plans/{planId}` enforced on direct presigned upload verification.
+- **Files**: `{timestamp}_{sanitized_filename}` verified via 4 KB magic-byte header inspection (`lib/documents/storage-verify.ts`).
 
 ## On-the-Fly Creation Strategy
 
@@ -203,7 +203,8 @@ const ensureBucketExists = async (bucketName: string): Promise<boolean> => {
 - **Private by default**: No public URLs; all access via signed URLs
 - **Signed URL generation**: Uses `supabaseAdmin.storage.from('documents').createSignedUrl()` with service role
 - **Size Limits**: Enforces 10MB file size limit
-- **Service role required**: All storage operations use `supabaseAdmin` (not the anon client). If `SUPABASE_SERVICE_ROLE_KEY` is missing, the download proxy returns an explicit error
+- **Service role required**: Every storage call (upload, list, signed URL, delete, bucket create and reconcile) runs on the server's service-role client through `adminStorage()` in `lib/supabase-storage-core.ts`. There is no anon storage client. If `SUPABASE_SERVICE_ROLE_KEY` is missing, storage operations fail with an explicit error.
+- **Verified deletes**: `removeObjects()` returns `true` only when every requested path is gone afterwards. Storage's batch delete returns only the objects it removed, so a path missing from that answer is checked with `exists()`. Routes answer `502` and keep the row when a delete is not confirmed.
 
 ### 2. Folder Creation
 
@@ -230,59 +231,32 @@ const ensureFolderExists = async (
 
 ```mermaid
 sequenceDiagram
-    participant U as User (Consultee)
+    participant U as User
     participant UI as React Component
     participant API as Next.js API
     participant DB as Prisma/Database
     participant SB as Supabase Storage
-    participant BG as Background Jobs
 
-    Note over U,BG: Document Upload Process
-
-    U->>UI: Select file and add description
-    UI->>UI: Validate file (size, type)
-
-    alt File Invalid
+    U->>UI: Select file
+    UI->>UI: Validate with the shared file policy
+    alt File invalid
         UI->>U: Show validation error
-    else File Valid
-        UI->>API: POST /api/appointments/{id}/documents
-
-        API->>API: Authenticate user
-        API->>API: Check appointment access
-
-        alt Development Mode
-            API->>API: Bypass access control
-            Note right of API: [DEV MODE] Allow any user
-        end
-
-        API->>SB: Check if documents bucket exists
-
-        alt Bucket Missing
-            API->>SB: Create documents bucket
-            SB->>API: Bucket created with permissions
-        end
-
-        API->>API: Generate unique filename
-        API->>SB: Upload file to folder structure
-        Note right of SB: appointments/{appointmentId}/<br/>consultee-{consulteeId}/
-
-        alt Upload Success
-            SB->>API: Return file URL and metadata
-            API->>DB: Save document record
-
-            alt Database Save Success
-                DB->>API: Document saved
-                API->>UI: Upload successful
-                UI->>U: Show success message
-            else Database Save Failed
-                API->>SB: Delete uploaded file (cleanup)
-                API->>UI: Database error
-                UI->>U: Show error with retry option
-            end
-        else Upload Failed
-            SB->>API: Upload error
-            API->>UI: Upload failed
-            UI->>U: Show network/storage error
+    else File valid
+        UI->>API: POST /api/appointments/{id}/documents/upload-url
+        API->>DB: Resolve party, confirmed booking, window and thread slot
+        API->>SB: createSignedUploadUrl (documents bucket, party folder)
+        API-->>UI: uploadUrl and storagePath
+        UI->>SB: PUT file straight to the signed URL
+        UI->>API: POST /api/appointments/{id}/documents (commit)
+        API->>SB: Verify the object (magic bytes, declared type)
+        API->>DB: Lock appointment, repeat the checks, insert the row
+        alt Commit fails
+            API->>SB: Delete the uploaded object
+            API-->>UI: Typed error
+            UI->>U: Show the fixed copy for the code
+        else Commit succeeds
+            API-->>UI: 201 document id, root id, version
+            UI->>U: Show the new version
         end
     end
 ```
@@ -290,15 +264,12 @@ sequenceDiagram
 #### Upload Implementation
 
 ```typescript
-// Complete upload process with hierarchy management
-const uploadAppointmentDocument = async (options: DocumentUploadOptions) => {
-  1. Validate file (size, type)
-  2. Ensure bucket exists
-  3. Generate unique filename
-  4. Create folder path
-  5. Ensure folder structure
-  6. Upload file
-  7. Return public URL
+// lib/documents/direct-upload.ts and lib/documents/upload-pipeline.ts
+const uploadBookingDocument = async (params) => {
+  1. validateUploadFile (shared file policy)
+  2. POST upload-url        -> { uploadUrl, storagePath }
+  3. PUT the file to uploadUrl, reporting progress
+  4. POST commit            -> verified object, row written under the booking lock
 }
 ```
 
@@ -321,16 +292,11 @@ sequenceDiagram
 
     API->>API: Authenticate consultant
 
-    alt Development Mode
-        API->>API: Bypass consultant access control
-        Note right of API: [DEV MODE] Allow any user
-    else Production Mode
-        API->>DB: Verify consultant ownership
-        alt Not Authorized
-            DB->>API: Access denied
-            API->>UI: 403 Forbidden
-            UI->>C: Show access denied message
-        end
+    API->>DB: Verify consultant ownership
+    alt Not Authorized
+        DB->>API: Access denied
+        API->>UI: 403 Forbidden
+        UI->>C: Show access denied message
     end
 
     API->>DB: Fetch documents for review
@@ -340,15 +306,15 @@ sequenceDiagram
 
     Note over C,SB: Document Review Action
 
-    C->>UI: Click review button
-    UI->>C: Show review dialog
+    C->>UI: Open the booking's Documents workspace
+    UI->>C: Show the review composer in the workspace
     C->>UI: Set status (APPROVED/REJECTED/NEEDS_REVISION)
-    C->>UI: Add review notes
+    C->>UI: Add review notes and an optional reply file
     C->>UI: Submit review
 
-    UI->>API: PATCH /api/appointments/{appointmentId}/documents/{docId}
+    UI->>API: POST /api/appointments/{appointmentId}/documents/{docId}/review
     API->>API: Validate review data
-    API->>DB: Update document review status
+    API->>DB: Compare-and-set the review status (no newer learner version)
 
     alt Update Success
         DB->>API: Review updated
@@ -372,99 +338,42 @@ sequenceDiagram
     SB->>C: Stream file content
 ```
 
+## Server-client operations and private buckets
+
+Every storage write, delete and signing call runs on the server-side client, never the public one, and private buckets are served only through access-checked signed URLs. The rules are these.
+
+- **Deletes are verified.** `removeObjects` in `lib/supabase-storage-core.ts` returns true only when every path is gone afterwards. Storage's batch delete answers with just the objects it removed, so each path missing from that answer is re-checked with an existence call. `deleteAsset`, `deleteAppointmentDocument` and the feature deletes all route through it, and callers act on the boolean: a route whose storage delete may have left the object behind reports once to Sentry and answers an error, and it keeps the database row so the delete can be retried. A delete that cannot be proven is never reported as a success.
+- **Rollbacks use the same path.** When a database insert fails after an upload, the object just written is removed with the same helper, so a failed save does not strand a file.
+- **Private buckets hand out short-lived signed URLs only.** Support attachments, appointment documents, plan materials and the finance PDFs are never linked by a stored URL. The app route checks the caller's access, signs a URL (60 seconds for support attachments) and redirects with `Cache-Control: private, no-store`. Rows written before a bucket became private may still hold an old stored URL, so readers map the row to the app route rather than rendering the stored value.
+- **Public buckets stay public deliberately.** Avatars, organisation logos and landing assets are served from their public endpoint; they hold nothing that needs an access check.
+- **Orphans are swept by reconciliation.** `scripts/cleanup/reconcile-document-storage.ts` treats every path referenced by a database row as live and removes unreferenced objects after a grace period, and it aborts on a listing error rather than deleting on partial information.
+
+See [support attachments](../support/08-intake-callbacks-attachments-and-limits.md#attachments) for the worked example.
+
+## Supabase for documents, R2 for recordings
+
+Session documents and plan materials live in the private Supabase `documents` bucket: small files (up to 10 MB), opened rarely, uploaded straight from the browser and signed on demand. Recordings live in the private Cloudflare R2 recordings bucket: hundreds of MB to several GB, streamed repeatedly, pulled in server-side by `transfer-recordings`. The split follows object size and read pattern. R2 charges no egress and has no per-plan upload cap, while Supabase Storage caps a single upload by plan. Each store has one signing helper. Public preview clips stay in the Supabase `recordings-previews` bucket. See [session documents](../documents/README.md#storage-supabase-for-documents-r2-for-recordings) and [recordings](../stream/19-recordings-lifecycle-and-access.md).
+
+Session documents are tombstoned 90 days after the booking ends (or is cancelled) and purged 7 days later by the registered `purge-deleted-documents` job (`lib/documents/document-purge.ts`). A tombstoned row keeps its object until the purge, and `reconcile-document-storage` imports the same `DOCUMENT_DELETE_GRACE_DAYS` constant so it never sweeps an object the purge still owns. The 10 MB limit and the allowed types come from one policy, `lib/documents/file-policy.ts`. See [session documents](../documents/README.md#retention-and-the-purge).
+
 ## Cleanup Strategy
 
-### 1. Daily Automated Cleanup
+### 1. Orphan Sweep (`reconcile-document-storage`, daily)
 
-**Schedule**: Every day at 9:00 AM IST (3:30 AM UTC)
-**Trigger**: GitHub Actions workflow
+The sweep lists each private bucket and compares the object paths with the rows that reference them. An object that no row references is deleted once it is older than the 7-day grace period.
 
-```yaml
-# .github/workflows/cleanup-empty-folders.yml
-schedule:
-  - cron: "30 3 * * *" # 9 AM IST daily
-```
+| Bucket                | Referencing rows                                                     |
+| --------------------- | -------------------------------------------------------------------- |
+| `documents`           | `AppointmentDocument`, `PlanMaterial`, `ProfileVerificationDocument` |
+| `support-attachments` | `SupportTicketAttachment`                                            |
 
-**Process:**
+The run counts only the objects that Storage confirms it removed. Any shortfall becomes one error per bucket, which marks the run failed so it is reported once.
 
-1. **Folder Scanning**: Traverses entire appointment hierarchy
-2. **Empty Detection**: Identifies folders with no actual files
-3. **Cleanup**: Removes placeholder files and empty markers
-4. **Reporting**: Logs summary of cleanup actions
+### 2. Empty Folders
 
-#### Automated Cleanup Process Flow
+Supabase Storage folders are virtual prefixes, so an empty folder costs nothing and is not swept. The former daily `cleanup-empty-folders` job was removed as cosmetic.
 
-```mermaid
-graph TD
-    A[GitHub Actions Trigger<br/>Daily 9:00 AM IST] --> B[Start Cleanup Script]
-
-    B --> C[Initialize Supabase Client]
-    C --> D{Documents Bucket Exists?}
-    D -->|No| E[No Cleanup Needed]
-    D -->|Yes| F[Scan appointments/ folder]
-
-    F --> G[For Each Appointment Folder]
-    G --> H[Scan Consultee Subfolders]
-    H --> I{Folder Empty?}
-
-    I -->|No| J[Check File Age]
-    J --> K{Files > 30 days old?}
-    K -->|Yes| L[Mark as Stale<br/>Log for Review]
-    K -->|No| M[Folder Has Valid Files]
-
-    I -->|Yes| N{Empty > 7 days?}
-    N -->|No| O[Skip - Recently Empty]
-    N -->|Yes| P[Remove Placeholder Files]
-    P --> Q[Delete .keep, .gitkeep, placeholder]
-    Q --> R[Mark Folder as Cleaned]
-
-    R --> S{More Consultee Folders?}
-    M --> S
-    L --> S
-    O --> S
-
-    S -->|Yes| H
-    S -->|No| T{Appointment Folder Empty?}
-
-    T -->|Yes| U[Clean Appointment Folder]
-    T -->|No| V[Keep Appointment Folder]
-
-    U --> W{More Appointment Folders?}
-    V --> W
-
-    W -->|Yes| G
-    W -->|No| X[Generate Cleanup Report]
-
-    X --> Y[Log Statistics:<br/>- Folders Checked<br/>- Empty Folders Found<br/>- Folders Cleaned<br/>- Stale Files Detected<br/>- Errors Encountered]
-
-    Y --> Z{Errors > 0?}
-    Z -->|Yes| AA[Report Errors<br/>Exit with Error Code]
-    Z -->|No| BB[Cleanup Complete<br/>Exit Successfully]
-
-    E --> CC[Log: No Action Needed]
-
-    %% Error Handling
-    D --> DD{Connection Error?}
-    DD -->|Yes| EE[Log Network Error<br/>Retry Logic]
-    EE --> FF{Retry Success?}
-    FF -->|No| GG[Exit with Error]
-    FF -->|Yes| F
-
-    %% Safety Checks
-    P --> HH{Safety Check}
-    HH --> II{Has DB Record?}
-    II -->|Yes| JJ[Skip - File Still Referenced]
-    II -->|No| Q
-
-    style A fill:#e3f2fd
-    style BB fill:#c8e6c9
-    style AA fill:#ffcdd2
-    style GG fill:#ffcdd2
-    style L fill:#fff3e0
-    style JJ fill:#e8f5e8
-```
-
-### 2. Stale Data Management
+### 3. Stale Data Management
 
 **Definition of Stale Data:**
 
@@ -480,7 +389,7 @@ const STALE_FILE_DAYS = 30; // Files older than 30 days
 const MAX_EMPTY_FOLDER_AGE_DAYS = 7; // Empty folders older than 7 days
 ```
 
-### 3. Cleanup Script Features
+### 4. Cleanup Script Features
 
 ```typescript
 // Enhanced cleanup with stale file detection
@@ -502,7 +411,7 @@ interface CleanupStats {
 - **Error Handling**: Graceful handling of permission or network issues
 - **Detailed Reporting**: Comprehensive logs and statistics
 
-### 4. Data Integrity Safeguards
+### 5. Data Integrity Safeguards
 
 **Database Synchronization:**
 
@@ -526,28 +435,7 @@ interface CleanupStats {
 - Have successful upload status
 ```
 
-## Development Mode Enhancements
-
-### Access Control Bypass
-
-```typescript
-const isDevelopment = process.env.NODE_ENV === 'development';
-
-// In development mode:
-- Allow access to any appointment's documents
-- Bypass consultee/consultant access restrictions
-- Enable upload/review by any authenticated user
-- Log all access control bypasses
-```
-
-**Benefits:**
-
-- **Testing Flexibility**: Easy testing across different user roles
-- **Data Visibility**: View all documents for debugging
-- **Development Speed**: No need to switch between different user accounts
-- **Clear Marking**: All responses marked with `[DEV MODE]` for clarity
-
-### Error Handling & Development Mode Scenarios
+## Error Handling Scenarios
 
 ```mermaid
 sequenceDiagram
@@ -557,7 +445,7 @@ sequenceDiagram
     participant DB as Database
     participant SB as Supabase Storage
 
-    Note over U,SB: Error Handling & Development Mode
+    Note over U,SB: Error Handling
 
     rect rgb(255, 245, 245)
         Note over U,SB: Scenario 1: Bucket Not Found Error
@@ -573,22 +461,8 @@ sequenceDiagram
         UI->>U: Document uploaded successfully
     end
 
-    rect rgb(245, 255, 245)
-        Note over U,SB: Scenario 2: Development Mode Access
-        Note right of API: NODE_ENV=development
-        U->>UI: Access any appointment documents
-        UI->>API: GET documents (different user's appointment)
-        API->>API: Check isDevelopment = true
-        API->>API: Bypass access control
-        Note right of API: Log: [DEV MODE] Bypassing access control
-        API->>DB: Fetch documents (no user restriction)
-        DB->>API: Return all documents
-        API->>UI: Documents with [DEV MODE] label
-        UI->>U: Show documents with dev indicator
-    end
-
     rect rgb(255, 248, 225)
-        Note over U,SB: Scenario 3: Database Error with Graceful Handling
+        Note over U,SB: Scenario 2: Database Error with Graceful Handling
         U->>UI: View consultant documents
         UI->>API: GET consultant documents
         API->>DB: Query appointment documents
@@ -606,7 +480,7 @@ sequenceDiagram
     end
 
     rect rgb(248, 225, 255)
-        Note over U,SB: Scenario 4: Upload with Cleanup on Database Failure
+        Note over U,SB: Scenario 3: Upload with Cleanup on Database Failure
         U->>UI: Upload large document
         UI->>API: POST document
         API->>SB: Upload to storage
@@ -628,16 +502,6 @@ sequenceDiagram
 - **File Count**: Monitor total documents uploaded
 - **Storage Size**: Track total storage usage
 - **Cleanup Efficiency**: Monitor empty folder cleanup success rate
-
-### 2. Health Checks
-
-```bash
-# Manual cleanup execution
-npm run scripts:cleanup-empty-folders
-
-# Development cleanup with detailed output
-npm run scripts:cleanup-empty-folders:dev
-```
 
 ### 3. Error Monitoring
 
@@ -681,7 +545,7 @@ npm run scripts:cleanup-empty-folders:dev
 
 ### 2. Data Protection
 
-- **Private Bucket**: The `documents` bucket is private (`public: false`). No direct public URL access.
+- **Private Buckets**: The `documents`, `support-attachments`, `recordings` and `org-invoices` buckets are private (`public: false`) and are served only through signed URLs. `support-attachments` is set private on the first upload by `reconcileBucketOptions`. Its API rows expose `/api/support-tickets/{ticketId}/attachments/{id}`, which checks the caller and redirects to a 60-second signed URL. The image and preview buckets (`plan-images`, `profile-images`, `organization-images`, `recordings-previews`) stay public, so their public URLs resolve directly.
 - **Signed URLs**: All document access uses time-limited signed URLs generated via `supabaseAdmin.storage.from('documents').createSignedUrl()`. The service role key (`SUPABASE_SERVICE_ROLE_KEY`) is required.
 - **Download Proxy**: The download API endpoint uses `supabaseAdmin` to generate signed URLs. If the service role key is not configured, the endpoint returns an explicit error rather than silently failing.
 - **File Scanning**: Virus scanning for uploaded files (future)
@@ -729,13 +593,6 @@ Solution: The system will automatically create the bucket on first upload
 Status: Fixed with ensureBucketExists() function
 ```
 
-**2. Empty Folder Accumulation**
-
-```bash
-Solution: Daily cleanup script removes empty folders automatically
-Manual: Run `npm run scripts:cleanup-empty-folders`
-```
-
 **3. Permission Denied**
 
 ```bash
@@ -773,3 +630,24 @@ Debug: Check browser console for detailed error messages
 - Report issues to development team
 
 This comprehensive strategy ensures reliable, efficient, and secure document storage management while providing robust cleanup and maintenance capabilities.
+
+## Deprecated & Superseded Approaches
+
+> [!WARNING]
+> **Do NOT re-introduce these superseded storage patterns.**
+
+1. **Public Storage Buckets & Stored Public URLs for User-Uploaded Files**:
+   - Earlier versions stored world-readable Supabase storage URLs directly in `AppointmentDocument.fileUrl` and `PlanMaterial.fileUrl`.
+   - All user documents, plan materials, verification submissions, and support attachments are now stored in private buckets (`public: false`) and served exclusively via authenticated 60-second signed URLs (`Cache-Control: private, no-store`). Only marketing/profile avatars (`plan-images`, `profile-images`, `organization-images`, `recordings-previews`) use public buckets.
+2. **Unverified Client-Side or Public-Key Deletes**:
+   - Calling `.remove()` through an anon client or ignoring partial batch deletion arrays silently left unreferenced blobs in storage while reporting `200 OK` to callers.
+   - All storage mutations run exclusively through `adminStorage()` (`lib/supabase-storage-core.ts`), and `removeObjects()` re-verifies any path missing from batch responses via `exists()` before reporting success.
+3. **Serverless Memory Buffering (`arrayBuffer()`) on Document Downloads**:
+   - Buffering full PDF/DOCX byte arrays through Next.js API routes exhausted serverless function memory and added double-hop latency.
+   - Download endpoints now validate permissions and session state, generate a 60-second signed Supabase URL (`createSignedStorageUrl`), and either return JSON metadata (`?format=json`) for inline preview frames or issue an HTTP `302` redirect.
+4. **Trusting Client `Content-Type` Headers Without Magic-Byte Verification**:
+   - Direct browser-to-storage presigned uploads allow callers to declare arbitrary `Content-Type` headers.
+   - Every commit handler now inspects the first 4,096 bytes of the uploaded object (`verifyDirectUploadedObject` in `lib/documents/storage-verify.ts`), immediately rejecting PE (`MZ`), ELF (`\x7FELF`), Mach-O executables, null-byte binary files disguised as `text/plain`, and header/MIME mismatches.
+5. **Unprobed Orphan Sweeps During Storage Outages**:
+   - Running `reconcile-document-storage` without first probing bucket connectivity risked interpreting empty list responses during transient storage outages as zero storage objects or failing partway through.
+   - `reconcileDocumentStorage` probes bucket readability up front, aborts on any directory listing error (`throw error`), and honors a 30-day soft-delete retention window alongside the 7-day orphan grace period.

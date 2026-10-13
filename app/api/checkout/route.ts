@@ -27,7 +27,26 @@ import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-repla
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { isUniqueViolationOn } from "@/lib/db/unique-violation";
-import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { isDeadlock, isExclusionViolation } from "@/lib/db/pg-errors";
+import {
+  EXPERT_VIA_COOKIE,
+  parseViaToken,
+} from "@/lib/referrals/attribution-token-shape";
+import {
+  BookingRuleError,
+  SlotTakenError,
+} from "@/lib/booking/booking-rule-error";
+import { DiscountExhaustedError } from "@/lib/payments/pricing/discount-exhausted-error";
+
+/** Contention refusals per reason; their share of checkout attempts is the slot-reservation trigger. */
+function countCheckoutConflict(reason: string): void {
+  Sentry.metrics.count("checkout.conflict", 1, { attributes: { reason } });
+}
+
+/** A 1:1 time another buyer holds: the pre-check refusal or the overlap constraint at insert. */
+function isSlotTaken(error: unknown): boolean {
+  return isExclusionViolation(error) || error instanceof SlotTakenError;
+}
 
 export async function POST(req: NextRequest) {
   // #828 — hoisted so the P2002 catch can replay without re-reading the
@@ -35,9 +54,7 @@ export async function POST(req: NextRequest) {
   let replayUserId: string | undefined;
   let replayKey: string | undefined;
   try {
-    // Check authentication — force-fresh (auth-helpers doctrine): the cookie
-    // cache can trail a revocation by up to its TTL, and this is a money path.
-    const authResult = await requireApiAuth();
+    const authResult = await requireApiAuth({ expectUser: true });
     if (authResult.error) return authResult.error;
     const session = authResult.session!;
     replayUserId = session.user.id;
@@ -74,7 +91,7 @@ export async function POST(req: NextRequest) {
       headers: req.headers,
     });
 
-    // Auto-route to optimal gateway (Razorpay domestic/IBT, Stripe fallback)
+    // Auto-route to the gateway (Razorpay for every buyer country)
     const gatewayRouting = routeGateway({
       buyerCountry,
       requestedGateway: validatedData.paymentGateway,
@@ -95,11 +112,33 @@ export async function POST(req: NextRequest) {
 
     // Unified checkout flow: Create payment first, then appointment via webhook
     // Supports both real and mock payments via isMockPayment flag
-    const result = await handleCheckout(
-      validatedData,
-      session.user.id,
-      isMockPayment,
-      buyerCountry,
+    //
+    // #1846 — the checkout core, as a span. This is the most expensive
+    // operation in the product (price derivation, seat hold, a gateway order
+    // mint and a payment write) and it was unmeasurable: the repo emits no
+    // metrics at all, so the only evidence of a checkout slowdown was the
+    // client seeing a slow response. `Sentry.startSpan` is the same idiom
+    // lib/payments/core/razorpay.ts already uses for the inner gateway call, so
+    // the two nest in one trace — the outer span shows the total, the inner one
+    // shows how much of it was Razorpay. No new dependency and no exporter.
+    const result = await Sentry.startSpan(
+      { op: "booking.checkout", name: "checkout.handle" },
+      (span) =>
+        handleCheckout(
+          validatedData,
+          session.user.id,
+          isMockPayment,
+          buyerCountry,
+          {
+            viaToken: parseViaToken(req.cookies.get(EXPERT_VIA_COOKIE)?.value),
+          },
+        ).then((value) => {
+          // Which gateway ran, not what was asked for: auto-routing may have
+          // overridden the request above, and it is the one input that changes
+          // what this span's duration means.
+          span?.setAttribute("gateway", gatewayRouting.gateway);
+          return value;
+        }),
     );
     if (!result.success) {
       return NextResponse.json(result, { status: 400 });
@@ -111,7 +150,9 @@ export async function POST(req: NextRequest) {
     // reads defensively with `in` rather than assuming a field on every
     // branch. Read-only: never affects the response.
     const gatewayOrderId =
-      ("orderId" in result && typeof result.orderId === "string" && result.orderId) ||
+      ("orderId" in result &&
+        typeof result.orderId === "string" &&
+        result.orderId) ||
       ("paymentIntent" in result &&
         result.paymentIntent &&
         typeof result.paymentIntent === "object" &&
@@ -182,6 +223,7 @@ export async function POST(req: NextRequest) {
     // B4 — SOLD OUT answered by the optimistic pre-check before the mutex.
     // Terminal until someone cancels: no retryAfter, plain copy.
     if (error instanceof EventFullError) {
+      countCheckoutConflict(error.code);
       return NextResponse.json(
         {
           error: error.message,
@@ -199,6 +241,7 @@ export async function POST(req: NextRequest) {
       error instanceof EventCheckoutBusyError ||
       error instanceof ConsulteeBookingBusyError
     ) {
+      countCheckoutConflict(error.code);
       return NextResponse.json(
         {
           error: error.message,
@@ -279,13 +322,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // #1319 — an exhausted serialization retry (P2034 ×4) means the tx never
-    // committed: nothing was charged and a retry will see the sibling's state.
-    // classifyError is message-only and would label it 500.
+    // #1319 — an exhausted serialization retry (P2034 or 40P01 ×4) means the tx
+    // never committed: nothing was charged and a retry will see the sibling's
+    // state. classifyError is message-only and would label it 500.
     if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2034"
+      (error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034") ||
+      isDeadlock(error)
     ) {
+      countCheckoutConflict("SERIALIZATION_CONFLICT");
+      reportSentryError(error, {
+        subsystem: "checkout",
+        op: "serializable-exhausted",
+        expected: true,
+        level: "warning",
+      });
       return NextResponse.json(
         {
           error:
@@ -305,16 +356,19 @@ export async function POST(req: NextRequest) {
     // without an explicit branch above — the #1458 programme-cap codes, the
     // #1467 entitlement codes — paging as a checkout incident. Report it the
     // way the modelled refusals inside handleCheckout are reported instead.
+    if (isSlotTaken(error)) countCheckoutConflict("SLOT_TAKEN");
+    let errorId: string | undefined;
     if (isBusinessErrorCode((error as { code?: unknown } | null)?.code)) {
       reportSentryError(error, { subsystem: "checkout", expected: true });
     } else {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "checkout" } },
-      );
+      errorId =
+        reportSentryError(error, { subsystem: "checkout" }) || undefined;
     }
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
+    if (classified.errorType === ErrorTypes.LOCK_CONTENTION) {
+      countCheckoutConflict(classified.errorType);
+    }
 
     // A coded refusal that names a retry window (CREDIT_SHORTFALL after a
     // concurrent spend, #1582 B-P1-01) lets the client auto-retry once.
@@ -325,7 +379,15 @@ export async function POST(req: NextRequest) {
         errorType: classified.errorType,
         // #1834 — additive: the booking rule's own code (e.g. ENROLMENT_CLOSED), as bookingRuleResponse sends it.
         ...(error instanceof BookingRuleError ? { code: error.code } : {}),
+        ...(error instanceof DiscountExhaustedError
+          ? {
+              code: error.code,
+              currentUses: error.currentUses,
+              maxUses: error.maxUses,
+            }
+          : {}),
         ...(typeof retryAfter === "number" ? { retryAfter } : {}),
+        ...(errorId ? { errorId } : {}),
         timestamp: new Date().toISOString(),
       },
       { status: classified.httpStatus },

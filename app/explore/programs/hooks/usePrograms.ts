@@ -90,12 +90,7 @@ export function usePrograms(
                 ...typedPlan,
                 classes,
                 type: "class",
-                imageUrl: generateProgramImageUrl(
-                  typedPlan.id,
-                  600,
-                  400,
-                  typedPlan.imageUrl,
-                ),
+                imageUrl: generateProgramImageUrl(typedPlan.imageUrl),
                 isRegistered,
               } as ClassPlanProgram;
             },
@@ -123,12 +118,7 @@ export function usePrograms(
                   ...typedPlan,
                   webinars,
                   type: "webinar",
-                  imageUrl: generateProgramImageUrl(
-                    typedPlan.id,
-                    600,
-                    400,
-                    typedPlan.imageUrl,
-                  ),
+                  imageUrl: generateProgramImageUrl(typedPlan.imageUrl),
                   isRegistered,
                 } as WebinarPlanProgram;
               },

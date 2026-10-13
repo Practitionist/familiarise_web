@@ -21,6 +21,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { OrgAuditCategory } from "@prisma/client";
 import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceActivity } from "@/lib/data/org-workspace";
@@ -28,6 +29,8 @@ import { getWorkspaceActivity } from "@/lib/data/org-workspace";
 const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z.string().optional(),
+  organizationId: z.string().min(1).optional(),
+  category: z.nativeEnum(OrgAuditCategory).optional(),
 });
 
 export async function GET(
@@ -63,6 +66,10 @@ export async function GET(
     auth.session.user.id,
     q.cursor ?? null,
     q.limit,
+    {
+      organizationId: q.organizationId ?? null,
+      category: q.category ?? null,
+    },
   );
   return NextResponse.json(result);
 }

@@ -34,6 +34,8 @@ import type { PersonalInfoAndRole } from "@/schemas/user";
 interface ConsultantProfessionalStepProps {
   onNext: (data: Partial<OnboardingFormData>) => void;
   onBack: () => void;
+  /** Field-level autosave: unsubmitted edits on this step. */
+  onDraftChange?: (partial: Record<string, unknown>) => void;
   initialData: Partial<OnboardingFormData>;
   personalInfo: PersonalInfoAndRole;
 }
@@ -41,6 +43,7 @@ interface ConsultantProfessionalStepProps {
 export default function ConsultantProfessionalStep({
   onNext,
   onBack,
+  onDraftChange,
   initialData,
   personalInfo,
 }: ConsultantProfessionalStepProps) {
@@ -111,6 +114,23 @@ export default function ConsultantProfessionalStep({
     }
   }, [initialData]);
 
+  useEffect(() => {
+    onDraftChange?.({
+      ...(expertiseData ?? {}),
+      workExperiences,
+      educationHistory: education,
+      certificationsList: certifications,
+      achievements: achievements.map(({ id: _id, ...rest }) => rest),
+    });
+  }, [
+    onDraftChange,
+    expertiseData,
+    workExperiences,
+    education,
+    certifications,
+    achievements,
+  ]);
+
   const handleExpertiseNext = (data: Partial<OnboardingFormData>) => {
     setExpertiseData(data);
     setActiveTab("experience");
@@ -141,6 +161,7 @@ export default function ConsultantProfessionalStep({
           <ConsultantProfileForm
             onNext={handleExpertiseNext}
             onBack={onBack}
+            onDraftChange={onDraftChange}
             initialData={expertiseData || initialData}
             personalInfo={personalInfo}
           />

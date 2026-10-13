@@ -120,9 +120,10 @@ function appointmentsKey(args: {
 }
 
 export function OperatorAppointmentsClient({
+  beforeContent,
   renderOps,
 }: Readonly<{
-  /** #1771 — the tree's per-booking Ops actions panel, supplied by app/. */
+  beforeContent?: ReactNode;
   renderOps?: (appointmentId: string) => ReactNode;
 }>) {
   const { toast } = useToast();
@@ -269,6 +270,8 @@ export function OperatorAppointmentsClient({
         }
       />
 
+      {beforeContent}
+
       {/* Global counts within the filters (#897), not the current page. */}
       <StatRow>
         <Stat label="Appointments" value={counts.all} icon={Calendar} />
@@ -383,15 +386,13 @@ export function OperatorAppointmentsClient({
                                     tone="warning"
                                   />
                                 )}
-                                {/* #1486 — a reschedule waiting on a party. */}
+                                {/* #1486 — a reschedule waiting on a party.
+                                    One label, not two: the query filters to the
+                                    open statuses, and since the counter-round was
+                                    retired the only open status is PENDING_REVIEW. */}
                                 {appointment.reschedule && (
                                   <StatusBadge
-                                    label={
-                                      appointment.reschedule.status ===
-                                      "COUNTERED"
-                                        ? "Reschedule countered"
-                                        : "Reschedule proposed"
-                                    }
+                                    label="Reschedule proposed"
                                     tone="caution"
                                   />
                                 )}

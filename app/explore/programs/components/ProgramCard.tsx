@@ -9,7 +9,7 @@ import Link from "next/link";
 import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "@/lib/explore/programs";
-import { displayedScore } from "@/lib/reviews-display";
+import { displayedScore, displayedScoreCount } from "@/lib/reviews-display";
 
 type ProgramCardVariant = "grid" | "list" | "carousel";
 export type ProgramBadge = "featured" | "trending" | "new";
@@ -18,13 +18,9 @@ interface ProgramCardProps {
   program: Program;
   variant?: ProgramCardVariant;
   badge?: ProgramBadge;
-  /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
   viewerOrgs?: Record<string, string>;
 }
 
-// Curation state is a neutral taxonomy, not a status — colour is reserved for
-// destructive/success/warning/info here, so these read monochrome (filled for
-// the editorial pick, muted for the derived ones) and survive dark mode.
 const badgeConfig: Record<
   ProgramBadge,
   { label: string; icon: React.ReactNode; className: string }
@@ -72,10 +68,6 @@ function ExtraBadge({ badge }: { badge: ProgramBadge }) {
   );
 }
 
-/**
- * The star on a program card: the GROUP score or nothing (#1566) — a group
- * product never wears a 1:1 reputation. NULL means suppressed, no star.
- */
 function getProgramRating(program: Program): number | null {
   const profile = program.consultantProfile;
   if (!profile) return null;
@@ -86,6 +78,18 @@ function getProgramRating(program: Program): number | null {
     },
     "GROUP",
   ).score;
+}
+
+function getProgramRatingCount(program: Program): number {
+  const profile = program.consultantProfile;
+  if (!profile) return 0;
+  return displayedScoreCount(
+    {
+      ratedClientsOneToOne: profile.ratedClientsOneToOne ?? 0,
+      ratedEventsGroup: profile.ratedEventsGroup ?? 0,
+    },
+    "GROUP",
+  );
 }
 
 /** Extract consultant headline from plan data if available. */
@@ -142,6 +146,7 @@ function GridCard({
 }) {
   const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
+  const ratingCount = getProgramRatingCount(program);
   const instructor = getProgramInstructor(program);
   const workExperiences = getInstructorWorkExperiences(program);
 
@@ -212,7 +217,7 @@ function GridCard({
               <div className="flex items-center gap-0.5 ml-1">
                 <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                 <span className="text-xs font-medium text-muted-foreground">
-                  {rating.toFixed(1)}
+                  {rating.toFixed(1)} ({ratingCount})
                 </span>
               </div>
             )}
@@ -243,6 +248,7 @@ function ListCard({
 }) {
   const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
+  const ratingCount = getProgramRatingCount(program);
   const instructor = getProgramInstructor(program);
   const workExperiences = getInstructorWorkExperiences(program);
 
@@ -313,7 +319,7 @@ function ListCard({
                 <div className="flex items-center gap-0.5 ml-1">
                   <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                   <span className="text-xs font-medium text-muted-foreground">
-                    {rating.toFixed(1)}
+                    {rating.toFixed(1)} ({ratingCount})
                   </span>
                 </div>
               )}

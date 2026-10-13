@@ -20,9 +20,9 @@ import type { AppointmentStatus } from "@prisma/client";
  * often most valuable after it, and a thread that goes read-only the moment the
  * last appointment ends strands both parties mid-exchange.
  *
- * Deliberately EXCLUDES `PENDING`: a request the consultant has not accepted is
- * not yet a relationship, or anyone could open a channel with anyone by
- * requesting a booking they never intend to pay for.
+ * Deliberately EXCLUDES `PENDING` and `APPROVED_PENDING_PAYMENT`: chat opens
+ * only once payment settles or an appointment is approved without pending
+ * payment (`APPROVED`, `SCHEDULED`, `COMPLETED`).
  *
  * **Changing this changes what the reconciler deletes.**
  * `syncUserEventChannels` treats every `dm-`/`dmo-`/`dmh-` channel absent from
@@ -34,7 +34,6 @@ import type { AppointmentStatus } from "@prisma/client";
  */
 export const DM_ELIGIBLE_STATUSES: readonly AppointmentStatus[] = [
   "APPROVED",
-  "APPROVED_PENDING_PAYMENT",
   "SCHEDULED",
   "COMPLETED",
 ] as const;

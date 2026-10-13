@@ -34,6 +34,10 @@ import { numericStateCode } from "@/lib/compliance/state-codes";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { TAX_CONSTANTS } from "@/lib/payments/payouts/constants";
+import {
+  COMMERCIAL_CREDIT_NOTE_REASON_PREFIX,
+  isPastGstCreditNoteCutoff,
+} from "@/lib/compliance/gst-credit-note-cutoff";
 import { getPlatformSupplier } from "@/lib/pdf/supplier";
 import { generateConsumerInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import { generateConsumerCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
@@ -374,12 +378,13 @@ export async function mintConsumerInvoice(
       tags: { feature: "consumer-invoice" },
       extra: { paymentId: payment.id, ...mismatch },
     });
-    void recordSystemErrorSafe({
+    await recordSystemErrorSafe({
       organizationId: null,
       category: "PAYMENT",
       summary: "Consumer tax invoice not minted: supplier state is ambiguous",
       err: ambiguous,
       context: { paymentId: payment.id, ...mismatch },
+      db: tx,
     });
     return { consumerInvoiceId: null };
   }
@@ -547,6 +552,7 @@ export async function mintConsumerCreditNote(
     reason: string;
     refundId?: string;
     disputeId?: string;
+    now?: Date;
   },
 ): Promise<{ consumerCreditNoteId: string | null }> {
   if (Boolean(params.refundId) === Boolean(params.disputeId)) {
@@ -568,6 +574,8 @@ export async function mintConsumerCreditNote(
     where: { paymentId: params.paymentId },
     select: {
       id: true,
+      supplyDate: true,
+      taxableValuePaise: true,
       cgstPaise: true,
       sgstPaise: true,
       igstPaise: true,
@@ -578,21 +586,33 @@ export async function mintConsumerCreditNote(
     return { consumerCreditNoteId: null };
   }
 
-  // Read the notes already issued inside this same transaction, so the cap is
-  // cumulative rather than per-note. Two concurrent triggers can still read
-  // the same sum under READ COMMITTED; the @unique trigger keys bound that to
-  // one note per refund and one per dispute.
-  const issued = await tx.consumerCreditNote.aggregate({
-    where: { consumerInvoiceId: invoice.id },
+  // Lock the parent ConsumerInvoice row so two concurrent triggers (e.g., a
+  // partial refund racing a lost dispute) serialize on the cumulative cap.
+  await tx.$executeRaw`SELECT id FROM "ConsumerInvoice" WHERE id = ${invoice.id} FOR UPDATE`;
+  const taxNotes = await tx.consumerCreditNote.aggregate({
+    where: { consumerInvoiceId: invoice.id, isCommercial: false },
     _sum: { totalPaise: true },
   });
+  const commercialNotes = await tx.consumerCreditNote.aggregate({
+    where: { consumerInvoiceId: invoice.id, isCommercial: true },
+    _sum: { taxableValuePaise: true },
+  });
+  // A commercial note carries no tax, so it consumes its value grossed up at the invoice's rate.
+  const commercialGross =
+    invoice.taxableValuePaise > 0
+      ? Math.round(
+          (sumPaise(commercialNotes._sum.taxableValuePaise) *
+            invoice.totalPaise) /
+            invoice.taxableValuePaise,
+        )
+      : 0;
   const derived = deriveConsumerCreditNoteAmounts({
     invoiceTotalPaise: invoice.totalPaise,
     invoiceCgstPaise: invoice.cgstPaise,
     invoiceSgstPaise: invoice.sgstPaise,
     invoiceIgstPaise: invoice.igstPaise,
     // Aggregations bypass the money result extension — see lib/prisma-extensions.
-    alreadyCreditedPaise: sumPaise(issued._sum.totalPaise),
+    alreadyCreditedPaise: sumPaise(taxNotes._sum.totalPaise) + commercialGross,
     requestedPaise: params.amountPaise,
   });
   if (derived.outcome === "FULLY_CREDITED") {
@@ -610,7 +630,7 @@ export async function mintConsumerCreditNote(
     const refusal = new Error(
       `ConsumerInvoice ${invoice.id} is credited in full; ${params.amountPaise}p could not be reversed.`,
     );
-    void recordSystemEventSafe({
+    await recordSystemEventSafe({
       organizationId: null,
       category: "PAYMENT",
       severity: "ERROR",
@@ -621,6 +641,7 @@ export async function mintConsumerCreditNote(
         disputeId: params.disputeId ?? null,
         errorMessage: refusal.message,
       },
+      db: tx,
     });
     reportSentryError(refusal, {
       subsystem: "payments",
@@ -639,9 +660,18 @@ export async function mintConsumerCreditNote(
   if (derived.outcome === "NOTHING_TO_CREDIT") {
     return { consumerCreditNoteId: null };
   }
-  const amounts = derived.amounts;
+  const commercial = isPastGstCreditNoteCutoff(invoice.supplyDate, params.now);
+  const amounts = commercial
+    ? {
+        ...derived.amounts,
+        cgstPaise: 0,
+        sgstPaise: 0,
+        igstPaise: 0,
+        creditedTotalPaise: derived.amounts.taxableValuePaise,
+      }
+    : derived.amounts;
 
-  const issuedAt = new Date();
+  const issuedAt = params.now ?? new Date();
   const { creditNoteNumber, fiscalYear } =
     await generateConsumerCreditNoteNumber(tx, issuedAt);
 
@@ -652,7 +682,10 @@ export async function mintConsumerCreditNote(
       consumerInvoiceId: invoice.id,
       refundId: params.refundId ?? null,
       disputeId: params.disputeId ?? null,
-      reason: params.reason,
+      reason: commercial
+        ? `${COMMERCIAL_CREDIT_NOTE_REASON_PREFIX}${params.reason}`
+        : params.reason,
+      isCommercial: commercial,
       taxableValuePaise: amounts.taxableValuePaise,
       cgstPaise: amounts.cgstPaise,
       sgstPaise: amounts.sgstPaise,

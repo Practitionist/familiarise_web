@@ -14,18 +14,15 @@ import {
 import { slaStateOf, type SlaClock } from "./sla";
 
 /**
- * #1527 — the back-office Support inbox: one list of CASES over two tables.
+ * Back-office Support inbox: one list of CASES over two tables.
  * A case is a ticket (platform, or escalated with its thread folded in) or a
  * conversation that has not been escalated yet (`supportTicketId: null`), so
  * an escalated conversation appears once, as its ticket.
- *
- * Pure: the list route, the nav badge and jest read the same builders (#1345 —
- * a badge counts exactly the set its page shows). `null` from a builder means
- * that table contributes nothing to the view.
  */
 
 export const INBOX_VIEWS = [
   "needs-reply",
+  "sla-at-risk",
   "mine",
   "unassigned",
   "self-serve",
@@ -35,11 +32,15 @@ export type InboxView = (typeof INBOX_VIEWS)[number];
 
 export const INBOX_VIEW_LABEL: Record<InboxView, string> = {
   "needs-reply": "Needs reply",
+  "sla-at-risk": "SLA at risk",
   mine: "Mine",
   unassigned: "Unassigned",
   "self-serve": "Self-serve only",
   all: "All",
 };
+
+export const INBOX_SORTS = ["activity", "sla"] as const;
+export type InboxSort = (typeof INBOX_SORTS)[number];
 
 export const INBOX_SCOPES = ["session", "platform"] as const;
 export type InboxScope = (typeof INBOX_SCOPES)[number];
@@ -65,6 +66,7 @@ const PRIORITIES: readonly SupportPriority[] = [
 /** The URL keys the inbox's views and filters live under (useListParams). */
 export const INBOX_FILTER_KEYS = [
   "view",
+  "sort",
   "scope",
   "status",
   "priority",
@@ -80,6 +82,7 @@ export const INBOX_MAX_DEPTH = 1000;
 
 export interface InboxFilters {
   view: InboxView;
+  sort: InboxSort;
   scope: InboxScope | null;
   status: InboxStatus | null;
   priority: SupportPriority | null;
@@ -107,8 +110,13 @@ export function parseInboxFilters(
   viewerId: string,
 ): InboxFilters {
   const topic = get("topic");
+  const view = oneOf(INBOX_VIEWS, get("view")) ?? "needs-reply";
+  const requestedSort = oneOf(INBOX_SORTS, get("sort"));
   return {
-    view: oneOf(INBOX_VIEWS, get("view")) ?? "needs-reply",
+    view,
+    sort:
+      requestedSort ??
+      (view === "needs-reply" || view === "sla-at-risk" ? "sla" : "activity"),
     scope: oneOf(INBOX_SCOPES, get("scope")),
     status: oneOf(INBOX_STATUSES, get("status")),
     priority: oneOf(PRIORITIES, get("priority")),
@@ -137,7 +145,7 @@ const THREAD_STATUSES = new Set<string>([
   "CLOSED",
 ]);
 
-/** The ball is in our court: unsettled and not waiting on the user (#705 clock). */
+/** The ball is in our court: unsettled and not waiting on the user. */
 export const TICKET_NEEDS_REPLY_WHERE: Prisma.SupportTicketWhereInput = {
   status: { in: ["OPEN", "IN_PROGRESS"] },
   awaitingUserSince: null,
@@ -168,13 +176,28 @@ function range(f: InboxFilters) {
   };
 }
 
+export const SLA_ACK_AT_RISK_MS = 6 * 3_600_000;
+export const SLA_RESOLUTION_AT_RISK_MS = 12 * 3_600_000;
+
 export function inboxTicketWhere(
   f: InboxFilters,
+  now: Date = new Date(),
 ): Prisma.SupportTicketWhereInput | null {
   if (f.view === "self-serve") return null;
   if (f.status && !TICKET_STATUSES.has(f.status)) return null;
   const and: Prisma.SupportTicketWhereInput[] = [];
   if (f.view === "needs-reply") and.push(TICKET_NEEDS_REPLY_WHERE);
+  if (f.view === "sla-at-risk") {
+    const ackThreshold = new Date(now.getTime() + SLA_ACK_AT_RISK_MS);
+    const resThreshold = new Date(now.getTime() + SLA_RESOLUTION_AT_RISK_MS);
+    and.push(TICKET_OPEN_WHERE, {
+      awaitingUserSince: null,
+      OR: [
+        { acknowledgedAt: null, ackDueAt: { lte: ackThreshold } },
+        { resolutionDueAt: { lte: resThreshold } },
+      ],
+    });
+  }
   if (f.view === "mine") and.push({ assignedToId: f.viewerId });
   if (f.view === "unassigned") and.push({ assignedToId: null });
   // Mine/Unassigned are work queues: settled cases drop out unless asked for.
@@ -210,9 +233,15 @@ export function inboxTicketWhere(
 export function inboxThreadWhere(
   f: InboxFilters,
 ): Prisma.AppointmentSupportThreadWhereInput | null {
-  // Conversations are never assigned and carry no priority; a platform case
-  // is by definition not about a booking.
-  if (f.view === "mine" || f.view === "unassigned") return null;
+  // Conversations are never assigned, carry no priority, and do not have
+  // statutory ticket SLA clocks; a platform case is not about a booking.
+  if (
+    f.view === "mine" ||
+    f.view === "unassigned" ||
+    f.view === "sla-at-risk"
+  ) {
+    return null;
+  }
   if (f.priority || f.scope === "platform") return null;
   if (f.status && !THREAD_STATUSES.has(f.status)) return null;
   const and: Prisma.AppointmentSupportThreadWhereInput[] = [THREAD_CASE_WHERE];
@@ -241,7 +270,7 @@ export function inboxThreadWhere(
   return { AND: and };
 }
 
-/** The nav badge: the default view, with no filters (#1345). */
+/** The nav badge: the default view, with no filters. */
 export function inboxBadgeFilters(viewerId: string): InboxFilters {
   return parseInboxFilters(() => null, viewerId);
 }
@@ -252,6 +281,9 @@ export interface SortKey {
   key: string;
   lastMessageAt: Date | null;
   createdAt: Date;
+  acknowledgedAt?: Date | null;
+  ackDueAt?: Date | null;
+  resolutionDueAt?: Date | null;
 }
 
 /** Both reads order by this, so the merge reproduces a single ORDER BY. */
@@ -274,14 +306,37 @@ export function compareCases(a: SortKey, b: SortKey): number {
   return a.key < b.key ? 1 : -1;
 }
 
+export function compareCasesBySla(a: SortKey, b: SortKey): number {
+  const aAck = a.acknowledgedAt ? null : (a.ackDueAt ?? null);
+  const bAck = b.acknowledgedAt ? null : (b.ackDueAt ?? null);
+  if (Boolean(aAck) !== Boolean(bAck)) return aAck ? -1 : 1;
+  if (aAck && bAck) {
+    const diff = aAck.getTime() - bAck.getTime();
+    if (diff !== 0) return diff;
+  }
+  const aRes = a.resolutionDueAt ?? null;
+  const bRes = b.resolutionDueAt ?? null;
+  if (Boolean(aRes) !== Boolean(bRes)) return aRes ? -1 : 1;
+  if (aRes && bRes) {
+    const diff = aRes.getTime() - bRes.getTime();
+    if (diff !== 0) return diff;
+  }
+  const byCreated = a.createdAt.getTime() - b.createdAt.getTime();
+  if (byCreated !== 0) return byCreated;
+  if (a.key === b.key) return 0;
+  return a.key < b.key ? -1 : 1;
+}
+
 /** One page of the union, given each table's first `skip + take` rows in order. */
 export function mergeCasePage<T extends SortKey>(
   a: readonly T[],
   b: readonly T[],
   skip: number,
   take: number,
+  sort: InboxSort = "activity",
 ): T[] {
-  return [...a, ...b].sort(compareCases).slice(skip, skip + take);
+  const cmp = sort === "sla" ? compareCasesBySla : compareCases;
+  return [...a, ...b].sort(cmp).slice(skip, skip + take);
 }
 
 // ── Team stats ──────────────────────────────────────────────────────────

@@ -18,22 +18,19 @@ import {
   cleanupExpiredApprovalPendingPayments,
 } from "@/scripts/payments/cleanup-abandoned-payments";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
+import { reconcileOrphanedPayments } from "@/scripts/payments/reconcile-orphaned-confirmations";
 
 // Refunds
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
-import { cascadeRefundToEarnings } from "@/scripts/refunds/cascade-refund-earnings";
 
 // Disputes
 import { reconcileDisputes } from "@/scripts/disputes/reconcile-disputes";
-import { handleLostDisputes } from "@/scripts/disputes/handle-lost-disputes";
-import { alertDisputeDeadlines } from "@/scripts/disputes/alert-dispute-deadlines";
 
 // Earnings
 import { syncPaymentEarnings } from "@/scripts/earnings/sync-payment-earnings";
 import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 
 // Appointments
-import { runAllCleanupTasks as cleanupInvalidAppointments } from "@/scripts/appointments/cleanup-invalid-appointments";
 import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
 import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
 import { cleanupTentativeOccurrences } from "@/scripts/appointments/cleanup-tentative-occurrences";
@@ -50,10 +47,10 @@ import { handleStuckPayouts } from "@/scripts/payouts/handle-stuck-payouts";
 import { reconcilePayoutStatus } from "@/scripts/payouts/reconcile-payout-status";
 
 // Cleanup
-import { cleanupAuthTokens } from "@/scripts/cleanup/cleanup-auth-tokens";
+import { cleanupAuthTokens } from "@/lib/auth/cleanup-auth-tokens";
 import { archiveWebhookEvents } from "@/scripts/cleanup/archive-webhook-events";
-import { deactivateExpiredDiscounts } from "@/scripts/cleanup/deactivate-expired-discounts";
 import { reconcileDocumentStorage } from "@/scripts/cleanup/reconcile-document-storage";
+import { purgeDeletedDocuments } from "@/lib/documents/document-purge";
 
 // Alerts
 import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments";
@@ -64,12 +61,11 @@ import { alertOrphanedPayments } from "@/scripts/alerts/alert-orphaned-payments"
 // When recordings stop transferring or event channels stop expiring, the only
 // way to run the repair was to dispatch a GitHub workflow.
 import { performStreamUserSync } from "@/scripts/stream/stream-sync";
-import { cleanupOldStreamRecordings } from "@/scripts/cleanup/cleanup-old-stream-recordings";
 import { reconcileOrphanedRecordings } from "@/scripts/stream/reconcile-orphaned-recordings";
-import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
+import { transferRecordings } from "@/lib/stream/recording-transfer-service";
+import { expireRecordings } from "@/lib/stream/recording-retention";
 import { expireEventChannels } from "@/jobs/stream/expire-event-channels";
 import { reconcileOrphanedSessions } from "@/jobs/meetings/reconcile-orphaned-sessions";
-import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -91,7 +87,7 @@ type JobResult = {
   [key: string]: unknown;
 };
 
-type JobFunction = () => Promise<JobResult>;
+type JobFunction = (actorUserId?: string) => Promise<JobResult>;
 
 const JOB_FUNCTIONS: Record<string, JobFunction> = {
   "cleanup-abandoned-payments": async () => {
@@ -129,25 +125,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errors.length,
     };
   },
-  "handle-lost-disputes": async () => {
-    const result = await handleLostDisputes();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      updatedCount: result.updatedCount,
-      alreadyPaidCount: result.alreadyPaidCount,
-      errorCount: result.errorCount,
-    };
-  },
-  "cascade-refund-earnings": async () => {
-    const result = await cascadeRefundToEarnings();
-    return {
-      success: result.success,
-      totalProcessed: result.totalProcessed,
-      updatedCount: result.updatedCount,
-      errorCount: result.errorCount,
-    };
-  },
   "sync-payment-earnings": async () => {
     const result = await syncPaymentEarnings();
     return {
@@ -167,31 +144,21 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errorCount,
     };
   },
-  "cleanup-invalid-appointments": async () => {
-    const result = await cleanupInvalidAppointments();
-    return {
-      success: result.success,
-      totalProcessed: result.totalCancelled,
-      cleanedCount: result.totalCancelled,
-      duplicateConsultations: result.duplicateConsultationsCancelled,
-      duplicateSubscriptions: result.duplicateSubscriptionsCancelled,
-      invalidDurationConsultations:
-        result.invalidDurationConsultationsCancelled,
-      invalidDurationSubscriptions:
-        result.invalidDurationSubscriptionsCancelled,
-      errorCount: result.errors.length,
-    };
-  },
-  "create-payout-batch": async () => {
-    const batchId = await createPayoutBatchService();
+  "create-payout-batch": async (actorUserId?: string) => {
+    const batchId = await createPayoutBatchService(
+      undefined,
+      actorUserId ? { createdBy: actorUserId } : undefined,
+    );
     return {
       success: true,
       batchId,
     };
   },
-  "process-payouts": async () => {
+  "process-payouts": async (actorUserId?: string) => {
     const results = await processApprovedPayoutsService(
-      REQUEST_PAYOUT_RUN_BOUNDS,
+      actorUserId
+        ? { ...REQUEST_PAYOUT_RUN_BOUNDS, triggeredByUserId: actorUserId }
+        : REQUEST_PAYOUT_RUN_BOUNDS,
     );
     const succeeded = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
@@ -213,6 +180,19 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       totalAmount: result.totalAmount,
     };
   },
+  "reconcile-orphaned-payments": async () => {
+    const result = await reconcileOrphanedPayments();
+    return {
+      success: result.success,
+      totalProcessed: result.scanned,
+      scannedCount: result.scanned,
+      linkedCount: result.linked,
+      refundedCount: result.refunded,
+      escrowedCount: result.escrowed,
+      stillFailingCount: result.stillFailing,
+      errorCount: result.stillFailing,
+    };
+  },
   "handle-stuck-payouts": async () => {
     const result = await handleStuckPayouts();
     return {
@@ -232,7 +212,8 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       cleanedCount: result.totalCleaned,
       verificationTokensDeleted: result.verificationTokensDeleted,
       sessionsDeleted: result.sessionsDeleted,
-      passwordResetTokensCleared: result.passwordResetTokensCleared,
+      idempotencyRecordsDeleted: result.idempotencyRecordsDeleted,
+      staleInvitationsExpired: result.staleInvitationsExpired,
     };
   },
   "reconcile-payment-status": async () => {
@@ -256,15 +237,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       failedCount: result.failedCount,
       discrepanciesCount: result.discrepancies.length,
       errorCount: result.errors.length,
-    };
-  },
-  "alert-dispute-deadlines": async () => {
-    const result = await alertDisputeDeadlines();
-    return {
-      success: result.success,
-      urgentCount: result.urgentCount,
-      criticalCount: result.criticalCount,
-      totalAlerts: result.urgentCount,
     };
   },
   "auto-complete-appointments": async () => {
@@ -322,6 +294,16 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errors.length,
     };
   },
+  "purge-deleted-documents": async () => {
+    const result = await purgeDeletedDocuments();
+    return {
+      success: result.success,
+      tombstoned: result.tombstoned,
+      purged: result.purged,
+      cleanedCount: result.purged,
+      errorCount: result.failedStorage + result.failedRows,
+    };
+  },
   "reconcile-document-storage": async () => {
     const result = await reconcileDocumentStorage();
     return {
@@ -330,17 +312,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       orphanedFilesDeleted: result.orphanedFilesDeleted,
       missingFilesFound: result.missingFilesFound,
       cleanedCount: result.orphanedFilesDeleted,
-      errorCount: result.errors.length,
-    };
-  },
-  "deactivate-expired-discounts": async () => {
-    const result = await deactivateExpiredDiscounts();
-    return {
-      success: result.success,
-      expiredByDateCount: result.expiredByDateCount,
-      maxUsesReachedCount: result.maxUsesReachedCount,
-      totalDeactivated: result.totalDeactivated,
-      cleanedCount: result.totalDeactivated,
       errorCount: result.errors.length,
     };
   },
@@ -356,31 +327,8 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.totalFailedDeletions,
     };
   },
-  "mark-expired-recordings": async () => {
-    // The lock for this one lives in the workflow entrypoint rather than in a
-    // shared core, so the operator path has to take it explicitly — otherwise
-    // an admin click during the 03:20 run would race the cron, and neither run
-    // would leave a `SystemJobExecution` row for the click.
-    const expiredCount = await withCronLock(
-      "mark-expired-recordings",
-      { failMode: "open" },
-      () => RecordingTransferService.markExpiredRecordings(),
-    );
-    return {
-      success: true,
-      totalProcessed: expiredCount,
-      expiredCount,
-    };
-  },
-  "transfer-expiring-recordings": async () => {
-    // Same reasoning as above, and it matters more here: two concurrent runs
-    // would upload the same recording to Supabase twice.
-    const result = await withCronLock(
-      "transfer-expiring-recordings",
-      { failMode: "open" },
-      () =>
-        RecordingTransferService.processExpiringRecordings(14, 10, "PERMANENT"),
-    );
+  "transfer-recordings": async () => {
+    const result = await transferRecordings();
     return {
       success: result.failed === 0,
       totalProcessed: result.processed,
@@ -389,13 +337,13 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errors.length,
     };
   },
-  "cleanup-old-stream-recordings": async () => {
-    const result = await cleanupOldStreamRecordings();
+  "expire-recordings": async () => {
+    const result = await expireRecordings();
     return {
       success: result.success,
       totalProcessed: result.scanned,
-      expiredCount: result.expired,
-      cleanedCount: result.expired,
+      expiredCount: result.expired + result.lapsed,
+      cleanedCount: result.cleaned,
       errorCount: result.errors.length,
     };
   },
@@ -524,7 +472,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (BACKGROUND_JOBS.has(jobId)) {
       scheduleAfter(async () => {
         try {
-          const outcome = await jobFunction();
+          const outcome = await jobFunction(user.id);
           await logRun(outcome.success ? "SUCCEEDED" : "FAILED");
         } catch (err) {
           await logRun("FAILED");
@@ -548,7 +496,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     let result: JobResult;
     try {
-      result = await jobFunction();
+      result = await jobFunction(user.id);
     } catch (err) {
       await logRun("FAILED");
       throw err;

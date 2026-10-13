@@ -37,6 +37,7 @@ import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { nextPeriodEnd } from "@/lib/enterprise/cycle-engine";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 const BATCH_SIZE = 500;
 
@@ -99,6 +100,7 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
                 billingAccountId: c.billingAccountId,
                 purchaseOrderId: c.purchaseOrderId,
                 status: "ACTIVE",
+                signedAt: now,
                 effectiveFrom: oldTo,
                 effectiveTo: newTo,
                 paymentTermsDays: c.paymentTermsDays,
@@ -169,6 +171,23 @@ export async function runAutoRenewContracts(): Promise<RenewStats> {
                 },
               },
             });
+
+            await dispatchWebhookEvent({
+              prisma: tx,
+              organizationId: c.organizationId,
+              eventType: "contract.signed",
+              payload: {
+                contractId: successor.id,
+                billingAccountId: c.billingAccountId,
+                status: "ACTIVE",
+                signedAt: now.toISOString(),
+                effectiveFrom: oldTo.toISOString(),
+                effectiveTo: newTo.toISOString(),
+                supersededContractId: c.id,
+                reason: "RENEWAL",
+              },
+            });
+
             return { renewed: true as const, successorId: successor.id };
           },
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

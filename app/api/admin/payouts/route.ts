@@ -23,6 +23,7 @@ import {
   adminPayoutBatchSchema,
   adminPayoutsQuerySchema,
 } from "@/schemas/payouts";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 /**
  * GET /api/admin/payouts
@@ -86,13 +87,17 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
+    const stale = requireFreshSession(auth.session);
+    if (stale) return stale;
 
     const { data, error } = await parseJsonRequest(adminPayoutBatchSchema, req);
     if (error) return error;
     const { consultantProfileIds } = data;
 
     // Create payout batch
-    const batchId = await createPayoutBatch(consultantProfileIds);
+    const batchId = await createPayoutBatch(consultantProfileIds, {
+      createdBy: auth.session.user.id,
+    });
 
     // Get created payouts
     const payouts = await prisma.consultantPayout.findMany({

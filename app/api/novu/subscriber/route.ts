@@ -1,17 +1,14 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { syncSubscriber } from "@/lib/novu/subscriber";
+import { computeSubscriberHash, syncSubscriber } from "@/lib/novu/subscriber";
 
 import { getSession } from "@/lib/auth-server";
-/**
- * POST /api/novu/subscriber
- * Syncs the current authenticated user to Novu as a subscriber.
- * Called by useNovuSubscriberSync hook on dashboard mount.
- */
+
+/** Syncs the current authenticated user to Novu and returns HMAC subscriberHash when configured. */
 export async function POST() {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -25,7 +22,6 @@ export async function POST() {
         phone: true,
         image: true,
         timezone: true,
-        // ADR 23 — routing preference for operators who own a workspace.
         orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
       },
     });
@@ -47,9 +43,16 @@ export async function POST() {
         user.orgWorkspaceProfile?.notificationRoutingMode ?? undefined,
     });
 
-    return NextResponse.json({ success: true });
+    const subscriberHash = computeSubscriberHash(user.id);
+    return NextResponse.json({
+      success: true,
+      ...(subscriberHash ? { subscriberHash } : {}),
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "notifications" } },
+    );
     console.error("Failed to sync Novu subscriber:", error);
     return NextResponse.json({ error: "Sync failed" }, { status: 500 });
   }

@@ -12,7 +12,7 @@
  * an empty conversation into the ops queue.
  */
 
-export type CaseKind = "ticket" | "thread" | "booking";
+export type CaseKind = "ticket" | "thread" | "booking" | "case";
 
 export interface CaseRef {
   kind: CaseKind;
@@ -23,12 +23,14 @@ const PREFIX: Record<CaseKind, string> = {
   ticket: "t",
   thread: "s",
   booking: "b",
+  case: "c",
 };
 
 const KIND_BY_PREFIX: Record<string, CaseKind> = {
   t: "ticket",
   s: "thread",
   b: "booking",
+  c: "case",
 };
 
 // Ids are opaque (uuid in prod, readable slugs in seeds), so only the shape
@@ -40,7 +42,7 @@ export function caseKeyOf(ref: CaseRef): string {
 }
 
 export function parseCaseKey(key: string | null | undefined): CaseRef | null {
-  const match = /^([tsb])_(.+)$/.exec(key ?? "");
+  const match = /^([tsbc])_(.+)$/.exec(key ?? "");
   if (!match || !ID_RE.test(match[2])) return null;
   return { kind: KIND_BY_PREFIX[match[1]], id: match[2] };
 }

@@ -71,16 +71,25 @@ export async function GET(
     // For subscriptions, participants include the consultant and consultee
     const participants = [];
 
-    // Add the consultee who requested the subscription
+    // Add the consultee who requested the subscription. No participant row means
+    // no seat was ever taken, so `null` is the honest signal here.
     if (subscription.requestedBy.user) {
-      participants.push(subscription.requestedBy.user);
+      participants.push({
+        ...subscription.requestedBy.user,
+        participantStatus: null,
+        participantRole: null,
+      });
     }
 
     // Add every seat holder on the wrapper (typically the consultant)
     const slotUsers =
-      subscription.appointment?.participants.map(
-        (participant) => participant.user,
-      ) ?? [];
+      subscription.appointment?.participants.map((participant) => ({
+        ...participant.user,
+        // Picked explicitly: the row also carries paymentId and
+        // organizationId, which this roster must not disclose.
+        participantStatus: participant.status,
+        participantRole: participant.role,
+      })) ?? [];
 
     // Get unique participants by user ID (avoid duplicates)
     const uniqueUsers = Array.from(

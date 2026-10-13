@@ -5,7 +5,7 @@ import { setCustomCode } from "@/lib/referrals/service";
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -34,7 +34,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: result });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error setting custom code:", error);
     return NextResponse.json(
       { error: "Failed to set custom code" },

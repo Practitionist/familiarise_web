@@ -78,7 +78,7 @@ export async function PUT(
 ) {
   try {
     // Authentication check
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -153,7 +153,6 @@ export async function PUT(
         whatsIncluded: validatedData.whatsIncluded,
         faqs: faqReplaceNested(validatedData.faqs),
         recordingEnabled: validatedData.recordingEnabled,
-        recordingStoragePolicy: validatedData.recordingStoragePolicy,
         // #1527 Q4 — absent means PUBLISHED on create and unchanged on update.
         status: validatedData.status,
         ...topicsUpdate,
@@ -216,7 +215,7 @@ export async function PATCH(
   { params }: { params: Promise<{ consultationPlanId: string }> },
 ) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -307,7 +306,7 @@ export async function DELETE(
 ) {
   try {
     // Authentication check
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

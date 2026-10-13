@@ -1,18 +1,11 @@
 /**
- * #1653 — the booking lifecycle emails: booked, cancelled, rescheduled,
- * reminder, new request and trial. Each sender takes user ids plus the raw
- * domain values the call site already holds (Dates, names, the href its Novu
- * bell computed), resolves recipients through the preference gate, and
- * renders per recipient in that recipient's zone. None of them throws.
+ * Booking lifecycle emails: booked, cancelled, rescheduled, reminder,
+ * new request, unscheduled nudge, trial scheduled, and window opened.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import * as React from "react";
+import { Button, Section, Text } from "react-email";
 import type { Tx } from "@/lib/prisma";
-import type { PreferenceCategory } from "@/lib/novu/templates/types";
-import { formatInViewerZone, zoneLabel } from "@/lib/time/viewer-zone";
-import { getAppUrl } from "@/lib/url";
-import { formatCurrencyAmount } from "@/utils/formatting";
 import AppointmentBookedEmail from "@/emails/booking/AppointmentBookedEmail";
 import AppointmentCancelledEmail from "@/emails/booking/AppointmentCancelledEmail";
 import AppointmentRescheduledEmail, {
@@ -22,92 +15,52 @@ import AppointmentReminderEmail from "@/emails/booking/AppointmentReminderEmail"
 import NewBookingRequestEmail from "@/emails/booking/NewBookingRequestEmail";
 import TrialScheduledEmail from "@/emails/booking/TrialScheduledEmail";
 import WindowOpenedEmail from "@/emails/booking/WindowOpenedEmail";
-import { SENDERS } from "../config";
-import { loadEmailRecipients, type EmailRecipient } from "../preferences";
+import { EmailLayout } from "@/emails/components/EmailLayout";
 import {
-  sendToRecipients,
-  stageToRecipients,
-  type SendToRecipientsResult,
-  type StagedRecipientEmail,
-} from "../send-to-recipients";
-
-export {
+  button,
+  buttonContainer,
+  heading,
+  paragraph,
+} from "@/emails/components/styles";
+import type { EmailRecipient } from "../preferences";
+import {
   attemptStaged,
   type SendToRecipientsResult,
   type StagedRecipientEmail,
 } from "../send-to-recipients";
+import {
+  absolute,
+  defineBudgetedEmailSender,
+  defineLifecycleStager,
+  greet,
+  money,
+  stageSpecGuarded,
+  whenText,
+  type RecipientEmailSpec,
+} from "./shared";
 
-const WHEN_PATTERN = "EEE, d MMM yyyy 'at' h:mm a";
-
-/** "Tue, 15 Sep 2026 at 4:30 PM IST" — every time in a booking email. */
-export function whenText(date: Date | string, zone: string): string {
-  return `${formatInViewerZone(date, zone, WHEN_PATTERN)} ${zoneLabel(date, zone)}`;
-}
-
-/** "A refund of ₹1,200 is on its way" — the cancellation's refund line. */
-export function refundOnItsWay(amountPaise: number, currency: string): string {
-  return `A refund of ${formatCurrencyAmount(amountPaise, currency)} is on its way`;
-}
-
-// The bells pass relative hrefs on some paths; a mail client needs absolute.
-function absolute(href: string): string {
-  return href.startsWith("/") ? `${getAppUrl()}${href}` : href;
-}
-
-function greet(r: EmailRecipient): string {
-  return r.name?.trim() || "there";
-}
-
-// "CONSULTATION" reads as a database value in a sentence.
-function humanType(appointmentType: string): string {
-  return appointmentType.toLowerCase();
-}
-
-type Spec = {
-  emailType: string;
-  category: PreferenceCategory;
-  entityRef: string;
-  subject: (r: EmailRecipient) => string;
-  render: (r: EmailRecipient) => React.ReactElement;
+export {
+  attemptStaged,
+  whenText,
+  type SendToRecipientsResult,
+  type StagedRecipientEmail,
 };
 
-const FAILED: SendToRecipientsResult = { sent: 0, skipped: 0, failed: 1 };
+export function refundOnItsWay(amountPaise: number, currency: string): string {
+  return `A refund of ${money(amountPaise, currency)} is on its way`;
+}
 
-// A sender never throws into a route or a webhook: the mail is best effort
-// and the outbox relay finishes what the inline attempt could not.
-async function guarded(
-  spec: Spec,
-  userIds: string[],
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
-  try {
-    const recipients = await loadEmailRecipients(userIds, spec.category);
-    return await sendToRecipients({
-      recipients,
-      emailType: spec.emailType,
-      from: SENDERS.notifications,
-      subject: spec.subject,
-      render: spec.render,
-      entityRef: spec.entityRef,
-      budgetMs,
-    });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "email", emailType: spec.emailType } },
-    );
-    console.error(`[email] ${spec.emailType} failed:`, error);
-    return FAILED;
-  }
+function humanType(appointmentType: string): string {
+  return appointmentType.toLowerCase();
 }
 
 // ── Booked ──────────────────────────────────────────────────────────────────
 
 export interface AppointmentBookedEmailArgs {
   appointmentId: string;
-  /** The payer; every other recipient reads the consultant-side copy. */
   consulteeUserId: string;
   consultantUserId?: string | null;
+  collaboratorUserIds?: string[];
   consulteeName: string;
   consultantName: string;
   planTitle: string;
@@ -117,7 +70,7 @@ export interface AppointmentBookedEmailArgs {
   cancellationWindowText?: string;
 }
 
-function bookedSpec(args: AppointmentBookedEmailArgs): Spec {
+function bookedSpec(args: AppointmentBookedEmailArgs): RecipientEmailSpec {
   const type = humanType(args.appointmentType);
   const role = (r: EmailRecipient) =>
     r.userId === args.consulteeUserId ? "consultee" : "consultant";
@@ -145,36 +98,20 @@ function bookedSpec(args: AppointmentBookedEmailArgs): Spec {
   };
 }
 
-function bookedRecipientIds(args: AppointmentBookedEmailArgs): string[] {
-  return [args.consulteeUserId, args.consultantUserId].filter(
-    (id): id is string => !!id,
-  );
-}
-
-/**
- * The payment webhook's twin: recipients are read and rows staged through
- * `tx`, and the caller runs `attemptStaged()` after commit. A database
- * failure propagates so the booking and its rows roll back together.
- */
 export async function stageAppointmentBookedEmail(
   tx: Tx,
   args: AppointmentBookedEmailArgs,
 ): Promise<StagedRecipientEmail[]> {
-  const spec = bookedSpec(args);
-  const recipients = await loadEmailRecipients(
-    bookedRecipientIds(args),
-    spec.category,
-    tx,
+  const userIds = Array.from(
+    new Set(
+      [
+        args.consulteeUserId,
+        args.consultantUserId,
+        ...(args.collaboratorUserIds ?? []),
+      ].filter((id): id is string => !!id),
+    ),
   );
-  return stageToRecipients({
-    tx,
-    recipients,
-    emailType: spec.emailType,
-    from: SENDERS.notifications,
-    subject: spec.subject,
-    render: spec.render,
-    entityRef: spec.entityRef,
-  });
+  return stageSpecGuarded(bookedSpec(args), userIds, tx);
 }
 
 // ── Cancelled ───────────────────────────────────────────────────────────────
@@ -183,24 +120,23 @@ export interface AppointmentCancelledEmailArgs {
   appointmentId: string;
   userIds: string[];
   startsAt?: Date | null;
-  /** A name or a capitalised role: "The consultant", "Familiarise". */
   cancelledBy: string;
   reason?: string | null;
-  /** Shown to `refundUserIds` (every recipient when that list is absent). */
   refundText?: string;
   refundUserIds?: string[];
   dashboardUrl: string;
 }
 
-export function sendAppointmentCancelledEmail(
-  args: AppointmentCancelledEmailArgs,
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
+function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
   const showRefund = (r: EmailRecipient) =>
     !!args.refundText &&
     (!args.refundUserIds || args.refundUserIds.includes(r.userId));
-  return guarded(
-    {
+  return {
+    userIds: args.userIds,
+    spec: {
       emailType: "APPOINTMENT_CANCELLED",
       category: "appointments",
       entityRef: `appointment:${args.appointmentId}`,
@@ -221,10 +157,14 @@ export function sendAppointmentCancelledEmail(
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
-    args.userIds,
-    budgetMs,
-  );
+  };
 }
+
+export const sendAppointmentCancelledEmail =
+  defineBudgetedEmailSender<AppointmentCancelledEmailArgs>(buildCancelledEmail);
+
+export const stageAppointmentCancelledEmail =
+  defineLifecycleStager<AppointmentCancelledEmailArgs>(buildCancelledEmail);
 
 // ── Rescheduled ─────────────────────────────────────────────────────────────
 
@@ -236,15 +176,14 @@ export interface AppointmentRescheduledEmailArgs {
   oldStartsAt?: Date | null;
   newStartsAt?: Date | null;
   proposedBy?: string;
-  /** PROPOSED only: the reschedule request's `expiresAt`. */
   respondBy?: Date | null;
   dashboardUrl: string;
 }
 
-export function sendAppointmentRescheduledEmail(
-  args: AppointmentRescheduledEmailArgs,
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
+function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
   const type = humanType(args.appointmentType);
   const subjects: Record<RescheduleEmailOutcome, string> = {
     PROPOSED: `New time proposed for your ${type}`,
@@ -254,8 +193,9 @@ export function sendAppointmentRescheduledEmail(
     WITHDRAWN: `Reschedule request withdrawn for your ${type}`,
     EXPIRED: `Your ${type} keeps its original time`,
   };
-  return guarded(
-    {
+  return {
+    userIds: args.userIds,
+    spec: {
       emailType: "APPOINTMENT_RESCHEDULED",
       category: "appointments",
       entityRef: `appointment:${args.appointmentId}`,
@@ -280,14 +220,45 @@ export function sendAppointmentRescheduledEmail(
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
-    args.userIds,
-    budgetMs,
-  );
+  };
 }
+
+export const sendAppointmentRescheduledEmail =
+  defineBudgetedEmailSender<AppointmentRescheduledEmailArgs>(
+    buildRescheduledEmail,
+  );
+
+export const stageAppointmentRescheduledEmail =
+  defineLifecycleStager<AppointmentRescheduledEmailArgs>(buildRescheduledEmail);
 
 // ── Reminder ────────────────────────────────────────────────────────────────
 
 export type ReminderWindowLabel = "24h" | "1h";
+
+/**
+ * #1583 P1 — the `FailedEmail.emailType` the reminder twin stages under, and
+ * the `entityRef` builder beside it. The reminder sweep reads BOTH back to
+ * decide which slots still owe a notice, so a literal duplicated at the reader
+ * would drift from the writer and silently turn the reader's guard into a
+ * no-op. Same shape as SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE below.
+ */
+export const APPOINTMENT_REMINDER_EMAIL_TYPE = "APPOINTMENT_REMINDER";
+
+/** The `FailedEmail.entityRef` for one occurrence+window's reminder email. */
+export function appointmentReminderEntityRef(
+  occurrenceId: string,
+  windowLabel: ReminderWindowLabel,
+): string {
+  return `occurrence:${occurrenceId}:${windowLabel}`;
+}
+
+/** Legacy appointment-scoped reminder entityRef retained for single-slot transition checks. */
+export function legacyAppointmentReminderEntityRef(
+  appointmentId: string,
+  windowLabel: ReminderWindowLabel,
+): string {
+  return `appointment:${appointmentId}:${windowLabel}`;
+}
 
 const WINDOW_WORDS: Record<ReminderWindowLabel, string> = {
   "24h": "tomorrow",
@@ -296,9 +267,10 @@ const WINDOW_WORDS: Record<ReminderWindowLabel, string> = {
 
 export interface AppointmentReminderEmailArgs {
   appointmentId: string;
+  occurrenceId?: string;
   userIds: string[];
+  collaboratorUserIds?: string[];
   windowLabel: ReminderWindowLabel;
-  /** Lets the consultant read the consultee's name as the other party. */
   consultantUserId?: string | null;
   consultantName: string;
   consulteeName: string;
@@ -309,42 +281,99 @@ export interface AppointmentReminderEmailArgs {
   dashboardUrl: string;
 }
 
-export function sendAppointmentReminderEmail(
+export function reminderSpec(
   args: AppointmentReminderEmailArgs,
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
+): RecipientEmailSpec {
   const type = humanType(args.appointmentType);
-  return guarded(
-    {
-      emailType: "APPOINTMENT_REMINDER",
-      category: "appointments",
-      entityRef: `appointment:${args.appointmentId}:${args.windowLabel}`,
-      subject: () => `Reminder: your ${type} is coming up`,
-      render: (r) =>
-        React.createElement(AppointmentReminderEmail, {
-          recipientName: greet(r),
-          otherPartyName:
-            r.userId === args.consultantUserId
-              ? args.consulteeName
-              : args.consultantName,
-          planTitle: args.planTitle,
-          appointmentType: type,
-          startsAtText: whenText(args.startsAt, r.zone),
-          windowLabel: WINDOW_WORDS[args.windowLabel],
-          joinUrl: args.joinUrl ? absolute(args.joinUrl) : undefined,
-          dashboardUrl: absolute(args.dashboardUrl),
-          unsubscribeUrl: r.unsubscribeUrl,
-        }),
+  const collabSet = new Set(args.collaboratorUserIds ?? []);
+  const isHostOrCollaborator = (r: EmailRecipient) =>
+    r.userId === args.consultantUserId || collabSet.has(r.userId);
+  const resolvedJoinUrl = args.joinUrl ? absolute(args.joinUrl) : undefined;
+  const resolvedDashboardUrl = absolute(args.dashboardUrl);
+  const windowText = WINDOW_WORDS[args.windowLabel];
+  return {
+    emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
+    category: "appointments",
+    entityRef: args.occurrenceId
+      ? appointmentReminderEntityRef(args.occurrenceId, args.windowLabel)
+      : legacyAppointmentReminderEntityRef(
+          args.appointmentId,
+          args.windowLabel,
+        ),
+    subject: () => `Reminder: your ${type} is coming up`,
+    render: (r) => {
+      const startsAtText = whenText(args.startsAt, r.zone);
+      if (isHostOrCollaborator(r)) {
+        return React.createElement(
+          EmailLayout,
+          {
+            preview: `Upcoming ${type} to host: ${args.planTitle} (${startsAtText})`,
+            unsubscribeUrl: r.unsubscribeUrl,
+          },
+          React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(
+              Text,
+              { style: heading },
+              "You have an upcoming session to host",
+            ),
+            React.createElement(Text, { style: paragraph }, `Hi ${greet(r)},`),
+            React.createElement(
+              Text,
+              { style: paragraph },
+              `Your ${type} session for `,
+              React.createElement("strong", null, args.planTitle),
+              ` starts ${windowText}, on `,
+              React.createElement("strong", null, startsAtText),
+              ".",
+            ),
+            React.createElement(
+              Text,
+              { style: paragraph },
+              resolvedJoinUrl
+                ? "The meeting room is open from your dashboard and from the button below."
+                : "The join link appears on your dashboard shortly before the session starts.",
+            ),
+            React.createElement(
+              Section,
+              { style: buttonContainer },
+              React.createElement(
+                Button,
+                {
+                  style: button,
+                  href: resolvedJoinUrl ?? resolvedDashboardUrl,
+                },
+                resolvedJoinUrl ? "Join session" : "View session",
+              ),
+            ),
+          ),
+        );
+      }
+      return React.createElement(AppointmentReminderEmail, {
+        recipientName: greet(r),
+        otherPartyName: args.consultantName,
+        planTitle: args.planTitle,
+        appointmentType: type,
+        startsAtText,
+        windowLabel: windowText,
+        joinUrl: resolvedJoinUrl,
+        dashboardUrl: resolvedDashboardUrl,
+        unsubscribeUrl: r.unsubscribeUrl,
+      });
     },
-    args.userIds,
-    budgetMs,
-  );
+  };
 }
+
+export const sendAppointmentReminderEmail =
+  defineBudgetedEmailSender<AppointmentReminderEmailArgs>((args) => ({
+    userIds: args.userIds,
+    spec: reminderSpec(args),
+  }));
 
 // ── New booking request ─────────────────────────────────────────────────────
 
 export interface NewBookingRequestEmailArgs {
-  /** The consultation (request) id the route has. */
   requestId: string;
   consultantUserId: string;
   consultantName: string;
@@ -356,13 +385,14 @@ export interface NewBookingRequestEmailArgs {
   reviewUrl: string;
 }
 
-export function sendNewBookingRequestEmail(
-  args: NewBookingRequestEmailArgs,
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
+function buildNewBookingRequestEmail(args: NewBookingRequestEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
   const type = humanType(args.appointmentType);
-  return guarded(
-    {
+  return {
+    userIds: [args.consultantUserId],
+    spec: {
       emailType: "NEW_BOOKING_REQUEST",
       category: "appointments",
       entityRef: `request:${args.requestId}`,
@@ -383,27 +413,33 @@ export function sendNewBookingRequestEmail(
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
-    [args.consultantUserId],
-    budgetMs,
-  );
+  };
 }
 
-// ── Unscheduled-subscription nudge (#1703) ─────────────────────────────────
+export const sendNewBookingRequestEmail =
+  defineBudgetedEmailSender<NewBookingRequestEmailArgs>(
+    buildNewBookingRequestEmail,
+  );
+
+export const stageNewBookingRequestEmail =
+  defineLifecycleStager<NewBookingRequestEmailArgs>(
+    buildNewBookingRequestEmail,
+  );
+
+// ── Unscheduled-subscription nudge ─────────────────────────────────────────
 
 export interface UnscheduledSubscriptionNudgeEmailArgs {
   subscriptionId: string;
   consultantUserId: string;
   consulteeName: string;
   planTitle: string;
-  /** #1775 C-4 — hours since the plan's capture (12, 24 or 36). */
   nudgeHours: number;
   timingsUrl: string;
 }
 
-/** The email twin of `notifyUnscheduledSubscriptionNudge`; one per stage. */
-/** #1703 — the sweep's once-guard reads the staged row by these two. */
 export const SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE =
   "SUBSCRIPTION_UNSCHEDULED_NUDGE";
+
 export function unscheduledNudgeEntityRef(
   subscriptionId: string,
   nudgeHours: number,
@@ -411,12 +447,10 @@ export function unscheduledNudgeEntityRef(
   return `subscription:${subscriptionId}:h${nudgeHours}`;
 }
 
-export function sendUnscheduledSubscriptionNudgeEmail(
-  args: UnscheduledSubscriptionNudgeEmailArgs,
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
-  return guarded(
-    {
+export const sendUnscheduledSubscriptionNudgeEmail =
+  defineBudgetedEmailSender<UnscheduledSubscriptionNudgeEmailArgs>((args) => ({
+    userIds: [args.consultantUserId],
+    spec: {
       emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
       category: "appointments",
       entityRef: unscheduledNudgeEntityRef(
@@ -436,10 +470,7 @@ export function sendUnscheduledSubscriptionNudgeEmail(
           nudgeHours: args.nudgeHours,
         }),
     },
-    [args.consultantUserId],
-    budgetMs,
-  );
-}
+  }));
 
 // ── Trial scheduled ─────────────────────────────────────────────────────────
 
@@ -453,58 +484,52 @@ export interface TrialScheduledEmailArgs {
   startsAt: Date;
   awaitingPayment: boolean;
   dashboardUrl: string;
-  /** The consultee's CTA while the trial awaits payment. */
   paymentUrl?: string | null;
 }
 
-export function sendTrialScheduledEmail(
-  args: TrialScheduledEmailArgs,
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
-  const role = (r: EmailRecipient) =>
-    r.userId === args.consulteeUserId ? "consultee" : "consultant";
-  const state = args.awaitingPayment
-    ? "held until payment completes"
-    : "confirmed";
-  return guarded(
-    {
-      emailType: "TRIAL_SESSION_SCHEDULED",
-      category: "trials",
-      entityRef: `trial:${args.trialId}`,
-      subject: (r) =>
-        role(r) === "consultee"
-          ? `Your free trial with ${args.consultantName} is ${state}`
-          : `Trial with ${args.consulteeName} is ${state}`,
-      render: (r) =>
-        React.createElement(TrialScheduledEmail, {
-          role: role(r),
-          recipientName: greet(r),
-          otherPartyName:
-            role(r) === "consultee" ? args.consultantName : args.consulteeName,
-          planTitle: args.planTitle,
-          startsAtText: whenText(args.startsAt, r.zone),
-          awaitingPayment: args.awaitingPayment,
-          dashboardUrl: absolute(
-            role(r) === "consultee" && args.paymentUrl
-              ? args.paymentUrl
-              : args.dashboardUrl,
-          ),
-          unsubscribeUrl: r.unsubscribeUrl,
-        }),
-    },
-    [args.consulteeUserId, args.consultantUserId],
-    budgetMs,
-  );
-}
+export const sendTrialScheduledEmail =
+  defineBudgetedEmailSender<TrialScheduledEmailArgs>((args) => {
+    const role = (r: EmailRecipient) =>
+      r.userId === args.consulteeUserId ? "consultee" : "consultant";
+    const state = args.awaitingPayment
+      ? "held until payment completes"
+      : "confirmed";
+    return {
+      userIds: [args.consulteeUserId, args.consultantUserId],
+      spec: {
+        emailType: "TRIAL_SESSION_SCHEDULED",
+        category: "trials",
+        entityRef: `trial:${args.trialId}`,
+        subject: (r) =>
+          role(r) === "consultee"
+            ? `Your free trial with ${args.consultantName} is ${state}`
+            : `Trial with ${args.consulteeName} is ${state}`,
+        render: (r) =>
+          React.createElement(TrialScheduledEmail, {
+            role: role(r),
+            recipientName: greet(r),
+            otherPartyName:
+              role(r) === "consultee"
+                ? args.consultantName
+                : args.consulteeName,
+            planTitle: args.planTitle,
+            startsAtText: whenText(args.startsAt, r.zone),
+            awaitingPayment: args.awaitingPayment,
+            dashboardUrl: absolute(
+              role(r) === "consultee" && args.paymentUrl
+                ? args.paymentUrl
+                : args.dashboardUrl,
+            ),
+            unsubscribeUrl: r.unsubscribeUrl,
+          }),
+      },
+    };
+  });
 
-// ── Window opened (#1778) ───────────────────────────────────────────────────
+// ── Window opened ───────────────────────────────────────────────────────────
 
 export const WINDOW_OPENED_EMAIL_TYPE = "WINDOW_OPENED";
 
-/**
- * #1778 — a held window a learner asked about has freed. Staged through `tx`
- * with the bell; the caller runs `attemptStaged()` after the commit.
- */
 export async function stageWindowOpenedEmail(
   tx: Tx,
   args: {
@@ -515,25 +540,22 @@ export async function stageWindowOpenedEmail(
     bookUrl: string;
   },
 ): Promise<StagedRecipientEmail[]> {
-  const recipients = await loadEmailRecipients(
+  return stageSpecGuarded(
+    {
+      emailType: WINDOW_OPENED_EMAIL_TYPE,
+      category: "appointments",
+      entityRef: `window-opened:${args.interestId}`,
+      subject: () => `A time with ${args.consultantName} just opened`,
+      render: (r) =>
+        React.createElement(WindowOpenedEmail, {
+          recipientName: greet(r),
+          consultantName: args.consultantName,
+          windowText: whenText(args.windowStart, r.zone),
+          bookUrl: absolute(args.bookUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
     [args.userId],
-    "appointments",
     tx,
   );
-  return stageToRecipients({
-    tx,
-    recipients,
-    emailType: WINDOW_OPENED_EMAIL_TYPE,
-    from: SENDERS.notifications,
-    entityRef: `window-opened:${args.interestId}`,
-    subject: () => `A time with ${args.consultantName} just opened`,
-    render: (r) =>
-      React.createElement(WindowOpenedEmail, {
-        recipientName: greet(r),
-        consultantName: args.consultantName,
-        windowText: whenText(args.windowStart, r.zone),
-        bookUrl: absolute(args.bookUrl),
-        unsubscribeUrl: r.unsubscribeUrl,
-      }),
-  });
 }

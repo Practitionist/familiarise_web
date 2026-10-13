@@ -22,6 +22,8 @@ export const billingSchema = z.object({
   // We accept it in all cases so the form can retain the value if the
   // user flips back and forth across funding sources.
   paymentTermsDays: z.coerce.number().int().min(1).max(120),
+  // The org is invoiced B2B, so its GST state picks the tax head.
+  gstStateCode: z.string().regex(/^\d{2}$/, "Choose your GST state"),
 });
 
 export const brandingSchema = z.object({
@@ -42,14 +44,18 @@ export const brandingSchema = z.object({
 // and removes the need to chase drift between `SUM(splits) - grossAmount`.
 export const revenueRatesSchema = z
   .object({
-    platformBps: z.coerce.number().int().min(0).max(10000),
+    // The server refuses a platform share below the default card (10%).
+    platformBps: z.coerce
+      .number()
+      .int()
+      .min(1000, "Platform commission is at least 10%")
+      .max(10000),
     orgBps: z.coerce.number().int().min(0).max(10000),
     consultantBps: z.coerce.number().int().min(0).max(10000),
   })
-  .refine(
-    (d) => d.platformBps + d.orgBps + d.consultantBps === 10000,
-    { message: "Basis points must sum to exactly 10000 (100%)" },
-  );
+  .refine((d) => d.platformBps + d.orgBps + d.consultantBps === 10000, {
+    message: "Basis points must sum to exactly 10000 (100%)",
+  });
 
 export type OrgInfoFormData = z.infer<typeof orgInfoSchema>;
 export type BillingFormData = z.infer<typeof billingSchema>;

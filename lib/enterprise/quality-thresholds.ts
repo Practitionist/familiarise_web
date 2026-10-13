@@ -51,16 +51,6 @@ export function orgQualitySignalWhere(
 }
 
 /**
- * Respondents needed before free-text would be reported.
- *
- * Nothing reaches this threshold today, because no organisation surface returns a
- * comment at all — ADR 20 keeps the note participant-only. The constant exists so
- * whoever is next asked for "just the comments, aggregated" has a number to point
- * at rather than a judgement call, and so the two floors are visibly different.
- */
-export const ORG_QUALITY_MIN_RESPONDENTS_FOR_COMMENTS = 10;
-
-/**
  * Whether a narrower TIME WINDOW may be published beside the wider one it sits
  * inside.
  *

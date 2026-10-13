@@ -24,6 +24,9 @@
  * `||` chain the handler uses. They fail on the four-rung version.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 interface Owner {
   userId: string;
 }
@@ -102,10 +105,6 @@ describe("consultant resolution for the payment-success DM", () => {
 });
 
 describe("the handler actually does this", () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { readFileSync } = require("fs") as typeof import("fs");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { join } = require("path") as typeof import("path");
   // #1356 — the channel block moved out of `handlers.ts` into its own module
   // so the reconcile sweep can re-drive it. The pin follows the code; the
   // contract it pins is unchanged.

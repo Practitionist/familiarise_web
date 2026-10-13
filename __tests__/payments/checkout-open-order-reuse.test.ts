@@ -16,17 +16,42 @@
  * Razorpay order" is asserted on the real call graph.
  */
 
-let txClient: Record<string, any>;
+type MockDelegate = Record<string, jest.Mock>;
+let txClient: Record<string, MockDelegate>;
+
+/** The scalar slice of a Payment the reuse lookup filters on. */
+type ReuseRow = {
+  userId: string;
+  paymentStatus: string;
+  organizationId: string | null;
+  paymentGateway: string;
+  deletedAt: Date | null;
+  expiresAt: Date | null;
+  appointment?: Record<string, unknown> | null;
+  [key: string]: unknown;
+};
+type ReuseWhere = {
+  userId: string;
+  paymentStatus: string;
+  organizationId: string | null;
+  paymentGateway: string;
+  deletedAt: Date | null;
+  expiresAt?: { gt: Date };
+  appointment?: Record<string, unknown>;
+};
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    $transaction: jest.fn(async (fn: any, _opts?: unknown) => fn(txClient)),
+    $transaction: jest.fn(
+      async (fn: (tx: typeof txClient) => unknown, _opts?: unknown) =>
+        fn(txClient),
+    ),
     payment: {
       // #1220-triage — the reuse lookup fetches the newest scope-matching
       // candidates; window/amount gates run in-code and rejects get
       // superseded via updateMany.
-      findMany: jest.fn(async ({ where }: any) =>
+      findMany: jest.fn(async ({ where }: { where: ReuseWhere }) =>
         reuseState.rows.filter((row) => matchesReuseWhere(row, where)),
       ),
       updateMany: jest.fn(async () => ({ count: 1 })),
@@ -112,12 +137,26 @@ jest.mock("../../lib/referrals/service", () => ({
   __esModule: true,
   applyCreditsToPayment: jest.fn(),
   getUserCredits: jest.fn(async () => ({ totalAvailable: 0 })),
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
+}));
+jest.mock("../../lib/referrals/capture", () => ({
+  __esModule: true,
+  recordReferralCaptureInSavepoint: jest.fn(),
+}));
+jest.mock("../../lib/referrals/attribution", () => ({
+  __esModule: true,
+  asWelcomeDiscountConflict: (err: unknown) => err,
+  resolveCheckoutAttribution: jest.fn(async () => ({
+    source: "MARKETPLACE",
+    referralId: null,
+    platformFeeBps: 2000,
+    welcomeDiscount: null,
+    creditCapBps: 2000,
+  })),
 }));
 jest.mock("../../lib/payments/payouts", () => ({
   __esModule: true,
   createEarningsFromPayment: jest.fn(),
+  resolvePaymentForEarnings: jest.fn(async () => null),
 }));
 jest.mock("../../lib/api/organizations/wallet", () => ({
   __esModule: true,
@@ -175,6 +214,10 @@ jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
 import prisma from "../../lib/prisma";
 import { createPaymentIntent } from "../../lib/payments/index";
 import {
+  createEarningsFromPayment,
+  resolvePaymentForEarnings,
+} from "../../lib/payments/payouts";
+import {
   unlockConsulteeBooking,
   unlockEventCheckout,
 } from "../../utils/appointmentlock";
@@ -188,9 +231,9 @@ import {
 // In-memory store + faithful evaluation of the reuse lookup's WHERE clause.
 // ---------------------------------------------------------------------------
 
-const reuseState: { rows: Record<string, any>[] } = { rows: [] };
+const reuseState: { rows: ReuseRow[] } = { rows: [] };
 
-function matchesReuseWhere(row: Record<string, any>, where: any): boolean {
+function matchesReuseWhere(row: ReuseRow, where: ReuseWhere): boolean {
   if (row.userId !== where.userId) return false;
   if (row.paymentStatus !== where.paymentStatus) return false;
   // Null-safe org equality — mirrors Prisma's behavior for `organizationId`.
@@ -252,7 +295,7 @@ function webinarRow() {
 }
 
 /** An open fresh PENDING sibling for user-1 on evt-1 (the first attempt). */
-function openSibling(overrides: Record<string, any> = {}) {
+function openSibling(overrides: Partial<ReuseRow> = {}): ReuseRow {
   return {
     id: "pay-open",
     userId: "user-1",
@@ -305,7 +348,9 @@ beforeEach(() => {
       })),
     },
     webinar: { findUnique: jest.fn(async () => webinarRow()) },
-    appointmentOccurrence: { update: jest.fn(async ({ where }: any) => where) },
+    appointmentOccurrence: {
+      update: jest.fn(async ({ where }: { where: unknown }) => where),
+    },
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -314,11 +359,12 @@ beforeEach(() => {
       findUnique: jest.fn(async () => ({ userId: "user_1" })),
     },
     payment: {
-      create: jest.fn(async ({ data }: any) => ({
+      create: jest.fn(async ({ data }: { data: { amount: number } }) => ({
         id: "pay-new",
         // #780 — the extended client reads bigint money back as Number.
         amount: data.amount,
       })),
+      updateManyAndReturn: jest.fn(async () => []),
     },
     paymentLeg: {
       create: jest.fn(async () => ({})),
@@ -343,7 +389,6 @@ function userRow() {
 describe("rec C — checkout adopts an open PENDING order across remounts", () => {
   it("a second request with a DIFFERENT client key resumes the same order and mints no second gateway order", async () => {
     reuseState.rows.push(openSibling());
-    const startedAtMs = Date.now();
 
     const res = await handleCheckout(
       checkoutInput({ clientIdempotencyKey: "brand-new-tab-key-9" }),
@@ -368,8 +413,10 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
     // THE point of rec C: no parallel Razorpay order exists to pay.
     expect(createPaymentIntent).not.toHaveBeenCalled();
 
-    // The lookup must be scoped tightly — user + PENDING + fresh window +
+    // The lookup must be scoped tightly — user + PENDING +
     // org equality + gateway + this event's appointment join.
+    // #1478 — expiresAt is evaluated in-code so expired PENDING rows are
+    // superseded and released rather than silently left occupying the calendar.
     const where = (prisma.payment.findMany as jest.Mock).mock.calls[0][0].where;
     expect(where).toMatchObject({
       userId: "user-1",
@@ -379,8 +426,7 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
       deletedAt: null,
       appointment: { webinarId: "evt-1" },
     });
-    // The window is evaluated at lookup time and must be live, not stale.
-    expect(where.expiresAt.gt.getTime()).toBeGreaterThanOrEqual(startedAtMs);
+    expect(where.expiresAt).toBeUndefined();
 
     // Early return still releases both locks via the finally block.
     expect(unlockEventCheckout).toHaveBeenCalled();
@@ -661,5 +707,32 @@ describe("#1695 — a post-mint abort leaves an EXPIRED tombstone for the orphan
     const written = (prisma.payment.create as jest.Mock).mock.calls[0][0].data;
     expect(written.appointmentId).toBeUndefined();
     expect(written.expiresAt).toBeInstanceOf(Date);
+  });
+});
+
+describe("synchronous rails settle earnings in Phase 1", () => {
+  it("writes earnings and the booking journal through the checkout tx, not after commit", async () => {
+    const resolved = {
+      paymentForEarnings: { id: "pay-new" },
+      earningsAppointmentType: "WEBINAR",
+      consultantProfileId: "cp-1",
+    };
+    (resolvePaymentForEarnings as jest.Mock).mockResolvedValueOnce(resolved);
+
+    const res = await handleCheckout(checkoutInput(), "user-1", true);
+
+    expect(res.success).toBe(true);
+    expect(resolvePaymentForEarnings).toHaveBeenCalledTimes(1);
+    expect(resolvePaymentForEarnings).toHaveBeenCalledWith(
+      { id: "pay-new" },
+      "WEBINAR",
+      txClient,
+    );
+    expect(createEarningsFromPayment).toHaveBeenCalledTimes(1);
+    expect(createEarningsFromPayment).toHaveBeenCalledWith({
+      payment: resolved.paymentForEarnings,
+      appointmentType: "WEBINAR",
+      tx: txClient,
+    });
   });
 });

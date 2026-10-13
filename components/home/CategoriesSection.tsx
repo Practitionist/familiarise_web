@@ -38,9 +38,9 @@ function CategoryCard({
               <Icon className="w-6 h-6 text-white" />
             </div>
             <div className="min-w-0">
-              <h4 className="font-semibold text-foreground truncate">
+              <h3 className="font-semibold text-foreground truncate">
                 {category.name}
-              </h4>
+              </h3>
               {consultantCount > 0 && (
                 <p className="text-sm text-muted-foreground truncate">
                   {consultantCount === 1

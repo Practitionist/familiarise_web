@@ -90,7 +90,12 @@ export async function GET(request: NextRequest) {
     // bookings into the consultant's "Trials" tab.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
-      select: { organizationId: true, status: true, role: true },
+      select: {
+        organizationId: true,
+        status: true,
+        role: true,
+        organization: { select: { status: true } },
+      },
     });
     const scopeResolution = resolveOrgScope({
       raw: searchParams.get("orgScope"),
@@ -498,13 +503,15 @@ export async function POST(request: NextRequest) {
       subscriptionPlan.title,
     );
 
-    // Notify the consultant about the new trial request
+    // Notify the consultant about the new trial request. The trials
+    // console does not exist as a route — the request lives in their
+    // requests queue, which is where the bell points.
     await notifyTrialRequested(trial.consultantProfile.user.id, {
       consultantName: trial.consultantProfile.user.name || "Consultant",
-      consulteeName: trial.consulteeProfile.user.name || "User",
+      consulteeName: trial.consulteeProfile.user.name || "A new user",
       planTitle: subscriptionPlan.title,
       status: trial.status,
-      dashboardUrl: "/dashboard/consultant/trials",
+      dashboardUrl: `/dashboard/consultant/${consultantProfileId}/requests`,
     });
 
     return NextResponse.json({ data: trial, checkoutUrl }, { status: 201 });

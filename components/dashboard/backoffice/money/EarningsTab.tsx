@@ -4,7 +4,8 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Input } from "@/components/ui/input";
 import {
   ResponsiveTable,
@@ -140,75 +141,80 @@ export function EarningsTab() {
   });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Earnings</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-2 sm:grid-cols-3">
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger aria-label="Status">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Every status</SelectItem>
-              {STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {earningStatusBadge(s).label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Input
-            aria-label="Expert profile id"
-            placeholder="Expert profile id"
-            value={consultantProfileId}
-            onChange={(e) => setConsultantProfileId(e.target.value)}
-          />
-          <Input
-            aria-label="Payment id"
-            placeholder="Payment id"
-            value={paymentId}
-            onChange={(e) => setPaymentId(e.target.value)}
-          />
-        </div>
-        {error ? (
-          <p className="text-sm text-destructive">Earnings could not load.</p>
-        ) : (
-          <ResponsiveTable<EarningRow>
-            columns={columns}
-            rows={isLoading ? [] : (data?.earnings ?? [])}
-            getRowId={(r) => r.id}
-            rowActions={rowActions}
-            empty={
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                {isLoading ? "Loading…" : "No earnings match these filters."}
-              </p>
-            }
-          />
-        )}
-      </CardContent>
-      <ReasonDialog
-        open={acting !== null}
-        onOpenChange={(o) => !o && setActing(null)}
-        title={
-          acting?.kind === "hold" ? "Hold this earning" : "Release this earning"
-        }
-        description={
-          acting?.kind === "hold"
-            ? "A held earning is skipped by the release job and every payout until it is released."
-            : "It goes back to Ready if its hold period is over, otherwise to Pending."
-        }
-        confirmLabel={acting?.kind === "hold" ? "Hold" : "Release"}
-        pending={door.isPending}
-        onConfirm={(reason) =>
-          acting &&
-          door.mutate({
-            url: `/api/admin/earnings/${acting.row.id}/${acting.kind}`,
-            body: { reason },
-          })
-        }
+    <div className="space-y-6">
+      <PageHeader
+        title="Earnings"
+        description="Filter expert shares by settlement state, hold pending payouts, or release mature holds."
       />
-    </Card>
+      <Card>
+        <CardContent className="pt-6 space-y-4">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger aria-label="Status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Every status</SelectItem>
+                {STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {earningStatusBadge(s).label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              aria-label="Expert profile id"
+              placeholder="Expert profile id"
+              value={consultantProfileId}
+              onChange={(e) => setConsultantProfileId(e.target.value)}
+            />
+            <Input
+              aria-label="Payment id"
+              placeholder="Payment id"
+              value={paymentId}
+              onChange={(e) => setPaymentId(e.target.value)}
+            />
+          </div>
+          {error ? (
+            <p className="text-sm text-destructive">Earnings could not load.</p>
+          ) : (
+            <ResponsiveTable<EarningRow>
+              columns={columns}
+              rows={isLoading ? [] : (data?.earnings ?? [])}
+              getRowId={(r) => r.id}
+              rowActions={rowActions}
+              empty={
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  {isLoading ? "Loading…" : "No earnings match these filters."}
+                </p>
+              }
+            />
+          )}
+        </CardContent>
+        <ReasonDialog
+          open={acting !== null}
+          onOpenChange={(o) => !o && setActing(null)}
+          title={
+            acting?.kind === "hold"
+              ? "Hold this earning"
+              : "Release this earning"
+          }
+          description={
+            acting?.kind === "hold"
+              ? "A held earning is skipped by the release job and every payout until it is released."
+              : "It goes back to Ready if its hold period is over, otherwise to Pending."
+          }
+          confirmLabel={acting?.kind === "hold" ? "Hold" : "Release"}
+          pending={door.isPending}
+          onConfirm={(reason) =>
+            acting &&
+            door.mutate({
+              url: `/api/admin/earnings/${acting.row.id}/${acting.kind}`,
+              body: { reason },
+            })
+          }
+        />
+      </Card>
+    </div>
   );
 }

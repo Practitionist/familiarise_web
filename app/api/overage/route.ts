@@ -1,6 +1,5 @@
-import { auth } from "@/lib/auth";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
-import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
 /**
@@ -13,11 +12,9 @@ import { NextResponse } from "next/server";
  * drop out. Ownership is scoped through the side-`Payment.userId`.
  */
 export async function GET() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-  }
-  const userId = session.user.id;
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const userId = authResult.session.user.id;
 
   const rows = await prisma.overageEvent.findMany({
     where: {

@@ -78,7 +78,13 @@ export function openProposalTarget(
   return null;
 }
 
-/** The times currently on offer — a COUNTERED request carries both rounds. */
+/** The times currently on offer.
+ *
+ * `round` filtering is retained even though every request is round 1: the column
+ * is what a resurrected counter-proposal would need, and the filter is the only
+ * thing standing between a two-round row and a card that offers the other side's
+ * own rejected times back to them. It costs one equality test on a list that is
+ * already in memory. */
 export function currentRoundProposedSlots(
   proposal: Pick<OpenRescheduleProposal, "round" | "proposedTimes">,
 ): OpenRescheduleProposal["proposedTimes"] {

@@ -6,9 +6,9 @@
  * admin can hit `DELETE .../domain-claims/wipro.com` without first having
  * to look up the row id.
  *
- * Safety guard: refuse the release if SSO enforcement would be left in an
- * inconsistent state (no domains + no providers on an enforceSSO=true
- * org), to prevent locking every user out.
+ * Releasing revokes the approval of the org's SSO providers that cover this
+ * domain, and is refused when that would leave SSO enforced with no approved
+ * provider.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -16,6 +16,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { providerDomains } from "@/lib/sso/domains";
 
 export async function DELETE(
   _req: NextRequest,
@@ -29,13 +30,30 @@ export async function DELETE(
   const domain = decodeURIComponent(rawDomain).toLowerCase().trim();
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
+    // Unverified orgs may release a domain claim before verification (requireActive: true omitted; SUSPENDED rejected below).
   });
   if (access.error) return access.error;
+  if (access.org?.status === "SUSPENDED") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_ACTIVE",
+        message:
+          "Domain claims cannot be modified while the organization is suspended.",
+        status: access.org.status,
+      },
+      { status: 409 },
+    );
+  }
 
   try {
     await prisma.$transaction(async (tx) => {
       const claim = await tx.orgDomainClaim.findUnique({
-        where: { domain },
+        where: {
+          organizationId_domain: {
+            organizationId: orgId,
+            domain,
+          },
+        },
       });
       if (!claim || claim.organizationId !== orgId) {
         throw Object.assign(new Error("Domain claim not found"), {
@@ -43,38 +61,41 @@ export async function DELETE(
         });
       }
 
-      const settings = await tx.organizationSSOSettings.findUnique({
-        where: { organizationId: orgId },
+      // A provider's approval rests on this claim, so releasing it revokes
+      // the approval in the same transaction; re-claiming needs fresh DNS
+      // proof and a fresh staff approval.
+      const approved = await tx.ssoProvider.findMany({
+        where: { organizationId: orgId, domainVerified: true },
+        select: { providerId: true, domain: true },
       });
-      if (settings?.enforceSSO) {
-        const providerCount = await tx.ssoProvider.count({
+      const unapproved = approved
+        .filter((p) => providerDomains(p.domain).includes(domain))
+        .map((p) => p.providerId);
+      if (unapproved.length > 0 && unapproved.length === approved.length) {
+        const settings = await tx.organizationSSOSettings.findUnique({
           where: { organizationId: orgId },
+          select: { enforceSSO: true },
         });
-        const otherDomains = settings.allowedEmailDomains.filter(
-          (d) => d !== domain,
-        );
-        if (providerCount === 0 && otherDomains.length === 0) {
+        // Same rule as deleting the last approved provider.
+        if (settings?.enforceSSO) {
           throw Object.assign(
             new Error(
-              "Cannot release the last claimed domain while enforceSSO=true and no SSO providers configured.",
+              "Releasing this domain would revoke the last approved SSO provider while SSO is enforced. Disable enforcement first.",
             ),
             { httpStatus: 409 },
           );
         }
       }
 
-      await tx.orgDomainClaim.delete({ where: { domain } });
-
-      // If the released domain was also listed in allowedEmailDomains,
-      // drop it from there too so the two surfaces stay consistent.
-      if (settings?.allowedEmailDomains.includes(domain)) {
-        await tx.organizationSSOSettings.update({
-          where: { organizationId: orgId },
-          data: {
-            allowedEmailDomains: settings.allowedEmailDomains.filter(
-              (d) => d !== domain,
-            ),
-          },
+      await tx.orgDomainClaim.delete({
+        where: {
+          organizationId_domain: { organizationId: orgId, domain },
+        },
+      });
+      if (unapproved.length > 0) {
+        await tx.ssoProvider.updateMany({
+          where: { organizationId: orgId, providerId: { in: unapproved } },
+          data: { domainVerified: false },
         });
       }
 
@@ -84,8 +105,11 @@ export async function DELETE(
           actorMembershipId: access.member.id,
           category: "SETTINGS",
           action: AUDIT_ACTIONS.SETTINGS.DOMAIN_RELEASED,
-          description: `Domain '${domain}' released`,
-          details: { domain },
+          description:
+            unapproved.length > 0
+              ? `Domain '${domain}' released; SSO provider approval revoked for ${unapproved.join(", ")}`
+              : `Domain '${domain}' released`,
+          details: { domain, unapprovedProviderIds: unapproved },
         },
       });
     });
@@ -93,11 +117,13 @@ export async function DELETE(
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

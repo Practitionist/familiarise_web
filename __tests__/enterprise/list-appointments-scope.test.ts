@@ -25,16 +25,23 @@ describe("buildWhere — personal scope (#org-appts)", () => {
     expect(where.organizationId).toBeNull();
   });
 
-  it("covers both sides — 3 consultee + 5 consultant arms, none re-pinning org", () => {
+  it("covers both sides — 3 consultee + 7 consultant arms (including collaborated webinars/classes), none re-pinning org", () => {
     // consultee: consultation / subscription / trial ; consultant: consultation-
-    // plan / subscription-plan / trial / webinar-plan / class-plan
-    expect(where.OR).toHaveLength(8);
+    // plan / subscription-plan / trial / webinar-plan / webinar-collaborator /
+    // class-plan / class-collaborator
+    expect(where.OR).toHaveLength(10);
     // The org constraint is top-level, so no arm carries its own organizationId.
     expect(where.OR.every((a) => !("organizationId" in a))).toBe(true);
     const hasConsultantUser = where.OR.some((a) =>
       JSON.stringify(a).includes('"consultantProfile":{"userId":"u1"}'),
     );
     expect(hasConsultantUser).toBe(true);
+    const hasCollaboratorArm = where.OR.some((a) =>
+      JSON.stringify(a).includes(
+        '"collaborators":{"some":{"consultantProfile":{"userId":"u1"},"status":"ACCEPTED"}}',
+      ),
+    );
+    expect(hasCollaboratorArm).toBe(true);
     const hasConsulteeUser = where.OR.some((a) =>
       JSON.stringify(a).includes('"requestedBy":{"userId":"u1"}'),
     );
@@ -48,28 +55,43 @@ describe("buildWhere — personal scope (#org-appts)", () => {
     }) as Record<string, unknown>;
 
     // List/detail parity: the detail page 404s any row whose organizationId
-    // isn't this org, so the list must not offer funded-elsewhere rows it
-    // cannot open. Cross-org funding visibility moved to the money views.
+    // isn't this org, so the list pins organizationId at the top level.
     expect(w.organizationId).toBe("org1");
-    expect(w.OR).toBeUndefined();
+    expect(Array.isArray(w.OR)).toBe(true);
 
-    // The property the previous version of this test was really protecting:
-    // the org arm carries NO user filter, which is why it requires
+    // The org arm carries NO user filter, which is why it requires
     // `operations.read` and why a non-operator is downgraded to `orgMember`.
     expect(JSON.stringify(w)).not.toContain('"u1"');
     expect(JSON.stringify(w)).not.toContain("userId");
   });
 
-  it("org scope no longer matches funded-elsewhere rows (#1166 ORG-8)", () => {
+  it("org scope admits unpaid, org-funded, or org-hosted rows while keeping funded-elsewhere out", () => {
     const w = buildWhere({
       scope: { kind: "org", orgId: "org1" },
       userId: "u1",
-    });
+    }) as {
+      organizationId: string;
+      OR: Array<Record<string, unknown>>;
+    };
 
-    // A row hosted by another org but funded by org1 matched the old
-    // `payment.some.organizationId` arm; the detail page then 404'd it.
-    // The predicate must not mention Payment at all any more.
-    expect(JSON.stringify(w)).not.toContain("payment");
+    expect(w.organizationId).toBe("org1");
+    expect(w.OR).toEqual(
+      expect.arrayContaining([
+        { payment: { none: {} } },
+        {
+          payment: {
+            some: {
+              organizationId: "org1",
+              paymentMethod: { in: ["WALLET", "INVOICE", "LICENSE"] },
+            },
+          },
+        },
+        { consultation: { consultationPlan: { organizationId: "org1" } } },
+        { subscription: { subscriptionPlan: { organizationId: "org1" } } },
+        { webinar: { webinarPlan: { organizationId: "org1" } } },
+        { class: { classPlan: { organizationId: "org1" } } },
+      ]),
+    );
   });
 
   it("orgMember scope pins organizationId AND filters to the user's participation (#org-appts)", () => {
@@ -80,11 +102,14 @@ describe("buildWhere — personal scope (#org-appts)", () => {
     // Strictly this org's activity...
     expect(w.organizationId).toBe("org1");
     // ...AND only the user's own — booked / attended (held seat) / delivered
-    // arms. Trials are excluded (B2C, personal scope).
-    expect(w.OR).toHaveLength(7);
+    // (including collaborated webinar/class) arms. Trials are excluded (B2C, personal scope).
+    expect(w.OR).toHaveLength(9);
     const s = JSON.stringify(w.OR);
     expect(s).toContain('"requestedBy":{"userId":"u1"}'); // consultee side
     expect(s).toContain('"consultantProfile":{"userId":"u1"}'); // consultant side
+    expect(s).toContain(
+      '"collaborators":{"some":{"consultantProfile":{"userId":"u1"},"status":"ACCEPTED"}}',
+    );
     expect(s).not.toContain("trial"); // trials stay B2C/personal
     // No arm re-pins organizationId: null (that's personal scope, not this).
     expect(w.OR.every((arm) => !("organizationId" in arm))).toBe(true);

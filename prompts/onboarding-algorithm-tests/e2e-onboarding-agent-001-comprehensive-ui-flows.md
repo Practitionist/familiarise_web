@@ -62,7 +62,7 @@ You have access to two MCP tools:
 ### Key Fields
 
 - `users.onboardingCompleted` — `Boolean`, default `false`
-- `users.role` — enum: `CONSULTANT`, `CONSULTEE`, `STAFF`, `ADMIN`
+- `users.role` — enum: `CONSULTANT`, `CONSULTEE`, `ORG_WORKSPACE`, `STAFF`, `ADMIN` (`STAFF`/`ADMIN` exist only via the ADMIN Team page, never the wizard)
 - `users.bio` — `VARCHAR(160)`, max 160 chars
 - `ConsultantProfile.scheduleType` — enum: `WEEKLY`, `CUSTOM`
 - `ConsultantProfile.headline` — `VARCHAR(120)`, max 120 chars
@@ -78,7 +78,7 @@ Password plaintext: TestPassword123!
 Bcrypt hash: $2b$10$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012
 ```
 
-**Important:** After creating the session in SQL, you need to set the `better-auth.session_token` cookie in the browser. Use `navigate_page` to go to `http://localhost:3000` first, then use the Chrome DevTools MCP to set the cookie before navigating to the onboarding page. If cookie-setting is not available via MCP, navigate directly to `http://localhost:3000/form/onboarding` and check if BetterAuth picks up the session from the DB. If authentication is an issue, try logging in via the app's sign-in UI at `http://localhost:3000/auth/sign-in` using the test email and password.
+**Important:** BetterAuth signs its session cookie, so a raw `token` from SQL is not a valid cookie value; signing in through the UI at `http://localhost:3000/auth/signin` is the reliable path. The test user is inserted with `emailVerified = true`, so sign-in does not ask for the 6-digit email code (an unverified user is sent to `/auth/verify-email` to type the code). If you still try the SQL session, set the `better-auth.session_token` cookie in the browser. Use `navigate_page` to go to `http://localhost:3000` first, then use the Chrome DevTools MCP to set the cookie before navigating to the onboarding page. If cookie-setting is not available via MCP, navigate directly to `http://localhost:3000/form/onboarding` and check if BetterAuth picks up the session from the DB. If authentication is an issue, try logging in via the app's sign-in UI at `http://localhost:3000/auth/signin` using the test email and password.
 
 ---
 
@@ -139,7 +139,7 @@ INSERT INTO users (
   'Phase<N> TestUser',
   'testonb-phase<N>@test.com',
   true,
-  '<ROLE>',       -- CONSULTEE, CONSULTANT, or STAFF
+  '<ROLE>',       -- CONSULTEE or CONSULTANT (never STAFF/ADMIN)
   false,
   'America/New_York',
   NOW(), NOW()
@@ -200,7 +200,7 @@ Create test user with `role = 'CONSULTEE'` using Phase 0 template (use `phase1` 
 
 ### Step 1.1: Navigate & Authenticate
 
-1. Navigate to `http://localhost:3000/auth/sign-in`
+1. Navigate to `http://localhost:3000/auth/signin`
 2. Take snapshot to find the email/password form fields
 3. Fill email `testonb-phase1@test.com`, password `TestPassword123!`
 4. Click the sign-in button
@@ -829,37 +829,21 @@ DELETE FROM users WHERE id = 'test-onb-phase9';
 
 ---
 
-## PHASE 10: Staff Onboarding — Happy Path (Invite-Only Bypass)
+## PHASE 10: Operators Never See Onboarding
 
-**Goal:** Test the Staff onboarding flow. Staff is normally invite-only, but the form UI shows it as greyed out. However, we can test what happens when a user with `role = 'STAFF'` already set in the DB accesses onboarding.
+**Goal:** Confirm STAFF and ADMIN cannot be reached through public onboarding.
 
-**Important:** The backend rejects STAFF role from public onboarding. This phase tests the **UI-level behavior** — what the user sees if they try to select Staff, and what happens if a staff user hits the onboarding page.
+Operators are created by an ADMIN from the back office (`lib/auth/operators.ts:createOperator`): the account is born with `onboardingCompleted = true` and the person sets a password from an emailed setup link. The new operator then enrols TOTP on first sign-in. There is no Staff card in the onboarding role picker, `processOnboardingData` (`utils/onboarding-server.ts`) accepts only `CONSULTEE` and `CONSULTANT`, and `POST /api/user/staff` no longer exists.
 
 ### Setup
-Create test user with `role = 'STAFF'`, suffix `phase10`.
+Create test user with `role = 'CONSULTEE'`, `onboardingCompleted = false`, suffix `phase10`.
 
 ### Steps
 
-1. Sign in with the staff user
-2. Navigate to onboarding
-3. Take screenshot: **"phase10-staff-onboarding-page"**
-4. On step 1:
-   - Verify the "Staff" role card is **greyed out / disabled** with text "Invite only"
-   - Take screenshot: **"phase10-staff-role-disabled"**
-   - Try clicking the Staff card — verify it does NOT select
-   - Select "Consultee" instead (since Staff is disabled in UI)
-5. Fill required fields, proceed through the consultee flow to submission
-6. Verify the submission completes (backend should accept CONSULTEE role regardless of original DB role)
-
-### Alternative Test (if staff role card can somehow be selected):
-
-If you manage to select Staff and proceed:
-- Step 2 should be "Role Details" (department + position selection)
-- Step 3 should be "Responsibilities" (checkboxes for responsibilities and permissions)
-- Step 4 should be "Agreement"
-- Step 5 should be "Review"
-
-Take screenshots at each staff-specific step.
+1. Sign in and navigate to onboarding
+2. On step 1, verify the role picker offers only Consultee, Consultant and Organization — no Staff or Admin card
+3. Take screenshot: **"phase10-role-picker-no-staff"**
+4. Complete the consultee flow, then confirm in the DB that `users.role` is still `CONSULTEE`
 
 ### Cleanup
 
@@ -952,7 +936,7 @@ DELETE FROM "Domain" WHERE id LIKE 'test-domain-onb-%';
 | 15 | All submitted fields persist with correct values in DB | 8 |
 | 16 | No orphaned profiles created for wrong roles | 1, 8 |
 | 17 | Review step displays all filled data | 9 |
-| 18 | Staff role card is disabled in UI | 10 |
+| 18 | Role picker has no Staff or Admin card | 10 |
 | 19 | Sign-out button works | 11 |
 | 20 | Double-click submit protection | 11 |
 | 21 | Special characters preserved in DB | 11 |

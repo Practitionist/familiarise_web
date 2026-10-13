@@ -31,7 +31,16 @@ import {
   isChannelAlreadyExistsError,
 } from "@/lib/stream-utils";
 import { assertCanDirectMessage } from "@/lib/stream/dm-eligibility";
-import { addRemainingMembers, createMemberChunk } from "@/lib/stream/batch";
+import {
+  DM_ELIGIBLE_STATUSES,
+  OPENABLE_EVENT_STATUSES,
+} from "@/lib/stream/dm-eligibility-statuses";
+import {
+  addRemainingMembers,
+  createMemberChunk,
+  forEachChunk,
+} from "@/lib/stream/batch";
+import { collabChannelId } from "@/lib/stream-channel-ids";
 
 // Input validation schemas
 const channelTypeSchema = z.enum(["messaging", "team"]);
@@ -87,6 +96,7 @@ export async function createChannel(input: {
   channelName?: string;
   members: string[];
   createdById: string;
+  moderatorIds?: string[];
   additionalData?: Record<string, unknown>;
   /**
    * Optional enterprise organization stamp. When non-null, written to the
@@ -116,7 +126,22 @@ export async function createChannel(input: {
   });
 
   // Ensure all members exist in Stream before channel creation
-  await upsertUsersToStream(allMembers);
+  const upsertResult = await upsertUsersToStream(allMembers, {
+    serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
+  });
+  const droppedIds = new Set(upsertResult?.droppedIds ?? []);
+  const syncedMembers = allMembers.filter((id) => !droppedIds.has(id));
+  if (
+    droppedIds.has(validated.createdById) ||
+    syncedMembers.length === 0 ||
+    (validated.channelType === "messaging" &&
+      allMembers.length >= 2 &&
+      syncedMembers.length < 2)
+  ) {
+    throw new Error(
+      "Stream channel requires consented creator and participants",
+    );
+  }
 
   // Merge the optional org stamp into additionalData. Use snake_case
   // (`organization_id`) to match Stream's chat field convention and the
@@ -139,7 +164,10 @@ export async function createChannel(input: {
   const createChannelData = {
     name: validated.channelName,
     created_by_id: validated.createdById,
-    members: createMemberChunk(allMembers),
+    members: createMemberChunk(syncedMembers),
+    ...(validated.channelType === "team" && syncedMembers.length >= 100
+      ? { cooldown: 3 }
+      : {}),
     ...mergedAdditionalData,
   };
   const channel = client.channel(
@@ -174,23 +202,22 @@ export async function createChannel(input: {
   // on the adopted path too: the winner created the same channel from the same
   // roster, so the same remainder is owed either way and `addMembers` is
   // idempotent for anyone already in.
-  await addRemainingMembers(channel, allMembers);
+  await addRemainingMembers(channel, syncedMembers);
 
-  // Channel-scoped moderation replaces the old global-admin Stream role
-  // (#899). Only the channel HOST may moderate — never an arbitrary creator:
-  //  - team channels (webinar/class): the creator IS the consultant host.
-  //  - messaging channels: only consultation/subscription DMs carry a
-  //    `dm_consultant_user_id`; grant moderation to that consultant. Peer DMs
-  //    (createDirectMessageChannel) have no host, so `moderatorId` is
-  //    undefined and no grant is issued — this prevents a consultee who
-  //    opens a 1:1 DM from being able to mute/remove the consultant (#981).
   const moderatorId =
     validated.channelType === "team"
       ? validated.createdById
       : (mergedAdditionalData.dm_consultant_user_id as string | undefined);
 
-  if (moderatorId) {
-    await grantChannelModerator(channel, moderatorId, validated.channelId);
+  const moderatorsToGrant = Array.from(
+    new Set([
+      ...(moderatorId ? [moderatorId] : []),
+      ...(input.moderatorIds ?? []).filter((id) => syncedMembers.includes(id)),
+    ]),
+  );
+
+  for (const modId of moderatorsToGrant) {
+    await grantChannelModerator(channel, modId, validated.channelId);
   }
 
   // Cache the channel existence
@@ -198,12 +225,12 @@ export async function createChannel(input: {
 
   streamLogger.debug("Channel created successfully", {
     channelId: validated.channelId,
-    memberCount: allMembers.length,
+    memberCount: syncedMembers.length,
   });
 
   return {
     channelId: validated.channelId,
-    members: allMembers,
+    members: syncedMembers,
     channelData,
   };
 }
@@ -253,240 +280,348 @@ export async function createDirectMessageChannel(
   });
 }
 
+const MODERATOR_COLLABORATOR_ROLES = new Set([
+  "CO_HOST",
+  "CO_INSTRUCTOR",
+  "MODERATOR",
+]);
+
+const ACCEPTED_COLLABORATORS_INCLUDE = {
+  where: {
+    status: "ACCEPTED" as const,
+    consultantProfile: { deletedAt: null },
+  },
+  select: {
+    role: true,
+    consultantProfile: { select: { userId: true } },
+  },
+};
+
+export type EventChannelType =
+  "webinar" | "class" | "consultation" | "subscription";
+
+async function loadEventChannelData(
+  eventType: EventChannelType,
+  eventId: string,
+) {
+  switch (eventType) {
+    case "webinar": {
+      const webinar = await prisma.webinar.findUnique({
+        where: { id: eventId },
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
+              collaborators: ACCEPTED_COLLABORATORS_INCLUDE,
+            },
+          },
+          appointment: {
+            include: {
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
+              },
+            },
+          },
+        },
+      });
+      if (!webinar) throw new Error(`Webinar not found: ${eventId}`);
+      if (
+        webinar.status &&
+        !OPENABLE_EVENT_STATUSES.includes(
+          webinar.status as (typeof OPENABLE_EVENT_STATUSES)[number],
+        )
+      ) {
+        throw new Error(
+          `Webinar is not in an active state for channel creation: ${eventId}`,
+        );
+      }
+
+      const consultantId = webinar.webinarPlan.consultantProfile?.user?.id;
+      if (!consultantId) {
+        throw new Error(`Consultant not found for webinar: ${eventId}`);
+      }
+
+      const collaborators = webinar.webinarPlan.collaborators ?? [];
+      const members = [
+        ...collaborators.map((c) => c.consultantProfile.userId),
+        ...(webinar.appointment?.participants.map((p) => p.userId) || []),
+      ];
+      const moderatorIds = collaborators
+        .filter((c) => MODERATOR_COLLABORATOR_ROLES.has(c.role))
+        .map((c) => c.consultantProfile.userId);
+
+      return {
+        consultantId,
+        members,
+        moderatorIds,
+        name: webinar.webinarPlan.title,
+        organizationId: bookingOrgId({
+          webinarPlan: webinar.webinarPlan,
+          appointment: webinar.appointment,
+        }),
+      };
+    }
+
+    case "class": {
+      const classData = await prisma.class.findUnique({
+        where: { id: eventId },
+        include: {
+          classPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
+              collaborators: ACCEPTED_COLLABORATORS_INCLUDE,
+            },
+          },
+          appointment: {
+            include: {
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
+              },
+            },
+          },
+        },
+      });
+      if (!classData) throw new Error(`Class not found: ${eventId}`);
+      if (
+        classData.status &&
+        !OPENABLE_EVENT_STATUSES.includes(
+          classData.status as (typeof OPENABLE_EVENT_STATUSES)[number],
+        )
+      ) {
+        throw new Error(
+          `Class is not in an active state for channel creation: ${eventId}`,
+        );
+      }
+
+      const consultantId = classData.classPlan.consultantProfile?.user?.id;
+      if (!consultantId) {
+        throw new Error(`Consultant not found for class: ${eventId}`);
+      }
+
+      const collaborators = classData.classPlan.collaborators ?? [];
+      const members = [
+        ...collaborators.map((c) => c.consultantProfile.userId),
+        ...(classData.appointment?.participants.map((p) => p.userId) || []),
+      ];
+      const moderatorIds = collaborators
+        .filter((c) => MODERATOR_COLLABORATOR_ROLES.has(c.role))
+        .map((c) => c.consultantProfile.userId);
+
+      return {
+        consultantId,
+        members,
+        moderatorIds,
+        name: classData.classPlan.title,
+        organizationId: bookingOrgId({
+          classPlan: classData.classPlan,
+          appointment: classData.appointment,
+        }),
+      };
+    }
+
+    case "consultation": {
+      const consultation = await prisma.consultation.findUnique({
+        where: { id: eventId },
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
+            },
+          },
+          requestedBy: { include: { user: { select: { id: true } } } },
+          appointment: { select: { organizationId: true } },
+        },
+      });
+      if (!consultation) throw new Error(`Consultation not found: ${eventId}`);
+      if (
+        consultation.status &&
+        !DM_ELIGIBLE_STATUSES.includes(
+          consultation.status as (typeof DM_ELIGIBLE_STATUSES)[number],
+        )
+      ) {
+        throw new Error(
+          `Consultation is not in a DM-eligible state: ${eventId}`,
+        );
+      }
+
+      const consultantId =
+        consultation.consultationPlan.consultantProfile?.user?.id;
+      const consulteeId = consultation.requestedBy?.user?.id;
+      if (!consultantId || !consulteeId) {
+        throw new Error(`Participants not found for consultation: ${eventId}`);
+      }
+
+      return {
+        consultantId,
+        members: [consulteeId],
+        name: consultation.consultationPlan.title,
+        organizationId: bookingOrgId({
+          consultationPlan: consultation.consultationPlan,
+          appointment: consultation.appointment,
+        }),
+      };
+    }
+
+    case "subscription": {
+      const subscription = await prisma.subscription.findUnique({
+        where: { id: eventId },
+        include: {
+          subscriptionPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true } } },
+              },
+            },
+          },
+          requestedBy: { include: { user: { select: { id: true } } } },
+          appointment: { select: { organizationId: true } },
+        },
+      });
+      if (!subscription) throw new Error(`Subscription not found: ${eventId}`);
+      if (
+        subscription.status &&
+        !DM_ELIGIBLE_STATUSES.includes(
+          subscription.status as (typeof DM_ELIGIBLE_STATUSES)[number],
+        )
+      ) {
+        throw new Error(
+          `Subscription is not in a DM-eligible state: ${eventId}`,
+        );
+      }
+
+      const consultantId =
+        subscription.subscriptionPlan.consultantProfile?.user?.id;
+      const consulteeId = subscription.requestedBy?.user?.id;
+      if (!consultantId || !consulteeId) {
+        throw new Error(`Participants not found for subscription: ${eventId}`);
+      }
+
+      return {
+        consultantId,
+        members: [consulteeId],
+        name: subscription.subscriptionPlan.title,
+        organizationId: bookingOrgId({
+          subscriptionPlan: subscription.subscriptionPlan,
+          appointment: subscription.appointment,
+        }),
+      };
+    }
+
+    default:
+      throw new Error(`Unknown event type: ${String(eventType)}`);
+  }
+}
+
 /**
- * Create a webinar channel with all participants
- * Members are everyone connected to the webinar's session slots
- *
- * @param webinarId — Webinar entity id
- * @param organizationId — Optional explicit org override. When omitted, the
- *   helper falls back to `webinarPlan.organizationId` so callers don't have
- *   to plumb it through. Pass `null` to force-omit the org tag.
+ * Shared event-channel data loader returning `null` when the entity or its
+ * required participants are missing (used by `addUserToEventChannel`).
+ */
+export async function getEventChannelData(
+  eventType: EventChannelType,
+  eventId: string,
+) {
+  try {
+    return await loadEventChannelData(eventType, eventId);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create a webinar channel with all participants (host, accepted collaborators,
+ * and live appointment participants).
  */
 export async function createWebinarChannel(
   webinarId: string,
   organizationId?: string | null,
 ) {
   channelIdSchema.parse(webinarId);
-
-  const webinar = await prisma.webinar.findUnique({
-    where: { id: webinarId },
-    include: {
-      webinarPlan: {
-        include: {
-          consultantProfile: {
-            include: { user: { select: { id: true } } },
-          },
-        },
-      },
-      appointment: {
-        include: {
-          participants: {
-            where: liveParticipant(),
-            select: { userId: true },
-          },
-        },
-      },
-    },
-  });
-
-  if (!webinar) {
-    throw new Error(`Webinar not found: ${webinarId}`);
-  }
-
-  const consultantUserId = webinar.webinarPlan.consultantProfile?.user?.id;
-  if (!consultantUserId) {
-    throw new Error(`Consultant not found for webinar: ${webinarId}`);
-  }
-
-  // Registrants are the live seat holders on the webinar's appointment (#1554).
-  const appointmentIds =
-    webinar.appointment?.participants.map((p) => p.userId) || [];
-
-  const allParticipantIds = Array.from(new Set(appointmentIds));
-
-  const allMembers = Array.from(
-    new Set([consultantUserId, ...allParticipantIds]),
-  );
+  const data = await loadEventChannelData("webinar", webinarId);
+  const allMembers = Array.from(new Set([data.consultantId, ...data.members]));
 
   streamLogger.debug("Creating webinar channel", {
     webinarId,
-    appointmentCount: appointmentIds.length,
     totalUnique: allMembers.length,
   });
 
-  // Ensure all members exist in Stream before channel creation
-  await upsertUsersToStream(allMembers);
-
-  // Fall back to the plan's org if the caller didn't pass one explicitly.
-  // `null` is treated as "explicitly no org"; `undefined` triggers fallback.
   const resolvedOrgId =
-    organizationId === undefined
-      ? (webinar.webinarPlan.organizationId ?? null)
-      : organizationId;
+    organizationId === undefined ? data.organizationId : organizationId;
 
   return createChannel({
     channelType: "team",
     channelId: `webinar-${webinarId}`,
-    channelName: webinar.webinarPlan.title,
+    channelName: data.name,
     members: allMembers,
-    createdById: consultantUserId,
+    createdById: data.consultantId,
+    moderatorIds: data.moderatorIds,
     additionalData: { webinar_id: webinarId },
     organizationId: resolvedOrgId,
   });
 }
 
 /**
- * Create a class channel with all participants
- *
- * @param classId — Class entity id
- * @param organizationId — Optional explicit org override. Falls back to
- *   `classPlan.organizationId` when omitted; `null` force-omits the tag.
+ * Create a class channel with all participants (host, accepted collaborators,
+ * and live appointment participants).
  */
 export async function createClassChannel(
   classId: string,
   organizationId?: string | null,
 ) {
   channelIdSchema.parse(classId);
-
-  const classData = await prisma.class.findUnique({
-    where: { id: classId },
-    include: {
-      classPlan: {
-        include: {
-          consultantProfile: {
-            include: { user: { select: { id: true } } },
-          },
-        },
-      },
-      appointment: {
-        include: {
-          participants: {
-            where: liveParticipant(),
-            select: { userId: true },
-          },
-        },
-      },
-    },
-  });
-
-  if (!classData) {
-    throw new Error(`Class not found: ${classId}`);
-  }
-
-  const consultantUserId = classData.classPlan.consultantProfile?.user?.id;
-  if (!consultantUserId) {
-    throw new Error(`Consultant not found for class: ${classId}`);
-  }
-
-  const appointmentIds =
-    classData.appointment?.participants.map((p) => p.userId) || [];
-
-  const allMembers = Array.from(new Set([consultantUserId, ...appointmentIds]));
+  const data = await loadEventChannelData("class", classId);
+  const allMembers = Array.from(new Set([data.consultantId, ...data.members]));
 
   streamLogger.debug("Creating class channel", {
     classId,
-    appointmentCount: appointmentIds.length,
     totalUnique: allMembers.length,
   });
 
-  // Ensure all members exist in Stream before channel creation
-  await upsertUsersToStream(allMembers);
-
   const resolvedOrgId =
-    organizationId === undefined
-      ? (classData.classPlan.organizationId ?? null)
-      : organizationId;
+    organizationId === undefined ? data.organizationId : organizationId;
 
   return createChannel({
     channelType: "team",
     channelId: `class-${classId}`,
-    channelName: classData.classPlan.title,
+    channelName: data.name,
     members: allMembers,
-    createdById: consultantUserId,
+    createdById: data.consultantId,
+    moderatorIds: data.moderatorIds,
     additionalData: { class_id: classId },
     organizationId: resolvedOrgId,
   });
 }
 
 /**
- * Create a consultation channel
- *
- * @param consultationId — Consultation entity id
- * @param organizationId — Optional explicit org override. When omitted, the
- *   resolved org tag falls back through this chain:
- *     1. `consultationPlan.organizationId` (plan is hosted by an org)
- *     2. `consultation.appointment.organizationId` (booking is funded by
- *        an org member, even when the plan itself is platform-owned)
- *     3. `null` — personal channel, no org tag
- *   Pass `null` explicitly to force-omit the org tag regardless of fallback.
- *
- *   Note: the underlying DM channel is per consultant-consultee pair, so an
- *   org tag here reflects the *first booking* — if the same pair later books
- *   a personal-plan consultation, the existing channel keeps the org tag.
+ * Create a consultation DM channel between consultant and consultee.
  */
 export async function createConsultationChannel(
   consultationId: string,
   organizationId?: string | null,
 ) {
   channelIdSchema.parse(consultationId);
+  const data = await loadEventChannelData("consultation", consultationId);
+  const { consultantId } = data;
+  const [consulteeId] = data.members;
 
-  const consultation = await prisma.consultation.findUnique({
-    where: { id: consultationId },
-    include: {
-      consultationPlan: {
-        include: {
-          consultantProfile: {
-            include: { user: { select: { id: true } } },
-          },
-        },
-      },
-      requestedBy: {
-        include: { user: { select: { id: true } } },
-      },
-      // Pull the appointment row so we can fall back to its org tag
-      // when the plan itself isn't org-hosted but the booker is paying
-      // through an org-funded membership (C.3 / #674).
-      appointment: { select: { organizationId: true } },
-    },
-  });
-
-  if (!consultation) {
-    throw new Error(`Consultation not found: ${consultationId}`);
-  }
-
-  const consultantId = consultation.consultationPlan.consultantProfile.user.id;
-  const consulteeId = consultation.requestedBy.user.id;
-
-  // Legacy self-booked row (checkout blocks these now): getDmChannelId throws
-  // on a self-pair, so skip rather than take the whole approval path down.
-  // Same guard the search routes apply per row.
   if (consultantId === consulteeId) {
     streamLogger.warn(
       "Skipping consultation channel — consultant and consultee are the same user",
-      {
-        consultationId,
-      },
+      { consultationId },
     );
     return null;
   }
 
-  if (!consultantId || !consulteeId) {
-    throw new Error(
-      `Participants not found for consultation: ${consultationId}`,
-    );
-  }
-
-  // Ensure both users exist in Stream before channel creation
-  await upsertUsersToStream([consultantId, consulteeId]);
-
-  // `null` from the caller force-omits the org; `undefined` means "resolve it".
   const resolvedOrgId =
-    organizationId === undefined ? bookingOrgId(consultation) : organizationId;
+    organizationId === undefined ? data.organizationId : organizationId;
 
-  // One DM per pair PER CONTEXT. Still not per event — multiple
-  // consultations/subscriptions between the same pair in the same context share
-  // one thread — but a personal booking and an org-funded one no longer collide
-  // into a single channel that can only live in one dashboard (ADR 19).
   return createChannel({
     channelType: "messaging",
     channelId: getDmChannelId(consultantId, consulteeId, resolvedOrgId),
@@ -501,79 +636,28 @@ export async function createConsultationChannel(
 }
 
 /**
- * Create a subscription channel
- *
- * @param subscriptionId — Subscription entity id
- * @param organizationId — Optional explicit org override. When omitted, the
- *   resolved org tag falls back through this chain:
- *     1. `subscriptionPlan.organizationId` (plan is hosted by an org)
- *     2. `subscription.appointment.organizationId` (booking is funded by
- *        an org member, even when the plan itself is platform-owned)
- *     3. `null` — personal channel, no org tag
- *   Pass `null` explicitly to force-omit. See `createConsultationChannel`
- *   for the DM-channel sharing caveat.
+ * Create a subscription DM channel between consultant and consultee.
  */
 export async function createSubscriptionChannel(
   subscriptionId: string,
   organizationId?: string | null,
 ) {
   channelIdSchema.parse(subscriptionId);
+  const data = await loadEventChannelData("subscription", subscriptionId);
+  const { consultantId } = data;
+  const [consulteeId] = data.members;
 
-  const subscription = await prisma.subscription.findUnique({
-    where: { id: subscriptionId },
-    include: {
-      subscriptionPlan: {
-        include: {
-          consultantProfile: {
-            include: { user: { select: { id: true } } },
-          },
-        },
-      },
-      requestedBy: {
-        include: { user: { select: { id: true } } },
-      },
-      // The wrapper's org tag is the fallback when the plan itself isn't
-      // org-hosted but the subscription is funded through an org-funded
-      // membership (C.3 / #674). #1554 — one wrapper per subscription.
-      appointment: { select: { organizationId: true } },
-    },
-  });
-
-  if (!subscription) {
-    throw new Error(`Subscription not found: ${subscriptionId}`);
-  }
-
-  const consultantId = subscription.subscriptionPlan.consultantProfile.user.id;
-  const consulteeId = subscription.requestedBy.user.id;
-
-  // Same self-pair guard as the consultation path above.
   if (consultantId === consulteeId) {
     streamLogger.warn(
       "Skipping subscription channel — consultant and consultee are the same user",
-      {
-        subscriptionId,
-      },
+      { subscriptionId },
     );
     return null;
   }
 
-  if (!consultantId || !consulteeId) {
-    throw new Error(
-      `Participants not found for subscription: ${subscriptionId}`,
-    );
-  }
-
-  // Ensure both users exist in Stream before channel creation
-  await upsertUsersToStream([consultantId, consulteeId]);
-
-  // `null` from the caller force-omits the org; `undefined` means "resolve it".
   const resolvedOrgId =
-    organizationId === undefined ? bookingOrgId(subscription) : organizationId;
+    organizationId === undefined ? data.organizationId : organizationId;
 
-  // One DM per pair PER CONTEXT. Still not per event — multiple
-  // consultations/subscriptions between the same pair in the same context share
-  // one thread — but a personal booking and an org-funded one no longer collide
-  // into a single channel that can only live in one dashboard (ADR 19).
   return createChannel({
     channelType: "messaging",
     channelId: getDmChannelId(consultantId, consulteeId, resolvedOrgId),
@@ -602,6 +686,7 @@ export async function createCollaboratorChannel(
 
   const collaboratorWhere = {
     status: "ACCEPTED" as const,
+    consultantProfile: { deletedAt: null },
   };
 
   const collaboratorInclude = {
@@ -613,6 +698,7 @@ export async function createCollaboratorChannel(
   let title: string;
   let hostUserId: string | undefined;
   let collaboratorUserIds: string[];
+  let organizationId: string | null = null;
 
   if (planType === "webinar") {
     const plan = await prisma.webinarPlan.findUnique({
@@ -630,8 +716,9 @@ export async function createCollaboratorChannel(
 
     if (!plan) throw new Error(`Webinar plan not found: ${planId}`);
     title = plan.title;
+    organizationId = plan.organizationId ?? null;
     hostUserId = plan.consultantProfile?.user?.id;
-    collaboratorUserIds = plan.collaborators
+    collaboratorUserIds = (plan.collaborators ?? [])
       .map((c) => c.consultantProfile.user.id)
       .filter(Boolean);
   } else {
@@ -650,19 +737,20 @@ export async function createCollaboratorChannel(
 
     if (!plan) throw new Error(`Class plan not found: ${planId}`);
     title = plan.title;
+    organizationId = plan.organizationId ?? null;
     hostUserId = plan.consultantProfile?.user?.id;
-    collaboratorUserIds = plan.collaborators
+    collaboratorUserIds = (plan.collaborators ?? [])
       .map((c) => c.consultantProfile.user.id)
       .filter(Boolean);
   }
 
-  if (!hostUserId) {
+  const creatorUserId = hostUserId ?? collaboratorUserIds[0];
+  if (!creatorUserId) {
     throw new Error(`Host not found for ${planType} plan: ${planId}`);
   }
 
-  // Deduplicated expected member set: host + all accepted collaborators
   const expectedMemberIds = Array.from(
-    new Set([hostUserId, ...collaboratorUserIds]),
+    new Set([...(hostUserId ? [hostUserId] : []), ...collaboratorUserIds]),
   );
 
   if (expectedMemberIds.length < 2) {
@@ -673,16 +761,15 @@ export async function createCollaboratorChannel(
     return null;
   }
 
-  const channelId = `collab-${planType}-${planId}`;
+  const channelId = collabChannelId(planType, planId);
   const client = getStreamChatClient();
 
-  // Stream refuses a channel whose members it has never seen; every other
-  // creator here upserts first, and this one did not (FAMILIARISE_WEB-37, #1580).
-  // The roster is whoever the upsert could sync: a member without
-  // STREAM_DATA_PROCESSING consent is left out of create, add and remove alike.
-  const { droppedIds } = await upsertUsersToStream(expectedMemberIds);
+  const upsertResult = await upsertUsersToStream(expectedMemberIds, {
+    serverTrusted: Symbol.for("familiarise.stream.serverTrusted"),
+  });
+  const droppedIds = upsertResult?.droppedIds ?? [];
   const roster = expectedMemberIds.filter((id) => !droppedIds.includes(id));
-  if (roster.length < 2 || !roster.includes(hostUserId)) {
+  if (roster.length < 2 || (hostUserId && !roster.includes(hostUserId))) {
     streamLogger.warn("Skipping collaborator channel - roster not syncable", {
       planType,
       planId,
@@ -693,19 +780,19 @@ export async function createCollaboratorChannel(
 
   const channel = client.channel("messaging", channelId, {
     name: `${title} - Collaborators`,
-    created_by_id: hostUserId,
-    members: roster,
+    created_by_id: creatorUserId,
+    members: createMemberChunk(roster),
     [`${planType}_plan_id`]: planId,
     is_collaborator_channel: true,
+    ...(organizationId ? { organization_id: organizationId } : {}),
   } as Record<string, unknown>);
 
-  // Idempotent create — no-op if channel already exists
   await channel.create();
+  await addRemainingMembers(channel, roster);
+  await channel.updatePartial?.({ set: { frozen: false } }).catch(() => {});
   markChannelExists("messaging", channelId);
 
-  // Host moderates their own collab channel — this path bypasses
-  // createChannel, so the #899 channel-scoped grant is repeated here.
-  await grantChannelModerator(channel, hostUserId, channelId);
+  await grantChannelModerator(channel, creatorUserId, channelId);
 
   // Query current channel membership for diffing
   const channelData = await channel.query();
@@ -716,7 +803,9 @@ export async function createCollaboratorChannel(
   // Add members present in DB but missing from channel
   const toAdd = roster.filter((id) => !currentMemberIds.includes(id));
   if (toAdd.length > 0) {
-    await channel.addMembers(toAdd);
+    await forEachChunk(toAdd, async (chunk) => {
+      await channel.addMembers(chunk);
+    });
     streamLogger.debug("Collaborator channel: added missing members", {
       channelId,
       added: toAdd,
@@ -726,7 +815,9 @@ export async function createCollaboratorChannel(
   // Remove channel members no longer in the DB set
   const toRemove = currentMemberIds.filter((id) => !roster.includes(id));
   if (toRemove.length > 0) {
-    await channel.removeMembers(toRemove);
+    await forEachChunk(toRemove, async (chunk) => {
+      await channel.removeMembers(chunk);
+    });
     streamLogger.debug("Collaborator channel: removed departed members", {
       channelId,
       removed: toRemove,

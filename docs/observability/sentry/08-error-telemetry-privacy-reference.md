@@ -576,7 +576,7 @@ determination from a qualified lawyer.
    anyway.
 
 **This repository** has this list tracked in more detail, with owners and
-phases, in [`docs/compliance/08-dpdp-and-privacy.md`](../../compliance/08-dpdp-and-privacy.md)
+phases, in [`docs/compliance/09-dpdp-and-privacy.md`](../../compliance/09-dpdp-and-privacy.md)
 ("Required H", and Gap #14). The engineering side of the same disclosure is in
 [05 identity and triage](05-identity-and-triage.md); the reason a specific
 identity switch exists and defaults off is in

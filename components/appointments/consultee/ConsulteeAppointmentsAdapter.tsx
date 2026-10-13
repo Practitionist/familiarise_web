@@ -7,6 +7,7 @@ import { caseKeyOf } from "@/lib/support/case-key";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
+import { useNowTick } from "@/hooks/use-now-tick";
 import { useSession } from "@/lib/auth-client";
 // #248: the shared hook reads the connected client singleton at click time and
 // lazy-imports lib/meeting, so the Stream SDK stays off this bundle.
@@ -41,10 +42,16 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
+import {
+  DM_ELIGIBLE_STATUSES,
+  OPENABLE_EVENT_STATUSES,
+} from "@/lib/stream/dm-eligibility-statuses";
 
-type DialogKind = "cancel" | "leave" | "documents";
+type DialogKind = "cancel" | "leave";
+
+const DM_ELIGIBLE_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
+const OPENABLE_EVENT_SET = new Set<string>(OPENABLE_EVENT_STATUSES);
 
 /**
  * Event id for leave / cancel-trial API paths.
@@ -90,6 +97,142 @@ function sourceId(vm: AppointmentVM): string | null {
     default:
       return null;
   }
+}
+
+export function consultantUserIdOf(vm: AppointmentVM): string | null {
+  const src = vm.raw.source as
+    | {
+        consultationPlan?: {
+          consultantProfile?: { user?: { id?: string } };
+        };
+        subscriptionPlan?: {
+          consultantProfile?: { user?: { id?: string } };
+        };
+        webinarPlan?: {
+          consultantProfile?: { user?: { id?: string } };
+        };
+        classPlan?: {
+          consultantProfile?: { user?: { id?: string } };
+        };
+      }
+    | undefined;
+  const fromSource =
+    src?.consultationPlan?.consultantProfile?.user?.id ??
+    src?.subscriptionPlan?.consultantProfile?.user?.id ??
+    src?.webinarPlan?.consultantProfile?.user?.id ??
+    src?.classPlan?.consultantProfile?.user?.id;
+  if (fromSource) return fromSource;
+
+  const appt = vm.raw.appointment as
+    | {
+        consultation?: {
+          consultationPlan?: {
+            consultantProfile?: { user?: { id?: string } };
+          };
+        } | null;
+        subscription?: {
+          subscriptionPlan?: {
+            consultantProfile?: { user?: { id?: string } };
+          };
+        } | null;
+        webinar?: {
+          webinarPlan?: {
+            consultantProfile?: { user?: { id?: string } };
+          };
+        } | null;
+        class?: {
+          classPlan?: {
+            consultantProfile?: { user?: { id?: string } };
+          };
+        } | null;
+      }
+    | undefined;
+  return (
+    appt?.consultation?.consultationPlan?.consultantProfile?.user?.id ??
+    appt?.subscription?.subscriptionPlan?.consultantProfile?.user?.id ??
+    appt?.webinar?.webinarPlan?.consultantProfile?.user?.id ??
+    appt?.class?.classPlan?.consultantProfile?.user?.id ??
+    null
+  );
+}
+
+export function consulteeUserIdOf(vm: AppointmentVM): string | null {
+  const appt = vm.raw.appointment;
+  if (appt?.consultation?.requestedBy?.user?.id) {
+    return appt.consultation.requestedBy.user.id;
+  }
+  if (appt?.subscription?.requestedBy?.user?.id) {
+    return appt.subscription.requestedBy.user.id;
+  }
+  const src = vm.raw.source as
+    | {
+        requestedBy?: { user?: { id?: string } };
+        consulteeProfile?: { user?: { id?: string } };
+      }
+    | undefined;
+  return src?.requestedBy?.user?.id ?? src?.consulteeProfile?.user?.id ?? null;
+}
+
+export function eventChannelIdOf(vm: AppointmentVM): string | null {
+  const appt = vm.raw.appointment as
+    | {
+        webinar?: { id?: string } | null;
+        class?: { id?: string } | null;
+        webinarId?: string | null;
+        classId?: string | null;
+      }
+    | undefined;
+  if (vm.kind === "WEBINAR") {
+    return appt?.webinar?.id ?? appt?.webinarId ?? sourceId(vm);
+  }
+  if (vm.kind === "CLASS") {
+    return appt?.class?.id ?? appt?.classId ?? sourceId(vm);
+  }
+  return null;
+}
+
+export function chatAffordancesForVm(options: {
+  vm: AppointmentVM;
+  messagesBasePath: string;
+  role: "consultant" | "consultee";
+  push: (href: string) => void;
+}): OverflowItem[] {
+  const { vm, messagesBasePath, role, push } = options;
+  if (vm.kind === "TRIAL") return [];
+
+  const chatItems: OverflowItem[] = [];
+  if (
+    (vm.kind === "WEBINAR" || vm.kind === "CLASS") &&
+    OPENABLE_EVENT_SET.has(vm.status)
+  ) {
+    const eventId = eventChannelIdOf(vm);
+    if (eventId) {
+      const eventChatHref = `${messagesBasePath}?eventType=${vm.kind.toLowerCase()}&eventId=${encodeURIComponent(eventId)}`;
+      chatItems.push({
+        key: "event-chat",
+        label: "Open Event Chat",
+        href: eventChatHref,
+        onClick: () => push(eventChatHref),
+      });
+    }
+  }
+
+  if (DM_ELIGIBLE_SET.has(vm.status) && vm.appointmentId) {
+    const counterpartyUserId =
+      role === "consultant" ? consulteeUserIdOf(vm) : consultantUserIdOf(vm);
+    if (counterpartyUserId) {
+      const dmHref = `${messagesBasePath}?contextAppointmentId=${encodeURIComponent(vm.appointmentId)}&counterpartyUserId=${encodeURIComponent(counterpartyUserId)}`;
+      chatItems.push({
+        key: "message",
+        label:
+          role === "consultant" ? "Message Consultee" : "Message Consultant",
+        href: dmHref,
+        onClick: () => push(dmHref),
+      });
+    }
+  }
+
+  return chatItems;
 }
 
 /**
@@ -153,6 +296,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const now = useNowTick();
 
   const typeLabel = activeVm ? KIND_TO_TYPE[activeVm.kind] : "Consultation";
   const actions = useEventActions({
@@ -213,12 +357,20 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
     const joinable = getJoinableOccurrence(vm.raw.rawOccurrences ?? [], {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      now,
     });
     if (joinable && isConfirmedStatus(vm.status) && vm.raw.appointment) {
       return {
         kind: "join",
         label: "Join",
-        onClick: () => void joinNow(vm, joinable),
+        onClick: (targetOccurrence) => {
+          const targetSlot = targetOccurrence
+            ? ((vm.raw.rawOccurrences ?? []).find(
+                (s) => s.id === targetOccurrence.occurrenceId,
+              ) ?? joinable)
+            : joinable;
+          void joinNow(vm, targetSlot);
+        },
         busy: joiningId === vm.id,
       };
     }
@@ -300,10 +452,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => openDialog(vm, "leave"),
       });
     }
-    // #1527 — a finished booking keeps its files (DOC-1 only closes
-    // cancelled/rejected/expired ones), so COMPLETED lists them too.
+    // A finished or cancelled booking keeps its files readable until retention.
     if (
       vm.appointmentId &&
+      consulteeId &&
       (isConfirmedStatus(vm.status) || isCompletedLikeStatus(vm.status)) &&
       (vm.kind === "CONSULTATION" ||
         vm.kind === "TRIAL" ||
@@ -312,8 +464,21 @@ export function useConsulteeAppointmentsAdapter(options?: {
       items.push({
         key: "documents",
         label: "Documents",
-        onClick: () => openDialog(vm, "documents"),
+        onClick: () =>
+          router.push(
+            `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/documents`,
+          ),
       });
+    }
+    if (consulteeId) {
+      items.push(
+        ...chatAffordancesForVm({
+          vm,
+          messagesBasePath: `/dashboard/consultee/${consulteeId}/messages`,
+          role: "consultee",
+          push: (href) => router.push(href),
+        }),
+      );
     }
     if (vm.appointmentId && consulteeId) {
       // #1527 — one verb for help everywhere, and one place: the booking's
@@ -500,16 +665,6 @@ export function useConsulteeAppointmentsAdapter(options?: {
               : null
           }
         />
-
-        {activeVm.appointmentId && dialog === "documents" && (
-          <DocumentUpload
-            appointmentId={activeVm.appointmentId}
-            appointmentTitle={activeVm.title}
-            appointmentType={typeLabel}
-            defaultOpen
-            onOpenChange={(open) => !open && closeDialog()}
-          />
-        )}
       </>
     );
   };

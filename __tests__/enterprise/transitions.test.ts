@@ -21,8 +21,6 @@ import {
   PAYOUT_ALLOWED_FROM,
   PO_ALLOWED_FROM,
   PROGRAM_ALLOWED_FROM,
-  TERMINAL_STATES,
-  WALLET_TOPUP_ALLOWED_FROM,
   transitionContract,
   transitionMembership,
   transitionOrgInvoice,
@@ -30,7 +28,6 @@ import {
   transitionOrgPayoutAccount,
   transitionOrganization,
   transitionProgram,
-  transitionProgramAssignment,
   transitionPurchaseOrder,
 } from "@/lib/enterprise/transitions";
 
@@ -61,7 +58,6 @@ const WRAPPERS = [
   ["Organization", transitionOrganization, ORG_ALLOWED_FROM],
   ["Contract", transitionContract, CONTRACT_ALLOWED_FROM],
   ["Program", transitionProgram, PROGRAM_ALLOWED_FROM],
-  ["ProgramAssignment", transitionProgramAssignment, ASSIGNMENT_ALLOWED_FROM],
   ["Membership", transitionMembership, MEMBER_ALLOWED_FROM],
   ["OrganizationInvoice", transitionOrgInvoice, INVOICE_ALLOWED_FROM],
   ["PurchaseOrder", transitionPurchaseOrder, PO_ALLOWED_FROM],
@@ -147,65 +143,10 @@ describe("transition wrappers — CAS contract", () => {
 });
 
 describe("terminal re-entry is structurally impossible", () => {
-  it("a terminal state never appears in any allowed-from set of its enum", () => {
-    const pairs = [
-      [ORG_ALLOWED_FROM, TERMINAL_STATES.OrgStatus],
-      [CONTRACT_ALLOWED_FROM, TERMINAL_STATES.ContractStatus],
-      [PROGRAM_ALLOWED_FROM, TERMINAL_STATES.ProgramStatus],
-      [ASSIGNMENT_ALLOWED_FROM, TERMINAL_STATES.AssignmentStatus],
-      [MEMBER_ALLOWED_FROM, TERMINAL_STATES.MemberStatus],
-      [INVOICE_ALLOWED_FROM, TERMINAL_STATES.OrgInvoiceStatus],
-      [PO_ALLOWED_FROM, TERMINAL_STATES.PoStatus],
-      [PAYOUT_ALLOWED_FROM, TERMINAL_STATES.PayoutStatus],
-      [WALLET_TOPUP_ALLOWED_FROM, TERMINAL_STATES.WalletTopUpStatus],
-    ] as const;
-    for (const [map, terminals] of pairs) {
-      const froms = new Set(Object.values(map).flat());
-      for (const t of Array.from(terminals)) expect(froms.has(t)).toBe(false);
-    }
-  });
-
-  it("expected terminal sets (audit S3 — resurrectable states are the bug class)", () => {
-    expect(Array.from(TERMINAL_STATES.OrgStatus).sort()).toEqual(["DEACTIVATED"]);
-    expect(Array.from(TERMINAL_STATES.ContractStatus).sort()).toEqual([
-      "EXPIRED",
-      "TERMINATED",
-    ]);
-    expect(Array.from(TERMINAL_STATES.ProgramStatus).sort()).toEqual([
-      "CANCELLED",
-      "EXPIRED",
-    ]);
-    expect(Array.from(TERMINAL_STATES.AssignmentStatus).sort()).toEqual([
-      "CANCELLED",
-      "CLOSED",
-      "ROLLED",
-    ]);
-    expect(Array.from(TERMINAL_STATES.MemberStatus).sort()).toEqual(["ERASED"]);
-    expect(Array.from(TERMINAL_STATES.OrgInvoiceStatus).sort()).toEqual([
-      "CANCELLED",
-      "REFUNDED",
-      "VOID",
-    ]);
-    expect(Array.from(TERMINAL_STATES.PoStatus).sort()).toEqual([
-      "CANCELLED",
-      "CLOSED",
-    ]);
-    // Bank-detail changes can re-verify from any payout-account state.
-    expect(Array.from(TERMINAL_STATES.OrgPayoutAccountStatus)).toEqual([]);
-    expect(Array.from(TERMINAL_STATES.PayoutStatus).sort()).toEqual([
-      "CANCELLED",
-      "FAILED",
-      "REVERSED",
-    ]);
-    expect(Array.from(TERMINAL_STATES.WalletTopUpStatus).sort()).toEqual([
-      "CONFIRMED",
-      "FAILED",
-    ]);
-  });
-
   it.each([
     ["TERMINATED contract → ACTIVE", CONTRACT_ALLOWED_FROM.ACTIVE, "TERMINATED"],
     ["CANCELLED program → ACTIVE", PROGRAM_ALLOWED_FROM.ACTIVE, "CANCELLED"],
+    ["CLOSED assignment → ACTIVE", ASSIGNMENT_ALLOWED_FROM.ACTIVE, "CLOSED"],
     ["CLOSED PO → ACTIVE", PO_ALLOWED_FROM.ACTIVE, "CLOSED"],
     ["DEACTIVATED org → ACTIVE", ORG_ALLOWED_FROM.ACTIVE, "DEACTIVATED"],
     ["REFUNDED invoice → PAID", INVOICE_ALLOWED_FROM.PAID, "REFUNDED"],

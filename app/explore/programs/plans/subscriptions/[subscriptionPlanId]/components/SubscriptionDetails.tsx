@@ -104,6 +104,7 @@ export function SubscriptionDetails({
               brochure={{ planId: plan.id, planType: "subscriptions" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
+              filesIncluded={plan.materials}
               faqs={plan.faqs}
               topics={plan.topics}
             />

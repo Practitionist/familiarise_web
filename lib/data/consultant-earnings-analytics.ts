@@ -20,6 +20,7 @@ import {
   type BucketSums,
 } from "@/lib/dashboard/earnings-state";
 import { sumPaise } from "@/lib/payments/utils/money";
+import { clawbackRecoveredByPayout } from "@/lib/payments/payouts/clawback-recovery";
 
 export interface MonthlyEarning {
   /** Calendar month bucket, "YYYY-MM". */
@@ -100,12 +101,61 @@ type EarningRecord = Awaited<
 >["earnings"][number];
 
 /** One earning as the page reads it: the row, its plan title and its sponsor. */
-export type ConsultantEarningRow = EarningRecord & {
+export type ConsultantEarningRow = Omit<EarningRecord, "payment"> & {
   title: string | null;
   sponsorOrgName: string | null;
+  payment: Omit<
+    EarningRecord["payment"],
+    "attributionSource" | "platformFeeBps"
+  > & {
+    attributionSource?: EarningRecord["payment"]["attributionSource"];
+    platformFeeBps?: EarningRecord["payment"]["platformFeeBps"];
+  };
 };
 
-export type { ConsultantPayoutRow };
+import {
+  readActiveFeeSchedule,
+  type ActiveFeeSchedule,
+} from "@/lib/payments/pricing/platform-fee";
+
+export interface ConsultantFeeWaiverStatus {
+  sessionsRemaining: number;
+  expiresAt: Date;
+  grants: Array<{ sessionsRemaining: number; expiresAt: Date }>;
+}
+
+export interface ConsultantTdsRecordRow {
+  id: string;
+  financialYear: string;
+  quarter: number;
+  cumulativeAmountCredited: number;
+  tdsDeducted: number;
+  tdsRateBps: number;
+  tdsSection: string | null;
+  payoutId: string | null;
+  isReversal: boolean;
+  reportedInForm26Q: boolean;
+  form26QFilingDate: Date | null;
+  challanNumber: string | null;
+  certificateNumber: string | null;
+  ackNumber: string | null;
+  createdAt: Date;
+}
+
+export interface AttributionBreakdown {
+  ownLinkPaise: number;
+  marketplacePaise: number;
+  ownLinkCount: number;
+  marketplaceCount: number;
+}
+
+export interface RepeatLearnerStats {
+  repeatLearners: number;
+  totalLearners: number;
+  repeatLearnerRate: number | null;
+}
+
+export type { ActiveFeeSchedule, ConsultantPayoutRow };
 
 export type ConsultantEarningsPayload = Awaited<
   ReturnType<typeof buildConsultantEarningsPayload>
@@ -133,12 +183,157 @@ function toEarningRow(e: EarningRecord): ConsultantEarningRow {
 }
 
 /** The raw gateway text can embed provider ids; only plain words leave the server. */
-function toPayoutRow(p: ConsultantPayoutRow): ConsultantPayoutRow {
+function toPayoutRow(
+  p: ConsultantPayoutRow,
+  recoveredPaise: number,
+): ConsultantPayoutRow & { recoveredPaise: number } {
   return {
     ...p,
+    recoveredPaise,
     failureReason: p.failureReason
       ? sanitizePayoutFailure(p.failureReason)
       : null,
+  };
+}
+
+async function readActiveFeeWaiver(
+  consultantProfileId: string,
+): Promise<ConsultantFeeWaiverStatus | null> {
+  const now = new Date();
+  const waivers = await prisma.consultantFeeWaiver.findMany({
+    where: {
+      consultantProfileId,
+      sessionsRemaining: { gt: 0 },
+      expiresAt: { gt: now },
+    },
+    orderBy: { expiresAt: "asc" },
+    select: { sessionsRemaining: true, expiresAt: true },
+  });
+  if (waivers.length === 0) return null;
+  const sessionsRemaining = waivers.reduce(
+    (sum, w) => sum + w.sessionsRemaining,
+    0,
+  );
+  return {
+    sessionsRemaining,
+    expiresAt: waivers[0].expiresAt,
+    grants: waivers,
+  };
+}
+
+async function readConsultantTdsRecords(
+  consultantProfileId: string,
+): Promise<ConsultantTdsRecordRow[]> {
+  const rows = await prisma.tDSRecord.findMany({
+    where: { consultantProfileId },
+    orderBy: [
+      { financialYear: "desc" },
+      { quarter: "desc" },
+      { createdAt: "desc" },
+    ],
+    select: {
+      id: true,
+      financialYear: true,
+      quarter: true,
+      cumulativeAmountCredited: true,
+      tdsDeducted: true,
+      tdsRateBps: true,
+      tdsSection: true,
+      payoutId: true,
+      isReversal: true,
+      reportedInForm26Q: true,
+      form26QFilingDate: true,
+      challanNumber: true,
+      certificateNumber: true,
+      ackNumber: true,
+      createdAt: true,
+    },
+  });
+  return rows.map((r) => ({
+    ...r,
+    cumulativeAmountCredited: sumPaise(r.cumulativeAmountCredited),
+    tdsDeducted: sumPaise(r.tdsDeducted),
+  }));
+}
+
+async function readAttributionAndRepeatStats(
+  consultantProfileId: string,
+  organizationId: string | null | undefined,
+): Promise<{
+  attributionBreakdown: AttributionBreakdown;
+  repeatLearnerStats: RepeatLearnerStats;
+}> {
+  const rows = await prisma.consultantEarnings.findMany({
+    where: {
+      consultantProfileId,
+      status: { not: "REFUNDED" },
+      ...(organizationId !== undefined ? { payment: { organizationId } } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 1000,
+    select: {
+      paymentId: true,
+      consultantSharePaise: true,
+      refundedShareAmount: true,
+      payment: {
+        select: {
+          userId: true,
+          attributionSource: true,
+          organizationId: true,
+        },
+      },
+    },
+    relationLoadStrategy: "join",
+  });
+
+  let ownLinkPaise = 0;
+  let marketplacePaise = 0;
+  const ownLinkPaymentIds = new Set<string>();
+  const marketplacePaymentIds = new Set<string>();
+  const paymentsByLearner = new Map<string, Set<string>>();
+
+  for (const row of rows) {
+    const netShare = Math.max(
+      0,
+      sumPaise(row.consultantSharePaise) - sumPaise(row.refundedShareAmount),
+    );
+    const isB2C = !row.payment.organizationId;
+    if (row.payment.attributionSource === "OWN_LINK") {
+      ownLinkPaise += netShare;
+      ownLinkPaymentIds.add(row.paymentId);
+    } else if (isB2C) {
+      marketplacePaise += netShare;
+      marketplacePaymentIds.add(row.paymentId);
+    }
+    if (isB2C && row.payment.userId) {
+      const existing =
+        paymentsByLearner.get(row.payment.userId) ?? new Set<string>();
+      existing.add(row.paymentId);
+      paymentsByLearner.set(row.payment.userId, existing);
+    }
+  }
+
+  const totalLearners = paymentsByLearner.size;
+  let repeatLearners = 0;
+  for (const paymentSet of paymentsByLearner.values()) {
+    if (paymentSet.size >= 2) repeatLearners += 1;
+  }
+
+  return {
+    attributionBreakdown: {
+      ownLinkPaise,
+      marketplacePaise,
+      ownLinkCount: ownLinkPaymentIds.size,
+      marketplaceCount: marketplacePaymentIds.size,
+    },
+    repeatLearnerStats: {
+      repeatLearners,
+      totalLearners,
+      repeatLearnerRate:
+        totalLearners > 0
+          ? Math.round((repeatLearners / totalLearners) * 100)
+          : null,
+    },
   };
 }
 
@@ -169,9 +364,13 @@ async function getConsultantBucketTotals(
     // counts are small (one batch a week at most), so the rows are reduced here.
     prisma.consultantPayout.findMany({
       where: { consultantProfileId, status: "COMPLETED" },
-      select: { amount: true, tdsDeducted: true, netAmount: true },
+      select: { id: true, amount: true, tdsDeducted: true, netAmount: true },
     }),
   ]);
+  const recovered = await clawbackRecoveredByPayout(
+    prisma,
+    paid.map((p) => p.id),
+  );
   const sums = sumEarningBuckets(
     byStatus.map((g) => ({
       status: g.status,
@@ -188,16 +387,140 @@ async function getConsultantBucketTotals(
         amount: sumPaise(p.amount),
         tdsDeducted: sumPaise(p.tdsDeducted),
         netAmount: p.netAmount === null ? null : sumPaise(p.netAmount),
+        recoveredPaise: recovered.get(p.id) ?? 0,
       }),
     0,
   );
   return { ...sums, paidOut };
 }
 
+const noAttribution = () => ({
+  attributionBreakdown: {
+    ownLinkPaise: 0,
+    marketplacePaise: 0,
+    ownLinkCount: 0,
+    marketplaceCount: 0,
+  },
+  repeatLearnerStats: {
+    repeatLearners: 0,
+    totalLearners: 0,
+    repeatLearnerRate: null,
+  },
+});
+
+interface EarningsReadPlan {
+  status?: EarningStatus;
+  limit: number;
+  offset: number;
+  organizationId: string | null | undefined;
+  monthly: boolean;
+  feeSchedule: boolean;
+  accountExtras: boolean;
+}
+
+/** Every read the earnings payload can need, each run once. */
+async function readEarningsParts(
+  consultantProfileId: string,
+  plan: EarningsReadPlan,
+) {
+  const { status, limit, offset, organizationId } = plan;
+  const [summary, eligibility, history, monthlyEarnings, totals] =
+    await Promise.all([
+      getConsultantEarningsSummary(consultantProfileId, organizationId),
+      // #org-appts (#1024) — VIEW splits by org-ness; payout eligibility
+      // stays whole (shared instrument).
+      checkPayoutEligibility(consultantProfileId),
+      getConsultantEarnings(consultantProfileId, {
+        status,
+        limit,
+        offset,
+        organizationId,
+      }),
+      plan.monthly
+        ? getConsultantMonthlyEarnings(consultantProfileId, 6, organizationId)
+        : Promise.resolve(undefined),
+      getConsultantBucketTotals(consultantProfileId, organizationId),
+    ]);
+
+  // #1675 PR-Y — the Paid-out bucket. A plain read after the fan-out, not
+  // inside it: PG_POOL_MAX=1 makes one more parallel read a wait, not a win.
+  const payouts = await getConsultantPayouts(consultantProfileId);
+  const recovered = await clawbackRecoveredByPayout(
+    prisma,
+    payouts.map((p) => p.id),
+  );
+  const feeSchedule = plan.feeSchedule
+    ? await readActiveFeeSchedule(prisma)
+    : undefined;
+  const feeWaiver = plan.accountExtras
+    ? await readActiveFeeWaiver(consultantProfileId)
+    : null;
+  const tdsRecords = plan.accountExtras
+    ? await readConsultantTdsRecords(consultantProfileId)
+    : [];
+  const attribution = plan.monthly
+    ? await readAttributionAndRepeatStats(consultantProfileId, organizationId)
+    : noAttribution();
+
+  return {
+    summary,
+    eligibility,
+    history,
+    monthlyEarnings,
+    totals,
+    payouts: payouts.map((p) => toPayoutRow(p, recovered.get(p.id) ?? 0)),
+    feeSchedule,
+    feeWaiver,
+    tdsRecords,
+    ...attribution,
+  };
+}
+
+type EarningsParts = Awaited<ReturnType<typeof readEarningsParts>>;
+
+/** One response body from the parts: `monthly` and `accountExtras` pick its view. */
+function shapeEarningsPayload(
+  parts: EarningsParts,
+  view: {
+    limit: number;
+    offset: number;
+    monthly: boolean;
+    accountExtras: boolean;
+  },
+) {
+  const rows = parts.history.earnings.slice(0, view.limit);
+  const attribution = view.monthly
+    ? {
+        attributionBreakdown: parts.attributionBreakdown,
+        repeatLearnerStats: parts.repeatLearnerStats,
+      }
+    : noAttribution();
+  return {
+    summary: parts.summary,
+    eligibility: parts.eligibility,
+    earnings: rows.map(toEarningRow),
+    payouts: parts.payouts,
+    totals: parts.totals,
+    feeSchedule: parts.feeSchedule,
+    feeWaiver: view.accountExtras ? parts.feeWaiver : null,
+    tdsRecords: view.accountExtras ? parts.tdsRecords : [],
+    ...attribution,
+    pagination: {
+      total: parts.history.total,
+      limit: view.limit,
+      offset: view.offset,
+      hasMore: view.offset + view.limit < parts.history.total,
+    },
+    ...(view.monthly && parts.monthlyEarnings
+      ? { monthlyEarnings: parts.monthlyEarnings }
+      : {}),
+  };
+}
+
 /**
  * Single assembler for the GET /api/consultant/earnings response body,
- * shared by the route handler and the analytics page's SSR prefetch so the
- * dehydrated cache and the client refetch can never drift apart.
+ * shared by the route handler so the client refetch and the page seed below
+ * can never drift apart.
  */
 export async function buildConsultantEarningsPayload(
   consultantProfileId: string,
@@ -212,41 +535,54 @@ export async function buildConsultantEarningsPayload(
   // whole (shared instrument), so it's never scoped below.
   const organizationId: string | null | undefined =
     "organizationId" in options ? options.organizationId : null;
+  const hasExplicitScope = "organizationId" in options;
+  const accountExtras = !includeMonthly && hasExplicitScope;
+  const parts = await readEarningsParts(consultantProfileId, {
+    status,
+    limit,
+    offset,
+    organizationId,
+    monthly: includeMonthly,
+    feeSchedule: hasExplicitScope || includeMonthly,
+    accountExtras,
+  });
+  return shapeEarningsPayload(parts, {
+    limit,
+    offset,
+    monthly: includeMonthly,
+    accountExtras,
+  });
+}
 
-  const [summary, eligibility, history, monthlyEarnings, totals] =
-    await Promise.all([
-      getConsultantEarningsSummary(consultantProfileId, organizationId),
-      // #org-appts (#1024) — VIEW splits by org-ness; payout eligibility
-      // stays whole (shared instrument).
-      checkPayoutEligibility(consultantProfileId),
-      getConsultantEarnings(consultantProfileId, {
-        status,
-        limit,
-        offset,
-        organizationId,
-      }),
-      includeMonthly
-        ? getConsultantMonthlyEarnings(consultantProfileId, 6, organizationId)
-        : Promise.resolve(undefined),
-      getConsultantBucketTotals(consultantProfileId, organizationId),
-    ]);
-
-  // #1675 PR-Y — the Paid-out bucket. A plain read after the fan-out, not
-  // inside it: PG_POOL_MAX=1 makes one more parallel read a wait, not a win.
-  const payouts = await getConsultantPayouts(consultantProfileId);
-
+/**
+ * The Earnings page's two personal seeds from one pass: the Summary body
+ * (`limit` rows) and the Analytics body (one row plus the monthly series),
+ * exactly as the route answers each.
+ */
+export async function buildConsultantEarningsPagePayloads(
+  consultantProfileId: string,
+  { limit }: { limit: number },
+) {
+  const parts = await readEarningsParts(consultantProfileId, {
+    limit,
+    offset: 0,
+    organizationId: null,
+    monthly: true,
+    feeSchedule: true,
+    accountExtras: true,
+  });
   return {
-    summary,
-    eligibility,
-    earnings: history.earnings.map(toEarningRow),
-    payouts: payouts.map(toPayoutRow),
-    totals,
-    pagination: {
-      total: history.total,
+    summary: shapeEarningsPayload(parts, {
       limit,
-      offset,
-      hasMore: history.hasMore,
-    },
-    ...(monthlyEarnings ? { monthlyEarnings } : {}),
+      offset: 0,
+      monthly: false,
+      accountExtras: true,
+    }),
+    analytics: shapeEarningsPayload(parts, {
+      limit: 1,
+      offset: 0,
+      monthly: true,
+      accountExtras: false,
+    }),
   };
 }

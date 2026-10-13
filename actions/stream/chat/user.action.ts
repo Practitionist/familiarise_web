@@ -47,15 +47,78 @@ const SEARCH_RESULT_LIMIT = 20;
  */
 const SEARCH_CANDIDATE_LIMIT = 200;
 
+const SERVER_TRUSTED = Symbol.for("familiarise.stream.serverTrusted");
+
+type StreamActorContext = {
+  trusted: boolean;
+  userId: string | null;
+  role: string | null;
+};
+
+async function requireAuthenticatedStreamActor(
+  targetIds: string[],
+  options?: {
+    serverTrusted?: symbol;
+  },
+): Promise<StreamActorContext> {
+  if (options?.serverTrusted === SERVER_TRUSTED) {
+    return { trusted: true, userId: null, role: null };
+  }
+  const session = await getSession();
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized: sign in to sync Stream user");
+  }
+  if (session.user.banned) {
+    throw new Error("Forbidden: account suspended");
+  }
+  const role = session.user.role ?? null;
+  const privileged = role === "ADMIN" || role === "STAFF";
+  if (!privileged && !targetIds.every((id) => id === session.user.id)) {
+    throw new Error("Forbidden: cannot sync another user to Stream");
+  }
+  return {
+    trusted: privileged,
+    userId: session.user.id,
+    role,
+  };
+}
+
+function stripStreamUserEmails<T>(payload: T, actor: StreamActorContext): T {
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+  const next = { ...(payload as Record<string, unknown>) };
+  if ("users" in next && next.users && typeof next.users === "object") {
+    next.users = Object.fromEntries(
+      Object.entries(next.users as Record<string, unknown>)
+        .filter(([id]) => actor.trusted || id === actor.userId)
+        .map(([id, userObj]) => {
+          if (!userObj || typeof userObj !== "object") return [id, userObj];
+          const rest = { ...(userObj as Record<string, unknown>) };
+          delete rest.email;
+          return [id, rest];
+        }),
+    );
+  }
+  return next as T;
+}
+
 /**
  * Upserts a user to Stream Chat
  * Uses caching to avoid redundant upserts
  * @param userId The ID of the user to upsert
  * @returns The upserted user or null if already synced
  */
-export const upsertUserToStream = async (userId: string) => {
+export const upsertUserToStream = async (
+  userId: string,
+  options?: { serverTrusted?: symbol },
+) => {
   // Validate input
   const validatedUserId = userIdSchema.parse(userId);
+  const actor = await requireAuthenticatedStreamActor(
+    [validatedUserId],
+    options,
+  );
 
   // Check cache first - skip if recently synced
   if (isUserSynced(validatedUserId)) {
@@ -135,7 +198,7 @@ export const upsertUserToStream = async (userId: string) => {
     // Mark as synced in cache
     markUserSynced(user.id);
 
-    return streamUser;
+    return stripStreamUserEmails(streamUser, actor);
   } catch (error) {
     // A consent gate is a deliberate refusal (already warn-logged above), not
     // an infra failure — rethrow without an error-level log so it doesn't
@@ -175,9 +238,13 @@ export const upsertUserToStream = async (userId: string) => {
  * @param userIds The IDs of the users to upsert
  * @returns The upserted users
  */
-export const upsertUsersToStream = async (userIds: string[]) => {
+export const upsertUsersToStream = async (
+  userIds: string[],
+  options?: { serverTrusted?: symbol },
+) => {
   // Validate input
   const validatedIds = userIdsSchema.parse(userIds);
+  const actor = await requireAuthenticatedStreamActor(validatedIds, options);
 
   // Filter out already synced users
   const unsyncedIds = validatedIds.filter((id) => !isUserSynced(id));
@@ -208,7 +275,10 @@ export const upsertUsersToStream = async (userIds: string[]) => {
       streamLogger.warn("No users found for batch upsert", {
         requestedIds: unsyncedIds,
       });
-      return { users: {}, droppedIds: unsyncedIds };
+      return stripStreamUserEmails(
+        { users: {}, droppedIds: unsyncedIds },
+        actor,
+      );
     }
 
     // DPDP gate (batch). Filter out users who have withdrawn — or never
@@ -242,7 +312,10 @@ export const upsertUsersToStream = async (userIds: string[]) => {
       (id) => !users.some((u) => u.id === id),
     );
     if (consenters.length === 0) {
-      return { users: {}, droppedIds: [...droppedIds, ...unknownIds] };
+      return stripStreamUserEmails(
+        { users: {}, droppedIds: [...droppedIds, ...unknownIds] },
+        actor,
+      );
     }
 
     const client = getStreamChatClient();
@@ -286,7 +359,13 @@ export const upsertUsersToStream = async (userIds: string[]) => {
     // Mark all as synced
     consenters.forEach((user) => markUserSynced(user.id));
 
-    return { ...result, droppedIds: [...droppedIds, ...unknownIds] };
+    return stripStreamUserEmails(
+      {
+        ...result,
+        droppedIds: [...droppedIds, ...unknownIds],
+      },
+      actor,
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -314,8 +393,8 @@ export const searchUsersWithRelationships = async (searchTerm: string) => {
   // `"use server"`, so every export is remotely invocable; the previous
   // signature took `currentUserId` from the caller, which let anyone enumerate
   // another user's related parties (names, emails, avatars) by passing their
-  // id. Same cookie-cache-bypass reasoning as assertCanMintToken.
-  const session = await getSession(true);
+  // id.
+  const session = await getSession();
   if (!session?.user?.id) {
     throw new Error("Unauthorized: sign in to search users");
   }

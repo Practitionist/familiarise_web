@@ -19,6 +19,7 @@
 
 import type { AppointmentsType, RescheduleInitiatorRole } from "@prisma/client";
 import type { RescheduleOutcomeFields } from "@/lib/novu/workflows";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 
 /** Ceiling on how long an unanswered proposal may sit. */
 export const PROPOSAL_MAX_LIFETIME_HOURS = 72;
@@ -97,15 +98,89 @@ export function supportsProposals(
   );
 }
 
+/** A window either side of the atom count is measured in. */
+interface AtomWindow {
+  startsAt: Date;
+  endsAt: Date;
+}
+
 /**
- * A proposal replaces released slots one-for-one. Anything else is a different
- * booking, not a reschedule, and would silently change what was paid for.
+ * The 30-minute atoms one window covers, from the window's own bounds.
+ *
+ * `SCHEDULING_INTERVAL_MS` rather than a literal because the atom is what every
+ * booking lock, the overlap exclusion and the allocator's `slotsPerCall` are
+ * built on — a second declaration of "half an hour" here is how the two sides
+ * of a comparison drift apart silently. Rounded rather than floored so a stray
+ * millisecond cannot make a correct proposal read as a short one; clamped at
+ * zero so an inverted window contributes nothing instead of subtracting.
+ */
+function atomsIn({ startsAt, endsAt }: AtomWindow): number {
+  const durationMs = endsAt.getTime() - startsAt.getTime();
+  return durationMs <= 0 ? 0 : Math.round(durationMs / SCHEDULING_INTERVAL_MS);
+}
+
+/**
+ * Atoms the RELEASED side covers.
+ *
+ * One `AppointmentOccurrence` row is one whole session, whose length is the
+ * plan's `slotsPerSession` — counting rows instead of atoms understates the
+ * coverage of every session longer than 30 minutes, which is what made a
+ * 1-hour session impossible to reschedule: one row against the two atoms the
+ * calendar expands a click into.
+ */
+export function releasedAtomCount(
+  occurrences: ReadonlyArray<AtomWindow>,
+): number {
+  return occurrences.reduce((total, row) => total + atomsIn(row), 0);
+}
+
+/**
+ * Atoms the PROPOSED side covers, measured the same way rather than assumed.
+ *
+ * Each row of `proposedSlots` is exactly one atom — the Zod refine says so, and
+ * the allocator needs it to — but assuming it on this side and measuring the
+ * other would be the same two-units bug in a new place. Both sides are counted
+ * from their bounds so the comparison is between like and like.
+ */
+export function proposedAtomCount(slots: ReadonlyArray<AtomWindow>): number {
+  return slots.reduce((total, row) => total + atomsIn(row), 0);
+}
+
+/**
+ * A proposal must replace exactly the COVERAGE it released. Anything else is a
+ * different booking, not a reschedule, and would silently change what was paid
+ * for.
+ *
+ * The two numbers are atom counts, not row counts: released rows are whole
+ * sessions, proposed rows are single atoms, and only atoms are commensurable.
+ * It is also exactly the rule the allocator enforces downstream
+ * (`slots.length === releasedSessions × slotsPerCall`), so a proposal that
+ * passes here cannot be refused there for being the wrong size — which is the
+ * guarantee the previous row-count comparison broke for every session longer
+ * than 30 minutes.
  */
 export function proposalCountMatches(
-  releasedSlotCount: number,
-  proposedSlotCount: number,
+  releasedAtomTotal: number,
+  proposedAtomTotal: number,
 ): boolean {
-  return releasedSlotCount === proposedSlotCount;
+  return releasedAtomTotal === proposedAtomTotal;
+}
+
+/**
+ * The route's one call: does this payload replace what was released?
+ *
+ * Total minutes equal and atom counts equal are the same statement at a fixed
+ * atom length, so the atom comparison IS the coverage comparison; the minutes
+ * are not added because a second expression of the same test can only drift.
+ */
+export function proposalCoverageMatches(
+  released: ReadonlyArray<AtomWindow>,
+  proposed: ReadonlyArray<AtomWindow>,
+): boolean {
+  return proposalCountMatches(
+    releasedAtomCount(released),
+    proposedAtomCount(proposed),
+  );
 }
 
 /**
@@ -145,14 +220,144 @@ export function rescheduleNotificationVariant(args: {
   };
 }
 
-/*
- * There is deliberately no counter-round.
+/**
+ * Which of the propose-response outcomes happened, as a code a client may
+ * branch on. The `message` beside it is prose and is free to change; this is
+ * the contract.
  *
- * MAX_PROPOSAL_ROUNDS and mayCounter lived here, and the COUNTERED status is
- * still in the enum and the transition map — but nothing ever wrote it. The
- * round-2 path was specified and never built, so removing it costs nothing and
- * leaves one fewer half-implemented state to reason about.
- *
- * Propose -> accept or decline is the whole flow. A decline already falls back
- * to the consultant allocating, so nothing dead-ends without it.
+ * The proposal row's own `status` is not on the wire, and the response used to
+ * carry no answer either, so a client could only infer the outcome from the
+ * presence of a proposal id — which cannot tell "waiting for the consultant"
+ * from "the row is gone". `autoConfirmReason` (#FAMILIARISE_WEB-2W) carried the
+ * cause but not the answer, and the message claimed one fixed cause regardless.
  */
+export type RescheduleProposeCode =
+  /** The times were placed without asking anyone. */
+  | "AUTO_CONFIRMED"
+  /** No concrete times were named: a plain release, or preference-only. */
+  | "RELEASED"
+  /** A proposal is open and the counterparty has it to answer. */
+  | "AWAITING_ANSWER"
+  /**
+   * A proposal is open, but auto-confirmation detected a reason it would not
+   * place the times — the free calendar is not enough, and a human has to place
+   * them.
+   */
+  | "NOT_PLACEABLE"
+  /** The proposal is no longer answerable: it was answered, expired or lost. */
+  | "PROPOSAL_CLOSED";
+
+/**
+ * Refusals that mean the proposal row is GONE, so nothing is waiting on
+ * anybody. Enumerated rather than inferred, because the two errors are opposite
+ * and the user pays for confusing them: telling someone a proposal is with the
+ * consultant when the row has been answered or expired means waiting for a
+ * decision that will never come.
+ *
+ * Closed by absence-of-row (`PROPOSAL_NOT_FOUND`), a status that is no longer
+ * open (`PROPOSAL_NOT_OPEN` — a lapsed row can still answer `PENDING_REVIEW` for
+ * up to an hour), and the finalize CAS losing its race (`TRANSITION_REFUSED`,
+ * set by the route).
+ */
+const CLOSED_AUTO_CONFIRM_REFUSALS = new Set([
+  "PROPOSAL_NOT_FOUND",
+  "PROPOSAL_NOT_OPEN",
+  "TRANSITION_REFUSED",
+]);
+
+/**
+ * Refusals that leave the proposal open AND leave a human as the next actor:
+ * the times were never ours to place (`CONSULTANT_INITIATED`), or the attempt
+ * never reached a decision (`APPOINTMENT_BUSY`, `BOOKING_LOCK_UNAVAILABLE`,
+ * `ERROR`).
+ *
+ * Membership is the CLASSIFICATION — the proposal is still answerable, so the
+ * code is AWAITING_ANSWER. The sentence is per-reason: `CONSULTANT_INITIATED`
+ * is the one member whose next actor is the other side (see the arm below), so
+ * it carries its own wording.
+ *
+ * Anything unrecognised — a typed `AllocationErrorCode`, or one added after this
+ * was written — falls to NOT_PLACEABLE, whose sentence asserts only that the
+ * time was not confirmed automatically. An unrecognised reason must not be
+ * dressed up as a specific cause, and the raw reason is on the wire beside it.
+ */
+const AWAITING_AUTO_CONFIRM_REFUSALS = new Set([
+  "CONSULTANT_INITIATED",
+  "APPOINTMENT_BUSY",
+  "BOOKING_LOCK_UNAVAILABLE",
+  "ERROR",
+]);
+
+/**
+ * The propose route's terminal sentence and its branchable code.
+ *
+ * Built here, beside the proposal policy, so the two cannot drift: a refusal
+ * reason the server already detected must not reach the user as the fixed
+ * "sent to the consultant" sentence, which asserts a human action the server
+ * may have just proved unnecessary or impossible.
+ */
+export function rescheduleProposeOutcome(args: {
+  autoConfirmed: boolean;
+  /** A row a counterparty can answer — absent for a preference-only proposal. */
+  hasProposal: boolean;
+  /** `tryAutoConfirmProposal`'s reason; null when it was never attempted. */
+  autoConfirmReason: string | null;
+  /** The route's own release sentence, for the no-proposal arm. */
+  releaseMessage: string;
+}): { code: RescheduleProposeCode; message: string } {
+  const { autoConfirmed, hasProposal, autoConfirmReason, releaseMessage } =
+    args;
+
+  if (autoConfirmed) {
+    return {
+      code: "AUTO_CONFIRMED",
+      message: "Your new time is confirmed.",
+    };
+  }
+  if (!hasProposal) {
+    return { code: "RELEASED", message: releaseMessage };
+  }
+  if (
+    autoConfirmReason !== null &&
+    CLOSED_AUTO_CONFIRM_REFUSALS.has(autoConfirmReason)
+  ) {
+    return {
+      code: "PROPOSAL_CLOSED",
+      message:
+        "This request is no longer pending — the booking has moved on since you submitted it.",
+    };
+  }
+  // The one AWAITING_ANSWER case whose next actor is not the consultant.
+  // Auto-confirm is asymmetric on purpose — `mayAutoConfirm` takes a CONSULTEE
+  // initiator only — so a CONSULTANT_INITIATED refusal means the caller reading
+  // this response IS the consultant, and the shared sentence below told them
+  // their own request had been "sent to the consultant". The code is unchanged
+  // (a proposal is open and the client has it to answer, which is what
+  // AWAITING_ANSWER means); only the party the sentence names changes, because
+  // the initiator is the only side this function is told apart from the reason.
+  if (autoConfirmReason === "CONSULTANT_INITIATED") {
+    return {
+      code: "AWAITING_ANSWER",
+      message: "Your new time has been sent to the attendee to confirm.",
+    };
+  }
+  if (
+    autoConfirmReason === null ||
+    AWAITING_AUTO_CONFIRM_REFUSALS.has(autoConfirmReason)
+  ) {
+    return {
+      code: "AWAITING_ANSWER",
+      message: "Your requested time has been sent to the consultant.",
+    };
+  }
+  return {
+    code: "NOT_PLACEABLE",
+    message:
+      "We could not confirm that time automatically, so it is with the consultant to place. Nothing has been charged or moved yet.",
+  };
+}
+
+// No counter-round: propose -> accept or decline is the whole flow.
+
+/** Where a decline left the released sessions (respond route's outcome code). */
+export type RescheduleRespondCode = "DECLINED" | "RELEASED";

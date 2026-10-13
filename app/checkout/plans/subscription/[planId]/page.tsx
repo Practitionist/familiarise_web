@@ -36,22 +36,27 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import {
   createHandleApiError,
   createRazorpayCheckoutHandlers,
-  createStripeCheckoutHandlers,
   paymentGateways,
 } from "../../utils";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useReferralPricing } from "../../useReferralPricing";
 import {
   mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type SubscriptionPlanWithConsultant = Omit<SubscriptionPlan, "price"> & {
@@ -117,6 +122,15 @@ export default function SubscriptionCheckoutPage({
     string | null
   >(null);
 
+  // #1863 — the refund rail, derived from the buyer's own funding choice so the
+  // promise under the price moves with it.
+  const viewer = useViewerZone();
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
+
   const { toast } = useToast();
   const {
     isBlocked: isMaintenanceBlocked,
@@ -168,6 +182,9 @@ export default function SubscriptionCheckoutPage({
   });
 
   const planData = checkoutPlanQuery.data ?? null;
+  const referralPricing = useReferralPricing(
+    planData?.data?.consultantProfile?.id,
+  );
   const isLoading = checkoutPlanQuery.isPending;
   const error =
     staleError ??
@@ -263,13 +280,12 @@ export default function SubscriptionCheckoutPage({
 
   // Create utility functions using the toast instance
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
-  const stripeHandlers = createStripeCheckoutHandlers(toast);
   const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
   const makeCheckoutRequest = useCallback(
     async (checkoutData: CheckoutInput, isMockPayment: boolean = false) => {
-      return fetch("/api/checkout", {
+      return fetchWithIdentity("/api/checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -339,6 +355,7 @@ export default function SubscriptionCheckoutPage({
           planId: planData.data.id,
           schedulingPeriodStartsAt:
             effectiveSearchParams.schedulingPeriodStartsAt,
+          renewsSubscriptionId: effectiveSearchParams.renewsSubscriptionId,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
@@ -374,7 +391,7 @@ export default function SubscriptionCheckoutPage({
         const data = validationResult.data;
 
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
-        // Real payments go through StripeCheckout/RazorpayCheckout components.
+        // Real payments go through the RazorpayCheckout component.
         // FIX #520: Also handle zero-amount payments (credits covered full cost)
         if (
           data.success &&
@@ -452,10 +469,17 @@ export default function SubscriptionCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent,
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount:
+        appliedDiscount || selectedOrganizationId
+          ? null
+          : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
+    referralPricing,
+    selectedOrganizationId,
     planData?.data?.price,
     appliedDiscount,
     useReferralCredits,
@@ -575,6 +599,12 @@ export default function SubscriptionCheckoutPage({
             Your plan includes {planData?.data?.totalSessions ?? "—"} sessions.
             Session dates are arranged with your expert after purchase.
           </p>
+          {effectiveSearchParams?.renewsSubscriptionId && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+              Renewing your existing subscription — your new period will start
+              immediately after your current subscription ends
+            </div>
+          )}
           <div className="grid gap-2">
             {/* Start + first cycle (#1766): the buyer picked a start; the
                 consultant schedules one cycle at a time from it. */}
@@ -815,10 +845,6 @@ export default function SubscriptionCheckoutPage({
                 <div>Subtotal</div>
                 <div>{formatPrice(pricing.subtotal)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
                   <div>
@@ -829,6 +855,10 @@ export default function SubscriptionCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
+              </div>
               {pricing.creditsApplied > 0 && (
                 <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>
@@ -854,6 +884,16 @@ export default function SubscriptionCheckoutPage({
               <EmiHint
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
+              />
+              {/* #1863 — the notice ladder, at purchase. The 48 h promise above
+                  is about the expert not scheduling; this is about the buyer
+                  changing their mind, which is a different rule and was
+                  invisible until the cancel dialog. */}
+              <CancellationPolicyNote
+                eventKind="individual"
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
               />
             </div>
           </CardContent>
@@ -896,6 +936,8 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
+                            renewsSubscriptionId:
+                              effectiveSearchParams.renewsSubscriptionId,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId
@@ -906,27 +948,6 @@ export default function SubscriptionCheckoutPage({
                           })}
                           onPaymentSuccess={razorpayHandlers.onPaymentSuccess}
                           onPaymentError={razorpayHandlers.onPaymentError}
-                          disabled={isMaintenanceBlocked}
-                        />
-                      ) : effectiveSearchParams?.schedulingPeriodStartsAt &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "SUBSCRIPTION",
-                            planId: planData?.data?.id || "",
-                            paymentGateway: "STRIPE",
-                            schedulingPeriodStartsAt:
-                              effectiveSearchParams.schedulingPeriodStartsAt,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={stripeHandlers.onPaymentSuccess}
-                          onPaymentError={stripeHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
                       ) : null}

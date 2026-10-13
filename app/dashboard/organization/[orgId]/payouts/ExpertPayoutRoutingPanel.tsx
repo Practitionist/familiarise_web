@@ -11,6 +11,7 @@ import {
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import { fetchWithReauth } from "@/lib/auth/reauth-client";
 
 type Recipient = "SELF" | "ORGANIZATION";
 
@@ -53,7 +54,7 @@ export function ExpertPayoutRoutingPanel({
   });
 
   const change = async (row: ExpertRouting) => {
-    const res = await fetch(
+    const res = await fetchWithReauth(
       `/api/organizations/${orgId}/expert-payout-routing`,
       {
         method: "PATCH",
@@ -99,7 +100,11 @@ export function ExpertPayoutRoutingPanel({
         confirmLabel="Change routing"
         onConfirm={() => change(row)}
         trigger={
-          <Button size="sm" variant="ghost">
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Change payout routing for ${row.name ?? "expert"}`}
+          >
             Change
           </Button>
         }
@@ -107,10 +112,7 @@ export function ExpertPayoutRoutingPanel({
     ) : null;
 
   return (
-    <Section
-      title="Experts' payout routing"
-      description="Whether each expert's share of a session is paid to the expert or to this organization."
-    >
+    <Section description="Whether each expert's share of a session is paid to the expert or to this organization.">
       {isError ? (
         <ErrorState
           title="Couldn't load experts' payout routing"

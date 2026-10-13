@@ -24,6 +24,7 @@ jest.mock("../../lib/prisma", () => {
 });
 jest.mock("../../lib/auth-helpers", () => ({ requireOrgAccess: jest.fn() }));
 
+import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { PATCH } from "@/app/api/organizations/[orgId]/expert-payout-routing/route";
@@ -36,6 +37,7 @@ const db = prisma as unknown as {
 function patchAs(role: string) {
   (requireOrgAccess as jest.Mock).mockResolvedValue({
     member: { id: "m-actor", role },
+    session: { session: { createdAt: new Date() } },
   });
   const req = new Request(
     "http://localhost/api/organizations/org-1/expert-payout-routing",
@@ -47,8 +49,9 @@ function patchAs(role: string) {
       }),
     },
   );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return PATCH(req as any, { params: Promise.resolve({ orgId: "org-1" }) });
+  return PATCH(req as unknown as NextRequest, {
+    params: Promise.resolve({ orgId: "org-1" }),
+  });
 }
 
 describe("PATCH expert-payout-routing — finance gate", () => {

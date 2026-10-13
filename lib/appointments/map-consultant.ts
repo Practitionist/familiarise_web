@@ -45,6 +45,14 @@ export interface ConsultantTrialLike {
       id: string;
       startsAt: string | Date;
       endsAt: string | Date;
+      isTentative?: boolean;
+      completionStatus?: string | null;
+      outcome?: string | null;
+      meeting?: {
+        id: string;
+        endedAt: Date | string | null;
+        endedReason: string | null;
+      } | null;
     }>;
   } | null;
 }
@@ -89,12 +97,27 @@ function person(
   return { name: user?.name ?? fallback, image: user?.image ?? null };
 }
 
+type AppointmentWithTrial = TAppointment & {
+  trial?: {
+    id?: string;
+    status?: string | null;
+    subscriptionPlan?: { title?: string | null } | null;
+    consulteeProfile?: {
+      user?: { name?: string | null; image?: string | null } | null;
+    } | null;
+  } | null;
+};
+
 /** Title + counterpart + lifecycle status live on the polymorphic parent. */
-function eventFacts(appointment: TAppointment): {
+function eventFacts(
+  appointment: TAppointment,
+  consultantId?: string,
+): {
   title: string;
   counterpart: PersonVM;
   status: string;
 } {
+  const appt = appointment as AppointmentWithTrial;
   switch (appointment.appointmentType) {
     case "CONSULTATION":
       return {
@@ -110,23 +133,45 @@ function eventFacts(appointment: TAppointment): {
         counterpart: person(appointment.subscription?.requestedBy?.user),
         status: normalizeStatus(appointment.subscription?.status?.toString()),
       };
-    case "WEBINAR":
+    case "WEBINAR": {
+      const plan = appointment.webinar?.webinarPlan;
+      const isCollaborator =
+        Boolean(consultantId) &&
+        Boolean(plan?.consultantProfileId) &&
+        plan?.consultantProfileId !== consultantId;
       return {
-        title: appointment.webinar?.webinarPlan?.title ?? "Webinar",
-        counterpart: person(
-          appointment.webinar?.webinarPlan?.consultantProfile?.user,
-          "Unknown Consultant",
-        ),
+        title: plan?.title ?? "Webinar",
+        counterpart: isCollaborator
+          ? person(plan?.consultantProfile?.user, "Host")
+          : {
+              name: "Registered attendees",
+              image: plan?.consultantProfile?.user?.image ?? null,
+            },
         status: normalizeStatus(appointment.webinar?.status?.toString()),
       };
-    case "CLASS":
+    }
+    case "CLASS": {
+      const plan = appointment.class?.classPlan;
+      const isCollaborator =
+        Boolean(consultantId) &&
+        Boolean(plan?.consultantProfileId) &&
+        plan?.consultantProfileId !== consultantId;
       return {
-        title: appointment.class?.classPlan?.title ?? "Class",
-        counterpart: person(
-          appointment.class?.classPlan?.consultantProfile?.user,
-          "Unknown Consultant",
-        ),
+        title: plan?.title ?? "Class",
+        counterpart: isCollaborator
+          ? person(plan?.consultantProfile?.user, "Host")
+          : {
+              name: "Enrolled learners",
+              image: plan?.consultantProfile?.user?.image ?? null,
+            },
         status: normalizeStatus(appointment.class?.status?.toString()),
+      };
+    }
+    case "TRIAL":
+      return {
+        title: appt.trial?.subscriptionPlan?.title ?? "Trial",
+        counterpart: person(appt.trial?.consulteeProfile?.user),
+        status: normalizeStatus(appt.trial?.status?.toString()),
       };
     default:
       return {
@@ -207,7 +252,7 @@ function mapSingle(
   now: Date,
 ): AppointmentVM {
   const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
-  const { title, counterpart, status } = eventFacts(appointment);
+  const { title, counterpart, status } = eventFacts(appointment, consultantId);
   return {
     id: `appointment-${appointment.id}`,
     // Always the viewing consultant: this is their own list.
@@ -239,7 +284,7 @@ function mapGroup(
   const occurrences = sortOccurrences(
     children.flatMap((c) => occurrencesOfAppointment(c)),
   );
-  const { title, counterpart, status } = eventFacts(first);
+  const { title, counterpart, status } = eventFacts(first, consultantId);
   // #1554 — progress is counted over live occurrence rows, not wrappers.
   const live = liveOccurrences(occurrences);
   const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
@@ -279,21 +324,27 @@ function mapTrial(
   consultantId: string,
   now: Date,
 ): AppointmentVM {
-  // A trial's rows are shown as confirmed regardless of the placeholder flag,
-  // so the override is applied BEFORE grouping — the grouper splits a run on a
-  // change of `isTentative`, and masking afterwards would leave the split.
+  const slotsOfAppointment = (t.appointment?.occurrences ?? []).map((slot) => ({
+    ...slot,
+    isTentative: slot.isTentative ?? false,
+  }));
   const occurrences = occurrencesOfAppointment(
     t.appointment
       ? {
           id: t.appointment.id,
-          occurrences: (t.appointment.occurrences ?? []).map((slot) => ({
-            ...slot,
-            isTentative: false,
-          })),
+          occurrences: slotsOfAppointment,
         }
       : null,
   );
   const status = normalizeStatus(t.status);
+  const trialAppointment = t.appointment
+    ? ({
+        id: t.appointment.id,
+        appointmentType: "TRIAL",
+        occurrences: slotsOfAppointment,
+        trial: t,
+      } as unknown as TAppointment)
+    : undefined;
   return {
     id: `trial-${t.id}`,
     // Always the viewing consultant: this is their own list.
@@ -312,7 +363,10 @@ function mapTrial(
     pendingPaymentUrl: null,
     collaborators: [],
     collaboratorRole: null,
-    raw: { source: t },
+    raw: {
+      appointment: trialAppointment,
+      source: t,
+    },
   };
 }
 
@@ -330,7 +384,10 @@ function mapUnscheduledClass(
     appointmentId: null,
     kind: "CLASS",
     title: plan.title,
-    counterpart: person(plan.consultantProfile?.user, "You"),
+    counterpart: {
+      name: "Enrolled learners",
+      image: plan.consultantProfile?.user?.image ?? null,
+    },
     status,
     ...deriveBucket(
       { status, occurrences: [], isUnscheduled: true, now },
@@ -361,7 +418,10 @@ function mapUnscheduledWebinar(
     appointmentId: null,
     kind: "WEBINAR",
     title: w.webinarPlan.title,
-    counterpart: person(w.webinarPlan.consultantProfile?.user, "You"),
+    counterpart: {
+      name: "Registered attendees",
+      image: w.webinarPlan.consultantProfile?.user?.image ?? null,
+    },
     status,
     ...deriveBucket(
       { status, occurrences: [], isUnscheduled: true, now },

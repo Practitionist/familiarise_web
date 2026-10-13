@@ -15,12 +15,56 @@ import { EmailLogo } from "@/emails/components/EmailLogo";
 interface PasswordResetEmailProps {
   name: string;
   resetLink: string;
+  /** A new operator's first password (lib/auth/operators.ts). */
+  invite?: boolean;
 }
 
 export const PasswordResetEmail = ({
   name = "Valued User",
   resetLink = `${getAppUrl()}/auth/reset-password?token=123`,
+  invite = false,
 }: PasswordResetEmailProps) => {
+  if (invite) {
+    return (
+      <Html>
+        <Head />
+        <Preview>Set your Familiarise staff password</Preview>
+        <Section style={main}>
+          <Container style={container}>
+            <EmailLogo />
+            <Section style={content}>
+              <Text style={heading}>Welcome to the Familiarise team</Text>
+              <Text style={paragraph}>Hi {name},</Text>
+              <Text style={paragraph}>
+                An administrator has created a staff account for you. Choose
+                your password to get started:
+              </Text>
+              <Section style={buttonContainer}>
+                <Button style={button} href={resetLink}>
+                  Set Your Password
+                </Button>
+              </Section>
+              <Text style={paragraph}>
+                After you sign in you will set up two-factor authentication with
+                an authenticator app. Keep your phone to hand.
+              </Text>
+              <Text style={paragraph}>
+                This link works once and expires in 30 minutes. If it has
+                expired, use &quot;Forgot password&quot; on the sign-in page to
+                get a new one.
+              </Text>
+              <Text style={paragraph}>
+                Best regards,
+                <br />
+                The Familiarise Security Team
+              </Text>
+            </Section>
+            <EmailFooter showSupport />
+          </Container>
+        </Section>
+      </Html>
+    );
+  }
   return (
     <Html>
       <Head />

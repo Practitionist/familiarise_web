@@ -41,7 +41,6 @@ export const moneyResultExtensions = {
     walletBalance: fn("walletBalance"),
     creditLimit: fn("creditLimit"),
     minBalancePaise: fn("minBalancePaise"),
-    autoTopUpAmountPaise: fn("autoTopUpAmountPaise"),
   },
   billingSubscription: {
     ratePerSeatPaise: fn("ratePerSeatPaise"),
@@ -54,6 +53,7 @@ export const moneyResultExtensions = {
     maxOveragePerCyclePaise: fn("maxOveragePerCyclePaise"),
   },
   creditPoolConfig: {
+    priceCapPerEngagementPaise: fn("priceCapPerEngagementPaise"),
     maxOveragePerCyclePaise: fn("maxOveragePerCyclePaise"),
   },
   programAssignment: { consumedPaise: f("consumedPaise") },
@@ -117,7 +117,7 @@ export const moneyResultExtensions = {
     amount: f("amount"),
     originalAmount: f("originalAmount"),
     taxAmount: f("taxAmount"),
-    gstTcsCollectedPaise: fn("gstTcsCollectedPaise"),
+    welcomeDiscountPaise: fn("welcomeDiscountPaise"),
     exchangeRateAtCheckout: dn("exchangeRateAtCheckout"),
   },
   paymentLeg: { amountPaise: f("amountPaise") },
@@ -131,12 +131,14 @@ export const moneyResultExtensions = {
     platformFeePaise: f("platformFeePaise"),
     consultantSharePaise: f("consultantSharePaise"),
     refundedShareAmount: f("refundedShareAmount"),
-    gstTcsAccruedPaise: fn("gstTcsAccruedPaise"),
   },
   consultantPayout: {
     amount: f("amount"),
     tdsDeducted: f("tdsDeducted"),
     netAmount: fn("netAmount"),
+    // W1a — the clawback counter crosses the JS boundary as a number, like
+    // organizationPayout's own clawback mapping.
+    clawbackAmountPaise: f("clawbackAmountPaise"),
   },
   tDSRecord: {
     cumulativeAmountCredited: f("cumulativeAmountCredited"),
@@ -165,16 +167,15 @@ export const moneyResultExtensions = {
     totalPaise: f("totalPaise"),
   },
   tdsAdjustment: { amountPaise: f("amountPaise") },
-  gstTcsBatch: {
-    netSupplyPaise: f("netSupplyPaise"),
-    tcsCollectedPaise: f("tcsCollectedPaise"),
-  },
-  gstTcsAdjustment: { amountPaise: f("amountPaise") },
   discountCode: { maxDiscount: fn("maxDiscount") },
   referralProgramConfig: {
-    monthlyBudgetPaise: fn("monthlyBudgetPaise"),
+    monthlyBudgetPaise: f("monthlyBudgetPaise"),
     currentMonthSpentPaise: f("currentMonthSpentPaise"),
     referrerRewardPaise: f("referrerRewardPaise"),
+    discountMaxPaise: f("discountMaxPaise"),
+    minOrderPaise: f("minOrderPaise"),
+    perReferrerYearlyCapPaise: f("perReferrerYearlyCapPaise"),
+    expertReferralBudgetPaise: f("expertReferralBudgetPaise"),
   },
   platformPricingConfig: {
     minTrialPriceInPaise: f("minTrialPriceInPaise"),
@@ -183,6 +184,7 @@ export const moneyResultExtensions = {
     referrerReward: fn("referrerReward"),
     refereeReward: fn("refereeReward"),
     totalEarned: f("totalEarned"),
+    yearRewardPaise: f("yearRewardPaise"),
   },
   referral: {
     referrerRewardAmount: fn("referrerRewardAmount"),

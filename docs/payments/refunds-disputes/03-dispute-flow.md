@@ -46,14 +46,14 @@ stateDiagram-v2
 
 ### Formal Dispute Statuses
 
-| Status            | Description                           | Action Required                 |
-| ----------------- | ------------------------------------- | ------------------------------- |
-| `NEEDS_RESPONSE`  | Formal dispute filed                  | Submit evidence within deadline |
-| `UNDER_REVIEW`    | Evidence submitted, awaiting decision | Wait (7-90 days)                |
-| `WON`             | Merchant won the dispute              | None (terminal)                 |
-| `LOST`            | Customer won, funds returned          | None (terminal)                 |
-| `CHARGE_REFUNDED` | Merchant voluntarily refunded         | None (terminal)                 |
-| `CLOSED`          | Razorpay: ended without a verdict (details provided or refund made) | None (terminal) |
+| Status            | Description                                                         | Action Required                 |
+| ----------------- | ------------------------------------------------------------------- | ------------------------------- |
+| `NEEDS_RESPONSE`  | Formal dispute filed                                                | Submit evidence within deadline |
+| `UNDER_REVIEW`    | Evidence submitted, awaiting decision                               | Wait (7-90 days)                |
+| `WON`             | Merchant won the dispute                                            | None (terminal)                 |
+| `LOST`            | Customer won, funds returned                                        | None (terminal)                 |
+| `CHARGE_REFUNDED` | Merchant voluntarily refunded                                       | None (terminal)                 |
+| `CLOSED`          | Razorpay: ended without a verdict (details provided or refund made) | None (terminal)                 |
 
 ---
 
@@ -295,11 +295,14 @@ The admin dashboard provides:
    - Filter by status, gateway
    - Pagination support
    - Urgent disputes count (due within 3 days)
+   - Rows carry status, amount, reason, deadline and the evidence-submitted date. They never carry the evidence, the billing details inside it, or internal notes, for any viewer.
 
 2. **Dispute Details** (`/api/admin/disputes/[id]`)
    - Full dispute information
    - Payment and user details
    - Evidence history
+
+Both routes are open to `disputes.read` (staff and admins). The evidence body and the payer's email are returned on the detail route only to a viewer holding `disputes.manage` (admins). Staff see the status, amount, deadline and the evidence-submitted date, with the line "Only admins can view it." Internal notes are never returned by either route.
 
 ---
 
@@ -333,19 +336,17 @@ const urgentDisputes = await prisma.dispute.count({
 
 ## Code References
 
-| Component             | File                                          |
-| --------------------- | --------------------------------------------- |
-| Disputes API          | `app/api/payments/disputes/route.ts`          |
-| Admin list            | `app/api/admin/disputes/route.ts`             |
-| Admin details         | `app/api/admin/disputes/[disputeId]/route.ts` |
-| Stripe implementation | `lib/payments/core/stripe.ts`                 |
-| Webhook handlers      | `app/api/webhooks/stripe/route.ts`            |
+| Component     | File                                          |
+| ------------- | --------------------------------------------- |
+| Disputes API  | `app/api/payments/disputes/route.ts`          |
+| Admin list    | `app/api/admin/disputes/route.ts`             |
+| Admin details | `app/api/admin/disputes/[disputeId]/route.ts` |
 
 ---
 
 ## Lost Dispute Handling (Mar 2026)
 
-When a dispute is resolved in the customer's favor (status: `LOST`), the `handle-lost-disputes` cron job now uses the canonical `refundEarnings(paymentId, { forceRefund: true })` path instead of manual inline logic. This ensures:
+When a dispute is resolved in the customer's favor (status: `LOST`), the lost-dispute settlement (`settleLostDispute`, shared by the `handleDisputeUpdated` webhook and the `reconcile-disputes` poll that adopts a missed LOST) runs the canonical reversal instead of manual inline logic. There is no `handle-lost-disputes` cron. This ensures:
 
 1. **TDS reversal records** are correctly created for already-paid earnings, via the shared `recordTdsReversal` helper, which writes a negative `isReversal` `TDSRecord` (#813)
 2. **`totalRevenue`** is decremented on the consultant profile for PAID earnings

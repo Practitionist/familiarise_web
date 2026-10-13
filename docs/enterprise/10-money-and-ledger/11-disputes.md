@@ -76,7 +76,7 @@ Authoritative: this section is gateway behavior, not regulation; the consumer-pr
 
 A merchant resolves a Razorpay dispute by either **accepting** it (the customer is refunded and the dispute closes) or **contesting** it with evidence. Contrary to our older payments documentation, Razorpay now exposes both as APIs rather than dashboard-only actions: `POST /v1/disputes/:id/accept` and `PATCH /v1/disputes/:id/contest` (https://razorpay.com/docs/api/disputes/contest/, https://razorpay.com/docs/api/disputes/accept/). A contest is built by uploading supporting documents to obtain document ids, then submitting them under typed evidence fields (`shipping_proof`, `proof_of_service`, `customer_communication`, `explanation_letter`, `refund_confirmation`, and others) with `action: "draft"` to save or `action: "submit"` to send to the bank — at least one document id is required to submit. Submitting moves the dispute to `under_review`, and the bank's verdict arrives as `payment.dispute.won` or `payment.dispute.lost`.
 
-> **Divergence resolved in docs; cron wiring still open.** The absorbed payments docs used to assert Razorpay has no dispute API; `docs/payments/refunds-disputes/03-dispute-flow.md` and `01-architecture.md` now reflect the contest/accept endpoints. The remaining gap is behavioral: `scripts/disputes/reconcile-disputes.ts` still routes every Razorpay dispute to `razorpayManualReviewCount` for manual dashboard review instead of reconciling through the API. Wiring the reconciler (and an evidence-upload surface) to the contest/accept endpoints is tracked in the launch-residuals register.
+> **Divergence resolved.** The absorbed payments docs used to assert Razorpay has no dispute API; `docs/payments/refunds-disputes/03-dispute-flow.md` and `01-architecture.md` now reflect the contest/accept endpoints, and `scripts/disputes/reconcile-disputes.ts` polls Razorpay disputes via `GET /v1/disputes/:id` — adopting status through the CAS and settling an adopted LOST through the shared path. `razorpayManualReviewCount` now counts only rows the poll cannot adopt (unknown gateway id, unmapped status, unlinked payment). Wiring an evidence-upload surface to the contest/accept endpoints is tracked in the launch-residuals register.
 
 ---
 
@@ -98,42 +98,65 @@ A related but lower-severity observation still stands: `open` is not explicitly 
 
 Three crons keep dispute state honest when webhooks are missed or deadlines approach, each a thin GitHub-Actions wrapper over a script in `scripts/disputes/`.
 
-The **reconcile-disputes** cron (`jobs/disputes/reconcile-disputes.ts`, every 6 hours) re-queries the gateway for disputes that are still `NEEDS_RESPONSE`/`UNDER_REVIEW` (or their warning variants) and either approaching their `dueBy` deadline or stale for 24 hours, then adopts any changed status. It reconciles **Stripe** disputes live, but every **Razorpay** dispute is shunted to a manual-review counter rather than reconciled (see the Gap 3 / §3 divergence about the now-existing Razorpay API). The **alert-dispute-deadlines** cron (hourly) finds `NEEDS_RESPONSE`/`WARNING_NEEDS_RESPONSE` disputes whose `dueBy` falls within 48 hours, escalating to critical within 12 hours, and flags any past-due disputes. The **handle-lost-disputes** cron (every 6 hours) is the backstop for a missed `payment.dispute.lost` webhook: it finds `LOST` disputes whose earnings are not yet `REFUNDED` and runs the canonical `refundEarnings(paymentId, { forceRefund: true })`, loudly counting any earnings that were already `PAID` (which require manual recovery).
+The **reconcile-disputes** cron (`jobs/disputes/reconcile-disputes.ts`, every 6 hours) re-queries the gateway for disputes that are still `NEEDS_RESPONSE`/`UNDER_REVIEW` (or their warning variants) and either approaching their `dueBy` deadline or stale for 24 hours, then adopts any changed status. It reconciles **Stripe** disputes live and **Razorpay** disputes via `GET /v1/disputes/:id`; a Razorpay row the poll cannot adopt (unknown gateway id, unmapped status, unlinked payment) counts toward manual review instead. The **alert-dispute-deadlines** cron (hourly) finds `NEEDS_RESPONSE`/`WARNING_NEEDS_RESPONSE` disputes whose `dueBy` falls within 48 hours, escalating to critical within 12 hours, and flags any past-due disputes. There is no `handle-lost-disputes` cron: the backstop for a missed `payment.dispute.lost` webhook is the same reconcile run — a `LOST` outcome adopted by the poll settles through the shared `settleLostDispute(tx, dispute)` (`app/api/webhooks/utils.ts`), the exact same atomic money path used by `handleDisputeUpdated`.
 
-When a dispute is lost, `handleDisputeUpdated` runs the money reversal inline, and for an org-funded booking it settles the chargeback against the org via `applyOrgChargeback`.
+When a dispute is lost, `settleLostDispute(tx, dispute)` executes inside the caller's Serializable transaction and fans the reversal out across consultant earnings, host-org earnings, completed payouts (via `lib/payments/operations/reversal-engine.ts`), and the sponsoring org (via `applyOrgChargeback`):
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant GW as payment.dispute.lost<br/>(or handle-lost-disputes cron)
-    participant H as handleDisputeUpdated (Serializable)
-    participant E as ConsultantEarnings
+    participant GW as payment.dispute.lost<br/>(or reconcile-disputes poll)
+    participant H as handleDisputeUpdated → settleLostDispute(tx)
+    participant E as ConsultantEarnings / OrganizationEarnings
+    participant RE as applyReversal (reversal-engine.ts)
     participant Org as applyOrgChargeback
     participant L as Ledger
 
     GW->>H: status = lost
     H->>H: guard — legal transition? not already terminal?
-    H->>E: HELD earnings → REFUNDED (+ refundedShareAmount)
-    H->>Org: org-funded? settle chargeback
+    H->>E: HELD / PAID earnings → REFUNDED (prorated, CAS on refundedShareAmount)
+    H->>E: recordTdsReversal for PAID consultant earnings
+    H->>RE: PAID B2C consultant payout COMPLETED → CONSULTANT_CLAWBACK (CONSULTANT_PAYOUT_CLAWBACK)
+    RE->>L: ConsultantPayout.clawbackAmountPaise += netClawbackPaise<br/>Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE
+    H->>RE: PAID host-org payout COMPLETED → PAYOUT_CLAWBACK
+    RE->>L: OrganizationPayout.clawbackAmountPaise += reversalNow<br/>Dr ORG_RECEIVABLE / Cr ORG_PAYABLE
+    H->>Org: org-funded? settle sponsor chargeback
     Org->>Org: net against SUCCEEDED refunds (avoid double-debit)
     Org->>L: Dr WALLET (or ORG_RECEIVABLE) / Cr CASH<br/>idempotencyKey chargeback:<disputeId>
-    Note over Org,L: wallet first, falling back to a receivable<br/>the dunning flow pursues
 ```
 
-`applyOrgChargeback` is idempotent on `chargeback:<disputeId>` and deliberately **nets the chargeback against any `SUCCEEDED` refund already booked on the same payment**, so the org is debited exactly once when a refund and a lost chargeback are two routes to the same "customer got the money back." The Serializable isolation on `handleDisputeUpdated` (and on `refundPayment`) is what makes that netting race-safe: an interleaving refund and lost-chargeback form a dangerous read-write structure and one transaction aborts and is retried, rather than both reversing the org for the same money.
+### 5.1 `settleLostDispute` and `CONSULTANT_PAYOUT_CLAWBACK` (`CONSULTANT_CLAWBACK`)
+
+`settleLostDispute` prorates every reversal by `prorationFactor = min(dispute.amountPaise / dispute.payment.amount, 1)` so partial disputes reverse only the disputed fraction of each party's share:
+
+1. **Consultant earnings (`HELD` and `PAID`):**
+   - Each matching `ConsultantEarnings` row is updated with a compare-and-set on `(id, status IN ['HELD', 'PAID'], refundedShareAmount: alreadyRefunded)` that flips `status` to `REFUNDED`, clears `preDisputeStatus`, and increments `refundedShareAmount` by `reversalNow = min(floor(consultantSharePaise * prorationFactor), remainingRefundable)`.
+   - When the CAS succeeds and `earning.payoutId` is present, `recordTdsReversal` (`lib/payments/tax/tds-service.ts`) writes a negative `TDSRecord` (and `TdsAdjustment` if the original quarter was already filed) so withheld tax is reversed alongside the principal.
+   - When the earning was already `PAID` on a `COMPLETED` `ConsultantPayout` for a **B2C** payment (`!dispute.payment.organizationId`), the net-of-TDS cash recovery (`netClawbackPaise = floor(reversalNow * (1 - payoutTds / payoutGross))`) is accumulated per `consultantPayoutId` and passed to the unified reversal engine (`lib/payments/operations/reversal-engine.ts`):
+     - `applyReversal(tx, { source: { kind: "CONSULTANT_CLAWBACK", consultantPayoutId, consultantProfileId }, amountPaise: claw.amountPaise, reason, refundId: "dispute:<dispute.id>" })` (dispatched to `reverseConsultantPayoutClawback` / `postConsultantPayoutClawback`, the `CONSULTANT_PAYOUT_CLAWBACK` branch).
+     - `postConsultantPayoutClawback` claims idempotency key `clawback:dispute:<dispute.id>:consultant-payout:<consultantPayoutId>` via `postLedgerTxn` (`Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`, net of TDS) and increments `ConsultantPayout.clawbackAmountPaise` + stamps `clawbackInitiatedAt` only when the journal is newly created (`res.created === true`), guaranteeing atomic dual-write parity.
+   - On an org-funded payment (`dispute.payment.organizationId` set), the sponsoring org bears the chargeback via `applyOrgChargeback`, so no `CONSULTANT_RECEIVABLE` is booked.
+
+2. **Host-org earnings (`HELD` and `PAID`):**
+   - Each matching `OrganizationEarnings` row is flipped to `REFUNDED` with a CAS on `(id, status IN ['HELD', 'PAID'], refundedAmountPaise: alreadyRefunded)`.
+   - When the row was already `PAID` on a `COMPLETED` `OrganizationPayout`, `applyReversal` (`kind: "PAYOUT_CLAWBACK"`, via `reversePayoutClawback` / `postPayoutClawback`) claims idempotency key `clawback:dispute:<dispute.id>:payout:<orgPayoutId>`, posts `Dr ORG_RECEIVABLE / Cr ORG_PAYABLE`, and increments `OrganizationPayout.clawbackAmountPaise`.
+
+3. **Sponsoring-org chargeback (`applyOrgChargeback`) and credit notes:**
+   - `applyOrgChargeback` is idempotent on `chargeback:<disputeId>` and **nets the chargeback against any `SUCCEEDED` refund already booked on the same payment**, so the sponsoring org is debited at most once (`Dr WALLET` or `Dr ORG_RECEIVABLE` / `Cr CASH`).
+   - When the disputed payment was billed on an issued `OrganizationInvoice`, the resulting `CreditNote` links to `disputeId` (`@unique`), one of the three mutually exclusive statutory triggers enforced by `credit_note_trigger_xor` (`CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1)`).
 
 ---
 
 ## 6. Disputes and earnings holds
 
-A dispute is the reason the earnings `HELD` state exists. When `handleDisputeCreated` records a new dispute, it flips that payment's `ConsultantEarnings` from `PENDING`/`READY` to `HELD`, freezing the funds so a payout cannot leave while the chargeback is live. The resolution then unwinds the hold: a `WON` (or `WARNING_CLOSED`) dispute releases `HELD` earnings back to `READY`, while a `LOST`/`CHARGE_REFUNDED` dispute marks them `REFUNDED` and increments `refundedShareAmount` for the un-refunded remainder. The full set of earning states and the payout gates they govern live in [earnings lifecycle](06-earnings-lifecycle.md).
+A dispute is the reason the earnings `HELD` state exists. When `handleDisputeCreated` records a new dispute, it flips that payment's `ConsultantEarnings` and `OrganizationEarnings` from `PENDING`/`READY` to `HELD` (preserving `preDisputeStatus`), freezing the funds so a payout cannot leave while the chargeback is live. The resolution then unwinds the hold: a `WON`, `WARNING_CLOSED`, or `CLOSED` dispute releases `HELD` earnings back to their recorded `preDisputeStatus` (`READY` or `PENDING`), while a `LOST`/`CHARGE_REFUNDED` dispute runs `settleLostDispute` to mark `HELD` and `PAID` rows `REFUNDED`, increment their cumulative refunded columns, and book any completed-payout clawbacks. The full set of earning states and the payout gates they govern live in [earnings lifecycle](06-earnings-lifecycle.md).
 
 ---
 
 ### Related docs
-- [Refunds](10-refunds.md) — the money path a `CHARGE_REFUNDED`/accept outcome shares.
+- [Refunds](10-refunds.md) — the money path a `CHARGE_REFUNDED`/accept outcome shares, plus the unified reversal engine and `CreditNote` triggers.
 - [Earnings lifecycle](06-earnings-lifecycle.md) — the `HELD` → `READY`/`REFUNDED` transitions a dispute drives.
-- [Payout pipeline](07-payout-pipeline.md) — why held earnings must not pay out.
-- [Payment webhooks](12-payment-webhooks.md) — the inbound `payment.dispute.*` events and the dispatch switch these gaps live in.
+- [Payout pipeline](07-payout-pipeline.md) — why held earnings must not pay out and how `clawbackAmountPaise` is tracked.
+- [Payment webhooks](12-payment-webhooks.md) — the inbound `payment.dispute.*` events and the dispatch switch.
 - B2C / gateway-generic details: [`docs/payments/refunds-disputes/`](../../payments/refunds-disputes/README.md).
-- Ground truth: `app/api/webhooks/utils.ts`, `lib/payments/dispute-status.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `scripts/disputes/*.ts`.
+- Ground truth: `app/api/webhooks/utils.ts` (`settleLostDispute`, `applyOrgChargeback`), `lib/payments/operations/reversal-engine.ts`, `lib/payments/dispute-status.ts`, `app/api/webhooks/razorpay-dispatch.ts`, `scripts/disputes/*.ts`.

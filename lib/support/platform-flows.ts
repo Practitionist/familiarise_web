@@ -84,6 +84,12 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
       body: "Banks usually release a pending deduction within 5–7 working days, and no booking is created in that case. We've flagged the charge to our payments team to confirm.",
       escalate: true,
       reason: "payment_deducted_unconfirmed",
+      promises: [
+        {
+          id: "bank-release-5-7d",
+          text: "Pending bank deductions release within 5–7 business days; charge flagged to payments.",
+        },
+      ],
     },
     twice: {
       id: "twice",
@@ -91,6 +97,12 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
       body: "Duplicate charges are refunded in full — our payments team will confirm here and over email.",
       escalate: true,
       reason: "double_charge",
+      promises: [
+        {
+          id: "duplicate-full-refund",
+          text: "Duplicate charges are refunded in full.",
+        },
+      ],
     },
     refund: {
       id: "refund",
@@ -115,6 +127,12 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
       body: "Gateway refunds typically land in 5–7 working days depending on your bank. You can watch its status on your Payments page.",
       action: { kind: "SHOW_REFUND_STATUS" },
       resolved: true,
+      promises: [
+        {
+          id: "refund-tat-5-7d",
+          text: "Refunds settle to the source instrument within 5–7 business days.",
+        },
+      ],
     },
     missing: {
       id: "missing",
@@ -122,6 +140,12 @@ const paymentsBillingFlow: PlatformFlowDefinition = {
       body: "Our payments team will trace it against your payment history and update you.",
       escalate: true,
       reason: "refund_missing",
+      promises: [
+        {
+          id: "refund-trace",
+          text: "Payments team will trace the missing refund and update this request.",
+        },
+      ],
     },
     invoice: {
       id: "invoice",

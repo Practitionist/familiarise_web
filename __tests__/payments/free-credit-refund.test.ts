@@ -43,15 +43,35 @@ const tx = {
     findFirst: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(async (...a: unknown[]) => {
+      tx.refund.update(...a);
+      return { count: 1 };
+    }),
   },
   payment: {
     findUniqueOrThrow: jest.fn(),
   },
   consultantEarnings: {
     update: jest.fn(),
+    // `refundEarnings` reads a payment's earnings before reversing any, so the
+    // read surface has to exist or the first call throws.
+    findMany: jest.fn(async (..._a: unknown[]) => []),
+    // W1c — `reverseFreeCreditSettlement` now writes through a CAS
+    // `updateMany` (status-in-WHERE + `refundedShareAmount` pinned to the
+    // pre-read) instead of a plain `update`. Without this the free-credit
+    // rail throws `updateMany is not a function` on every run.
+    // Typed with the CAS argument so `mock.calls` is inspectable — a
+    // zero-parameter `jest.fn` types `calls` as `[][]` and the assertions
+    // against the write silently stop type-checking.
+    updateMany: jest.fn(
+      async (..._a: unknown[]): Promise<{ count: number }> => ({ count: 1 }),
+    ),
   },
   organizationEarnings: {
     update: jest.fn(),
+    updateMany: jest.fn(
+      async (..._a: unknown[]): Promise<{ count: number }> => ({ count: 1 }),
+    ),
   },
   organizationPayout: {
     update: jest.fn(),
@@ -102,11 +122,11 @@ jest.mock("../../lib/payments/operations/reversal-engine", () => ({
 }));
 
 const mockRestoreUpTo = jest.fn(
-  async (_p: string, _t: unknown, n: number) => n,
+  async (_p: string, _t: unknown, n: number, _r: string) => n,
 );
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: (...a: unknown[]) => mockReverseCredits(...a),
-  restoreCreditsForPaymentUpTo: (...a: [string, unknown, number]) =>
+  restoreCreditsForPaymentUpTo: (...a: [string, unknown, number, string]) =>
     mockRestoreUpTo(...a),
 }));
 
@@ -141,6 +161,10 @@ jest.mock("../../lib/payments/tax/tds-service", () => ({
 // Captured, not executed: the balance assertion below re-derives what the
 // ledger would enforce, so a drift ships as a red test instead of a red
 // production reconcile report.
+const mockMintConsumerCreditNote = jest.fn();
+jest.mock("../../lib/payments/billing/consumer-invoice", () => ({
+  mintConsumerCreditNote: (...a: unknown[]) => mockMintConsumerCreditNote(...a),
+}));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
@@ -157,6 +181,7 @@ function freeCreditSettlement() {
   return {
     originalAmount: 100_000,
     taxAmount: 18_000,
+    createdAt: new Date(),
     legs: [{ source: "REFERRAL_CREDIT", amountPaise: 118_000 }],
     earnings: [
       {
@@ -185,7 +210,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   tx.refund.findFirst.mockResolvedValue(null);
   tx.refund.create.mockResolvedValue({ id: "refund-row-1" });
-  tx.consultantEarnings.update.mockResolvedValue({});
+  // W1c — the earnings reversal now lands through the CAS `updateMany`;
+  // a `{count: 1}` return is what makes the helper report it won.
+  tx.consultantEarnings.updateMany.mockResolvedValue({ count: 1 });
   tx.organizationEarnings.update.mockResolvedValue({});
   tx.payment.findUniqueOrThrow.mockResolvedValue(freeCreditSettlement());
   mockReverseCredits.mockResolvedValue(118_000);
@@ -219,7 +246,20 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
       rail: "CREDITS",
     });
     // No amounts passed → full restoration of every usage row.
-    expect(mockReverseCredits).toHaveBeenCalledWith(PAYMENT_ID, tx);
+    expect(mockReverseCredits).toHaveBeenCalledWith(
+      PAYMENT_ID,
+      tx,
+      undefined,
+      undefined,
+      "refund-row-1",
+    );
+    // The consumer invoice is reversed for the whole credit-funded value.
+    expect(mockMintConsumerCreditNote).toHaveBeenCalledWith(tx, {
+      paymentId: PAYMENT_ID,
+      refundId: "refund-row-1",
+      amountPaise: 118_000,
+      reason: "cancellation",
+    });
     expect(mockReverseUtilization).toHaveBeenCalledWith(tx, {
       paymentId: PAYMENT_ID,
       reason: "cancellation",
@@ -236,8 +276,15 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
     );
 
     // The payable's source row nets first, so payout math follows the ledger.
-    expect(tx.consultantEarnings.update).toHaveBeenCalledWith({
-      where: { id: "ce-1" },
+    // W1c — CAS-in-WHERE: the WHERE now pins the source status AND the
+    // pre-read `refundedShareAmount`, so a concurrent reversal cannot both
+    // win, and the value written is absolute rather than an `increment`.
+    expect(tx.consultantEarnings.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "ce-1",
+        status: "PENDING",
+        refundedShareAmount: 0,
+      },
       data: { refundedShareAmount: 80_000, status: "REFUNDED" },
     });
     expect(mockAssertEarningTransition).toHaveBeenCalledWith(
@@ -282,6 +329,43 @@ describe("refundBookingPayment — free_ credit rail (#1161)", () => {
           account: { kind: "PLATFORM_FEE" },
           direction: "DEBIT",
           amountPaise: 20_000,
+        }),
+      ]),
+    );
+  });
+
+  it("past the CGST s.34(2) cutoff posts no GST_PAYABLE debit — the platform bears the tax", async () => {
+    tx.payment.findUniqueOrThrow.mockResolvedValue({
+      ...freeCreditSettlement(),
+      createdAt: new Date("2024-05-01T00:00:00Z"),
+    });
+    mockPaymentFindUnique
+      .mockResolvedValueOnce({ paymentIntent: "free_1730000000_abc" })
+      .mockResolvedValueOnce({
+        id: PAYMENT_ID,
+        currency: "INR",
+        paymentStatus: "SUCCEEDED",
+        paymentGateway: "RAZORPAY",
+      });
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+      initiatedByUserId: "user-1",
+    });
+
+    const posting = mockPostLedgerTxn.mock.calls[0][1];
+    expect(
+      posting.postings.some(
+        (p: { account: { kind: string } }) => p.account.kind === "GST_PAYABLE",
+      ),
+    ).toBe(false);
+    expect(posting.postings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          account: { kind: "PLATFORM_FEE" },
+          direction: "DEBIT",
+          amountPaise: 38_000,
         }),
       ]),
     );
@@ -421,11 +505,16 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
     });
 
     // The paid share nets to REFUNDED…
-    const earningUpdate = tx.consultantEarnings.update.mock.calls.find(
-      ([arg]: [{ where: { id: string } }]) => arg.where.id === "ce-paid",
+    const earningUpdate = tx.consultantEarnings.updateMany.mock.calls.find(
+      (args: unknown[]) =>
+        (args[0] as { where?: { id?: string } })?.where?.id === "ce-paid",
     );
-    // Cumulative-set semantics on this rail (not {increment}).
-    expect(earningUpdate[0].data).toMatchObject({
+    // Absolute-set semantics on this rail (not {increment}) — the whole point
+    // of the CAS: two writers can only compose to min(share, a + b).
+    expect(earningUpdate).toBeDefined();
+    expect(
+      (earningUpdate![0] as { data: Record<string, unknown> }).data,
+    ).toMatchObject({
       status: "REFUNDED",
       refundedShareAmount: 80_000,
     });
@@ -459,11 +548,26 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
       // No consultant side — org-collaborator-only settlement.
       earnings: [],
     });
-    const orgEarningUpdates: Array<{ data: Record<string, unknown> }> = [];
-    tx.organizationEarnings.update.mockImplementation(
-      async ({ data }: { data: Record<string, unknown> }) => {
-        orgEarningUpdates.push({ data });
-        return {};
+    // The org rail writes through the shared CAS primitive, which uses
+    // `updateMany` with the status set AND the prior amount repeated in the
+    // WHERE — a plain `update({ where: { id } })` would let two concurrent
+    // writers both land. Capture the whole call so the predicate is asserted,
+    // not just the write.
+    const orgEarningUpdates: Array<{
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }> = [];
+    // The stub's `updateMany` is declared over `..._a: unknown[]`, so the
+    // implementation has to take that shape and narrow inside — a typed
+    // destructured parameter is contravariantly incompatible.
+    tx.organizationEarnings.updateMany.mockImplementation(
+      async (...args: unknown[]) => {
+        const { where, data } = (args[0] ?? {}) as {
+          where: Record<string, unknown>;
+          data: Record<string, unknown>;
+        };
+        orgEarningUpdates.push({ where, data });
+        return { count: 1 };
       },
     );
 
@@ -475,7 +579,15 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
     // Org share flips to REFUNDED with the full proration.
     expect(orgEarningUpdates[0]?.data).toMatchObject({
       status: "REFUNDED",
-      refundedAmountPaise: 20_000, // cumulative-set
+      refundedAmountPaise: 20_000, // absolute set, not an increment
+    });
+    // …and only for a row that is still a refundable source carrying the
+    // amount we read. Without the pinned amount in the WHERE a concurrent
+    // refund would let this write double-apply on top of it.
+    expect(orgEarningUpdates[0]?.where).toMatchObject({
+      id: "oe-1",
+      refundedAmountPaise: 0,
+      status: "PAID",
     });
     // Clawback recorded on the COMPLETED payout — exactly once stamped.
     const clawback = tx.organizationPayout.update.mock.calls.find(
@@ -567,10 +679,26 @@ it("returns only missed, unmade sessions to a live credit seat", async () => {
   });
 
   expect(r).toMatchObject({ rail: "CREDITS", restoredPaise: 59_000 });
-  expect(mockRestoreUpTo).toHaveBeenCalledWith(PAYMENT_ID, tx, 59_000);
-  expect(tx.consultantEarnings.update).toHaveBeenCalledWith({
-    where: { id: "ce-1" },
-    data: { refundedShareAmount: 40_000, status: "PENDING" },
+  expect(mockRestoreUpTo).toHaveBeenCalledWith(
+    PAYMENT_ID,
+    tx,
+    59_000,
+    "refund-row-1",
+  );
+  // W1c — CAS-in-WHERE, same shape as the assertion above.
+  //
+  // The `data` carries NO `status`, where the old write restated `"PENDING"` —
+  // the row's own current value, so that write was a no-op. The helper only sets
+  // `status` when the reversal actually exhausts the share, which is the whole
+  // point of making the write absolute rather than incremental: a transition
+  // that did not happen is not written. The row is left PENDING either way.
+  expect(tx.consultantEarnings.updateMany).toHaveBeenCalledWith({
+    where: {
+      id: "ce-1",
+      status: "PENDING",
+      refundedShareAmount: 0,
+    },
+    data: { refundedShareAmount: 40_000 },
   });
   const posting = mockPostLedgerTxn.mock.calls[0][1];
   expect(sum(posting.postings, "CREDIT")).toBe(59_000);

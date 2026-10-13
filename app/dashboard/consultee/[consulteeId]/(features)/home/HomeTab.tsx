@@ -35,7 +35,11 @@ import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
-import type { NeedsActionReason } from "@/lib/appointments/view-model";
+import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import {
+  toOccurrenceVM,
+  type NeedsActionReason,
+} from "@/lib/appointments/view-model";
 import {
   formatForViewer,
   formatInViewerZone,
@@ -55,20 +59,26 @@ import {
   eventStatusBadge,
 } from "@/lib/labels/session-labels";
 import {
+  eventUnionStatusBadge,
   isCancelledLikeStatus,
   isInactiveStatus,
   isConfirmedStatus,
 } from "@/lib/appointments/status";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
+  REJOIN_GRACE_MS,
   getOccurrenceJoinState,
+  isDeadOccurrence,
+  isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
+import { useNowTick } from "@/hooks/use-now-tick";
 import {
   openProposalTarget,
   type OpenRescheduleProposal,
 } from "@/lib/appointments/consultee-affordances";
 import type { ConsulteeMoneySummary } from "@/lib/data/consultee-payments";
-import type { ConsulteeDocumentsPayload } from "@/lib/data/consultee-documents";
+import type { LibraryDocument, LibraryPage } from "@/lib/library/library-query";
+import { WaitlistOfferBanner } from "../appointments/WaitlistOfferBanner";
 import { fetchPendingPayments } from "./PendingPaymentsWidget";
 import {
   type ProcessedEvent,
@@ -79,12 +89,17 @@ import {
 } from "./event-processor";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
-// subscriptions carry AppointmentStatus. One resolver so both card
-// variants render the same shared pills.
-const processedEventBadge = (event: ProcessedEvent) =>
-  event.type === "webinar" || event.type === "class"
-    ? eventStatusBadge(event.status?.toUpperCase())
-    : appointmentStatusBadge(event.status?.toUpperCase());
+// subscriptions carry AppointmentStatus; trials carry TrialStatus.
+const processedEventBadge = (event: ProcessedEvent) => {
+  const normalizedStatus = event.status?.toUpperCase();
+  if (event.type === "webinar" || event.type === "class") {
+    return eventStatusBadge(normalizedStatus);
+  }
+  if (event.type === "trial") {
+    return eventUnionStatusBadge(normalizedStatus);
+  }
+  return appointmentStatusBadge(normalizedStatus);
+};
 
 const NEXT_UP_LIMIT = 3;
 const RATE_PROMPT_LIMIT = 2;
@@ -94,6 +109,7 @@ const TYPE_LABEL: Record<ProcessedEvent["type"], string> = {
   subscription: "Subscription",
   class: "Class",
   webinar: "Webinar",
+  trial: "Trial",
 };
 
 interface HomeTabProps {
@@ -133,14 +149,24 @@ function awaitingLabel(reason: NeedsActionReason | null): string {
 function getTimeAway(
   date: Date | null,
   reason: NeedsActionReason | null,
+  endsAt?: Date | null,
+  now: Date = new Date(),
+  meetingEnded = false,
 ): { text: string; urgent: boolean } {
+  if (meetingEnded) return { text: "Completed", urgent: false };
   if (!date)
     return { text: awaitingLabel(reason), urgent: reason === "PAY_NOW" };
-  const now = new Date();
+  const startMs = date.getTime();
+  const endMs = (endsAt ?? date).getTime() + REJOIN_GRACE_MS;
+  const nowMs = now.getTime();
+  if (nowMs >= startMs && nowMs <= endMs) {
+    return { text: "In progress", urgent: true };
+  }
+  if (nowMs > endMs) return { text: "Past", urgent: false };
+
   const hoursAway = differenceInHours(date, now);
   const daysAway = differenceInDays(date, now);
 
-  if (hoursAway < 0) return { text: "Past", urgent: false };
   if (hoursAway < 1) return { text: "Starting soon", urgent: true };
   if (hoursAway < 24) {
     const mins = Math.floor((hoursAway % 1) * 60);
@@ -178,16 +204,24 @@ function NextUpCard({
   event,
   href,
   viewerZone,
+  now,
   onJoin,
   isJoining,
 }: Readonly<{
   event: ProcessedEvent;
   href: string | null;
   viewerZone: ViewerZone;
+  now: Date;
   onJoin?: () => void;
   isJoining?: boolean;
 }>) {
-  const timeAway = getTimeAway(event.startsAt, event.needsActionReason);
+  const timeAway = getTimeAway(
+    event.startsAt,
+    event.needsActionReason,
+    event.endsAt,
+    now,
+    isDeliberateEnd(event.joinableOccurrence?.meeting),
+  );
 
   // Shared guards (lib/appointments/status-guards.ts) — same semantics as the
   // Appointments tab cards.
@@ -206,6 +240,7 @@ function NextUpCard({
     !!event.joinableOccurrence &&
     getOccurrenceJoinState(event.joinableOccurrence, {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
+      now,
     }) === "joinable";
 
   return (
@@ -378,6 +413,85 @@ function proposalsAwaiting(
   });
 }
 
+function hasLiveRenewal(
+  renewal:
+    | {
+        id?: string;
+        status?: string;
+        deletedAt?: Date | string | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!renewal?.id || renewal.deletedAt) return false;
+  const st = renewal.status?.toUpperCase();
+  return st !== "CANCELLED" && st !== "REJECTED" && st !== "EXPIRED";
+}
+
+function readSubscriptionRenewal(sub: object): {
+  id?: string;
+  status?: string;
+  deletedAt?: Date | string | null;
+} | null {
+  if (!("renewal" in sub) || !sub.renewal || typeof sub.renewal !== "object") {
+    return null;
+  }
+  const r = sub.renewal;
+  const id = "id" in r && typeof r.id === "string" ? r.id : undefined;
+  const status =
+    "status" in r && typeof r.status === "string" ? r.status : undefined;
+  const deletedAt =
+    "deletedAt" in r &&
+    (typeof r.deletedAt === "string" ||
+      r.deletedAt instanceof Date ||
+      r.deletedAt === null)
+      ? r.deletedAt
+      : undefined;
+  return { id, status, deletedAt };
+}
+
+function lowSessionSubscriptions(
+  eventsData: TConsulteeEventsResponse,
+  now: Date,
+) {
+  return (eventsData.subscriptions ?? []).flatMap((sub) => {
+    const status = sub.status.toUpperCase();
+    if (status !== "APPROVED" && status !== "COMPLETED") return [];
+
+    if (hasLiveRenewal(readSubscriptionRenewal(sub))) return [];
+
+    const planId = sub.subscriptionPlan.id ?? sub.subscriptionPlanId;
+    if (!planId) return [];
+
+    const planTotal = sub.sessionsTotal ?? sub.subscriptionPlan.totalSessions;
+    if (!planTotal || planTotal <= 0) return [];
+
+    const occurrences = sub.appointment?.occurrences ?? [];
+    const completedOrPast = occurrences.filter(
+      (o) => !isDeadOccurrence(o) && isOccurrenceOver(toOccurrenceVM(o), now),
+    ).length;
+    const remaining = Math.max(0, planTotal - completedOrPast);
+
+    if (remaining > 1) return [];
+    const title = sub.subscriptionPlan.title || "Subscription";
+    const consultantName =
+      sub.subscriptionPlan.consultantProfile?.user?.name ?? "your expert";
+    return [
+      {
+        key: `renew-subscription:${sub.id}`,
+        severity: "info" as const,
+        title:
+          remaining === 1
+            ? `1 session left in ${title}`
+            : `All sessions completed in ${title}`,
+        body: `Continue working with ${consultantName} by renewing your subscription.`,
+        ctaLabel: "Renew subscription",
+        ctaHref: `/checkout/plans/subscription/${planId}?renewsSubscriptionId=${sub.id}`,
+      },
+    ];
+  });
+}
+
 interface ReviewableSessionRow {
   appointmentId: string;
   consultantProfileId: string;
@@ -486,13 +600,14 @@ export default function HomeTab({
     }
   };
 
+  const now = useNowTick();
   const processedEvents = useMemo(
-    () => processAllEvents(eventsData),
-    [eventsData],
+    () => processAllEvents(eventsData, now),
+    [eventsData, now],
   );
   const upcomingEvents = useMemo(
-    () => getUpcomingEvents(processedEvents),
-    [processedEvents],
+    () => getUpcomingEvents(processedEvents, now),
+    [processedEvents, now],
   );
   // #1527 — Next up is live scheduled sessions only: an unpaid request is in
   // Needs you and a request waiting on the expert is Appointments' concern.
@@ -510,16 +625,16 @@ export default function HomeTab({
     enabled: isOwner,
     queryFn: () =>
       fetchJson<ReviewableSessionRow[]>(
-        "/api/user/reviews/reviewable-sessions",
+        "/api/user/reviews/reviewable-sessions?unreviewed=1",
         true,
       ),
   });
   const { data: revisions } = useQuery({
-    queryKey: ["consultee-documents", consulteeId, "NEEDS_REVISION"],
+    queryKey: ["documents", "library", "consultee", consulteeId, "your-turn"],
     staleTime: 2 * 60_000,
     queryFn: () =>
-      fetchJson<ConsulteeDocumentsPayload>(
-        `/api/dashboard/consultee/${consulteeId}/documents?status=NEEDS_REVISION&limit=5`,
+      fetchJson<LibraryPage<LibraryDocument>>(
+        `/api/dashboard/consultee/${consulteeId}/documents?status=your-turn`,
         false,
       ),
   });
@@ -535,8 +650,8 @@ export default function HomeTab({
 
   const pendingPayments = money?.pendingPayments;
   const actionItems = useMemo(
-    () =>
-      deriveConsulteeActionItems({
+    () => [
+      ...deriveConsulteeActionItems({
         pendingPaymentCount: pendingPayments?.length ?? 0,
         pendingPaymentTotalPaise: (pendingPayments ?? []).reduce(
           (sum, p) => sum + (p.amount ?? 0),
@@ -571,18 +686,25 @@ export default function HomeTab({
             consultantName: s.consultantName ?? "your expert",
             href: `/explore/experts/${s.consultantProfileId}#reviews`,
           })),
-        documentsToRevise: (revisions?.data ?? [])
-          .filter((d) => d.uploadedByRole === "CONSULTEE")
-          .map((d) => ({
-            id: d.id,
-            name: d.originalName,
-            appointmentId: d.appointmentId,
-          })),
+        documentsToRevise: (revisions?.groups ?? [])
+          .flatMap((g) =>
+            g.files
+              .filter((f) => f.needsYou)
+              .map((f) => ({
+                id: f.id,
+                name: f.title,
+                appointmentId: g.session.appointmentId,
+              })),
+          )
+          .slice(0, 5),
         failedRefunds: (money?.failedRefunds ?? []).map((r) => ({
           paymentId: r.paymentId,
           amountText: formatCurrencyAmount(r.amountPaise, r.currency),
         })),
+        now,
       }),
+      ...lowSessionSubscriptions(eventsData, now),
+    ],
     [
       pendingPayments,
       money,
@@ -592,12 +714,13 @@ export default function HomeTab({
       userDetails?.id,
       reviewable,
       revisions,
+      now,
     ],
   );
 
   const monthSessions = useMemo(
-    () => sessionsThisMonth(processedEvents, viewerZone.zone, new Date()),
-    [processedEvents, viewerZone.zone],
+    () => sessionsThisMonth(processedEvents, viewerZone.zone, now),
+    [processedEvents, viewerZone.zone, now],
   );
 
   return (
@@ -616,6 +739,8 @@ export default function HomeTab({
         }
         description="What needs you, and what's next."
       />
+
+      <WaitlistOfferBanner viewerZone={viewerZone} />
 
       <ActionRequiredPanel
         items={actionItems}
@@ -662,6 +787,7 @@ export default function HomeTab({
                     : null
                 }
                 viewerZone={viewerZone}
+                now={now}
                 onJoin={() => handleJoinMeeting(event)}
                 isJoining={joiningEventId === event.id}
               />

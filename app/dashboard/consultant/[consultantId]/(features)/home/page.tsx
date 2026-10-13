@@ -37,7 +37,7 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
 
   // Free: requirePersonalProfileAccess above already resolved this exact call,
   // and getSession is React.cache'd per render, so both share one entry.
-  const session = await getSession(true);
+  const session = await getSession();
   // An ADMIN/STAFF inspecting someone else's dashboard would otherwise be
   // greeted by their OWN name, since the session is the viewer's. The owner's
   // name lives in the layout's cached profile, which is not available here

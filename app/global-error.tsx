@@ -2,7 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import NextError from "next/error";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import { sora } from "@/lib/fonts";
 
@@ -13,9 +13,22 @@ export default function GlobalError({
 }: {
   error: Error & { digest?: string };
 }) {
+  const [eventId, setEventId] = useState<string | undefined>(undefined);
+
   useEffect(() => {
-    Sentry.captureException(error);
+    const id = Sentry.captureException(error, {
+      tags: {
+        subsystem: "client",
+        boundary: "global-error",
+        ...(error.digest ? { digest: error.digest } : {}),
+      },
+    });
+    if (typeof id === "string" && id) {
+      setEventId(id);
+    }
   }, [error]);
+
+  const referenceId = error.digest ?? eventId;
 
   return (
     // global-error legitimately replaces the root layout, so it owns the only
@@ -28,6 +41,11 @@ export default function GlobalError({
         does not expose status codes for errors, we simply pass 0 to render a
         generic error message. */}
         <NextError statusCode={0} />
+        {referenceId && (
+          <p className="fixed bottom-4 left-1/2 -translate-x-1/2 font-mono text-xs text-muted-foreground">
+            Error ID: {referenceId}
+          </p>
+        )}
       </body>
     </html>
   );

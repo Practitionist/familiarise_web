@@ -38,7 +38,6 @@ const earning = (
   platformFeePaise: 20_000,
   consultantSharePaise: 80_000,
   refundedShareAmount: 0,
-  gstTcsAccruedPaise: null,
   role: "OWNER",
   shareBps: 10_000,
   appointmentOccurrenceId: null,
@@ -74,6 +73,7 @@ const payout = (status: Payout["status"]): Payout => ({
   amount: 80_000,
   tdsDeducted: 80,
   netAmount: 79_920,
+  recoveredPaise: 0,
   tdsRateAppliedBps: 10,
   tdsFinancialYear: "2026-27",
   processedAt: "2026-09-14T20:05:00Z",
@@ -133,7 +133,7 @@ it("sums the tiles, shows the hold date and the sponsor, and never a raw enum", 
         now={NOW}
         stats={{ rows: [], lifetimePaise: 0 }}
       />
-      <EarningsActivity data={data} now={NOW} />
+      <EarningsActivity consultantId="cp-1" data={data} now={NOW} />
     </>,
   );
   // Available = 80,000 − 5,000; Pending = 80,000; Paid out = 79,920 net.
@@ -153,13 +153,23 @@ it("sums the tiles, shows the hold date and the sponsor, and never a raw enum", 
 
 it("the Pending and Payouts segments carry the hold date, the sponsor and the walk", () => {
   const pending = render(
-    <EarningsActivity data={data} now={NOW} initialSegment="PENDING" />,
+    <EarningsActivity
+      consultantId="cp-1"
+      data={data}
+      now={NOW}
+      initialSegment="PENDING"
+    />,
   );
   expect(pending).toContain("available on 25 Sep");
   expect(pending).toContain("Acme Corp");
 
   const paid = render(
-    <EarningsActivity data={data} now={NOW} initialSegment="PAID_OUT" />,
+    <EarningsActivity
+      consultantId="cp-1"
+      data={data}
+      now={NOW}
+      initialSegment="PAID_OUT"
+    />,
   );
   expect(paid).toContain("Paid 15 Sep · UTR UTR9");
   // The segment lists every payout with its state, so it is "Payouts"; the

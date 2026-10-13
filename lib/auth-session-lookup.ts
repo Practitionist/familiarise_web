@@ -1,15 +1,13 @@
-import { cookies } from "next/headers";
-import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { markExpected } from "@/lib/observability/expected";
+import {
+  isNextControlFlowError,
+  SessionLookupFailedError,
+} from "@/lib/auth/session-lookup-error";
 
 /**
- * #1716 — the three answers a session lookup can give. `getSession` alone
- * collapses the third into the second: the `customSession` plugin's endpoint
- * wraps the core lookup in `.catch(() => null)` (better-auth 1.6.5,
- * `plugins/custom-session/index.mjs:50`), so an adapter failure — a ~27 s
- * cold-instance stall on a VALID cookie — came back as "no session" and the
- * caller answered 401 to a signed-in user.
- *
+ * `getSession` as a value instead of a throw: the guards (`requireApiAuth`,
+ * `requireApiSession`, the page guards in lib/auth-guard.ts) branch on it.
  * Its own module so the many suites that mock `lib/auth-server` to a bare
  * `getSession` keep driving it.
  */
@@ -22,90 +20,21 @@ export type SessionLookup =
   | { kind: "none" }
   | { kind: "failed"; cause: unknown };
 
-/** Thrown by page guards on a failed lookup, so the boundary retries, never signs out. */
-export class SessionLookupFailedError extends Error {
-  readonly code = "SESSION_LOOKUP_FAILED";
-  constructor(readonly cause: unknown) {
-    super("Session lookup failed");
-    this.name = "SessionLookupFailedError";
-  }
+/** Marked here so a caller that reports the cause directly never pages. */
+function markLookupCause(cause: unknown): unknown {
+  return cause instanceof Error ? markExpected(cause) : cause;
 }
 
-// Better Auth's default names: the `__Secure-` prefix rides on https origins.
-const SESSION_TOKEN_COOKIES = [
-  "__Secure-better-auth.session_token",
-  "better-auth.session_token",
-];
-
-/** The raw session token from the signed cookie, or null when no cookie rides. */
-async function sessionTokenFromCookie(): Promise<string | null> {
-  const jar = await cookies();
-  for (const name of SESSION_TOKEN_COOKIES) {
-    const value = jar.get(name)?.value;
-    if (!value) continue;
-    // better-call signs as `<token>.<signature>`; the token is what the row is keyed on.
-    const dot = value.lastIndexOf(".");
-    return dot < 1 ? null : value.substring(0, dot);
-  }
-  return null;
-}
-
-/**
- * Next's control-flow throws (DYNAMIC_SERVER_USAGE while prerendering,
- * NEXT_REDIRECT, NEXT_NOT_FOUND, BAILOUT_TO_CLIENT_SIDE_RENDERING) carry a
- * string `digest` and must reach the framework; a database fault carries none.
- */
-function isNextControlFlowError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "digest" in error &&
-    typeof error.digest === "string"
-  );
-}
-
-/**
- * `getSession` with the failure made visible. A thrown lookup is a failure;
- * a null WITH a session cookie is ambiguous, so one indexed read of the row
- * settles it: a live row means the lookup did not complete (fail), no row
- * means the session is gone (none). The extra read runs only on the null
- * path, which is rare for a signed-in caller.
- */
-export async function lookupSession(
-  disableCookieCache = false,
-): Promise<SessionLookup> {
-  let session: Awaited<ReturnType<typeof getSession>>;
+/** Includes an unenrolled operator's session; the guards answer it themselves. */
+export async function lookupSession(): Promise<SessionLookup> {
   try {
-    session = await getSession(disableCookieCache);
+    const session = await getSession({ allowUnenrolledOperator: true });
+    return session?.user?.id ? { kind: "found", session } : { kind: "none" };
   } catch (cause) {
-    if (isNextControlFlowError(cause)) throw cause;
-    return { kind: "failed", cause };
-  }
-  if (session?.user?.id) return { kind: "found", session };
-
-  let token: string | null;
-  try {
-    token = await sessionTokenFromCookie();
-  } catch {
-    // Outside a request scope (a job, a bare test) there is no jar to consult.
-    return { kind: "none" };
-  }
-  if (!token) return { kind: "none" };
-  try {
-    const row = await prisma.session.findUnique({
-      where: { token },
-      select: { expiresAt: true },
-    });
-    if (row && row.expiresAt > new Date()) {
-      return {
-        kind: "failed",
-        cause: new Error(
-          "session row is live but the session lookup answered null",
-        ),
-      };
+    if (cause instanceof SessionLookupFailedError) {
+      return { kind: "failed", cause: markLookupCause(cause.cause) };
     }
-    return { kind: "none" };
-  } catch (cause) {
-    return { kind: "failed", cause };
+    if (isNextControlFlowError(cause)) throw cause;
+    return { kind: "failed", cause: markLookupCause(cause) };
   }
 }

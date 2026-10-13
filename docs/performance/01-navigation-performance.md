@@ -127,7 +127,7 @@ To make future regressions visible without attaching a profiler, [`lib/prisma.ts
 
 The following items were considered during this round and deliberately deferred. They are recorded here so that the rationale is not lost and the next attempt does not repeat a dead end.
 
-The first is a fast-path for `customSession` membership reads. This would let the session-enrichment hot path skip a database round trip when memberships are already known, but it requires memberships to be persisted into the session itself. BetterAuth's `cookieCache` strips the enriched membership list, so a fast-path keyed only on session generation would return empty memberships and break authorization reads. Until memberships are persisted into the session in a form the cookie cache preserves, this fast-path cannot be implemented safely.
+The first is a fast-path for `customSession` membership reads, which would let session enrichment skip the membership query when memberships are already known. It is off the table by design: the session cookie cache is disabled in `lib/auth.ts`, so every session read goes to the database and returns live role, ban and membership state. Any fast-path would have to keep that guarantee.
 
 The second is converting the public landing, explore, and detail pages to React Server Components. These pages are currently client-rendered, and an RSC conversion would cut their client JavaScript and improve their first paint, but it is a larger refactor than the navigation round scoped for and is left for a dedicated effort.
 

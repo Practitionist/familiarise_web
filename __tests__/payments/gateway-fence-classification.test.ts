@@ -1,25 +1,20 @@
 /**
- * #1351 — a fenced or stub gateway must reach the caller as a business
- * rejection. Before this pin the guard's error matched no message pattern, so
- * `POST /api/checkout` with a disabled rail answered 500 UNKNOWN_ERROR and
- * Sentry recorded it as an unexpected exception.
+ * A stub gateway must reach the caller as a business rejection, not a 500
+ * UNKNOWN_ERROR recorded by Sentry as an unexpected exception.
  */
 import {
   classifyError,
   ErrorTypes,
 } from "@/lib/errors/classification/payment-error-classification";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
-import {
-  DisabledGatewayError,
-  UnsupportedGatewayError,
-} from "@/lib/payments/validation/gateway-guards";
+import { UnsupportedGatewayError } from "@/lib/payments/validation/gateway-guards";
 import { DomainVerificationRequiredError } from "@/lib/enterprise/governance";
 import { WalletInsufficientFundsError } from "@/lib/api/organizations/wallet";
 
 describe("gateway fence classification", () => {
-  it("classifies a disabled gateway as a 422 business rejection", () => {
+  it("classifies a stub gateway as a 422 business rejection", () => {
     const classified = classifyError(
-      new DisabledGatewayError("STRIPE", "route a checkout"),
+      new UnsupportedGatewayError("PAYPAL", "issue a refund"),
     );
 
     expect(classified.errorType).toBe(ErrorTypes.GATEWAY_UNAVAILABLE);
@@ -27,26 +22,16 @@ describe("gateway fence classification", () => {
     expect(classified.httpStatus).toBe(422);
   });
 
-  it("classifies a stub gateway the same way", () => {
-    const classified = classifyError(
-      new UnsupportedGatewayError("PAYPAL", "issue a refund"),
-    );
-
-    expect(classified.errorType).toBe(ErrorTypes.GATEWAY_UNAVAILABLE);
-    expect(classified.httpStatus).toBe(422);
-  });
-
-  it("gives the buyer a payment-method toast, not the env flag", () => {
+  it("gives the buyer a payment-method toast", () => {
     const toast = getErrorToast(ErrorTypes.GATEWAY_UNAVAILABLE);
 
     expect(toast.title).toBe("This payment method is not available");
-    expect(toast.description).not.toContain("STRIPE_ENABLED");
   });
 
   // #1426 — WALLET_FROZEN, CONSENT_REQUIRED and CONSENT_WITHDRAWN are the
   // codes checkout.ts already throws (lib/payments/operations/checkout.ts:881,
-  // :1556, :2538) but BUSINESS_ERROR_CODES only carried GATEWAY_DISABLED and
-  // UNSUPPORTED_GATEWAY, so these three fell through to the 500 UNKNOWN path.
+  // :1556, :2538) but BUSINESS_ERROR_CODES only carried UNSUPPORTED_GATEWAY,
+  // so these three fell through to the 500 UNKNOWN path.
   it("classifies SELF_BOOKING as its own 409 business error (#1593)", () => {
     const classified = classifyError(
       Object.assign(new Error("You cannot book your own plan."), {

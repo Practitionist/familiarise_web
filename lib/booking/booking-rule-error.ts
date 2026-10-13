@@ -19,7 +19,8 @@ export type BookingRuleCode =
   | "BACKUP_WINDOW_PAST"
   | "ENROLMENT_CLOSED"
   | "CLASS_PRICE_CHANGED"
-  | "PLAN_NOT_PUBLISHED";
+  | "PLAN_NOT_PUBLISHED"
+  | "SCHEDULE_CONFLICT";
 
 export class BookingRuleError extends Error {
   constructor(
@@ -29,5 +30,13 @@ export class BookingRuleError extends Error {
   ) {
     super(message);
     this.name = "BookingRuleError";
+  }
+}
+
+/** Another buyer holds this 1:1 window; codeless so the classifier still answers it by message. */
+export class SlotTakenError extends Error {
+  constructor() {
+    super("Time slot is already booked");
+    this.name = "SlotTakenError";
   }
 }

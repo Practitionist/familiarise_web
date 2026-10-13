@@ -12,6 +12,10 @@
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+// Session-document erasure has its own suite; this one pins the money gate.
+jest.mock("../../lib/documents/document-erasure", () => ({
+  eraseUserSessionDocuments: jest.fn(async () => []),
+}));
 jest.mock("../../lib/auth-helpers", () => ({
   requireAdminAuth: jest.fn(async () => ({
     session: { user: { id: "admin_1" } },
@@ -30,6 +34,15 @@ jest.mock("../../lib/collaborators/standing", () => ({
   removeCollaboratorStanding: jest.fn(async () => []),
 }));
 
+const mockDeleteSubscriber = jest.fn(async () => true);
+jest.mock("../../lib/novu/client", () => ({
+  isNovuConfigured: () => true,
+  getNovuClient: () => ({}),
+}));
+jest.mock("../../lib/novu/subscriber", () => ({
+  deleteSubscriber: () => mockDeleteSubscriber(),
+}));
+
 const counts = {
   consultantPayout: 0,
   consultantEarnings: 0,
@@ -44,6 +57,7 @@ const tx = {
   consultation: { updateMany: jest.fn(async () => ({ count: 1 })) },
   session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  consentArtifact: { updateMany: jest.fn(async () => ({ count: 0 })) },
   erasureRequest: { findFirst: jest.fn(async () => null) },
 };
 jest.mock("../../lib/prisma", () => ({
@@ -102,6 +116,7 @@ function post() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockDeleteSubscriber.mockResolvedValue(true);
   counts.consultantPayout = 0;
   counts.consultantEarnings = 0;
   counts.dispute = 0;
@@ -139,5 +154,24 @@ describe("erasure money gate and consultee free text (#1598 P4-P0-05)", () => {
       where: { requestedBy: { userId: "u1" } },
       data: { requestNotes: null },
     });
+  });
+
+  it("keeps ErasureRequest in IN_PROGRESS and answers 202 when a vendor erasure leg fails", async () => {
+    mockDeleteSubscriber.mockResolvedValueOnce(false);
+
+    const res = await post();
+    const body = await res.json();
+
+    expect(res.status).toBe(202);
+    expect(body.status).toBe("IN_PROGRESS");
+    expect(body.vendorFailures).toHaveLength(1);
+    expect(prisma.erasureRequest.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { id: "er_1" },
+        data: expect.objectContaining({
+          status: "IN_PROGRESS",
+        }),
+      }),
+    );
   });
 });

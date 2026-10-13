@@ -1,464 +1,248 @@
 # Pre-Production Checklist — Email, Notifications & Newsletter
 
-> Everything needed before going live. Current state, free tier limits, when to pay, and the exact setup steps.
+> Production readiness runbook for outbound email (`lib/email/`), Novu in-app feed notifications (`lib/novu/`), ImprovMX inbound routing, DMARC/SPF/DKIM alignment, scheduled outbox relays, and environment variables.
 
-**Last Updated**: 2026-09-14
-**Live Domain**: `familiarisenow.com` (Netlify)
+**Last Updated**: 2026-10-11
+**Live Domain**: `familiarisenow.com` (Netlify DNS)
 
 ---
 
 ## Table of Contents
 
-- [Decision (2026-09-14): Sending Domain](#decision-2026-09-14-sending-domain)
-- [Service Free Tier Limits](#service-free-tier-limits)
-- [Pre-Launch Checklist (Free, $0/month)](#pre-launch-checklist-free-0month)
-- [DNS Setup for Resend (Step-by-Step)](#dns-setup-for-resend-step-by-step)
-- [Novu Dashboard Configuration](#novu-dashboard-configuration)
-- [Cron Job Scheduling](#cron-job-scheduling)
+- [Sending Domains, Inbound Routing & DMARC Architecture](#sending-domains-inbound-routing--dmarc-architecture)
+- [Service Free Tier Limits & Quotas](#service-free-tier-limits--quotas)
+- [Pre-Launch Checklist (Free Tier, \$0/month)](#pre-launch-checklist-free-tier-0month)
+- [DNS Setup for Resend, ImprovMX & DMARC](#dns-setup-for-resend-improvmx--dmarc)
+- [Novu Environment & Workflow Configuration](#novu-environment--workflow-configuration)
+- [Scheduled Outbox Drains & Sweep Cadences](#scheduled-outbox-drains--sweep-cadences)
 - [Environment Variables](#environment-variables)
-- [When You'll Need to Pay](#when-youll-need-to-pay)
-- [Deferred Services (Post-Launch)](#deferred-services-post-launch)
+- [Owner Runbook: Rotating `RESEND_API_KEY`](#owner-runbook-rotating-resend_api_key)
+- [When You'll Need to Upgrade](#when-youll-need-to-upgrade)
 - [Cost Projection Timeline](#cost-projection-timeline)
-- [Sources](#sources)
+- [Deferred Services (Post-Launch)](#deferred-services-post-launch)
+- [Deprecated & Superseded Approaches](#deprecated--superseded-approaches)
 
 ---
 
-## Decision (2026-09-14): Sending Domain
+## Sending Domains, Inbound Routing & DMARC Architecture
 
-The prod outage tracked as #1298 had three causes: the `RESEND_API_KEY` deployed to Netlify prod, the GitHub Actions secret, `.env` and `.mcp.json` was invalid (Resend returned 400 "API key is invalid" on every send); every `from:` address was `@familiarise.com`, a domain the company has never owned (it sits parked at NameBright/HugeDomains with SPF `-all`, which tells receiving servers to reject mail claiming to be from it); and `familiarisenow.com`, the domain the company does own and the live site runs on, had no DKIM/SPF/DMARC records — its DNS is Netlify DNS (nameservers at NS1), not the registrar.
+Outbound mail splits sender reputations across two dedicated Resend subdomains on `familiarisenow.com` (dispatched from Resend region `ap-northeast-1` Tokyo), while inbound operator mailboxes route through ImprovMX on the root apex `@`:
 
-`familiarise.com` was never a real option: the company does not control its DNS, so Resend cannot verify it, and buying it back does not fix the second and third causes.
+```text
+Outbound Transactional & Ops (@mail.familiarisenow.com):
+  onboarding@mail.familiarisenow.com     -- Welcome & email verification
+  security@mail.familiarisenow.com       -- Password reset/changed, 2FA, SSO, account suspension/ban
+  payments@mail.familiarisenow.com       -- Payment links, receipts, failures, refunds, payouts, disputes
+  notifications@mail.familiarisenow.com  -- Bookings, reminders, org invites, support replies, reviews
+  finance@mail.familiarisenow.com        -- Org billing receipts, invoices, wallet low, overage due
+  dpdp@mail.familiarisenow.com           -- DPDP compliance & data-export notifications
+  noreply@mail.familiarisenow.com        -- Automated system notifications
+  system@mail.familiarisenow.com         -- Familiarise Ops alerts (Reply-To: ops@familiarisenow.com)
 
-The owner decided to send from `familiarisenow.com` through two subdomains, splitting reputations so a newsletter bounce spike cannot affect transactional deliverability:
+Outbound Bulk / Waitlist (@news.familiarisenow.com):
+  newsletter@news.familiarisenow.com     -- Waitlist confirmation, welcome & broadcasts
 
+Inbound Operator Mailboxes (@familiarisenow.com via ImprovMX):
+  support@familiarisenow.com             -- Default Reply-To & customer support inbox
+  ops@familiarisenow.com                 -- Reply-To for ops/canary/quota/compliance alerts (OPS_EMAIL)
+  dpdp@familiarisenow.com                -- Privacy & DPDP statutory contact
+  billing@familiarisenow.com             -- Supplier invoice & finance contact
+  dmarc@familiarisenow.com               -- Aggregate DMARC reports (rua=mailto:dmarc@familiarisenow.com)
 ```
-onboarding@mail.familiarisenow.com
-security@mail.familiarisenow.com
-payments@mail.familiarisenow.com
-notifications@mail.familiarisenow.com
-finance@mail.familiarisenow.com
-dpdp@mail.familiarisenow.com
-noreply@mail.familiarisenow.com
-system@mail.familiarisenow.com   (bare requester id, not a From header)
-newsletter@news.familiarisenow.com
-```
 
-The region is Tokyo (`ap-northeast-1`). Resend offers four regions (`us-east-1`, `eu-west-1`, `sa-east-1`, `ap-northeast-1`); the region controls where Resend dispatches mail from, not where account data is stored, which stays in the US regardless of the region chosen.
+---
 
-Support and contact mail still goes to a real mailbox through `NEXT_PUBLIC_SUPPORT_EMAIL` / `CONTACT_INBOX_ADDRESS`, because `familiarisenow.com` has no MX record yet and cannot receive mail.
-
-**Files using these `from:` addresses:**
-
-- `lib/email/index.ts` — 11 sender functions, all reading `SENDERS` from `lib/email/config.ts`
-- `app/api/admin/waitlist/broadcast/route.ts` — the newsletter broadcast, `SENDERS.newsletter`
-
-## Service Free Tier Limits
+## Service Free Tier Limits & Quotas
 
 ### Resend (Email Delivery)
 
-| Feature                  | Free        | Pro ($20/mo)           | Scale ($90/mo)         |
-| ------------------------ | ----------- | ---------------------- | ---------------------- |
-| Emails/month             | 3,000       | 50,000                 | 100,000                |
-| **Daily limit**          | **100/day** | No limit               | No limit               |
-| Custom domain            | Yes         | Yes                    | Yes                    |
-| Analytics (opens/clicks) | **No**      | Yes                    | Yes                    |
-| API keys                 | 1           | Multiple               | Multiple               |
-| Overage                  | Blocked     | Pay-as-you-go (5x cap) | Pay-as-you-go (5x cap) |
+| Feature                       | Free        | Pro (\$20/mo)          | Scale (\$90/mo)        |
+| ----------------------------- | ----------- | ---------------------- | ---------------------- |
+| Emails/month                  | 3,000       | 50,000                 | 100,000                |
+| **Daily limit**               | **100/day** | No limit               | No limit               |
+| Custom verified subdomains    | Yes         | Yes                    | Yes                    |
+| Svix delivery/bounce webhooks | Yes         | Yes                    | Yes                    |
+| Analytics UI (opens/clicks)   | No          | Yes                    | Yes                    |
+| Overage                       | Blocked     | Pay-as-you-go (5x cap) | Pay-as-you-go (5x cap) |
 
-**What 100/day means in practice:**
+**Operational notes on the 100/day free cap:**
 
-- Each booking typically fires 2 emails (confirmation to both parties)
-- 100/day = ~50 bookings/day, or ~50 unique user actions triggering emails
-- Newsletter sends count against this — a blast to 200 subscribers = 200 emails = 2 days of quota
-- **Workaround for newsletters:** Send admin newsletter blasts during off-peak hours, batch across days if >100 subscribers
+- Each booking triggers confirmation emails to active participants plus pre-session reminders.
+- Waitlist broadcasts count toward the daily limit and use `FailedEmailBatch` chunking with `EmailSuppression` pre-filtering.
+- Delivery events (`email.bounced`, `email.complained`, `email.suppressed`, `contact.*`, `domain.*`) stream continuously on the free tier via `POST /api/webhooks/resend` into `EmailEvent`, `EmailSuppression`, `Waitlist`, and `SystemEvent`.
 
-**What you lose without analytics:**
+### Novu (In-App Feed Orchestration)
 
-- No open rate tracking
-- No click tracking
-- No bounce/complaint monitoring
-- You're flying blind on deliverability until you upgrade
+| Feature                     | Free                                     | Pro (~\$25–30/mo) |
+| --------------------------- | ---------------------------------------- | ----------------- |
+| Events/month                | ~10,000                                  | 30,000            |
+| In-app feed + WebSocket     | Yes (HMAC subscriber hash secured)       | Yes               |
+| Email channel               | Unused — all 16 families are in-app only | Unused            |
+| Activity feed retention     | 7 days                                   | 30 days           |
+| Subscribers                 | Unlimited                                | Unlimited         |
+| Active workflows per tenant | 20 (16 families deployed)                | 20 (100 on Team)  |
 
-### Novu (Notification Orchestration)
+**Development vs. Production Tenants:**
 
-| Feature                 | Free                                       | Pro (~$25-30/mo) |
-| ----------------------- | ------------------------------------------ | ---------------- |
-| Events/month            | ~10,000                                    | 30,000           |
-| In-app notifications    | Yes                                        | Yes              |
-| Email channel           | Not used — all 16 families are in-app only | Not used         |
-| Digest/batching         | Limited                                    | Full             |
-| Activity feed retention | 7 days                                     | 30 days          |
-| Subscribers             | Unlimited                                  | Unlimited        |
-| Workflows               | 20                                         | 20 (100 on Team) |
-
-**What an "event" is:**
-
-- 1 trigger call to 1 subscriber = 1 event
-- `notifyAppointmentBooked([consultantId, consulteeId], payload)` = **2 events** (one per recipient)
-- `notifyGeneralAnnouncement(payload)` (broadcast to 500 users) = **500 events**
-
-**Capacity math:**
-
-- 10K events/month = ~166 events/day
-- At 2 recipients per notification, that's ~83 notification triggers/day
-- Comfortable for the first few hundred active users
-
-### Kit / ConvertKit (Newsletter — Deferred)
-
-| Feature          | Free Newsletter | Creator ($39/mo)           |
-| ---------------- | --------------- | -------------------------- |
-| Subscribers      | **10,000**      | 1,000+ (scales with price) |
-| Email sends      | Unlimited       | Unlimited                  |
-| Automations      | 1               | Unlimited                  |
-| Sequences (drip) | **No**          | Yes                        |
-| Landing pages    | Yes             | Yes                        |
-| Tags/segments    | Yes             | Yes                        |
-
-**The free tier is very generous.** 10K subscribers with unlimited sends covers you well past launch. You only need Creator when you want automated drip sequences (welcome series, onboarding flows, re-engagement).
-
-### Directus CMS (Blog — Deferred)
-
-| Feature           | Self-Hosted          | Cloud ($25/mo) |
-| ----------------- | -------------------- | -------------- |
-| Cost              | Free (your infra)    | $25/mo         |
-| Setup complexity  | Docker, VPS, backups | Managed        |
-| Content API       | Full                 | Full           |
-| Media storage     | Your S3/Supabase     | Included       |
-| Revenue threshold | Free under $5M/yr    | No limit       |
-
-**Recommendation:** Use Directus Cloud at $25/mo when ready for the blog. Skip self-hosting complexity at this stage.
+- Novu's Development and Production environments are fully isolated tenants with distinct workflows, subscribers, and secret keys.
+- `lib/novu/secret-key.ts` selects `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (Netlify production deploys and GitHub Actions crons) and `NOVU_DEVELOPMENT_KEY` everywhere else.
+- `/api/novu/subscriber` authenticates subscribers via deterministic HMAC-SHA256 hashes (`computeSubscriberHash(subscriberId)` in `lib/novu/subscriber.ts`).
 
 ---
 
-## Pre-Launch Checklist (Free, $0/month)
+## Pre-Launch Checklist (Free Tier, \$0/month)
 
-### Step 1: Domain Decision
+### Step 1: Domain & Inbound Forwarding
 
-- [x] Decided 2026-09-14: send from `familiarisenow.com` through `mail.familiarisenow.com` (transactional) and `news.familiarisenow.com` (newsletter); see [Decision (2026-09-14): Sending Domain](#decision-2026-09-14-sending-domain)
-- [ ] Add both subdomains in the Resend dashboard and verify (see [DNS Setup](#dns-setup-for-resend-step-by-step) below)
+- [x] Subdomain architecture active in `lib/email/config.ts`: `mail.familiarisenow.com` (transactional/ops) and `news.familiarisenow.com` (newsletter)
+- [ ] Configure ImprovMX forwarding for `support@`, `ops@`, `dpdp@`, `billing@`, and `dmarc@` on `familiarisenow.com`
+- [ ] Publish root SPF (`v=spf1 -all`) and DMARC (`v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com`) TXT records in Netlify DNS
 
-### Step 2: Resend Setup
+### Step 2: Resend Subdomain Verification & Webhook Registration
 
-- [ ] Create account at [resend.com](https://resend.com)
-- [ ] Add both sending domains (see [DNS Setup](#dns-setup-for-resend-step-by-step) below)
-- [ ] Verify both domains (DKIM + SPF)
-- [ ] Copy API key → save for Step 5
-- [ ] Register the Resend webhook (`create-webhook`, events sent/delivered/delivery_delayed/bounced/complained/failed) against `https://familiarisenow.com/api/webhooks/resend` and set `RESEND_WEBHOOK_SECRET` in the Netlify production context (#1647). The hook delivers to production only, so a preview never sees an event.
+- [ ] Verify both `mail.familiarisenow.com` and `news.familiarisenow.com` in Resend (`ap-northeast-1` Tokyo)
+- [ ] Register Svix webhook endpoint `https://familiarisenow.com/api/webhooks/resend` for `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.suppressed`, `email.failed`, `contact.*`, and `domain.*`
+- [ ] Store signing secret `whsec_...` in Netlify production `RESEND_WEBHOOK_SECRET`
 
-### Step 3: Novu Setup
+### Step 3: Novu Tenant Sync & Subscriber HMAC
 
-- [ ] Create account at [novu.co](https://novu.co)
-- [ ] Sync the workflows (see [Novu Dashboard Configuration](#novu-dashboard-configuration)) — no Resend email provider to add, every family is in-app only
-- [ ] Copy Secret Key + App ID → save for Step 5
+- [ ] Run `npm run novu:sync -- --dry-run` followed by `npm run novu:sync` to sync all 16 workflow families to Development, then promote to Production (`npm run novu:sync -- --env production`)
+- [ ] Verify `npm run novu:check` exits `0` with zero drift
+- [ ] Enable HMAC encryption in Novu Dashboard → In-App Integration settings to pair with `computeSubscriberHash(subscriberId)`
 
-### Step 4: Prisma Schema
+### Step 4: Database Schema & SQL Sidecars
 
-- [x] The `Waitlist` model (status, confirmedAt, unsubscribedAt, consent proof) is already in `prisma/schema.prisma`; no migration is needed for the newsletter
+- [ ] Confirm zero schema drift via `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`
+- [ ] Have an operator deliberately apply `prisma/sql/check-constraints.sql` against the target environment (`FailedEmail_active_outbox_idx`, `FailedEmailBatch_active_outbox_idx`, `NotificationOutbox_active_outbox_idx`, `FailedEmail_sent_unscrubbed_updatedAt_idx`, `SystemJobExecution_running_jobName_key`) — never execute autonomously against the shared database
 
-### Step 5: Environment Variables
+### Step 5: Environment Variables & Pre-Launch Delivery Guard Cutover
 
-- [ ] Set all required env vars in Netlify dashboard (see [Environment Variables](#environment-variables))
+- [ ] Confirm all required environment variables are configured in Netlify Dashboard and GitHub Actions secrets
+- [ ] **Launch Cutover Gate**: Flip `EMAIL_DELIVERY_MODE=live` in both Netlify production env vars and GitHub Actions repository variables (`cron-intra-day.yml`, `cron-daily.yml`) when opening public traffic (while unset or `allowlist`, external recipients are held safely as `DEAD_LETTER` `held:pre-launch` in `FailedEmail`)
 
-### Step 6: Cron Jobs
+### Step 6: Smoke Test Verification
 
-- [ ] Set up GitHub Actions for appointment-reminders (every 15 min)
-- [ ] Set up GitHub Actions for auto-complete-appointments (hourly)
-- [ ] Verify both with manual trigger
-
-### Step 7: Smoke Test
-
-- [ ] Sign up as new user → verify welcome email arrives
-- [ ] Use a real inbox you control or one of Resend's test recipients (`delivered@resend.dev`, `bounced@resend.dev`, `complained@resend.dev`) for any throwaway signup. Resend rejects `example.com` and similar reserved domains with a 422 `validation_error`, and until that row is dead-lettered the retry worker will replay it on every backoff step (this happened on 2026-09-14 with a preview QA address).
-- [ ] Subscribe to newsletter → verify DB record
-- [ ] Unsubscribe via link → verify `unsubscribed = true`
-- [ ] Trigger a test Novu workflow → verify in-app bell notification appears
-- [ ] Check Resend dashboard → verify domain shows "Verified"
+- [ ] Sign up with a real mailbox or Resend test address (`delivered@resend.dev`) — never `example.com` (immediately dead-lettered by `terminalSendReason` on attempt 1)
+- [ ] Confirm welcome email arrives with valid DKIM/SPF/DMARC pass headers
+- [ ] Confirm lifecycle email footer link (`GET /api/notifications/unsubscribe`) renders confirmation UI without mutating DB, and one-click `POST` disables email while preserving in-app notifications
+- [ ] Confirm waitlist footer link (`GET /api/waitlist/unsubscribe`) renders confirmation form without mutating DB, and `POST` unsubscribes immediately
+- [ ] Trigger a test booking event and verify `flushNotificationsAfter` delivers both the Novu bell and Resend email
 
 ---
 
-## DNS Setup for Resend (Step-by-Step)
+## DNS Setup for Resend, ImprovMX & DMARC
 
-Two domains need to be added and verified, because transactional and newsletter mail are split to keep their sender reputations apart.
+Publish all records below in **Netlify DNS** (`familiarisenow.com` zone):
 
-1. Log into [Resend Dashboard → Domains](https://resend.com/domains)
-2. Click **"+ Add Domain"** and enter `mail.familiarisenow.com`; repeat for `news.familiarisenow.com`
-3. Select region **ap-northeast-1 (Tokyo)** for both — the region controls where Resend dispatches mail from, not where account data lives, which stays in the US
-4. Resend displays the DNS records each domain needs once it is added:
-
-| Type | Name                                        | Value                                               | Purpose                       |
-| ---- | ------------------------------------------- | --------------------------------------------------- | ----------------------------- |
-| TXT  | `resend._domainkey.mail.familiarisenow.com` | `p=MIGfMA0GCSq...` (read from the Resend dashboard) | DKIM signature                |
-| TXT  | `send.mail.familiarisenow.com`              | `v=spf1 include:amazonses.com ~all`                 | SPF authorization             |
-| MX   | `send.mail.familiarisenow.com`              | `feedback-smtp.ap-northeast-1.amazonses.com`        | Return-path / bounce handling |
-| TXT  | `_dmarc.mail.familiarisenow.com`            | `v=DMARC1; p=none; ...` (optional)                  | DMARC policy                  |
-
-The exact record names and values are read from the Resend dashboard after each domain is added, not copied from this table — Resend generates the DKIM key per domain. The same four records are added again for `news.familiarisenow.com`.
-
-5. Add the records in **Netlify DNS**, which is where the `familiarisenow.com` zone lives (nameservers point at NS1, not the domain registrar): `netlify api createDnsRecord --data '{...}'` against the zone, or through the Netlify dashboard's DNS panel
-6. Back in Resend, click **"Verify DNS"** for each domain
-7. Wait for verification (minutes to 48 hours for DNS propagation)
-8. Status should change to **"Verified"** with a green checkmark for both `mail.familiarisenow.com` and `news.familiarisenow.com`
-
-**Important:** Netlify DNS records are not proxied, so there is no orange-cloud/gray-cloud distinction to worry about here (that concern is specific to Cloudflare DNS, which this repository does not use for `familiarisenow.com`).
+| Type | Host                     | Value                                                         | Purpose                                                    |
+| ---- | ------------------------ | ------------------------------------------------------------- | ---------------------------------------------------------- |
+| MX   | `@`                      | `mx1.improvmx.com` (priority 10), `mx2.improvmx.com` (20)     | Inbound forwarding (`support@`, `ops@`, `dpdp@`, `dmarc@`) |
+| TXT  | `@`                      | `v=spf1 -all`                                                 | Prevents spoofing on non-sending root apex                 |
+| TXT  | `_dmarc`                 | `v=DMARC1; p=quarantine; rua=mailto:dmarc@familiarisenow.com` | Enforces domain DMARC policy & aggregate reports           |
+| TXT  | `resend._domainkey.mail` | `p=MIGfMA0GCSq...` (from Resend dashboard)                    | DKIM public key for transactional mail                     |
+| TXT  | `send.mail`              | `v=spf1 include:amazonses.com ~all`                           | SPF authorization for transactional envelope sender        |
+| MX   | `send.mail`              | `feedback-smtp.ap-northeast-1.amazonses.com` (priority 10)    | Return-Path bounce handling for transactional mail         |
+| TXT  | `resend._domainkey.news` | `p=MIGfMA0GCSq...` (from Resend dashboard)                    | DKIM public key for newsletter mail                        |
+| TXT  | `send.news`              | `v=spf1 include:amazonses.com ~all`                           | SPF authorization for newsletter envelope sender           |
+| MX   | `send.news`              | `feedback-smtp.ap-northeast-1.amazonses.com` (priority 10)    | Return-Path bounce handling for newsletter mail            |
 
 ---
 
-## Novu Dashboard Configuration
+## Novu Environment & Workflow Configuration
 
-Use the template specs at `docs/notifications/03-novu-template-specs.md` for copy-paste-ready content.
-
-### 1. Add Resend Email Provider — not needed
-
-All sixteen Novu workflow families are in-app only; none has an email step, so there is no Resend integration to add in Novu → Integrations. Novu's own "email" integration option is its demo provider and is not used here. Email for a Novu-triggered event, if ever wanted, is a product decision tracked separately and is not part of this checklist.
-
-### 2. Sync the workflows
-
-The workflows are no longer created by hand. `lib/novu/templates/` is the source of truth, and `scripts/novu/sync-workflows.ts` writes it to the Novu environment with three commands:
-
-- `npm run novu:sync -- --dry-run` prints the plan without writing anything.
-- `npm run novu:sync` applies the plan. It retires the 19 legacy workflows first, because the environment's 20-workflow cap counts live workflows and a create on a full environment fails. This apply is a production operation: local development and production both point at the same Development environment, so running it writes to what customers see. Run it by hand after a merge, never from CI.
-- `npm run novu:check` exits 1 if the live environment has drifted from the manifest. This is the drift guard CI runs on every pull request.
-
-### 3. Preference categories and step conditions
-
-Nothing to configure by hand. Each family carries its opt-out category as a tag and as a step condition (`subscriber.data.<categoryFlag> != false`, plus `routingBell != false`), both written by the sync from `FAMILIES` and `inAppSkipRule` in `lib/novu/templates/`. The family-to-category map is the table in `03-novu-template-specs.md`, and the runbook in `docs/enterprise/50-operations/09-novu-console-conditions.md` describes what the sync writes and how to verify it.
-
-### 4. Gate the production deploy on the sync
-
-The `prod` branch deploys on merge, and the code it carries triggers family ids. Before merging `dev` into `prod` after any change under `lib/novu/templates/`, run `npm run novu:sync` and then `npm run novu:check` and confirm it reports nothing to change; a deploy that lands before the sync drops every notification of a missing family silently. The same order applies in reverse for the first migration: merge, sync, then verify one event per changed family in an inbox.
+1. **In-App Only Topology**: All 16 Novu workflow families contain only an in-app step (`lib/novu/templates/`). Do not configure an email integration inside Novu.
+2. **Declarative Sync & Drift Guard**:
+   - `npm run novu:sync -- --dry-run`: Previews workflow updates.
+   - `npm run novu:sync`: Syncs `lib/novu/templates/` to Development (`--env production` promotes to Production).
+   - `npm run novu:check`: Verifies live Novu workflows match code manifests in CI.
+3. **Dual-Layer Preference Gating**:
+   - **Pre-Stage Database Gate (`stageBell`)**: Filters out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, and muted category columns before inserting into `NotificationOutbox`, while calculating quiet-hours `notBefore`.
+   - **Subscriber Custom Data Gate (`buildSubscriberCustomData` & `updateSubscriberPreferences`)**: Upserts subscriber flags idempotently via `novu.subscribers.create(...)` and propagates DB errors fail-closed so transient outages never re-enable muted users.
 
 ---
 
-## Owner Runbook: Rotating `RESEND_API_KEY`
+## Scheduled Outbox Drains & Sweep Cadences
 
-The key that caused #1298 was the same invalid value in four places; all four need the new key, in this order, because a partial rotation leaves some paths sending and others silently dead-lettering:
+Sub-hourly latency-sensitive relays run on the phase-staggered Netlify scheduled function (`netlify/functions/cron-tick.mts`, `*/5 * * * *`), while batch maintenance jobs run in GitHub Actions (`.github/workflows/cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`):
 
-1. **Netlify production** — Site settings → Environment variables → `RESEND_API_KEY`, scoped to the production context.
-2. **GitHub Actions secret** — `gh secret set RESEND_API_KEY`, so the retry worker cron (`5-59/15 * * * *`) and any CI-side email test use the same key.
-3. **`.env`** — local development.
-4. **`.mcp.json`** — the Resend MCP server configuration used for live verification.
+| Job Target                    | Driver          | Cadence & Offset                  | Batch / Timeout       | Purpose                                                           |
+| ----------------------------- | --------------- | --------------------------------- | --------------------- | ----------------------------------------------------------------- |
+| `drain-notification-outbox`   | `cron-tick.mts` | Every **10m** at offset **`:05`** | `limit=20`, `20s` cap | Replays due `NotificationOutbox` rows (`notBefore <= now`)        |
+| `retry-failed-emails`         | `cron-tick.mts` | Every **15m** at offset **`:00`** | `limit=20`, `20s` cap | Replays due `FailedEmail` & `FailedEmailBatch` with RFC 8058 hdrs |
+| `appointment-reminders`       | `cron-tick.mts` | Every **15m** at offset **`:10`** | `limit=25`, `20s` cap | Dispatches pre-session email & in-app appointment reminders       |
+| `auto-complete-appointments`  | `cron-tick.mts` | Every **30m** at offset **`:15`** | `limit=25`, `20s` cap | Auto-completes past sessions and triggers post-session flows      |
+| `prune-system-job-executions` | GitHub Actions  | Daily (`cron-daily.yml`)          | Unbounded             | Scrubs `SENT` email HTML/text after 7d; prunes terminal rows      |
 
-Then, before the first send:
-
-5. Add `mail.familiarisenow.com` and `news.familiarisenow.com` as domains in the Resend dashboard (see [DNS Setup](#dns-setup-for-resend-step-by-step)) and add the DNS records in Netlify DNS.
-6. Set `EMAIL_TRANSACTIONAL_DOMAIN`, `EMAIL_NEWSLETTER_DOMAIN`, `NEXT_PUBLIC_SUPPORT_EMAIL`, `CONTACT_INBOX_ADDRESS`, `BILLING_EMAIL` and `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` per [.env.sample](../../.env.sample) if a non-default value is wanted.
-7. Redeploy so Netlify picks up the new environment variables.
-8. Smoke test: sign up a test user and confirm the welcome email arrives; check the Resend dashboard shows both domains "Verified"; check the `FailedEmail` table has no new `PENDING` rows after the smoke test.
-9. Resolve the open Sentry issues fingerprinted `["email-send-terminal", ...]` that were paging during the outage, once sends succeed again.
-
----
-
-## Cron Job Scheduling
-
-### GitHub Actions Workflow
-
-Create `.github/workflows/cron-notifications.yml`:
-
-```yaml
-name: Notification Cron Jobs
-
-on:
-  schedule:
-    # Appointment reminders - every 15 minutes
-    - cron: "*/15 * * * *"
-  workflow_dispatch: # Allow manual trigger
-
-jobs:
-  appointment-reminders:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send appointment reminders
-        run: |
-          curl -s -f -X GET \
-            "${{ secrets.APP_URL }}/api/cleanup/appointment-reminders" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            -H "Content-Type: application/json"
-```
-
-Create `.github/workflows/cron-auto-complete.yml`:
-
-```yaml
-name: Auto-Complete Appointments
-
-on:
-  schedule:
-    # Hourly
-    - cron: "0 * * * *"
-  workflow_dispatch:
-
-jobs:
-  auto-complete:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Auto-complete expired appointments
-        run: |
-          curl -s -f -X GET \
-            "${{ secrets.APP_URL }}/api/cleanup/auto-complete-appointments" \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            -H "Content-Type: application/json"
-```
-
-**GitHub Secrets needed:**
-
-- `APP_URL` = `https://familiarisenow.com`
-- `CRON_SECRET` = same value as in Netlify env vars
+Every target routes through `/api/cleanup/[job]`, authenticates via `CRON_SECRET`, and acquires an atomic Postgres lease on `SystemJobExecution` (`withCronLock`).
 
 ---
 
 ## Environment Variables
 
-Set these in **Netlify Dashboard → Site → Environment Variables**:
+Set these in **Netlify Dashboard → Site → Environment Variables** (and matching GitHub Actions secrets/variables where noted):
 
-| Variable                             | Value                                                                                                   | Required                                       |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `NEXT_PUBLIC_APP_URL`                | `https://familiarisenow.com`                                                                            | Yes                                            |
-| `RESEND_API_KEY`                     | From Resend dashboard                                                                                   | Yes                                            |
-| `RESEND_WEBHOOK_SECRET`              | Signing secret shown when the webhook is created (#1647); Netlify production context only               | Yes (for delivery events)                      |
-| `EMAIL_TRANSACTIONAL_DOMAIN`         | `mail.familiarisenow.com`                                                                               | No (this is the default)                       |
-| `EMAIL_NEWSLETTER_DOMAIN`            | `news.familiarisenow.com`                                                                               | No (this is the default)                       |
-| `NEXT_PUBLIC_SUPPORT_EMAIL`          | `support@familiarisenow.com`                                                                            | No (this is the default)                       |
-| `CONTACT_INBOX_ADDRESS`              | Defaults to `NEXT_PUBLIC_SUPPORT_EMAIL`                                                                 | No                                             |
-| `BILLING_EMAIL`                      | Defaults to `NEXT_PUBLIC_SUPPORT_EMAIL`                                                                 | No                                             |
-| `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` | Omitted from the footer when unset                                                                      | No                                             |
-| `NOVU_DEVELOPMENT_KEY`               | From Novu dashboard → Development → API Keys                                                            | Yes                                            |
-| `NOVU_PRODUCTION_KEY`                | From Novu dashboard → Production → API Keys; Netlify production context and GitHub Actions secrets only | Yes                                            |
-| `NEXT_PUBLIC_NOVU_APP_ID`            | From Novu dashboard → Settings → API Keys                                                               | Yes                                            |
-| `CRON_SECRET`                        | Generate: `openssl rand -hex 32`                                                                        | Yes                                            |
-| `WAITLIST_HMAC_SECRET`               | Generate: `openssl rand -hex 32`                                                                        | Yes (there is no fallback to `RESEND_API_KEY`) |
-| `STREAM_WEBHOOK_SECRET`              | From Stream.io dashboard                                                                                | Yes (for recording notifications)              |
-
-**Generate secrets locally:**
-
-```bash
-# Run these and copy the output
-openssl rand -hex 32  # → CRON_SECRET
-openssl rand -hex 32  # → WAITLIST_HMAC_SECRET
-```
+| Variable                     | Value / Source                                               | Required                                                 |
+| ---------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_URL`        | `https://familiarisenow.com`                                 | Yes                                                      |
+| `EMAIL_DELIVERY_MODE`        | `live` at launch (defaults to `allowlist` pre-launch)        | Yes (Netlify + GitHub Actions variables)                 |
+| `EMAIL_ALLOWLIST`            | Comma-separated emails/`@domains` allowed pre-launch         | Optional (used when `EMAIL_DELIVERY_MODE != live`)       |
+| `RESEND_API_KEY`             | Resend API key (`re_...`)                                    | Yes (Netlify + GitHub Actions secrets)                   |
+| `RESEND_WEBHOOK_SECRET`      | Svix signing secret (`whsec_...`)                            | Yes (Netlify production context)                         |
+| `EMAIL_TRANSACTIONAL_DOMAIN` | `mail.familiarisenow.com`                                    | Optional (default)                                       |
+| `EMAIL_NEWSLETTER_DOMAIN`    | `news.familiarisenow.com`                                    | Optional (default)                                       |
+| `NEXT_PUBLIC_SUPPORT_EMAIL`  | `support@familiarisenow.com`                                 | Optional (default)                                       |
+| `CONTACT_INBOX_ADDRESS`      | Defaults to `NEXT_PUBLIC_SUPPORT_EMAIL`                      | Optional                                                 |
+| `BILLING_EMAIL`              | `billing@familiarisenow.com` (fallback: `supportEmail()`)    | Optional                                                 |
+| `OBSERVABILITY_ALERT_EMAIL`  | Ops recipient for Sentry canary/quota alerts                 | Optional (fallback: `supportEmail()`)                    |
+| `DATABREACH_ALERT_EMAIL`     | Compliance recipient for DPDP 72h alerts                     | Yes                                                      |
+| `MSME_ALERT_EMAIL`           | Finance recipient for MSME Section 43B(h) alerts             | Yes                                                      |
+| `SLACK_OPS_WEBHOOK_URL`      | Slack incoming webhook for dead-letter & ops fallback alerts | Optional (recommended)                                   |
+| `NOVU_DEVELOPMENT_KEY`       | Novu Development secret key                                  | Yes                                                      |
+| `NOVU_PRODUCTION_KEY`        | Novu Production secret key                                   | Yes (Netlify production + GitHub Actions secrets)        |
+| `NEXT_PUBLIC_NOVU_APP_ID`    | Novu Application Identifier                                  | Yes                                                      |
+| `CRON_SECRET`                | `openssl rand -hex 32`                                       | Yes (Netlify + GitHub Actions secrets)                   |
+| `WAITLIST_HMAC_SECRET`       | `openssl rand -hex 32`                                       | Yes (signs stateless email & waitlist unsubscribe links) |
 
 ---
 
-## When You'll Need to Pay
+## Owner Runbook: Rotating `RESEND_API_KEY`
 
-### Resend: Free → Pro ($20/mo)
+Rotate `RESEND_API_KEY` across all four locations in lockstep so no environment dead-letters messages with 401 errors:
 
-**Upgrade trigger:** Any of these:
+1. **Netlify Production**: Site configuration → Environment variables → `RESEND_API_KEY`.
+2. **GitHub Actions Secret**: `gh secret set RESEND_API_KEY` (used by scheduled CLI/backstop jobs).
+3. **Local `.env`**: Update local developer workspace.
+4. **`.mcp.json`**: Update local MCP Resend configuration.
+5. **Redeploy & Verify**: Trigger a deploy on Netlify, send a test transactional email, verify zero new `DEAD_LETTER` rows in `FailedEmail`, and resolve any `["email-send-terminal", "invalid_api_key"]` Sentry alerts.
 
-- Consistently sending >80 emails/day
-- Need open/click analytics for deliverability monitoring
-- Planning a newsletter blast to >100 subscribers (daily limit)
-- Getting "rate limit" errors in logs
+---
 
-**Expected timeline:** Month 2-3 post-launch
+## When You'll Need to Upgrade
 
-### Novu: Free → Pro (~$25-30/mo)
-
-**Upgrade trigger:** Any of these:
-
-- Exceeding 10K events/month
-- Need activity feed retention >7 days
-- Need advanced digest/batching rules
-
-Note that Pro keeps the 20-workflow cap; only Team ($250/month) raises it to 100. The 16 workflow families exist so that the cap is not the reason to upgrade.
-
-**Expected timeline:** Month 3-6 post-launch (when you have ~100+ DAU)
-
-**Self-hosting alternative:** Novu is open-source. You can self-host for unlimited events if you want to avoid the cost, but it adds DevOps overhead.
-
-### Kit (ConvertKit): Free → Creator ($39/mo)
-
-**Upgrade trigger:**
-
-- Need automated drip sequences (welcome series, onboarding flows)
-- Need more than 1 automation rule
-- The free tier supports 10K subscribers, so subscriber count won't be the trigger
-
-**Expected timeline:** 6+ months post-launch
-
-### Directus CMS: $0 → Cloud ($25/mo)
-
-**Upgrade trigger:**
-
-- Ready to launch the blog for SEO/content marketing
-- Need a content management system for the team
-
-**Expected timeline:** When content strategy kicks in (post-launch, when you have traction)
+- **Resend Free → Pro (\$20/mo)**: When daily volume regularly exceeds ~80 emails/day, newsletter broadcasts exceed 100 subscribers in a single blast, or native Resend open/click analytics are required.
+- **Novu Free → Pro (~\$25–30/mo)**: When monthly triggers exceed ~10,000 events/month or in-app feed history retention beyond 7 days is required.
+- **Kit / Directus CMS**: Remain deferred post-launch (`lib/newsletter/convertkit.ts` and `app/api/webhooks/directus/route.ts`) until automated drip sequences or managed CMS publishing are prioritized.
 
 ---
 
 ## Cost Projection Timeline
 
-| Phase                               | Resend | Novu   | Kit  | Directus | Total           |
-| ----------------------------------- | ------ | ------ | ---- | -------- | --------------- |
-| **Launch (Month 1)**                | $0     | $0     | $0   | $0       | **$0/mo**       |
-| **Early Growth (Month 2-3)**        | $20    | $0     | $0   | $0       | **$20/mo**      |
-| **Active Users (Month 3-6)**        | $20    | $25    | $0   | $0       | **$45/mo**      |
-| **Content + Newsletter (Month 6+)** | $20    | $25    | $0\* | $25      | **$70/mo**      |
-| **Full Scale (Month 12+)**          | $20-90 | $25-50 | $39  | $25      | **$109-204/mo** |
+| Phase                               | Resend  | Novu    | Kit  | Directus | Total            |
+| ----------------------------------- | ------- | ------- | ---- | -------- | ---------------- |
+| **Launch (Month 1)**                | \$0     | \$0     | \$0  | \$0      | **\$0/mo**       |
+| **Early Growth (Month 2–3)**        | \$20    | \$0     | \$0  | \$0      | **\$20/mo**      |
+| **Active Users (Month 3–6)**        | \$20    | \$25    | \$0  | \$0      | **\$45/mo**      |
+| **Content + Newsletter (Month 6+)** | \$20    | \$25    | \$0  | \$25     | **\$70/mo**      |
+| **Full Scale (Month 12+)**          | \$20–90 | \$25–50 | \$39 | \$25     | **\$109–204/mo** |
 
-_Kit free tier covers 10K subscribers. Creator ($39/mo) only needed for drip sequences._
+_Kit free tier covers 10K subscribers. Creator (\$39/mo) is only needed for automated drip sequences._
 
-**Note:** These costs are separate from your existing SaaS stack (Supabase, Stream.io, Upstash, etc.). See `docs/finances/08-saas-expenditures.md` for the full breakdown.
-
----
-
-## Deferred Services (Post-Launch)
-
-### ConvertKit (Kit) — Newsletter
-
-**Current state:** Stubs in `lib/newsletter/convertkit.ts`. Newsletter subscribe/unsubscribe routes work via Resend batch API as interim. Since #1647 the broadcast route stages a `FailedEmailBatch` row before every batch send, so a batch whose response was lost or whose send failed is replayed by the relay under the same idempotency key, and addresses on `EmailSuppression` are dropped from the recipients before the batches are built.
-
-**When to integrate:**
-
-- 500+ newsletter subscribers
-- Ready for drip sequences (welcome, onboarding, re-engagement)
-- Blog is live and you want automated "new post" broadcasts
-
-**What to do:**
-
-1. Sign up at [kit.com](https://kit.com) (free tier)
-2. Get API key + form ID
-3. Set `CONVERTKIT_API_KEY` and `CONVERTKIT_FORM_ID` env vars
-4. Replace stub functions in `lib/newsletter/convertkit.ts` with real API calls
-5. Set up subscriber tags (consultant, consultee, tech, career, business)
-6. Wire Directus webhook → `createBroadcast()` for blog post notifications
-
-### Directus CMS — Blog & Community
-
-**Current state:** Webhook stub at `app/api/webhooks/directus/route.ts`. Database schema isolation designed (`public` vs `cms` schema).
-
-**When to integrate:**
-
-- Ready for SEO-driven content marketing
-- Have someone to write content (you, team member, or AI-assisted)
-
-**What to do:**
-
-1. Sign up for [Directus Cloud](https://directus.io/pricing/cloud) ($25/mo) or self-host
-2. Point at your Supabase PostgreSQL database
-3. Configure `DB_SCHEMA=cms` for isolation
-4. Create content tables: `cms_posts`, `cms_categories`
-5. Set up webhook to fire on `items.create` for `cms_posts`
-6. Update `app/api/webhooks/directus/route.ts` to handle real events
-7. Build blog frontend pages in Next.js
-
-**Architecture docs:** the Directus CMS design was deleted with `docs/roadmap/` in #1535; the live question is tracked in #767.
+**Note:** These costs are separate from the shared platform stack (Supabase, Stream.io, Upstash, Sentry).
 
 ---
 
-## Sources
+## Deprecated & Superseded Approaches
 
-- [Resend Pricing](https://resend.com/pricing)
-- [Resend Account Quotas and Limits](https://resend.com/docs/knowledge-base/account-quotas-and-limits)
-- [Resend Domain Setup Guide](https://resend.com/docs/dashboard/domains/introduction)
-- [Resend New Free Tier Announcement](https://resend.com/blog/new-free-tier)
-- [Novu Pricing](https://novu.co/pricing/)
-- [Novu Pro Tier Announcement](https://novu.co/blog/from-builders-for-builders-introducing-new-novu-pro-tier/)
-- [Novu Free Tier Events Discussion](https://www.answeroverflow.com/m/1121163999606734989)
-- [Directus Pricing (Self-hosting and Cloud)](https://directus.io/pricing)
-- [Kit (ConvertKit) Pricing](https://kit.com/pricing)
-- [Kit Pricing Analysis 2026](https://www.emailtooltester.com/en/reviews/convertkit/pricing/)
-- [Resend SPF/DKIM/DMARC Setup Guide](https://dmarcdkim.com/setup/how-to-setup-resend-spf-dkim-and-dmarc-records)
-
-## Environments: Development and Production are separate tenants (2026-09-14)
-
-Novu's Development and Production environments are two fully separate tenants — separate workflows, subscribers, notification history and secret keys, and a key only works on its own tenant. Until 2026-09-14 the production site pointed at the Development identifier and every inbox showed Novu's "Development mode" banner; the 16 workflow families were promoted to Production that day with the per-workflow sync (`workflows.sync({ targetEnvironmentId })` from the Development side, because the environment publish endpoint refuses API keys), and the production context was switched to the Production identifier and key. The code now resolves the secret from `NEXT_PUBLIC_SENTRY_ENVIRONMENT`: `NOVU_PRODUCTION_KEY` when it is `production` (the Netlify production context and the GitHub Actions cron twins), otherwise `NOVU_DEVELOPMENT_KEY` (`lib/novu/secret-key.ts`), so a preview or a local shell can never reach a real user's inbox. The sync and purge scripts target Development unless run with `--env production`. Both environments hold 16 of the plan's 20 workflows, and all 69 events across the families have a trigger call site in code.
+- **Sending From Unowned `@familiarise.com` & Unrouted Root Mailboxes**: Replaced by `mail.familiarisenow.com` and `news.familiarisenow.com` verified in Resend (`ap-northeast-1`), paired with ImprovMX inbound routing on `@familiarisenow.com` and `_dmarc` `p=quarantine`.
+- **Standalone Sub-Hourly GitHub Actions Workflows (`cron-notifications.yml`, `cron-auto-complete.yml`)**: Superseded by phase-staggered dispatch in `netlify/functions/cron-tick.mts` (`drain-notification-outbox` every 10m at `:05`, `retry-failed-emails` every 15m at `:00`, `appointment-reminders` every 15m at `:10`, `auto-complete-appointments` every 30m at `:15`), avoiding GitHub Actions sub-hourly scheduling lag and duplicate cron workflows.
+- **Replaying 422 Invalid-Domain Sends Across Backoff**: Superseded by `terminalSendReason()` dead-lettering 422 validation errors immediately on attempt 1.

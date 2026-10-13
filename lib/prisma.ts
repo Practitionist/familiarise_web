@@ -1,8 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { z } from "zod";
 
 import { moneyResultExtensions } from "./prisma-extensions";
+import { ssoSecretDecryptExtension } from "./prisma-sso-secret-extension";
 
 // A saturated Supavisor (txn pooler :6543) made pg hang 5–9.6s on connect
 // (EAUTHTIMEOUT), surfacing to users as "the edge function timed out". The two
@@ -45,6 +47,19 @@ const PG_CONNECT_TIMEOUT_MS = pgTimeoutMs(
 // a client-side query_timeout.
 const PG_QUERY_TIMEOUT_MS = pgTimeoutMs("PG_QUERY_TIMEOUT_MS", 6000);
 
+// The 1-connection pool is a deploy invariant on Netlify; a missing value would
+// silently fall back to pg's default of 10 per instance. The build phase is exempt.
+const PG_POOL_MAX = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .safeParse(process.env.PG_POOL_MAX);
+if (process.env.NETLIFY && !IS_NEXT_BUILD && !PG_POOL_MAX.success) {
+  throw new Error(
+    `PG_POOL_MAX must be a positive integer on Netlify (got "${process.env.PG_POOL_MAX ?? ""}"). Set PG_POOL_MAX=1 in the site's environment variables.`,
+  );
+}
+
 const adapter = new PrismaPg({
   // Use pooled connection (DATABASE_URL) for runtime queries to avoid connection exhaustion
   // DIRECT_URL is only for migrations (handled by prisma.config.ts)
@@ -62,9 +77,7 @@ const adapter = new PrismaPg({
   // concurrent invocations that can dwarf Supavisor's client cap. Set
   // PG_POOL_MAX=1 (or 2) in serverless deploy env; unset = pg default for
   // long-lived local dev/jobs.
-  ...(Number(process.env.PG_POOL_MAX) > 0
-    ? { max: Number(process.env.PG_POOL_MAX) }
-    : {}),
+  ...(PG_POOL_MAX.success ? { max: PG_POOL_MAX.data } : {}),
 });
 
 // Slow-query threshold (ms). A query exceeding this is logged via the
@@ -84,6 +97,21 @@ export const ALLOCATION_TX_TIMEOUT_MS = pgTimeoutMs(
   "ALLOCATION_TX_TIMEOUT_MS",
   30000,
 );
+
+/**
+ * Extracts only the SQL verb (SELECT/INSERT/UPDATE/DELETE) and target table
+ * name from a raw Prisma SQL string — never any parameter values or WHERE
+ * literals — so slow-query alerts identify the bottleneck table safely.
+ */
+function summarizeSlowSql(sql: string): { operation: string; table: string } {
+  const trimmed = sql.trim();
+  const verbMatch = /^([A-Za-z]+)/.exec(trimmed);
+  const operation = verbMatch ? verbMatch[1].toUpperCase() : "QUERY";
+  const tableMatch =
+    /\b(?:FROM|INTO|UPDATE)\s+(?:"[^"]+"\.)?"?([A-Za-z0-9_]+)"?/i.exec(trimmed);
+  const table = tableMatch ? tableMatch[1] : "unknown";
+  return { operation, table };
+}
 
 function makeClient() {
   // Emit the `query` event everywhere so the slow-query hook fires in prod too;
@@ -119,14 +147,65 @@ function makeClient() {
   // that production silently deleted anyway. See #1122.
   base.$on("query", (e) => {
     if (e.duration > SLOW_QUERY_MS) {
+      const { operation, table } = summarizeSlowSql(e.query ?? "");
       Sentry.logger.warn(
         Sentry.logger
-          .fmt`[Prisma:SLOW_QUERY] ${e.duration}ms (threshold ${SLOW_QUERY_MS}ms)`,
+          .fmt`[Prisma:SLOW_QUERY] ${operation} ${table} ${e.duration}ms (threshold ${SLOW_QUERY_MS}ms)`,
       );
     }
   });
 
-  return base.$extends({ result: moneyResultExtensions });
+  // Two result extensions, both applying on read:
+  //   - moneyResultExtensions: BigInt money columns -> number (#780).
+  //   - ssoSecretDecryptExtension: `SsoProvider.oidcConfig` envelope -> the
+  //     JSON object BetterAuth's SSO plugin expects. See that module for why
+  //     the Prisma client is the only seam that covers every reader.
+  //
+  // Merged per-model, not with a top-level spread: `$extends` infers each
+  // model's result shape from its own object literal, and a spread widens
+  // `ssoProvider`'s inferred type to a union that Prisma can no longer resolve
+  // per field. `ssoProvider` appears in neither the money map nor anywhere
+  // else, so the key sets are disjoint and this is not a lossy merge.
+  return base.$extends({
+    result: {
+      ...moneyResultExtensions,
+      ssoProvider: ssoSecretDecryptExtension.ssoProvider,
+    },
+    query: {
+      $allModels: {
+        $allOperations({ operation, args, query }) {
+          return query(withQueryLoadDefault(operation, args));
+        },
+      },
+    },
+  });
+}
+
+// The relationJoins preview makes "join" the default for every read; reads opt in
+// per query instead, so every other query keeps one statement per relation level.
+const RELATION_LOAD_OPERATIONS: ReadonlySet<string> = new Set([
+  "findUnique",
+  "findUniqueOrThrow",
+  "findFirst",
+  "findFirstOrThrow",
+  "findMany",
+  "create",
+  "update",
+  "upsert",
+  "delete",
+]);
+
+function withQueryLoadDefault<A>(operation: string, args: A): A {
+  if (!RELATION_LOAD_OPERATIONS.has(operation)) return args;
+  if (
+    args &&
+    typeof args === "object" &&
+    "relationLoadStrategy" in args &&
+    args.relationLoadStrategy !== undefined
+  ) {
+    return args;
+  }
+  return { ...args, relationLoadStrategy: "query" };
 }
 
 // Helper signatures must accept the extended client — a bare PrismaClient

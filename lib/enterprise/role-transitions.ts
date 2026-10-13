@@ -12,7 +12,7 @@
  * EXPERT with history here must be removed and re-invited, OWNER-only
  * roles, the last OWNER) live in `lib/enterprise/membership-guards.ts`,
  * which calls this for the blocked pairs. That guard is shared by the
- * members PATCH route, SCIM provisioning and bulk import (#1846).
+ * members PATCH route and bulk import (#1846).
  */
 
 import type { MemberRole } from "@prisma/client";

@@ -40,4 +40,4 @@ The back-relation for `uploadedByUserId`, named so the erasure pipeline (DPDP §
 
 ## Applying the change
 
-The change is additive (two nullable columns, one widened to nullable, one enum, one index). On the single Supabase project it is applied with `prisma db push` before the code deploys — the build prerenders against the live database — followed by `npm run db:sidecars`, because a push can revert the hand-applied sidecars and CI's drift guard fails every pull request until they are re-asserted.
+The change is additive (two nullable columns, one widened to nullable, one enum, one index). The owner applies schema changes to the single Supabase project before the code deploys, because the build prerenders against the live database; agents never run `prisma db push` or `npm run db:*`. Check live drift read-only with `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`: a plain push would drop the `prisma/sql` sidecars, and CI's drift guard fails every pull request until they are re-asserted.

@@ -29,9 +29,9 @@ function ExpertCard({ expert }: { expert: IConsultantCardData }) {
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <h4 className="font-semibold text-foreground truncate">
+              <h3 className="font-semibold text-foreground truncate">
                 {expert.user.name}
-              </h4>
+              </h3>
               <p className="text-sm text-muted-foreground truncate">
                 {expert.headline || expert.domain?.name}
               </p>
@@ -45,6 +45,9 @@ function ExpertCard({ expert }: { expert: IConsultantCardData }) {
                   <Star className="w-4 h-4 fill-foreground text-foreground" />
                   <span className="font-medium text-foreground">
                     {expert.rating.toFixed(1)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    ({expert.reviewCount ?? expert.reviews?.length ?? 0})
                   </span>
                 </div>
                 <span className="text-muted-foreground/70">•</span>

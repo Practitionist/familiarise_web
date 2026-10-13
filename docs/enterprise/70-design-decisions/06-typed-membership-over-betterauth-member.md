@@ -8,6 +8,13 @@ last-reviewed: 2026-06-05
 
 # ADR 06 — Every gate reads the typed `Membership`, never BetterAuth's `member`
 
+> **Update (auth productionization, D11):** BetterAuth's organization plugin
+> is no longer mounted, so the `member` table and `Membership.betterAuthMemberId`
+> are gone. SSO JIT writes `Membership` directly from the sso() `provisionUser`
+> hook (`lib/sso/jit-membership.ts`). The decision below — gate only on the
+> typed `Membership` — stands; the bridge it describes no longer exists.
+> SCIM was removed as well, and with it `Membership.externalScimId`.
+
 ## Context
 
 The platform uses BetterAuth, whose organization plugin maintains its own

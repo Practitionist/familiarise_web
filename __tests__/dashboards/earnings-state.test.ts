@@ -48,6 +48,7 @@ const payout = (
   amount: 100_000,
   tdsDeducted: 100,
   netAmount: 99_900,
+  recoveredPaise: 0,
   tdsRateAppliedBps: 10,
   processedAt: "2026-09-14T20:05:00Z",
   gatewayUtr: "UTR123",
@@ -186,6 +187,7 @@ describe("nextPayoutCopy and the tile sums", () => {
       share: 100_000,
       tds: 100,
       tdsRateBps: 10,
+      recovered: 0,
       net: 99_900,
     });
   });

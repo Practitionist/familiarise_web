@@ -1,6 +1,7 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import {
+  buildConsultantOccupancyWhere,
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
@@ -24,7 +25,22 @@ export class CollaboratorUnavailableError extends Error {
 }
 
 /**
- * A co-host's existing commitments: appointments they own, or have ACCEPTED a
+ * #2010 — host schedule-conflict error when a webinar or class time-commit
+ * overlaps an existing confirmed session, live tentative hold, or accepted
+ * co-host commitment on the consultant's calendar.
+ */
+export class ConsultantScheduleConflictError extends Error {
+  constructor(
+    message = "That time conflicts with another confirmed session on your calendar.",
+  ) {
+    super(message);
+    this.name = "ConsultantScheduleConflictError";
+  }
+}
+
+/**
+ * A co-host's existing commitments: appointments they own (across all 5
+ * offering types or direct occurrence ownership), or have ACCEPTED a
  * collaboration on.
  */
 function commitmentClauses(
@@ -35,6 +51,7 @@ function commitmentClauses(
     { subscription: { subscriptionPlan: { consultantProfileId } } },
     { webinar: { webinarPlan: { consultantProfileId } } },
     { class: { classPlan: { consultantProfileId } } },
+    { trial: { is: { consultantProfileId } } },
     {
       webinar: {
         webinarPlan: {
@@ -46,6 +63,15 @@ function commitmentClauses(
       class: {
         classPlan: {
           collaborators: { some: { consultantProfileId, status: "ACCEPTED" } },
+        },
+      },
+    },
+    {
+      occurrences: {
+        some: {
+          consultantProfileId,
+          deletedAt: null,
+          completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
         },
       },
     },
@@ -110,6 +136,7 @@ export async function assertCollaboratorsAvailableForWindows(
   const collaborators = await db.collaborator.findMany({
     where: {
       status: "ACCEPTED",
+      consultantProfile: { deletedAt: null },
       ...(planType === "WEBINAR"
         ? { webinarPlanId: planId }
         : { classPlanId: planId }),
@@ -127,17 +154,6 @@ export async function assertCollaboratorsAvailableForWindows(
   // per-co-host resolution classify holds against the same clock.
   const now = new Date();
 
-  // A live, non-soft-deleted slot overlapping the window. deletedAt:null on both
-  // the slot and its appointment keeps cancelled/soft-deleted bookings from
-  // surfacing as phantom clashes.
-  //
-  // #1319 — this filtered on `isTentative: false`, which hid a co-host's live
-  // PENDING direct-checkout hold from the guard while checkout, the allocator
-  // and the availability grid all counted that same hold as occupying. An
-  // allocation could therefore commit a co-host onto a minute checkout would
-  // refuse. Occupancy is now the subsystem-wide predicate: an appointment in an
-  // occupying state, minus the dead holds (approved-unpaid or direct-checkout
-  // PENDING whose every payment is EXPIRED/FAILED or clock-expired).
   const overlapWhere = (
     appointment: Prisma.AppointmentWhereInput,
   ): Prisma.AppointmentOccurrenceWhereInput => ({
@@ -147,6 +163,7 @@ export async function assertCollaboratorsAvailableForWindows(
       endsAt: { gt: w.startsAt },
     })),
     deletedAt: null,
+    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
     ...(excluded.length > 0 ? { appointmentId: { notIn: excluded } } : {}),
     appointment: {
       deletedAt: null,
@@ -202,6 +219,79 @@ export async function assertCollaboratorsAvailable(
   return assertCollaboratorsAvailableForWindows(db, {
     planType: params.planType,
     planId: params.planId,
+    windows: [{ startsAt: params.startsAt, endsAt: params.endsAt }],
+    excludeAppointmentIds: params.excludeAppointmentId
+      ? [params.excludeAppointmentId]
+      : [],
+  });
+}
+
+/**
+ * #2010 — Throws ConsultantScheduleConflictError if the host consultant has ANY
+ * live overlapping commitment across all 5 offering types (Consultation,
+ * Subscription, Webinar, Class, Trial), live tentative checkout holds, or
+ * accepted co-host commitments on another plan.
+ *
+ * Complements the PostgreSQL `occurrence_no_confirmed_overlap` GiST exclusion
+ * constraint, which only sees non-tentative occurrences whose
+ * `consultantProfileId` equals this consultant (missing live tentative holds
+ * and co-hosted events where another consultant is the plan owner).
+ */
+export async function assertConsultantAvailableForWindows(
+  db: Tx | typeof prisma,
+  params: {
+    consultantProfileId: string;
+    consultantUserId?: string;
+    windows: CollaboratorWindow[];
+    excludeAppointmentIds?: string[];
+  },
+): Promise<void> {
+  if (!db.appointmentOccurrence?.findFirst) return;
+
+  const windows = mergeWindows(
+    params.windows.filter((w) => w.endsAt.getTime() > w.startsAt.getTime()),
+  );
+  if (windows.length === 0) return;
+
+  const excluded = (params.excludeAppointmentIds ?? []).filter(Boolean);
+  const now = new Date();
+
+  const conflict = await db.appointmentOccurrence.findFirst({
+    where: {
+      OR: windows.map((w) => ({
+        startsAt: { lt: w.endsAt },
+        endsAt: { gt: w.startsAt },
+      })),
+      deletedAt: null,
+      completionStatus: { notIn: ["CANCELLED", "RESCHEDULED", "VOIDED"] },
+      ...(excluded.length > 0 ? { appointmentId: { notIn: excluded } } : {}),
+      appointment: buildConsultantOccupancyWhere(
+        params.consultantProfileId,
+        params.consultantUserId ?? "",
+        now,
+      ),
+    },
+    select: { id: true },
+  });
+
+  if (conflict) {
+    throw new ConsultantScheduleConflictError();
+  }
+}
+
+export async function assertConsultantAvailable(
+  db: Tx | typeof prisma,
+  params: {
+    consultantProfileId: string;
+    consultantUserId?: string;
+    startsAt: Date;
+    endsAt: Date;
+    excludeAppointmentId?: string | null;
+  },
+): Promise<void> {
+  return assertConsultantAvailableForWindows(db, {
+    consultantProfileId: params.consultantProfileId,
+    consultantUserId: params.consultantUserId,
     windows: [{ startsAt: params.startsAt, endsAt: params.endsAt }],
     excludeAppointmentIds: params.excludeAppointmentId
       ? [params.excludeAppointmentId]

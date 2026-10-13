@@ -42,7 +42,9 @@ describe("issue-type surface partition", () => {
   it("offers no session-scoped type on the platform form", () => {
     // The failure this prevents: the form offers something the API refuses,
     // so the user picks it and hits a 422 they cannot act on.
-    const leaked = platformTypes.filter((t) => SESSION_SCOPED_ISSUE_TYPES.has(t));
+    const leaked = platformTypes.filter((t) =>
+      SESSION_SCOPED_ISSUE_TYPES.has(t),
+    );
     expect(leaked).toEqual([]);
   });
 
@@ -77,8 +79,8 @@ describe("issue-type surface partition", () => {
       /site|app/i,
     );
     // In-session audio/video trouble is the session-scoped type instead.
-    expect(SESSION_SCOPED_ISSUE_TYPES.has(SupportIssueType.COMMUNICATION_ISSUE)).toBe(
-      true,
-    );
+    expect(
+      SESSION_SCOPED_ISSUE_TYPES.has(SupportIssueType.COMMUNICATION_ISSUE),
+    ).toBe(true);
   });
 });

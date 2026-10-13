@@ -30,6 +30,23 @@ import {
   ORGANISATIONS_PER_PAGE,
 } from "@/lib/data/explore-organisations";
 import { orgFiltersFromSearchParams } from "@/lib/explore/organisation-filters";
+import { publicCacheHeaders } from "@/lib/api/cdn-cache";
+
+const LIST_CACHE_HEADERS = publicCacheHeaders({
+  sMaxAge: 60,
+  staleWhileRevalidate: 300,
+  varyQuery: [
+    "search",
+    "type",
+    "industry",
+    "size",
+    "capability",
+    "hasExperts",
+    "sort",
+    "page",
+    "limit",
+  ],
+});
 
 export async function GET(req: NextRequest) {
   try {
@@ -57,11 +74,7 @@ export async function GET(req: NextRequest) {
           totalPages: result.totalPages,
         },
       },
-      {
-        headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-        },
-      },
+      { headers: LIST_CACHE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(

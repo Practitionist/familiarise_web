@@ -164,7 +164,6 @@ One trial engagement per consultant per consultee. The table below lists its col
 | `organizationId?` (`SetNull`)                                     | Optional org attribution when the trial booker is a LEARNER of an active org. The org pays nothing — a paid trial charges the consultee — so this is pure attribution, not sponsorship; full utilization-pool integration is deferred to Programs v2. |
 | `requestedAt`, `completedAt?`                                     | The request and completion timestamps.                                                                                                                                                                                                                |
 | `paymentDueAt?`                                                   | The deadline for a paid trial's pay-link: 24 hours from consultant acceptance, or the session start if that comes first. The expiry job cancels `AWAITING_PAYMENT` trials past this and frees the slot.                                               |
-| `deletedAt?`                                                      | Soft-delete tombstone (#1319 A-series).                                                                                                                                                                                                               |
 
 The table below lists the row's unique and indexes.
 
@@ -178,13 +177,12 @@ The table below lists the row's unique and indexes.
 
 One row per time a reschedule request offers. The table below lists its columns.
 
-| Column                               | Why it exists                                                  |
-| ------------------------------------ | -------------------------------------------------------------- |
-| `rescheduleRequestId` (`Cascade`)    | The request this proposed time belongs to.                     |
-| `startsAt`, `endsAt` (`Timestamptz`) | The proposed range.                                            |
-| `round` (default 1)                  | Which offer round this is; round-2 rows are the counter-offer. |
-| `proposedById` (`Cascade`)           | The user who proposed this time.                               |
-| `deletedAt?`                         | Soft-delete tombstone (#1319 A-series).                        |
+| Column                               | Why it exists                                               |
+| ------------------------------------ | ----------------------------------------------------------- |
+| `rescheduleRequestId` (`Cascade`)    | The request this proposed time belongs to.                  |
+| `startsAt`, `endsAt` (`Timestamptz`) | The proposed range.                                         |
+| `round` (default 1)                  | The proposal round index (currently always `1`).            |
+| `proposedById` (`Cascade`)           | The user who proposed this time.                            |
 
 The table below lists the row's index.
 
@@ -217,6 +215,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS "appointment_feedback_level_key"
 
 ## Related
 
-- [`docs/enterprise/00-foundations/07-scheduling-glossary.md`](../enterprise/00-foundations/07-scheduling-glossary.md) — the canonical vocabulary these tables use.
+- [`docs/enterprise/00-foundations/06-scheduling-glossary.md`](../enterprise/00-foundations/06-scheduling-glossary.md) — the canonical vocabulary these tables use.
 - [12-concurrency-and-locking.md](./12-concurrency-and-locking.md) — the application-level guards ahead of `occurrence_no_confirmed_overlap`.
 - [`docs/reviews/06-schema-reference.md`](../reviews/06-schema-reference.md) — the sibling review tables, in the same shape.

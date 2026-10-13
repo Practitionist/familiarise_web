@@ -78,7 +78,10 @@ export async function GET(
   if (!id.ok) return id.response;
   const { orgId } = id.data;
   try {
-    const access = await requireOrgAccess(orgId, { permission: "operations.read" });
+    const access = await requireOrgAccess(orgId, {
+      readOnly: true,
+      permission: "operations.read",
+    });
     if (access.error) return access.error;
 
     const url = new URL(req.url);

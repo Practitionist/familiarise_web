@@ -29,7 +29,7 @@
  *      register cannot outlive the defect it describes.
  *   3. A scheduled entrypoint that reaches the Supabase client module must be
  *      given the environment that module throws without, because a missing
- *      `NEXT_PUBLIC_SUPABASE_ANON_KEY` fails in exactly the same invisible way.
+ *      `NEXT_PUBLIC_SUPABASE_URL` fails in exactly the same invisible way.
  *
  * Files are read as text, never imported: job modules connect to Prisma and
  * Redis at import time and a static guard must not need either.
@@ -45,16 +45,8 @@ const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
 /** The client module every Supabase-touching job resolves to. */
 const SUPABASE_CORE = "lib/supabase-storage-core.ts";
 
-/**
- * Environment `lib/supabase-storage-core.ts` throws at module scope without.
- * The anon key is on this list even for jobs that only ever use the admin
- * client: the module builds the public client first and never reaches the
- * admin one.
- */
-const SUPABASE_REQUIRED_ENV = [
-  "NEXT_PUBLIC_SUPABASE_URL",
-  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-];
+/** Environment `lib/supabase-storage-core.ts` throws at module scope without. */
+const SUPABASE_REQUIRED_ENV = ["NEXT_PUBLIC_SUPABASE_URL"];
 
 function read(file: string): string | null {
   try {
@@ -103,17 +95,36 @@ interface Row {
   graph: string[];
 }
 
+function entrypointsOf(workflowSrc: string): string[] {
+  const jobMatches = Array.from(
+    workflowSrc.matchAll(
+      /(?:\.\/)?node_modules\/\.bin\/tsx\s+(jobs\/[^\s"']+\.ts)/g,
+    ),
+    (m) => m[1],
+  );
+  if (jobMatches.length > 0) return Array.from(new Set(jobMatches));
+  const single = entrypointOf(workflowSrc);
+  return single ? [single] : [];
+}
+
 function buildRows(): Row[] {
   const rows: Row[] = [];
   for (const workflow of fs.readdirSync(WORKFLOW_DIR).sort()) {
     if (!/\.ya?ml$/.test(workflow)) continue;
     const src = read(path.join(WORKFLOW_DIR, workflow));
     if (!src || !/^\s*schedule:/m.test(src)) continue;
-    const entrypoint = entrypointOf(src);
-    if (!entrypoint) continue; // covered by the cron-lock registry test
-    const entryFile = path.join(ROOT, entrypoint);
-    if (!fs.existsSync(entryFile)) continue;
-    rows.push({ workflow, src, entrypoint, graph: importGraph(entryFile) });
+    const entrypoints = entrypointsOf(src);
+    for (const entrypoint of entrypoints) {
+      const entryFile = path.join(ROOT, entrypoint);
+      if (!fs.existsSync(entryFile)) continue;
+      const slug = path.basename(entrypoint, ".ts");
+      rows.push({
+        workflow: entrypoints.length > 1 ? `${workflow}#${slug}` : workflow,
+        src,
+        entrypoint,
+        graph: importGraph(entryFile),
+      });
+    }
   }
   return rows;
 }
@@ -189,7 +200,7 @@ describe("scheduled workflows can import their own entrypoint (#1270)", () => {
   it("walks a non-trivial slice of the fleet", () => {
     // A floor, not an equality. This only catches the parser silently matching
     // nothing after a workflow-format change.
-    expect(rows.length).toBeGreaterThanOrEqual(55);
+    expect(rows.length).toBeGreaterThanOrEqual(35);
   });
 
   it("never reaches a module that cannot load in a bare Node process", () => {

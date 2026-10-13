@@ -64,8 +64,8 @@ function registerDevanagari(): boolean {
 
 const devanagariReady = registerDevanagari();
 
-/** The face used for buyer-supplied names and addresses on the CONSUMER
- *  documents only. The org stylesheet is deliberately untouched. */
+/** The face used for statutory PDFs (#1365 consumer, #1475 org). Falls back
+ *  to Helvetica if the bundled Noto Sans Devanagari files are absent. */
 export const BODY_FONT = devanagariReady ? "NotoSansDevanagari" : "Helvetica";
 
 // ============================================================================

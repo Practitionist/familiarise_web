@@ -1,6 +1,6 @@
 /**
  * In-app copy for the organisation workflows (ADR 23). Categories follow the
- * audience, per docs/enterprise/50-operations/09-novu-console-conditions.md:
+ * audience, per docs/enterprise/50-operations/10-novu-console-conditions.md:
  * an operator who wants invoices but not roster churn, and an expert who
  * wants the reverse, are the two cases the split serves.
  */
@@ -39,7 +39,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     category: "orgBilling",
     inApp: {
       subject: "Invoice overdue",
-      body: "Invoice {{payload.invoiceNumber}} for {{payload.total}} is {{payload.daysLate}} day{% if payload.daysLate != 1 %}s{% endif %} overdue.{% if payload.reminderStage > 1 %} This is reminder {{payload.reminderStage}}.{% endif %}",
+      body: "Invoice {{payload.invoiceNumber}} for {{payload.total}} is {{payload.daysLate}} day{% if payload.daysLate != 1 %}s{% endif %} overdue.{% if payload.reminderStage >= 1 %} This is reminder {{payload.reminderStage}}.{% endif %}",
       redirect: "payUrl",
     },
   },
@@ -85,7 +85,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     category: "orgBilling",
     inApp: {
       subject: "Payout failed",
-      body: "A payout of {{payload.amount}} to {{payload.orgName}} failed: {{payload.reason}}.",
+      body: "A payout of {{payload.amount}} to {{payload.orgName}} failed{% if payload.reason %}: {{payload.reason}}{% endif %}.",
       redirect: "dashboardUrl",
     },
   },
@@ -97,7 +97,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     category: "orgBilling",
     inApp: {
       subject: "Payout reversed",
-      body: "A payout of {{payload.amount}} to {{payload.orgName}} was reversed: {{payload.reason}}{% if payload.withheld %} (includes {{payload.withheld}} withheld as TDS, netted on the return).{% endif %}",
+      body: "A payout of {{payload.amount}} to {{payload.orgName}} was reversed{% if payload.reason %}: {{payload.reason}}{% endif %}{% if payload.withheld %} (includes {{payload.withheld}} withheld as TDS, netted on the return){% endif %}.",
       redirect: "dashboardUrl",
     },
   },
@@ -170,17 +170,6 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
       redirect: "dashboardUrl",
     },
   },
-  {
-    workflowId: W.ORG_SSO_CERT_EXPIRING,
-    name: "SSO certificate expiring",
-    description: "Org admins. `severity` is WARN, CRITICAL or EXPIRED.",
-    category: "orgMembership",
-    inApp: {
-      subject: "SSO certificate",
-      body: "{% if payload.severity == 'EXPIRED' %}The SSO certificate for {{payload.orgName}} ({{payload.providerId}}) expired on {{payload.notAfter}} and single sign-on is failing.{% else %}The SSO certificate for {{payload.orgName}} ({{payload.providerId}}) expires on {{payload.notAfter}} — {{payload.daysRemaining}} day{% if payload.daysRemaining != 1 %}s{% endif %} left.{% endif %} Upload a new certificate.",
-      redirect: "dashboardUrl",
-    },
-  },
 
   // ── Programmes ──────────────────────────────────────────────────────────
   {
@@ -201,7 +190,7 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     category: "orgProgram",
     inApp: {
       subject: "Programme nearly used up",
-      body: "{{payload.assigneeName}} has used {{payload.engagementsUsed}} of {{payload.cap}} engagements ({{payload.usedPct}}%) in {{payload.programName}} at {{payload.orgName}}.",
+      body: "{{payload.assigneeName}} has used {{payload.engagementsUsed}} of {{payload.cap}} engagement{% if payload.cap != 1 %}s{% endif %} ({{payload.usedPct}}%) in {{payload.programName}} at {{payload.orgName}}.",
       redirect: "dashboardUrl",
     },
   },

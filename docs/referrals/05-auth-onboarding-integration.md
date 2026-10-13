@@ -1,90 +1,55 @@
-# Referral × Authentication and Onboarding Integration
+# Referral Capture Across Signup and Onboarding
 
-**Status**: Planned — branch `feat/email-verification-referral-capture`. This
-document describes how a referral code is captured and applied across every
-sign-up path, and how that interacts with the signup verification policy.
+A referral code must survive three gaps between the first click and an authenticated account: a full-page OAuth redirect, the wait for email verification, and a switch of tab. This document describes how the code is captured at first touch and applied once the user is signed in.
 
-Tracking issue: [#880](https://github.com/Practitionist/familiarise_web/issues/880).
-Reward policy lives in [04-reward-economics-and-decisions.md](./04-reward-economics-and-decisions.md).
+## 1. Capture at first touch
 
-## 1. The problem this solves
+The code is kept in two places so that either one can recover it.
 
-In the shipped MVP the referral code is applied only *after* signup, by a client
-call to `POST /api/referrals/apply`, which requires an authenticated session.
-That works for email/password signup but has two gaps. Google and other OAuth
-signups complete through a full-page redirect that bypasses the signup handler,
-and nothing persists the `?ref=` parameter across that redirect, so the code is
-silently dropped and the referral is never attributed. Separately, once the
-signup verification policy (below) requires a verified email, an email/password
-signup no longer produces a session immediately, so the post-signup apply call
-would have no session to authenticate against. Both problems have the same fix:
-capture the code at first touch and apply it after the user authenticates,
-whenever that happens.
+| Store                                                  | Written by                                                   | Survives                                                |
+| ------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------- |
+| `fam_ref` cookie, 30 days, readable by script          | `app/r/[code]/route.ts` for every valid code                 | An OAuth round trip, and a new tab on the same browser. |
+| `familiarise.pendingReferral` in browser local storage | `setPendingReferral`, called by the signup page from `?ref=` | A reload and email verification on the same browser.    |
 
-## 2. Signup verification policy (the gate this integrates with)
+`lib/pending-referral.ts` reads local storage first and falls back to the cookie. The code is trimmed and checked with a small Zod schema before it is stored, and a landing on signup without `?ref=` never erases a stored code. Storage is best effort. A private window, or opening the link on another device, loses the code, which the product accepts.
 
-The decision, recorded in full alongside the research in the issue tracker, is
-that **verified email is the universal signup gate**, and the platform trusts
-the `email_verified` claim from OAuth providers and enterprise SSO rather than
-re-verifying those users. **Phone verification is not a signup requirement.** It
-is instead a risk-based step-up applied only at money-moving moments — claiming
-a referral reward, the first paid booking, and a consultant's first payout — and
-its implementation and India compliance are tracked separately in
-[#884](https://github.com/Practitionist/familiarise_web/issues/884). The reason
-phone is not the signup gate is that phone verification is not an effective
-sybil defense; the real anti-abuse controls are device fingerprinting, velocity
-limits, and the reward deferral already in place.
+## 2. Apply after authentication
 
-## 3. Capture at first touch
+A signed-in visitor to `/r/<code>` has the code applied by the route itself, subject to the apply rate limit, and lands on `/dashboard`. Everyone else is sent to `/auth/signup?ref=<code>`.
 
-When a prospective user arrives through a referral, the code is persisted on the
-client before authentication so that it survives a full-page OAuth redirect. The
-`/r/[code]` landing already validates the code and redirects an unauthenticated
-visitor to `/auth/signup?ref=CODE` (and applies the code directly for an
-already-authenticated visitor), and the signup page persists the code from the
-`?ref=` parameter, and from the manual entry field, into client storage as soon
-as it is known. The code is trimmed and validated by a small Zod schema before
-it is stored, and the persisted value is cleared if the user empties the
-referral field, so a stale or whitespace-only code is never carried forward.
-Persisting before the user clicks a social provider is what closes the OAuth gap.
+For a new account, the single apply point is the onboarding page. When a session exists, it reads the stored code and calls `POST /api/referrals/apply`. The call is idempotent because `Referral.referredUserId` is unique. The stored code is cleared on success or on a 400, which means the code is invalid, already used by this account, or refused by a rule. A network failure, a 429 or a 5xx leaves the code in place so a later authenticated render can retry.
 
-## 4. Apply after authentication
+Applying a code only creates the `Referral` row in `SIGNED_UP`. No credit and no discount exists yet. The apply step refuses an account that was created before the qualify window began, an account with an earlier paid booking, and any request while the programme takes no new referees, so an existing customer cannot be turned into a referee afterwards.
 
-The stored code is applied once the user is authenticated, which for a new user
-is when they first land on onboarding. This single apply point covers every
-path. An email/password user verifies their address, is auto-signed-in, lands on
-the verification page, and is routed to onboarding, where the code is applied. An
-OAuth or SSO user returns from the provider already authenticated and lands on
-onboarding, where the code is applied. Application reuses the existing
-`applyReferralCode` path and remains idempotent, because the unique constraint
-on `Referral.referredUserId` and the self-referral guard already enforce
-once-only attribution. The apply is non-destructive: the stored code is read
-without removing it and is cleared only on a successful apply or a terminal
-rejection (an invalid, already-referred, or self-referral `400`); a transient
-failure (network, `429`, or `5xx`) leaves the code in place so a later
-authenticated render can retry rather than permanently losing attribution.
+## 3. The expert link has no onboarding step
 
-## 5. Path interaction matrix
+An expert's signed link needs no account at the moment of the click. The `fam_via` cookie is set by the middleware on the expert's public page, and the token is verified at checkout, which may happen weeks later. The buyer's signup path is independent of it.
 
-| Sign-up path | Email verification | Session created at signup | Where the referral is applied |
-|---|---|---|---|
-| Email + password | Required (link/OTP) | No — only after verifying | Onboarding, after verify + auto-sign-in |
-| Google / other OAuth | Trusted from provider | Yes (after redirect) | Onboarding, on first authenticated landing |
-| Enterprise SSO | Trusted from IdP | Yes (after redirect) | Onboarding, on first authenticated landing |
+## 4. Path matrix
 
-## 6. Why the reward still cannot be farmed
+The table shows where the referral code is applied for each way of signing up.
 
-Capturing and applying the code only records the *attribution* (the `Referral`
-row in `SIGNED_UP` state). No credit is granted at this point. The actual reward
-is still released only when the referee completes a real paid event — a paid
-booking for a consultee, a completed session for a consultant — and only after
-the hold past the refund window, exactly as described in the reward policy. The
-integration therefore widens attribution coverage to OAuth and verified-email
-signups without weakening the anti-farming guarantee.
+| Sign-up path          | Email verification                 | Session at signup        | Where the code is applied                             |
+| --------------------- | ---------------------------------- | ------------------------ | ----------------------------------------------------- |
+| Email and password    | Required, by link or one-time code | No, only after verifying | Onboarding, after verification and automatic sign-in. |
+| Google or other OAuth | Trusted from the provider          | Yes, after the redirect  | Onboarding, on the first authenticated landing.       |
+| Enterprise SSO        | Trusted from the identity provider | Yes, after the redirect  | Onboarding, on the first authenticated landing.       |
+| Already signed in     | Not applicable                     | Yes                      | The `/r/<code>` route, at once.                       |
 
-## 7. References
+## 5. Why capture does not weaken the anti-farming rules
 
-- [#880](https://github.com/Practitionist/familiarise_web/issues/880) — tracking issue
-- [#884](https://github.com/Practitionist/familiarise_web/issues/884) — phone step-up verification and compliance
-- [04-reward-economics-and-decisions.md](./04-reward-economics-and-decisions.md) — reward policy and decision record
-- [01-architecture.md](./01-architecture.md) — the underlying referral engine
+Capture and apply record attribution only. The reward is released later by the vest sweep, after a delivered, held and unrefunded paid session, and it is bounded by the budget and caps described in [04-reward-economics-and-decisions.md](./04-reward-economics-and-decisions.md). Widening capture to OAuth and verified-email signups therefore adds coverage without adding a way to farm rewards.
+
+## 6. Signup verification policy
+
+A verified email is the universal gate for a new account. The platform trusts the verified-email claim from OAuth providers and enterprise SSO. Phone verification is not a signup requirement. It is a planned risk-based step at money-moving moments, and it is not built.
+
+## Deprecated & Superseded Approaches
+
+An earlier plan applied the code right after signup with a client call that needed a session. That failed for OAuth signups, which lose `?ref=` in the redirect, and for email signups, which have no session until verified. The apply step moved to onboarding, and capture moved to first touch. The first version also granted a referee credit at signup, which the pre-tax welcome discount replaced.
+
+Residual artifacts to delete when found:
+
+- Any call to `POST /api/referrals/apply` from the signup submit handler.
+- Any copy that promises the referee a credit at signup. The referee gets a discount on the first booking.
+- The status banner "Planned" and the branch name `feat/email-verification-referral-capture` from the earlier document.

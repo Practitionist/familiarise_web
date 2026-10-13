@@ -89,6 +89,7 @@ interface ConsultationPricingToggleProps {
   onPlanChange: (id: string) => void;
   onCalendarOpenChange?: (open: boolean) => void;
   bookingRequest?: number;
+  onDurationChange?: (durationInHours: number) => void;
 }
 
 export default function ConsultationPricingToggle({
@@ -113,6 +114,7 @@ export default function ConsultationPricingToggle({
   onPlanChange: setActiveConsultationOption,
   onCalendarOpenChange,
   bookingRequest = 0,
+  onDurationChange,
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
   const router = useRouter();
@@ -161,6 +163,10 @@ export default function ConsultationPricingToggle({
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
 
+  useEffect(() => {
+    onDurationChange?.(selectedDuration);
+  }, [selectedDuration, onDurationChange]);
+
   const availableSlots = useMemo((): SlotWithStatus[] => {
     if (
       !slotTimings ||
@@ -175,9 +181,7 @@ export default function ConsultationPricingToggle({
       ...slot,
       isAllocated: slot.isAllocated || false,
       bookingStatus: (slot.bookingStatus || "available") as
-        | "available"
-        | "partially-booked"
-        | "fully-booked",
+        "available" | "partially-booked" | "fully-booked",
     }));
 
     // Use breakDownSlotsPreservingStatus to create duration windows

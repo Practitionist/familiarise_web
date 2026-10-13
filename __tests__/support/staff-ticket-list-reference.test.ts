@@ -56,14 +56,17 @@ describe("Support inbox list (E2E F-4)", () => {
       (k) => (k === "view" ? "all" : null),
       "s1",
     );
-    const page = await readInboxPage(filters, 1, { showEmail: false });
+    const page = await readInboxPage(filters, 1);
     expect(page.total).toBe(1);
     expect(page.rows[0]).toMatchObject({
       key: `t_${TICKET_ROW.id}`,
       reference: "FAM-2026-000006",
       topic: "payments",
       scope: "platform",
-      requester: { id: "u1", name: "U", email: null },
+      requester: { id: "u1", name: "U" },
     });
+    // Contact fields are on the case detail only.
+    expect(page.rows[0].requester).not.toHaveProperty("email");
+    expect(page.rows[0].requester).not.toHaveProperty("phone");
   });
 });

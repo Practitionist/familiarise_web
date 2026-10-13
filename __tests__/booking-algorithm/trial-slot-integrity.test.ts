@@ -70,7 +70,10 @@ import {
   BookingLockUnavailableError,
 } from "../../utils/appointmentlock";
 import { SlotLockError } from "../../utils/errors/SlotLockError";
-import { getWebinarCapacity, getClassCapacity } from "../../lib/events/capacity";
+import {
+  getWebinarCapacity,
+  getClassCapacity,
+} from "../../lib/events/capacity";
 
 const redisMock = jest.requireMock("../../lib/redis") as {
   checkRedisHealth: jest.Mock;
@@ -236,9 +239,7 @@ describe("lockSlotInterval — all-or-nothing acquisition semantics", () => {
     // #1170 review — sequential backoff erodes early atoms' TTLs, so the
     // final step re-arms EVERY atom (pexpire) to one fresh deadline.
     expect(redisTest.pexpireCalls).toEqual(locks.map((l) => l.key));
-    const deadlines = locks.map(
-      (l) => redisTest.store.get(l.key)!.expiresAt,
-    );
+    const deadlines = locks.map((l) => redisTest.store.get(l.key)!.expiresAt);
     expect(Math.abs(deadlines[0] - deadlines[1])).toBeLessThan(2000);
     for (const d of deadlines) {
       expect(d).toBeGreaterThan(Date.now() + 50_000);

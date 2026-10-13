@@ -52,6 +52,14 @@ export const allocationRequestSchema = z
       })
       .optional(),
 
+    // #1692 Item 5 — explicit reschedule indicator; when true,
+    // expectedTentativeSlotCount is required so stale tabs are always caught.
+    isReschedule: z
+      .boolean({
+        invalid_type_error: "'isReschedule' must be a boolean",
+      })
+      .optional(),
+
     // #1012 — reschedule stale-tab precondition. When present, must equal the
     // live tentative slot count or the allocate returns 409.
     expectedTentativeSlotCount: z
@@ -119,6 +127,19 @@ export const allocationRequestSchema = z
       message:
         "Manual allocation requires 'slots' array with at least one time slot",
       path: ["slots"],
+    },
+  )
+  .refine(
+    (data) => {
+      if (data.isReschedule === true) {
+        return data.expectedTentativeSlotCount !== undefined;
+      }
+      return true;
+    },
+    {
+      message:
+        "'expectedTentativeSlotCount' is required when 'isReschedule' is true",
+      path: ["expectedTentativeSlotCount"],
     },
   );
 

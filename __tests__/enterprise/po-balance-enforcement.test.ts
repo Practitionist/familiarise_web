@@ -28,6 +28,10 @@ import { NextRequest } from "next/server";
 
 // ---- Mocks ------------------------------------------------------------
 
+jest.mock("../../lib/payments/billing/org-invoice-journal", () => ({
+  postInvoiceIssuedJournal: jest.fn().mockResolvedValue("POSTED"),
+  postInvoiceVoidedJournal: jest.fn().mockResolvedValue(true),
+}));
 // The route applies moneyOpsLimiter (10/min). Without this stub, the real
 // Upstash limiter 429s the later cases in CI — the same house mock every
 // other enterprise suite uses (see owner-role-escalation-guard.test.ts).
@@ -76,6 +80,7 @@ jest.mock("../../lib/auth-helpers", () => ({
 }));
 
 jest.mock("../../lib/compliance/gst", () => ({
+  orgBuyerCountry: () => "IN",
   // Why: we don't want the GST math to be the test surface — invoke
   // with the totalPaise the test asks for so the assertions read like
   // the route handler sees them. Real GST resolution is covered by
@@ -85,7 +90,13 @@ jest.mock("../../lib/compliance/gst", () => ({
   // array. Echo the subtotal back as the total so the CAS predicate
   // assertions read with the same number the caller supplied.
   deriveGstBreakdown: jest.fn(
-    ({ subtotalPaise, hsnCode }: { subtotalPaise: number; hsnCode: string }) => ({
+    ({
+      subtotalPaise,
+      hsnCode,
+    }: {
+      subtotalPaise: number;
+      hsnCode: string;
+    }) => ({
       subtotalPaise,
       cgstPaise: 0,
       sgstPaise: 0,
@@ -164,6 +175,9 @@ function wireTxShim() {
   // (PATCH) all land on jest.fn()s the tests can assert against.
   mockedPrisma.$transaction.mockImplementation(async (fn: unknown) => {
     const tx = {
+      // The invoice POST now runs its org, PO and contract reads in the tx.
+      organization: mockedPrisma.organization,
+      contract: mockedPrisma.contract,
       purchaseOrder: mockedPrisma.purchaseOrder,
       organizationInvoice: mockedPrisma.organizationInvoice,
       settlementLedgerEntry: mockedPrisma.settlementLedgerEntry,
@@ -181,8 +195,7 @@ function wireTxShim() {
         }
       ).outboundWebhookDelivery,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (fn as any)(tx);
+    return (fn as (tx: unknown) => unknown)(tx);
   });
 }
 
@@ -191,19 +204,22 @@ function setupOrg() {
     id: "org-1",
     name: "Acme",
     slug: "acme",
-    gstStateCode: "06",
-    gstin: "06ABCDE1234F1Z5",
-    hsnDefault: "9982",
+    taxInfo: {
+      gstStateCode: "06",
+      gstin: "06ABCDE1234F1Z5",
+      hsnDefault: "9982",
+    },
     dataResidencyRegion: "IN",
+    requiresPO: false,
     billingAccountId: "ba-1",
     invoiceNumberPrefix: "ACME",
   });
 }
 
 /**
- * The POST route runs a pre-flight `purchaseOrder.findUnique` BEFORE
- * starting the $transaction (to surface "PO belongs to another org" or
- * "PO is not ACTIVE" as a friendly 400/409 before any locks). Default
+ * The POST route reads the PO (`purchaseOrder.findUnique`) before its CAS
+ * draw-down, to surface "PO belongs to another org" or "PO is not ACTIVE"
+ * as a friendly 400/409. Default
  * to a PO that passes both gates so each test only has to override the
  * CAS-step outcome via `updateMany.mockResolvedValue`.
  */
@@ -257,6 +273,7 @@ describe("POST /api/organizations/[orgId]/billing-account/invoices — PO balanc
         status: "ACTIVE",
         currency: "INR",
         remainingAmountPaise: { gte: 5000 },
+        OR: [{ validUntil: null }, { validUntil: { gte: expect.any(Date) } }],
       },
       data: { remainingAmountPaise: { decrement: 5000 } },
     });
@@ -325,9 +342,8 @@ describe("PATCH /api/organizations/[orgId]/billing-account/invoices/[invoiceId] 
   let patchHandler: typeof import("@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route").PATCH;
 
   beforeAll(async () => {
-    const mod = await import(
-      "@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route"
-    );
+    const mod =
+      await import("@/app/api/organizations/[orgId]/billing-account/invoices/[invoiceId]/route");
     patchHandler = mod.PATCH;
   });
 

@@ -79,17 +79,19 @@ export function legacyBackofficeHref(
 
   if (rest.length === 0) {
     switch (head) {
-      // Q9 — approval payments became an Appointments tab.
+      case "payments":
+      case "refunds":
+      case "payouts":
+      case "disputes":
+        return withQuery(`${base}/money/${head}`, searchParams);
       case "approval-payments":
         return withQuery(`${base}/appointments`, searchParams, {
           tab: "awaiting-payment",
         });
-      // The documents log became a Verification tab.
       case "documents":
         return withQuery(`${base}/verification`, searchParams, {
           tab: "documents",
         });
-      // The feedback notification linked a plural that never had a page.
       case "feedbacks":
         return withQuery(`${base}/feedback`, searchParams);
       case "data-breaches":

@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { BookingHistoryEntity } from "@prisma/client";
+import { HISTORY_FROM_CREATED } from "@/lib/booking/transitions";
 
 /**
  * #1703 D4 — a consultant's request response rate, read from
@@ -95,7 +96,7 @@ export async function getConsultantResponseRate(
   const created = await prisma.bookingStatusHistory.findMany({
     where: {
       entityId: { in: [...new Set(answers.map((a) => a.entityId))] },
-      fromStatus: "CREATED",
+      fromStatus: HISTORY_FROM_CREATED,
     },
     select: { entityId: true, createdAt: true },
     orderBy: { createdAt: "asc" },

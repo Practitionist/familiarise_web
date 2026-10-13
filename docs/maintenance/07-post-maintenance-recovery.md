@@ -13,8 +13,9 @@ Complete these steps after ending maintenance mode. Items are ordered by priorit
 
 **What happens automatically when you end maintenance**:
 
-- Redis keys updated: `maintenance:phase` = `"OFF"`
+- Redis keys updated: `maintenance:phase` = `"OFF"` (and local Node `readMaintenancePhase` cache invalidated)
 - Prisma: `MaintenanceWindow` record updated with `endedAt` and `endedBy`
+- Stream chat channels unfrozen via `unfreezeChannelsAfterMaintenance()` (`deriveChannelsToUnfreeze()` queries `MeetingSession.endedReason = "maintenance"` within `LIVE_SESSION_WINDOW_MS`)
 - BetterStack incident auto-resolved (if one was created)
 - Novu "we're back" notification sent
 
@@ -179,11 +180,12 @@ npx tsx jobs/payouts/reconcile-payout-status.ts
 
 ## 8. Verify Cron Job Resume
 
-- [ ] Check that cron jobs resume on their next schedule:
-  - Every 15 min: `cleanup-abandoned-payments`, `cascade-refund-earnings`, `reconcile-pending-refunds`
+- [ ] Check that cron jobs resume on their next schedule (phase-staggered `netlify/functions/cron-tick.mts` every 5 min + GitHub Actions backstops):
+  - Every 5 min: `drain-notification-outbox`, `dispatch-outbound-webhooks`, `reconcile-orphaned-confirmations`, `sweep-stuck-webhook-events`
+  - Every 15 min (phase-staggered across `:00`, `:05`, `:10`): `cleanup-abandoned-payments`, `reconcile-pending-refunds`, `retry-failed-emails`, `retry-auto-refunds`
   - Every 30 min: `reconcile-payment-status`
   - Hourly: Several jobs (see [Cron Jobs Reference](./04-cron-jobs-reference.md))
-  - Verify the next scheduled run completes in GitHub Actions
+  - Verify `/api/health` reports `cron.stale: false`
 
 ## Recovery Troubleshooting
 

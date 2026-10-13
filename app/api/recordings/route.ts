@@ -10,6 +10,7 @@
  * this with `?orgScope=personal`.
  */
 
+import { fileApiError } from "@/lib/documents/api-error";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -39,7 +40,12 @@ export async function GET(req: NextRequest) {
 
   const memberships = await prisma.membership.findMany({
     where: { userId: session.user.id, status: "ACTIVE" },
-    select: { organizationId: true, status: true, role: true },
+    select: {
+      organizationId: true,
+      status: true,
+      role: true,
+      organization: { select: { status: true } },
+    },
   });
 
   const url = new URL(req.url);
@@ -51,7 +57,7 @@ export async function GET(req: NextRequest) {
   });
   if (!scopeResolution.ok) {
     return NextResponse.json(
-      { error: scopeResolution.message, code: scopeResolution.code },
+      { code: scopeResolution.code, message: scopeResolution.message },
       { status: scopeResolution.status },
     );
   }
@@ -59,12 +65,7 @@ export async function GET(req: NextRequest) {
   const filters = QuerySchema.safeParse({
     status: url.searchParams.get("status") ?? undefined,
   });
-  if (!filters.success) {
-    return NextResponse.json(
-      { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
-    );
-  }
+  if (!filters.success) return fileApiError("INVALID_INPUT");
   const pagination = parsePagination(url);
 
   const result = await listRecordingsScoped({

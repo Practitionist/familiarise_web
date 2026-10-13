@@ -2,10 +2,9 @@
  * GET  /api/organizations/[orgId]/invitations
  * POST /api/organizations/[orgId]/invitations
  *
- * Backed by BetterAuth's `Invitation` table — we keep the invitation
- * token lifecycle inside BetterAuth so the accept flow can verify the
- * token natively. The typed `Membership` row is created separately at
- * accept time (see /api/organizations/invitations/accept/route.ts).
+ * Backed by the app's own `Invitation` table (BetterAuth's organization
+ * plugin is not mounted). The typed `Membership` row is created at accept
+ * time (see /api/organizations/invitations/accept/route.ts).
  *
  * EXPERT requires canHost=true and LEARNER canSponsor=true (checked below);
  * SUPPORT is invitable like the other operator roles (#1527). The role list
@@ -16,7 +15,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { HostInvitableMemberRoleSchema } from "@/lib/labels/org-labels";
-import { Prisma } from "@prisma/client";
+import { InvitationStatus, Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
@@ -47,13 +46,7 @@ const InviteBodySchema = z.object({
   expiresInDays: z.coerce.number().int().min(1).max(30).default(14),
 });
 
-const StatusFilterSchema = z.enum([
-  "pending",
-  "accepted",
-  "rejected",
-  "expired",
-  "canceled",
-]);
+const StatusFilterSchema = z.nativeEnum(InvitationStatus);
 
 export async function GET(
   req: NextRequest,
@@ -61,6 +54,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "invitations.manage",
   });
   if (access.error) return access.error;
@@ -104,10 +98,7 @@ export async function POST(
   // stay blocked by the explicit check here.
   const access = await requireOrgAccess(orgId, {
     permission: "invitations.manage",
-    // requireActive deliberately omitted: it is a `true`-literal opt-in flag,
-    // and pre-verification invites are exactly what we want here (the seat
-    // cap below owns the PENDING_VERIFICATION policy; SUSPENDED/DEACTIVATED
-    // are refused explicitly above).
+    expectUser: true,
   });
   if (access.error) return access.error;
   // SUSPENDED-only: requireOrgAccess already answers 403 for DEACTIVATED

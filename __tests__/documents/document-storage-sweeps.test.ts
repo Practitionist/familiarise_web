@@ -1,0 +1,212 @@
+/**
+ * @jest-environment node
+ */
+
+const OLD = "2020-01-01T00:00:00Z";
+const bucketFiles: Record<string, string[]> = {
+  documents: [
+    "appointments/a1/consultee-c1/kept.pdf",
+    "plans/class-plans/p1/material.pdf",
+    "verification/u1/id.pdf",
+    "appointments/a1/consultee-c1/orphan.pdf",
+  ],
+  "support-attachments": ["support-tickets/t1/orphan.png"],
+};
+const listFailures = new Set<string>();
+const remove = jest.fn(async (bucket: string, paths: string[]) => ({
+  // Support-attachment removals are dropped, as an unconfirmed delete would be.
+  data: bucket === "documents" ? paths.map((name) => ({ name })) : [],
+  error: null,
+}));
+
+jest.mock("@supabase/supabase-js", () => ({
+  createClient: () => ({
+    storage: {
+      from: (bucket: string) => ({
+        list: async (path: string) =>
+          listFailures.has(`${bucket}/${path}`)
+            ? { data: null, error: new Error("listing failed") }
+            : {
+                data: path
+                  ? []
+                  : (bucketFiles[bucket] ?? []).map((name) => ({
+                      name,
+                      metadata: {},
+                      created_at: OLD,
+                    })),
+                error: null,
+              },
+        remove: (paths: string[]) => remove(bucket, paths),
+      }),
+    },
+  }),
+}));
+
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  withCronLock: (_job: string, _opts: unknown, fn: () => unknown) => fn(),
+  LONG_JOB_TTL_MS: 1,
+}));
+
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryMessage: jest.fn(),
+}));
+
+jest.mock("../../lib/supabase-storage-core", () => ({
+  deleteAppointmentDocument: jest.fn(),
+}));
+
+const rows = (paths: string[]) => paths.map((storagePath) => ({ storagePath }));
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    appointment: { findMany: jest.fn(async () => []) },
+    appointmentDocument: {
+      findMany: jest.fn(async () => []),
+      updateMany: jest.fn(async () => ({ count: 0 })),
+      deleteMany: jest.fn(async () => ({ count: 1 })),
+    },
+    planMaterial: { findMany: jest.fn() },
+    profileVerificationDocument: { findMany: jest.fn() },
+    supportTicketAttachment: { findMany: jest.fn(async () => []) },
+  },
+}));
+
+import prisma from "../../lib/prisma";
+import { reportSentryMessage } from "../../lib/observability/report";
+import { deleteAppointmentDocument } from "../../lib/supabase-storage-core";
+import { reconcileDocumentStorage } from "../../scripts/cleanup/reconcile-document-storage";
+import { purgeDeletedDocuments } from "../../lib/documents/document-purge";
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  listFailures.clear();
+  jest.spyOn(console, "log").mockImplementation(() => undefined);
+  jest.spyOn(console, "error").mockImplementation(() => undefined);
+});
+
+describe("reconcile-document-storage orphan sweep", () => {
+  it("keeps plan materials and verification documents, sweeps support attachments, and reports a shortfall once", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue(
+      rows(["appointments/a1/consultee-c1/kept.pdf"]),
+    );
+    (prisma.planMaterial.findMany as jest.Mock).mockResolvedValue(
+      rows(["plans/class-plans/p1/material.pdf"]),
+    );
+    (
+      prisma.profileVerificationDocument.findMany as jest.Mock
+    ).mockResolvedValue(rows(["verification/u1/id.pdf"]));
+
+    const result = await reconcileDocumentStorage();
+
+    expect(remove).toHaveBeenCalledWith("documents", [
+      "appointments/a1/consultee-c1/orphan.pdf",
+    ]);
+    expect(remove).toHaveBeenCalledWith("support-attachments", [
+      "support-tickets/t1/orphan.png",
+    ]);
+    expect(result.orphanedFilesFound).toBe(2);
+    expect(result.orphanedFilesDeleted).toBe(1);
+    expect(result.success).toBe(false);
+    expect(result.errors).toEqual([
+      "1 orphaned files in support-attachments were not removed",
+    ]);
+  });
+});
+
+describe("reconcile-document-storage listing failure", () => {
+  it("aborts without deleting or flagging anything when a bucket listing fails", async () => {
+    listFailures.add("support-attachments/");
+
+    const result = await reconcileDocumentStorage();
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(prisma.appointmentDocument.updateMany).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.errors).toHaveLength(1);
+  });
+});
+
+describe("purge-deleted-documents", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = new Date("2026-10-12T00:00:00Z");
+  const booking = (endsDaysAgo: number) => ({
+    id: `apt-${endsDaysAgo}`,
+    organizationId: null,
+    organization: null,
+    consultation: {
+      status: "COMPLETED",
+      cancelledAt: null,
+      updatedAt: now,
+      requestedBy: { id: "cp", userId: "u-l", user: { name: "L" } },
+      consultationPlan: {
+        title: "Plan",
+        consultantProfile: { id: "xp", userId: "u-e", user: { name: "E" } },
+      },
+    },
+    subscription: null,
+    trial: null,
+    occurrences: [
+      {
+        startsAt: new Date(now.getTime() - endsDaysAgo * DAY - 3600_000),
+        endsAt: new Date(now.getTime() - endsDaysAgo * DAY),
+      },
+    ],
+    statusHistory: [],
+  });
+
+  it("tombstones only bookings past their retention date, with the reason", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([booking(91), booking(89)])
+      .mockResolvedValueOnce([]);
+    (prisma.appointmentDocument.updateMany as jest.Mock).mockResolvedValue({
+      count: 2,
+    });
+
+    const result = await purgeDeletedDocuments(now);
+
+    expect(prisma.appointmentDocument.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.appointmentDocument.updateMany).toHaveBeenCalledWith({
+      where: { appointmentId: "apt-91", deletedAt: null },
+      data: { deletedAt: now, removalReason: "RETENTION_EXPIRY" },
+    });
+    expect(result.tombstoned).toBe(2);
+  });
+
+  it("purges versions before roots, retries surviving bytes and reports once", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock)
+      .mockResolvedValueOnce([
+        {
+          id: "v2",
+          storagePath: "a/2.pdf",
+          isStorageMissing: false,
+          removalReason: "USER_REQUEST",
+        },
+        {
+          id: "v3",
+          storagePath: "a/3.pdf",
+          isStorageMissing: false,
+          removalReason: null,
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    (deleteAppointmentDocument as jest.Mock).mockImplementation(
+      async (path: string) => path === "a/2.pdf",
+    );
+
+    const result = await purgeDeletedDocuments(now);
+
+    const where = (prisma.appointmentDocument.findMany as jest.Mock).mock
+      .calls[0][0].where;
+    expect(where.AND).toContainEqual({
+      OR: [{ rootDocumentId: { not: null } }, { threadVersions: { none: {} } }],
+    });
+    expect(result).toMatchObject({
+      purged: 1,
+      failedStorage: 1,
+      byReason: { USER_REQUEST: 1 },
+      success: false,
+    });
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+  });
+});

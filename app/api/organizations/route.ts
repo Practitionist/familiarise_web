@@ -7,7 +7,7 @@
  * fields the switcher needs (capability booleans, fundingSource, role).
  *
  * POST creates a new Organization + BillingAccount + OWNER Membership in
- * a single transaction. The caller is the OWNER of the created org; a
+ * a single transaction (and, for a first-time owner, completes onboarding in it). The caller is the OWNER of the created org; a
  * matching BetterAuth `Member` row is also written (so the org-scope
  * session gets populated on the next login).
  *
@@ -30,9 +30,14 @@ import { isValidGstin } from "@/lib/compliance/gst";
 import { numericStateCode } from "@/lib/compliance/state-codes";
 import { isValidPan } from "@/lib/compliance/tds";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
-import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { attemptOnboardingEmail, stageOrgCreatedEmail } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
+import { OrgOnboardingSchema } from "@/utils/onboarding";
+import {
+  claimOnboardingCompletion,
+  recordOnboardingConsent,
+} from "@/utils/onboarding-completion";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary
@@ -113,6 +118,11 @@ const CreateBodySchema = z
       .refine((v) => v === null || v === undefined || isValidGstin(v), {
         message: "INVALID_GSTIN_FORMAT",
       }),
+    gstStateCode: z
+      .string()
+      .regex(/^\d{2}$/)
+      .nullable()
+      .optional(),
     pan: z
       .string()
       .nullable()
@@ -121,6 +131,8 @@ const CreateBodySchema = z
         message: "INVALID_PAN_FORMAT",
       }),
     requiresPO: z.boolean().default(false),
+    /** First-time owner: onboarding completes in the org-create transaction. */
+    onboarding: OrgOnboardingSchema.optional(),
   })
   .refine((v) => v.canSponsor || v.canHost, {
     message: "At least one of canSponsor or canHost must be true",
@@ -149,21 +161,6 @@ export async function POST(req: NextRequest) {
   const auth = await requireApiAuth();
   if (auth.error) return auth.error;
 
-  // Only UserRole.ORG_WORKSPACE can create organizations. Platform ADMIN can
-  // also seed orgs (used by fixtures and back-office tooling). CONSULTANT
-  // and CONSULTEE are distinct user types — they join orgs via invitation,
-  // they don't create them. Blocks UI-bypass attempts via direct API.
-  const creatorRole = auth.session.user.role;
-  if (creatorRole !== "ORG_WORKSPACE" && creatorRole !== "ADMIN") {
-    return NextResponse.json(
-      {
-        error:
-          "Only organization administrators can create organizations. Sign up with the Organization Owner role to continue.",
-      },
-      { status: 403 },
-    );
-  }
-
   const raw = await req.json().catch(() => null);
   const parsed = CreateBodySchema.safeParse(raw);
   if (!parsed.success) {
@@ -173,6 +170,44 @@ export async function POST(req: NextRequest) {
     );
   }
   const body = parsed.data;
+  const onboarding = body.onboarding;
+
+  // Only UserRole.ORG_WORKSPACE (or a platform ADMIN seeding fixtures) creates
+  // organizations. A not-yet-onboarded account becomes ORG_WORKSPACE only by
+  // sending `onboarding`, committed atomically below; consultants and
+  // consultees join orgs by invitation.
+  const creatorRole = auth.session.user.role;
+  const firstTimeOwner =
+    onboarding !== undefined &&
+    auth.session.user.onboardingCompleted !== true &&
+    (creatorRole === "CONSULTEE" || creatorRole === "ORG_WORKSPACE");
+  if (
+    !firstTimeOwner &&
+    creatorRole !== "ORG_WORKSPACE" &&
+    creatorRole !== "ADMIN"
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Only organization administrators can create organizations. Sign up with the Organization Owner role to continue.",
+      },
+      { status: 403 },
+    );
+  }
+
+  // A sponsoring domestic org is invoiced B2B, so its GST state is mandatory.
+  const gstStateCode =
+    numericStateCode(body.gstin, null) ?? body.gstStateCode ?? null;
+  if (body.canSponsor && body.dataResidencyRegion === "IN" && !gstStateCode) {
+    return NextResponse.json(
+      {
+        error:
+          "A GST state is required for an organisation that is invoiced. Choose your state, or add your GSTIN.",
+        code: "GST_STATE_REQUIRED",
+      },
+      { status: 400 },
+    );
+  }
 
   const desiredSlug = body.slug ?? slugify(body.name);
   if (!SLUG_REGEX.test(desiredSlug)) {
@@ -184,6 +219,29 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      // CAS first: role, onboarding and consent commit with the org or not at all.
+      if (onboarding) {
+        const claimed = await claimOnboardingCompletion(
+          tx,
+          auth.session.user.id,
+          {
+            role: "ORG_WORKSPACE",
+            name: onboarding.name,
+            phone: onboarding.phone,
+            timezone: onboarding.timezone,
+            dateOfBirth: onboarding.dateOfBirth,
+          },
+        );
+        if (!claimed) {
+          throw new HttpError(
+            "Your account has already finished setup.",
+            409,
+            "ALREADY_ONBOARDED",
+          );
+        }
+        await recordOnboardingConsent(tx, auth.session.user.id, onboarding);
+      }
+
       const dupSlug = await tx.organization.findUnique({
         where: { slug: desiredSlug },
         select: { id: true },
@@ -208,12 +266,11 @@ export async function POST(req: NextRequest) {
       // be created but its earnings flow would silently no-op. We
       // reject at the API boundary instead so an OWNER receives a
       // typed 400 rather than a half-functional org.
-      if (body.canHost && !ENABLE_HOST_ORGS) {
-        throw Object.assign(
-          new Error(
-            "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
-          ),
-          { httpStatus: 400, code: "HOST_ORGS_GATED" },
+      if (body.canHost && !isHostOrgsEnabled()) {
+        throw new HttpError(
+          "Host-capable orgs are gated by ENABLE_HOST_ORGS. Contact ops to flip the flag for your tenant.",
+          400,
+          "HOST_ORGS_GATED",
         );
       }
       const org = await tx.organization.create({
@@ -249,8 +306,7 @@ export async function POST(req: NextRequest) {
           taxInfo: {
             create: {
               gstin: body.gstin ?? null,
-              // #1744 row 3 — the GSTIN prefix is the buyer's GST state.
-              gstStateCode: numericStateCode(body.gstin, null),
+              gstStateCode,
               // #768 — PAN stored encrypted (parity with ConsultantTaxInfo).
               ...(body.pan
                 ? (() => {
@@ -290,24 +346,12 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // OWNER Membership + a matching BetterAuth Member for invitation
-      // + org-scope session support. The Member row's id becomes the
-      // betterAuthMemberId pointer on Membership so the bridge is live
-      // from the moment the org exists.
-      const betterAuthMember = await tx.member.create({
-        data: {
-          organizationId: org.id,
-          userId: auth.session.user.id,
-          role: "OWNER",
-        },
-      });
       const membership = await tx.membership.create({
         data: {
           userId: auth.session.user.id,
           organizationId: org.id,
           status: "ACTIVE",
           role: "OWNER",
-          betterAuthMemberId: betterAuthMember.id,
         },
       });
 
@@ -404,7 +448,21 @@ export async function POST(req: NextRequest) {
     //    a retry is the right answer).
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
       switch (err.code) {
-        case "P2002":
+        case "P2002": {
+          const target = err.meta?.target;
+          const onPhone = (Array.isArray(target) ? target : [target]).some(
+            (t) => String(t).includes("phone"),
+          );
+          if (onPhone) {
+            return NextResponse.json(
+              {
+                error:
+                  "This phone number is already linked to another account.",
+                code: "PHONE_TAKEN",
+              },
+              { status: 409 },
+            );
+          }
           return NextResponse.json(
             {
               error: "Conflict — a unique constraint was violated",
@@ -413,6 +471,7 @@ export async function POST(req: NextRequest) {
             },
             { status: 409 },
           );
+        }
         case "P2003":
           return NextResponse.json(
             {

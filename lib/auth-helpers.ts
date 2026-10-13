@@ -1,5 +1,8 @@
 import { lookupSession } from "@/lib/auth-session-lookup";
+import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { sessionLookupFailedResponse } from "@/lib/auth/session-lookup-error";
+import { EXPECTED_USER_HEADER } from "@/lib/auth/identity-header";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   setSentryIdentityFromSession,
@@ -7,6 +10,7 @@ import {
 } from "@/lib/observability/identity";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { renderMemo } from "@/lib/render-memo";
 import { Prisma } from "@prisma/client";
 import type {
   FundingSource,
@@ -18,26 +22,64 @@ import {
   hasBackofficePermission,
   type BackofficeSurface,
 } from "@/lib/auth/backoffice-permissions";
+import {
+  hasAnyOrgPermission,
+  type OrgSurface,
+} from "@/lib/auth/org-permissions";
+
+type ApiAuthResult =
+  | { session: Session; error?: never }
+  | { session?: never; error: NextResponse };
+
+type ApiAuthOptions = {
+  /**
+   * Money and IAM writes: refuse with 409 `IDENTITY_CHANGED` when the page
+   * that sent the request was rendered for a different user than the cookie
+   * now carries (another tab signed in as someone else).
+   */
+  expectUser?: boolean;
+};
 
 /**
  * Requires API authentication and returns the session or an error response.
- * Use this at the start of protected API route handlers.
- *
- * Always reads force-fresh, and there is deliberately no opt-out. Session
- * revocation is invisible to a cached read, and `session.user.role` comes from
- * the cookie payload — ~86 call sites branch on that role directly (e.g. the
- * ADMIN gate on DELETE /api/bookings/subscriptions/[id]), so a stale read
- * honours a demotion up to 5 minutes late. The cookie cache would save roughly
- * one query in four anyway, because customSession re-runs its enrichment on
- * every call regardless.
+ * Enforces the 2FA precondition for operators.
  */
-export async function requireApiAuth(): Promise<
-  { session: Session; error?: never } | { session?: never; error: NextResponse }
-> {
-  const lookup = await lookupSession(true);
-  // #1716 — a lookup that did not complete is not "no session". 401 is
-  // reserved for no cookie / expired / not found; a stalled or failed read
-  // answers 503 with Retry-After so the client retries instead of signing out.
+export async function requireApiAuth({
+  expectUser = false,
+}: ApiAuthOptions = {}): Promise<ApiAuthResult> {
+  const auth = await requireApiSession();
+  if (auth.error) return auth;
+  const refused = twoFactorPrecondition(auth.session);
+  if (refused) return { error: refused };
+  if (expectUser) {
+    const changed = await identityChanged(auth.session.user.id);
+    if (changed) return { error: changed };
+  }
+  return auth;
+}
+
+/** 409 when the caller named an expected user and the session is someone else. */
+async function identityChanged(
+  sessionUserId: string,
+): Promise<NextResponse | null> {
+  const expected = (await headers()).get(EXPECTED_USER_HEADER);
+  if (!expected || expected === sessionUserId) return null;
+  return NextResponse.json(
+    {
+      error:
+        "You signed in as a different account in another tab. Reload to continue.",
+      code: "IDENTITY_CHANGED",
+    },
+    { status: 409, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+/**
+ * {@link requireApiAuth} without the operator 2FA precondition: the session
+ * exists and is not banned, nothing more.
+ */
+export async function requireApiSession(): Promise<ApiAuthResult> {
+  const lookup = await lookupSession();
   if (lookup.kind === "failed") {
     reportSentryError(lookup.cause, {
       subsystem: "auth",
@@ -53,13 +95,7 @@ export async function requireApiAuth(): Promise<
     };
   }
   const { session } = lookup;
-  // Stamp the acting identity BEFORE the ban check, so a suspended user
-  // hitting a 403 is still attributable when support asks "who is being
-  // bounced". The SDK forks the isolation scope per request, so this is
-  // per-request by construction and cannot leak onto a concurrent request.
   setSentryIdentityFromSession(session);
-  // #693 defense-in-depth — ban-time session deletion + the sign-in gate
-  // cover the normal paths; this catches a session minted in the race window.
   if (session.user.banned === true) {
     return {
       error: NextResponse.json({ error: "Account suspended" }, { status: 403 }),
@@ -68,144 +104,70 @@ export async function requireApiAuth(): Promise<
   return { session };
 }
 
-/** Seconds a client waits before retrying a failed session lookup (#1716). */
-export const SESSION_LOOKUP_RETRY_AFTER_SECONDS = 2;
-
-export function sessionLookupFailedResponse(): NextResponse {
+function twoFactorPrecondition(session: Session): NextResponse | null {
+  if (!isPrivileged(session.user.role)) return null;
+  if (session.user.twoFactorEnabled === true) return null;
   return NextResponse.json(
     {
-      error:
-        "We couldn't confirm your session just now. Try again in a moment.",
-      code: "SESSION_LOOKUP_FAILED",
+      error: "Set up two-factor authentication before using the back office.",
+      code: "TWO_FACTOR_REQUIRED",
     },
     {
-      status: 503,
-      headers: { "Retry-After": String(SESSION_LOOKUP_RETRY_AFTER_SECONDS) },
+      status: 428,
+      headers: { "X-Auth-Action": "enroll-2fa" },
     },
   );
 }
 
-/**
- * Checks if a user has privileged access (ADMIN or STAFF role).
- *
- * Prefer the typed helpers below in API handlers — this is here for
- * places that just need a boolean branch (e.g., conditional DB queries).
- */
+/** Checks if the user has privileged access (ADMIN or STAFF role). */
 export function isPrivileged(role: string | undefined | null): boolean {
   return role === "ADMIN" || role === "STAFF";
 }
 
-/**
- * Strict ADMIN-only auth — for routes that mutate platform-level state
- * irreversibly (system jobs, maintenance mode, exchange rates, newsletters,
- * payouts processing). Replaces ad-hoc inline `requireAdmin()` helpers
- * scattered across `app/api/admin/**`.
- *
- * @see docs/api/auth-helpers.md for the decision matrix.
- */
-export async function requireAdminAuth(): Promise<
-  { session: Session; error?: never } | { session?: never; error: NextResponse }
-> {
+async function requireRoleGate(
+  predicate: (role: UserRole | undefined) => boolean,
+  message: string,
+  { expectUser = false }: ApiAuthOptions = {},
+): Promise<ApiAuthResult> {
   const auth = await requireApiAuth();
   if (auth.error) return { error: auth.error };
-  if (auth.session.user.role !== "ADMIN") {
-    return {
-      error: NextResponse.json(
-        { error: "Forbidden — admin access required" },
-        { status: 403 },
-      ),
-    };
+  if (!predicate(auth.session.user.role as UserRole | undefined)) {
+    return { error: forbiddenResponse(message) };
   }
+  const changed = expectUser && (await identityChanged(auth.session.user.id));
+  if (changed) return { error: changed };
   return { session: auth.session };
 }
 
-/**
- * Strict STAFF-only auth — rejects ADMIN.
- *
- * Use for routes that are specifically staff-scoped and where an ADMIN
- * should NOT have access (e.g., "my support tickets" viewed by the staff
- * member who owns them, separated from admin's own views). This is
- * deliberately strict — most admin/staff routes want the PRIVILEGED
- * flavor below. If you're refactoring a route that previously allowed
- * both ADMIN and STAFF, use `requirePrivilegedAuth` instead.
- */
-export async function requireStaffAuth(): Promise<
-  { session: Session; error?: never } | { session?: never; error: NextResponse }
-> {
-  const auth = await requireApiAuth();
-  if (auth.error) return { error: auth.error };
-  if (auth.session.user.role !== "STAFF") {
-    return {
-      error: NextResponse.json(
-        { error: "Forbidden — staff access required" },
-        { status: 403 },
-      ),
-    };
-  }
-  return { session: auth.session };
+/** Strict ADMIN-only auth. */
+export async function requireAdminAuth(): Promise<ApiAuthResult> {
+  return requireRoleGate(
+    (role) => role === "ADMIN",
+    "Forbidden — admin access required",
+  );
 }
 
-/**
- * Privileged operator auth — ADMIN or STAFF. Use for read endpoints,
- * moderation queues, support operations, and the shared admin/staff
- * dashboard API surface. This is the most common helper for
- * `app/api/admin/**` and `app/api/staff/**` routes.
- *
- * @see docs/api/auth-helpers.md for the decision matrix.
- */
-export async function requirePrivilegedAuth(): Promise<
-  { session: Session; error?: never } | { session?: never; error: NextResponse }
-> {
-  const auth = await requireApiAuth();
-  if (auth.error) return { error: auth.error };
-  if (!isPrivileged(auth.session.user.role)) {
-    return {
-      error: NextResponse.json(
-        { error: "Forbidden — admin or staff access required" },
-        { status: 403 },
-      ),
-    };
-  }
-  return { session: auth.session };
+/** Privileged operator auth — ADMIN or STAFF. */
+export async function requirePrivilegedAuth(): Promise<ApiAuthResult> {
+  return requireRoleGate(
+    (role) => isPrivileged(role),
+    "Forbidden — admin or staff access required",
+  );
 }
 
-/**
- * Surface-scoped back-office auth — the granular flavor of
- * `requirePrivilegedAuth`. Resolves the caller's UserRole against
- * `BACKOFFICE_PERMISSIONS`, so the API route, the page guard, and the
- * sidebar all agree on who may reach a surface.
- *
- * Prefer this over `requireAdminAuth` / `requireStaffAuth` on any route the
- * merged back-office tree renders: those two only express "is this an
- * admin", which is why `admin/feedback` ended up calling `/api/staff/*` and
- * `staff/refunds` calling `/api/admin/*`. Pick the surface, not the role.
- *
- * @see lib/auth/backoffice-permissions.ts for the matrix and its rationale.
- */
+/** Surface-scoped back-office auth. */
 export async function requireBackofficeSurface(
   surface: BackofficeSurface,
-): Promise<
-  { session: Session; error?: never } | { session?: never; error: NextResponse }
-> {
-  const auth = await requireApiAuth();
-  if (auth.error) return { error: auth.error };
-
-  const role = auth.session.user.role as UserRole | undefined;
-  if (!role || !hasBackofficePermission(role, surface)) {
-    return {
-      error: NextResponse.json(
-        { error: "Forbidden — insufficient back-office permissions" },
-        { status: 403 },
-      ),
-    };
-  }
-  return { session: auth.session };
+  options: ApiAuthOptions = {},
+): Promise<ApiAuthResult> {
+  return requireRoleGate(
+    (role) => !!role && hasBackofficePermission(role, surface),
+    "Forbidden — insufficient back-office permissions",
+    options,
+  );
 }
 
-/**
- * Checks if the session user owns a resource based on their profile ID.
- * Returns true if the user's profile ID matches the resource owner ID.
- */
+/** Checks if the session user owns a resource based on their profile ID. */
 export function checkOwnership(
   session: Session,
   resourceOwnerId: string | null | undefined,
@@ -220,130 +182,165 @@ export function checkOwnership(
     admin: "adminProfileId",
   } as const;
 
-  const profileKey = profileKeyMap[profileType];
-  const userProfileId = session.user[profileKey];
-
-  return userProfileId === resourceOwnerId;
+  return session.user[profileKeyMap[profileType]] === resourceOwnerId;
 }
 
-/**
- * Creates a standardized 403 Forbidden response.
- */
+/** Creates a standardized 403 Forbidden response. */
 export function forbiddenResponse(message = "Forbidden"): NextResponse {
   return NextResponse.json({ error: message }, { status: 403 });
 }
 
-/**
- * Creates a standardized 401 Unauthorized response.
- */
-export function unauthorizedResponse(message = "Unauthorized"): NextResponse {
-  return NextResponse.json({ error: message }, { status: 401 });
+async function hasOrgEventAccess(
+  userId: string,
+  organizationId: string | null | undefined,
+): Promise<boolean> {
+  if (!organizationId) return false;
+  const member = await prisma.membership.findUnique({
+    where: { userId_organizationId: { userId, organizationId } },
+    select: {
+      status: true,
+      role: true,
+      organization: { select: { status: true } },
+    },
+  });
+  if (member?.status !== "ACTIVE") return false;
+  if (member.organization.status === "DEACTIVATED") return false;
+  return hasAnyOrgPermission(member.role, [
+    "catalog.manage",
+    "appointments.actForOrg.reschedule",
+  ]);
+}
+
+async function authorizeOneToOneEvent(
+  userId: string,
+  consultantProfileId: string | undefined,
+  consulteeProfileId: string | undefined,
+  eventType: "consultation" | "subscription",
+  eventId: string,
+): Promise<boolean> {
+  const row =
+    eventType === "consultation"
+      ? await prisma.consultation.findUnique({
+          where: { id: eventId },
+          select: {
+            requestedById: true,
+            consultationPlan: {
+              select: { consultantProfileId: true, organizationId: true },
+            },
+          },
+        })
+      : await prisma.subscription.findUnique({
+          where: { id: eventId },
+          select: {
+            requestedById: true,
+            subscriptionPlan: {
+              select: { consultantProfileId: true, organizationId: true },
+            },
+          },
+        });
+  if (!row) return false;
+
+  const plan =
+    "consultationPlan" in row ? row.consultationPlan : row.subscriptionPlan;
+  return (
+    (Boolean(consultantProfileId) &&
+      consultantProfileId === plan.consultantProfileId) ||
+    (Boolean(consulteeProfileId) && consulteeProfileId === row.requestedById) ||
+    (await hasOrgEventAccess(userId, plan.organizationId))
+  );
+}
+
+async function authorizeGroupEvent(
+  userId: string,
+  consultantProfileId: string | undefined,
+  isReadOnly: boolean,
+  eventType: "webinar" | "class",
+  eventId: string,
+): Promise<boolean> {
+  const row =
+    eventType === "webinar"
+      ? await prisma.webinar.findUnique({
+          where: { id: eventId },
+          select: {
+            webinarPlan: {
+              select: {
+                id: true,
+                consultantProfileId: true,
+                organizationId: true,
+              },
+            },
+          },
+        })
+      : await prisma.class.findUnique({
+          where: { id: eventId },
+          select: {
+            classPlan: {
+              select: {
+                id: true,
+                consultantProfileId: true,
+                organizationId: true,
+              },
+            },
+          },
+        });
+  if (!row) return false;
+
+  const plan = "webinarPlan" in row ? row.webinarPlan : row.classPlan;
+  if (
+    (Boolean(consultantProfileId) &&
+      consultantProfileId === plan.consultantProfileId) ||
+    (await hasOrgEventAccess(userId, plan.organizationId))
+  ) {
+    return true;
+  }
+
+  if (!isReadOnly || !consultantProfileId) return false;
+  const collab = await prisma.collaborator.findFirst({
+    where: {
+      ...(eventType === "webinar"
+        ? { webinarPlanId: plan.id }
+        : { classPlanId: plan.id }),
+      consultantProfileId,
+      status: "ACCEPTED",
+    },
+  });
+  return Boolean(collab);
 }
 
 /**
  * Authorize access to an event (consultation/subscription/webinar/class).
- * Checks if the session user is the consultant (plan owner), consultee (requester),
- * or has a privileged role (ADMIN/STAFF).
- *
- * @returns null if authorized, or a 403 NextResponse if not
+ * Mutating methods require primary plan owner or authorized org admin; accepted
+ * collaborators are permitted on read-only GET requests only.
  */
 export async function authorizeEventAccess(
   session: Session,
   eventType: "consultation" | "subscription" | "webinar" | "class",
   eventId: string,
+  method: string,
 ): Promise<NextResponse | null> {
   if (isPrivileged(session.user.role)) return null;
 
-  const consultantProfileId = session.user.consultantProfileId;
-  const consulteeProfileId = session.user.consulteeProfileId;
+  const isAuthorized =
+    eventType === "consultation" || eventType === "subscription"
+      ? await authorizeOneToOneEvent(
+          session.user.id,
+          session.user.consultantProfileId,
+          session.user.consulteeProfileId,
+          eventType,
+          eventId,
+        )
+      : await authorizeGroupEvent(
+          session.user.id,
+          session.user.consultantProfileId,
+          method.toUpperCase() === "GET",
+          eventType,
+          eventId,
+        );
 
-  let isAuthorized = false;
-
-  if (eventType === "consultation") {
-    const event = await prisma.consultation.findUnique({
-      where: { id: eventId },
-      select: {
-        requestedById: true,
-        consultationPlan: { select: { consultantProfileId: true } },
-      },
-    });
-    if (event) {
-      isAuthorized =
-        consultantProfileId === event.consultationPlan.consultantProfileId ||
-        consulteeProfileId === event.requestedById;
-    }
-  } else if (eventType === "subscription") {
-    const event = await prisma.subscription.findUnique({
-      where: { id: eventId },
-      select: {
-        requestedById: true,
-        subscriptionPlan: { select: { consultantProfileId: true } },
-      },
-    });
-    if (event) {
-      isAuthorized =
-        consultantProfileId === event.subscriptionPlan.consultantProfileId ||
-        consulteeProfileId === event.requestedById;
-    }
-  } else if (eventType === "webinar") {
-    const event = await prisma.webinar.findUnique({
-      where: { id: eventId },
-      select: {
-        webinarPlan: { select: { id: true, consultantProfileId: true } },
-      },
-    });
-    if (event) {
-      isAuthorized =
-        consultantProfileId === event.webinarPlan.consultantProfileId;
-      if (!isAuthorized && consultantProfileId) {
-        const collab = await prisma.collaborator.findFirst({
-          where: {
-            webinarPlanId: event.webinarPlan.id,
-            consultantProfileId,
-            status: "ACCEPTED",
-          },
-        });
-        isAuthorized = !!collab;
-      }
-    }
-  } else if (eventType === "class") {
-    const event = await prisma.class.findUnique({
-      where: { id: eventId },
-      select: {
-        classPlan: { select: { id: true, consultantProfileId: true } },
-      },
-    });
-    if (event) {
-      isAuthorized =
-        consultantProfileId === event.classPlan.consultantProfileId;
-      if (!isAuthorized && consultantProfileId) {
-        const collab = await prisma.collaborator.findFirst({
-          where: {
-            classPlanId: event.classPlan.id,
-            consultantProfileId,
-            status: "ACCEPTED",
-          },
-        });
-        isAuthorized = !!collab;
-      }
-    }
-  }
-
-  if (!isAuthorized) {
-    return forbiddenResponse("You are not authorized to access this event");
-  }
-
-  return null;
+  return isAuthorized
+    ? null
+    : forbiddenResponse("You are not authorized to access this event");
 }
-
-// ============================================================================
-// ORGANIZATION ACCESS HELPERS — Arch 4-Modified (Issue #681)
-// ============================================================================
-
-import {
-  hasAnyOrgPermission,
-  type OrgSurface,
-} from "@/lib/auth/org-permissions";
 
 export type OrgAccessGrant = {
   session: Session;
@@ -351,104 +348,56 @@ export type OrgAccessGrant = {
   org: Organization;
 };
 
-/**
- * Capability gate for {@link requireOrgAccess}. All fields are optional;
- * any field that is set must match for the request to proceed.
- *
- * - `canSponsor: true` — require the org to sponsor bookings
- *   (BillingAccount present, sponsor-side APIs). A host-only org gets a
- *   404 (the page / API endpoint "doesn't exist" for that org shape).
- * - `canHost: true` — mirror for host-side APIs.
- * - `fundingSource` — require the org's BillingAccount to be in a
- *   specific funding mode. Used by WALLET-only endpoints like
- *   /billing-account/wallet. 404 on mismatch.
- */
 export type OrgCapabilityGate = {
-  /**
-   * Key from the org permission matrix (lib/auth/org-permissions.ts) — the
-   * only role gate. It expresses the operations/finance track split
-   * (SUPPORT reads operations; BILLING_ADMIN is operator-blind) that the
-   * rank ladder cannot, which is why the `minimumRole` rank floor is gone
-   * (#1851). A list means any-of (a surface two grants open, e.g. Settings
-   * GET — #1527). Omitted means any ACTIVE member.
-   */
   permission?: OrgSurface | readonly OrgSurface[];
   canSponsor?: true;
   canHost?: true;
   fundingSource?: FundingSource;
-  /**
-   * Require `Organization.status === "ACTIVE"`. A newly created org sits
-   * in PENDING_VERIFICATION until a platform admin runs the verify action;
-   * setting this on side-effecting routes (invite send, wallet top-up,
-   * contract submit) keeps the graceful pre-verification UX while still
-   * blocking spam surfaces. Returns 409 ORG_NOT_VERIFIED so the UI can
-   * distinguish this from plain 403.
-   */
   requireActive?: true;
-  /**
-   * #1527 decision 6 — also admit a SUSPENDED membership, for the member's
-   * already-booked sessions ONLY: the org shell's details read, Appointments ›
-   * Mine, and their own appointment detail. A suspended member never passes a
-   * permission gate, so this refuses when combined with `permission`;
-   * callers branch on `member.status`.
-   */
   allowSuspended?: true;
+  /** The caller only reads. A platform ADMIN passes (as an OWNER stub) only on these gates. */
+  readOnly?: true;
+  /** Money/IAM writes: 409 when the page was rendered for another user. */
+  expectUser?: true;
 };
 
-/**
- * Require that the session user is an active Membership of the specified
- * organization, holding `opts.permission` when set, and enforce the
- * capability + funding-source gates.
- *
- * Platform admins (`UserRole.ADMIN`) bypass membership + role checks and
- * get a synthesized OWNER-rank stub; capability checks still apply so
- * an admin hitting a WALLET-only endpoint on an INVOICE org still gets
- * the structural 404.
- */
-export async function requireOrgAccess(
-  organizationId: string,
-  opts: OrgCapabilityGate = {},
-): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
-  const {
-    permission,
-    canSponsor,
-    canHost,
-    fundingSource,
-    requireActive,
-    allowSuspended,
-  } = opts;
-
-  const auth = await requireApiAuth();
-  if (auth.error) return { error: auth.error };
-
-  // Pull the billingAccount alongside the org so fundingSource gates
-  // don't need a second round-trip. Non-capability callers pay the same
-  // (cheap) cost — this read is LEFT JOIN one row keyed on a unique
-  // index.
-  // FAMILIARISE_WEB-5W — pre-migration rollout: the generated client knows
-  // `Organization.kind` before `db push` creates the column, and a bare
-  // `findUnique` selects every scalar, so the gate 500s with P2022 on every
-  // org route. Answer that exact case with 503 + Retry-After (same posture
-  // as a failed session lookup above): the deploy is mid-rollout, the
-  // client must retry, and nothing must read it as "no access". Scoped to
-  // P2022 only; every other defect still throws to the route's handler.
-  let org;
-  try {
-    org = await prisma.organization.findUnique({
-      where: { id: organizationId },
-      include: {
-        billingAccount: {
-          select: { id: true, fundingSource: true },
-        },
+// The org layout and its page each gate on requireOrgAccess; these reads
+// resolve once per render and stay uncached in route handlers.
+const findOrganizationWithBilling = renderMemo((organizationId: string) =>
+  prisma.organization.findUnique({
+    where: { id: organizationId },
+    include: {
+      billingAccount: {
+        select: { id: true, fundingSource: true },
       },
-    });
+    },
+    relationLoadStrategy: "join",
+  }),
+);
+
+const findMembership = renderMemo((userId: string, organizationId: string) =>
+  prisma.membership.findUnique({
+    where: { userId_organizationId: { userId, organizationId } },
+  }),
+);
+
+async function fetchOrganizationWithBilling(organizationId: string) {
+  try {
+    const org = await findOrganizationWithBilling(organizationId);
+    if (!org) {
+      return {
+        error: NextResponse.json(
+          { error: "Organization not found" },
+          { status: 404 },
+        ),
+      };
+    }
+    return { org };
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2022"
     ) {
-      // Expected-true warning (not a page): drift windows are normal during
-      // rollout, but the column must actually land via db push afterwards.
       reportSentryError(error, {
         subsystem: "auth",
         op: "requireOrgAccess.schema-drift",
@@ -463,88 +412,132 @@ export async function requireOrgAccess(
     }
     throw error;
   }
-  if (!org) {
-    return {
-      error: NextResponse.json(
-        { error: "Organization not found" },
-        { status: 404 },
-      ),
-    };
+}
+
+function checkOrgCapabilityGates(
+  org: Organization & {
+    billingAccount: { id: string; fundingSource: FundingSource } | null;
+  },
+  opts: OrgCapabilityGate,
+): NextResponse | null {
+  if (org.status === "DEACTIVATED") {
+    return NextResponse.json(
+      { error: "Organization has been deactivated" },
+      { status: 403 },
+    );
+  }
+  if (opts.requireActive && org.status !== "ACTIVE") {
+    return NextResponse.json(
+      {
+        error: "ORG_NOT_VERIFIED",
+        message:
+          "This action is paused until a platform admin verifies your organization.",
+        status: org.status,
+      },
+      { status: 409 },
+    );
+  }
+  if (opts.canSponsor === true && !org.canSponsor) {
+    return NextResponse.json(
+      { error: "This organization does not sponsor bookings" },
+      { status: 404 },
+    );
+  }
+  if (opts.canHost === true && !org.canHost) {
+    return NextResponse.json(
+      { error: "This organization does not host consultants" },
+      { status: 404 },
+    );
+  }
+  if (
+    opts.fundingSource &&
+    org.billingAccount?.fundingSource !== opts.fundingSource
+  ) {
+    return NextResponse.json(
+      {
+        error: `This endpoint requires ${opts.fundingSource} funding`,
+        currentFundingSource: org.billingAccount?.fundingSource ?? null,
+      },
+      { status: 404 },
+    );
+  }
+  return null;
+}
+
+function checkMemberPermissionGate(
+  member: Membership | null,
+  opts: OrgCapabilityGate,
+): NextResponse | null {
+  if (!member) {
+    return NextResponse.json(
+      { error: "Not a member of this organization" },
+      { status: 403 },
+    );
   }
 
-  // The tenant is now resolved for this request, so stamp it. Deliberately
-  // before every capability check below, not after the grant: a 403 here is
-  // exactly the "user X was bounced off org Y" question support asks, and an
-  // unauthorized probe still records an accurate tenant. The caller's role
-  // *within* the org is not known yet, so it is added at the grant sites
-  // further down rather than guessed.
+  const suspendedAdmitted =
+    opts.allowSuspended === true && member.status === "SUSPENDED";
+  if (
+    (member.status !== "ACTIVE" && !suspendedAdmitted) ||
+    (suspendedAdmitted && opts.permission)
+  ) {
+    return NextResponse.json(
+      { error: `Membership is ${member.status.toLowerCase()}` },
+      { status: 403 },
+    );
+  }
+
+  if (opts.permission && !hasAnyOrgPermission(member.role, opts.permission)) {
+    const named =
+      typeof opts.permission === "string"
+        ? opts.permission
+        : opts.permission.join(" or ");
+    return NextResponse.json(
+      { error: `Forbidden — your role does not grant ${named}` },
+      { status: 403 },
+    );
+  }
+
+  return null;
+}
+
+/**
+ * Require that the session user is an active Membership of the specified
+ * organization, holding `opts.permission` when set, and enforce capability
+ * and funding-source gates. A platform ADMIN gets a read-only OWNER stub on
+ * `readOnly` gates and a 403 on every other gate; admin writes go through
+ * the audited `/api/admin/*` doors.
+ */
+export async function requireOrgAccess(
+  organizationId: string,
+  opts: OrgCapabilityGate = {},
+): Promise<({ error?: never } & OrgAccessGrant) | { error: NextResponse }> {
+  const auth = await requireApiAuth({ expectUser: opts.expectUser });
+  if (auth.error) return { error: auth.error };
+
+  const orgLookup = await fetchOrganizationWithBilling(organizationId);
+  if (orgLookup.error) return { error: orgLookup.error };
+  const { org } = orgLookup;
+
   setSentryOrgContext({ orgId: org.id });
 
-  if (org.status === "DEACTIVATED") {
-    return {
-      error: NextResponse.json(
-        { error: "Organization has been deactivated" },
-        { status: 403 },
-      ),
-    };
-  }
-
-  if (requireActive && org.status !== "ACTIVE") {
-    return {
-      error: NextResponse.json(
-        {
-          error: "ORG_NOT_VERIFIED",
-          message:
-            "This action is paused until a platform admin verifies your organization.",
-          status: org.status,
-        },
-        { status: 409 },
-      ),
-    };
-  }
-
-  // Capability guards are structural, not authorization — a host-only
-  // org doesn't have sponsor APIs at all, so "404 not found" is the
-  // honest response (rather than 403, which implies "you're allowed
-  // elsewhere"). Mirrors how filesystems surface missing paths.
-  if (canSponsor === true && !org.canSponsor) {
-    return {
-      error: NextResponse.json(
-        { error: "This organization does not sponsor bookings" },
-        { status: 404 },
-      ),
-    };
-  }
-  if (canHost === true && !org.canHost) {
-    return {
-      error: NextResponse.json(
-        { error: "This organization does not host consultants" },
-        { status: 404 },
-      ),
-    };
-  }
-  if (fundingSource && org.billingAccount?.fundingSource !== fundingSource) {
-    return {
-      error: NextResponse.json(
-        {
-          error: `This endpoint requires ${fundingSource} funding`,
-          currentFundingSource: org.billingAccount?.fundingSource ?? null,
-        },
-        { status: 404 },
-      ),
-    };
-  }
+  const gateError = checkOrgCapabilityGates(org, opts);
+  if (gateError) return { error: gateError };
 
   const userId = auth.session.user.id;
-
-  // Platform admins bypass org membership checks. Capability guards
-  // above still apply so the admin gets the same structural 404 as a
-  // regular user — the endpoint genuinely doesn't exist on that org.
   if (auth.session.user.role === "ADMIN") {
-    // A platform admin crossing a tenant boundary. Recorded as `ADMIN`, not as
-    // the stub's synthesised `OWNER` role, and with no membership id — the
-    // `__admin_stub_…` value is not a real `Membership.id` and would be a
-    // broken join key for anyone reading the Sentry user panel.
+    if (opts.readOnly !== true) {
+      return {
+        error: NextResponse.json(
+          {
+            error:
+              "Platform admins have read-only access to organizations — act through the back office.",
+            code: "ADMIN_READ_ONLY",
+          },
+          { status: 403 },
+        ),
+      };
+    }
     setSentryOrgContext({ orgId: org.id, orgRole: "ADMIN" });
     const stub: Membership = {
       id: `__admin_stub_${userId}`,
@@ -558,75 +551,29 @@ export async function requireOrgAccess(
       payoutRecipient: "SELF",
       rateCardOverrideId: null,
       exclusiveEngagement: false,
-      betterAuthMemberId: null,
-      // PR #655 SCIM addition — the stub satisfies the Membership type
-      // by tracking every schema column. Admin sessions never have a
-      // SCIM-provisioned identity by definition; nullable column.
-      externalScimId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
     return { session: auth.session, member: stub, org };
   }
 
-  const member = await prisma.membership.findUnique({
-    where: { userId_organizationId: { userId, organizationId: org.id } },
-  });
+  const member = await findMembership(userId, org.id);
 
-  if (!member) {
-    return {
-      error: NextResponse.json(
-        { error: "Not a member of this organization" },
-        { status: 403 },
-      ),
-    };
-  }
+  const memberError = checkMemberPermissionGate(member, opts);
+  if (memberError) return { error: memberError };
 
-  const suspendedAdmitted =
-    allowSuspended === true && member.status === "SUSPENDED";
-  if (
-    (member.status !== "ACTIVE" && !suspendedAdmitted) ||
-    (suspendedAdmitted && permission)
-  ) {
-    return {
-      error: NextResponse.json(
-        { error: `Membership is ${member.status.toLowerCase()}` },
-        { status: 403 },
-      ),
-    };
-  }
-
-  if (permission && !hasAnyOrgPermission(member.role, permission)) {
-    const named =
-      typeof permission === "string" ? permission : permission.join(" or ");
-    return {
-      error: NextResponse.json(
-        { error: `Forbidden — your role does not grant ${named}` },
-        { status: 403 },
-      ),
-    };
-  }
-
-  // The grant succeeded, so the membership (and its role) is now known for
-  // certain. This is the one place in the request where org_role is a real
-  // `MemberRole` rather than an assumption.
   setSentryOrgContext({
     orgId: org.id,
-    orgRole: member.role,
-    membershipId: member.id,
+    orgRole: member!.role,
+    membershipId: member!.id,
   });
 
-  return { session: auth.session, member, org };
+  return { session: auth.session, member: member!, org };
 }
 
 /**
  * Whether this caller may waive the consultant's own published availability
  * when allocating.
- *
- * Deliberately narrower than {@link authorizeEventAccess}, which admits the
- * consultee as a participant. Accepting a time outside the published window is
- * the consultant's decision about their own schedule; a consultee asserting it
- * would let them book whenever they liked.
  */
 export async function isEventConsultant(
   session: Session,

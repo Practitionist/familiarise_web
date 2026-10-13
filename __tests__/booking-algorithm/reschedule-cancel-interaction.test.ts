@@ -66,8 +66,11 @@ describe("cancel cleans up after a reschedule", () => {
 
   it("knows which proposal states are still live and must be closed", () => {
     expect(RESCHEDULE_OPEN_STATUSES).toEqual(
-      expect.arrayContaining(["PENDING_REVIEW", "COUNTERED"]),
+      expect.arrayContaining(["PENDING_REVIEW"]),
     );
+    // `COUNTERED` left the enum with the counter-round. If it ever comes back,
+    // every "is this request still answerable" read has to be re-audited.
+    expect(RESCHEDULE_OPEN_STATUSES).not.toContain("COUNTERED");
     // A terminal state must never appear here, or cancel would "close" rows it
     // has no business touching and clear a lock it does not hold.
     expect(RESCHEDULE_OPEN_STATUSES).not.toContain("ACCEPTED");

@@ -38,6 +38,7 @@ export async function getMyProgramData(params: {
   const assignments = await prisma.programAssignment.findMany({
     where: {
       membershipId,
+      status: "ACTIVE",
       periodStart: { lte: now },
       periodEnd: { gte: now },
     },
@@ -59,7 +60,7 @@ export async function getMyProgramData(params: {
     where: { membershipId },
     select: { id: true },
   });
-  const utilizations = allAssignmentIds.length
+  const rawUtilizations = allAssignmentIds.length
     ? await prisma.bookingUtilization.findMany({
         where: {
           programAssignmentId: { in: allAssignmentIds.map((a) => a.id) },
@@ -67,6 +68,13 @@ export async function getMyProgramData(params: {
         orderBy: { createdAt: "desc" },
         take: 20,
         include: {
+          programAssignment: {
+            select: {
+              program: {
+                select: { type: true },
+              },
+            },
+          },
           payment: {
             select: {
               id: true,
@@ -76,6 +84,10 @@ export async function getMyProgramData(params: {
         },
       })
     : [];
+  const utilizations = rawUtilizations.map((u) => ({
+    ...u,
+    programSubType: u.programAssignment?.program?.type ?? null,
+  }));
 
   // #748 — upcoming org-funded sessions for THIS learner. Appointment is
   // polymorphic; the learner participates as consultee (Consultation/

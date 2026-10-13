@@ -81,8 +81,12 @@ export async function recomputeProfileCompletion(
         select: {
           subDomains: true,
           tags: true,
-          availabilityWindowsWeekly: { where: { deletedAt: null } },
-          availabilityWindowsCustom: { where: { deletedAt: null } },
+          // No `deletedAt` filter: availability rows are hard-deleted (see the
+          // section banner on the AVAILABILITY WINDOWS models), so there is no
+          // tombstone to exclude and the predicate was counting the same rows
+          // as an unfiltered count while implying a lifecycle that does not exist.
+          availabilityWindowsWeekly: true,
+          availabilityWindowsCustom: true,
           consultationPlans: true,
           subscriptionPlans: true,
           webinarPlans: true,

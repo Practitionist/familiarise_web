@@ -184,7 +184,6 @@ erDiagram
         string userId
         datetime expiresAt
         string ipAddress
-        string activeOrganizationId
     }
     Verification {
         string id
@@ -199,6 +198,15 @@ erDiagram
         string organizationId
         string domain
         string userId
+        string oidcConfig
+        boolean domainVerified
+    }
+    TwoFactor {
+        string id
+        string userId
+        boolean verified
+        int failedVerificationCount
+        datetime lockedUntil
     }
     CookiePreference {
         string id
@@ -220,6 +228,7 @@ erDiagram
 
     User ||--o{ Account : "has"
     User ||--o{ Session : "has"
+    User ||--o| TwoFactor : "has"
     User ||--o| CookiePreference : "has"
     User ||--o| NotificationPreference : "has"
     User ||--o{ SsoProvider : "has"
@@ -453,7 +462,6 @@ erDiagram
         int maxParticipants
         float durationInHours
         boolean certificateProvided
-        RecordingStoragePolicy recordingStoragePolicy
         PlanLevel level
         OrgPlanVisibility visibility
         datetime archivedAt
@@ -714,7 +722,6 @@ erDiagram
         int price
         int maxParticipants
         boolean certificateProvided
-        RecordingStoragePolicy recordingStoragePolicy
     }
     Webinar {
         string id
@@ -873,13 +880,18 @@ erDiagram
     AppointmentDocument {
         string id
         string appointmentId
+        string rootDocumentId
         string responseToDocumentId
+        int versionNo
         string fileName
+        string storagePath
         string fileUrl
+        boolean isStorageMissing
         DocumentReviewStatus reviewStatus
         DocumentUploadRole uploadedByRole
-        string reviewedBy
+        string reviewedById
         datetime reviewedAt
+        datetime deletedAt
     }
     ConsultantProfile {
         string id
@@ -906,7 +918,7 @@ erDiagram
     }
 
     Appointment ||--o{ AppointmentDocument : "session docs"
-    AppointmentDocument ||--o{ AppointmentDocument : "consultant response doc"
+    AppointmentDocument ||--o{ AppointmentDocument : "threadVersions / responseToDocument"
     ConsultantProfile ||--o{ ConsultantProfileVerification : "verification submissions"
     ConsultantProfileVerification ||--o{ ProfileVerificationDocument : "supporting docs"
 ```
@@ -1150,7 +1162,6 @@ erDiagram
         boolean isDefault
         string razorpayContactId
         string razorpayFundAccId
-        string stripeAccountId
     }
     ConsultantTaxInfo {
         string id
@@ -1184,22 +1195,6 @@ erDiagram
         int amountPaise
         boolean reportedInForm26Q
     }
-    GstTcsBatch {
-        string id
-        string financialYear
-        int month
-        int netSupplyPaise
-        int tcsCollectedPaise
-        GstTcsBatchStatus status
-        datetime filedAt
-    }
-    GstTcsAdjustment {
-        string id
-        string batchId
-        string paymentId
-        string refundId
-        int amountPaise
-    }
 
     ConsultantProfile ||--o{ ConsultantEarnings : "earns"
     ConsultantProfile ||--o{ Payout : "batch payouts"
@@ -1209,22 +1204,18 @@ erDiagram
     ConsultantProfile ||--o{ TdsAdjustment : "TDS reversals (refund)"
     Payout ||--o{ ConsultantEarnings : "batches"
     Payout ||--o{ TDSRecord : "triggers TDS"
-    GstTcsBatch ||--o{ GstTcsAdjustment : "monthly GSTR-8 net"
 ```
 
 > **#778 §D refund-tax reversals.** `TdsAdjustment` posts a negative line in the
-> revised 26Q/27Q when previously-withheld TDS is reversed on refund;
-> `GstTcsBatch` aggregates GST TCS u/s 52 per month for GSTR-8 (e-commerce
-> operator, 1% on registered consultants), with `GstTcsAdjustment` netting
-> refund reversals into the period's batch. Collection + filing are flag-gated
-> pending CA signoff. `CreditNote` (Sec 34 / CGST Rule 53) is the org-side
+> revised 26Q/27Q when previously-withheld TDS is reversed on refund.
+> `CreditNote` (Sec 34 / CGST Rule 53) is the org-side
 > refund document — see section 20 (Enterprise Invoicing).
 
 ---
 
 ## 18. Enterprise Core — Org & Membership
 
-An Organization can sponsor employees (`canSponsor`) and/or host consultants (`canHost`). `Membership` is the source of truth; `Member` is kept for BetterAuth invite-token compatibility.
+An Organization can sponsor employees (`canSponsor`) and/or host consultants (`canHost`). `Membership` is the only membership table.
 
 ```mermaid
 erDiagram
@@ -1257,13 +1248,6 @@ erDiagram
         string rateCardOverrideId
         boolean exclusiveEngagement
         string departmentLabel
-        string betterAuthMemberId
-    }
-    Member {
-        string id
-        string organizationId
-        string userId
-        string role
     }
     Invitation {
         string id
@@ -1278,8 +1262,8 @@ erDiagram
         string id
         string organizationId
         boolean enforceSSO
-        datetime breakGlassUntil
         MemberRole defaultRoleForAutoJoin
+        int version
     }
     OrgDomainClaim {
         string id
@@ -1297,14 +1281,12 @@ erDiagram
     }
 
     Organization ||--o{ Membership : "typed members"
-    Organization ||--o{ Member : "BetterAuth members"
     Organization ||--o{ Invitation : "pending invites"
     Organization ||--o| OrganizationSSOSettings : "SSO"
     Organization ||--o{ OrgDomainClaim : "domain claims"
     Organization ||--o{ OrgAuditLog : "audit trail"
     Organization ||--o{ OrgInvoiceCounter : "fiscal-year seq"
     User ||--o{ Membership : "member of orgs"
-    Membership ||--o| Member : "bridges BetterAuth"
 ```
 
 ### 18.1 New 2026-05-15 fields on `Organization`
@@ -1340,8 +1322,8 @@ Commercial structure: `BillingAccount` → `Contract` → `Program` → `Program
 > `LicensedSeatConfig`/`CreditPoolConfig.{overageSurchargeBps,
 maxOveragePerCyclePaise}` (surcharge + circuit-breaker); `OverageEvent`
 > (append-only over-cap charge ledger, `basePaise`+`surchargePaise`=`marginalPaise`);
-> and `BillingAccount.{minBalancePaise, autoTopUpEnabled, autoTopUpAmountPaise,
-autoTopUpMandateId}` (wallet floor + auto-top-up). Top-up lifecycle is
+> and `BillingAccount.{minBalancePaise, autoTopUpLastFiredAt}` (notify-only
+> wallet floor + its alert cooldown). Top-up lifecycle is
 > `WalletTopUp` (PENDING→CONFIRMED/FAILED) — the wallet \_balance* itself is a
 > credit-normal liability in the double-entry ledger, not a standalone table.
 
@@ -1354,9 +1336,6 @@ erDiagram
         int walletBalance
         int creditLimit
         int minBalancePaise
-        boolean autoTopUpEnabled
-        int autoTopUpAmountPaise
-        string autoTopUpMandateId
         datetime autoTopUpLastFiredAt
         string billingEmail
         Currency currency
@@ -1582,7 +1561,6 @@ erDiagram
         string ifscCode
         OrgPayoutAccountStatus status
         string razorpayContactId
-        string stripeConnectId
     }
     CreditNote {
         string id
@@ -1900,9 +1878,9 @@ Every enum in the schema and its values.
 | `FundingSource`                | PERSONAL, LICENSE, WALLET, INVOICE                                                                                                                                                                                                                                                     |
 | `WalletReason`                 | TOPUP, BOOKING, REFUND, ADJUSTMENT                                                                                                                                                                                                                                                     |
 | `WalletTopUpStatus`            | PENDING, CONFIRMED, FAILED                                                                                                                                                                                                                                                             |
-| `LedgerAccountKind`            | CASH, WALLET, PLATFORM_FEE, PLATFORM_PROMO, DISCOUNT, CONSULTANT_PAYABLE, ORG_PAYABLE, ORG_RECEIVABLE, TDS_PAYABLE, GST_PAYABLE                                                                                                                                                        |
+| `LedgerAccountKind`            | CASH, WALLET, PLATFORM_FEE, PLATFORM_PROMO, DISCOUNT, CONSULTANT_PAYABLE, ORG_PAYABLE, ORG_RECEIVABLE, CONSULTANT_RECEIVABLE, TDS_PAYABLE, GST_PAYABLE, UNAPPLIED_RECEIPTS                                                                                                             |
 | `LedgerDirection`              | DEBIT, CREDIT                                                                                                                                                                                                                                                                          |
-| `LedgerTransactionKind`        | BOOKING, TOPUP, TOPUP_REFUND, INVOICE_ISSUED, INVOICE_PAID, PAYOUT, ORG_PAYOUT, REFUND, OVERAGE_MEMBER, GRANT                                                                                                                                                                          |
+| `LedgerTransactionKind`        | BOOKING, TOPUP, TOPUP_REFUND, INVOICE_ISSUED, INVOICE_PAID, PAYOUT, ORG_PAYOUT, REFUND, OVERAGE_MEMBER, GRANT, UNAPPLIED_RECEIPT                                                                                                                                                       |
 | `ContractStatus`               | DRAFT, ACTIVE, EXPIRED, TERMINATED                                                                                                                                                                                                                                                     |
 | `ContractSupersessionReason`   | AMENDMENT, RENEWAL, TERMINATION_REPLACEMENT                                                                                                                                                                                                                                            |
 | `BillingCycle`                 | MONTHLY, QUARTERLY, ANNUAL                                                                                                                                                                                                                                                             |
@@ -1918,7 +1896,6 @@ Every enum in the schema and its values.
 | `IrpStatus`                    | PENDING, GENERATED, CANCELLED, FAILED                                                                                                                                                                                                                                                  |
 | `PoStatus`                     | ACTIVE, CLOSED, CANCELLED                                                                                                                                                                                                                                                              |
 | `CreditNoteStatus`             | DRAFT, ISSUED, CANCELLED                                                                                                                                                                                                                                                               |
-| `GstTcsBatchStatus`            | OPEN, FILED                                                                                                                                                                                                                                                                            |
 | `OrgDataExportStatus`          | PENDING, PROCESSING, READY, FAILED, EXPIRED                                                                                                                                                                                                                                            |
 | `PayoutRecipient`              | SELF, ORGANIZATION                                                                                                                                                                                                                                                                     |
 | `ResidencyStatus`              | RESIDENT, NON_RESIDENT                                                                                                                                                                                                                                                                 |
@@ -1926,9 +1903,10 @@ Every enum in the schema and its values.
 | `PayoutArrangement`            | DIRECT, AOR, EOR                                                                                                                                                                                                                                                                       |
 | `AppointmentStatus`            | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED, REJECTED, CANCELLED, EXPIRED                                                                                                                                                                                        |
 | `AppointmentsType`             | CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS, TRIAL                                                                                                                                                                                                                                      |
-| `OccurrenceCompletionStatus`         | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED                                                                                                                                                                                                                               |
+| `OccurrenceCompletionStatus`   | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED, VOIDED                                                                                                                                                                                                                       |
+| `RescheduleRequestStatus`      | PENDING_REVIEW, ACCEPTED, AUTO_ACCEPTED, DECLINED, WITHDRAWN, EXPIRED                                                                                                                                                                                                                  |
 | `BookingSource`                | DIRECT_CHECKOUT, REQUEST_SUBMITTED                                                                                                                                                                                                                                                     |
-| `TrialStatus`           | PENDING, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                                                                                                                                                          |
+| `TrialStatus`                  | PENDING, AWAITING_PAYMENT, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                                                                                                                                        |
 | `WaitlistStatus`               | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (newsletter list)                                                                                                                                                                                                                           |
 | `WaitlistSource`               | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, EVENT_SOLD_OUT, IMPORT                                                                                                                                                                                                                      |
 | `WebinarStatus`                | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                                                                                                                                           |
@@ -1936,8 +1914,7 @@ Every enum in the schema and its values.
 | `DayOfWeek`                    | MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY                                                                                                                                                                                                                         |
 | `ScheduleType`                 | WEEKLY, CUSTOM                                                                                                                                                                                                                                                                         |
 | `Platform`                     | ZOOM, GOOGLE_MEET, MICROSOFT_TEAMS, STREAM, CUSTOM                                                                                                                                                                                                                                     |
-| `RecordingStoragePolicy`       | STREAM_ONLY, SUPABASE_PERMANENT                                                                                                                                                                                                                                                        |
-| `RecordingStorageType`         | STREAM_S3, SUPABASE                                                                                                                                                                                                                                                                    |
+| `RecordingStorageType`         | STREAM_S3, PLATFORM                                                                                                                                                                                                                                                                    |
 | `RecordingStatus`              | RECORDING, PROCESSING, READY, TRANSFERRING, AVAILABLE, FAILED, EXPIRED                                                                                                                                                                                                                 |
 | `PaymentGateway`               | STRIPE, RAZORPAY, DODO_PAYMENTS, CARD                                                                                                                                                                                                                                                  |
 | `PaymentStatus`                | PENDING, SUCCEEDED, FAILED, EXPIRED                                                                                                                                                                                                                                                    |
@@ -1962,7 +1939,7 @@ Every enum in the schema and its values.
 | `AchievementType`              | AWARD, PUBLICATION, PROJECT, TALK, OPEN_SOURCE, OTHER                                                                                                                                                                                                                                  |
 | `CareerStage`                  | SCHOOL_STUDENT, STUDENT, EARLY_CAREER, MID_CAREER, SENIOR, EXECUTIVE                                                                                                                                                                                                                   |
 | `BudgetPreference`             | BUDGET, MODERATE, PREMIUM, FLEXIBLE                                                                                                                                                                                                                                                    |
-| `OfferingFormat`                  | ONE_ON_ONE, GROUP, ASYNC_REVIEW                                                                                                                                                                                                                                                        |
+| `OfferingFormat`               | ONE_ON_ONE, GROUP, ASYNC_REVIEW                                                                                                                                                                                                                                                        |
 | `ActivityType`                 | CONSULTATION_BOOKED, CONSULTATION_COMPLETED, CONSULTATION_CANCELLED, SUBSCRIPTION_REQUESTED, SUBSCRIPTION_APPROVED, SUBSCRIPTION_CANCELLED, WEBINAR_REGISTERED, CLASS_ENROLLED, TRIAL_REQUESTED, TRIAL_SCHEDULED, TRIAL_COMPLETED, TRIAL_CONVERTED, REVIEW_SUBMITTED, MESSAGE_RECEIVED |
 | `FeedbackStatus`               | PENDING, ACKNOWLEDGED, IN_PROGRESS, RESOLVED, CLOSED                                                                                                                                                                                                                                   |
 | `SupportTicketStatus`          | OPEN, IN_PROGRESS, ON_HOLD, RESOLVED, CLOSED                                                                                                                                                                                                                                           |

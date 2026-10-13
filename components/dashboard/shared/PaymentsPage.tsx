@@ -229,10 +229,7 @@ export function PaymentsPage() {
 
       {/* Filters */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Filters</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <Input
               placeholder="Search payment ID..."
@@ -323,12 +320,7 @@ export function PaymentsPage() {
 
       {/* Payments Table */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">
-            Payments ({data?.total || 0})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           {isLoading || !data ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (

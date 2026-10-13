@@ -40,7 +40,6 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
-  fundingRailForIntent: jest.fn(),
   refundBookingPayment: jest.fn(),
 }));
 jest.mock("../../lib/payments/payouts/earnings-hold", () => ({

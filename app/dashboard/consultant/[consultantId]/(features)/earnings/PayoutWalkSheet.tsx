@@ -47,6 +47,16 @@ export function PayoutWalkBody({ payout }: Readonly<{ payout: WalkPayout }>) {
         </dt>
         <dd className="font-medium text-foreground">−{inr(walk.tds)}</dd>
       </div>
+      {walk.recovered > 0 && (
+        <div className="flex items-center justify-between">
+          <dt className="text-muted-foreground">
+            Owed back from an earlier refund
+          </dt>
+          <dd className="font-medium text-foreground">
+            −{inr(walk.recovered)}
+          </dd>
+        </div>
+      )}
       <div className="flex items-center justify-between border-t border-border pt-3">
         <dt className="font-medium text-foreground">Paid to you</dt>
         <dd className="text-base font-semibold text-foreground">

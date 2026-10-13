@@ -96,14 +96,14 @@ const contentSection = (noun: string): SectionSpec => ({
       kind: "textarea",
       label: "Prerequisites",
       description: "What someone should already know. Leave blank if none.",
-      span: 3,
+      span: 6,
     },
     {
       name: "materialProvided",
       kind: "textarea",
       label: "Material provided",
       description: "Anything they take away.",
-      span: 3,
+      span: 6,
     },
     {
       name: "targetAudience",
@@ -111,7 +111,7 @@ const contentSection = (noun: string): SectionSpec => ({
       label: "Who this is for",
       itemNoun: "audiences",
       maxItems: 6,
-      span: 3,
+      span: 6,
     },
     {
       name: "whatsIncluded",
@@ -119,7 +119,7 @@ const contentSection = (noun: string): SectionSpec => ({
       label: "What's included",
       itemNoun: "items",
       maxItems: 10,
-      span: 3,
+      span: 6,
     },
   ],
 });
@@ -254,11 +254,13 @@ const sessionDurationField = (description: string): FieldSpec => ({
 });
 
 /**
- * Recording and certification promises. Every model carries the recording
- * columns (#1134 P1-6 made them reachable for 1:1 types too); only webinar
+ * Recording and certification promises. Every type can record; only webinar
  * and class can issue a certificate, so the toggle is opt-in per type.
  */
-const extrasSection = (withCertificate: boolean): SectionSpec => ({
+const extrasSection = (
+  withCertificate: boolean,
+  recordingFields: FieldSpec[] = [],
+): SectionSpec => ({
   id: "extras",
   title: "Extras",
   description: "Recordings and certificates.",
@@ -272,21 +274,7 @@ const extrasSection = (withCertificate: boolean): SectionSpec => ({
         "Sessions can be recorded for attendees to revisit. The host starts recording during a session, subject to consent.",
       span: 3,
     },
-    {
-      // Always rendered rather than shown only when recording is on — the
-      // renderer cannot express field dependencies, and choosing a policy
-      // before enabling is harmless.
-      name: "recordingStoragePolicy",
-      kind: "select",
-      label: "Recording storage",
-      description:
-        "Stream keeps recordings 14 days; Permanent library keeps them indefinitely.",
-      span: 3,
-      options: [
-        { value: "STREAM_ONLY", label: "Stream only" },
-        { value: "PERMANENT", label: "Permanent library" },
-      ],
-    },
+    ...recordingFields,
     ...(withCertificate
       ? [
           {
@@ -410,7 +398,17 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
       fields: [priceField(2), durationHoursField(2), maxParticipantsField],
     },
     contentSection("webinar"),
-    extrasSection(true),
+    extrasSection(true, [
+      {
+        name: "shareRecordingsWithAllAttendees",
+        kind: "switch",
+        label: "Share recordings with attendees of every run",
+        description:
+          "When off, attendees see only the recordings of the run they joined.",
+        span: 3,
+        shownWhen: "recordingEnabled",
+      },
+    ]),
     {
       id: "sessions",
       title: "Sessions",
@@ -488,7 +486,7 @@ export const CLASS_MANIFEST: OfferingManifest = {
         {
           name: "lateJoinersGetPastRecordings",
           kind: "switch",
-          label: "Late joiners can watch earlier recordings",
+          label: "Share past recordings with members who join late",
           description:
             "When off, a late joiner sees recordings only from the sessions after they joined.",
           span: 3,

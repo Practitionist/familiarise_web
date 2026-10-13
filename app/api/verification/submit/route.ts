@@ -5,7 +5,6 @@ import { getSession } from "@/lib/auth-server";
 import { VerificationSubmitSchema } from "@/schemas/verifications";
 import { canSubmitVerification } from "@/utils/onboarding-shared";
 import { applyRateLimit, verificationSubmitLimiter } from "@/lib/rate-limit";
-import { getAppUrl } from "@/lib/url";
 import {
   submitVerificationRequest,
   SUBMIT_REFUSAL_STATUS,
@@ -21,8 +20,7 @@ import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
  */
 export async function POST(request: NextRequest) {
   try {
-    // Force-fresh (see documents route): revocation must bite immediately.
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
@@ -86,7 +84,6 @@ export async function POST(request: NextRequest) {
       linkedinUrl: linkedinUrl ?? null,
       documentIds: documentIds ?? [],
       carryOver: consultantProfile.verificationStatus !== "UNDER_REVIEW",
-      adminDashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
     });
     if (!outcome.ok) {
       return NextResponse.json(

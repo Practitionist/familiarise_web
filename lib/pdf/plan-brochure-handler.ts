@@ -37,7 +37,7 @@ export async function handlePlanBrochureDownload(
       type === "classes"
         ? fetchClassPlanDetail(planId)
         : fetchSubscriptionPlanDetail(planId),
-      getSession(true).catch((error) => {
+      getSession().catch((error) => {
         reportSentryError(error, { subsystem: "plans", expected: true });
         return null;
       }),

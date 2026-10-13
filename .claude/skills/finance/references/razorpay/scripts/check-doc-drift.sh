@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
-# Guards the razorpay skill bundle against the specific wrong claims it was
-# corrected for. Each pattern below was live in these docs at some point and had
-# to be fact-checked out; this stops them creeping back in silently.
+# Guards the razorpay skill bundle, subagents, and payment gateway docs against
+# specific wrong claims that were fact-checked against official Razorpay docs.
 #
 #   bash .claude/skills/finance/references/razorpay/scripts/check-doc-drift.sh
 #
 # Exits non-zero on the first violation found. Run it after editing anything in
-# .claude/skills/finance/references/razorpay/ or .claude/agents/razorpay-*.md.
+# .claude/skills/finance/references/razorpay/, .claude/agents/razorpay-*.md, or
+# docs/payments/.
 
 set -uo pipefail
 
 # Resolve the repo root from the script's own location so the bundle can move
 # without silently scanning nothing (#1483).
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../../.." && pwd)"
-TARGETS=("$ROOT/.claude/skills/finance/references/razorpay" "$ROOT/.claude/agents")
+TARGETS=(
+  "$ROOT/.claude/skills/finance/references/razorpay"
+  "$ROOT/.claude/agents"
+  "$ROOT/docs/payments/gateways"
+  "$ROOT/docs/payments/webhooks"
+  "$ROOT/docs/payments/payouts/07-razorpay-implementation.md"
+)
 FAILED=0
 
 for target in "${TARGETS[@]}"; do
-  if [ ! -d "$target" ]; then
-    echo "FAIL: target directory does not exist: $target"
-    echo "      the bundle moved; update TARGETS in $(basename "${BASH_SOURCE[0]}")"
+  if [[ ! -e "$target" ]]; then
+    echo "FAIL: target path does not exist: $target"
+    echo "      update TARGETS in $(basename "${BASH_SOURCE[0]}")"
     exit 1
   fi
 done
@@ -35,7 +41,7 @@ check() {
     --include='*.md' --include='*.sh' \
     --exclude="$(basename "${BASH_SOURCE[0]}")" \
     | grep -v 'drift-ok' || true)
-  if [ -n "$hits" ]; then
+  if [[ -n "$hits" ]]; then
     echo "FAIL: $why"
     echo "$hits" | sed 's/^/      /'
     echo
@@ -49,11 +55,20 @@ check 'payment\.refund\.(created|processed|failed|speed_changed)' \
 check '\bspeed[^a-z]{0,4}(:|=)\s*.optimized' \
   "refund speed values are normal|optimum; 'optimized' does not exist"
 
+check 'speed_requested:[[:space:]]*z\.enum\(\["normal", "instant"\]\)' \
+  "speed_requested is z.enum(['normal', 'optimum']); 'instant' only appears on speed_processed"
+
 check '4111[ -]?1111[ -]?1111[ -]?1111' \
-  "Razorpay's documented test cards are the 4100 2800 family; 4111... is generic tutorial filler"
+  "Razorpay's documented test cards are the 4100 2800 / 4012 8888 family; 4111... is a Stripe test card"
+
+check '4000[ -]?0000[ -]?0000[ -]?0002' \
+  "4000 0000 0000 0002 is a Stripe test card, not a Razorpay test card"
 
 check "(pause|resume)_initiated_by.*(request|param|-d )" \
   "pause/resume take pause_at / resume_at; *_initiated_by is response-only"
+
+check '(pause|resume)_initiated_by:[[:space:]]*"self"' \
+  "pause/resume request body takes pause_at/resume_at: 'now', never *_initiated_by: 'self'"
 
 check 'can REPLAY|replay the individual event|Dashboard can [Rr]eplay' \
   "there is no self-serve webhook replay — it is a support ticket, <=15 days, one event at a time"
@@ -72,7 +87,10 @@ check 'RAZORPAY_KEY_SECRET' \
 check '(payload|entity|response|Razorpay)[^.]{0,20}\.current_period_end' \
   "Razorpay sends current_end; current_period_end is a Stripe-ism"
 
-if [ "$FAILED" -eq 0 ]; then
+check 'Webhook-only \(no API management\)|Razorpay does \*\*not\*\* provide a direct API for managing disputes' \
+  "Razorpay provides a full REST Disputes & Documents API (/v1/disputes, /v1/documents, PATCH /v1/disputes/:id/contest)"
+
+if [[ "$FAILED" -eq 0 ]]; then
   echo "OK: no known-stale Razorpay claims found."
 fi
 exit "$FAILED"

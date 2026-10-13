@@ -41,7 +41,6 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import StripeCheckout from "../../../components/StripeCheckout";
 import { AvailabilityRecovery } from "../../../components/AvailabilityRecovery";
 import {
   consultationRecoveryHref,
@@ -55,14 +54,20 @@ import {
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
+import { useReferralPricing } from "../../useReferralPricing";
 import {
   createRazorpayCheckoutHandlers,
-  createStripeCheckoutHandlers,
   mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
   reportPaymentsError,
 } from "@/app/checkout/plans/utils";
+import {
+  CancellationPolicyNote,
+  type PurchaseFunding,
+} from "@/components/booking/CancellationPolicyNote";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 // price arrives as number: extended client + JSON serialization (#780)
 type ConsultationPlanWithConsultant = Omit<ConsultationPlan, "price"> & {
@@ -147,6 +152,14 @@ export default function ConsultationCheckoutPage({
     string | null
   >(null);
   const { data: session } = useSession();
+  // #1863 — the refund rail, derived from the buyer's own funding choice so the
+  // promise under the price moves with it.
+  const viewer = useViewerZone();
+  const purchaseFunding: PurchaseFunding = selectedOrganizationId
+    ? { kind: "organization", name: null }
+    : useReferralCredits
+      ? { kind: "credits" }
+      : { kind: "gateway" };
   const selectedOrgFundingSource = useMemo(() => {
     if (!selectedOrganizationId) return null;
     const memberships = session?.user?.organizationMemberships ?? [];
@@ -155,7 +168,6 @@ export default function ConsultationCheckoutPage({
         ?.fundingSource ?? null
     );
   }, [selectedOrganizationId, session?.user?.organizationMemberships]);
-  const isLicenseCovered = selectedOrgFundingSource === "LICENSE";
 
   const { toast } = useToast();
   const {
@@ -260,6 +272,9 @@ export default function ConsultationCheckoutPage({
   });
 
   const eventData = checkoutPlanQuery.data?.plan ?? null;
+  const referralPricing = useReferralPricing(
+    eventData?.data?.consultantProfile?.id,
+  );
   const isLoading = checkoutPlanQuery.isPending;
   const error =
     slotPassedError ??
@@ -356,7 +371,7 @@ export default function ConsultationCheckoutPage({
       _gateway: string,
       isMockPayment: boolean = false,
     ) => {
-      return fetch("/api/checkout", {
+      return fetchWithIdentity("/api/checkout", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -458,7 +473,7 @@ export default function ConsultationCheckoutPage({
         }
 
         // handleCheckout is only invoked by the dev-only Mock Pay button (isMockPayment=true).
-        // Real payments go through StripeCheckout/RazorpayCheckout components.
+        // Real payments go through the RazorpayCheckout component.
         // FIX #520: Also handle zero-amount payments (credits covered full cost)
         if (
           data.skipPayment ||
@@ -535,10 +550,17 @@ export default function ConsultationCheckoutPage({
       discountPercent: discountAmount > 0 ? 0 : discountPercent, // Don't use percent if we have a fixed amount
       discountAmount,
       creditsApplied: useReferralCredits ? availableCredits : 0,
+      welcomeDiscount:
+        appliedDiscount || selectedOrganizationId
+          ? null
+          : referralPricing?.welcomeDiscount,
+      creditCapBps: referralPricing?.creditCapBps,
       isInternational: checkoutTaxContext.isInternational,
       exportZeroRated: checkoutTaxContext.exportZeroRated,
     });
   }, [
+    referralPricing,
+    selectedOrganizationId,
     eventData?.data?.price,
     appliedDiscount,
     useReferralCredits,
@@ -839,10 +861,6 @@ export default function ConsultationCheckoutPage({
                 <div>Subtotal</div>
                 <div>{formatPrice(pricing.subtotal)}</div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
               {pricing.discountAmount > 0 && (
                 <div className="flex items-center justify-between text-green-600">
                   <div>
@@ -853,6 +871,10 @@ export default function ConsultationCheckoutPage({
                   <div>-{formatPrice(pricing.discountAmount)}</div>
                 </div>
               )}
+              <div className="flex items-center justify-between">
+                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
+                <div>{formatPrice(pricing.taxAmount)}</div>
+              </div>
               {pricing.creditsApplied > 0 && (
                 <div className="flex items-center justify-between text-foreground">
                   <div>Referral Credits</div>
@@ -862,30 +884,38 @@ export default function ConsultationCheckoutPage({
               <Separator className="bg-border" />
               <div className="flex items-center justify-between font-semibold">
                 <div>Total</div>
-                <div>
-                  {isLicenseCovered
-                    ? formatPrice(0)
-                    : formatPrice(pricing.total)}
-                </div>
+                <div>{formatPrice(pricing.total)}</div>
               </div>
-              {!isLicenseCovered && (
-                <FxEstimateNote
-                  totalPaise={pricing.total}
-                  organizationId={selectedOrganizationId}
-                />
-              )}
-              {!isLicenseCovered && (
-                <EmiHint
-                  totalPaise={pricing.total}
-                  organizationId={selectedOrganizationId}
-                />
-              )}
-              {isLicenseCovered && (
+              <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              <EmiHint
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              {selectedOrgFundingSource === "LICENSE" && (
                 <p className="text-xs text-emerald-600">
-                  Session value {formatPrice(pricing.total)} — covered by
-                  enterprise license
+                  Programme license coverage (if entitled) is verified and
+                  applied at checkout
                 </p>
               )}
+              {/* #1863 — the notice ladder, in the buyer's own terms, at the
+                  one moment they can still act on it. A consultation buy showed
+                  no cancellation terms at all: the ladder only surfaced in the
+                  cancel dialog, i.e. after the money had already gone. */}
+              <CancellationPolicyNote
+                eventKind="individual"
+                // A consultation checkout can already carry a chosen slot, and
+                // when it does the ladder has a live rung: the note then says
+                // what cancelling THIS booking returns and how much earlier
+                // notice would be worth more, instead of only printing the
+                // table.
+                eventStartsAt={validatedSearchParams?.startsAt ?? null}
+                funding={purchaseFunding}
+                viewerZone={viewer}
+                className="border-t border-border pt-3 text-xs text-muted-foreground"
+              />
             </div>
           </CardContent>
         </Card>
@@ -971,52 +1001,7 @@ export default function ConsultationCheckoutPage({
                                 error.message ??
                                 error.reason,
                               errorType: error.code,
-                              yourCardWasNotCharged:
-                                error.yourCardWasNotCharged,
-                            })
-                          }
-                        />
-                      ) : validatedSearchParams &&
-                        gateway.gateway === "STRIPE" ? (
-                        <StripeCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "CONSULTATION",
-                            planId: resolvedParams.planId,
-                            paymentGateway: "STRIPE",
-                            startsAt: validatedSearchParams.startsAt,
-                            endsAt: validatedSearchParams.endsAt,
-                            availabilityWindowWeeklyId:
-                              validatedSearchParams.availabilityWindowWeeklyId,
-                            availabilityWindowCustomId:
-                              validatedSearchParams.availabilityWindowCustomId,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            notes: validatedSearchParams.notes,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          onPaymentSuccess={
-                            createStripeCheckoutHandlers(toast).onPaymentSuccess
-                          }
-                          disabled={
-                            isMaintenanceBlocked || !!availabilityRefusal
-                          }
-                          onPaymentError={(error: {
-                            message?: string;
-                            description?: string;
-                            errorType?: string;
-                            error?: string;
-                            yourCardWasNotCharged?: boolean;
-                          }) =>
-                            handleApiError({
-                              error:
-                                error.error ??
-                                error.message ??
-                                error.description,
-                              errorType: error.errorType,
+                              code: error.code,
                               yourCardWasNotCharged:
                                 error.yourCardWasNotCharged,
                             })

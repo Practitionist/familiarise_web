@@ -1,22 +1,8 @@
 /**
- * P3 onboarding email twins — the Resend side of the onboarding/org bells.
- *
- * Every sender here is a required notice (`category: null`): verification
- * outcomes, roster changes, org creation and invite-accept affect access or
- * money-adjacent state, so the preference gate never blocks them. Each takes
- * user ids plus the raw values its call site already holds, resolves
- * recipients through the preference gate, renders per recipient, and never
- * throws.
- *
- * One shape per notice. `stage*` only writes the outbox rows — one fast
- * insert per recipient, no vendor call — and returns them for
- * `attemptOnboardingEmail()` inside `after()`: the row exists before the
- * response, so a dropped or timed-out `after()` costs nothing but latency
- * (the relay finishes the send), while the response never waits on the
- * Resend budget.
+ * Onboarding and organization email twins — staged through the outbox and
+ * attempted after the response via `attemptOnboardingEmail()`.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import * as React from "react";
 import VerificationDecidedEmail, {
   verificationDecidedSubject,
@@ -32,15 +18,17 @@ import OrgMembershipChangedEmail, {
 import OrgWelcomeEmail, {
   orgWelcomeSubject,
 } from "@/emails/organizations/OrgWelcomeEmail";
-import prisma, { type Tx } from "@/lib/prisma";
-import { getAppUrl } from "@/lib/url";
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
-import { loadEmailRecipients, type EmailRecipient } from "../preferences";
+import { attemptStaged } from "../send-to-recipients";
 import {
-  attemptStaged,
-  stageToRecipients,
-  type StagedRecipientEmail,
-} from "../send-to-recipients";
+  absolute,
+  defineStagedEmailSender,
+  greet,
+  type StagedOnboardingEmail,
+  type StagingTx,
+} from "./shared";
+
+export type { StagedOnboardingEmail, StagingTx };
 
 export const ONBOARDING_EMAIL_TYPES = {
   VERIFICATION_DECIDED: "VERIFICATION_DECIDED",
@@ -50,77 +38,6 @@ export const ONBOARDING_EMAIL_TYPES = {
   ORG_WELCOME: "ORG_WELCOME",
 } as const;
 
-type Spec = {
-  emailType: string;
-  entityRef: string;
-  from: string;
-  budgetMs: number;
-  subject: (r: EmailRecipient) => string;
-  render: (r: EmailRecipient) => React.ReactElement;
-};
-
-/** Outbox rows a route attempts after its response (`attemptOnboardingEmail`). */
-export interface StagedOnboardingEmail {
-  emailType: string;
-  budgetMs: number;
-  list: StagedRecipientEmail[];
-}
-
-const NOTHING_STAGED = (spec: Spec): StagedOnboardingEmail => ({
-  emailType: spec.emailType,
-  budgetMs: spec.budgetMs,
-  list: [],
-});
-
-function absolute(href: string): string {
-  return href.startsWith("/") ? `${getAppUrl()}${href}` : href;
-}
-
-function greet(r: EmailRecipient): string {
-  return r.name?.trim() || "there";
-}
-
-/** The transaction a route stages inside; recipients are read through it too (PG_POOL_MAX=1). */
-export type StagingTx = Pick<Tx, "failedEmail" | "emailSuppression" | "user">;
-
-// Stage only: one FailedEmail row per allowed recipient, no vendor call.
-// With `tx` the rows join the caller's transaction — recipients are read
-// through it (a global-client read would deadlock on the single
-// connection) and a staging failure PROPAGATES so the business change and
-// its notice commit or roll back together. Without `tx` (a caller with no
-// transaction) a failure is reported and yields an empty list.
-async function stageGuarded(
-  spec: Spec,
-  userIds: string[],
-  tx?: StagingTx,
-): Promise<StagedOnboardingEmail> {
-  const run = async () => {
-    const recipients = await loadEmailRecipients(userIds, null, tx ?? prisma);
-    const list = await stageToRecipients({
-      tx: tx ?? prisma,
-      recipients,
-      emailType: spec.emailType,
-      from: spec.from,
-      entityRef: spec.entityRef,
-      subject: spec.subject,
-      render: spec.render,
-    });
-    return { emailType: spec.emailType, budgetMs: spec.budgetMs, list };
-  };
-  if (tx) return run();
-  try {
-    return await run();
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "email", emailType: spec.emailType } },
-    );
-    console.error(`[email] ${spec.emailType} stage failed:`, error);
-    return NOTHING_STAGED(spec);
-  }
-}
-
-/** The `after()` half of a `stage*` call. Never throws. */
 export async function attemptOnboardingEmail(
   staged: StagedOnboardingEmail,
 ): Promise<void> {
@@ -140,38 +57,36 @@ export interface VerificationDecidedEmailArgs {
   status: VerificationDecidedStatus;
   reason?: string;
   dashboardUrl: string;
-  /** Reminder only: days before the unanswered request closes. */
   daysLeft?: number;
 }
 
-function verificationDecidedSpec(args: VerificationDecidedEmailArgs): Spec {
-  const dashboardUrl = absolute(args.dashboardUrl);
-  const support = supportEmail();
-  return {
-    emailType: ONBOARDING_EMAIL_TYPES.VERIFICATION_DECIDED,
-    entityRef: `verification:${args.verificationId}`,
-    from: SENDERS.onboarding,
-    budgetMs: EMAIL_BUDGET_MS.REQUEST,
-    subject: () => verificationDecidedSubject(args.status),
-    render: (r) =>
-      React.createElement(VerificationDecidedEmail, {
-        recipientName: greet(r),
-        status: args.status,
-        reason: args.reason,
-        dashboardUrl,
-        supportEmail: support,
-        daysLeft: args.daysLeft,
-      }),
-  };
-}
-
-/** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
-export function stageVerificationDecidedEmail(
-  args: VerificationDecidedEmailArgs,
-  tx?: StagingTx,
-): Promise<StagedOnboardingEmail> {
-  return stageGuarded(verificationDecidedSpec(args), [args.userId], tx);
-}
+export const stageVerificationDecidedEmail =
+  defineStagedEmailSender<VerificationDecidedEmailArgs>(
+    EMAIL_BUDGET_MS.REQUEST,
+    (args) => {
+      const dashboardUrl = absolute(args.dashboardUrl);
+      const support = supportEmail();
+      return {
+        userIds: [args.userId],
+        spec: {
+          emailType: ONBOARDING_EMAIL_TYPES.VERIFICATION_DECIDED,
+          category: null,
+          entityRef: `verification:${args.verificationId}`,
+          from: SENDERS.onboarding,
+          subject: () => verificationDecidedSubject(args.status),
+          render: (r) =>
+            React.createElement(VerificationDecidedEmail, {
+              recipientName: greet(r),
+              status: args.status,
+              reason: args.reason,
+              dashboardUrl,
+              supportEmail: support,
+              daysLeft: args.daysLeft,
+            }),
+        },
+      };
+    },
+  );
 
 // ── Membership role change / removal (non-EXPERT) ───────────────────────────
 
@@ -186,40 +101,42 @@ export interface OrgMembershipChangedEmailArgs {
   dashboardUrl: string;
 }
 
-function orgMembershipChangedSpec(args: OrgMembershipChangedEmailArgs): Spec {
-  const dashboardUrl = absolute(args.dashboardUrl);
-  const support = supportEmail();
-  return {
-    emailType:
-      args.kind === "REMOVED"
-        ? ONBOARDING_EMAIL_TYPES.ORG_MEMBERSHIP_REMOVED
-        : ONBOARDING_EMAIL_TYPES.ORG_MEMBERSHIP_ROLE_CHANGED,
-    entityRef: `membership:${args.membershipId}`,
-    from: SENDERS.notifications,
-    budgetMs: EMAIL_BUDGET_MS.REQUEST,
-    subject: () =>
-      orgMembershipChangedSubject({ kind: args.kind, orgName: args.orgName }),
-    render: (r) =>
-      React.createElement(OrgMembershipChangedEmail, {
-        recipientName: greet(r),
-        kind: args.kind,
-        orgName: args.orgName,
-        roleBefore: args.roleBefore,
-        roleAfter: args.roleAfter,
-        actorName: args.actorName,
-        dashboardUrl,
-        supportEmail: support,
-      }),
-  };
-}
-
-/** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
-export function stageOrgMembershipChangedEmail(
-  args: OrgMembershipChangedEmailArgs,
-  tx?: StagingTx,
-): Promise<StagedOnboardingEmail> {
-  return stageGuarded(orgMembershipChangedSpec(args), [args.userId], tx);
-}
+export const stageOrgMembershipChangedEmail =
+  defineStagedEmailSender<OrgMembershipChangedEmailArgs>(
+    EMAIL_BUDGET_MS.REQUEST,
+    (args) => {
+      const dashboardUrl = absolute(args.dashboardUrl);
+      const support = supportEmail();
+      return {
+        userIds: [args.userId],
+        spec: {
+          emailType:
+            args.kind === "REMOVED"
+              ? ONBOARDING_EMAIL_TYPES.ORG_MEMBERSHIP_REMOVED
+              : ONBOARDING_EMAIL_TYPES.ORG_MEMBERSHIP_ROLE_CHANGED,
+          category: null,
+          entityRef: `membership:${args.membershipId}`,
+          from: SENDERS.notifications,
+          subject: () =>
+            orgMembershipChangedSubject({
+              kind: args.kind,
+              orgName: args.orgName,
+            }),
+          render: (r) =>
+            React.createElement(OrgMembershipChangedEmail, {
+              recipientName: greet(r),
+              kind: args.kind,
+              orgName: args.orgName,
+              roleBefore: args.roleBefore,
+              roleAfter: args.roleAfter,
+              actorName: args.actorName,
+              dashboardUrl,
+              supportEmail: support,
+            }),
+        },
+      };
+    },
+  );
 
 // ── Org created ─────────────────────────────────────────────────────────────
 
@@ -230,30 +147,29 @@ export interface OrgCreatedEmailArgs {
   dashboardUrl: string;
 }
 
-function orgCreatedSpec(args: OrgCreatedEmailArgs): Spec {
-  const dashboardUrl = absolute(args.dashboardUrl);
-  return {
-    emailType: ONBOARDING_EMAIL_TYPES.ORG_CREATED,
-    entityRef: `org:${args.orgId}`,
-    from: SENDERS.onboarding,
-    budgetMs: EMAIL_BUDGET_MS.REQUEST,
-    subject: () => orgCreatedSubject(args.orgName),
-    render: (r) =>
-      React.createElement(OrgCreatedEmail, {
-        recipientName: greet(r),
-        orgName: args.orgName,
-        dashboardUrl,
-      }),
-  };
-}
-
-/** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
-export function stageOrgCreatedEmail(
-  args: OrgCreatedEmailArgs,
-  tx?: StagingTx,
-): Promise<StagedOnboardingEmail> {
-  return stageGuarded(orgCreatedSpec(args), [args.userId], tx);
-}
+export const stageOrgCreatedEmail =
+  defineStagedEmailSender<OrgCreatedEmailArgs>(
+    EMAIL_BUDGET_MS.REQUEST,
+    (args) => {
+      const dashboardUrl = absolute(args.dashboardUrl);
+      return {
+        userIds: [args.userId],
+        spec: {
+          emailType: ONBOARDING_EMAIL_TYPES.ORG_CREATED,
+          category: null,
+          entityRef: `org:${args.orgId}`,
+          from: SENDERS.onboarding,
+          subject: () => orgCreatedSubject(args.orgName),
+          render: (r) =>
+            React.createElement(OrgCreatedEmail, {
+              recipientName: greet(r),
+              orgName: args.orgName,
+              dashboardUrl,
+            }),
+        },
+      };
+    },
+  );
 
 // ── Org welcome (acceptee) ──────────────────────────────────────────────────
 
@@ -265,28 +181,27 @@ export interface OrgWelcomeEmailArgs {
   dashboardUrl: string;
 }
 
-function orgWelcomeSpec(args: OrgWelcomeEmailArgs): Spec {
-  const dashboardUrl = absolute(args.dashboardUrl);
-  return {
-    emailType: ONBOARDING_EMAIL_TYPES.ORG_WELCOME,
-    entityRef: `membership:${args.membershipId}`,
-    from: SENDERS.onboarding,
-    budgetMs: EMAIL_BUDGET_MS.REQUEST,
-    subject: () => orgWelcomeSubject(args.orgName),
-    render: (r) =>
-      React.createElement(OrgWelcomeEmail, {
-        recipientName: greet(r),
-        orgName: args.orgName,
-        role: args.role,
-        dashboardUrl,
-      }),
-  };
-}
-
-/** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
-export function stageOrgWelcomeEmail(
-  args: OrgWelcomeEmailArgs,
-  tx?: StagingTx,
-): Promise<StagedOnboardingEmail> {
-  return stageGuarded(orgWelcomeSpec(args), [args.userId], tx);
-}
+export const stageOrgWelcomeEmail =
+  defineStagedEmailSender<OrgWelcomeEmailArgs>(
+    EMAIL_BUDGET_MS.REQUEST,
+    (args) => {
+      const dashboardUrl = absolute(args.dashboardUrl);
+      return {
+        userIds: [args.userId],
+        spec: {
+          emailType: ONBOARDING_EMAIL_TYPES.ORG_WELCOME,
+          category: null,
+          entityRef: `membership:${args.membershipId}`,
+          from: SENDERS.onboarding,
+          subject: () => orgWelcomeSubject(args.orgName),
+          render: (r) =>
+            React.createElement(OrgWelcomeEmail, {
+              recipientName: greet(r),
+              orgName: args.orgName,
+              role: args.role,
+              dashboardUrl,
+            }),
+        },
+      };
+    },
+  );

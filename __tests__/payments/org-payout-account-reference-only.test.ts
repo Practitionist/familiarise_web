@@ -24,6 +24,7 @@ jest.mock("../../lib/auth-helpers", () => ({
   requireOrgAccess: jest.fn(async () => ({
     org: { canHost: true, billingEmail: null },
     member: { id: "m1" },
+    session: { session: { createdAt: new Date() } },
   })),
 }));
 jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({

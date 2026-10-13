@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { format } from "date-fns";
 import { ArrowUpRight, CreditCard } from "lucide-react";
 import {
   Sheet,
@@ -16,10 +15,15 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
+import {
+  isDeadOccurrence,
+  isDeliberateEnd,
+} from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
+import { useZonedFormat } from "@/lib/time/zoned-format";
 import { CountdownBadge } from "./CountdownBadge";
 import { KIND_LABEL } from "./AppointmentRow";
 import { RowPrimaryAction } from "./RowPrimaryAction";
@@ -55,6 +59,7 @@ export function AppointmentSheet({
   joinWindowMs,
 }: AppointmentSheetProps) {
   const router = useRouter();
+  const format = useZonedFormat();
   if (!vm) return null;
 
   const action = adapter.primaryAction(vm);
@@ -64,12 +69,20 @@ export function AppointmentSheet({
   const anchorSession = vm.nextAt
     ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
+  const anchorDeliberatelyEnded = anchorSession
+    ? isDeliberateEnd({
+        endedAt: anchorSession.meetingEndedAt,
+        endedReason: anchorSession.meetingEndedReason,
+      })
+    : false;
   const anchorOver = vm.nextAt
-    ? (anchorSession?.endsAt?.getTime() ??
+    ? anchorDeliberatelyEnded ||
+      (anchorSession?.endsAt?.getTime() ??
         vm.nextAt.getTime() + 60 * 60 * 1000) < Date.now()
     : false;
-  const hasConcreteSessions = vm.occurrences.some((s) => !s.isTentative);
-  const allTentative = vm.occurrences.length > 0 && !hasConcreteSessions;
+  const liveOccurrences = vm.occurrences.filter((s) => !isDeadOccurrence(s));
+  const hasConcreteSessions = liveOccurrences.some((s) => !s.isTentative);
+  const allTentative = liveOccurrences.length > 0 && !hasConcreteSessions;
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -111,6 +124,11 @@ export function AppointmentSheet({
                 Your role: {vm.collaboratorRole}
               </span>
             )}
+            {vm.kind === "TRIAL" && (
+              <span className="rounded bg-muted text-muted-foreground px-1.5 py-px text-[10px] font-medium">
+                Trial booking — direct chat requires a paid plan
+              </span>
+            )}
           </div>
         </SheetHeader>
 
@@ -138,6 +156,7 @@ export function AppointmentSheet({
                     <CountdownBadge
                       targetDate={vm.nextAt}
                       sessionEndDate={anchorSession?.endsAt ?? undefined}
+                      meetingEnded={anchorDeliberatelyEnded}
                     />
                   )}
                 </div>
@@ -155,9 +174,6 @@ export function AppointmentSheet({
                 </div>
                 <Progress
                   value={
-                    // A group whose sessions have no slots yet has total 0,
-                    // and 0/0 is NaN — which reaches Progress as an
-                    // attribute value and renders a broken bar.
                     vm.group.total > 0
                       ? (vm.group.completed / vm.group.total) * 100
                       : 0
@@ -188,7 +204,7 @@ export function AppointmentSheet({
                   isJoining={action.kind === "join" && !!action.busy}
                   onJoinSession={
                     action.kind === "join" && action.onClick
-                      ? () => action.onClick!()
+                      ? action.onClick
                       : undefined
                   }
                 />
@@ -231,22 +247,36 @@ export function AppointmentSheet({
                 )}
                 {overflow.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
-                    {overflow.map((item) => (
-                      <Button
-                        key={item.key}
-                        variant="outline"
-                        size="sm"
-                        disabled={item.disabled}
-                        onClick={item.onClick}
-                        className={
-                          item.destructive
-                            ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
-                            : undefined
-                        }
-                      >
-                        {item.label}
-                      </Button>
-                    ))}
+                    {overflow.map((item) => {
+                      const destructiveClassName = item.destructive
+                        ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
+                        : undefined;
+                      if (item.href && !item.disabled) {
+                        return (
+                          <Button
+                            key={item.key}
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            className={destructiveClassName}
+                          >
+                            <Link href={item.href}>{item.label}</Link>
+                          </Button>
+                        );
+                      }
+                      return (
+                        <Button
+                          key={item.key}
+                          variant="outline"
+                          size="sm"
+                          disabled={item.disabled}
+                          onClick={item.onClick}
+                          className={destructiveClassName}
+                        >
+                          {item.label}
+                        </Button>
+                      );
+                    })}
                   </div>
                 )}
                 {detailHref && (

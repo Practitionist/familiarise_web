@@ -12,28 +12,26 @@ The booking system relies on several cron jobs to maintain data integrity, expir
 
 ### Invocation Model
 
-Each job follows a dual-invocation pattern:
+Each job follows a unified HTTP-first or GitHub Actions invocation pattern:
 
-1. **GitHub Actions** (unbounded backstop) -- Workflows in `.github/workflows/` run on a `schedule` trigger and execute the core script directly via `npx tsx`. ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule roughly once every hundred minutes rather than on its declared cadence, so Actions is the fleet's daily/weekly and unbounded fallback scheduler, not the primary invocation for a latency-sensitive job.
-2. **API endpoints** -- Thin wrapper routes in `app/api/cleanup/` exist for every job. Five of the booking jobs are also Netlify ticker targets: `netlify/functions/cron-tick.mts` (ADR 27) POSTs them on every third five-minute tick, a 15-minute cadence, and the ticker is their primary invocation while the hourly (or, for `tentative-occurrences`, two-hourly) GitHub Actions workflow is the unbounded backstop. The remaining routes — `detect-consultant-no-shows`, `auto-complete-appointments`, `reconcile-occurrence-availability` and the rest of this page — are not ticker targets; their Actions schedule is the only automatic invocation and the route serves manual `curl` runs. See "The Netlify ticker" below for the five and their cadences.
+1. **Dynamic HTTP cleanup dispatcher (`app/api/cleanup/[job]/route.ts`)** -- Every cleanup job is registered in `lib/cron/cleanup-registry.ts` and exposed at `/api/cleanup/<job>`. `netlify/functions/cron-tick.mts` runs every five minutes and POSTs latency-sensitive targets (`auto-complete-appointments`, `detect-consultant-no-shows`, `expire-unpaid-trials`, `reschedule-proposals`, `appointment-reminders`, `tentative-occurrences`, `expire-stale-requests`, `settle-cancelled-sessions`, and financial/outbox sweeps) on their configured cadence (`TARGET_EVERY_MINUTES`).
+2. **GitHub Actions** (unbounded backstop / daily & hourly schedules) -- Workflows in `.github/workflows/` run on a `schedule` trigger and execute the core script directly via `npx tsx` where an unbounded process is needed alongside or instead of the Netlify ticker.
 
-Both paths call the same core function exported from `scripts/appointments/`. The API route adds HTTP authentication; the GitHub Actions workflow uses repository secrets for database access.
-
-> **Cross-reference**: See `docs/guides/cron-setup.md` for how to run the Netlify ticker locally.
+Both paths call the same core function exported from `scripts/appointments/` (or `scripts/payments/`, `scripts/trials/`), wrapped in `withCronLock` and `assertNotInMaintenance` / `abortIfMaintenance`.
 
 ---
 
 ## Schedule Overview
 
-| Job                          | Cron Expression   | Human-Readable        | Source Script                                               | API Route                                        |
-| ---------------------------- | ----------------- | --------------------- | ----------------------------------------------------------- | ------------------------------------------------ |
-| Auto-complete appointments   | `7 * * * *`       | Every hour, at :07    | `scripts/appointments/auto-complete-appointments.ts`        | `/api/cleanup/auto-complete-appointments`        |
-| Cleanup tentative slots      | `38 */2 * * *`    | Every 2 hours, at :38 | `scripts/appointments/cleanup-tentative-occurrences.ts`     | `/api/cleanup/tentative-occurrences`             |
-| Cleanup invalid appointments | `12 * * * *`      | Every hour, at :12    | `scripts/appointments/cleanup-invalid-appointments.ts`      | `/api/cleanup/invalid-appointments`              |
-| Expire stale requests        | `10 * * * *`      | Every hour, at :10    | `scripts/appointments/expire-stale-requests.ts`             | `/api/cleanup/expire-stale-requests`             |
-| Cleanup abandoned payments   | `6-59/15 * * * *` | Every 15 minutes      | `scripts/payments/cleanup-abandoned-payments.ts`            | `/api/cleanup/abandoned-payments`                |
-| Reconcile slot availability  | `32 * * * *`      | Every hour, at :32    | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
-| Detect consultant no-shows   | `57 * * * *`      | Every hour, at :57    | `scripts/appointments/detect-consultant-no-shows.ts`        | N/A (GitHub Actions only)                        |
+| Job                          | Cadence / Trigger                          | Source Script                                               | API Route (`app/api/cleanup/[job]`)              |
+| ---------------------------- | ------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------ |
+| Auto-complete appointments   | Netlify ticker every 30 min                | `scripts/appointments/auto-complete-appointments.ts`        | `/api/cleanup/auto-complete-appointments`        |
+| Cleanup tentative slots      | Netlify ticker every 15 min + GHA `38 */2` | `scripts/appointments/cleanup-tentative-occurrences.ts`     | `/api/cleanup/tentative-occurrences`             |
+| Cleanup invalid appointments | GHA `12 * * * *`                           | `scripts/appointments/cleanup-invalid-appointments.ts`      | `/api/cleanup/invalid-appointments`              |
+| Expire stale requests        | Netlify ticker every 15 min + GHA `10 *`   | `scripts/appointments/expire-stale-requests.ts`             | `/api/cleanup/expire-stale-requests`             |
+| Cleanup abandoned payments   | Netlify ticker every 15 min + GHA `6-59/15`| `scripts/payments/cleanup-abandoned-payments.ts`            | `/api/cleanup/abandoned-payments`                |
+| Reconcile slot availability  | GHA `32 * * * *`                           | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
+| Detect consultant no-shows   | Netlify ticker every 30 min                | `scripts/appointments/detect-consultant-no-shows.ts`        | `/api/cleanup/detect-consultant-no-shows`        |
 
 ---
 
@@ -314,44 +312,39 @@ Since #1780 the ticker also drives `settle-cancelled-sessions` every 15 minutes 
 
 ## Job Architecture
 
-All booking cron jobs follow the same three-layer pattern:
+All booking cron jobs follow the same layered pattern:
 
 ```
-scripts/appointments/<job>.ts    -- Core logic (exported function, testable)
+scripts/appointments/<job>.ts    -- Core logic (exported function, testable, withCronLock)
      |
      v
-app/api/cleanup/<job>/route.ts   -- HTTP wrapper (auth + invoke core function)
+lib/cron/cleanup-registry.ts     -- Central cleanup job registry
      |
      v
-.github/workflows/<job>.yml     -- Cron trigger (schedule + environment setup)
+app/api/cleanup/[job]/route.ts   -- Dynamic HTTP dispatcher (CRON_SECRET + assertNotInMaintenance)
 ```
 
-The core script has no HTTP or framework dependencies. The API route is a thin wrapper that adds authentication and returns JSON. The GitHub Actions workflow handles scheduling, dependency installation, and failure notifications.
+The core script has no HTTP or framework dependencies. `app/api/cleanup/[job]/route.ts` dispatches to `lib/cron/cleanup-registry.ts`, which adds authentication and maintenance guards and returns JSON. `netlify/functions/cron-tick.mts` and `.github/workflows/<job>.yml` invoke the registered jobs on schedule.
 
 ```mermaid
 flowchart TD
     subgraph Triggers
-        GHA["GitHub Actions<br/>(schedule cron, unbounded backstop)"]
+        GHA["GitHub Actions<br/>(schedule cron)"]
         TICK["Netlify ticker<br/>(cron-tick.mts, every 5 min)"]
         MANUAL["Manual curl<br/>(POST/GET)"]
     end
 
     subgraph "API Layer"
-        ROUTE["app/api/cleanup/*/route.ts<br/>- Verify CRON_SECRET<br/>- Return JSON result"]
+        ROUTE["app/api/cleanup/[job]/route.ts<br/>lib/cron/cleanup-registry.ts"]
     end
 
     subgraph "Core Logic"
         SCRIPT["scripts/appointments/*.ts<br/>- Query database<br/>- Apply business rules<br/>- Update records"]
     end
 
-    subgraph "GitHub Actions Path"
-        JOB["jobs/appointments/*.ts<br/>- Import core function<br/>- Call + disconnect"]
-    end
-
-    GHA --> JOB
+    GHA --> SCRIPT
     TICK --> ROUTE
     MANUAL --> ROUTE
-    JOB --> SCRIPT
     ROUTE --> SCRIPT
     SCRIPT --> DB[(Database)]
 ```

@@ -32,6 +32,8 @@ import type { Tx } from "@/lib/prisma";
  *                         which this engine never calls (reverseClassMulti marks
  *                         its child refunds SUCCEEDED with no gateway leg).
  *   - PAYOUT_CLAWBACK   — the dispute-lost branch of handleDisputeUpdated.
+ *   - CONSULTANT_CLAWBACK — the same branch's consultant rail: a lost dispute on
+ *                         an earning a COMPLETED ConsultantPayout already paid.
  *   - BOOKING / OVERAGE — single-payment reversals still flow through
  *                         `refundPayment` (it owns the gateway phases); nothing
  *                         calls applyReversal for those from a route.
@@ -45,6 +47,7 @@ import {
 } from "@prisma/client";
 import { applyRefundCascade, type ApplyRefundCascadeResult } from "./refund";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import { ORG_CLAWBACK_KEY_PREFIX } from "@/lib/payments/payouts/clawback-recovery";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -61,6 +64,13 @@ type ReversalSource =
   | { kind: "OVERAGE"; overagePaymentId: string }
   // Gateway-side payout clawback (e.g. a lost dispute on an org-funded booking).
   | { kind: "PAYOUT_CLAWBACK"; orgPayoutId: string; organizationId: string }
+  // Consultant mirror of PAYOUT_CLAWBACK; cash cannot be pulled on this rail,
+  // so the recovery is booked as a receivable.
+  | {
+      kind: "CONSULTANT_CLAWBACK";
+      consultantPayoutId: string;
+      consultantProfileId: string;
+    }
   // A consolidated CLASS purchase: many child payments, no single paymentId.
   | { kind: "CLASS_MULTI"; paymentIds: string[] };
 
@@ -149,6 +159,21 @@ export async function applyReversal(
       );
       return {
         kind: "PAYOUT_CLAWBACK",
+        cascades: [],
+        childRefundIds: [],
+        clawbackPosted: posted,
+      };
+    }
+
+    case "CONSULTANT_CLAWBACK": {
+      const posted = await reverseConsultantPayoutClawback(
+        tx,
+        input,
+        input.source.consultantPayoutId,
+        input.source.consultantProfileId,
+      );
+      return {
+        kind: "CONSULTANT_CLAWBACK",
         cascades: [],
         childRefundIds: [],
         clawbackPosted: posted,
@@ -309,8 +334,8 @@ async function reverseClassMulti(
       reason: input.reason,
       initiatedByUserId: input.initiatedByUserId ?? null,
     });
-    await tx.refund.update({
-      where: { id: childRefund.id },
+    await tx.refund.updateMany({
+      where: { id: childRefund.id, status: RefundStatus.PENDING },
       data: { status: RefundStatus.SUCCEEDED },
     });
     results.push(cascade);
@@ -404,7 +429,7 @@ export async function postPayoutClawback(
   // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
   try {
     await postLedgerTxn(tx, {
-      idempotencyKey: `clawback:${refundId}:${payoutId}`,
+      idempotencyKey: `${ORG_CLAWBACK_KEY_PREFIX}${refundId}:${payoutId}`,
       kind: "ORG_PAYOUT",
       payoutId,
       postings: [
@@ -437,3 +462,132 @@ export async function postPayoutClawback(
     throw err;
   }
 }
+
+/** One clawback per (driver id, payout); the dispute path passes `dispute:<id>`. */
+export function consultantClawbackKey(
+  refundId: string,
+  consultantPayoutId: string,
+): string {
+  return `clawback:${refundId}:${consultantPayoutId}`;
+}
+
+/**
+ * Consultant clawback for a PAID payout (no reverse-transfer on this rail):
+ * `Dr CONSULTANT_RECEIVABLE / Cr CONSULTANT_PAYABLE`, net of TDS. A pure
+ * reclassification of the debit the chargeback reversal left on the payable.
+ */
+async function reverseConsultantPayoutClawback(
+  tx: Tx,
+  input: ApplyReversalInput,
+  consultantPayoutId: string,
+  consultantProfileId: string,
+): Promise<boolean> {
+  if (input.amountPaise <= 0) return false;
+
+  // One clawback per (dispute, payout), even when several earnings share it.
+  const alreadyPosted = await tx.ledgerTransaction.findUnique({
+    where: {
+      idempotencyKey: consultantClawbackKey(input.refundId, consultantPayoutId),
+    },
+    select: { id: true },
+  });
+  if (alreadyPosted) return false;
+
+  const payout = await tx.consultantPayout.findUnique({
+    where: { id: consultantPayoutId },
+    select: { id: true, clawbackInitiatedAt: true },
+  });
+  if (!payout) {
+    reportSentryMessage(
+      "reverseConsultantPayoutClawback: target ConsultantPayout not found",
+      {
+        subsystem: "payments",
+        level: "warning",
+        extra: { consultantPayoutId, refundId: input.refundId },
+      },
+    );
+    return false;
+  }
+
+  // Counter kept in step with the journal. Never flips payout status: that
+  // would re-open PAID earnings for a second payout.
+  await tx.consultantPayout.update({
+    where: { id: consultantPayoutId },
+    data: {
+      clawbackAmountPaise: { increment: input.amountPaise },
+      clawbackInitiatedAt: payout.clawbackInitiatedAt ? undefined : new Date(),
+    },
+  });
+
+  await postConsultantPayoutClawback(tx, {
+    refundId: input.refundId,
+    consultantPayoutId,
+    consultantProfileId,
+    amountPaise: input.amountPaise,
+    reason: input.reason,
+  });
+
+  return true;
+}
+
+/** Clawback journal, idempotent on `clawback:<refundId>:<payoutId>`. */
+export async function postConsultantPayoutClawback(
+  tx: Tx,
+  input: {
+    refundId: string;
+    consultantPayoutId: string;
+    consultantProfileId: string;
+    amountPaise: number;
+    reason: string;
+  },
+): Promise<void> {
+  const { consultantPayoutId, consultantProfileId, amountPaise } = input;
+  // Rethrow so the enclosing tx rolls back: reversal and clawback stay atomic.
+  try {
+    await postLedgerTxn(tx, {
+      idempotencyKey: consultantClawbackKey(input.refundId, consultantPayoutId),
+      // Counters a consultant `payout:<id>` txn (doc §4.4), hence PAYOUT.
+      kind: "PAYOUT",
+      payoutId: consultantPayoutId,
+      description: `Consultant payout clawback: ${amountPaise} paise from payout ${consultantPayoutId} (${input.reason})`,
+      postings: [
+        {
+          account: { kind: "CONSULTANT_RECEIVABLE", consultantProfileId },
+          direction: "DEBIT",
+          amountPaise,
+        },
+        {
+          // The lost-chargeback journal already debited this payable for the
+          // reversed share; move that debit balance onto the receivable.
+          account: { kind: "CONSULTANT_PAYABLE", consultantProfileId },
+          direction: "CREDIT",
+          amountPaise,
+        },
+      ],
+    });
+  } catch (err) {
+    reportSentryError(err, { subsystem: "payments", level: "fatal" });
+    console.error(
+      `[ledger] consultant payout clawback posting FAILED for payout ${consultantPayoutId} (refund tx rolls back): ${err instanceof Error ? err.message : String(err)}`,
+    );
+    void recordSystemErrorSafe({
+      // Consultant counterparty: no org to attribute to.
+      organizationId: null,
+      category: "LEDGER",
+      summary: `Consultant payout clawback ledger posting failed for payout ${consultantPayoutId}`,
+      err,
+      context: {
+        consultantPayoutId,
+        consultantProfileId,
+        refundId: input.refundId,
+      },
+    });
+    throw err;
+  }
+}
+
+export {
+  accumulatePaidConsultantClawback,
+  applyPaidConsultantClawbacks,
+  type PendingConsultantClawback,
+} from "@/lib/payments/payouts/paid-consultant-clawback";

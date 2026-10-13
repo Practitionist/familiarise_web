@@ -8,6 +8,16 @@ last-reviewed: 2026-06-05
 
 # ADR 07 — BetterAuth's limiter off; Upstash sliding windows on the sensitive routes
 
+> **Update (auth productionization, D12):** the auth half of this decision is
+> reversed. BetterAuth's limiter is now **on** for every `/api/auth/*` path,
+> with its counters in Upstash through a `customStorage` adapter
+> (`lib/auth/rate-limit.ts`), which removes the per-lambda problem described
+> below. `authLimiter`, `scimLimiter` and the edge rules for BetterAuth paths
+> are gone. Upstash sliding windows via `makeLimiter` still cover every
+> non-auth route as described here. Current matrix:
+> [rate-limiting](../20-iam-and-security/03-rate-limiting.md) and
+> [authentication/rate-limiting-and-abuse.md](../../authentication/rate-limiting-and-abuse.md).
+
 ## Context
 
 The platform needs to rate-limit a set of abuse-prone routes: auth
@@ -40,7 +50,7 @@ after the route resolves. `applyRateLimit` returns a 429 with
 `X-RateLimit-Remaining` on exceed and **fails open** if Redis is
 unreachable, so a Redis outage degrades to "no rate limit" rather than
 "site down" (see
-[rate-limiting](../20-iam-and-security/04-rate-limiting.md)).
+[rate-limiting](../20-iam-and-security/03-rate-limiting.md)).
 
 The real reason BetterAuth's limiter is off, verified against both the doc
 (§1) and the comment block above `rateLimit: { enabled: false }` in

@@ -5,7 +5,7 @@
 //   ceiling   — a platform limit. Netlify functions are killed at roughly 26
 //               seconds, so anything at or past it is a 504 to the buyer.
 //   published — a criterion already written down in the chaos runbook
-//               (docs/enterprise/50-operations/07-chaos-test-runbook.md):
+//               (docs/enterprise/50-operations/06-chaos-test-runbook.md):
 //               scenario 6 wants an error rate under 5% and P95 under two
 //               seconds; scenario 17 wants zero raw 502/504 and P95 under 26s.
 //   budget    — a target this harness sets for the first run. These are the

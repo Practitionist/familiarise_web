@@ -64,6 +64,7 @@ function submitButtonTitle(state: {
   isSubmitting: boolean;
   selectionIncomplete: boolean;
   proposedCount: number;
+  requiredProposedSlots: number;
   allowReleaseWithoutTime: boolean;
 }): string {
   if (state.isSubmitting) {
@@ -77,6 +78,9 @@ function submitButtonTitle(state: {
   }
   if (state.proposedCount === 0) {
     return "Pick at least one replacement time first.";
+  }
+  if (state.proposedCount !== state.requiredProposedSlots) {
+    return "Select a complete replacement time for every session being moved.";
   }
   return "Submit the selected times.";
 }
@@ -210,6 +214,21 @@ export function TimePicker({
   };
 
   const isSelectMode = policy.calendarMode === "select";
+  const slotsPerSession = Math.ceil(
+    (subject.sessionDurationInHours || subject.durationInHours || 1) / 0.5,
+  );
+  const requiredProposedSlots = sessionsBeingMoved * slotsPerSession;
+  const movingSessionStarts = React.useMemo(() => {
+    if (!isSelectMode) return undefined;
+    if (picksSpecificSessions) {
+      return sessions
+        .filter((session) =>
+          session.slots.every((slot) => selectedSlotIds.includes(slot.id)),
+        )
+        .map((session) => session.startTime);
+    }
+    return sessions.map((session) => session.startTime);
+  }, [isSelectMode, picksSpecificSessions, sessions, selectedSlotIds]);
   const showConsultantLegend =
     policy.kind === "RESCHEDULE_CONSULTANT" ||
     policy.kind === "MANAGE_TIMINGS" ||
@@ -271,7 +290,10 @@ export function TimePicker({
         durationInHours={subject.durationInHours}
         sessionsPerWeek={subject.sessionsPerWeek}
         durationInMonths={subject.durationInMonths}
-        totalSessions={subject.totalSessions}
+        totalSessions={
+          isSelectMode ? sessionsBeingMoved : subject.totalSessions
+        }
+        movingSessionStarts={movingSessionStarts}
         schedulingTimezone={subject.schedulingTimezone}
         allowedStart={subject.allowedStart}
         allowedEnd={subject.allowedEnd}
@@ -385,12 +407,15 @@ export function TimePicker({
           <Button
             onClick={() => submit(true)}
             disabled={
-              isSubmitting || selectionIncomplete || proposedSlots.length === 0
+              isSubmitting ||
+              selectionIncomplete ||
+              proposedSlots.length !== requiredProposedSlots
             }
             title={submitButtonTitle({
               isSubmitting,
               selectionIncomplete,
               proposedCount: proposedSlots.length,
+              requiredProposedSlots,
               allowReleaseWithoutTime: policy.allowReleaseWithoutTime,
             })}
           >

@@ -8,7 +8,7 @@
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { apiError } from "@/lib/errors/api-error";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import { CronLockUnavailableError } from "@/lib/cron/with-cron-lock";
@@ -16,18 +16,17 @@ import {
   createInstantPayout,
   InstantPayoutError,
 } from "@/lib/payments/payouts/payout-service";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
 export async function POST() {
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401, headers: NO_STORE },
-      );
-    }
+    const auth = await requireApiAuth({ expectUser: true });
+    if (auth.error) return auth.error;
+    const { session } = auth;
+    const stale = requireFreshSession(session);
+    if (stale) return stale;
     const rateLimited = await applyRateLimit(moneyOpsLimiter, session.user.id);
     if (rateLimited) return rateLimited;
     // The profile is looked up by the session's own user, so it is always theirs.

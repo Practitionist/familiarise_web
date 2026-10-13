@@ -2,16 +2,24 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useCall } from "@stream-io/video-react-sdk";
-import { useSession } from "@/lib/auth-client";
 import { Circle, Square, Loader2 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
+import {
+  FileActionError,
+  friendlyErrorFromResponse,
+  friendlyFileError,
+} from "@/lib/documents/file-errors";
+import { isOneToManyAppointmentType } from "@/lib/meetings/room-ready";
+import { useSessionInfo } from "../session-info";
+import DeclineRecordingButton from "./DeclineRecordingButton";
 
 interface RecordingControlsProps {
   meetingId: string;
   recordingEnabled: boolean;
   showOnlyButton?: boolean;
   showOnlyIndicator?: boolean;
+  isHost?: boolean;
 }
 
 const RecordingControls = ({
@@ -19,17 +27,17 @@ const RecordingControls = ({
   recordingEnabled: _recordingEnabled,
   showOnlyButton = false,
   showOnlyIndicator = false,
+  isHost: isHostProp,
 }: RecordingControlsProps) => {
   const call = useCall();
   const { toast } = useToast();
-  const { data: session } = useSession();
+  const { isHost: sessionIsHost, appointmentType } = useSessionInfo();
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
 
-  // Only consultants (hosts) should be able to control recordings
-  // Use session role instead of Stream's createdBy, as consultee might join first
-  const isConsultant = session?.user?.role === "CONSULTANT";
+  // Derive host control from call metadata (`useSessionInfo`) so org experts and co-presenters can record.
+  const isHost = isHostProp ?? sessionIsHost;
 
   // Ref to avoid stale closure in call event handlers
   const isRecordingRef = useRef(isRecording);
@@ -37,11 +45,13 @@ const RecordingControls = ({
     isRecordingRef.current = isRecording;
   }, [isRecording]);
 
+  // The host mounts a button-only and an indicator copy; only one may announce.
+  const announces = !showOnlyButton;
+
   // Subscribe to call recording state changes
   useEffect(() => {
     if (!call) return;
 
-    // Get initial recording state from call
     const checkRecordingState = () => {
       const callState = call.state;
       const recording = callState.recording;
@@ -50,37 +60,36 @@ const RecordingControls = ({
 
     checkRecordingState();
 
-    // Listen for recording state changes
     const unsubscribe = call.on("call.recording_started", () => {
       setIsRecording(true);
       setIsLoading(false);
-      toast({
-        title: "Recording Started",
-        description: "The session is now being recorded.",
-      });
+      if (announces)
+        toast({
+          title: "Recording Started",
+          description: "The session is now being recorded.",
+        });
     });
 
     const unsubscribeStopped = call.on("call.recording_stopped", () => {
       setIsRecording(false);
       setIsLoading(false);
       setRecordingDuration(0);
-      toast({
-        title: "Recording Stopped",
-        description: "The recording has been saved.",
-      });
+      if (announces)
+        // Neutral: a consent decline also stops the recording, and discards it.
+        toast({ title: "Recording stopped." });
     });
 
     const unsubscribeFailed = call.on("call.recording_failed", () => {
       setIsRecording(false);
       setIsLoading(false);
-      toast({
-        title: "Recording Failed",
-        description: "There was an error with the recording.",
-        variant: "destructive",
-      });
+      if (announces)
+        toast({
+          title: "Recording Failed",
+          description: "There was an error with the recording.",
+          variant: "destructive",
+        });
     });
 
-    // Also subscribe to general call state updates to catch recording changes
     const unsubscribeUpdated = call.on("call.updated", () => {
       const recording = call.state.recording;
       if (recording && !isRecordingRef.current) {
@@ -99,7 +108,7 @@ const RecordingControls = ({
       unsubscribeFailed();
       unsubscribeUpdated();
     };
-  }, [call, toast]);
+  }, [call, toast, announces]);
 
   // Recording duration timer
   useEffect(() => {
@@ -116,7 +125,6 @@ const RecordingControls = ({
     };
   }, [isRecording]);
 
-  // Format duration as MM:SS or HH:MM:SS
   const formatDuration = (seconds: number) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -144,20 +152,18 @@ const RecordingControls = ({
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || "Failed to start recording");
+        throw new FileActionError(await friendlyErrorFromResponse(response));
       }
-
-      // The recording state will be updated via call events
     } catch (error) {
-      console.error("Error starting recording:", error);
       setIsLoading(false);
+      const friendly =
+        error instanceof FileActionError
+          ? { title: error.title, description: error.message }
+          : friendlyFileError("NETWORK");
       toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to start recording",
+        title: friendly.title,
+        description: friendly.description,
         variant: "destructive",
       });
     }
@@ -179,47 +185,46 @@ const RecordingControls = ({
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.error || "Failed to stop recording");
+        throw new FileActionError(await friendlyErrorFromResponse(response));
       }
-
-      // The recording state will be updated via call events
     } catch (error) {
-      console.error("Error stopping recording:", error);
       setIsLoading(false);
+      const friendly =
+        error instanceof FileActionError
+          ? { title: error.title, description: error.message }
+          : friendlyFileError("NETWORK");
       toast({
-        title: "Error",
-        description:
-          error instanceof Error ? error.message : "Failed to stop recording",
+        title: friendly.title,
+        description: friendly.description,
         variant: "destructive",
       });
     }
   };
 
-  // For non-consultants (consultees), show recording indicator when recording is active
-  if (!isConsultant) {
-    // Show recording indicator when recording is active (so consultee knows they're being recorded)
+  if (!isHost) {
     if (isRecording) {
       return (
-        <div
-          className="flex items-center gap-2 px-3 py-2 bg-red-500/20 rounded-lg border border-red-500/30 cursor-not-allowed"
-          title="Recording in progress"
-        >
-          <Circle className="w-3 h-3 fill-red-500 text-red-500 animate-pulse" />
-          <span className="text-sm font-medium text-red-400">
-            REC {formatDuration(recordingDuration)}
-          </span>
+        <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-2 px-3 py-2 bg-red-500/20 rounded-lg border border-red-500/30 cursor-not-allowed"
+            title="Recording in progress"
+          >
+            <Circle className="w-3 h-3 fill-red-500 text-red-500 animate-pulse" />
+            <span className="text-sm font-medium text-red-400">
+              REC {formatDuration(recordingDuration)}
+            </span>
+          </div>
+          {/* Group recordings are acknowledge-only; the consent route refuses their declines. */}
+          {call && !isOneToManyAppointmentType(appointmentType) && (
+            <DeclineRecordingButton callId={call.id} />
+          )}
         </div>
       );
     }
     return null;
   }
 
-  // For consultants - render based on props
-
-  // If showOnlyIndicator is true, only render the REC time indicator (when recording)
   if (showOnlyIndicator) {
     if (!isRecording) return null;
     return (

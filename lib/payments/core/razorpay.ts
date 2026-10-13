@@ -101,7 +101,7 @@ export function getRazorpayClient(): Razorpay | null {
 }
 
 // ============================================================================
-// SDK call timeout
+// SDK call timeout & Circuit Breaker (#697 INF-3 / #1450 §0.4)
 // ============================================================================
 
 // razorpay-node exposes no timeout option — a hung connection to
@@ -112,7 +112,104 @@ export function getRazorpayClient(): Razorpay | null {
 // Bound every SDK call; the raw-HTTP refund path already uses AbortSignal.
 const SDK_CALL_TIMEOUT_MS = 30_000;
 
-export function withRazorpaySdkTimeout<T>(
+/**
+ * #697 (INF-3) — 4xx client/validation errors (e.g. BAD_REQUEST_ERROR on an
+ * unknown order/refund ID or invalid contact) prove Razorpay is reachable and
+ * must NEVER trip the circuit breaker. Only 5xx gateway faults and network /
+ * timeout errors count toward opening the circuit.
+ */
+export function shouldTripRazorpayCircuitBreaker(error: unknown): boolean {
+  if (!error || typeof error !== "object") return true;
+
+  const nestedError = (error as { error?: unknown }).error;
+  const statusCode =
+    (error as { statusCode?: unknown; status?: unknown }).statusCode ??
+    (error as { status?: unknown }).status ??
+    (nestedError && typeof nestedError === "object"
+      ? ((nestedError as { statusCode?: unknown; status?: unknown })
+          .statusCode ?? (nestedError as { status?: unknown }).status)
+      : undefined);
+
+  if (typeof statusCode === "number") {
+    if (statusCode === 429) {
+      return true;
+    }
+    if (statusCode >= 400 && statusCode < 500) {
+      return false;
+    }
+    if (statusCode >= 500) {
+      return true;
+    }
+  }
+
+  const body = readRazorpayErrorBody(error);
+  if (body?.code === "BAD_REQUEST_ERROR") {
+    return false;
+  }
+
+  return true;
+}
+
+type RazorpayCircuitBreakerLike = {
+  run: <T>(
+    operation: () => Promise<T>,
+    fallback?: () => T,
+    shouldTrip?: (error: unknown) => boolean,
+  ) => Promise<T>;
+  reset: () => void;
+  status: () => {
+    name: string;
+    state: string;
+    failures: number;
+    totalRequests?: number;
+    lastFailure: number | null;
+  };
+};
+
+let razorpayCircuitBreakerInstance: RazorpayCircuitBreakerLike | null = null;
+
+async function getRazorpayCircuitBreaker(): Promise<RazorpayCircuitBreakerLike> {
+  if (razorpayCircuitBreakerInstance) return razorpayCircuitBreakerInstance;
+  try {
+    // Lazy dynamic import so `lib/payments/core/razorpay.ts` does not evaluate
+    // `lib/redis.ts` at module load (preserving the PM-10 boot guard order in
+    // `razorpay-test-key-guard.test.ts`). Dynamic `import()` is the ESM form
+    // of the lazy load; the no-inline-disable policy forbids `require`.
+    const redisMod = (await import("@/lib/redis")) as {
+      createCircuitBreaker?: (name: string) => RazorpayCircuitBreakerLike;
+    };
+    if (razorpayCircuitBreakerInstance) return razorpayCircuitBreakerInstance;
+    if (typeof redisMod.createCircuitBreaker === "function") {
+      razorpayCircuitBreakerInstance =
+        redisMod.createCircuitBreaker("razorpay");
+      return razorpayCircuitBreakerInstance;
+    }
+  } catch {
+    // Fallback if Redis env is absent in isolated unit tests
+  }
+  razorpayCircuitBreakerInstance = {
+    run: (op) => op(),
+    reset: () => {},
+    status: () => ({
+      name: "razorpay",
+      state: "CLOSED",
+      failures: 0,
+      totalRequests: 0,
+      lastFailure: null,
+    }),
+  };
+  return razorpayCircuitBreakerInstance;
+}
+
+export async function getRazorpayCircuitStatus() {
+  return (await getRazorpayCircuitBreaker()).status();
+}
+
+export function resetRazorpayCircuitBreakerForTesting(): void {
+  razorpayCircuitBreakerInstance?.reset();
+}
+
+function runWithTimeout<T>(
   op: string,
   call: () => Promise<T>,
   timeoutMs: number = SDK_CALL_TIMEOUT_MS,
@@ -141,6 +238,18 @@ export function withRazorpaySdkTimeout<T>(
       throw err;
     }
   });
+}
+
+export async function withRazorpaySdkTimeout<T>(
+  op: string,
+  call: () => Promise<T>,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
+): Promise<T> {
+  return (await getRazorpayCircuitBreaker()).run(
+    () => runWithTimeout(op, call, timeoutMs),
+    undefined,
+    shouldTripRazorpayCircuitBreaker,
+  );
 }
 
 // ============================================================================
@@ -185,6 +294,24 @@ function holdCaptureSettings(holdExpiresAt: Date) {
   };
 }
 
+const MAX_RAZORPAY_NOTE_KEYS = 15;
+const MAX_RAZORPAY_NOTE_VALUE_CHARS = 256;
+
+/** Enforce Razorpay's hard limit of 15 note entries and 256 chars per value. */
+export function sanitizeRazorpayNotes(
+  metadata: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!metadata) return undefined;
+  return Object.fromEntries(
+    Object.entries(metadata)
+      .slice(0, MAX_RAZORPAY_NOTE_KEYS)
+      .map(([k, v]) => [
+        k.slice(0, MAX_RAZORPAY_NOTE_VALUE_CHARS),
+        String(v).slice(0, MAX_RAZORPAY_NOTE_VALUE_CHARS),
+      ]),
+  );
+}
+
 /**
  * Create a Razorpay Order
  */
@@ -195,13 +322,8 @@ export async function createRazorpayOrder({
   customerId,
   holdExpiresAt,
 }: PaymentIntentParams): Promise<PaymentIntent> {
-  // #1396 — first statement in the function, ahead of the client lookup, so a
-  // non-INR currency cannot reach the SDK even on a misconfigured instance.
-  // Only the booking checkout was guarded upstream; the org wallet top-up
-  // minted `{ amount: paise, currency: BillingAccount.currency }`, so a USD
-  // billing account turned a ₹1,000 top-up into a $1,000 order.
-  // #1396 — use the canonical code the guard just normalised, not the raw
-  // (possibly padded/lowercased) input, so the SDK always sees "INR".
+  // Normalise settlement currency before client initialisation so non-INR orders
+  // never reach Razorpay on any call path.
   const settlementCurrency = assertInrSettlement(
     currency,
     "create a Razorpay order",
@@ -217,43 +339,59 @@ export async function createRazorpayOrder({
     );
   }
 
-  // BUG-C: Validate amount is positive before creating payment order
-  if (amount <= 0) {
+  if (!Number.isSafeInteger(amount) || amount < 100) {
     throw new PaymentError(
-      "Payment amount must be greater than zero",
+      "Razorpay order amount must be an integer of at least 100 paise (INR 1.00)",
       "INVALID_AMOUNT",
       "RAZORPAY",
     );
   }
 
-  try {
-    const order = await Sentry.startSpan(
-      { op: "http.client", name: "razorpay.createOrder" },
-      () =>
-        withRazorpaySdkTimeout("orders.create", () =>
-          razorpayClient.orders.create({
-            amount: amount, // already in smallest currency unit (paise)
-            currency: settlementCurrency,
-            notes: metadata,
-            // PM-11 — Date.now() collides for two orders in the same ms; the uuid
-            // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
-            receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
-            // #1771 row 1 — only personal checkouts with saved cards on pass one.
-            ...(customerId ? { customer_id: customerId } : {}),
-            ...(holdExpiresAt
-              ? { payment: holdCaptureSettings(holdExpiresAt) }
-              : {}),
-          }),
-        ),
+  const sanitizedNotes = sanitizeRazorpayNotes(metadata);
+  const submitOrder = (resolvedCustomerId?: string) =>
+    Sentry.startSpan({ op: "http.client", name: "razorpay.createOrder" }, () =>
+      withRazorpaySdkTimeout("orders.create", () =>
+        razorpayClient.orders.create({
+          amount,
+          currency: settlementCurrency,
+          notes: sanitizedNotes,
+          receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+          ...(resolvedCustomerId ? { customer_id: resolvedCustomerId } : {}),
+          ...(holdExpiresAt
+            ? { payment: holdCaptureSettings(holdExpiresAt) }
+            : {}),
+        }),
+      ),
     );
+
+  try {
+    let effectiveCustomerId = customerId;
+    let order;
+    try {
+      order = await submitOrder(effectiveCustomerId);
+    } catch (firstErr) {
+      // Stale customer_id across Test -> Live key cutover rejects orders.create with 400/404;
+      // clear the stale customer pointer and retry order creation without customer_id.
+      if (effectiveCustomerId && isUnknownOrderId(firstErr)) {
+        const { default: prisma } = await import("@/lib/prisma");
+        await prisma.user.updateMany({
+          where: { razorpayCustomerId: effectiveCustomerId },
+          data: { razorpayCustomerId: null },
+        });
+        effectiveCustomerId = undefined;
+        order = await submitOrder(undefined);
+      } else {
+        throw firstErr;
+      }
+    }
 
     return {
       id: order.id,
-      client_secret: order.id, // Razorpay uses order ID as client secret
-      amount: Number(order.amount), // already in smallest currency unit
+      client_secret: order.id,
+      amount: Number(order.amount),
       currency: order.currency,
       status: order.status,
-      ...(customerId ? { customerId } : {}),
+      ...(effectiveCustomerId ? { customerId: effectiveCustomerId } : {}),
     };
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
@@ -405,9 +543,7 @@ export async function eraseRazorpayCustomerPii(
  * `no_live_payment`.
  */
 export type RazorpayOrderCancelResult =
-  | "no_live_payment"
-  | "has_live_payment"
-  | "unknown";
+  "no_live_payment" | "has_live_payment" | "unknown";
 
 /** Payment states that mean the buyer's money is with the gateway. */
 const LIVE_ORDER_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
@@ -615,6 +751,38 @@ async function postRefund({
   }
 }
 
+type RazorpaySdkClient = NonNullable<ReturnType<typeof getRazorpayClient>>;
+
+/** The order's captured payment; refusing an order with nothing captured. */
+async function capturedPaymentIdOfOrder(
+  razorpayClient: RazorpaySdkClient,
+  orderId: string,
+): Promise<string> {
+  const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
+    razorpayClient.orders.fetchPayments(orderId),
+  );
+
+  if (payments.count === 0) {
+    throw new RefundError(
+      "No payment found for this order",
+      "NO_PAYMENT_FOUND",
+      "RAZORPAY",
+    );
+  }
+
+  // An order can carry failed attempts before the captured one, and one with
+  // no captured payment has nothing to refund, so never fall back to items[0].
+  const payment = payments.items.find((p) => p.status === "captured");
+  if (!payment) {
+    throw new RefundError(
+      `Order ${orderId} has no captured payment — nothing to refund`,
+      "NOT_CAPTURED",
+      "RAZORPAY",
+    );
+  }
+  return payment.id;
+}
+
 /**
  * Create a refund for a Razorpay payment
  * Note: Razorpay refunds are created on payment IDs, not order IDs
@@ -638,7 +806,7 @@ export async function createRazorpayRefund({
   // #1584 P2-P0-01 — Razorpay refunds the ENTIRE payment when `amount` is
   // omitted, so `amount || undefined` promoted 0/NaN to a full refund. The
   // only caller (operations/refund.ts) already passes a positive Int; this
-  // is defence at the boundary, same shape as the Stripe guard.
+  // is defence at the boundary.
   if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
     throw new RefundError(
       `Refund amount must be a positive whole number of paise (got ${String(amount)})`,
@@ -648,34 +816,14 @@ export async function createRazorpayRefund({
   }
 
   try {
-    // First, get the payment ID from the order
-    const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
-      razorpayClient.orders.fetchPayments(paymentIntentId),
-    );
-
-    if (payments.count === 0) {
-      throw new RefundError(
-        "No payment found for this order",
-        "NO_PAYMENT_FOUND",
-        "RAZORPAY",
-      );
-    }
-
-    // PM-12 — an order can carry failed attempts before the captured one;
-    // items[0] is creation-ordered. #1584 P1-GW01b — never fall back to it:
-    // an order with no captured payment has nothing to refund.
-    const payment = payments.items.find((p) => p.status === "captured");
-    if (!payment) {
-      throw new RefundError(
-        `Order ${paymentIntentId} has no captured payment — nothing to refund`,
-        "NOT_CAPTURED",
-        "RAZORPAY",
-      );
-    }
+    // A `pay_…` intent names one capture on a shared order; refund exactly it.
+    const paymentId = paymentIntentId.startsWith("pay_")
+      ? paymentIntentId
+      : await capturedPaymentIdOfOrder(razorpayClient, paymentIntentId);
 
     // Create refund on the payment. Raw HTTP, not the SDK — see postRefund.
     const refund = await postRefund({
-      paymentId: payment.id,
+      paymentId,
       amount, // already in smallest currency unit (paise)
       notes: {
         reason: reason || "requested_by_customer",
@@ -771,8 +919,38 @@ export function isRazorpayUnknownRefundIdError(
 }
 
 /**
- * List all refunds for a payment
- * Note: This function receives an orderId, not a paymentId
+ * True when Razorpay answered with HTTP 404: these keys have no such order, so
+ * no refund exists under it and a new one would fail before money moves.
+ */
+export function isRazorpayUnknownOrderError(
+  error: unknown,
+): error is RefundError {
+  return (
+    error instanceof RefundError &&
+    error.gateway === "RAZORPAY" &&
+    (error.originalError as { statusCode?: unknown } | undefined)
+      ?.statusCode === 404
+  );
+}
+
+/** The order's captured payment, else its first attempt; null when it has none. */
+async function firstPaymentIdOfOrder(
+  razorpayClient: RazorpaySdkClient,
+  orderId: string,
+): Promise<string | null> {
+  const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
+    razorpayClient.orders.fetchPayments(orderId),
+  );
+  if (payments.count === 0) return null;
+  // Prefer the captured payment over a failed earlier attempt.
+  return (
+    payments.items.find((p) => p.status === "captured") ?? payments.items[0]
+  ).id;
+}
+
+/**
+ * List all refunds for a payment: an order id, or the `pay_…` id of one
+ * capture when a Payment row records a single duplicate capture.
  */
 export async function listRazorpayRefunds(
   orderId: string,
@@ -788,17 +966,12 @@ export async function listRazorpayRefunds(
   }
 
   try {
-    // First, get the payment ID from the order ID
-    const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
-      razorpayClient.orders.fetchPayments(orderId),
-    );
-    if (payments.count === 0) {
+    const paymentId = orderId.startsWith("pay_")
+      ? orderId
+      : await firstPaymentIdOfOrder(razorpayClient, orderId);
+    if (!paymentId) {
       return []; // No payments for this order, so no refunds
     }
-    // PM-12 — prefer the captured payment over a failed earlier attempt.
-    const paymentId = (
-      payments.items.find((p) => p.status === "captured") ?? payments.items[0]
-    ).id;
 
     // Fetch refunds for the specific payment using the SDK method
     const refundsResponse = await withRazorpaySdkTimeout(
@@ -818,11 +991,15 @@ export async function listRazorpayRefunds(
     }));
   } catch (error) {
     console.error("Razorpay refunds list failed:", error);
-    reportSentryError(error, {
-      subsystem: "payments",
-      tags: { provider: "razorpay" },
-    });
-    throw handleRazorpayRefundError(error);
+    const refundError = handleRazorpayRefundError(error);
+    // The reconciler reports an unknown order once per run, not per row.
+    if (!isRazorpayUnknownOrderError(refundError)) {
+      reportSentryError(error, {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+      });
+    }
+    throw refundError;
   }
 }
 

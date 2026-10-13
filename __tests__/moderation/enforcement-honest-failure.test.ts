@@ -74,6 +74,7 @@ jest.mock("../../lib/moderation/cancel-user-engagements", () => ({
     refundsIssued: 0,
     refundedPaise: 0,
     failures: [],
+    refundedInFullOnUnreadableLedger: [],
     remaining: [],
   })),
 }));

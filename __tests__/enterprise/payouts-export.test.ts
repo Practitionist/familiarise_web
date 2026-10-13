@@ -15,6 +15,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     organizationPayout: { findMany: jest.fn() },
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
+    ledgerTransaction: { findMany: jest.fn() },
   },
 }));
 
@@ -29,6 +30,7 @@ import { GET } from "../../app/api/organizations/[orgId]/payouts/export/route";
 const m = jest.mocked(prisma) as unknown as {
   organizationPayout: { findMany: jest.Mock };
   orgAuditLog: { create: jest.Mock };
+  ledgerTransaction: { findMany: jest.Mock };
 };
 const mockedAccess = requireOrgAccess as jest.Mock;
 
@@ -54,6 +56,7 @@ beforeEach(() => {
   // stale ResolvedValueOnce entries that poison the NEXT test's first pull.
   jest.resetAllMocks();
   m.orgAuditLog.create.mockResolvedValue({});
+  m.ledgerTransaction.findMany.mockResolvedValue([]);
   mockedAccess.mockResolvedValue({
     error: null,
     member: { id: "m-owner", role: "OWNER" },

@@ -34,6 +34,7 @@ function writeNote(caseKey: string, value: string) {
 }
 
 const NOTE_HINT_ID = "support-note-hint";
+const CLOSED_HINT_ID = "support-closed-hint";
 
 /**
  * #1527 — the case timeline and its composer. Reply and Private note keep
@@ -54,6 +55,7 @@ export function CaseConversation({
   suggested,
   helpArticles,
   onInsert,
+  onSelectReply,
 }: Readonly<{
   data: CaseWorkspace;
   mode: ComposerMode;
@@ -66,6 +68,7 @@ export function CaseConversation({
   suggested: ArticleLink[];
   helpArticles: ArticleLink[];
   onInsert: (text: string) => void;
+  onSelectReply?: (reply: SavedReply) => void;
 }>) {
   const canNote = !!data.ticketId;
   const [note, setNote] = useState("");
@@ -88,22 +91,47 @@ export function CaseConversation({
   }, [data.key, data.timeline.length]);
 
   const isNote = mode === "note" && canNote;
+  const replyLocked = data.status === "CLOSED" && !isNote;
   const draft = isNote ? note : replyDraft;
   const submit = async () => {
     const message = draft.trim();
-    if (!message || sending) return;
+    if (!message || sending || replyLocked) return;
     try {
       await onSend(message, isNote);
     } catch {
-      return; // the toast says why; the draft stays for a retry
+      return;
     }
     if (isNote) changeNote("");
     else onReplyDraftChange("");
     setNoteSaved(false);
   };
 
+  const promises = data.botPromises ?? [];
+
   return (
     <div className="flex min-h-[28rem] flex-col rounded-lg border border-border bg-card">
+      {data.handoffSummary && (
+        <div className="border-b border-border bg-muted/40 px-4 py-3 text-xs">
+          <p className="mb-1 font-semibold uppercase tracking-wide text-muted-foreground">
+            Case Summary
+          </p>
+          <p className="whitespace-pre-line text-foreground">
+            {data.handoffSummary}
+          </p>
+          {promises.length > 0 && (
+            <div className="mt-2 rounded border border-border bg-background/80 px-2.5 py-2">
+              <p className="font-semibold text-foreground">
+                Bot promises to customer
+              </p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+                {promises.map((p) => (
+                  <li key={p}>{p}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
       <div className="max-h-[60vh] flex-1 space-y-3 overflow-y-auto p-4">
         {data.timeline.length === 0 ? (
           <p className="text-sm text-muted-foreground">No messages yet.</p>
@@ -187,10 +215,23 @@ export function CaseConversation({
             suggested={suggested}
             all={helpArticles}
             onInsert={onInsert}
+            onSelectReply={onSelectReply}
           />
         </div>
+        {replyLocked && (
+          <p
+            id={CLOSED_HINT_ID}
+            className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
+          >
+            {canNote
+              ? "This request is closed, so the customer can't receive replies. Private notes are still allowed."
+              : "This conversation is closed, so the customer can't receive replies."}
+          </p>
+        )}
         <Textarea
           aria-label={isNote ? "Private note" : "Reply to the customer"}
+          aria-describedby={replyLocked ? CLOSED_HINT_ID : undefined}
+          disabled={replyLocked}
           rows={3}
           value={draft}
           placeholder={
@@ -220,7 +261,7 @@ export function CaseConversation({
           <Button
             size="sm"
             onClick={() => void submit()}
-            disabled={sending || !draft.trim()}
+            disabled={sending || replyLocked || !draft.trim()}
           >
             {isNote ? (
               <Lock className="mr-1.5 h-3.5 w-3.5" aria-hidden />

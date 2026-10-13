@@ -1,12 +1,10 @@
 "use client";
 
 /**
- * ScopedListTable — generic table wrapper shared by dashboard list pages
- * (originally the org list pages from #674 / B1-hybrid: appointments,
- * trials, documents, recordings; now also the personal
- * dashboards). Each consumer passes its own column config + row renderer;
- * this component handles the loading state, empty state, pagination, and
- * pages-of-X count.
+ * ScopedListTable — generic table wrapper shared by organization and personal
+ * dashboard list pages (appointments, trials, documents, recordings). Each
+ * consumer passes its own column config + row renderer; this component handles
+ * loading state, empty state, pagination, and page counts.
  *
  * Deliberately minimal — no virtualization, no sorting in v1. Org
  * dashboards rarely have >a few thousand rows; we ship pagination via
@@ -26,7 +24,7 @@ export interface Column<T> {
 }
 
 export interface ScopedListTableProps<T> {
-  title: string;
+  title?: string;
   description?: React.ReactNode;
   isLoading: boolean;
   isError: boolean;
@@ -68,13 +66,15 @@ export function ScopedListTable<T>({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        {description && (
-          <p className="text-sm text-muted-foreground">{description}</p>
-        )}
-      </CardHeader>
-      <CardContent>
+      {(title || description) && (
+        <CardHeader>
+          {title && <CardTitle>{title}</CardTitle>}
+          {description && (
+            <p className="text-sm text-muted-foreground">{description}</p>
+          )}
+        </CardHeader>
+      )}
+      <CardContent className={!title && !description ? "pt-6" : undefined}>
         {toolbar && <div className="mb-4">{toolbar}</div>}
 
         {isLoading ? (

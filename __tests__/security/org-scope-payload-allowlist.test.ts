@@ -42,7 +42,10 @@ function metadataSelectBody(src: string, constName: string): string {
 
 describe("org-scope payloads never carry session content", () => {
   it("recordings: the metadata select omits every field that reaches the media", () => {
-    const body = metadataSelectBody(read(RECORDINGS), "recordingMetadataSelect");
+    const body = metadataSelectBody(
+      read(RECORDINGS),
+      "recordingMetadataSelect",
+    );
 
     // Each of these either IS the media or resolves to it.
     for (const field of [
@@ -59,7 +62,10 @@ describe("org-scope payloads never carry session content", () => {
   });
 
   it("recordings: the metadata select still carries what the org table renders", () => {
-    const body = metadataSelectBody(read(RECORDINGS), "recordingMetadataSelect");
+    const body = metadataSelectBody(
+      read(RECORDINGS),
+      "recordingMetadataSelect",
+    );
 
     // RecordingsClient's own RecordingRow interface. Dropping one of these
     // would blank a column rather than protect anything.
@@ -100,19 +106,30 @@ describe("org-scope payloads never carry session content", () => {
     }
   });
 
-  it.each([
-    [RECORDINGS, "recordingParticipantSelect", "recordingUrl"],
-    [DOCUMENTS, "documentParticipantSelect", "fileUrl"],
-  ])(
-    "%s: the participant select still returns the content (%s)",
-    (rel, constName, field) => {
-      const src = read(rel);
-      const start = src.indexOf(`const ${constName} = {`);
-      expect(start).toBeGreaterThan(-1);
-      const body = src.slice(start, src.indexOf("} satisfies", start));
-      expect(body).toContain(`${field}: true`);
-    },
-  );
+  it("documents: even the participant select returns no stored link or object path", () => {
+    const body = metadataSelectBody(
+      read(DOCUMENTS),
+      "documentParticipantSelect",
+    );
+    expect(body).not.toContain("fileUrl: true");
+    expect(body).not.toContain("storagePath: true");
+  });
+
+  it("recordings: even the participant select never ships playable media", () => {
+    const body = metadataSelectBody(
+      read(RECORDINGS),
+      "recordingParticipantSelect",
+    );
+    for (const field of [
+      "recordingUrl",
+      "storageUrl",
+      "storagePath",
+      "streamRecordingId",
+      "streamCallId",
+    ]) {
+      expect(body).not.toContain(field);
+    }
+  });
 
   it.each([RECORDINGS, DOCUMENTS])(
     "%s: content is gated on participant scope, not on org membership",
@@ -160,5 +177,18 @@ describe("org support triage never carries conversation content (#support-hub)",
   it("the route documents the ADR-20 rule it enforces", () => {
     expect(src).toContain("METADATA ONLY");
     expect(src).toContain("ADR 20");
+  });
+});
+
+describe("unified support case reader redacts org-filed transcripts from member requesters (ADR 20)", () => {
+  const src = read("lib/support/case-service.ts");
+
+  it("returns empty messages and filedByOrganizationNotice when requester !== submitter", () => {
+    expect(src).toContain("viewer.userId === supportCase.requesterUserId");
+    expect(src).toContain(
+      "supportCase.requesterUserId !== supportCase.submitterUserId",
+    );
+    expect(src).toContain("messages: []");
+    expect(src).toContain("filedByOrganizationNotice: true");
   });
 });

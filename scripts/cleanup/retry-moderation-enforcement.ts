@@ -69,6 +69,8 @@ export interface ModerationRetryOptions {
   limit?: number;
 }
 
+const MAX_ATTEMPTS = 6;
+
 const RETRYABLE_ACTIONS: ModerationActionType[] = [
   "USER_BANNED",
   "USER_SUSPENDED",
@@ -220,9 +222,13 @@ async function retryModerationEnforcementUnlocked(
     }
   }
 
-  // #1593 — the erasure scrub records the Stream revocations it could not
-  // land; there is no erasure sweep of its own, so this one drains them.
-  await drainErasureRevocations(result, limit);
+  // The erasure scrub records the Stream revocations and vendor
+  // erasures it could not land; there is no erasure sweep of its own, so this
+  // one drains them.
+  const settledRequestIds = new Set<string>();
+  await drainErasureRevocations(result, limit, settledRequestIds);
+  await drainVendorErasureRetries(result, limit, settledRequestIds);
+  await finalizeCompletedErasureRequests(settledRequestIds);
 
   // #1270 review — a sweep that left enforcement unlanded did not succeed.
   // `jobs/` reads this to decide the workflow's exit code.
@@ -231,10 +237,103 @@ async function retryModerationEnforcementUnlocked(
   return result;
 }
 
+async function executeErasureRevocationRow(
+  row: {
+    planType: string;
+    planId: string;
+    erasureRequest: { userId: string };
+  },
+  deps: {
+    principalPrefix: string;
+    eraseStreamPrincipalFootprint: (userId: string) => Promise<void>;
+    revokeCollaboratorAccess: (
+      planType: "webinar" | "class",
+      planId: string,
+      userId: string,
+      opts: { notify: boolean },
+    ) => Promise<{ success: boolean }>;
+  },
+): Promise<string | null> {
+  if (row.planId.startsWith(deps.principalPrefix)) {
+    try {
+      await deps.eraseStreamPrincipalFootprint(row.erasureRequest.userId);
+      return null;
+    } catch (error_) {
+      return errMsg(error_);
+    }
+  }
+  const planType = row.planType === "WEBINAR" ? "webinar" : "class";
+  try {
+    const { success } = await deps.revokeCollaboratorAccess(
+      planType,
+      row.planId,
+      row.erasureRequest.userId,
+      { notify: false },
+    );
+    return success ? null : "Collaborator Stream access not fully revoked";
+  } catch (error_) {
+    return errMsg(error_);
+  }
+}
+
+async function recordErasureOutboxOutcome(params: {
+  delegate: {
+    update: (args: {
+      where: { id: string };
+      data: Record<string, unknown>;
+    }) => Promise<unknown>;
+  };
+  row: { id: string; attempts: number; erasureRequestId: string | null };
+  error: string | null;
+  errorLabel: string;
+  now: Date;
+  result: ModerationRetryResult;
+  settledRequestIds: Set<string>;
+}): Promise<void> {
+  const { delegate, row, error, errorLabel, now, result, settledRequestIds } =
+    params;
+  const attempts = row.attempts + 1;
+  const gaveUp = Boolean(error) && attempts >= MAX_ATTEMPTS;
+  await delegate.update({
+    where: { id: row.id },
+    data: error
+      ? {
+          status: "FAILED",
+          attempts,
+          lastError: error,
+          nextRetryAt: gaveUp ? null : nextRetryAt(attempts, now),
+        }
+      : { status: "SUCCEEDED", attempts, completedAt: now },
+  });
+  if (error) {
+    if (gaveUp) {
+      result.gaveUp++;
+      Sentry.captureMessage(
+        `${errorLabel} retry gave up after ${attempts} attempts`,
+        {
+          level: "error",
+          tags: { subsystem: "moderation-retry" },
+          extra: { rowId: row.id, lastError: error },
+        },
+      );
+    } else {
+      result.stillFailing++;
+    }
+    result.errors.push(`${errorLabel} ${row.id}: ${error}`);
+  } else {
+    result.erasureRevocationsRecovered++;
+    if (row.erasureRequestId) {
+      settledRequestIds.add(row.erasureRequestId);
+    }
+  }
+}
+
 async function drainErasureRevocations(
   result: ModerationRetryResult,
   limit: number,
+  settledRequestIds: Set<string>,
 ): Promise<void> {
+  if (!prisma.streamRevocationRetry?.findMany) return;
   const now = new Date();
   // #1593 — the outbox `scrubUser` writes inside its own transaction; a row
   // is owed until SUCCEEDED, and FAILED rows wait out their backoff slot.
@@ -245,6 +344,7 @@ async function drainErasureRevocations(
     },
     select: {
       id: true,
+      erasureRequestId: true,
       planType: true,
       planId: true,
       attempts: true,
@@ -255,40 +355,125 @@ async function drainErasureRevocations(
   });
   if (rows.length === 0) return;
 
+  const { STREAM_PRINCIPAL_PLAN_ID_PREFIX, eraseStreamPrincipalFootprint } =
+    await import("@/lib/compliance/erasure/scrub-user");
   const { revokeCollaboratorAccess } =
     await import("@/lib/collaborators/service");
   for (const row of rows) {
-    const planType = row.planType === "WEBINAR" ? "webinar" : "class";
+    const error = await executeErasureRevocationRow(row, {
+      principalPrefix: STREAM_PRINCIPAL_PLAN_ID_PREFIX,
+      eraseStreamPrincipalFootprint,
+      revokeCollaboratorAccess,
+    });
+    await recordErasureOutboxOutcome({
+      delegate: prisma.streamRevocationRetry,
+      row,
+      error,
+      errorLabel: "erasure-revoke",
+      now,
+      result,
+      settledRequestIds,
+    });
+  }
+}
+
+type RazorpayRetryPayload = {
+  customerId?: string | null;
+  payoutAccounts?: {
+    razorpayContactId: string | null;
+    razorpayFundAccId: string | null;
+  }[];
+};
+
+async function drainVendorErasureRetries(
+  result: ModerationRetryResult,
+  limit: number,
+  settledRequestIds: Set<string>,
+): Promise<void> {
+  if (!prisma.vendorErasureRetry?.findMany) return;
+  const now = new Date();
+  const rows = await prisma.vendorErasureRetry.findMany({
+    where: {
+      status: { in: ["PENDING", "FAILED"] },
+      attempts: { lt: MAX_ATTEMPTS },
+      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+    },
+    select: {
+      id: true,
+      erasureRequestId: true,
+      vendor: true,
+      vendorRef: true,
+      payload: true,
+      attempts: true,
+      erasureRequest: { select: { userId: true } },
+    },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+  });
+  if (rows.length === 0) return;
+
+  const {
+    eraseStreamPrincipalFootprint,
+    offboardNotificationVendor,
+    offboardPaymentVendors,
+  } = await import("@/lib/compliance/erasure/scrub-user");
+
+  for (const row of rows) {
+    const targetUserId = row.vendorRef || row.erasureRequest.userId;
     let error: string | null = null;
     try {
-      const { success } = await revokeCollaboratorAccess(
-        planType,
-        row.planId,
-        row.erasureRequest.userId,
-        { notify: false },
-      );
-      if (!success) error = "Collaborator Stream access not fully revoked";
-    } catch (caught) {
-      error = errMsg(caught);
+      if (row.vendor === "NOVU") {
+        const failures = await offboardNotificationVendor(targetUserId);
+        if (failures.length > 0) error = failures.join("; ");
+      } else if (row.vendor === "STREAM") {
+        await eraseStreamPrincipalFootprint(targetUserId);
+      } else if (row.vendor === "RAZORPAY") {
+        const payload = (row.payload ?? {}) as RazorpayRetryPayload;
+        const failures = await offboardPaymentVendors(prisma, {
+          userId: targetUserId,
+          razorpayCustomerId: payload.customerId ?? null,
+          payoutAccounts: payload.payoutAccounts ?? [],
+        });
+        if (failures.length > 0) error = failures.join("; ");
+      }
+    } catch (error_) {
+      error = errMsg(error_);
     }
-    const attempts = row.attempts + 1;
-    await prisma.streamRevocationRetry.update({
-      where: { id: row.id },
-      data: error
-        ? {
-            status: "FAILED",
-            attempts,
-            lastError: error,
-            nextRetryAt: nextRetryAt(attempts, now),
-          }
-        : { status: "SUCCEEDED", attempts, completedAt: now },
+
+    await recordErasureOutboxOutcome({
+      delegate: prisma.vendorErasureRetry,
+      row,
+      error,
+      errorLabel: `vendor-erasure ${row.vendor.toLowerCase()}`,
+      now,
+      result,
+      settledRequestIds,
     });
-    if (error) {
-      result.stillFailing++;
-      result.errors.push(`erasure-revoke ${row.id}: ${error}`);
-    } else {
-      result.erasureRevocationsRecovered++;
-    }
+  }
+}
+
+async function finalizeCompletedErasureRequests(
+  settledRequestIds: Set<string>,
+): Promise<void> {
+  if (settledRequestIds.size === 0 || !prisma.erasureRequest) return;
+  const now = new Date();
+  for (const erasureRequestId of settledRequestIds) {
+    const pendingFilter = {
+      where: {
+        erasureRequestId,
+        status: { in: ["PENDING" as const, "FAILED" as const] },
+      },
+    };
+    const pendingStream =
+      (await prisma.streamRevocationRetry?.count?.(pendingFilter)) ?? 0;
+    const pendingVendor =
+      (await prisma.vendorErasureRetry?.count?.(pendingFilter)) ?? 0;
+    if (pendingStream > 0 || pendingVendor > 0) continue;
+
+    await prisma.erasureRequest.updateMany?.({
+      where: { id: erasureRequestId, status: "IN_PROGRESS" },
+      data: { status: "COMPLETED", completedAt: now },
+    });
   }
 }
 

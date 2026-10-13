@@ -116,6 +116,27 @@ describe("findUserIssues", () => {
     });
   });
 
+  it("queries by the deterministic ust_<32-hex> HMAC token when SENTRY_IDENTITY_SALT is set", async () => {
+    process.env.SENTRY_API_TOKEN = "tok";
+    process.env.SENTRY_IDENTITY_SALT = "test-dpdp-secret-salt-32-bytes-long";
+    try {
+      fetchMock.mockResolvedValue({ ok: true, json: async () => [issue()] });
+      const { resolveSentryUserId } =
+        await import("../../lib/observability/identity");
+      const findUserIssues = await load();
+      await findUserIssues({ userId: "usr_123" });
+
+      const expectedToken = resolveSentryUserId("usr_123");
+      expect(expectedToken).toMatch(/^ust_[0-9a-f]{32}$/);
+      const url = new URL(fetchMock.mock.calls[0][0] as string);
+      expect(url.searchParams.get("query")).toBe(
+        `user.id:"${expectedToken}" is:unresolved`,
+      );
+    } finally {
+      delete process.env.SENTRY_IDENTITY_SALT;
+    }
+  });
+
   it("reduces an issue to the fields a support agent can act on", async () => {
     process.env.SENTRY_API_TOKEN = "tok";
     fetchMock.mockResolvedValue({ ok: true, json: async () => [issue()] });

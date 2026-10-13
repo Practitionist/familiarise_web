@@ -53,6 +53,7 @@ const subscriptionFindUnique = jest.fn();
 const subscriptionUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
 const historyCreate = jest.fn().mockResolvedValue({});
 const txStub = {
+  $executeRaw: jest.fn(async () => 0),
   payment: {
     findUnique: paymentFindUnique,
     // The appointmentId link is still a plain update — only STATUS rides a CAS.
@@ -83,6 +84,10 @@ const txStub = {
   bookingStatusHistory: { create: historyCreate },
 };
 
+jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
+  postUnappliedReceipt: jest.fn(),
+  releaseUnappliedReceipt: jest.fn(),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -109,6 +114,8 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 jest.mock("../../lib/payments/payouts", () => ({
   __esModule: true,
   createEarningsFromPayment: jest.fn(),
+  planEarningsForPayment: jest.fn(async () => null),
+  resolvePaymentForEarnings: jest.fn(async () => null),
 }));
 jest.mock("../../lib/email", () => ({
   __esModule: true,
@@ -123,8 +130,6 @@ jest.mock("../../lib/novu", () => ({
 }));
 jest.mock("../../lib/referrals/service", () => ({
   __esModule: true,
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   __esModule: true,
@@ -150,10 +155,18 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
   normalizeLegacySlotKeys: (m: unknown) => m,
   validateWebhookMetadata: jest.fn(),
 }));
+// #1846 — the legacy event creators now replay the checkout capacity gate, and
+// the gate requires a real reading. A bare `jest.fn()` here reads as "no
+// reading", which the production code must NOT treat as "room available" — so
+// these answer with a room that has space, the way a live roster does.
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
-  getWebinarCapacity: jest.fn(),
-  getClassCapacity: jest.fn(),
+  getWebinarCapacity: jest.fn(() => ({
+    isFull: false,
+    registered: 1,
+    max: 10,
+  })),
+  getClassCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
 }));
 
 import {

@@ -14,6 +14,16 @@
  * the refund call itself throws, and #1846 N2's retry sweep then re-drives it. Either way the booking
  * is never confirmed (no appointment lookup, no earnings, no Phase-2 confirm
  * work). The matching-amount happy path is inert on the guard.
+ *
+ * W1b — ORDERING CHANGED, and this paragraph used to be the only description
+ * of it. The parity comparison now runs BEFORE the `SUCCEEDED → return null`
+ * short-circuit, so a webhook REDELIVERY of an already-confirmed payment still
+ * re-validates the captured amount; a mismatch on a terminal row pages P1 and
+ * logs `*_MISMATCH_REDELIVERY` but performs no second remediation. Without the
+ * hoist a mismatched redelivery returned at the short-circuit and the mismatch
+ * was never examined at all. The `EXPIRED`/`FAILED` claim was hoisted above it
+ * too; the two predicates are mutually exclusive, so its behaviour is unchanged.
+ * See `capture-amount-parity-plumbing.test.ts` for the redelivery pins.
  */
 
 const captureException = jest.fn();
@@ -64,6 +74,10 @@ const txStub = {
 const prismaPaymentUpdate = jest.fn(
   async (_args: { where: unknown; data: { description?: string } }) => ({}),
 );
+const postUnappliedReceipt = jest.fn();
+jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
+  postUnappliedReceipt: (...a: unknown[]) => postUnappliedReceipt(...a),
+}));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
@@ -98,9 +112,9 @@ jest.mock("../../lib/novu", () => ({
   notifyPaymentFailed: jest.fn(),
   notifyAppointmentBooked: jest.fn(),
 }));
+const reverseCreditsForPayment = jest.fn();
 jest.mock("../../lib/referrals/service", () => ({
-  processQualifyingAction: jest.fn(),
-  processConsultantBookingReferral: jest.fn(),
+  reverseCreditsForPayment: (...a: unknown[]) => reverseCreditsForPayment(...a),
 }));
 jest.mock("../../actions/stream/chat/event-channel.action", () => ({
   addUserToEventChannel: jest.fn(),
@@ -172,6 +186,11 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
     const update = paymentUpdateMany.mock.calls[0][0];
     expect(update.where.paymentStatus).toBe("PENDING");
     expect(update.data.description).toMatch(/^Auto-refund pending:/);
+    // The captured cash is parked, not booked, in the same transaction.
+    expect(postUnappliedReceipt).toHaveBeenCalledWith(expect.anything(), {
+      paymentId: "pay1",
+      capturedPaise: 9999,
+    });
 
     // #990 — Phase 2 auto-refunded the wrong-amount capture for this payment.
     expect(refundPayment).toHaveBeenCalledTimes(1);
@@ -255,7 +274,13 @@ describe("#1695 — a capture whose hold is already gone is claimed and refunded
     });
     refundBookingPayment.mockResolvedValue({ rail: "GATEWAY" });
 
-    await handlePaymentSuccess("order1", { appointmentType: "CONSULTATION" });
+    // Late captures ship the payment entity amount; the order total is
+    // withheld without one, so the claim below carries gateway truth.
+    await handlePaymentSuccess(
+      "order1",
+      { appointmentType: "CONSULTATION" },
+      10000,
+    );
 
     expect(paymentUpdateMany).toHaveBeenCalledTimes(1);
     expect(paymentUpdateMany.mock.calls[0][0]).toMatchObject({
@@ -274,16 +299,43 @@ describe("#1695 — a capture whose hold is already gone is claimed and refunded
     expect(recordSystemError).not.toHaveBeenCalled();
   });
 
+  it("stays PENDING when an EXPIRED capture ships no gateway amount", async () => {
+    // order.paid without a payment entity carries the order total, not what
+    // was settled: stamping it would park and refund an unverified amount.
+    paymentFindUnique.mockResolvedValue({
+      id: "pay1",
+      paymentIntent: "order1",
+      amount: 10000,
+      paymentStatus: "EXPIRED",
+      userId: "u1",
+      currency: "INR",
+      appointmentId: "appt1",
+      user: { email: "buyer@example.com", name: "Buyer", consulteeProfile: {} },
+    });
+
+    await handlePaymentSuccess("order1", { appointmentType: "CONSULTATION" });
+
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
+    expect(refundBookingPayment).not.toHaveBeenCalled();
+    expect(appointmentFindUnique).not.toHaveBeenCalled();
+  });
+
   it("refunds a capture on a trial the unpaid-trial sweep already cancelled, without confirming its slot", async () => {
     appointmentFindUnique.mockResolvedValue({ id: "appt1" });
     trialUpdateMany.mockResolvedValue({ count: 0 });
     trialFindUnique.mockResolvedValue({ status: "CANCELLED" });
     refundBookingPayment.mockResolvedValue({ rail: "GATEWAY" });
 
-    await handlePaymentSuccess("order1", {
-      appointmentType: "TRIAL",
-      trialId: "trial1",
-    });
+    // Late captures ship the payment entity amount; without it the
+    // stay-PENDING guard returns before the trial branch is reached.
+    await handlePaymentSuccess(
+      "order1",
+      {
+        appointmentType: "TRIAL",
+        trialId: "trial1",
+      },
+      10000,
+    );
 
     // #1846 SM-B13 — the CAS now rides transitionTrial's from-set.
     expect(trialUpdateMany.mock.calls[0][0]).toMatchObject({
@@ -331,6 +383,25 @@ describe("#1582 B-P0-01 — handlePaymentFailure is a CAS write", () => {
       "payment.failed lost the race to a capture",
       expect.anything(),
     );
+    expect(reverseCreditsForPayment).not.toHaveBeenCalled();
+  });
+
+  it("restores the order's credits inside the transaction that wins PENDING → FAILED", async () => {
+    paymentFindUnique.mockResolvedValue({
+      id: "pay1",
+      paymentStatus: "PENDING",
+      userId: "u1",
+      appointmentId: null,
+      amount: 10000,
+      currency: "INR",
+      description: null,
+      user: { email: "buyer@example.com", name: "Buyer" },
+      appointment: null,
+    });
+
+    await handlePaymentFailure("order1").catch(() => undefined);
+
+    expect(reverseCreditsForPayment).toHaveBeenCalledWith("pay1", txStub);
   });
 });
 

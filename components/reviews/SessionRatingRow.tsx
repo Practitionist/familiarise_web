@@ -16,10 +16,18 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { RatingCause } from "@prisma/client";
 import { Star } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
-import { bookingFeedbackKey } from "@/hooks/useSessionFeedback";
+import {
+  bookingFeedbackKey,
+  useSessionFeedback,
+} from "@/hooks/useSessionFeedback";
+
+import { RatingCauseSelector } from "./RatingCauseSelector";
 
 export function SessionRatingRow({
   appointmentId,
@@ -28,48 +36,71 @@ export function SessionRatingRow({
   existingRating,
   readOnly = false,
 }: Readonly<{
-  /** The CHILD appointment this session belongs to — where the rating is POSTed. */
   appointmentId: string;
-  /** The BOOKING the page is showing, which owns the cache entry to invalidate.
-   *  #1540 consolidated the read to one request for the whole booking, so
-   *  invalidating this row's own child id would leave the stars unchanged after a
-   *  save. */
   bookingAppointmentId: string;
   occurrenceId: string;
   existingRating: number | null;
-  /** The consultant's view: what this call scored, not something to set. */
   readOnly?: boolean;
 }>) {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const feedback = useSessionFeedback(bookingAppointmentId);
+  const existingComment = feedback.comments[occurrenceId] ?? "";
+  const existingCause = feedback.ratingCauses[occurrenceId] ?? null;
+
   const [rating, setRating] = useState(existingRating ?? 0);
   const [hover, setHover] = useState(0);
+  const [comment, setComment] = useState(existingComment);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [forceRateOpen, setForceRateOpen] = useState(false);
+  const [ratingCause, setRatingCause] = useState<RatingCause | null>(
+    existingCause,
+  );
 
   useEffect(() => {
     setRating(existingRating ?? 0);
-  }, [existingRating, occurrenceId]);
+    setRatingCause(existingCause);
+    setForceRateOpen(false);
+  }, [existingRating, existingCause, occurrenceId]);
+
+  useEffect(() => {
+    setComment(existingComment);
+  }, [existingComment, occurrenceId]);
 
   const save = useMutation({
-    mutationFn: async (value: number) => {
+    mutationFn: async (args: {
+      value: number;
+      note?: string;
+      cause: RatingCause | null;
+    }) => {
+      const trimmedNote = args.note?.trim();
       const res = await fetch(`/api/appointments/${appointmentId}/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rating: value, occurrenceId }),
+        body: JSON.stringify({
+          rating: args.value,
+          occurrenceId,
+          ...(trimmedNote !== undefined ? { comment: trimmedNote } : {}),
+          ratingCause: args.value > 3 ? null : args.cause,
+        }),
       });
       if (!res.ok) await throwSupportError(res, "session rating");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       void qc.invalidateQueries({
         queryKey: bookingFeedbackKey(bookingAppointmentId),
       });
+      if (variables.note !== undefined) {
+        setNoteOpen(false);
+        toast({
+          title: "Private note saved",
+          description:
+            "Your written note is visible only to Familiarise support.",
+        });
+      }
     },
     onError: (e: unknown) => {
-      // Put the stars back where they were: leaving the new value on screen
-      // claims a rating we did not store. The third mutation argument is the
-      // `onMutate` context, not the previous value — this mutation has no
-      // `onMutate`, so it was always undefined and the branch that read it was
-      // dead. The call site captures the pre-click rating.
       setRating(existingRating ?? 0);
       toast({
         title: "Rating",
@@ -79,8 +110,6 @@ export function SessionRatingRow({
     },
   });
 
-  // Nothing to show a consultant on a call nobody rated — an empty star row
-  // reads as a zero rather than as an absence.
   if (readOnly && !existingRating) return null;
 
   if (readOnly) {
@@ -94,11 +123,6 @@ export function SessionRatingRow({
             key={n}
             className={
               "h-3.5 w-3.5 " +
-              // ROUNDED, then named. A group call averages its attendees, so
-              // this arrives as 3.5 and a bare `>= n` filled three stars — the
-              // consultant read the session as scoring worse than it did.
-              // Rounding fixes the direction; printing the number is what makes
-              // the row honest, since five stars cannot show a half.
               (Math.round(existingRating ?? 0) >= n
                 ? "fill-foreground text-foreground"
                 : "text-muted-foreground/30")
@@ -112,46 +136,139 @@ export function SessionRatingRow({
     );
   }
 
-  // The score IS shown to the consultant, so the rater has to be told before
-  // they give it. The API comment justifying that disclosure asserted this copy
-  // already existed; it did not, and a rating collected as private and handed
-  // to the rated party is exactly the CSAT/consumer-review mixing #705 set out
-  // to avoid. The free-text note stays withheld from them either way.
-  const DISCLOSURE = "Your rating of this call is shared with the expert.";
+  if (feedback.supportOpen && rating === 0 && !forceRateOpen) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setForceRateOpen(true);
+        }}
+        className="self-start text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+      >
+        Support request in progress · Rate anyway
+      </button>
+    );
+  }
+
+  const DISCLOSURE =
+    "Stars are shared with the expert; written notes are private to Familiarise.";
 
   return (
-    // No handler on the wrapper: a div with onClick is unreachable by keyboard
-    // and announces nothing. Each star is a real button and stops propagation
-    // itself, which is what keeps the session row from also firing.
-    <div className="flex items-center gap-0.5" title={DISCLOSURE}>
-      <span className="sr-only">{DISCLOSURE}</span>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button
-          key={n}
-          type="button"
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-0.5" title={DISCLOSURE}>
+          <span className="sr-only">{DISCLOSURE}</span>
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button
+              key={n}
+              type="button"
+              disabled={save.isPending}
+              aria-label={`Rate ${n} out of 5. ${DISCLOSURE}`}
+              aria-pressed={rating === n}
+              onMouseEnter={() => setHover(n)}
+              onMouseLeave={() => setHover(0)}
+              onClick={(e) => {
+                e.stopPropagation();
+                const previous = rating;
+                const previousCause = ratingCause;
+                const nextRating = n;
+                const nextCause = nextRating > 3 ? null : ratingCause;
+                setRating(nextRating);
+                setRatingCause(nextCause);
+                save.mutate(
+                  { value: nextRating, cause: nextCause },
+                  {
+                    onError: () => {
+                      setRating(previous);
+                      setRatingCause(previousCause);
+                    },
+                  },
+                );
+              }}
+              className="rounded p-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
+            >
+              <Star
+                className={
+                  "h-3.5 w-3.5 " +
+                  ((hover || rating) >= n
+                    ? "fill-foreground text-foreground"
+                    : "text-muted-foreground/50")
+                }
+              />
+            </button>
+          ))}
+        </div>
+
+        {rating > 0 && !noteOpen && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setNoteOpen(true);
+            }}
+            className="text-[11px] font-medium text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            {existingComment ? "Edit private note" : "Add private note"}
+          </button>
+        )}
+      </div>
+
+      {rating > 0 && rating <= 3 && (
+        <RatingCauseSelector
+          value={ratingCause}
           disabled={save.isPending}
-          aria-label={`Rate ${n} out of 5. ${DISCLOSURE}`}
-          aria-pressed={rating === n}
-          onMouseEnter={() => setHover(n)}
-          onMouseLeave={() => setHover(0)}
-          onClick={(e) => {
-            e.stopPropagation();
-            const previous = rating;
-            setRating(n);
-            save.mutate(n, { onError: () => setRating(previous) });
+          onChange={(nextCause) => {
+            const previousCause = ratingCause;
+            setRatingCause(nextCause);
+            save.mutate(
+              {
+                value: rating,
+                cause: rating > 3 ? null : nextCause,
+              },
+              {
+                onError: () => setRatingCause(previousCause),
+              },
+            );
           }}
-          className="rounded p-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
-        >
-          <Star
-            className={
-              "h-3.5 w-3.5 " +
-              ((hover || rating) >= n
-                ? "fill-foreground text-foreground"
-                : "text-muted-foreground/50")
-            }
+        />
+      )}
+
+      {rating > 0 && noteOpen && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Input
+            value={comment}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Private note (only Familiarise sees this)"
+            aria-label="Private feedback note (visible only to Familiarise)"
+            className="h-7 min-w-[200px] flex-1 text-xs"
+            maxLength={2000}
           />
-        </button>
-      ))}
+          <Button
+            type="button"
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            disabled={save.isPending}
+            onClick={(e) => {
+              e.stopPropagation();
+              save.mutate({
+                value: rating,
+                note: comment,
+                cause: rating > 3 ? null : ratingCause,
+              });
+            }}
+          >
+            {save.isPending ? "Saving…" : "Save note"}
+          </Button>
+        </div>
+      )}
+
+      {rating > 0 && !noteOpen && existingComment && (
+        <p className="text-[11px] italic text-muted-foreground">
+          Private note: &ldquo;{existingComment}&rdquo;
+        </p>
+      )}
     </div>
   );
 }

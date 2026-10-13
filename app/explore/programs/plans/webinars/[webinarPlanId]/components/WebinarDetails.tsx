@@ -96,7 +96,7 @@ export function WebinarDetails({
     <main className="explore-page min-h-screen pb-24 lg:pb-0">
       <PlanHero
         title={plan.title}
-        image={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
+        image={generateProgramImageUrl(plan.imageUrl)}
         badge={
           <div className="flex items-center gap-3 mb-4">
             <Badge className="bg-background text-foreground">Webinar</Badge>
@@ -173,6 +173,7 @@ export function WebinarDetails({
               whatsIncluded={plan.whatsIncluded}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
+              filesIncluded={plan.materials}
               faqs={plan.faqs}
               topics={plan.topics}
             />

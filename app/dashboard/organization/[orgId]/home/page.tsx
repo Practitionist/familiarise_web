@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import {
   HydrationBoundary,
   QueryClient,
@@ -20,12 +21,18 @@ export default async function OrgHomePage({
   const { orgId } = await params;
   const queryClient = new QueryClient();
 
-  // /home is every role's landing, so the page itself is not gated. Only the
-  // operator home reads the analytics aggregate and activity feed (#1527 role
-  // homes), so only operators get them seeded — SUPPORT holds
-  // operations.read but its home is the support queue.
-  // Keys MUST match OperatorHome's queries or hydration won't apply.
+  const baseAccess = await requireOrgAccess(orgId, {
+    readOnly: true,
+    allowSuspended: true,
+  });
+  if (baseAccess.error) {
+    redirect("/dashboard");
+  }
+
+  // Only the operator home reads the analytics aggregate and activity feed,
+  // so only operators get them seeded.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "operations.read",
   });
   if (!access.error && OPERATOR_ROLES.has(access.member.role)) {

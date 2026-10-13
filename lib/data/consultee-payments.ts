@@ -14,6 +14,7 @@
 
 import type { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { spendableCreditsWhere } from "@/lib/referrals/service";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { refundedPaise } from "@/lib/appointments/seat-payments";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
@@ -281,10 +282,22 @@ export function paymentRowSelect(userId: string) {
           },
         },
         // #1760 — the EXPIRED edge tells a lapsed pay link from an
-        // unanswered request.
+        // unanswered request. #1846 added the second arm: a consultant's
+        // withdraw-approval now ends in CANCELLED, so the `toStatus: "EXPIRED"`
+        // filter alone would drop the edge that names the expert who ended it.
+        // Added rather than substituted — the EXPIRED edge is still what proves
+        // a pay link lapsed rather than being withdrawn.
         statusHistory: {
-          where: { toStatus: "EXPIRED" },
-          select: { fromStatus: true, toStatus: true },
+          where: {
+            OR: [
+              { toStatus: "EXPIRED" as const },
+              {
+                toStatus: "CANCELLED" as const,
+                reason: "WITHDRAWN_BY_CONSULTANT",
+              },
+            ],
+          },
+          select: { fromStatus: true, toStatus: true, reason: true },
         },
       },
     },
@@ -431,10 +444,10 @@ export async function readConsulteePayments(args: {
         orderBy: { createdAt: "desc" },
         take: HISTORY_CAP,
       }),
-      // Balances come from the UNCAPPED table: the display list is capped and a
-      // sum over it would underreport past 250 credits (PR #1247 review).
+      // Balances come from the uncapped table over the spendable credits only,
+      // so total − used = remaining.
       prisma.referralCredit.aggregate({
-        where: { userId },
+        where: spendableCreditsWhere(userId),
         _sum: { amount: true, usedAmount: true, remainingAmount: true },
       }),
       prisma.referralCreditUsage.findMany({
@@ -517,7 +530,7 @@ export async function readConsulteeMoneySummary(args: {
       },
     }),
     prisma.referralCredit.aggregate({
-      where: { userId },
+      where: spendableCreditsWhere(userId),
       _sum: { remainingAmount: true },
     }),
   ]);

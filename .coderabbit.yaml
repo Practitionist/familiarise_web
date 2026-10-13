@@ -10,8 +10,8 @@ tone_instructions: >-
   idempotency, authorization and race-condition risk: money bugs mean
   double payouts or lost funds.
 reviews:
-  # assertive = deepest review profile (more findings, including nitpicks).
-  profile: assertive
+  # chill = high-signal review profile (avoids nitpick churn and rate limits).
+  profile: chill
   request_changes_workflow: false # reviews stay non-blocking; we triage comments via our own flow
   high_level_summary: true
   high_level_summary_in_walkthrough: true
@@ -27,8 +27,8 @@ reviews:
   abort_on_close: true
   auto_review:
     enabled: true
-    auto_incremental_review: true # re-review on every push
-    auto_pause_after_reviewed_commits: 0 # never auto-pause long trains
+    auto_incremental_review: false # review once on open; re-review on demand
+    auto_pause_after_reviewed_commits: 5
     drafts: false
     ignore_title_keywords: ["WIP", "[skip review]", "DO NOT MERGE"]
     labels: ["!do-not-review"]

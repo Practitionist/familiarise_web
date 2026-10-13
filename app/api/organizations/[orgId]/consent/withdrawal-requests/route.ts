@@ -30,6 +30,7 @@ export async function POST(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "consent.requestWithdrawal",
+    requireActive: true,
   });
   if (access.error) return access.error;
 

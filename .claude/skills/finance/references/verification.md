@@ -53,4 +53,4 @@ A subagent's summary of what it did is not evidence that it did it. Before accep
 
 ## Sources
 
-`docs/payments/06-high-level-design.md`, `docs/maintenance/04-cron-jobs-reference.md`, `docs/payments/gateways/razorpay/05-go-live-checklist.md`, `.claude/skills/finance/references/razorpay/references/local-testing.md`, `app/api/dev/mock-webhook/route.ts`, `lib/payments/operations/checkout.ts` (`buildPaymentMetadata`), `__tests__/payments/*webhook*`.
+`docs/payments/05-high-level-design.md`, `docs/maintenance/04-cron-jobs-reference.md`, `docs/payments/gateways/razorpay/05-go-live-checklist.md`, `.claude/skills/finance/references/razorpay/references/local-testing.md`, `app/api/dev/mock-webhook/route.ts`, `lib/payments/operations/checkout.ts` (`buildPaymentMetadata`), `__tests__/payments/*webhook*`.

@@ -42,6 +42,7 @@ interface ExpertPricingProps {
   onPlanChange: (id: string) => void;
   onCalendarOpenChange: (open: boolean) => void;
   bookingRequest?: number;
+  onDurationChange?: (durationInHours: number) => void;
 }
 
 export function ExpertPricing({
@@ -70,6 +71,7 @@ export function ExpertPricing({
   onPlanChange,
   onCalendarOpenChange,
   bookingRequest,
+  onDurationChange,
 }: Readonly<ExpertPricingProps>) {
   const formatPricingOptions = (
     // Rows from the detail fetcher, not raw Prisma types — keeps price: number (#780)
@@ -234,6 +236,7 @@ export function ExpertPricing({
                 onPlanChange={onPlanChange}
                 onCalendarOpenChange={onCalendarOpenChange}
                 bookingRequest={bookingRequest}
+                onDurationChange={onDurationChange}
               />
             </TabsContent>
             <TabsContent value="subscriptions">
@@ -272,6 +275,7 @@ export function ExpertPricing({
             onPlanChange={onPlanChange}
             onCalendarOpenChange={onCalendarOpenChange}
             bookingRequest={bookingRequest}
+            onDurationChange={onDurationChange}
           />
         ) : hasSubscriptions ? (
           <SubscriptionPricingToggle

@@ -26,6 +26,7 @@ export interface OrgDetailsResponse {
     name: string;
     slug: string;
     logo: string | null;
+    bannerImage: string | null;
     status: OrgStatus;
     canSponsor: boolean;
     canHost: boolean;
@@ -72,10 +73,13 @@ export interface OrgDetailsResponse {
 export interface RawOrgDetailsResponse {
   organization: Omit<
     OrgDetailsResponse["organization"],
-    "fundingSource" | "logo"
+    "fundingSource" | "logo" | "bannerImage"
   > & {
     billingAccount?: { fundingSource: FundingSource } | null;
-    brandingProfile?: { logo: string | null } | null;
+    brandingProfile?: {
+      logo: string | null;
+      bannerImage?: string | null;
+    } | null;
   };
   membership: OrgDetailsResponse["membership"];
 }
@@ -99,6 +103,7 @@ export function flattenOrgDetails(
       // Organization itself has no logo column. Same flatten every other reader
       // does.
       logo: raw.organization.brandingProfile?.logo ?? null,
+      bannerImage: raw.organization.brandingProfile?.bannerImage ?? null,
       status: raw.organization.status,
       canSponsor: raw.organization.canSponsor,
       canHost: raw.organization.canHost,

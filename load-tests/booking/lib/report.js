@@ -83,7 +83,7 @@ ${
     : `<ul>${summary.thresholdsBreached.map((name) => `<li><code>${name}</code></li>`).join("")}</ul>`
 }
 <p class="sub">Record these numbers on issue #874 using the table in
-docs/enterprise/50-operations/08-load-gate-runbook.md, then run the cleanup
+docs/enterprise/50-operations/09-load-gate-runbook.md, then run the cleanup
 script. The target shares the production database.</p>
 </body></html>`;
 }

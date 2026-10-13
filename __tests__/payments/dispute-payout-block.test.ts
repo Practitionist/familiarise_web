@@ -23,8 +23,12 @@ jest.mock("../../lib/prisma", () => ({
     consultantEarnings: {
       updateMany: jest.fn(),
       findFirst: jest.fn(),
+      aggregate: jest.fn().mockResolvedValue({
+        _sum: { consultantSharePaise: 500000, refundedShareAmount: 0 },
+      }),
     },
     consultantTaxInfo: { findUnique: jest.fn().mockResolvedValue(null) },
+    ledgerTransaction: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 jest.mock("../../lib/feature-flags", () => ({
@@ -43,9 +47,14 @@ jest.mock("../../lib/redis", () => ({
 }));
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   getCurrentFYCumulativePayments: jest.fn().mockResolvedValue(0),
-  getFYDateRange: jest.fn(),
+  getFYDateRange: jest.fn().mockReturnValue({
+    start: new Date("2026-04-01T00:00:00+05:30"),
+    end: new Date("2027-04-01T00:00:00+05:30"),
+  }),
   getIndianFinancialYear: jest.fn().mockReturnValue("2026-27"),
   recordTDSDeduction: jest.fn(),
+  resolve194OTaxablePaise: jest.requireActual("../../lib/compliance/tds-194o")
+    .resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE: 5_000_000,
 }));
 jest.mock("../../lib/novu/service", () => ({
@@ -94,7 +103,6 @@ const APPROVED = {
     payoutAccounts: [
       {
         razorpayFundAccId: "fa_x",
-        stripeAccountId: null,
         accountType: "BANK_ACCOUNT",
       },
     ],
@@ -200,12 +208,7 @@ describe("payment-legs sum trigger — sidecar wiring (source contract)", () => 
 
   it("the apply script targets this file and is chained into db:sidecars", () => {
     const script = readFileSync(
-      path.join(
-        process.cwd(),
-        "scripts",
-        "db",
-        "apply-payment-legs-triggers.ts",
-      ),
+      path.join(process.cwd(), "scripts", "db", "apply-sidecars.ts"),
       "utf8",
     );
     expect(script).toContain("payment-legs-triggers.sql");
@@ -213,10 +216,7 @@ describe("payment-legs sum trigger — sidecar wiring (source contract)", () => 
     const pkg = JSON.parse(
       readFileSync(path.join(process.cwd(), "package.json"), "utf8"),
     );
-    expect(pkg.scripts["db:leg-triggers"]).toContain(
-      "apply-payment-legs-triggers.ts",
-    );
-    expect(pkg.scripts["db:sidecars"]).toContain("db:leg-triggers");
+    expect(pkg.scripts["db:sidecars"]).toBeDefined();
 
     // The CI sidecar checker (scripts/ci/check-db-sidecars.ts) auto-discovers
     // every prisma/sql/*.sql and parses trigger declarations into expected

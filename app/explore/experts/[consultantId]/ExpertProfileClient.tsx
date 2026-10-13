@@ -90,8 +90,19 @@ export function ExpertProfileClient({
   const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
     null,
   );
+  const [selectedDuration, setSelectedDuration] = useState<number>(() =>
+    consultantDetails.consultationPlans.length > 0
+      ? Math.min(
+          ...consultantDetails.consultationPlans.map((p) => p.durationInHours),
+        )
+      : 1,
+  );
 
   const timezone = browserTimezone || userDetails?.timezone;
+  const consulteeUserId =
+    session?.user?.id && session.user.id !== consultantDetails.userId
+      ? session.user.id
+      : undefined;
 
   // #1591 J1-P1-04 — the grid answer is `private, max-age=30`, so a return
   // after a checkout 409 re-read the stale green cell. Entered with
@@ -134,6 +145,7 @@ export function ExpertProfileClient({
     startUtc: selectedDate ? pricingWeekStart : null,
     endUtc: selectedDate ? pricingWeekEnd : null,
     timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+    consulteeUserId,
     bypassRef: bypassCacheOnce,
     enabled: calendarOpen && offering.service === "consultations",
   });
@@ -145,6 +157,7 @@ export function ExpertProfileClient({
     consultantId: consultantDetails?.id,
     monthStart: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
     timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+    consulteeUserId,
     enabled: calendarOpen && offering.service === "consultations",
     bypassRef: bypassMonthCacheOnce,
   });
@@ -366,6 +379,8 @@ export function ExpertProfileClient({
         date,
         now,
         marks && key ? (marks[key] ?? []) : null,
+        timezone || "UTC",
+        selectedDuration,
       );
       const isToday = state.startsWith("today");
       const selectable = isSelectableDay(state);
@@ -409,7 +424,7 @@ export function ExpertProfileClient({
     }
 
     return days;
-  }, [currentDate, selectedDate, timezone, monthQuery.data]);
+  }, [currentDate, selectedDate, timezone, selectedDuration, monthQuery.data]);
 
   return (
     <main className="explore-page pb-24 xl:pb-0">
@@ -503,6 +518,7 @@ export function ExpertProfileClient({
               calendarLoading={monthQuery.isPending || isTimezoneLoading}
               calendarError={monthQuery.isError}
               onRefreshSlots={refreshSlots}
+              onDurationChange={setSelectedDuration}
             />
           </motion.div>
         </div>

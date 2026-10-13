@@ -3,53 +3,111 @@ title: State-as-outbox with a scheduled ticker
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-09-03
+last-reviewed: 2026-10-11
 ---
 
 # ADR 27 — State-as-outbox with a scheduled ticker
 
 ## Context
 
-ADR 14 kept the platform queue-less for launch; ADR 22 measured GitHub Actions delivering every sub-hourly schedule roughly once per hundred minutes and authorised QStash as the escalation. The 2026-09-03 financial audit asked for a transactional outbox for post-payment side effects (#1356), and the owner asked for an unbiased answer on whether one is needed.
+Serverless functions on Netlify have no built-in durable queue worker and freeze immediately once an HTTP response settles. Three platform facts govern background work and transactional side effects:
 
-Three facts settle it. First, the repo already has the durable state an outbox exists to provide: `WebhookEvent` is an inbox with a processed flag, `OutboundWebhookDelivery` and `FailedEmail` are outboxes with retry state, and every money-bearing follow-up is keyed on a domain row that already exists (`Payment`, `Appointment`, `Refund`, `WalletTopUp`). Second, every job under `jobs/` already has an HTTP twin under `app/api/cleanup/*` built by `lib/cron/cleanup-route.ts`, gated by `CRON_SECRET` and wrapped in the same `withCronLock`, so any scheduler that can POST can drive the fleet. Third, the only side effect that lacked a re-drive was Stream channel creation and its notification after a capture, and that is derivable from the appointment row.
+1. **Postgres already holds the durable state an outbox provides**: `WebhookEvent` is an inbound idempotent inbox (`processed` flag + `svixId`/`eventId` uniqueness); `FailedEmail` (`FailedEmailBatch`), `NotificationOutbox`, and `OutboundWebhookDelivery` are transactional outboxes with retry ladders; and domain-row obligations are anchored directly on business tables (`Payment`, `Appointment`, `Refund`, `WalletTopUp`).
+2. **Every background job is exposed through `app/api/cleanup/[job]/route.ts`** built by `lib/cron/cleanup-route.ts` (`lib/cron/cleanup-registry.ts`), gated by `CRON_SECRET` and guarded by `withCronLock` (`lib/cron/with-cron-lock.ts`), so any HTTP scheduler can invoke targets safely.
+3. **External message brokers cannot participate in a Postgres `$transaction` without a dual-write**, meaning a Postgres outbox table is required even when an external broker exists.
 
-So the missing piece was never a table. It was a scheduler that fires when it says it will.
+| Broker / Pattern                                           | Atomic with Postgres `$transaction`?                                  | Serverless (Netlify) Fit                                                                    | Operational & Cost Overhead                    | Verdict                                                                       |
+| :--------------------------------------------------------- | :-------------------------------------------------------------------- | :------------------------------------------------------------------------------------------ | :--------------------------------------------- | :---------------------------------------------------------------------------- |
+| **Apache Kafka**                                           | **No** (Requires DB outbox + CDC/Debezium to avoid dual-write)        | **Poor** (Long-lived consumer groups & partition rebalancing)                               | **Very High** (\$150–\$500+/mo + ops overhead) | **Rejected**                                                                  |
+| **RabbitMQ / BullMQ**                                      | **No** (Redis/AMQP enqueue inside DB tx is a dual-write)              | **Poor** (Requires persistent TCP workers on a separate 24/7 VM tier)                       | **High** (Separate compute fleet required)     | **Rejected**                                                                  |
+| **AWS SQS**                                                | **No** (HTTP `SendMessage` inside DB tx is a dual-write)              | **Mediocre** (No native SQS event source mapping on Netlify)                                | **Moderate** (Cross-cloud IAM + poller)        | **Rejected**                                                                  |
+| **Upstash QStash**                                         | **No on its own** (Still needs DB outbox)                             | **Excellent** (Stateless HTTP push with retries, DLQ, and `FlowControl`)                    | **Low** (~$1 / 100k messages)                  | **Optional Stage-2 Escalation** (if `OutboundWebhookDelivery` exceeds >10k/d) |
+| **Postgres Transactional Outbox + Phase-Staggered Ticker** | **100% Atomic** (`stage()` / `stageBell()` writes inside caller `tx`) | **Native** (Post-commit fast-path settles in ~150ms; phase-staggered ticker drains retries) | **Zero Incremental Cost** (\$0/mo)             | **Active Production Architecture**                                            |
+
+---
 
 ## Decision
 
-1. **Domain rows are the outbox.** No generic outbox table is added. A follow-up that must survive a crash is expressed as a nullable stamp on the row it belongs to (for example `Appointment.chatChannelEnsuredAt`) plus an idempotent ensure-step in an existing sweeper.
-2. **A Netlify scheduled function is the ticker.** `netlify/functions/cron-tick.mts` runs every five minutes and POSTs the latency-sensitive sweep routes (stuck webhooks, refund cascade and reconcile, abandoned payments, payment-status reconcile, orphaned confirmations, orphaned top-up captures, outbound webhook dispatch, earnings sync and release) with the cron secret. Each route already holds a fail-closed Redis lock, so a ticker run and a GitHub Actions run cannot overlap; the loser answers 409 and that is expected.
-3. **GitHub Actions stays** for daily and weekly business crons, for the unbounded backstop runs of the same sweepers, and for manual dispatch with its run history.
-4. **Routes invoked by the ticker take a `limit`** so a single run fits inside the Next function ceiling of 26 seconds; the nightly Actions run remains unbounded.
-5. **QStash remains the escalation**, not the default. Its triggers are unchanged from ADR 14 and ADR 22: a notification fan-out that exceeds the synchronous budget, a measured webhook-processing SLO breach that a five-minute tick cannot close, or the Netlify scheduler proving as unreliable as Actions. Inngest and Temporal remain out on the criteria ADR 22 records.
+1. **Consolidated 3-Table Transactional Outbox + Domain Stamps.**
+   - `FailedEmail` (and `FailedEmailBatch`), `NotificationOutbox`, and `OutboundWebhookDelivery` are the dedicated transactional outbox tables.
+   - Domain-row obligations use explicit nullable stamps (e.g., `Appointment.chatChannelEnsuredAt`, `Payment.description` `Auto-refund pending:` prefix) walked by idempotent sweepers.
+2. **Pre-Render Outside `$transaction`, Stage Inside `tx` with 60s Lease Window, Flush via `flushNotificationsAfter`.**
+   - Producers pre-render React Email payloads outside database transactions (`prepareRecipientEmails` in `lib/email/send-to-recipients.ts`) so `PG_POOL_MAX=1` connections are never held during CPU-bound rendering.
+   - Inside `$transaction(tx)`, producers stage emails (`stage()` / `stagePreparedEmails()`) and in-app bells (`stageBell(tx, ...)` in `lib/novu/stage-bell.ts`, which filters out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, and muted categories while computing quiet-hours `notBefore`).
+   - Staged rows receive `status = "PENDING"` and `nextRetryAt = NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS = 60_000`) so background cron sweeps skip rows whose inline post-commit delivery is still in flight.
+   - Post-commit, `flushNotificationsAfter({ bells, emails }, op)` (`lib/novu/stage-then-attempt.ts`) dispatches all staged triggers and emails concurrently via `scheduleAfter` (`lib/api/after-safe.ts`, backed by Next.js `after()` inside a request scope and awaited inline outside request scopes).
+   - Both `stage()` and `runEmailRetryTick` scope Resend idempotency keys to the outbox row ID (`<EMAIL_TYPE>/failed-email/<row.id>` via `idempotencyKeyFor`), preventing Resend's 24-hour payload hash cache from dropping repeat transactional emails.
+   - On relay retries, `reconstructUnsubscribeHeaders(row)` (`lib/email/unsubscribe.ts`) statelessly rebuilds RFC 8058 `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers from persisted body URLs without persisting redundant JSON columns.
+3. **Phase-Staggered Netlify Scheduled Ticker (`netlify/functions/cron-tick.mts`).**
+   - `cron-tick.mts` runs every 5 minutes (`*/5 * * * *`) and distributes 10-minute, 15-minute, and 30-minute targets across deterministic phase offsets (`TARGET_OFFSET_MINUTES`) so no 5-minute tick fires more than **8 targets** concurrently:
+     - `retry-failed-emails`: **every 15 minutes at offset `:00`** (`:00, :15, :30, :45`), `limit=20`, `20_000 ms` timeout, sequential `SEND_GAP_MS = 125 ms` pacing.
+     - `drain-notification-outbox`: **every 10 minutes at offset `:05`** (`:05, :15, :25, :35, :45, :55`), `limit=20`, `20_000 ms` timeout, sequential probe + `DRAIN_CONCURRENCY = 5`.
+   - Default target timeout is `15_000 ms` (`20_000 ms` for vendor round-trip sweeps), keeping every tick inside Netlify's 30-second ceiling.
+4. **Atomic Postgres Lease Lock (`withCronLock`) & Sidecar Partial Indexes (`prisma/sql/check-constraints.sql`).**
+   - `lib/cron/with-cron-lock.ts` acquires fail-closed Postgres leases on `SystemJobExecution` enforced by `CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key" ON "SystemJobExecution" ("jobName") WHERE "status" = 'RUNNING'` in `prisma/sql/check-constraints.sql` with single-`UPDATE` CAS takeover for expired leases.
+   - Active outbox scans and 7-day `SENT` body scrubs are backed by partial indexes in `prisma/sql/check-constraints.sql`:
+     - `FailedEmail_active_outbox_idx` (`ON "FailedEmail" ("nextRetryAt" ASC NULLS FIRST) WHERE "status" IN ('PENDING', 'RETRY')`)
+     - `FailedEmailBatch_active_outbox_idx` (`ON "FailedEmailBatch" ("nextRetryAt" ASC NULLS FIRST) WHERE "status" IN ('PENDING', 'RETRY')`)
+     - `NotificationOutbox_active_outbox_idx` (`ON "NotificationOutbox" ("nextRetryAt" ASC NULLS FIRST, "notBefore") WHERE "status" IN ('PENDING', 'RETRY')`)
+     - `FailedEmail_sent_unscrubbed_updatedAt_idx` (`ON "FailedEmail" ("updatedAt") WHERE "status" = 'SENT' AND ("htmlBody" <> '' OR "textBody" IS NOT NULL)`)
+5. **Per-Tick Aggregated Telemetry & Retention Pruning.**
+   - Outbox drains aggregate failures once per tick (`0` per-row loop Sentry calls), update queue depth gauges (`email.outbox.pending`, `email.outbox.dead_letter`, `notifications.outbox.pending`, `notifications.outbox.dead_letter`), and send fallback ops alerts via `postOpsChat`.
+   - `scripts/cleanup/prune-system-job-executions.ts` scrubs `htmlBody`/`textBody` on `SENT` `FailedEmail` rows after 7 days and deletes terminal outbox/execution rows on schedule.
 
-## Consequences
+---
 
-_Amended 2026-09-17._ Netlify confirmed (ticket #1112198) that a burst of new instances stalls about 28 s inside its shared regional pool and bills the stall as duration, so a five-minute tick on twelve parallel targets was itself a recurring cold burst. Six sweeps whose GitHub Actions twin already runs at fifteen minutes or slower — `reconcile-ledgers`, `sync-payment-earnings`, `release-earnings`, `cascade-refund-earnings`, `reconcile-refunds`, `abandoned-payments` — now run on the fifteen-minute slots (`TARGET_EVERY_MINUTES`), and instances are kept warm by a separate four-minute scheduled function rather than by the ticker. The five customer-visible sweeps and the webhook re-drive keep the five-minute cadence this ADR chose; the worst case for a buyer is unchanged.
+## Active Architecture Diagram
 
-The worst case for a buyer whose `after()` callback died falls from about a hundred minutes to about five, with no new vendor, no new secret inside the money path and no new table to reconcile. The trade-off is one more place that fires the fleet, which is why the ticker only ever hits routes that are already lock-guarded and idempotent, and why the cron heartbeat keeps watching the Actions side independently.
+```text
++===================================================================================================+
+|                     PRODUCERS (API Routes, Webhooks, Server Actions, Jobs)                        |
++===================================================================================================+
+   |
+   | 1. Pre-render React Email OUTSIDE $transaction (`prepareRecipientEmails` -> `render` + `toPlainText`)
+   | 2. Gate bell recipients via `stageBell(tx, ...)` (routing mode, channel/category prefs, quiet hours)
+   | 3. Stage emails via `stage()` / `stagePreparedEmails(tx, ...)` inside `$transaction(tx)`:
+   |    - `status: "PENDING"`, `nextRetryAt: NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`)
+   |    - Row-scoped Resend key: `<EMAIL_TYPE>/failed-email/<row.id>`
+   |    - Deterministic Novu key: `<workflowId>:<sha256[:32]>` + `NotificationScope` on `ORG_*` workflows
+   | 4. Post-commit fast-path: `flushNotificationsAfter({ bells, emails }, op)` dispatches concurrently
+   |    via `scheduleAfter` (`after()` in Next.js request context; awaited inline in CLI/cron/tests)
+   v
++---------------------------------------------------------------------------------------------------+
+|               CONSOLIDATED OUTBOX LAYER (Postgres + `prisma/sql/check-constraints.sql`)           |
+|  1. `FailedEmail` & `FailedEmailBatch` (`FailedEmail_active_outbox_idx`, `FailedEmailBatch_*`)    |
+|  2. `NotificationOutbox` (`NotificationOutbox_active_outbox_idx`)                                 |
+|  3. `OutboundWebhookDelivery` (Enterprise Customer Webhooks)                                      |
+|  * Stateless RFC 8058 `reconstructUnsubscribeHeaders(row)` rebuilds one-click headers on retry    |
+|  * 7d `SENT` body scrub (`FailedEmail_sent_unscrubbed_updatedAt_idx`) + 30d/90d row pruning       |
++---------------------------------------------------------------------------------------------------+
+   |
+   v
++===================================================================================================+
+|              PHASE-STAGGERED CRON & LOCKING ENGINE (`netlify/functions/cron-tick.mts`)            |
++===================================================================================================+
+  Netlify `cron-tick.mts` (`*/5 * * * *`, max 8 concurrent targets per tick):
+  - `retry-failed-emails`: every 15m at offset `:00` (`limit=20`, `20s` timeout, `SEND_GAP_MS = 125ms`)
+  - `drain-notification-outbox`: every 10m at offset `:05` (`limit=20`, `20s` timeout, `DRAIN_CONCURRENCY = 5`)
+  - Atomic Postgres lease lock (`SystemJobExecution_running_jobName_key` in `prisma/sql/check-constraints.sql`)
+  - Per-tick aggregated Sentry alerts + `*.outbox.dead_letter` gauges + `postOpsChat` fallback alerts
+```
 
-Anyone adding a follow-up to a money path should first ask which row already records the obligation and which sweeper already walks that row, and only then consider a new mechanism.
+---
 
-### Who uses this pattern
+## Side Effects Riding This Pattern
 
-The table below lists every side effect that rides an outbox row and a ticker-driven relay under this decision, so a new candidate can be measured against the ones that already exist.
+| Side effect                          | Outbox row / stamp                                        | Written where                                                                      | Relay (ticker target & cadence)                                            |
+| ------------------------------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Partner webhook delivery             | `OutboundWebhookDelivery`                                 | Emitting domain service before any POST                                            | `dispatch-outbound-webhooks`, every 15m (offset `:00`, `limit=15`)         |
+| Stream chat channels after a capture | `Appointment.chatChannelEnsuredAt` (`NULL` until synced)  | Payment confirmation pipeline                                                      | `reconcile-orphaned-confirmations`, every 15m (offset `:05`, `limit=10`)   |
+| Transactional & batch email          | `FailedEmail` / `FailedEmailBatch` (`nextRetryAt = +60s`) | `stage()` in `lib/email/deliver.ts` inside caller `tx` where applicable            | `retry-failed-emails`, every 15m (offset `:00`, `limit=20`, `20s` timeout) |
+| Novu in-app notifications            | `NotificationOutbox` (`nextRetryAt = now + 60s`)          | `stageBell()` (`lib/novu/stage-bell.ts`) / `stageTrigger()` (`lib/novu/outbox.ts`) | `drain-notification-outbox`, every 10m (offset `:05`, `limit=20`, `20s`)   |
+| Capture-webhook auto-refunds         | `Payment.description` (`Auto-refund pending:` prefix)     | Capture webhook Phase 1 transaction across auto-refund branches                    | `retry-auto-refunds`, every 15m (offset `:10`, `limit=10`, `20s` timeout)  |
 
-| Side effect                          | Outbox row                                   | Written where                                                                              | Relay (ticker target)                                            | Since |
-| ------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ----- |
-| Partner webhook delivery             | `OutboundWebhookDelivery`                    | The emitting service, before any POST                                                      | `dispatch-outbound-webhooks`, every tick                         | #1019 |
-| Stream chat channels after a capture | `Appointment.chatChannelEnsuredAt` (a stamp) | The payment pipeline, as a NULL that the sweep re-drives                                   | `reconcile-orphaned-confirmations`, every tick                   | #1356 |
-| Transactional email                  | `FailedEmail` (`PENDING` before the send)    | `stage()` in `lib/email/deliver.ts`, inside the caller's transaction where it has one      | `retry-failed-emails`, every third tick, Actions as the backstop | #1654 |
-| Novu in-app triggers                 | `NotificationOutbox`                         | `stageTrigger()` in `lib/novu/outbox.ts`, inside the caller's transaction where it has one | `drain-notification-outbox`, every tick                          | #1654 |
-| Capture-webhook auto-refunds         | `Payment.description` (an `Auto-refund pending:` prefix) | The capture webhook's Phase 1 transaction, on all five refund branches          | `retry-auto-refunds`, every third tick, Actions hourly at :37 as the backstop | #1853 |
+---
 
-`FailedEmail` and `NotificationOutbox` are the two places where decision 1 ("no generic outbox table") bends: an email and a bell have no domain row of their own to stamp, so the rendered message or the trigger payload is the row, and the same row doubles as the retry state the relay walks. Both keep the inline fast path: the request that caused the side effect makes the first attempt itself under a time budget, so the ticker's five-minute interval is the worst case, not the common one (#1654).
+## Deprecated & Superseded Approaches
 
-The auto-refund row, added by #1853 (bucket B of #1846), follows the stamp pattern rather than a new table. A SUCCEEDED payment whose description starts with `Auto-refund pending:` is the work queue, and `scripts/payments/retry-auto-refunds.ts` walks it at most ten payments per run, oldest first, after a fifteen-minute grace that lets the webhook's own attempt finish. The sweep skips a payment that has a PENDING refund, because reconcile-refunds owns that one, and a payment under a live dispute. A settled refund rewrites the prefix to `Auto-refunded:`, and after three failed gateway refunds the prefix becomes `Auto-refund stuck:` and one SystemError pages an operator, so the payer is not told about a failed refund on every tick.
-
-## Related
-
-- ADR 05 (GitHub Actions crons), ADR 14 (queue posture), ADR 22 (measurements) — this ADR narrows their remedy, it does not reverse them.
-- ADR 21 (single writer for payment confirmation) — the ticker never writes payment status; it only re-invokes the pipeline.
-- #866, #1010 (QStash plan), #1356 (the outbox request this answers), #1246 (orphan gateway orders, still hygiene).
+- **Unstaggered Ticker Thundering Herd (`minute % every < 5` without offsets)**: Previously fired 18+ targets simultaneously at `:00`/`:30` while leaving `:05, :25, :35, :55` idle, exhausting `PG_POOL_MAX=1` connections; superseded by deterministic `TARGET_OFFSET_MINUTES` capping concurrent targets at `<= 8` per 5-minute tick.
+- **Immediate `nextRetryAt: NOW()` & Content-Hashed Resend Idempotency Keys**: Staging rows due immediately allowed cron ticks to double-send inline attempts, while hashing `to + subject + html` caused Resend's 24-hour idempotency cache to silently drop legitimate repeat transactional emails; superseded by the 60s inline lease window and `<EMAIL_TYPE>/failed-email/<row.id>` row keys.
+- **In-Transaction React Email SSR & Stripped Retry Unsubscribe Headers**: Rendering React Email inside `Serializable` transactions bloated lock hold times, and omitting header reconstruction stripped RFC 8058 one-click headers on retries; superseded by `prepareRecipientEmails` pre-rendering and stateless `reconstructUnsubscribeHeaders(row)`.

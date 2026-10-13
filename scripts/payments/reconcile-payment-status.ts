@@ -1,7 +1,7 @@
 /**
  * Payment Status Reconciliation - Core Logic
  *
- * Reconciles payment status with payment gateways (Stripe/Razorpay).
+ * Reconciles payment status with Razorpay.
  * Finds PENDING payments and queries gateways for actual status.
  *
  * This catches cases where:
@@ -24,6 +24,7 @@ import * as Sentry from "@sentry/nextjs";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
+import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
 
@@ -93,80 +94,10 @@ type GatewayLookup =
   | { kind: "unknown_id"; detail: string }
   | { kind: "gateway_error"; detail: string };
 
-// Matched on the error's own fields, not `instanceof` against the lazily
-// imported SDK — the same posture as cleanup-abandoned-payments (#1464).
-function isStripeUnknownId(error: unknown): boolean {
-  const e = error as { code?: unknown; statusCode?: unknown } | null;
-  return e?.code === "resource_missing" || e?.statusCode === 404;
-}
-
 export interface ReconcilePaymentStatusOptions {
   /** #1356 — caps the batch for the Netlify ticker; undefined keeps the
    * unbounded GitHub Actions behaviour. */
   limit?: number;
-}
-
-/**
- * Query Stripe for payment intent status
- */
-async function getStripePaymentStatus(
-  paymentIntent: string,
-): Promise<GatewayLookup> {
-  const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-  if (!stripeSecretKey) {
-    console.warn("Stripe credentials not configured");
-    return {
-      kind: "gateway_error",
-      detail: "Stripe credentials not configured",
-    };
-  }
-
-  try {
-    const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(stripeSecretKey);
-
-    // Checkout-flow payments store the cs_ session id as the payment ref
-    // (the cancel path in lib/payments/core/stripe.ts handles the same
-    // split). Passing a cs_ id to paymentIntents.retrieve throws "No such
-    // payment_intent", which used to poison every run with the same two
-    // stale rows. Resolve the session to its intent; a session that never
-    // produced one maps on its own state — expired → canceled (the row
-    // finally EXPIREs), open → processing (Stripe auto-expires within 24h,
-    // the next sweep settles it).
-    if (paymentIntent.startsWith("cs_")) {
-      const session = await stripe.checkout.sessions.retrieve(paymentIntent);
-      const intentRef = session.payment_intent;
-      if (!intentRef) {
-        return {
-          kind: "status",
-          status: session.status === "expired" ? "canceled" : "processing",
-        };
-      }
-      const pi =
-        typeof intentRef === "string"
-          ? await stripe.paymentIntents.retrieve(intentRef)
-          : intentRef;
-      return {
-        kind: "status",
-        status: pi.status,
-        failureMessage: pi.last_payment_error?.message ?? undefined,
-      };
-    }
-
-    const pi = await stripe.paymentIntents.retrieve(paymentIntent);
-    return {
-      kind: "status",
-      status: pi.status,
-      failureMessage: pi.last_payment_error?.message,
-    };
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    if (isStripeUnknownId(error)) {
-      return { kind: "unknown_id", detail };
-    }
-    console.error(`Failed to get Stripe payment status: ${error}`);
-    return { kind: "gateway_error", detail };
-  }
 }
 
 /**
@@ -199,6 +130,7 @@ async function getRazorpayPaymentStatus(
         headers: {
           Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
         },
+        signal: AbortSignal.timeout(15_000),
       },
     );
 
@@ -225,6 +157,7 @@ async function getRazorpayPaymentStatus(
           headers: {
             Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
           },
+          signal: AbortSignal.timeout(15_000),
         },
       );
 
@@ -283,24 +216,7 @@ function mapGatewayStatus(
   gateway: PaymentGateway,
   status: string,
 ): PaymentStatus | null {
-  if (gateway === PaymentGateway.STRIPE) {
-    switch (status) {
-      case "succeeded":
-        return PaymentStatus.SUCCEEDED;
-      case "processing":
-        return PaymentStatus.PENDING;
-      case "requires_payment_method":
-        return PaymentStatus.FAILED;
-      case "requires_confirmation":
-        return PaymentStatus.PENDING;
-      case "requires_action":
-        return PaymentStatus.PENDING;
-      case "canceled":
-        return PaymentStatus.EXPIRED;
-      default:
-        return null;
-    }
-  } else if (gateway === PaymentGateway.RAZORPAY) {
+  if (gateway === PaymentGateway.RAZORPAY) {
     switch (status) {
       case "paid":
       case "captured":
@@ -357,6 +273,7 @@ async function reconcilePaymentStatusUnlocked(
   const stalePendingPayments = await prisma.payment.findMany({
     where: {
       paymentStatus: PaymentStatus.PENDING,
+      paymentGateway: PaymentGateway.RAZORPAY,
       createdAt: {
         lt: minAge,
         gte: maxAge,
@@ -368,7 +285,7 @@ async function reconcilePaymentStatusUnlocked(
     },
     include: {
       user: { select: { email: true, name: true } },
-      appointment: { select: { id: true } },
+      appointment: { select: { id: true, appointmentType: true } },
     },
     orderBy: { createdAt: "asc" },
     take: opts.limit,
@@ -380,12 +297,11 @@ async function reconcilePaymentStatusUnlocked(
     where: {
       paymentStatus: PaymentStatus.PENDING,
       createdAt: { lt: orphanCutoff },
-      paymentGateway: { in: [PaymentGateway.STRIPE, PaymentGateway.RAZORPAY] },
       NOT: { paymentIntent: "" },
     },
     include: {
       user: { select: { email: true, name: true } },
-      appointment: { select: { id: true } },
+      appointment: { select: { id: true, appointmentType: true } },
     },
     orderBy: { createdAt: "asc" },
     take: opts.limit,
@@ -438,9 +354,7 @@ async function reconcilePaymentStatusUnlocked(
     // instead of writing the status (ADR 21).
     let lookup: GatewayLookup;
 
-    if (payment.paymentGateway === PaymentGateway.STRIPE) {
-      lookup = await getStripePaymentStatus(payment.paymentIntent);
-    } else if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
+    if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
         skippedCount++;
@@ -448,6 +362,11 @@ async function reconcilePaymentStatusUnlocked(
       }
       // For Razorpay, paymentIntent might be orderId
       lookup = await getRazorpayPaymentStatus(payment.paymentIntent);
+    } else if (payment.createdAt < orphanCutoff) {
+      lookup = {
+        kind: "unknown_id",
+        detail: `unsupported legacy gateway ${payment.paymentGateway}`,
+      };
     } else {
       console.log(
         `   Skipping - unsupported gateway: ${payment.paymentGateway}`,
@@ -544,30 +463,67 @@ async function reconcilePaymentStatusUnlocked(
 
     // Update if status changed
     if (mappedStatus !== payment.paymentStatus) {
-      // ADR 21 — a payment that reconciles to SUCCEEDED must go through the
-      // confirmation pipeline, not a status write.
-      //
-      // This job exists precisely because a `payment.captured` was missed, so
-      // it is the LEAST safe place to write the status directly: setting
-      // SUCCEEDED here poisons handlePaymentSuccess's already-SUCCEEDED guard,
-      // and Razorpay's redelivery (it retries for 24h) then no-ops. The legacy
-      // appointment-creation path and all three auto-refund guards
-      // (amount-mismatch, captured-after-terminal, double-booking-loser) are
-      // skipped permanently — and none of those are covered by another cron.
-      // The old code even logged "may need manual appointment creation!"
-      // instead of just creating it.
-      // Razorpay only: routeCapturedPayment is the Razorpay dispatch's router,
-      // and Stripe successes are confirmed by their own webhook handler. A
-      // Stripe row still takes the CAS below, which is the pre-existing
-      // behaviour for that gateway.
-      if (
-        mappedStatus === PaymentStatus.SUCCEEDED &&
-        payment.paymentGateway === PaymentGateway.RAZORPAY
-      ) {
+      // SUCCEEDED goes through routeCapturedPayment, never a raw status write,
+      // so confirmation, auto-refund guards, earnings and journaling all run.
+      if (mappedStatus === PaymentStatus.SUCCEEDED) {
+        const notes: Record<string, string> = {
+          ...gatewayStatus.notes,
+        };
+        if (payment.appointment?.id) {
+          if (!notes.userId && payment.userId) {
+            notes.userId = payment.userId;
+          }
+          if (!notes.appointmentType && payment.appointment.appointmentType) {
+            notes.appointmentType = payment.appointment.appointmentType;
+          }
+        }
+        const isStandaloneFlow =
+          notes.type === "credit_purchase" ||
+          notes.type === "invoice_payment" ||
+          notes.type === "overage_member" ||
+          notes.type === "recording_purchase";
+        if (
+          !isStandaloneFlow &&
+          !payment.appointment?.id &&
+          !notes.appointmentType
+        ) {
+          const msg = `Cannot reconcile booking payment ${payment.id} to SUCCEEDED without linked appointment or creation notes`;
+          console.error(`   ${msg}`);
+          const missingCtxCorrelationId = `reconcile-missing-context:${payment.id}`;
+          const alreadyReportedMissingCtx =
+            typeof prisma.systemEvent?.findFirst === "function"
+              ? await prisma.systemEvent
+                  .findFirst({
+                    where: {
+                      correlationId: missingCtxCorrelationId,
+                      createdAt: {
+                        gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+                      },
+                    },
+                    select: { id: true },
+                  })
+                  .catch(() => null)
+              : null;
+          if (!alreadyReportedMissingCtx) {
+            await recordSystemEvent({
+              category: "PAYMENT",
+              severity: "ERROR",
+              message: `PAYMENT_RECONCILE_MISSING_BOOKING_CONTEXT: ${msg}`,
+              correlationId: missingCtxCorrelationId,
+              context: {
+                paymentId: payment.id,
+                paymentGateway: payment.paymentGateway,
+                paymentIntent: payment.paymentIntent,
+              },
+            });
+          }
+          errors.push(`Payment ${payment.id}: ${msg}`);
+          continue;
+        }
         try {
           await routeCapturedPayment({
             orderId: payment.paymentIntent,
-            notes: gatewayStatus.notes ?? {},
+            notes,
             amountPaise: gatewayStatus.amountPaise,
             gatewayPaymentId: gatewayStatus.paymentId,
           });
@@ -587,11 +543,21 @@ async function reconcilePaymentStatusUnlocked(
       // the predicate the reconcile would clobber that real transition back to
       // EXPIRED/FAILED. updateMany lets us add the guard; count===0 means another
       // writer already moved it — skip rather than overwrite.
-      const claimed = await prisma.payment.updateMany({
-        where: { id: payment.id, paymentStatus: payment.paymentStatus },
-        data: {
-          paymentStatus: mappedStatus,
-        },
+      const claimed = await prisma.$transaction(async (tx) => {
+        const res = await tx.payment.updateMany({
+          where: { id: payment.id, paymentStatus: payment.paymentStatus },
+          data: {
+            paymentStatus: mappedStatus,
+          },
+        });
+        if (
+          res.count > 0 &&
+          (mappedStatus === PaymentStatus.FAILED ||
+            mappedStatus === PaymentStatus.EXPIRED)
+        ) {
+          await reverseCreditsForPayment(payment.id, tx);
+        }
+        return res;
       });
 
       if (claimed.count === 0) {

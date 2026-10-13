@@ -5,28 +5,76 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { pendingToast, useToast } from "@/hooks/use-toast";
-import {
-  signUp,
-  useSession,
-  sendVerificationEmail,
-  getSession,
-} from "@/lib/auth-client";
+import { signIn, signUp, useSession } from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { setPendingReferral } from "@/lib/pending-referral";
+import { DisplayNameSchema } from "@/schemas/auth";
+import {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_RULE_HINT,
+  passwordTooLong,
+} from "@/lib/auth/password-rules";
 import { ReferralCodeField } from "./ReferralCodeField";
+import {
+  referralCheckText,
+  useReferralCodeCheck,
+} from "./useReferralCodeCheck";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
 import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
+  type AuthErrorAction,
   type AuthErrorField,
 } from "@/lib/labels/auth-errors";
-import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
+import { useConfiguredSocialProviders } from "@/components/auth/social-providers-context";
+import {
+  AuthErrorAffordance,
+  type AuthActionTarget,
+} from "@/components/auth/AuthErrorAffordance";
+import { useRetryAfterCapture } from "@/components/auth/useRetryAfterCapture";
+import { markExpectedUnreachable } from "@/lib/auth/expected-auth-failures";
+import { cn } from "@/utils/tailwind";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useSignedInRedirect } from "../useSignedInRedirect";
+import { stashPendingVerificationEmail } from "../pending-verification";
 import { AuthFormSkeleton } from "../AuthFormSkeleton";
+
+/** Customer-facing support mailbox. Mirrors `lib/labels/org-errors.ts`. */
+const SUPPORT_EMAIL =
+  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
+
+/**
+ * A thrown Better Auth `APIError` keeps `{ code, message }` in `body`; the
+ * message is read only so the catalog can pick a field, never shown.
+ */
+function thrownAuthError(error: unknown): {
+  code?: string;
+  status?: number;
+  message?: string;
+} {
+  if (!error || typeof error !== "object") return {};
+  const e = error as {
+    code?: unknown;
+    status?: unknown;
+    message?: unknown;
+    body?: unknown;
+    response?: unknown;
+  };
+  const body =
+    e.body && typeof e.body === "object"
+      ? (e.body as { code?: unknown; message?: unknown })
+      : {};
+  return {
+    ...(typeof e.code === "string" ? { code: e.code } : {}),
+    ...(typeof body.code === "string" ? { code: body.code } : {}),
+    ...(typeof e.status === "number" ? { status: e.status } : {}),
+    ...(typeof body.message === "string" ? { message: body.message } : {}),
+  };
+}
 
 export default function SignUp() {
   return (
@@ -42,7 +90,8 @@ function SignUpContent() {
   const searchParams = useSearchParams();
   const referralCode = searchParams.get("ref");
   const callbackUrl = searchParams.get("callbackUrl");
-  const { data: session, isPending } = useSession();
+  const { data: session, isPending, refetch: refetchSession } = useSession();
+  const socialProviders = useConfiguredSocialProviders();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -52,162 +101,78 @@ function SignUpContent() {
   const [ssoCheck, setSsoCheck] = useState<{
     enforceSSO: boolean;
     organizationName: string;
-    ssoBody: { providerId: string; domain: string; callbackURL: string };
+    ssoBody: {
+      providerId: string;
+      domain: string;
+      callbackURL: string;
+      errorCallbackURL: string;
+    };
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
-  const [verificationSent, setVerificationSent] = useState(false);
-  const [resending, setResending] = useState(false);
-  // The sentence under the input the server refused, cleared on retype.
+  // The sentence under the input that was refused, cleared on retype.
   const [fieldError, setFieldError] = useState<
     Partial<Record<AuthErrorField, string>>
   >({});
+  // The catalog's "what to do next" for the last failure.
+  const [errorAction, setErrorAction] = useState<AuthErrorAction | null>(null);
+  const retryAfter = useRetryAfterCapture();
+  const refParamCheck = useReferralCodeCheck(
+    referralCode ?? "",
+    !!referralCode,
+  );
 
-  // Validate the callbackUrl once and reuse the safe value across onboarding,
-  // verification, and social login. safeSameOriginPath rejects backslash /
-  // scheme-relative escapes that naive prefix checks let through.
   const safeCallbackUrl = safeSameOriginPath(callbackUrl);
-
-  // Build onboarding URL with optional callbackUrl passthrough (for org invite flow)
-  const onboardingUrl = safeCallbackUrl
-    ? `/form/onboarding?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+  const callbackQuery = safeCallbackUrl
+    ? `callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+    : "";
+  const onboardingUrl = callbackQuery
+    ? `/form/onboarding?${callbackQuery}`
     : "/form/onboarding";
-
-  // Thread the validated callbackUrl through the verification link so an
-  // invite/deep-link destination survives email verification.
-  const verificationCallbackUrl = safeCallbackUrl
-    ? `/auth/verify-email?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
-    : "/auth/verify-email";
-
-  // Thread it back to sign-in too, so toggling sign-up ↔ sign-in preserves the
-  // destination in both directions (only the org-invite deep-link set it before).
-  const signInUrl = safeCallbackUrl
-    ? `/auth/signin?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
+  const signInUrl = callbackQuery
+    ? `/auth/signin?${callbackQuery}`
     : "/auth/signin";
+  const signUpUrl = callbackQuery
+    ? `/auth/signup?${callbackQuery}`
+    : "/auth/signup";
 
-  // Redirect authenticated users based on onboarding status.
-  //
-  // `useSession()` can serve the ≤5-min cookie-cache payload; acting on a
-  // stale `onboardingCompleted` sent the client one way while the server
-  // guard (always force-fresh) bounced the user back — an intermittent
-  // flicker. Re-verify with a force-fresh read before committing, and keep
-  // the navigation idempotent (single replace, never push: leaving /auth/*
-  // in history made Back from the dashboard ping-pong forward again).
-  const navigatedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (isPending || !session?.user) return;
-
-    let cancelled = false;
-    const resolveAndGo = (completed: boolean) => {
-      if (cancelled) return;
-      const target = completed
+  // Replace, never push: /auth/* in history makes Back bounce forward again.
+  const signedInTarget = useCallback(
+    (user: { onboardingCompleted?: boolean | null }) =>
+      user.onboardingCompleted
         ? safeCallbackUrl || "/dashboard"
-        : onboardingUrl;
-      if (navigatedRef.current === target) return;
-      navigatedRef.current = target;
-      router.replace(target);
-    };
+        : onboardingUrl,
+    [safeCallbackUrl, onboardingUrl],
+  );
+  useSignedInRedirect(session?.user, refetchSession, signedInTarget);
 
-    getSession({ query: { disableCookieCache: true } })
-      .then(({ data, error: sessionError }) => {
-        // Better Auth resolves (rather than rejects) HTTP-level failures as
-        // `{ data: null, error }` — fall back to the cached value instead of
-        // stranding the page on the interstitial until the next store update.
-        if (sessionError) {
-          resolveAndGo(!!session.user?.onboardingCompleted);
-          return;
-        }
-        // Session revoked between paint and check — no protected redirect.
-        if (!data?.user) return;
-        resolveAndGo(!!data.user.onboardingCompleted);
-      })
-      .catch(() => {
-        resolveAndGo(!!session.user?.onboardingCompleted);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [session, isPending, router, safeCallbackUrl, onboardingUrl]);
-
-  // Persist the referral code at first touch so it survives the OAuth redirect
-  // and the email-verification gap; it is applied after authentication on the
-  // onboarding landing. #880
-  // #891 — landing here WITHOUT ?ref= must not wipe a previously-stashed code;
-  // an explicit different code simply overwrites the stash.
+  // Stashed at first touch so it survives OAuth and verification; applied on
+  // the onboarding landing. No code here never wipes an earlier stash.
   useEffect(() => {
     if (refCode) setPendingReferral(refCode);
   }, [refCode]);
 
-  // Show loading while checking session status (fallback for when middleware doesn't catch)
+  // A refused OAuth callback lands here as `?error=<code>`; unknown codes get
+  // the generic sign-up copy, never the raw code.
+  const callbackError = searchParams.get("error");
+  useEffect(() => {
+    if (!callbackError) return;
+    const copy = humanizeAuthError("signup", { code: callbackError });
+    setErrorAction(copy.action ?? null);
+    toast({
+      title: copy.title,
+      description: copy.description,
+      variant: "destructive",
+    });
+  }, [callbackError, toast]);
 
   if (isPending) {
     return <AuthFormSkeleton />;
   }
 
-  // If already logged in, show redirecting message. Generic on purpose —
-  // the cached `onboardingCompleted` can be stale (see the force-fresh effect
-  // above); naming the destination flashed the wrong one for a frame.
   if (session?.user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950">
         <p className="text-white">Redirecting…</p>
-      </div>
-    );
-  }
-
-  const handleResendVerification = async () => {
-    setResending(true);
-    try {
-      await sendVerificationEmail({
-        email,
-        callbackURL: verificationCallbackUrl,
-      });
-      toast({
-        title: "Verification email sent",
-        description: `If ${email} belongs to an unverified account, the link is on its way.`,
-      });
-    } catch {
-      toast({
-        title: "Couldn't resend the email",
-        description: "Please try again in a moment.",
-        variant: "destructive",
-      });
-    } finally {
-      setResending(false);
-    }
-  };
-
-  // After a verification-required signup there is no session yet — show a
-  // check-your-email panel with a resend instead of the form.
-  if (verificationSent) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-neutral-950 p-6">
-        <div className="w-full max-w-md text-center text-white">
-          <h2 className="mb-3 text-fluid-3xl font-semibold tracking-tight">
-            Check your email
-          </h2>
-          <p className="mb-6 text-sm text-zinc-400 md:text-base">
-            We sent a verification link to{" "}
-            <span className="font-medium text-white">{email}</span>. Click it to
-            activate your account. The link expires in 1 hour.
-          </p>
-          <Button
-            onClick={handleResendVerification}
-            disabled={resending}
-            className="w-full bg-zinc-800 hover:bg-zinc-700"
-          >
-            {resending ? "Resending…" : "Resend verification email"}
-          </Button>
-          <p className="mt-4 text-xs text-zinc-400">
-            Already verified?{" "}
-            <Link
-              href={signInUrl}
-              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
-            >
-              Sign in
-            </Link>
-          </p>
-        </div>
       </div>
     );
   }
@@ -238,26 +203,25 @@ function SignUpContent() {
     }
   };
 
-  /**
-   * Translate BetterAuth's developer-facing validation errors into
-   * user-friendly messages. Raw errors look like:
-   *   "[body.email] Invalid email address; [body.password] Too small: ..."
-   */
   const handleSSOSignIn = async () => {
     if (!ssoCheck) return;
-    // Use the guarded wrapper around signIn.sso() so SSO failures
-    // (resolve-with-error, 500-with-empty-body, no-redirect-after-2s)
-    // surface as a destructive toast instead of a silent dead-end on
-    // the signup form. See `lib/sso/signin-with-toast.ts` + audit B.1.
-    const result = await ssoSigninWithGuard({
-      providerId: ssoCheck.ssoBody.providerId,
-      domain: ssoCheck.ssoBody.domain,
-      callbackURL: ssoCheck.ssoBody.callbackURL,
-    });
-    if (!result.ok && result.errorMessage) {
+    try {
+      const res = await signIn.sso(ssoCheck.ssoBody);
+      if (res?.error) {
+        const copy = humanizeAuthError("signup", res.error);
+        setErrorAction(copy.action ?? null);
+        toast({
+          title: copy.title,
+          description: copy.description,
+          variant: "destructive",
+        });
+      }
+    } catch {
+      const copy = humanizeAuthError("signup", { status: 0 });
+      setErrorAction(copy.action ?? null);
       toast({
-        title: "SSO sign-in failed",
-        description: result.errorMessage,
+        title: copy.title,
+        description: copy.description,
         variant: "destructive",
       });
     }
@@ -266,6 +230,22 @@ function SignUpContent() {
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setFieldError({});
+    setErrorAction(null);
+    retryAfter.clear();
+    const parsedName = DisplayNameSchema.safeParse(name);
+    if (!parsedName.success) {
+      setFieldError({
+        name: parsedName.error.issues[0]?.message ?? "Enter your name.",
+      });
+      return;
+    }
+    if (passwordTooLong(password)) {
+      setFieldError({
+        password: humanizeAuthError("signup", { code: "PASSWORD_TOO_LONG" })
+          .description,
+      });
+      return;
+    }
     if (password !== confirmPassword) {
       setFieldError({ password: "The two passwords don't match." });
       toast({ title: "Passwords do not match", variant: "destructive" });
@@ -274,61 +254,84 @@ function SignUpContent() {
     setIsLoading(true);
     const settle = pendingToast({ title: "Creating account..." });
 
-    try {
-      const { data, error } = await signUp.email({
-        name,
-        email,
-        password,
-        callbackURL: verificationCallbackUrl,
-      });
-
+    /** Everything that depends on the *result* of `signUp.email`. */
+    const applyResult = (error: unknown) => {
       if (error) {
-        const copy = humanizeAuthError("signup", error);
+        const copy = humanizeAuthError("signup", error, {
+          retryAfterSeconds: retryAfter.take(),
+        });
+        setErrorAction(copy.action ?? null);
         if (copy.field) setFieldError({ [copy.field]: copy.description });
         settle({
           title: copy.title,
           description: copy.description,
           variant: "destructive",
         });
-      } else if (data && !data.token) {
-        // requireEmailVerification: the account is created but no session is
-        // issued until the email is verified. Show the check-your-email panel.
-        setVerificationSent(true);
-        settle({
-          title: "Check your email",
-          description: `We sent a verification link to ${email}.`,
-        });
-      } else if (data) {
-        // Session created (verification-disabled fallback). The referral code
-        // was persisted at first touch and is applied on the onboarding landing
-        // (covers OAuth + verified-email paths uniformly). #880
-        // Replace, never push: leaving /auth/signup in history makes Back from
-        // onboarding/dashboard ping-pong forward again.
-        settle({
-          title: "Account Created Successfully!",
-          description: "Redirecting to onboarding...",
-        });
-        router.replace(onboardingUrl);
+        return;
       }
-    } catch (error: unknown) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "auth" } },
+      // New and existing emails answer identically; the code entry page is
+      // the next step either way.
+      settle({ title: "Check your email for a 6-digit code" });
+      stashPendingVerificationEmail(email);
+      router.push(
+        callbackQuery
+          ? `/auth/verify-email?${callbackQuery}`
+          : "/auth/verify-email",
       );
+    };
+
+    try {
+      const { error } = await signUp.email({
+        name: parsedName.data,
+        email,
+        password,
+        // `onResponse` here is how the `Retry-After` header is read.
+        fetchOptions: retryAfter.fetchOptions,
+      });
+      applyResult(error);
+    } catch (error: unknown) {
+      // Only transport failures are marked expected; anything else keeps
+      // error level.
+      const { error: reported, marked } = markExpectedUnreachable(error);
+      Sentry.captureException(reported, {
+        tags: {
+          subsystem: "auth",
+          ...(marked ? {} : { auth_unreachable: "false" }),
+        },
+      });
       console.error("Sign up error:", error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.";
+      const thrown = thrownAuthError(error);
+      const copy = humanizeAuthError(
+        "signup",
+        // No status means the request never completed: "couldn't reach".
+        { ...thrown, status: thrown.status ?? 0 },
+        { retryAfterSeconds: retryAfter.take() },
+      );
+      setErrorAction(copy.action ?? null);
+      if (copy.field) setFieldError({ [copy.field]: copy.description });
       settle({
-        title: "Sign Up Failed",
-        description: message,
+        title: copy.title,
+        description: copy.description,
         variant: "destructive",
       });
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Rebuilt per render: the SSO callback closes over this render's ssoCheck.
+  const actionTargets: Partial<Record<AuthErrorAction, AuthActionTarget>> = {
+    "sign-in": { kind: "link", href: signInUrl },
+    "switch-to-sso": {
+      kind: "callback",
+      onClick: () => void handleSSOSignIn(),
+    },
+    "contact-support": { kind: "link", href: `mailto:${SUPPORT_EMAIL}` },
+  };
+
+  const errorTarget = errorAction ? actionTargets[errorAction] : undefined;
+  // An unrecognised `?ref=` falls back to the editable field.
+  const showReferralField = !referralCode || refParamCheck.state === "invalid";
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
@@ -369,13 +372,20 @@ function SignUpContent() {
               <Label htmlFor="name">Name</Label>
               <Input
                 id="name"
+                name="name"
+                autoComplete="name"
                 placeholder="Your Name"
                 type="text"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setFieldError((f) => ({ ...f, name: undefined }));
+                }}
                 required
                 disabled={isLoading}
+                {...invalidProps(fieldError.name, "name-error")}
               />
+              <FieldError id="name-error" message={fieldError.name} />
             </div>
             <AuthEmailField
               value={email}
@@ -394,7 +404,9 @@ function SignUpContent() {
                   <Label htmlFor="password">Password</Label>
                   <Input
                     id="password"
+                    name="password"
                     type="password"
+                    autoComplete="new-password"
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => {
@@ -402,8 +414,7 @@ function SignUpContent() {
                       setFieldError((f) => ({ ...f, password: undefined }));
                     }}
                     required
-                    minLength={8}
-                    maxLength={128}
+                    minLength={PASSWORD_MIN_LENGTH}
                     disabled={isLoading}
                     {...invalidProps(fieldError.password, "password-error")}
                   />
@@ -411,13 +422,15 @@ function SignUpContent() {
                     id="password-error"
                     message={fieldError.password}
                   />
-                  <p className="text-xs text-zinc-400">8 to 128 characters.</p>
+                  <p className="text-xs text-zinc-400">{PASSWORD_RULE_HINT}</p>
                 </div>
                 <div className="grid gap-2 mt-4">
                   <Label htmlFor="confirm-password">Confirm Password</Label>
                   <Input
                     id="confirm-password"
+                    name="confirm-password"
                     type="password"
+                    autoComplete="new-password"
                     placeholder="••••••••"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
@@ -427,21 +440,28 @@ function SignUpContent() {
                 </div>
               </>
             )}
-            {!referralCode && !ssoCheck?.enforceSSO && (
+            {showReferralField && !ssoCheck?.enforceSSO && (
               <ReferralCodeField
                 value={refCode}
                 onChange={setRefCode}
                 disabled={isLoading}
               />
             )}
-            {referralCode && !ssoCheck?.enforceSSO && (
-              <div className="mt-4 p-3 rounded-md bg-green-900/30 border border-green-700">
-                <p className="text-sm text-green-400">
-                  Referral code{" "}
-                  <span className="font-semibold">{referralCode}</span> applied!
-                  You&apos;ll receive a welcome bonus after signing up.
-                </p>
-              </div>
+            {!showReferralField && !ssoCheck?.enforceSSO && (
+              <output
+                className={cn(
+                  "mt-4 block rounded-md border p-3 text-sm",
+                  refParamCheck.state === "valid"
+                    ? "border-green-700 bg-green-900/30 text-green-400"
+                    : "border-white/15 bg-white/5 text-zinc-400",
+                )}
+              >
+                Referral code{" "}
+                <span className="font-semibold">{referralCode}</span>
+                {refParamCheck.state === "idle"
+                  ? " will be checked when your account is set up."
+                  : `: ${referralCheckText(refParamCheck)}`}
+              </output>
             )}
             {!ssoCheck?.enforceSSO && (
               <Button
@@ -452,6 +472,11 @@ function SignUpContent() {
                 {isLoading ? "Creating Account..." : "Create Account"}
               </Button>
             )}
+            {/* The toast carried the copy; this is only the next step. */}
+            <AuthErrorAffordance
+              action={errorAction ?? undefined}
+              target={errorTarget}
+            />
           </form>
 
           {ssoCheck?.enforceSSO && (
@@ -470,7 +495,7 @@ function SignUpContent() {
             </div>
           )}
 
-          {!ssoCheck?.enforceSSO && (
+          {!ssoCheck?.enforceSSO && socialProviders.length > 0 && (
             <>
               <div className="relative my-6">
                 <div className="absolute inset-0 flex items-center">
@@ -486,6 +511,7 @@ function SignUpContent() {
               <SocialLoginButtons
                 callbackURL={safeCallbackUrl || "/dashboard"}
                 newUserCallbackURL={onboardingUrl}
+                errorCallbackURL={signUpUrl}
                 isLoading={isLoading}
                 ssoEnforced={false}
               />
@@ -502,8 +528,25 @@ function SignUpContent() {
             </Link>
           </p>
           <p className="mt-2 text-xs text-zinc-400">
-            By clicking Create Account, you agree to our Terms of Service and
-            Privacy Policy.
+            By clicking Create Account, you agree to our{" "}
+            <Link
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Terms of Service
+            </Link>{" "}
+            and{" "}
+            <Link
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Privacy Policy
+            </Link>
+            .
           </p>
         </div>
         <div />

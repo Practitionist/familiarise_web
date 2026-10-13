@@ -14,7 +14,7 @@ export default async function MeetingsLayout({
   const session = await requireOnboarded();
   // Video only: the first connect on a direct landing needs no token round
   // trip to a possibly stalled instance (#1124, FAMILIARISE_WEB-3N).
-  const streamTokens = mintInitialStreamTokens(session.user.id, {
+  const streamTokens = await mintInitialStreamTokens(session.user.id, {
     chat: false,
     video: true,
   });

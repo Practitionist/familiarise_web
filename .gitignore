@@ -3,6 +3,10 @@
 # Custom MCP Server
 .mcp.json*
 !.mcp.json.example
+mcp_config.json*
+!mcp_config.json.example
+.agents/mcp_config.json*
+!.agents/mcp_config.json.example
 
 # logs
 logs/
@@ -15,6 +19,7 @@ update-postman-collection.js
 
 # Prisma
 migrations/
+!prisma/migrations/
 
 # Zipped Files
 *.zip
@@ -87,6 +92,11 @@ next-env.d.ts
 # Private financial documents - DO NOT COMMIT
 docs/finances/private/
 
+# Private strategy docs live in the founders' Notion workspace - DO NOT COMMIT
+docs/competition/private/*
+!docs/competition/private/README.md
+launch-guide/
+
 # Other Repos
 node-payment-main/
 # Local Netlify folder
@@ -114,3 +124,6 @@ prompts/
 # rosters) and rollback material for an operator's machine — not source.
 .stream-backups/
 opencode.json
+
+# Agent worktree jest helper (local only)
+jt.sh

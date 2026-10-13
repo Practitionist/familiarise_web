@@ -24,6 +24,7 @@ export async function GET(
   // #1527 P0-4 — the same grant as the Webhooks tab and the writes (OWNER +
   // BILLING_ADMIN); was a MANAGER rank floor.
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "integrations.manage",
   });
   if (access.error) return access.error;

@@ -68,26 +68,6 @@ export function getStatusIcon(status: string) {
 }
 
 /**
- * Get human-readable label for document review status enum
- */
-export function getStatusLabel(status: string): string {
-  switch (status) {
-    case "PENDING":
-      return "Pending";
-    case "IN_REVIEW":
-      return "In Review";
-    case "APPROVED":
-      return "Approved";
-    case "REJECTED":
-      return "Rejected";
-    case "NEEDS_REVISION":
-      return "Needs Revision";
-    default:
-      return status;
-  }
-}
-
-/**
  * Get Lucide icon element for a document based on its MIME type
  */
 export function getDocumentTypeIcon(mimeType: string) {

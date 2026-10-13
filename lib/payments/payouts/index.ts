@@ -15,14 +15,6 @@ export {
 } from "./razorpay-payouts";
 export type { Contact, RazorpayPayout } from "./razorpay-payouts";
 
-// Stripe Connect
-export {
-  StripeConnectService,
-  getStripeConnectService,
-  isStripeConnectConfigured,
-} from "./stripe-connect";
-export type { AccountLink } from "./stripe-connect";
-
 // Payout Service
 export {
   getPendingPayouts,
@@ -43,17 +35,21 @@ export type { PayoutResult } from "./payout-service";
 export {
   getOrgPayoutEligibility,
   createOrgPayoutBatch,
+  createOrgPayoutBatches,
+  approveOrgPayout,
   processOrgPayout,
   processPendingOrgPayouts,
   markOrgPayoutCompleted,
   markOrgPayoutFailed,
   markOrgPayoutReversed,
 } from "./org-payout-service";
-export type { OrgProcessingResult } from "./org-payout-service";
+export type { OrgProcessingResult, OrgBatchResult } from "./org-payout-service";
+export { PayoutMakerCheckerError } from "./shared-lifecycle";
 
 // Earnings Service
 export {
   createEarningsFromPayment,
+  planEarningsForPayment,
   resolvePaymentForEarnings,
   getConsultantEarningsSummary,
   getConsultantEarnings,
@@ -63,3 +59,4 @@ export {
   getOrgEarningsSummary,
   getOrgEarnings,
 } from "./earnings-service";
+export type { PreplannedEarningsContext } from "./earnings-service";

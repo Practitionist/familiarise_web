@@ -18,6 +18,7 @@
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
   captureMessage: jest.fn(),
+  flush: jest.fn().mockResolvedValue(true),
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -142,6 +143,8 @@ describe("cleanupRoute", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // The catch-all is throttled per job, so windows must not leak.
+    resetThrottledCaptureForTesting();
     guard.mockResolvedValue(undefined);
     process.env = { ...OLD_ENV, CRON_SECRET: SECRET };
   });
@@ -296,5 +299,19 @@ describe("cleanupRoute", () => {
     expect(reported).toBeInstanceOf(Error);
     expect(reported.message).toContain("REFUND_GATEWAY_TIMEOUT");
     expect(ctx.tags).toMatchObject({ subsystem: "cron", job: "test-job" });
+    expect(Sentry.flush).toHaveBeenCalledWith(2_000);
+  });
+
+  it("flushes Sentry before returning on a 500 run result even when CRON_SENTRY_CANARY is unset", async () => {
+    delete process.env.CRON_SENTRY_CANARY;
+    const { POST } = cleanupRoute({
+      job: "test-job",
+      run: async () => ({ success: false }),
+    });
+
+    const res = await POST(request());
+
+    expect(res.status).toBe(500);
+    expect(Sentry.flush).toHaveBeenCalledWith(2_000);
   });
 });

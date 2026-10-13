@@ -24,7 +24,7 @@ server-authoritative and does not depend on the freshness of any screen: a
 booking is serialized by the interval-atom locks minted in
 `utils/appointmentlock.ts` (one `slot-booking:<consultantProfileId>:<atomStartISO>`
 key per half-hour atom a request touches), the status CAS transitions in
-`lib/booking/transitions.ts` (ADR 13), and the `slot_no_confirmed_overlap`
+`lib/booking/transitions.ts` (ADR 13), and the `occurrence_no_confirmed_overlap`
 exclusion constraint (#440). A stale screen can therefore never cause a
 double booking — the second writer loses cleanly with a 409, never with
 corrupt data. Freshness is consequently a user-experience concern, not a

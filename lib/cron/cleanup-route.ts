@@ -5,7 +5,6 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
 } from "@/lib/cron/with-cron-lock";
-import { reportSentryError } from "@/lib/observability/report";
 import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   assertNotInMaintenance,
@@ -77,6 +76,28 @@ export function parseLimitParam(req: NextRequest): number | undefined {
 }
 
 /**
+ * {@link parseLimitParam} with a floor, for the routes the Netlify ticker
+ * drives whose core work is per-row.
+ *
+ * The distinction from the bare parser is the DEFAULT. A route whose `run`
+ * ignores the request entirely (its core takes no arguments) silently runs its
+ * unbounded cohort inside the ticker's abort — the failure this exists to
+ * close. Giving such a route a fallback means every caller is bounded, and
+ * `?limit=` can only tighten that bound, never remove it.
+ *
+ * The fallback belongs HERE rather than at the ticker, because the ticker is
+ * not the only caller: a hand-rolled `curl` with `CRON_SECRET`, an operator
+ * probe, and a future scheduler all reach the same route, and a limit enforced
+ * only by one caller is a limit that silently disappears with it.
+ */
+export function parseLimitParamOrDefault(
+  req: NextRequest,
+  fallback: number,
+): number {
+  return parseLimitParam(req) ?? fallback;
+}
+
+/**
  * Constant-time bearer comparison. Digesting first keeps both operands the
  * same fixed length, so neither the secret's length nor its matching prefix is
  * observable through response timing.
@@ -94,6 +115,15 @@ export function bearerMatches(
   if (!authHeader) return false;
   const sha = (v: string) => createHash("sha256").update(v).digest();
   return timingSafeEqual(sha(authHeader), sha(`Bearer ${cronSecret}`));
+}
+
+function ingestCanaryEnabled(job: string): boolean {
+  const raw = process.env.SENTRY_INGEST_CANARY_JOBS;
+  if (!raw) return false;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .includes(job);
 }
 
 /**
@@ -126,7 +156,9 @@ export function cleanupRoute<T extends object>(opts: {
   const { job, run, summarize, status, failureMessage, unauthorizedMessage } =
     opts;
 
-  async function handle(req: NextRequest): Promise<NextResponse> {
+  async function executeCleanupJob(
+    req: NextRequest,
+  ): Promise<{ body: unknown; status: number; ok: boolean }> {
     try {
       const authHeader = req.headers.get("authorization");
       const cronSecret =
@@ -134,12 +166,13 @@ export function cleanupRoute<T extends object>(opts: {
 
       if (!cronSecret || !bearerMatches(authHeader, cronSecret)) {
         console.warn(`Unauthorized ${job} attempt`);
-        return NextResponse.json(
-          unauthorizedMessage
+        return {
+          body: unauthorizedMessage
             ? { error: "Unauthorized", message: unauthorizedMessage }
             : { error: "Unauthorized" },
-          { status: 401 },
-        );
+          status: 401,
+          ok: true,
+        };
       }
       // The cron core is shared with the jobs/** entrypoint, which exits on
       // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
@@ -159,12 +192,16 @@ export function cleanupRoute<T extends object>(opts: {
       const responseStatus = status
         ? status(result)
         : statusFor(result as { success?: boolean });
-      return NextResponse.json(result, { status: responseStatus });
+      return {
+        body: result,
+        status: responseStatus,
+        ok: responseStatus < 500,
+      };
     } catch (error) {
       // #476 — concurrent invocation (schedule overlap / manual re-run)
       // skips with a 409 instead of double-running.
       if (error instanceof CronLockHeldError) {
-        return NextResponse.json({ error: error.message }, { status: 409 });
+        return { body: { error: error.message }, status: 409, ok: true };
       }
       // #1822 Q-2 — one Redis outage is one report: a key shared by every job,
       // 15-min window per instance; the first job to hit it is tagged.
@@ -181,16 +218,17 @@ export function cleanupRoute<T extends object>(opts: {
           },
           LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
         );
-        return NextResponse.json({ error: error.message }, { status: 503 });
+        return { body: { error: error.message }, status: 503, ok: false };
       }
       if (error instanceof InvalidLimitError) {
-        return NextResponse.json({ error: "INVALID_LIMIT" }, { status: 400 });
+        return { body: { error: "INVALID_LIMIT" }, status: 400, ok: true };
       }
       if (error instanceof MaintenanceActiveError) {
-        return NextResponse.json(
-          { error: error.message, phase: error.phase },
-          { status: error.httpStatus },
-        );
+        return {
+          body: { error: error.message, phase: error.phase },
+          status: error.httpStatus,
+          ok: true,
+        };
       }
       // The exception text stays in Sentry and the server log. It used to be
       // echoed to the caller as `details`, which on these 36 endpoints means
@@ -199,13 +237,30 @@ export function cleanupRoute<T extends object>(opts: {
       // forbids, and one the cron caller has no use for anyway.
       // #1441 — a script that rethrows a plain object reached Sentry as
       // "Error: [object Object]"; the report helper keeps its message/code.
-      reportSentryError(error, { subsystem: "cron", tags: { job } });
-      console.error(`Error in ${job}:`, error);
-      return NextResponse.json(
-        { error: failureMessage ?? `Failed to run ${job}` },
-        { status: 500 },
+      // Keyed by target like the lock branch above: a systemic fault
+      // fails every tick and used to cost one event per tick per job.
+      captureThrottled(
+        `cron:${job}`,
+        error,
+        { subsystem: "cron", tags: { job } },
+        LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
       );
+      console.error(`Error in ${job}:`, error);
+      return {
+        body: { error: failureMessage ?? `Failed to run ${job}` },
+        status: 500,
+        ok: false,
+      };
     }
+  }
+
+  async function handle(req: NextRequest): Promise<NextResponse> {
+    const canary = ingestCanaryEnabled(job);
+    const outcome = await executeCleanupJob(req);
+    if (canary || !outcome.ok) {
+      await Sentry.flush?.(2_000);
+    }
+    return NextResponse.json(outcome.body, { status: outcome.status });
   }
 
   return { GET: handle, POST: handle };

@@ -8,6 +8,7 @@ import NavigationProgress from "@/components/NavigationProgress";
 import { Toaster } from "@/components/ui/toaster";
 import { AnnouncementBarProvider } from "@/providers/AnnouncementBarProvider";
 import AuthSyncProvider from "@/providers/AuthSyncProvider";
+import ReauthProvider from "@/components/auth/ReauthDialog";
 import { MaintenanceProvider } from "@/providers/MaintenanceProvider";
 import ReactQueryProvider from "@/providers/ReactQueryProvider";
 import type { Metadata, Viewport } from "next";
@@ -91,6 +92,7 @@ export default function RootLayout({
       <body className={`${sora.className} flex flex-col min-h-svh antialiased`}>
         <ReactQueryProvider>
           <AuthSyncProvider />
+          <ReauthProvider />
           <MaintenanceProvider>
             <AnnouncementBarProvider>
               <NavigationProgress />

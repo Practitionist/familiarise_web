@@ -17,12 +17,13 @@ jest.mock("../../lib/redis", () => ({
 
 const findFirst = jest.fn();
 const update = jest.fn();
+const updateMany = jest.fn();
 const create = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     $transaction: async (fn: (tx: unknown) => Promise<void>) =>
-      fn({ maintenanceWindow: { findFirst, update, create } }),
+      fn({ maintenanceWindow: { findFirst, update, updateMany, create } }),
   },
 }));
 
@@ -50,7 +51,8 @@ beforeEach(() => {
 describe("setMaintenanceState platform scope (#1598 P1-W01)", () => {
   it("OFF does not close an active per-org window", async () => {
     await setMaintenanceState(MaintenancePhase.OFF, { endedBy: "ops" });
-    expect(findFirst.mock.calls[0][0].where).toMatchObject({
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany.mock.calls[0][0].where).toMatchObject({
       organizationId: null,
     });
     expect(update).not.toHaveBeenCalled();

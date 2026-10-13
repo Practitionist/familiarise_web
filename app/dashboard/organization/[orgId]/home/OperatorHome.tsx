@@ -229,6 +229,7 @@ export function OperatorHome({ orgId }: Readonly<{ orgId: string }>) {
         <StatSkeleton />
         <StatSkeleton />
         <StatSkeleton />
+        <StatSkeleton />
       </StatRow>
     );
   } else if (analytics.isError) {

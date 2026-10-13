@@ -16,7 +16,9 @@ import {
 } from "@/lib/support/platform-flows";
 import { priorityForReason } from "@/lib/support/priority";
 
-function ctx(overrides: Partial<PlatformSupportContext> = {}): PlatformSupportContext {
+function ctx(
+  overrides: Partial<PlatformSupportContext> = {},
+): PlatformSupportContext {
   return {
     userId: "u1",
     isOperator: false,

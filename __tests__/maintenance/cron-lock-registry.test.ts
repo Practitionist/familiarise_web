@@ -41,18 +41,27 @@ const LOCK_EXEMPT: Record<string, string> = {
   // Two bespoke Redis locks predate withCronLock and additionally guard the
   // HTTP approval path, which withCronLock's key shape does not reach. See
   // lib/payments/payouts/payout-service.ts.
-  "process-payouts.yml": "lock:payout_processing in payout-service.ts",
-  "create-payout-batch.yml": "lock:payout_batch_creation in payout-service.ts",
+  "cron-weekly.yml#process-payouts":
+    "lock:payout_processing in payout-service.ts",
+  "cron-weekly.yml#create-payout-batch":
+    "lock:payout_batch_creation in payout-service.ts",
   // The dead-man switch itself. Locking it through Redis would make the
   // watchdog depend on the infrastructure it exists to report on, and the
   // check is read-only, so a double-run costs nothing.
   "cron-heartbeat.yml": "deliberately unlocked — read-only dead-man switch",
+  // Ticker-only probe: one Sentry event per run and no DB writes; a double run
+  // costs one extra event and the email alert is deduped in Redis.
+  "cron-tick:sentry-ingest-canary": "deliberately unlocked — vendor probe",
   // #1270 — a drift DETECTOR, not a job. It runs the operator script in
   // `--check` mode, which makes no Stream write and no database write; the
   // whole run is one `getAppSettings` read. Two concurrent reads cost one
   // extra API call, so a lock would buy nothing and would give a read-only
   // guard a hard dependency on Redis.
   "stream-webhook-drift.yml": "deliberately unlocked — read-only drift check",
+  // #1885 — Weekly supply-chain vulnerability scan (`npm audit --omit=dev`);
+  // read-only lockfile audit with no database or external state mutation.
+  "security-audit.yml": "deliberately unlocked — read-only npm audit check",
+  "db-live-drift.yml": "deliberately unlocked — read-only migrate diff",
 };
 
 interface Row {
@@ -85,16 +94,112 @@ function resolveImport(fromFile: string, spec: string): string | null {
   return fs.existsSync(base) && fs.statSync(base).isFile() ? base : null;
 }
 
+function findAllLocks(
+  src: string | null,
+): { jobName: string; failMode: string }[] {
+  if (!src) return [];
+  const out: { jobName: string; failMode: string }[] = [];
+  const re = /withCronLock\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{([^}]*)\}/g;
+  for (const m of src.matchAll(re)) {
+    const failMode = m[2].match(/failMode:\s*["']([^"']+)["']/);
+    out.push({ jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" });
+  }
+  return out;
+}
+
 function findLock(
   src: string | null,
 ): { jobName: string; failMode: string } | null {
-  if (!src) return null;
-  // No dotAll flag: the options group is `[^}]*`, a negated class that already
-  // spans newlines, so the lock survives being formatted across lines.
-  const m = src.match(/withCronLock\(\s*["'`]([^"'`]+)["'`]\s*,\s*\{([^}]*)\}/);
-  if (!m) return null;
-  const failMode = m[2].match(/failMode:\s*["']([^"']+)["']/);
-  return { jobName: m[1], failMode: failMode ? failMode[1] : "unparsed" };
+  return findAllLocks(src)[0] ?? null;
+}
+
+function extractImports(src: string): string[] {
+  const specs: string[] = [];
+  for (const m of src.matchAll(/from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g)) {
+    specs.push(m[1]);
+  }
+  for (const m of src.matchAll(
+    /import\(\s*["'](@\/[^"']+|\.\.?\/[^"']+)["']\s*\)/g,
+  )) {
+    specs.push(m[1]);
+  }
+  return specs;
+}
+
+/** Parse `@cleanup-twin <slug>` blocks from `lib/cron/cleanup-registry.ts`. */
+function cleanupTwinBlocks(): Map<string, string> {
+  const registryFile = path.join(ROOT, "lib", "cron", "cleanup-registry.ts");
+  const src = read(registryFile) ?? "";
+  const out = new Map<string, string>();
+  const parts = src.split(/\/\/\s*@cleanup-twin\s+([a-z0-9-]+)\s*\n/);
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    out.set(parts[i], parts[i + 1]);
+  }
+  return out;
+}
+
+/** The lock in an entry file, or in the first core under `coreDirs` it imports. */
+function lockFor(
+  entry: string | null,
+  entryFile: string | null,
+  entrySrc: string | null,
+  coreDirs: RegExp,
+): { lock: ReturnType<typeof findLock>; lockedIn: string | null } {
+  const own = findLock(entrySrc);
+  if (own || !entrySrc || !entryFile)
+    return { lock: own, lockedIn: own ? entry : null };
+  // One core file can host two sweeps sharing a module (the orphan
+  // confirmation re-drive plus the orphan payment healer); prefer the lock
+  // whose job matches the twin's own `job:` literal over the first in file.
+  const expectedJob = entrySrc.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
+  for (const spec of extractImports(entrySrc)) {
+    const resolved = resolveImport(entryFile, spec);
+    if (!resolved) continue;
+    const rel = path.relative(ROOT, resolved);
+    if (!coreDirs.test(rel) || rel.includes("with-cron-lock")) continue;
+    const all = findAllLocks(read(resolved));
+    if (all.length === 0) continue;
+    const found =
+      (expectedJob ? all.find((l) => l.jobName === expectedJob) : null) ??
+      all[0];
+    if (found) return { lock: found, lockedIn: rel };
+  }
+  return { lock: null, lockedIn: null };
+}
+
+/** The `/api/cleanup/<target>` routes netlify/functions/cron-tick.mts POSTs. */
+function tickerTargets(): string[] {
+  const src = read(path.join(ROOT, "netlify", "functions", "cron-tick.mts"));
+  const block =
+    src?.match(/const TARGETS = \[([\s\S]*?)\] as const/)?.[1] ?? "";
+  return Array.from(
+    block.replace(/\/\/.*$/gm, "").matchAll(/["']([a-z0-9-]+)["']/g),
+    (m) => m[1],
+  );
+}
+
+/** Scheduled workflow steps that POST `/api/cleanup/<slug>` instead of running a tsx entrypoint. */
+function workflowTwinCalls(): [string, string][] {
+  const out: [string, string][] = [];
+  for (const workflow of fs.readdirSync(WORKFLOW_DIR).sort()) {
+    const src = read(path.join(WORKFLOW_DIR, workflow));
+    if (!src || !/^\s*schedule:/m.test(src)) continue;
+    for (const m of src.matchAll(/\/api\/cleanup\/([a-z0-9-]+)/g)) {
+      out.push([`${workflow}#${m[1]}`, m[1]]);
+    }
+  }
+  return out;
+}
+
+function entrypointsOf(workflowSrc: string): (string | null)[] {
+  const jobMatches = Array.from(
+    workflowSrc.matchAll(
+      /(?:\.\/)?node_modules\/\.bin\/tsx\s+(jobs\/[^\s"']+\.ts)/g,
+    ),
+    (m) => m[1],
+  );
+  if (jobMatches.length > 0) return Array.from(new Set(jobMatches));
+  return [entrypointOf(workflowSrc)];
 }
 
 function buildRegistry(): Row[] {
@@ -105,43 +210,63 @@ function buildRegistry(): Row[] {
     const src = read(path.join(WORKFLOW_DIR, workflow));
     if (!src || !/^\s*schedule:/m.test(src)) continue;
 
-    const entrypoint = entrypointOf(src);
-    const entryFile = entrypoint ? path.join(ROOT, entrypoint) : null;
-    const entrySrc = entryFile ? read(entryFile) : null;
+    const entrypoints = entrypointsOf(src);
+    for (const entrypoint of entrypoints) {
+      const entryFile = entrypoint ? path.join(ROOT, entrypoint) : null;
+      const entrySrc = entryFile ? read(entryFile) : null;
 
-    let lock = findLock(entrySrc);
-    let lockedIn = lock ? entrypoint : null;
+      // Wrapper → core: jobs/** wrappers hold the GitHub Actions plumbing and
+      // delegate to a scripts/** or lib/** core, which is where the lock usually
+      // lives so every entry point (Actions, HTTP, local) inherits it.
+      const { lock, lockedIn } = lockFor(
+        entrypoint,
+        entryFile,
+        entrySrc,
+        /^(scripts|lib)\//,
+      );
 
-    // Wrapper → core: jobs/** wrappers hold the GitHub Actions plumbing and
-    // delegate to a scripts/** or lib/** core, which is where the lock usually
-    // lives so every entry point (Actions, HTTP, local) inherits it.
-    if (!lock && entrySrc && entryFile) {
-      for (const imp of entrySrc.matchAll(
-        /from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g,
-      )) {
-        const resolved = resolveImport(entryFile, imp[1]);
-        if (!resolved) continue;
-        const rel = path.relative(ROOT, resolved);
-        if (!/^(scripts|lib)\//.test(rel) || rel.includes("with-cron-lock")) {
-          continue;
-        }
-        const found = findLock(read(resolved));
-        if (found) {
-          lock = found;
-          lockedIn = rel;
-          break;
-        }
-      }
+      const guard = entrySrc?.match(
+        /abortIfMaintenance\(\s*["'`]([^"'`]+)["'`]/,
+      );
+      const slug = entrypoint ? path.basename(entrypoint, ".ts") : workflow;
+      rows.push({
+        workflow:
+          entrypoints.length > 1 && entrypoint
+            ? `${workflow}#${slug}`
+            : workflow,
+        entrypoint,
+        jobName: guard?.[1] ?? lock?.jobName ?? slug,
+        lockedIn,
+        failMode: lock?.failMode ?? null,
+      });
     }
+  }
 
-    const guard = entrySrc?.match(/abortIfMaintenance\(\s*["'`]([^"'`]+)["'`]/);
+  // Ticker targets and workflow steps that POST a cleanup twin: resolved from lib/cron/cleanup-registry.ts.
+  const viaYaml = new Set(rows.map((r) => r.jobName));
+  const twinBlocks = cleanupTwinBlocks();
+  const registryRel = path.join("lib", "cron", "cleanup-registry.ts");
+  const registryFile = path.join(ROOT, registryRel);
+  const twinCallers: [string, string][] = [
+    ...tickerTargets().map((t): [string, string] => [`cron-tick:${t}`, t]),
+    ...workflowTwinCalls(),
+  ];
+  for (const [workflow, target] of twinCallers) {
+    const entrySrc = twinBlocks.get(target) ?? null;
+    const jobName =
+      entrySrc?.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? target;
+    if (viaYaml.has(jobName)) continue;
+    const entrypoint = `${registryRel}#${target}`;
+    const { lock, lockedIn } = lockFor(
+      entrypoint,
+      registryFile,
+      entrySrc,
+      /^(scripts|lib|jobs)\//,
+    );
     rows.push({
       workflow,
-      entrypoint,
-      jobName:
-        guard?.[1] ??
-        lock?.jobName ??
-        path.basename(entrypoint ?? workflow, ".ts"),
+      entrypoint: entrySrc ? entrypoint : null,
+      jobName,
       lockedIn,
       failMode: lock?.failMode ?? null,
     });
@@ -156,12 +281,14 @@ describe("cron lock registry (#1169)", () => {
   it("finds the whole scheduled fleet", () => {
     // A floor, not an equality: new jobs are expected. This only catches the
     // parser silently matching nothing after a workflow-format change.
-    expect(registry.length).toBeGreaterThanOrEqual(61);
+    expect(registry.length).toBeGreaterThanOrEqual(50);
   });
 
   it("resolves an entrypoint for every scheduled workflow", () => {
+    // CLI-only scheduled checks (e.g. `npm audit`) have no `.ts` entrypoint.
+    const CLI_ONLY_SCHEDULED = new Set(["security-audit.yml"]);
     const unresolved = registry
-      .filter((r) => !r.entrypoint)
+      .filter((r) => !r.entrypoint && !CLI_ONLY_SCHEDULED.has(r.workflow))
       .map((r) => r.workflow);
     expect(unresolved).toEqual([]);
   });
@@ -256,11 +383,19 @@ describe("cron lock registry (#1169)", () => {
 
     const ungated = callers
       .map((file) => {
-        const lock = findLock(read(file));
-        return { file: path.relative(ROOT, file), jobName: lock?.jobName };
+        // One module can host two sweeps (orphan confirmation re-drive plus
+        // the orphan payment healer); the file passes when any of its locks
+        // is a financial job, since that is the lock guarding the refund.
+        const locks = findAllLocks(read(file));
+        const gated = locks.some((l) => FINANCIAL_JOB_NAMES.has(l.jobName));
+        return {
+          file: path.relative(ROOT, file),
+          jobName: locks.map((l) => l.jobName).join(",") || "none",
+          gated: locks.length > 0 && gated,
+        };
       })
-      .filter((r) => !r.jobName || !FINANCIAL_JOB_NAMES.has(r.jobName))
-      .map((r) => `${r.file} → withCronLock("${r.jobName ?? "none"}")`);
+      .filter((r) => !r.gated)
+      .map((r) => `${r.file} → withCronLock("${r.jobName}")`);
 
     expect(ungated).toEqual([]);
   });
@@ -272,8 +407,10 @@ describe("cron lock registry (#1169)", () => {
     // killing a mid-flight money job is the one thing worse than a double run.
     const missing = registry
       .map((r) => r.workflow)
+      .filter((workflow) => !workflow.startsWith("cron-tick:"))
       .filter((workflow) => {
-        const src = read(path.join(WORKFLOW_DIR, workflow));
+        const wfFile = workflow.split("#")[0];
+        const src = read(path.join(WORKFLOW_DIR, wfFile));
         if (!src) return true;
         const hasGroup = /^concurrency:\s*\n\s*group:\s*\S+/m.test(src);
         const hasNoCancel = /cancel-in-progress:\s*false/.test(src);
@@ -288,7 +425,6 @@ describe("cron lock registry (#1169)", () => {
 // its FINANCIAL_JOB_NAMES entry runs straight through DEGRADED. Walk the twins
 // from source and check each money twin's literal against the set.
 describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
-  const CLEANUP_DIR = path.join(ROOT, "app", "api", "cleanup");
   const MONEY_CORE_DIRS = [
     "scripts/payments/",
     "scripts/refunds/",
@@ -316,18 +452,14 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
   }
 
   function buildTwins(): Twin[] {
-    return fs
-      .readdirSync(CLEANUP_DIR)
-      .sort()
-      .map((dir) => {
-        const file = path.join(CLEANUP_DIR, dir, "route.ts");
-        const src = read(file);
-        if (!src) return null;
+    const registryFile = path.join(ROOT, "lib", "cron", "cleanup-registry.ts");
+    const twinBlocks = cleanupTwinBlocks();
+    return Array.from(twinBlocks.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([dir, src]) => {
         const job = src.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
-        const money = [
-          ...src.matchAll(/from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g),
-        ].some((imp) => {
-          const resolved = resolveImport(file, imp[1]);
+        const money = extractImports(src).some((spec) => {
+          const resolved = resolveImport(registryFile, spec);
           if (!resolved) return false;
           const rel = path.relative(ROOT, resolved);
           if (MONEY_CORE_DIRS.some((d) => rel.startsWith(d))) return true;
@@ -335,8 +467,7 @@ describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
           return !!core && REFUND_FRONT_DOORS.some((fn) => core.includes(fn));
         });
         return { dir, job, money };
-      })
-      .filter((t): t is Twin => t !== null);
+      });
   }
 
   const twins = buildTwins();

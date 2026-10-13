@@ -20,17 +20,26 @@ const constraintPredicate = (sql: string): string => {
   return match[1].replace(/\s+/g, " ");
 };
 
-describe("occurrence_no_confirmed_overlap tombstone exemption (#1694)", () => {
-  it("exempts soft-deleted rows, and the swap script builds the same predicate", () => {
-    const sidecar = constraintPredicate(
-      read("prisma/sql/check-constraints.sql"),
-    );
+describe("occurrence_no_confirmed_overlap tombstone exemption (#1694 / #2010)", () => {
+  it("exempts soft-deleted and cancelled/rescheduled rows in the sidecar exclusion constraint", () => {
+    const sql = read("prisma/sql/check-constraints.sql");
+    const sidecar = constraintPredicate(sql);
     expect(sidecar).toContain('"consultantProfileId" IS NOT NULL');
     expect(sidecar).toContain('NOT "isTentative"');
     expect(sidecar).toContain('"deletedAt" IS NULL');
+    expect(sidecar).toContain(
+      "\"completionStatus\" NOT IN ('CANCELLED', 'RESCHEDULED')",
+    );
+  });
 
-    const script = read("scripts/db/swap-occurrence-overlap-constraint.ts");
-    const declared = /NEW_PREDICATE =\s*'([^']+)'/.exec(script)?.[1];
-    expect(declared?.replace(/\s+/g, " ")).toBe(sidecar);
+  it("enforces non-null consultantProfileId on confirmed, non-deleted, non-cancelled occurrences (#2010)", () => {
+    const sql = read("prisma/sql/check-constraints.sql");
+    expect(sql).toMatch(
+      /ADD CONSTRAINT "occurrence_confirmed_requires_consultant_chk"\s+CHECK \(\s*"isTentative"\s+OR "deletedAt" IS NOT NULL\s+OR "consultantProfileId" IS NOT NULL\s+OR "completionStatus" IN \('CANCELLED', 'RESCHEDULED'\)\s*\) NOT VALID;/,
+    );
+    expect(sql).toMatch(
+      /VALIDATE CONSTRAINT "occurrence_confirmed_requires_consultant_chk";/,
+    );
   });
 });
+

@@ -218,7 +218,11 @@ describe.each(CASES)(
       expect(mockParticipantUpdateMany).toHaveBeenCalledWith({
         where: {
           AND: [
-            { appointment: participantScope, userId: ATTENDEE_ID },
+            {
+              appointment: participantScope,
+              userId: ATTENDEE_ID,
+              role: "CONSULTEE",
+            },
             { status: { in: ["HELD", "CONFIRMED", "ATTENDED"] } },
           ],
         },

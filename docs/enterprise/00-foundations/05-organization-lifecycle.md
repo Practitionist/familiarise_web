@@ -151,7 +151,7 @@ stateDiagram-v2
   [*] --> ACTIVE: invite accepted / SSO auto-join
   PENDING --> ACTIVE: invitation accepted
   REMOVED --> ACTIVE: new invitation accepted
-  ACTIVE --> SUSPENDED: operator suspend / SCIM deprovision
+  ACTIVE --> SUSPENDED: operator suspend
   SUSPENDED --> ACTIVE: operator reactivate
   ACTIVE --> REMOVED: operator remove
   SUSPENDED --> REMOVED: operator remove
@@ -171,9 +171,8 @@ import sends LEARNER invitations, and accepting an invitation is the one door
 into `ACTIVE` for a `PENDING` row. The members PATCH refuses `PENDING` to
 `ACTIVE` with `PENDING_REQUIRES_ACCEPT`.
 
-The transition from `ACTIVE` to `SUSPENDED` is triggered either by an operator
-suspending the member or by a SCIM deprovision, which suspends rather than erases so
-the identity stays re-linkable. The reverse, `SUSPENDED` back to `ACTIVE`, is an
+The transition from `ACTIVE` to `SUSPENDED` is triggered by an operator suspending
+the member. The reverse, `SUSPENDED` back to `ACTIVE`, is an
 operator reactivation. While suspended, the member's role is inert and the API
 returns a 403.
 
@@ -190,8 +189,8 @@ the member's `ACTIVE` program assignments to `CANCELLED` (see the
 new invitation reactivates the same row to `ACTIVE` with the invited role, which
 keeps its downstream foreign keys intact. That acceptance is the only way out of
 `REMOVED`: the members PATCH refuses any move out of it
-(`REMOVED_REQUIRES_REINVITE`), and SCIM can never revive a `REMOVED` or `ERASED`
-row. An `ERASED` person cannot be invited again (`MEMBER_ERASED` at invite
+(`REMOVED_REQUIRES_REINVITE`), and SSO JIT leaves an existing `REMOVED` or
+`ERASED` row alone. An `ERASED` person cannot be invited again (`MEMBER_ERASED` at invite
 time), and the accept route refuses an `ERASED` row as well.
 
 The transition to `ERASED` is triggered by the DPDP §12 erasure pipeline when a user
@@ -228,8 +227,7 @@ single Prisma transaction that:
 3. If `canSponsor=true`, creates the `BillingAccount` with the chosen
    `fundingSource`. `walletBalance = 0` is set when the source is
    `WALLET`, and `null` otherwise.
-4. Creates an `OWNER` `Membership` row AND a matching BetterAuth `Member`
-   row, bridged via `Membership.betterAuthMemberId`.
+4. Creates an `OWNER` `Membership` row.
 5. Upserts an `OrgWorkspaceProfile` for the creator (one row per user who
    operates an org, shared across multiple orgs) and stamps
    `User.orgWorkspaceProfileId`. The response body includes

@@ -7,9 +7,21 @@ import {
 import type { EmailSuppressionReason, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { EMAIL_BUDGET_MS, supportEmail } from "./config";
-import { resendErrorText, terminalSendReason } from "./classify";
+import {
+  REDACTED_CREDENTIAL_BODY,
+  carriesCredential,
+  resendErrorText,
+  terminalSendReason,
+} from "./classify";
 import { idempotencyKeyFor } from "./idempotency";
 import { EmailSuppressedError, findSuppression } from "./suppression";
+import {
+  EmailHeldError,
+  HELD_PRE_LAUNCH,
+  heldRecipientDomain,
+  logHeld,
+  recipientsOf,
+} from "./delivery-guard";
 
 // #474 — the already-RENDERED message a sender handed to Resend. We persist
 // THIS verbatim (not the sender args) so retry is a re-send, not a re-render.
@@ -26,19 +38,26 @@ export interface RenderedEmail {
 }
 
 export type DeliverResult =
-  // #1703 — `staged` on success says the outbox row exists; a sweep whose
-  // once-guard is that row must not count a send that has none.
-  | { success: true; data: CreateEmailResponse; staged: boolean }
-  // #1654 — `staged` tells a caller whether the message is durable in the
-  // outbox despite the failed inline send (the contact form answers on it).
-  | { success: false; error: unknown; staged?: boolean };
+  | {
+      success: true;
+      data?: CreateEmailResponse;
+      staged: boolean;
+      stagedRow?: StagedEmail;
+      stagedEmail?: StagedEmail;
+    }
+  | {
+      success: false;
+      error: unknown;
+      staged?: boolean;
+      stagedRow?: StagedEmail;
+      stagedEmail?: StagedEmail;
+    };
 
-/** #1654 — the outbox row `stage()` wrote; `attempt()` settles it. */
 export interface StagedEmail {
   id: string;
   idempotencyKey: string;
-  /** #1647 — set when the recipient is suppressed; the row is already DEAD_LETTER. */
   suppressed?: EmailSuppressionReason;
+  held?: true;
 }
 
 export interface StageOptions {
@@ -52,6 +71,8 @@ export interface DeliverOptions {
   entityRef?: string;
   /** Inline send budget; defaults to the auth budget, the most generous one. */
   budgetMs?: number;
+  /** Persist to outbox (`stage`) and return immediately so `attempt()` runs post-response. */
+  deferAttempt?: boolean;
 }
 
 // #1298 — thrown INSIDE deliver's try so a missing key dead-letters the
@@ -88,6 +109,17 @@ export function getResendClient(): Resend | null {
 // attempt derive the same row and the same key from the same message.
 function withReplyTo(message: RenderedEmail): RenderedEmail {
   return { ...message, replyTo: message.replyTo ?? supportEmail() };
+}
+
+/** The bodies the outbox row keeps; a live code or link never reaches the table. */
+function storedBodies(
+  message: RenderedEmail,
+  emailType: string,
+): { htmlBody: string; textBody: string | null } {
+  if (carriesCredential(emailType)) {
+    return { htmlBody: REDACTED_CREDENTIAL_BODY, textBody: null };
+  }
+  return { htmlBody: message.html, textBody: message.text ?? null };
 }
 
 // #1298 — a terminal cause (dead key, unverified domain) or no key at all is
@@ -130,8 +162,7 @@ export async function recordFailedEmail(
         fromAddress: message.from,
         replyTo: message.replyTo ?? null,
         subject: message.subject,
-        htmlBody: message.html,
-        textBody: message.text ?? null,
+        ...storedBodies(message, emailType),
         emailType,
         status: "PENDING",
         // Retry-now: the worker's first pass picks it up; backoff only kicks
@@ -160,16 +191,22 @@ export async function stage(
   opts: StageOptions = {},
 ): Promise<StagedEmail | null> {
   const payload = withReplyTo(message);
-  const idempotencyKey = idempotencyKeyFor(payload, emailType);
   const db = opts.tx ?? prisma;
+  const heldDomain = heldRecipientDomain(recipientsOf(payload));
   const write = async (): Promise<StagedEmail> => {
-    // #1647 — a bounced or complaining address is dead-lettered at stage time:
-    // the row records the refusal and neither the inline path nor the relay sends.
-    const suppressed = (await findSuppression(payload.to, db))?.reason;
-    if (suppressed) {
-      console.warn(
-        `[email] ${emailType} not sent: recipient is suppressed (${suppressed})`,
-      );
+    let refusal: string | null = null;
+    let suppressed: EmailSuppressionReason | undefined;
+    if (heldDomain) {
+      logHeld(emailType, heldDomain);
+      refusal = HELD_PRE_LAUNCH;
+    } else {
+      suppressed = (await findSuppression(payload.to, db))?.reason;
+      if (suppressed) {
+        console.warn(
+          `[email] ${emailType} not sent: recipient is suppressed (${suppressed})`,
+        );
+        refusal = `suppressed:${suppressed}`;
+      }
     }
     const row = await db.failedEmail.create({
       data: {
@@ -177,16 +214,17 @@ export async function stage(
         fromAddress: payload.from,
         replyTo: payload.replyTo ?? null,
         subject: payload.subject,
-        htmlBody: payload.html,
-        textBody: payload.text ?? null,
+        ...storedBodies(payload, emailType),
         emailType,
-        status: suppressed ? "DEAD_LETTER" : "PENDING",
-        nextRetryAt: new Date(),
-        lastError: suppressed ? `suppressed:${suppressed}` : null,
+        status: refusal ? "DEAD_LETTER" : "PENDING",
+        nextRetryAt: new Date(Date.now() + 60_000),
+        lastError: refusal,
         entityRef: opts.entityRef ?? null,
       },
       select: { id: true },
     });
+    const idempotencyKey = idempotencyKeyFor(payload, emailType, row.id);
+    if (heldDomain) return { id: row.id, idempotencyKey, held: true };
     return suppressed
       ? { id: row.id, idempotencyKey, suppressed }
       : { id: row.id, idempotencyKey };
@@ -251,6 +289,19 @@ export async function attempt(
       success: false,
       error: new EmailSuppressedError(staged.suppressed),
       staged: true,
+    };
+  }
+  // A held message never reaches Resend; an unstaged one is logged here instead.
+  if (staged?.held) {
+    return { success: false, error: new EmailHeldError(), staged: true };
+  }
+  const heldDomain = heldRecipientDomain(recipientsOf(message));
+  if (heldDomain) {
+    if (!staged) logHeld(emailType, heldDomain);
+    return {
+      success: false,
+      error: new EmailHeldError(),
+      staged: staged !== null,
     };
   }
   const payload = withReplyTo(message);
@@ -341,6 +392,24 @@ export async function deliver(
   const staged = await stage(message, emailType, {
     entityRef: opts.entityRef,
   });
+  if (opts.deferAttempt && staged) {
+    if (staged.suppressed) {
+      return {
+        success: false,
+        error: new EmailSuppressedError(staged.suppressed),
+        staged: true,
+      };
+    }
+    if (staged.held) {
+      return { success: false, error: new EmailHeldError(), staged: true };
+    }
+    return {
+      success: true,
+      staged: true,
+      stagedRow: staged,
+      stagedEmail: staged,
+    };
+  }
   return attempt(staged, message, emailType, {
     budgetMs: opts.budgetMs ?? EMAIL_BUDGET_MS.AUTH,
   });

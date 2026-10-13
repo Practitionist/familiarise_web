@@ -8,7 +8,7 @@
  * — every fix had to land twice. There is now one implementation:
  * kind-specific data (nav, labels, fetchers, guards, error UX, verification
  * extras, user wrapping) is injected as props. Chrome, Novu and the error
- * boundary live in DashboardShell (#1527).
+ * boundary live in DashboardShell.
  */
 
 import { usePathname, useRouter } from "next/navigation";
@@ -31,7 +31,6 @@ import type { DashboardContextBarBadge } from "@/components/dashboard/DashboardC
 import StreamProvider from "@/providers/StreamProvider";
 import { useSession } from "@/lib/auth-client";
 import { signOutEverywhere } from "@/lib/auth/sign-out";
-import { getEffectiveUserId } from "@/utils/auth";
 import { useServerUserId } from "@/components/dashboard/ServerUserId";
 import { schedulePrefetch } from "@/lib/dashboard-queries";
 import { accountSettingsHref } from "@/lib/dashboard/account-href";
@@ -69,7 +68,7 @@ export interface PersonalDashboardCoreProps<P> {
   routeParam: string;
   /** Pure nav from `lib/dashboard/nav/{consultant,consultee}.ts`. */
   nav: DashboardNav;
-  /** This tree's Settings sections, listed in Find for the owner (#1527). */
+  /** This tree's Settings sections, listed in Find for the owner. */
   settingsGroups?: FindSettingsGroup[];
   /** Counts keyed by `NavItem.badgeKey`. */
   badges?: Record<string, number | undefined>;
@@ -93,7 +92,7 @@ export interface PersonalDashboardCoreProps<P> {
     profile: P | null | undefined,
   ) => string | null | undefined;
   /**
-   * The route profile's owner, for the operator-view banner (#1527 QA B6):
+   * The route profile's owner, for the operator-view banner:
    * the header identity is the signed-in operator, the banner names whose
    * dashboard this is.
    */
@@ -157,12 +156,22 @@ function DefaultError({ message }: Readonly<{ message: string }>) {
   return (
     <AccessCard Icon={Lock} title="Something went wrong" tone="red">
       <p className="text-zinc-600">{message || "Failed to load dashboard"}</p>
-      <button
-        onClick={() => window.location.reload()}
-        className="mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
-      >
-        Try Again
-      </button>
+      <div className="mt-6 flex flex-col gap-3">
+        <button
+          onClick={() => window.location.reload()}
+          className="w-full px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
+        >
+          Try Again
+        </button>
+        <button
+          onClick={() =>
+            void signOutEverywhere("/auth/signin?callbackUrl=/dashboard")
+          }
+          className="w-full px-6 py-2.5 bg-zinc-100 text-zinc-700 rounded-lg font-medium hover:bg-zinc-200 transition-colors"
+        >
+          Sign Out &amp; Re-login
+        </button>
+      </div>
     </AccessCard>
   );
 }
@@ -184,7 +193,7 @@ const OPERATOR_TREE: Record<string, "admin" | "staff"> = {
   STAFF: "staff",
 };
 
-/** #1527 — an operator opening someone's dashboard (User 360 "View
+/** An operator opening someone's dashboard (User 360 "View
  *  dashboard") must always know whose data they are looking at. */
 function OperatorViewBanner({
   name,
@@ -241,12 +250,12 @@ export function PersonalDashboardLayoutCore<P>({
 
   // Fall back to the server-resolved id: useSession() is still pending during
   // SSR, so without this the query key below is ["user-details", undefined]
-  // and the server seed in app/dashboard/layout.tsx can never be read (#1105).
+  // and the server seed in app/dashboard/layout.tsx can never be read.
   const serverUserId = useServerUserId();
-  const userId = getEffectiveUserId(session) ?? serverUserId;
+  const userId = session?.user?.id ?? serverUserId;
 
-  // One fetcher for both trees (#1527): the key is shared with the server
-  // seed in app/dashboard/layout.tsx, so it must hold one shape everywhere.
+  // One fetcher for both trees. The server seed in app/dashboard/layout.tsx
+  // omits the résumé lists, so readers of this key use scalars and profile ids only.
   const {
     data: userDetails,
     error: userQueryError,
@@ -493,7 +502,7 @@ export function PersonalDashboardLayoutCore<P>({
       </>
     ) : undefined;
 
-  // Account only (#1527 Q1): context switching lives in the switcher.
+  // Account only: context switching lives in the switcher.
   // Settings is this tree's hub for its owner; an operator inspecting someone's
   // dashboard gets their OWN settings, never the inspected user's.
   const shell = (

@@ -29,7 +29,11 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findMany: jest.fn(), groupBy: jest.fn() },
     appointment: { findMany: jest.fn() },
     activityLog: { findMany: jest.fn() },
-    consultantEarnings: { aggregate: jest.fn(), count: jest.fn() },
+    consultantEarnings: {
+      aggregate: jest.fn(),
+      count: jest.fn(),
+      groupBy: jest.fn(),
+    },
     consultantReview: { aggregate: jest.fn() },
     bookingStatusHistory: { findMany: jest.fn() },
   },
@@ -38,7 +42,10 @@ jest.mock("../../lib/prisma", () => ({
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
-import { readRequestsInbox } from "@/lib/data/requests-inbox";
+import {
+  readRequestsInbox,
+  readRequestsToAnswerCount,
+} from "@/lib/data/requests-inbox";
 import { APPOINTMENT_LIST_SELECT } from "@/lib/booking/list-selects";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { GET as getInbox } from "@/app/api/bookings/inbox/route";
@@ -245,6 +252,7 @@ describe("Home strip parity (A-6)", () => {
     m.consultantEarnings.aggregate.mockResolvedValue({
       _sum: { consultantSharePaise: null, refundedShareAmount: null },
     });
+    m.consultantEarnings.groupBy.mockResolvedValue([]);
     m.consultantReview.aggregate.mockResolvedValue({
       _avg: { rating: null },
       _count: { rating: 0 },
@@ -260,5 +268,21 @@ describe("Home strip parity (A-6)", () => {
     expect(
       inbox.meta.counts.consultation + inbox.meta.counts.subscription,
     ).toBe(3);
+  });
+});
+
+describe("readRequestsToAnswerCount (#1928)", () => {
+  it("sums the REQUESTED arms only and asks trials for PENDING alone", async () => {
+    const m = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+    m.consultation.count.mockResolvedValue(2);
+    m.subscription.count.mockResolvedValue(3);
+    m.trial.count.mockResolvedValue(4);
+    await expect(
+      readRequestsToAnswerCount({ consultantProfileId: CP }),
+    ).resolves.toBe(9);
+    expect(m.trial.count).toHaveBeenCalledTimes(1);
+    expect(m.trial.count.mock.calls[0][0].where.status).toEqual({
+      in: ["PENDING"],
+    });
   });
 });

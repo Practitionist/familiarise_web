@@ -1,4 +1,4 @@
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, type Prisma } from "@prisma/client";
 
 /**
  * Anti-scalper cap for request-for-approval holds (booking-journey audit B1).
@@ -63,27 +63,25 @@ export const CONSULTANT_AT_CAPACITY: ConsultantRequestRefusal = {
     "This expert's request queue is full — try again in a day or two, or pick another expert.",
 };
 
-type OpenRequestCounter = {
-  count: (args: {
-    where: {
-      status: AppointmentStatus;
-      deletedAt: null;
-      consultationPlan?: { consultantProfileId: string };
-      subscriptionPlan?: { consultantProfileId: string };
-    };
-  }) => Promise<number>;
+// Prisma's WhereInput (not a hand-rolled shape) so tsc rejects a dropped column.
+type OpenRequestCounters = {
+  consultation: {
+    count: (args: { where: Prisma.ConsultationWhereInput }) => Promise<number>;
+  };
+  subscription: {
+    count: (args: { where: Prisma.SubscriptionWhereInput }) => Promise<number>;
+  };
 };
 
 /** Open PENDING requests against this consultant, both request kinds. */
 export async function countOpenRequestsForConsultant(
-  db: { consultation: OpenRequestCounter; subscription: OpenRequestCounter },
+  db: OpenRequestCounters,
   consultantProfileId: string,
 ): Promise<number> {
   const [consultations, subscriptions] = await Promise.all([
     db.consultation.count({
       where: {
         status: AppointmentStatus.PENDING,
-        deletedAt: null,
         consultationPlan: { consultantProfileId },
       },
     }),
@@ -110,7 +108,7 @@ export function pausedRefusal(profile: {
  * guard, and a cap of null skips the read entirely.
  */
 export async function capacityRefusal(
-  db: { consultation: OpenRequestCounter; subscription: OpenRequestCounter },
+  db: OpenRequestCounters,
   profile: { id: string; maxOpenRequests: number | null },
 ): Promise<ConsultantRequestRefusal | null> {
   if (profile.maxOpenRequests === null) return null;

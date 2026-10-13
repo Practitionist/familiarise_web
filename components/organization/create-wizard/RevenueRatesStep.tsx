@@ -5,10 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  revenueRatesSchema,
-  type RevenueRatesFormData,
-} from "./schemas";
+import { revenueRatesSchema, type RevenueRatesFormData } from "./schemas";
 import type { StepProps } from "./types";
 
 // Defaults: 1000 / 1000 / 8000 basis points (10 / 10 / 80 %).
@@ -44,11 +41,7 @@ export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
   // Controller owns the percent ↔ bps translation so the schema stays
   // the canonical contract. `mode: "onChange"` so the sum-refine error
   // (and the disabled state below) update live as the user types.
-  const {
-    control,
-    handleSubmit,
-    watch,
-  } = useForm<RevenueRatesFormData>({
+  const { control, handleSubmit, watch } = useForm<RevenueRatesFormData>({
     resolver: zodResolver(revenueRatesSchema),
     mode: "onChange",
     defaultValues: {
@@ -71,10 +64,10 @@ export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
       <p className="text-sm text-zinc-500">
         Each booking payment is split three ways. Percentages must sum to{" "}
-        <strong>100%</strong> (10,000 basis points). You can adjust these
-        later from organization settings — changes create a new rate card
-        effective from the change date, so historical earnings stay at
-        their original split.
+        <strong>100%</strong> (10,000 basis points). You can adjust these later
+        from organization settings — changes create a new rate card effective
+        from the change date, so historical earnings stay at their original
+        split.
       </p>
 
       <div className="space-y-4">
@@ -88,14 +81,18 @@ export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
                 id="platform-rate"
                 type="number"
                 step="0.01"
-                min={0}
+                min={10}
                 max={100}
                 value={bpsToPct(field.value)}
-                onChange={(e) => field.onChange(clampBps(pctToBps(e.target.value)))}
+                onChange={(e) =>
+                  field.onChange(clampBps(pctToBps(e.target.value)))
+                }
               />
             )}
           />
-          <p className="text-xs text-zinc-500">Familiarise&apos;s fee per session.</p>
+          <p className="text-xs text-zinc-500">
+            Familiarise&apos;s fee per session.
+          </p>
         </div>
 
         <div className="space-y-2">
@@ -111,7 +108,9 @@ export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
                 min={0}
                 max={100}
                 value={bpsToPct(field.value)}
-                onChange={(e) => field.onChange(clampBps(pctToBps(e.target.value)))}
+                onChange={(e) =>
+                  field.onChange(clampBps(pctToBps(e.target.value)))
+                }
               />
             )}
           />
@@ -133,13 +132,15 @@ export function RevenueRatesStep({ onNext, onBack, initialData }: StepProps) {
                 min={0}
                 max={100}
                 value={bpsToPct(field.value)}
-                onChange={(e) => field.onChange(clampBps(pctToBps(e.target.value)))}
+                onChange={(e) =>
+                  field.onChange(clampBps(pctToBps(e.target.value)))
+                }
               />
             )}
           />
           <p className="text-xs text-zinc-500">
-            What each consultant keeps. Can be overridden per consultant via
-            a membership rate-card override.
+            What each consultant keeps. Can be overridden per consultant via a
+            membership rate-card override.
           </p>
         </div>
       </div>

@@ -60,11 +60,11 @@ const codes = (r: { code: string }[]) => r.map((x) => x.code);
 
 describe("Y2-0 payoutRequirements", () => {
   it.each([
-    ["none", {}, ["PAYOUT_ACCOUNT", "PAN"], ["GSTIN"], true],
+    ["none", {}, ["PAYOUT_ACCOUNT", "PAN", "TAX_ENTITY_TYPE"], ["GSTIN"], true],
     [
       "PAN only",
       { defaultAccount: { isVerified: true } },
-      ["PAN"],
+      ["PAN", "TAX_ENTITY_TYPE"],
       ["GSTIN"],
       false,
     ],
@@ -72,7 +72,7 @@ describe("Y2-0 payoutRequirements", () => {
       "account unverified",
       {
         defaultAccount: { isVerified: false },
-        taxInfo: { panLast4: "234F", gstin: null },
+        taxInfo: { panLast4: "234F", gstin: null, taxEntityType: "INDIVIDUAL" },
       },
       ["ACCOUNT_VERIFICATION"],
       ["GSTIN"],
@@ -82,7 +82,11 @@ describe("Y2-0 payoutRequirements", () => {
       "all set",
       {
         defaultAccount: { isVerified: true },
-        taxInfo: { panLast4: "234F", gstin: "27AAAAA0000A1Z5" },
+        taxInfo: {
+          panLast4: "234F",
+          gstin: "27AAAAA0000A1Z5",
+          taxEntityType: "INDIVIDUAL",
+        },
       },
       [],
       [],
@@ -104,6 +108,7 @@ describe("Y2-0 payoutRequirements", () => {
     expect(codes(out.eventuallyDue)).toEqual([
       "PAYOUT_ACCOUNT",
       "PAN",
+      "TAX_ENTITY_TYPE",
       "GSTIN",
     ]);
     for (const r of out.eventuallyDue) {

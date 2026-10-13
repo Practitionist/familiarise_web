@@ -44,7 +44,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
     <main className="explore-page min-h-screen pb-24 lg:pb-0">
       <PlanHero
         title={plan.title}
-        image={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
+        image={generateProgramImageUrl(plan.imageUrl)}
         badge={
           <Badge className="bg-background text-foreground mb-4">Class</Badge>
         }
@@ -106,6 +106,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               brochure={{ planId: plan.id, planType: "classes" }}
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
+              filesIncluded={plan.materials}
               faqs={plan.faqs}
               topics={plan.topics}
             />

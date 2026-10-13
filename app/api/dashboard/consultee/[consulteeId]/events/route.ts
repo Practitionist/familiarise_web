@@ -77,7 +77,12 @@ export async function GET(
     const url = new URL(request.url);
     const callerMemberships = await prisma.membership.findMany({
       where: { userId, status: "ACTIVE" },
-      select: { organizationId: true, status: true, role: true },
+      select: {
+        organizationId: true,
+        status: true,
+        role: true,
+        organization: { select: { status: true } },
+      },
     });
     const scopeResolution = resolveOrgScope({
       raw: url.searchParams.get("orgScope"),

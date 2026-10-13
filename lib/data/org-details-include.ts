@@ -14,11 +14,7 @@ import { hasOrgPermission } from "@/lib/auth/org-permissions";
  * ships on its own and the heavy read stays where it belongs.
  */
 export const orgDetailsInclude = {
-  // #768 lockdown #6 carved branding onto a 1:1 satellite, and every other
-  // reader already flattens `brandingProfile?.logo` (org-workspace, invitation
-  // preview, explore, the settings route). This read did not, so
-  // `org.organization.logo` was undefined and org avatars never displayed.
-  brandingProfile: { select: { logo: true } },
+  brandingProfile: { select: { logo: true, bannerImage: true } },
   billingAccount: {
     select: {
       id: true,
@@ -39,6 +35,8 @@ export const orgDetailsInclude = {
   // #1230 — settings UI renders the MSME declaration; the payout deadline
   // engine already reads this satellite server-side.
   msmeInfo: { select: { msmeStatus: true, msmeWrittenAgreementOnFile: true } },
+  // Read with relationLoadStrategy "join": each count is then a per-org
+  // LATERAL subquery instead of an unfiltered GROUP BY over the child table.
   _count: {
     select: {
       memberships: true,

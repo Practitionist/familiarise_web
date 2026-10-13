@@ -106,7 +106,7 @@ beforeEach(() => {
     billingAccountId: "ba_1",
     dataResidencyRegion: "IN",
     paymentTermsDays: 30,
-    taxInfo: null,
+    taxInfo: { gstStateCode: "29", gstin: null, hsnDefault: null },
   });
   mockNotifyIssued.mockResolvedValue([{ id: "ob_1" }]);
   mockDispatchWebhook.mockResolvedValue({ enqueuedCount: 1 });
@@ -115,7 +115,11 @@ beforeEach(() => {
 
 /** A committed-looking tx double for the issue path. */
 function issuingTx(opts: {
-  payments?: Array<{ id: string; legs: Array<{ amountPaise: number }> }>;
+  payments?: Array<{
+    id: string;
+    taxAmount: number;
+    legs: Array<{ amountPaise: number }>;
+  }>;
   overageEvents?: Array<{
     id: string;
     bookingUtilization: { paymentId: string };
@@ -128,13 +132,17 @@ function issuingTx(opts: {
   const invoiceCreate = jest.fn().mockResolvedValue({ id: "inv_9" });
   const tx = {
     payment: {
+      // Tax-inclusive, as the leg-sum trigger forces: ₹10 base + ₹1.80 GST.
       findMany: async () =>
-        opts.payments ?? [{ id: "pay_1", legs: [{ amountPaise: 1000 }] }],
+        opts.payments ?? [
+          { id: "pay_1", taxAmount: 180, legs: [{ amountPaise: 1180 }] },
+        ],
       updateMany: async () => ({ count: 1 }),
     },
     organizationInvoice: { create: invoiceCreate },
     invoiceLineItem: { findMany: async () => [] },
     overageEvent: { findMany: overageFindMany, updateMany: overageUpdateMany },
+    purchaseOrder: { findMany: async () => [] },
   };
   return { tx, invoiceCreate, overageFindMany, overageUpdateMany };
 }
@@ -197,19 +205,25 @@ describe("rollupOrgInvoiceAccruals — supplier state", () => {
       fn({
         payment: {
           findMany: async () => [
-            { id: "pay_1", legs: [{ amountPaise: 1000 }] },
+            { id: "pay_1", taxAmount: 180, legs: [{ amountPaise: 1180 }] },
           ],
           updateMany: async () => ({ count: 1 }),
         },
         organizationInvoice: { create: invoiceCreate },
         invoiceLineItem: { findMany: async () => [] },
         overageEvent: { findMany: async () => [] },
+        purchaseOrder: { findMany: async () => [] },
       }),
     );
 
     await rollupOrgInvoiceAccruals({ organizationId: "org_1" });
 
-    expect(invoiceCreate.mock.calls[0][0].data.placeOfSupply).toBe("29");
+    // Buyer state 29 matches the GSTIN-derived supplier state: intra-state.
+    expect(invoiceCreate.mock.calls[0][0].data).toMatchObject({
+      placeOfSupply: "29",
+      cgstPaise: 90,
+      sgstPaise: 90,
+    });
   });
 });
 
@@ -310,6 +324,7 @@ describe("rollupOrgInvoiceAccruals — buyer GSTIN drives the tax head", () => {
     process.env = OLD_ENV;
   });
 
+  // The leg already carries its 180p of GST; the invoice splits it, never adds more.
   it.each([
     ["29AAAAA0000A1Z5", { cgstPaise: 90, sgstPaise: 90, igstPaise: 0 }],
     ["27AAAAA0000A1Z5", { cgstPaise: 0, sgstPaise: 0, igstPaise: 180 }],
@@ -334,6 +349,28 @@ describe("rollupOrgInvoiceAccruals — buyer GSTIN drives the tax head", () => {
     expect(invoiceCreate.mock.calls[0][0].data).toMatchObject({
       ...heads,
       placeOfSupply: gstin.slice(0, 2),
+      subtotalPaise: 1000,
+      totalPaise: 1180,
     });
+  });
+
+  it("skips a domestic org with neither a GST state nor a GSTIN", async () => {
+    mockOrgFindUnique.mockResolvedValue({
+      id: "org_1",
+      name: "Acme",
+      slug: "acme",
+      status: "ACTIVE",
+      deletedAt: null,
+      invoiceNumberPrefix: null,
+      billingAccountId: "ba_1",
+      dataResidencyRegion: "IN",
+      paymentTermsDays: 30,
+      taxInfo: null,
+    });
+
+    const r = await rollupOrgInvoiceAccruals({ organizationId: "org_1" });
+
+    expect(r).toMatchObject({ invoiceId: null, skippedNoGstState: true });
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 });

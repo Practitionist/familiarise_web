@@ -23,12 +23,20 @@
  */
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 import { useRequireOrgAccess } from "../useOrgRole";
 
@@ -122,6 +130,25 @@ export function BillingSettingsPanel({ orgId }: Readonly<{ orgId: string }>) {
 
   return (
     <div className="max-w-xl space-y-6">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">
+            Invoices, purchase orders &amp; spend limits
+          </CardTitle>
+          <CardDescription>
+            Manage wallet balance, tax invoices, purchase orders, member spend
+            caps, and payment disputes from the organization Billing workspace.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/dashboard/organization/${orgId}/billing`}>
+              Open Billing
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>

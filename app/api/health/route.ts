@@ -69,12 +69,9 @@ async function checkBetterStack(): Promise<{
   }
 }
 
-// #1169/#866 — cron dead-man threshold. Every locked job run refreshes
-// `cron:heartbeat:last` (lib/cron/with-cron-lock.ts); the dispatcher is
-// scheduled every minute and GitHub's throttling delivers it at worst about
-// every 2.75h measured, so >6h of total silence means the scheduled fleet has
-// stopped — the failure the Actions-API heartbeat cannot report about itself.
-const CRON_HEARTBEAT_STALE_MS = 6 * 60 * 60 * 1000;
+// Cron dead-man threshold. Only a successful locked job run refreshes `cron:heartbeat:last`
+// (lib/cron/with-cron-lock.ts), so 45 minutes stale means the fleet stopped or every run is failing.
+const CRON_HEARTBEAT_STALE_MS = 45 * 60 * 1000;
 
 type CronHeartbeat = {
   configured: boolean;
@@ -96,10 +93,7 @@ type RedisStatus = {
   status: "ok" | "degraded";
   /** Generic code only: the route is public, so no vendor class or message. #1822 */
   reason?:
-    | "QUOTA_EXCEEDED"
-    | "UNAVAILABLE"
-    | "CIRCUIT_OPEN"
-    | "MOCK_IN_PRODUCTION";
+    "QUOTA_EXCEEDED" | "UNAVAILABLE" | "CIRCUIT_OPEN" | "MOCK_IN_PRODUCTION";
 };
 
 function redisOk(): RedisStatus {
@@ -107,6 +101,48 @@ function redisOk(): RedisStatus {
   return isRedisCircuitOpen()
     ? { status: "degraded", reason: "CIRCUIT_OPEN" }
     : { status: "ok" };
+}
+
+function pickFresherTimestamp(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): string | null {
+  if (!a && !b) return null;
+  if (!a) return b ?? null;
+  if (!b) return a;
+  const aMs = Date.parse(a);
+  const bMs = Date.parse(b);
+  if (!Number.isFinite(aMs)) return b;
+  if (!Number.isFinite(bMs)) return a;
+  return bMs > aMs ? b : a;
+}
+
+async function readLatestCompletedCronExecutionAt(): Promise<string | null> {
+  try {
+    const delegate = (
+      prisma as unknown as {
+        systemJobExecution?: {
+          findFirst?: (args: {
+            where: { status: "COMPLETED" };
+            orderBy: { startedAt: "desc" };
+            select: { startedAt: true };
+          }) => Promise<{ startedAt: Date | string } | null>;
+        };
+      }
+    ).systemJobExecution;
+    if (typeof delegate?.findFirst !== "function") return null;
+    const latest = await delegate.findFirst({
+      where: { status: "COMPLETED" },
+      orderBy: { startedAt: "desc" },
+      select: { startedAt: true },
+    });
+    if (!latest?.startedAt) return null;
+    return latest.startedAt instanceof Date
+      ? latest.startedAt.toISOString()
+      : String(latest.startedAt);
+  } catch {
+    return null;
+  }
 }
 
 // #1822 Q-7 — the heartbeat GET doubles as the Redis probe, so a quota
@@ -126,7 +162,11 @@ async function checkCronHeartbeat(): Promise<{
     };
   }
   try {
-    const lastRunAt = await redis.get<string>("cron:heartbeat:last");
+    const [redisLastRunAt, dbLastRunAt] = await Promise.all([
+      redis.get<string>("cron:heartbeat:last"),
+      readLatestCompletedCronExecutionAt(),
+    ]);
+    const lastRunAt = pickFresherTimestamp(redisLastRunAt, dbLastRunAt);
     if (!lastRunAt) {
       return {
         cron: { configured: true, lastRunAt: null, stale: null },
@@ -250,26 +290,40 @@ export async function GET(request: Request) {
       ? "degraded"
       : "healthy";
 
-  return NextResponse.json({
-    status,
-    database,
-    // #1124's stall is a platform latency, not a dependency failure: it is
-    // reported here, and in the Sentry log above, but never changes `status`.
-    platform: {
-      eventLoopStallMs,
-      processUptimeMs,
-      databaseLatencyMs,
-      databaseProbeRetried: retried,
+  const cacheControl =
+    status === "healthy" && !includeBetterStack
+      ? "public, s-maxage=30, stale-while-revalidate=60"
+      : "no-store";
+
+  return NextResponse.json(
+    {
+      status,
+      database,
+      // #1124's stall is a platform latency, not a dependency failure: it is
+      // reported here, and in the Sentry log above, but never changes `status`.
+      platform: {
+        eventLoopStallMs,
+        processUptimeMs,
+        databaseLatencyMs,
+        databaseProbeRetried: retried,
+      },
+      maintenance: {
+        phase: maintenanceState.phase,
+        reason: maintenanceState.reason,
+        estimatedEnd: maintenanceState.estimatedEnd,
+      },
+      stream,
+      betterstack,
+      cron,
+      redis: redisStatus,
+      timestamp: new Date().toISOString(),
     },
-    maintenance: {
-      phase: maintenanceState.phase,
-      reason: maintenanceState.reason,
-      estimatedEnd: maintenanceState.estimatedEnd,
+    {
+      headers: {
+        "Cache-Control": cacheControl,
+        // Keyed on the flag, or a cached plain probe answers a `?includeBetterStack=1` call.
+        "Netlify-Vary": "query=includeBetterStack",
+      },
     },
-    stream,
-    betterstack,
-    cron,
-    redis: redisStatus,
-    timestamp: new Date().toISOString(),
-  });
+  );
 }

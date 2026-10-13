@@ -22,7 +22,7 @@ const querySchema = z.object({
 
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return supportError({ status: 401, code: "UNAUTHORIZED" });
     }
@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
         supportTicketId: true,
         // Last-message preview for the list row — one message, no more.
         messages: {
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ seq: "desc" }, { createdAt: "desc" }],
           take: 1,
           select: { sender: true, body: true, createdAt: true },
         },

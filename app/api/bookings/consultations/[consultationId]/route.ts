@@ -1,4 +1,3 @@
-import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -19,11 +18,13 @@ import {
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import {
+  APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
   refusePlanNotOwned,
+  releaseDeclinedRequestHold,
+  validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
 import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
-import { APPROVAL_STATUSES_DETAIL_ONLY } from "@/lib/booking/list-query";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -419,8 +420,6 @@ export async function PATCH(
       );
     }
 
-    // #1775 — a dual-profile user was both sides of the request, so the
-    // participant check passed and they could approve their own booking.
     if (
       APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&
       existingConsultation.consultationPlan.consultantProfile.user.id ===
@@ -433,20 +432,13 @@ export async function PATCH(
       );
     }
 
-    // #1004 — declining is the CONSULTANT's act. The transition guard enforces
-    // only the from-state, and REJECTED is legal from PENDING and
-    // APPROVED_PENDING_PAYMENT, so without this the consultee could reject
-    // their own paid request and collect the consultant-initiated 100% refund
-    // — every notice tier bypassed, on demand.
-    if (
-      status === AppointmentStatus.REJECTED &&
-      !isConsultant &&
-      !isPrivileged(session.user.role)
-    ) {
-      return forbiddenResponse(
-        "Only the consultant can decline a request. Cancel it instead.",
-      );
-    }
+    const patchError = validateDetailRequestStatusPatch(
+      status,
+      isConsultant,
+      isPrivileged(session.user.role),
+      false,
+    );
+    if (patchError) return patchError;
 
     // LAYER 1: Distributed lock (only for APPROVED status changes)
     let lock: ApprovalLock | null = null;
@@ -528,50 +520,41 @@ export async function PATCH(
               }
             }
 
-            // #836 — allowed-from guard rides the WHERE; the idempotency
-            // pre-checks above are only friendly error text. updateMany
-            // returns no row, so re-read for the heavy include.
-            await transitionConsultationRequest(tx, {
-              where: { id: consultationId },
-              to: status,
-            });
-            // #1778 — a decline frees the held times: tell anyone waiting.
-            if (status === AppointmentStatus.REJECTED) {
-              await stageDeclineHoldNotices(tx, consultationId);
-            }
-            const consultation = await tx.consultation.findUniqueOrThrow({
-              where: { id: consultationId },
-              include: {
-                consultationPlan: {
+            if (status === AppointmentStatus.APPROVED) {
+              const hasPayment = await checkConsultationPayment(
+                tx,
+                consultationId,
+              );
+
+              if (hasPayment) {
+                await transitionConsultationRequest(tx, {
+                  where: { id: consultationId },
+                  to: AppointmentStatus.APPROVED,
+                });
+                const consultation = await tx.consultation.findUniqueOrThrow({
+                  where: { id: consultationId },
                   include: {
-                    consultantProfile: {
+                    consultationPlan: {
+                      include: {
+                        consultantProfile: {
+                          include: {
+                            user: PARTY_USER_SELECT,
+                          },
+                        },
+                      },
+                    },
+                    requestedBy: {
                       include: {
                         user: PARTY_USER_SELECT,
                       },
                     },
+                    appointment: {
+                      include: {
+                        occurrences: true,
+                      },
+                    },
                   },
-                },
-                requestedBy: {
-                  include: {
-                    user: PARTY_USER_SELECT,
-                  },
-                },
-                appointment: {
-                  include: {
-                    occurrences: true,
-                  },
-                },
-              },
-            });
-
-            // If approved, check if payment exists
-            if (status === AppointmentStatus.APPROVED) {
-              const hasPayment = await checkConsultationPayment(
-                tx,
-                consultation.id,
-              );
-
-              if (hasPayment) {
+                });
                 // Payment already exists - check if tentative appointment exists
                 if (consultation.appointment) {
                   // Confirm existing tentative appointment. RESCHEDULED rows are
@@ -599,11 +582,9 @@ export async function PATCH(
                 return { data: consultation, duplicate: false };
               } else {
                 // No payment — record the approval now; the pay-link is minted
-                // AFTER commit (#1169 PR 2). A gateway round-trip inside a
-                // Serializable transaction pinned a pooled connection for
-                // seconds, could blow the 30s budget, and on rollback left a
-                // live payment link for an approval that never persisted. The
-                // trial path documents the same rule.
+                // AFTER commit (#1169 PR 2). Transition directly to
+                // APPROVED_PENDING_PAYMENT so BookingStatusHistory is not
+                // polluted with a transient APPROVED row.
                 await transitionConsultationRequest(tx, {
                   where: { id: consultationId },
                   to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
@@ -643,6 +624,50 @@ export async function PATCH(
                 };
               }
             }
+
+            // #836 — allowed-from guard rides the WHERE; the idempotency
+            // pre-checks above are only friendly error text. updateMany
+            // returns no row, so re-read for the heavy include.
+            await transitionConsultationRequest(tx, {
+              where: { id: consultationId },
+              to: status,
+              data:
+                status === AppointmentStatus.REJECTED
+                  ? { pendingPaymentUrl: null }
+                  : undefined,
+            });
+            // #1778 — a decline frees the held times: tell anyone waiting and release holds.
+            if (status === AppointmentStatus.REJECTED) {
+              await releaseDeclinedRequestHold(
+                tx,
+                { consultationId },
+                session.user.id,
+              );
+            }
+            const consultation = await tx.consultation.findUniqueOrThrow({
+              where: { id: consultationId },
+              include: {
+                consultationPlan: {
+                  include: {
+                    consultantProfile: {
+                      include: {
+                        user: PARTY_USER_SELECT,
+                      },
+                    },
+                  },
+                },
+                requestedBy: {
+                  include: {
+                    user: PARTY_USER_SELECT,
+                  },
+                },
+                appointment: {
+                  include: {
+                    occurrences: true,
+                  },
+                },
+              },
+            });
 
             return { data: consultation, duplicate: false };
           },
@@ -858,20 +883,25 @@ class PaidWithoutAppointmentError extends Error {
   }
 }
 
-// #1778 — lifted out of the approval transaction to keep its complexity in bounds.
-async function stageDeclineHoldNotices(
-  tx: Tx,
-  consultationId: string,
-): Promise<void> {
-  const held = await tx.appointment.findFirst({
-    where: { consultationId: consultationId, deletedAt: null },
-    select: { id: true },
-  });
-  if (held) await stageNoticesForAppointmentHolds(tx, held.id);
-}
-
 /**
- * Check if payment exists for this consultation
+ * Does this consultation carry money that has actually landed?
+ *
+ * SUCCEEDED and nothing else. The old predicate was
+ * `in: [SUCCEEDED, PENDING]`, which let a pay-link order nobody has paid count
+ * as a payment: approval then took the settled branch, CONFIRMED the occurrence
+ * (`isTentative: false`) and returned without minting anything, leaving wrapper
+ * APPROVED + a confirmed slot + a PENDING/EXPIRED Payment and no pay link. No
+ * sweep can reap that shape — every cohort needs a tentative occurrence or an
+ * APPROVED_PENDING_PAYMENT/PENDING request — so the consultant-minute was
+ * blocked by the GiST exclusion forever, with a buyer who never paid holding a
+ * confirmed slot.
+ *
+ * A PENDING order is a hold, not a payment, so it now falls through to the
+ * unpaid arm below: the request lands in APPROVED_PENDING_PAYMENT, the hold
+ * stays tentative, and the pay-link mint runs. This is the same predicate
+ * `SETTLED_CONSULTATION` gives the subscription twin, which reads it as a CAS
+ * WHERE rather than a read.
+ *
  * Uses transaction client to maintain serializable isolation
  */
 async function checkConsultationPayment(
@@ -881,19 +911,27 @@ async function checkConsultationPayment(
   const consultation = await tx.consultation.findUnique({
     where: { id: consultationId },
     include: {
+      consultationPlan: {
+        select: { price: true },
+      },
       appointment: {
         include: {
           payment: {
             where: {
-              paymentStatus: {
-                in: [PaymentStatus.SUCCEEDED, PaymentStatus.PENDING],
-              },
+              paymentStatus: PaymentStatus.SUCCEEDED,
             },
           },
         },
       },
     },
   });
+
+  if (
+    consultation?.consultationPlan?.price === 0 &&
+    Boolean(consultation.appointment)
+  ) {
+    return true;
+  }
 
   return (consultation?.appointment?.payment?.length ?? 0) > 0;
 }

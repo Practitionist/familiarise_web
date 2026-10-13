@@ -14,7 +14,7 @@
  * Naming convention
  * -----------------
  * `<entity>.<verb_past_tense>` — matches the Stripe / GitHub Actions /
- * Linear convention. Dots are SCIM-style separators, not slashes, so
+ * Linear convention. Dots are the separators, not slashes, so
  * `event.startsWith("invoice.")` is the natural filter shape in
  * integrator code.
  *
@@ -27,9 +27,7 @@
  */
 
 export const OUTBOUND_WEBHOOK_EVENTS = [
-  /// Membership lifecycle. Emitted from `membership-transitions.ts`
-  /// (in-app invite accept + manual role change) AND from the SCIM
-  /// resource handlers (IdP-driven provisioning).
+  /// Membership lifecycle: invite acceptance, OIDC JIT auto-join, admin suspension/reactivation, removal, and DPDP erasure.
   "member.added",
   "member.removed",
 

@@ -1,6 +1,6 @@
 /**
  * Detail-payload mapper: readAppointmentDetail's { appointment }
- * → one AppointmentVM (plus flattened recordings) so the detail page reuses
+ * → one AppointmentVM so the detail page reuses
  * the shared timeline/badge/action machinery. Role decides the counterpart:
  * consultees see the consultant; consultants see the consultee (or the plan
  * host for group events).
@@ -14,11 +14,14 @@ import type { TAppointment } from "@/types/appointment";
 import { detailEntitlement } from "./presentation-input";
 import { deriveBucket } from "./bucket";
 import {
+  REJOIN_GRACE_MS,
   getAnchorTime,
+  isDeadOccurrence,
+  isDeliberateEnd,
   isOccurrenceOver,
   liveOccurrences,
+  occurrencesOfAppointment,
 } from "./occurrences";
-import { occurrencesOfAppointment } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import { payablePaymentId } from "@/lib/payments/pay-link-href";
@@ -31,17 +34,6 @@ import {
 } from "./view-model";
 
 type Role = "consultee" | "consultant";
-
-interface DetailRecordingVM {
-  id: string;
-  title: string;
-  url: string | null;
-  thumbnailUrl: string | null;
-  status: string;
-  durationInMinutes: number;
-  recordedAt: Date;
-  sessionStartsAt: Date;
-}
 
 function person(
   user: { name?: string | null; image?: string | null } | null | undefined,
@@ -115,7 +107,8 @@ function eventOf(appointment: TDetailAppointment): {
     title: plan?.title ?? (webinar ? "Webinar" : "Class"),
     status: normalizeStatus((webinar?.status ?? cls?.status)?.toString()),
     consultant: person(plan?.consultantProfile?.user, "Unknown Consultant"),
-    consultantProfileId: plan?.consultantProfile?.id ?? null,
+    consultantProfileId:
+      plan?.consultantProfile?.id ?? plan?.consultantProfileId ?? null,
     consultee: null,
     pendingPaymentUrl: null,
     collaborators: (plan?.collaborators ?? []).map((c) => ({
@@ -130,7 +123,8 @@ export function mapAppointmentDetail(
   detail: TAppointmentDetail,
   role: Role,
   now: Date = new Date(),
-): { vm: AppointmentVM; recordings: DetailRecordingVM[] } {
+  viewerConsultantId?: string,
+): { vm: AppointmentVM } {
   const { appointment } = detail;
   const facts = eventOf(appointment);
   // #1554 — one wrapper per purchase: the programme IS its occurrence rows.
@@ -151,18 +145,38 @@ export function mapAppointmentDetail(
     ? { total: entitlement.total, completed: entitlement.completed }
     : null;
 
+  const isCollaboratorViewer =
+    role === "consultant" &&
+    Boolean(
+      viewerConsultantId &&
+      facts.consultantProfileId &&
+      facts.consultantProfileId !== viewerConsultantId,
+    );
+
   const counterpart =
     role === "consultee"
       ? facts.consultant
-      : (facts.consultee ?? facts.consultant);
+      : (facts.consultee ??
+        (isCollaboratorViewer
+          ? facts.consultant
+          : {
+              name:
+                appointment.appointmentType === "WEBINAR"
+                  ? "Registered attendees"
+                  : "Enrolled learners",
+              image: facts.consultant.image,
+            }));
 
   const rawOccurrences: OccurrenceLike[] = all
     .flatMap((a) =>
       a.occurrences.map((slot) => ({ ...slot }) as OccurrenceLike),
     )
     .filter((slot) => {
+      if (isDeadOccurrence(slot)) return false;
+      if (isDeliberateEnd(slot.meeting)) return false;
       const end = toDate(slot.endsAt ?? slot.startsAt);
-      return end.getTime() >= now.getTime();
+      const graceMs = slot.endsAt ? REJOIN_GRACE_MS : 0;
+      return end.getTime() + graceMs >= now.getTime();
     })
     .sort(
       (a, b) => toDate(a.startsAt).getTime() - toDate(b.startsAt).getTime(),
@@ -204,23 +218,5 @@ export function mapAppointmentDetail(
     },
   };
 
-  const recordings: DetailRecordingVM[] = all.flatMap((a) =>
-    a.occurrences.flatMap((slot) =>
-      (slot.meeting?.recordings ?? []).map((rec) => ({
-        id: rec.id,
-        title: rec.title,
-        url: rec.storageUrl ?? rec.recordingUrl ?? null,
-        thumbnailUrl: rec.thumbnailUrl ?? null,
-        status: rec.status?.toString() ?? "READY",
-        durationInMinutes: rec.durationInMinutes,
-        recordedAt: toDate(rec.recordedAt),
-        sessionStartsAt: toDate(slot.startsAt),
-      })),
-    ),
-  );
-  recordings.sort((a, b) => b.recordedAt.getTime() - a.recordedAt.getTime());
-
-  return { vm, recordings };
+  return { vm };
 }
-
-export type { DetailRecordingVM };

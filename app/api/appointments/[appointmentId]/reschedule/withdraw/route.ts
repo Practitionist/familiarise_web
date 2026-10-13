@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";
+import {
+  applyRateLimit,
+  eventMutationLimiter,
+  rescheduleAppointmentLimiter,
+} from "@/lib/rate-limit";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import { withdrawRescheduleRequest } from "@/lib/booking/reschedule-withdraw";
@@ -13,9 +18,11 @@ import {
  * POST /api/appointments/[appointmentId]/reschedule/withdraw
  *
  * The initiator takes back their own open reschedule. The other party has
- * Decline, which ends the same request with a different meaning: a withdrawal
- * restores the booking, a decline leaves the slots released for the consultant
- * to re-place.
+ * Decline, which ends the same request the same way — both restore the released
+ * sessions, so the booking ends up where it started either way. What differs is
+ * who may do it and what a refusal means: only the initiator may withdraw, and
+ * a withdrawal blocked because the original time was taken is a 409 that leaves
+ * the proposal OPEN to be answered (#1846), not a settled request.
  */
 export async function POST(
   _request: NextRequest,
@@ -27,6 +34,14 @@ export async function POST(
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
     const { session } = authResult;
+    // Same budget as the sibling reschedule route: both move slots and money.
+    const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (limited) return limited;
+    const apptLimited = await applyRateLimit(
+      rescheduleAppointmentLimiter,
+      `${session.user.id}:${appointmentId}`,
+    );
+    if (apptLimited) return apptLimited;
 
     // Found via the appointment rather than by request id: the caller is acting
     // on a booking they can see, and openForAppointmentId already guarantees at

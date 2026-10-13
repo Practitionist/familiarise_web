@@ -37,7 +37,7 @@ import {
   sessionsTotalOf,
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
-import { Prisma } from "@prisma/client";
+import { Prisma, type EarningStatus } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -91,6 +91,49 @@ const HOME_NEXT_CYCLE_TAKE = 5;
 /** Candidates read before the JS `remaining > 0` filter (#1766). */
 const HOME_NEXT_CYCLE_SCAN = 50;
 
+export const NON_HOST_UNVERIFIED_REASONS: readonly string[] = [
+  "OFFLINE",
+  "INCONCLUSIVE",
+  "NOBODY_JOINED",
+  "CONSULTEE_NO_SHOW",
+];
+
+/**
+ * Computes the consultant's 30-day session completion rate percentage from
+ * grouped occurrence counts, excluding non-host-fault UNVERIFIED outcomes
+ * (maintenance windows, inconclusive Stream outages, nobody joined, or
+ * consultee no-shows) and platform-outage voids from the denominator.
+ */
+export function computeConsultantCompletionRate(
+  slotCounts: ReadonlyArray<{
+    completionStatus: string;
+    outcome?: string | null;
+    unverifiedReason?: string | null;
+    _count: number;
+  }>,
+): number | null {
+  const countOf = (keep: (s: (typeof slotCounts)[number]) => boolean) =>
+    slotCounts.filter(keep).reduce((sum, s) => sum + s._count, 0);
+  const completedSlots = countOf((s) => s.completionStatus === "COMPLETED");
+  const cancelledSlots = countOf((s) => s.completionStatus === "CANCELLED");
+  const unverifiedSlots = countOf((s) => {
+    if (s.completionStatus !== "UNVERIFIED") return false;
+    const reason = s.outcome ?? s.unverifiedReason ?? null;
+    return !reason || !NON_HOST_UNVERIFIED_REASONS.includes(reason);
+  });
+  const hostVoidedSlots = countOf(
+    (s) =>
+      s.completionStatus === "VOIDED" &&
+      !!s.outcome &&
+      (HOST_ATTRIBUTED_OUTCOMES as readonly string[]).includes(s.outcome),
+  );
+  const completionDenom =
+    completedSlots + cancelledSlots + unverifiedSlots + hostVoidedSlots;
+  return completionDenom > 0
+    ? Math.round((completedSlots / completionDenom) * 100)
+    : null;
+}
+
 /**
  * #1766 — subscriptions whose live cycle is finished and whose entitlement
  * is not: derived at read time, no job. Two steps because the predicate can
@@ -133,6 +176,7 @@ async function readNextCycles(
     },
     orderBy: { updatedAt: "asc" },
     take: HOME_NEXT_CYCLE_SCAN,
+    relationLoadStrategy: "join",
   });
   return candidates
     .map((row) => {
@@ -233,60 +277,82 @@ const consultantDeliveryArms = (
       status: "SCHEDULED" as const,
     },
   },
+  {
+    trial: {
+      consultantProfileId,
+      status: "SCHEDULED" as const,
+    },
+  },
 ];
 
-const appointmentInclude = {
+/** A plan owner as Home renders them: avatar and name. */
+const planOwnerSelect = {
+  consultantProfileId: true,
+  consultantProfile: {
+    select: { id: true, user: { select: userSelectFields } },
+  },
+} as const;
+
+/** Accepted co-hosts, for the viewer's role badge and the host avatar. */
+const acceptedCollaboratorsSelect = {
+  where: { status: "ACCEPTED" as const },
+  select: {
+    id: true,
+    role: true,
+    consultantProfileId: true,
+    consultantProfile: {
+      select: {
+        id: true,
+        user: { select: { id: true, name: true, image: true } },
+      },
+    },
+  },
+};
+
+/** Exactly what Home's appointment transform and card helpers read. */
+const appointmentSelect = {
+  id: true,
+  appointmentType: true,
+  organizationId: true,
   occurrences: {
+    where: { deletedAt: null },
     orderBy: { startsAt: "asc" as const },
-    include: {
+    select: {
+      id: true,
+      startsAt: true,
+      endsAt: true,
+      isTentative: true,
+      completionStatus: true,
       meeting: {
         select: { id: true, endedAt: true, endedReason: true },
       },
     },
   },
   consultation: {
-    include: {
+    select: {
+      id: true,
+      status: true,
       consultationPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: userSelectFields,
-              },
-            },
-          },
-        },
+        select: { id: true, title: true, ...planOwnerSelect },
       },
-      requestedBy: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
+      requestedBy: { select: { id: true, user: { select: userSelectFields } } },
     },
   },
   subscription: {
     select: {
       id: true,
       subscriptionPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: userSelectFields,
-              },
-            },
-          },
+        select: {
+          id: true,
+          title: true,
+          // calculateSessionProgress reads the entitlement inputs.
+          totalSessions: true,
+          sessionsPerWeek: true,
+          durationInMonths: true,
+          ...planOwnerSelect,
         },
       },
-      requestedBy: {
-        include: {
-          user: {
-            select: userSelectFields,
-          },
-        },
-      },
+      requestedBy: { select: { id: true, user: { select: userSelectFields } } },
       schedulingPeriodStartsAt: true,
       schedulingPeriodEndsAt: true,
       // #1766 — Home's session progress reads the frozen entitlement.
@@ -296,68 +362,51 @@ const appointmentInclude = {
     },
   },
   webinar: {
-    include: {
+    select: {
+      id: true,
+      status: true,
       webinarPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: userSelectFields,
-              },
-            },
-          },
-          collaborators: {
-            where: { status: "ACCEPTED" },
-            include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      image: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
+        select: {
+          id: true,
+          title: true,
+          ...planOwnerSelect,
+          collaborators: acceptedCollaboratorsSelect,
         },
       },
     },
   },
   class: {
-    include: {
+    select: {
+      id: true,
+      status: true,
       classPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: userSelectFields,
-              },
-            },
-          },
-          collaborators: {
-            where: { status: "ACCEPTED" },
-            include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      image: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
+        select: {
+          id: true,
+          title: true,
+          ...planOwnerSelect,
+          collaborators: acceptedCollaboratorsSelect,
         },
       },
     },
   },
-} satisfies Prisma.AppointmentInclude;
+  trial: {
+    select: {
+      id: true,
+      status: true,
+      subscriptionPlan: {
+        select: {
+          id: true,
+          title: true,
+          trialDurationMinutes: true,
+          trialPriceInPaise: true,
+        },
+      },
+      consulteeProfile: {
+        select: { id: true, user: { select: userSelectFields } },
+      },
+    },
+  },
+} satisfies Prisma.AppointmentSelect;
 
 /** Pending-approvals widget only needs id + requester name + requestedAt. */
 const pendingConsultationInclude = {
@@ -384,7 +433,7 @@ const pendingSubscriptionInclude = {
 // GetPayload would re-introduce bigint money fields (#780).
 type DashboardAppointment = Prisma.Result<
   typeof prisma.appointment,
-  { include: typeof appointmentInclude },
+  { select: typeof appointmentSelect },
   "findFirstOrThrow"
 >;
 type DashboardConsultation = Prisma.Result<
@@ -565,6 +614,7 @@ export async function getConsultantDashboard(
       },
       orderBy: { startsAt: "asc" },
       take: HOME_ORG_SESSIONS_TAKE,
+      relationLoadStrategy: "join",
     }),
   ]);
   const homeAppointmentIds = [
@@ -601,19 +651,16 @@ export async function getConsultantDashboard(
     ratingAgg,
     slotCounts,
     trialCounts,
-    netEarningsAgg,
-    readyEarningsAgg,
-    availableEarningsAgg,
+    earningsByStatus,
   ] = await Promise.all([
-    // Fetch approved appointments for consultations, subscriptions, webinars, and
-    // classes. `appointmentInclude` carries nine nested `user` selections, so an
-    // unguarded empty id list cost nine follow-up SELECTs — see readByIds. The
-    // guard is per-query, not an early return: every other read below is
-    // consultant-scoped rather than id-scoped and must still run. (#1121)
+    // The appointments Home renders, in one joined statement. readByIds skips
+    // the read for an empty id list; every read below is consultant-scoped and
+    // still runs.
     readByIds(homeAppointmentIds, () =>
       prisma.appointment.findMany({
         where: { id: { in: homeAppointmentIds } },
-        include: appointmentInclude,
+        select: appointmentSelect,
+        relationLoadStrategy: "join",
       }),
     ),
     // Active clients / programs are counted over the consultant's whole active
@@ -645,7 +692,9 @@ export async function getConsultantDashboard(
           select: { id: true, requestedBy: { select: { id: true } } },
         },
         class: { select: { id: true } },
+        trial: { select: { consulteeProfile: { select: { id: true } } } },
       },
+      relationLoadStrategy: "join",
     }),
     // Pending previews. #1703 — the list reads the SAME predicate and window
     // as the badge count below (no 90-day floor: the badge never had one, and
@@ -656,12 +705,14 @@ export async function getConsultantDashboard(
       include: pendingConsultationInclude,
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_PENDING_TAKE,
+      relationLoadStrategy: "join",
     }),
     prisma.subscription.findMany({
       where: pendingSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
       include: pendingSubscriptionInclude,
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_PENDING_TAKE,
+      relationLoadStrategy: "join",
     }),
     // The approvals badge is a total, not a list length. Counting the capped
     // list made it disagree with NeedsYou — which counts properly — on the very
@@ -694,6 +745,7 @@ export async function getConsultantDashboard(
       include: pendingConsultationInclude,
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_AWAITING_PAYMENT_TAKE,
+      relationLoadStrategy: "join",
     }),
     prisma.subscription.findMany({
       where: subscriptionRequestWhere(
@@ -704,6 +756,7 @@ export async function getConsultantDashboard(
       include: pendingSubscriptionInclude,
       orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_AWAITING_PAYMENT_TAKE,
+      relationLoadStrategy: "join",
     }),
     prisma.consultation.count({
       where: consultationRequestWhere(
@@ -777,6 +830,7 @@ export async function getConsultantDashboard(
             { subscription: { subscriptionPlan: { consultantProfileId } } },
             { webinar: { webinarPlan: { consultantProfileId } } },
             { class: { classPlan: { consultantProfileId } } },
+            { trial: { consultantProfileId } },
           ],
         },
         startsAt: { gte: thirtyDaysAgo, lt: now },
@@ -791,33 +845,12 @@ export async function getConsultantDashboard(
     // --- Financial Summary Queries ---
     // Deliberately GLOBAL (no org filter): payouts settle one instrument
     // across every context (ADR 19 — views split, instruments don't).
-    // 5. Net earnings (all-time, excluding refunded, minus partial refunds)
-    prisma.consultantEarnings.aggregate({
+    // 5–7. Net, Ready and Available from one grouped read. A READY row never
+    // carries a payoutId: batching sets it and moves the row to BATCHED.
+    prisma.consultantEarnings.groupBy({
+      by: ["status"],
+      where: { consultantProfileId },
       _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      where: {
-        consultantProfileId,
-        status: { not: "REFUNDED" },
-      },
-    }),
-    // 6. Ready earnings (eligible for next payout — not yet assigned to a payout)
-    prisma.consultantEarnings.aggregate({
-      _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      where: {
-        consultantProfileId,
-        status: "READY",
-        payoutId: null,
-      },
-    }),
-    // 7. #1527 review — "Available" (READY + BATCHED), matching the Earnings
-    // page's bucket (lib/dashboard/earnings-state.ts bucketOf); BATCHED rows
-    // are already committed to a run but cash hasn't left, so they read as
-    // "yours" here even though they're excluded from #6's payout-eligibility.
-    prisma.consultantEarnings.aggregate({
-      _sum: { consultantSharePaise: true, refundedShareAmount: true },
-      where: {
-        consultantProfileId,
-        status: { in: ["READY", "BATCHED"] },
-      },
     }),
   ]);
 
@@ -923,6 +956,20 @@ export async function getConsultantDashboard(
             status: appointment.class.status,
           }
         : undefined,
+      trial: appointment.trial
+        ? {
+            id: appointment.trial.id,
+            status: appointment.trial.status,
+            subscriptionPlan: appointment.trial.subscriptionPlan,
+            consulteeProfile: {
+              id: appointment.trial.consulteeProfile?.id ?? "",
+              user: {
+                name: appointment.trial.consulteeProfile?.user?.name ?? null,
+                image: appointment.trial.consulteeProfile?.user?.image ?? null,
+              },
+            },
+          }
+        : undefined,
     }),
   );
 
@@ -945,6 +992,18 @@ export async function getConsultantDashboard(
     consultantProfileId,
     startOfMonth,
   ).catch(() => undefined);
+  const profileRatings =
+    (await prisma.consultantProfile
+      ?.findUnique?.({
+        where: { id: consultantProfileId },
+        select: {
+          publishedRatingOneToOne: true,
+          publishedRatingGroup: true,
+          ratedClientsOneToOne: true,
+          ratedEventsGroup: true,
+        },
+      })
+      .catch(() => null)) ?? null;
 
   // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
   // reads above; a failure degrades to no row, never to a broken Home.
@@ -1007,24 +1066,7 @@ export async function getConsultantDashboard(
         : 0;
 
   // Session completion rate from slot counts
-  const countOf = (keep: (s: (typeof slotCounts)[number]) => boolean) =>
-    slotCounts.filter(keep).reduce((sum, s) => sum + s._count, 0);
-  const completedSlots = countOf((s) => s.completionStatus === "COMPLETED");
-  const cancelledSlots = countOf((s) => s.completionStatus === "CANCELLED");
-  const unverifiedSlots = countOf((s) => s.completionStatus === "UNVERIFIED");
-  // D6 — a platform outage is not the consultant's miss.
-  const hostVoidedSlots = countOf(
-    (s) =>
-      s.completionStatus === "VOIDED" &&
-      !!s.outcome &&
-      HOST_ATTRIBUTED_OUTCOMES.includes(s.outcome),
-  );
-  const completionDenom =
-    completedSlots + cancelledSlots + unverifiedSlots + hostVoidedSlots;
-  const completionRate =
-    completionDenom > 0
-      ? Math.round((completedSlots / completionDenom) * 100)
-      : null;
+  const completionRate = computeConsultantCompletionRate(slotCounts);
 
   // Trial conversion rate
   const trialCountMap = new Map(trialCounts.map((t) => [t.status, t._count]));
@@ -1035,15 +1077,21 @@ export async function getConsultantDashboard(
     trialDenom > 0 ? Math.round((convertedTrials / trialDenom) * 100) : null;
 
   // --- Financial Summary derived values ---
-  const netEarningsVal =
-    sumPaise(netEarningsAgg._sum.consultantSharePaise) -
-    sumPaise(netEarningsAgg._sum.refundedShareAmount);
-  const readyEarningsVal =
-    sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
-    sumPaise(readyEarningsAgg._sum.refundedShareAmount);
-  const availableEarningsVal =
-    sumPaise(availableEarningsAgg._sum.consultantSharePaise) -
-    sumPaise(availableEarningsAgg._sum.refundedShareAmount);
+  const netOf = (keep: (status: EarningStatus) => boolean) =>
+    earningsByStatus
+      .filter((group) => keep(group.status))
+      .reduce(
+        (sum, group) =>
+          sum +
+          sumPaise(group._sum.consultantSharePaise) -
+          sumPaise(group._sum.refundedShareAmount),
+        0,
+      );
+  const netEarningsVal = netOf((status) => status !== "REFUNDED");
+  const readyEarningsVal = netOf((status) => status === "READY");
+  const availableEarningsVal = netOf(
+    (status) => status === "READY" || status === "BATCHED",
+  );
   const payoutMinimum = PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT;
   const payoutEligible = readyEarningsVal >= payoutMinimum;
 
@@ -1055,7 +1103,9 @@ export async function getConsultantDashboard(
   const activeClassIds = new Set<string>();
   for (const apt of activeBookRows) {
     const consulteeId =
-      apt.consultation?.requestedBy?.id ?? apt.subscription?.requestedBy?.id;
+      apt.consultation?.requestedBy?.id ??
+      apt.subscription?.requestedBy?.id ??
+      apt.trial?.consulteeProfile?.id;
     if (consulteeId) activeClientIds.add(consulteeId);
     if (apt.subscription?.id) activeSubIds.add(apt.subscription.id);
     if (apt.class?.id) activeClassIds.add(apt.class.id);
@@ -1099,6 +1149,10 @@ export async function getConsultantDashboard(
       completionRate,
       averageRating: ratingAgg._avg.rating ?? 0,
       totalReviews: ratingAgg._count.rating,
+      publishedRatingOneToOne: profileRatings?.publishedRatingOneToOne ?? null,
+      publishedRatingGroup: profileRatings?.publishedRatingGroup ?? null,
+      ratedClientsOneToOne: profileRatings?.ratedClientsOneToOne ?? 0,
+      ratedEventsGroup: profileRatings?.ratedEventsGroup ?? 0,
       trialConversionRate,
     },
     financialSummary,

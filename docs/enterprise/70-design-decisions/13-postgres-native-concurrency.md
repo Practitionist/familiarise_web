@@ -147,11 +147,11 @@ triggers are unavailable, and an earlier revision of this ADR wrongly said so
 (corrected in #1132). They live in `prisma/sql/*.sql` and are applied by
 `npm run db:sidecars`, which `npm run db:push` runs after the schema push;
 `scripts/ci/check-db-sidecars.ts` fails CI if any declared object is missing
-from the live catalog. So CAS WHERE clauses are the _first_ enforcement layer,
+after a fresh `db push` + `db:sidecars`, and `db-live-drift.yml` checks the live catalog daily. So CAS WHERE clauses are the _first_ enforcement layer,
 not the only one.
 
 The live sidecars are the deferred `ledger_txn_balanced` CONSTRAINT TRIGGER, the
-`slot_no_confirmed_overlap` GiST exclusion, and ~30 CHECK constraints. The trap
+`occurrence_no_confirmed_overlap` GiST exclusion, and ~30 CHECK constraints. The trap
 they guard against is `npm run db:push:schema`, which exists as a standalone
 script and skips the sidecars entirely.
 

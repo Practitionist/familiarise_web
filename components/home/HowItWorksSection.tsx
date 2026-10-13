@@ -35,9 +35,9 @@ function HowItWorksStep({
           )}
         </div>
         <div className="pb-12 min-w-0">
-          <h4 className="text-xl font-semibold text-foreground mb-2">
+          <h3 className="text-xl font-semibold text-foreground mb-2">
             {step.title}
-          </h4>
+          </h3>
           <p className="text-muted-foreground leading-relaxed">
             {step.description}
           </p>

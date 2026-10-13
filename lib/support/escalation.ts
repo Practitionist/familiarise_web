@@ -9,17 +9,15 @@
 
 import type { SupportContext, SupportTurnResult } from "./types";
 
-/** User phrases that always warrant a human, independent of the flow. */
-const HUMAN_KEYWORDS = [
-  "human",
-  "agent",
-  "representative",
-  "speak to someone",
-  "complaint",
-  "legal",
-  "chargeback",
-  "fraud",
-];
+/** Word-bounded human/legal escalation triggers so substrings never false-match. */
+const HUMAN_KEYWORD_RE =
+  /\b(human|agent|representative|complaint|legal|chargeback|fraud)\b|speak to someone/i;
+
+const BARE_HUMAN_PHRASE_RE =
+  /\b(human|agent|representative)\b|speak to someone|talk to a person/i;
+
+const BARE_STRIP_RE =
+  /\b(i\s+(?:want|need|would\s+like)\s+(?:to\s+)?)?(?:talk|speak|chat)\s+(?:to|with)\s+(?:a\s+|an\s+|live\s+|real\s+)?(?:human|agent|representative|support|person|someone)\b|\b(?:human|agent|representative|support|person|someone|please|now|help|me|can|i|to|with|a|an)\b/gi;
 
 /**
  * Does this message ask for a person? Exported so BOTH scopes can honour it —
@@ -29,8 +27,83 @@ const HUMAN_KEYWORDS = [
  * keep: there is no thread there, so nothing was checking.
  */
 export function mentionsHumanKeyword(text: string | undefined): boolean {
-  const t = (text ?? "").toLowerCase();
-  return !!t && HUMAN_KEYWORDS.some((k) => t.includes(k));
+  const t = (text ?? "").trim();
+  return !!t && HUMAN_KEYWORD_RE.test(t);
+}
+
+/** True when the message asks for a person without stating the problem yet. */
+export function isBareHumanRequest(msg: string): boolean {
+  const trimmed = msg.trim();
+  if (!trimmed || !BARE_HUMAN_PHRASE_RE.test(trimmed)) return false;
+  const remaining = trimmed
+    .replace(BARE_STRIP_RE, " ")
+    .replace(/[^a-z0-9\s]/gi, " ")
+    .trim();
+  const contentWords = remaining ? remaining.split(/\s+/).filter(Boolean) : [];
+  return contentWords.length < 3;
+}
+
+export interface FlowPromise {
+  id: string;
+  text: string;
+}
+
+export interface EscalationBriefInput {
+  customerAsk?: string | null;
+  path?: string | null;
+  botSaid?: string | null;
+  reason?: string | null;
+  topic?: string | null;
+  promises?: ReadonlyArray<FlowPromise>;
+}
+
+const BOT_PROMISES_PREFIX = "Bot told the customer:";
+
+const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
+
+/** Structured handoff brief written to ticket descriptions at escalation time. */
+export function escalationBrief(input: EscalationBriefInput): string {
+  const lines: string[] = [];
+  const fields: ReadonlyArray<[string, string | null | undefined]> = [
+    ["Customer ask", input.customerAsk],
+    ["Topic", input.topic],
+    ["Flow path", input.path],
+    ["Bot response", input.botSaid],
+    ["Escalation reason", input.reason],
+  ];
+  for (const [label, value] of fields) {
+    const clean = value ? oneLine(value) : "";
+    if (clean) {
+      lines.push(`${label}: ${clean}`);
+    }
+  }
+  const promiseTexts = (input.promises ?? [])
+    .map((p) => oneLine(p.text))
+    .filter(Boolean);
+  if (promiseTexts.length > 0) {
+    lines.push(`${BOT_PROMISES_PREFIX} ${promiseTexts.join(" | ")}`);
+  }
+  return lines.join("\n");
+}
+
+/** Extract structured bot promises written by escalationBrief into a ticket summary. */
+export function extractBotPromises(
+  summary: string | null | undefined,
+): string[] {
+  if (!summary) return [];
+  const found: string[] = [];
+  for (const line of summary.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(BOT_PROMISES_PREFIX)) continue;
+    const raw = trimmed.slice(BOT_PROMISES_PREFIX.length).trim();
+    for (const part of raw.split(" | ")) {
+      const item = part.trim();
+      if (item && !found.includes(item)) {
+        found.push(item);
+      }
+    }
+  }
+  return found;
 }
 
 export interface EscalationDecision {

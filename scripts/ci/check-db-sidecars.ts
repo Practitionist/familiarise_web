@@ -46,6 +46,9 @@ function parseSidecars(): Expected[] {
 
 async function main(): Promise<void> {
   if (!process.env.DATABASE_URL) {
+    console.warn(
+      "::warning title=Database Sidecar Check Skipped::DATABASE_URL is unset — live database sidecar verification was skipped.",
+    );
     console.log("check-db-sidecars: DATABASE_URL unset — skipping");
     return;
   }

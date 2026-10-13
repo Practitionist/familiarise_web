@@ -5,8 +5,13 @@ const TERMINAL_PATTERNS: ReadonlyArray<[reason: string, pattern: RegExp]> = [
   ["domain_not_verified", /domain is not verified/i],
   ["not_verified", /not verified/i],
   ["validation_error", /validation_error/i],
+  ["invalid_from_address", /invalid_from_address/i],
   ["invalid_from", /invalid `from`/i],
   ["restricted_api_key", /restricted_api_key/i],
+  ["invalid_idempotency_key", /invalid_idempotency_key/i],
+  ["invalid_idempotent_request", /invalid_idempotent_request/i],
+  ["invalid_parameter", /invalid_parameter/i],
+  ["missing_required_field", /missing_required_field/i],
 ];
 
 /** `name: message` for a Resend error body, so the name survives into lastError. */
@@ -33,20 +38,16 @@ export function isTerminalSendError(
   return terminalSendReason(message) !== null;
 }
 
-// #1298 — how long a replayed link is still clickable. Mirrors lib/auth.ts:
-// emailVerification.expiresIn = 3600 s, resetPasswordTokenExpiresIn = 1800 s.
-export const EMAIL_TTL_MS: Record<string, number> = {
-  EMAIL_VERIFICATION: 60 * 60 * 1000,
-  PASSWORD_RESET: 30 * 60 * 1000,
-};
+// Their body carries a live single-use code or link, so the outbox stores it
+// redacted and the relay never replays it; the user requests a fresh one.
+const CREDENTIAL_EMAIL_TYPES: ReadonlySet<string> = new Set([
+  "EMAIL_VERIFICATION",
+  "PASSWORD_RESET",
+]);
 
-/** True when a dead-lettered row of this type carries a link that has expired. */
-export function isExpiredForReplay(
-  emailType: string,
-  createdAt: Date,
-  now: Date,
-): boolean {
-  const ttl = EMAIL_TTL_MS[emailType];
-  if (ttl === undefined) return false;
-  return now.getTime() - createdAt.getTime() > ttl;
+export const REDACTED_CREDENTIAL_BODY =
+  "[redacted: this email carried a single-use credential]";
+
+export function carriesCredential(emailType: string): boolean {
+  return CREDENTIAL_EMAIL_TYPES.has(emailType);
 }

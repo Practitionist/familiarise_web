@@ -18,7 +18,7 @@ import {
   capabilityOf,
   defaultOverageBehaviorForFunding,
   isReachableOrgFundingPath,
-  overageBehaviorUnsupportedReason,
+  overageConfigRefusals,
 } from "@/lib/enterprise/reachable-paths";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -30,8 +30,7 @@ const CoveredPlanTypeSchema = z.enum([
 ]);
 
 const BillingCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
-// The enum still parses CHARGE_MEMBER so the refusal below can name it;
-// #1744 — `overageBehaviorUnsupportedReason` refuses it on every rail.
+// CHARGE_MEMBER parses so `overageConfigRefusals` can refuse it by name on every rail.
 const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 
 // #768 #14/#15 — overage-combo guards shared by both config schemas:
@@ -95,7 +94,7 @@ const LicensedSeatConfigSchema = z
     priceCapPerEngagementPaise: z.coerce
       .number()
       .int()
-      .min(0)
+      .positive()
       .nullable()
       .optional(),
     // #775 — bps markup on the pass-through overage marginal (null = no markup).
@@ -164,6 +163,12 @@ const CreditPoolConfigSchema = z
     // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
     // Omitted → funding-aware default resolved by the route (see above).
     overageBehavior: OverageBehaviorSchema.optional(),
+    priceCapPerEngagementPaise: z.coerce
+      .number()
+      .int()
+      .positive()
+      .nullable()
+      .optional(),
     overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
     maxOveragePerCyclePaise: z.coerce
       .number()
@@ -206,7 +211,7 @@ export async function GET(
   // Any ACTIVE member may call this, but only `programs.read` sees every
   // program with spend; everyone else sees the programs they hold a seat in,
   // without utilisation (#1527 P0-2).
-  const access = await requireOrgAccess(orgId);
+  const access = await requireOrgAccess(orgId, { readOnly: true });
   if (access.error) return access.error;
   if (!access.org.canSponsor) {
     // Hosting-only orgs genuinely do not have programs; surface 404 so
@@ -288,6 +293,7 @@ export async function POST(
   const access = await requireOrgAccess(orgId, {
     permission: "programs.manage",
     canSponsor: true,
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -390,17 +396,18 @@ export async function POST(
       { status: 400 },
     );
   }
-  const overageReason = overageBehaviorUnsupportedReason(
+  const [overageRefusal] = overageConfigRefusals(
     fundingSource,
     effectiveOverageBehavior,
-    // #1458 — the surcharge is part of the rule, not a separate knob: CHARGE_ORG
-    // is collectable on a wallet debit only while the marginal stays inside the
-    // price that debit took.
     overageConfig.overageSurchargeBps,
   );
-  if (overageReason) {
+  if (overageRefusal) {
     return NextResponse.json(
-      { error: overageReason, code: "INVALID_OVERAGE_CONFIG" },
+      {
+        error: overageRefusal.message,
+        code: "INVALID_OVERAGE_CONFIG",
+        refusal: overageRefusal.code,
+      },
       { status: 400 },
     );
   }
@@ -473,6 +480,11 @@ export async function POST(
               cycle: body.creditPoolConfig.cycle,
               creditBudgetPerCycle: body.creditPoolConfig.creditBudgetPerCycle,
               overageBehavior: effectiveOverageBehavior,
+              ...(body.creditPoolConfig.priceCapPerEngagementPaise !==
+                undefined && {
+                priceCapPerEngagementPaise:
+                  body.creditPoolConfig.priceCapPerEngagementPaise,
+              }),
               overageSurchargeBps:
                 body.creditPoolConfig.overageSurchargeBps ?? null,
               maxOveragePerCyclePaise:

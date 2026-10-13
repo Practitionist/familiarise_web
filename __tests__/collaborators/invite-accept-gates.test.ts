@@ -23,6 +23,18 @@ jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorDeclined: jest.fn(),
   notifyCollaboratorWithdrawn: jest.fn(),
 }));
+jest.mock("../../lib/email/senders/collaborators", () => ({
+  sendCollaboratorInvitedEmail: jest.fn(async () => undefined),
+  sendCollaboratorAcceptedEmail: jest.fn(async () => undefined),
+  sendCollaboratorDeclinedEmail: jest.fn(async () => undefined),
+  sendCollaboratorRemovedEmail: jest.fn(async () => undefined),
+  sendCollaboratorWithdrawnEmail: jest.fn(async () => undefined),
+}));
+jest.mock(
+  "../../utils/organization-roles",
+  () => ({ hasOrgPermission: jest.fn(() => false) }),
+  { virtual: true },
+);
 
 type Invitee = {
   userId: string;
@@ -48,21 +60,6 @@ let plan: { title: string; archivedAt: Date | null } | null = {
 };
 let seat: { id: string } | null = null;
 
-const tx = {
-  collaborator: {
-    findMany: jest.fn(async () => []),
-    findFirst: jest.fn(async () => null),
-    create: jest.fn(async (args: { data: unknown }) => ({
-      id: "new",
-      ...(args.data as object),
-    })),
-    update: jest.fn(),
-  },
-  appointmentParticipant: {
-    createMany: jest.fn(async () => ({ count: 1 })),
-    updateMany: jest.fn(async () => ({ count: 0 })),
-  },
-};
 // The accept write is a CAS `updateMany` on status PENDING (#1580); the row is
 // re-read afterwards. `collaboratorUpdate` spies on the CAS and shapes the re-read.
 const collaboratorUpdate = jest.fn(async (..._args: unknown[]) => ({
@@ -71,13 +68,53 @@ const collaboratorUpdate = jest.fn(async (..._args: unknown[]) => ({
   status: "ACCEPTED",
 }));
 let lastWrite: { id: string; role: string; status: string } | null = null;
+const tx = {
+  consultantProfile: { findUnique: jest.fn(async () => invitee) },
+  webinarPlan: { findUnique: jest.fn(async () => plan) },
+  classPlan: { findUnique: jest.fn(async () => plan) },
+  appointment: {
+    findMany: jest.fn(async () => [{ id: "appt-1", organizationId: null }]),
+  },
+  collaborator: {
+    findUnique: jest.fn(async () => ({
+      id: "c-1",
+      consultantProfileId: "cp-new",
+      webinarPlanId: "plan-1",
+      classPlanId: null,
+      status: "PENDING",
+    })),
+    findMany: jest.fn(async () => []),
+    findFirst: jest.fn(async () => null),
+    create: jest.fn(async (args: { data: unknown }) => ({
+      id: "new",
+      ...(args.data as object),
+    })),
+    update: jest.fn(),
+    updateMany: async (...args: unknown[]) => {
+      lastWrite = (await collaboratorUpdate(...args)) as typeof lastWrite;
+      return { count: 1 };
+    },
+    findUniqueOrThrow: async () => lastWrite,
+  },
+  appointmentParticipant: {
+    findFirst: jest.fn(async () => seat),
+    createMany: jest.fn(async () => ({ count: 1 })),
+    updateMany: jest.fn(async () => ({ count: 0 })),
+  },
+};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     consultantProfile: { findUnique: jest.fn(async () => invitee) },
     webinarPlan: { findUnique: jest.fn(async () => plan) },
     classPlan: { findUnique: jest.fn(async () => plan) },
-    appointmentParticipant: { findFirst: jest.fn(async () => seat) },
+    appointmentParticipant: {
+      findFirst: jest.fn(async () => seat),
+      createMany: () => tx.appointmentParticipant.createMany(),
+      updateMany: () => tx.appointmentParticipant.updateMany(),
+    },
+    webinar: { findMany: jest.fn(async () => []) },
+    appointmentOccurrence: { findMany: jest.fn(async () => []) },
     appointment: {
       findMany: jest.fn(async () => [{ id: "appt-1", organizationId: null }]),
     },
@@ -89,7 +126,6 @@ jest.mock("../../lib/prisma", () => ({
         classPlanId: null,
         status: "PENDING",
       })),
-      // Referenced lazily: the factory is hoisted above the const.
       updateMany: async (...args: unknown[]) => {
         lastWrite = (await collaboratorUpdate(...args)) as typeof lastWrite;
         return { count: 1 };

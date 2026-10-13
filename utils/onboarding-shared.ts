@@ -2,8 +2,6 @@ import { z } from "zod";
 import type {
   ConsultantProfileCreateData,
   ConsulteeProfileCreateData,
-  StaffProfileCreateData,
-  AdminProfileCreateData,
 } from "./onboarding";
 import type { OnboardingData } from "./onboarding";
 import {
@@ -12,6 +10,7 @@ import {
   CertificationSchema,
 } from "@/schemas/user";
 import { AchievementCreateInputSchema } from "./onboarding";
+import { stepKeyForField } from "@/app/form/onboarding/field-map";
 
 // ============================================================================
 // USER FIELD EXTRACTION
@@ -33,10 +32,6 @@ export function buildUserUpdateData(data: OnboardingData) {
     country: data.country ?? null,
     linkedinUrl: data.linkedinUrl || null,
     bio: data.bio ?? null,
-    ...(data.termsAcceptedAt ? { termsAcceptedAt: data.termsAcceptedAt } : {}),
-    ...(data.privacyAcceptedAt
-      ? { privacyAcceptedAt: data.privacyAcceptedAt }
-      : {}),
   };
 }
 
@@ -80,21 +75,6 @@ export function buildConsulteeScalarData(data: ConsulteeProfileCreateData) {
   };
 }
 
-/** Build the scalar data for a staff profile upsert */
-export function buildStaffScalarData(data: StaffProfileCreateData) {
-  return {
-    department: data.department ?? "",
-    position: data.position ?? "",
-  };
-}
-
-/** Build the scalar data for an admin profile upsert */
-export function buildAdminScalarData(data: AdminProfileCreateData) {
-  return {
-    notes: data.notes ?? null,
-  };
-}
-
 // ============================================================================
 // VERIFICATION POLICY (pure)
 // ============================================================================
@@ -107,15 +87,6 @@ export interface VerificationSignals {
   verificationDocuments?: unknown[];
 }
 
-/**
- * Does this entry carry enough data for submitVerificationRequest to actually
- * persist or link it? Pure and structural so the deferral policy below and
- * the server-side persistence filters can never disagree on what counts as a
- * real document — mirrors exactly the two branches that create/link rows:
- *   - an existing record uploaded earlier via /api/verification/documents
- *   - an onboarding upload carrying its storage URL
- * An empty object like `{}` satisfies neither, so it must not start a review.
- */
 /**
  * A refusal the wizard can act on: `code` is the server's machine word,
  * `field` the top-level payload field it is about (see
@@ -151,60 +122,13 @@ export function refusalFromIssues(
     for (const segment of issue.path) {
       if (typeof segment !== "string") continue;
       const field = SERVER_FIELD_TO_WIZARD[segment] ?? segment;
-      if (WIZARD_FIELDS.has(field)) {
+      if (stepKeyForField(field) !== null) {
         return new OnboardingRefusedError("VALIDATION", issue.message, field);
       }
     }
   }
   return new OnboardingRefusedError("VALIDATION", fallbackMessage);
 }
-
-/** Top-level wizard payload fields (mirrors app/form/onboarding/field-map.ts). */
-const WIZARD_FIELDS = new Set([
-  "name",
-  "email",
-  "phone",
-  "address",
-  "timezone",
-  "gender",
-  "city",
-  "country",
-  "linkedinUrl",
-  "bio",
-  "dateOfBirth",
-  "image",
-  "role",
-  "description",
-  "headline",
-  "experience",
-  "domain",
-  "domainId",
-  "subDomains",
-  "tags",
-  "languages",
-  "toolsAndTechnologies",
-  "offeringFormats",
-  "workExperiences",
-  "educationHistory",
-  "certificationsList",
-  "achievements",
-  "scheduleType",
-  "weeklySlots",
-  "customSlots",
-  "termsAccepted",
-  "privacyAccepted",
-  "termsAcceptedAt",
-  "privacyAcceptedAt",
-  "verificationLinkedinUrl",
-  "verificationNotes",
-  "verificationDocuments",
-  "aboutMe",
-  "skillsToDevelop",
-  "consulteeInlineEducation",
-  "consulteeInlineWorkExperience",
-  "department",
-  "position",
-]);
 
 /** The `{ success: false }` arm every onboarding action returns. */
 export function refusalResult(error: unknown, fallback: string) {
@@ -222,6 +146,10 @@ export function refusalResult(error: unknown, fallback: string) {
   return { success: false as const, error: fallback };
 }
 
+/**
+ * Whether an entry can be linked by submitVerificationRequest: only a
+ * server-issued upload id counts, so `{}` or a client flag never starts a review.
+ */
 export function isPersistableVerificationDoc(doc: unknown): boolean {
   if (typeof doc !== "object" || doc === null) return false;
   const d = doc as Record<string, unknown>;
@@ -248,26 +176,13 @@ export function shouldSubmitVerification(body: VerificationSignals): {
 }
 
 /**
- * Email-ownership guard for the onboarding write boundary.
- *
- * `OnboardingBaseSchema` accepts any email and `buildUserUpdateData` writes it
- * straight to `User`, so without this check a caller could squat an
- * unregistered address (or someone else's) onto their row with no
- * re-verification — the only backstop was the `email @unique` constraint
- * surfacing as a 500-ish error. The session email is already verified at
- * signup (BetterAuth `requireEmailVerification`), so for self-service writes
- * the body email must equal it; privileged operators (ADMIN/STAFF writing
- * another user's row) bypass by design.
- *
- * Pure so both the server action and the PATCH route share one decision, and
- * so tests can pin it without a session.
+ * Email-ownership guard: `buildUserUpdateData` writes the body email to
+ * `User`, so it must equal the verified session email (onboarding is self-only).
  */
 export function resolveOnboardingEmailUpdate(args: {
   bodyEmail: unknown;
   sessionEmail: string | null | undefined;
-  isPrivileged: boolean;
 }): { ok: true } | { ok: false; error: string } {
-  if (args.isPrivileged) return { ok: true };
   // Absent/non-string emails are not our call — Zod requires `email` downstream
   // and rejects the body there with a field-level error.
   if (typeof args.bodyEmail !== "string") return { ok: true };
@@ -278,26 +193,21 @@ export function resolveOnboardingEmailUpdate(args: {
 }
 
 /**
- * Who may upload via `POST /api/verification/documents?onboarding=true`.
- *
- * Transient onboarding uploads create NO database row, so the per-verification
- * count cap cannot see them — previously any authenticated user (any role, no
- * draft, no profile) could store unbounded 10MB objects. The consultant
- * wizard is the only legitimate caller, and by the agreement step it has both
- * picked CONSULTANT (persisted to the draft on step transition) and triggered
- * autosave — so gate on exactly that. Post-onboarding re-uploads use normal
- * mode with a profile and are unaffected.
- *
- * Pure so the route and tests share one decision.
+ * Who may upload via `POST /api/verification/documents?onboarding=true`: a
+ * consultant, a user still onboarding, or one eligible for add mode. Reads the
+ * live `User` row (never the draft); the upload quotas bound abuse.
  */
 export function canUploadVerificationDoc(args: {
   isOnboardingMode: boolean;
   hasConsultantProfile: boolean;
-  draftRole: string | null | undefined;
+  user: OnboardingStateUser;
 }): boolean {
-  if (!args.isOnboardingMode) return args.hasConsultantProfile;
   if (args.hasConsultantProfile) return true;
-  return args.draftRole === "CONSULTANT";
+  if (!args.isOnboardingMode) return false;
+  return (
+    args.user.onboardingCompleted !== true ||
+    canAddConsultantIdentity(args.user)
+  );
 }
 
 /**
@@ -313,18 +223,31 @@ export function canSubmitVerification(args: {
   return args.hasConsultantProfile && args.role === "CONSULTANT";
 }
 
-/**
- * Who may add a consultant identity to an already-onboarded account (PR-6 of
- * the onboarding train). EXPERT invites are strict — accepting needs a real
- * `ConsultantProfile` — but `requireNotOnboarded` keeps a finished user out of
- * the wizard, so a learner or an org operator invited as an expert had no way
- * forward. Pure so the layout guard, the action and the tests share it.
- */
-export function canAddConsultantIdentity(user: {
+/** The `User` columns every onboarding predicate reads. */
+export interface OnboardingStateUser {
   role: string | null | undefined;
   onboardingCompleted: boolean | null | undefined;
-  consultantProfileId: string | null | undefined;
-}): boolean {
+  consultantProfileId?: string | null | undefined;
+  staffProfileId?: string | null | undefined;
+}
+
+/**
+ * The one "fully onboarded" predicate for guards, the wizard and recovery.
+ * Consultee and org-workspace profiles are created lazily, so only the
+ * consultant and staff profiles are required.
+ */
+export function isFullyOnboarded(user: OnboardingStateUser): boolean {
+  if (user.onboardingCompleted !== true) return false;
+  if (user.role === "CONSULTANT") return !!user.consultantProfileId;
+  if (user.role === "STAFF") return !!user.staffProfileId;
+  return true;
+}
+
+/**
+ * Who may add a consultant identity to an onboarded learner or org operator
+ * (the wizard's add mode, e.g. after an EXPERT invite).
+ */
+export function canAddConsultantIdentity(user: OnboardingStateUser): boolean {
   return (
     user.onboardingCompleted === true &&
     !user.consultantProfileId &&
@@ -336,31 +259,50 @@ export function canAddConsultantIdentity(user: {
 // PROFESSIONAL BACKGROUND VALIDATION
 // ============================================================================
 
-/** Validates and parses professional background arrays from raw body using Zod schemas.
- *  Returns validated data or null if input is missing/invalid. */
+/**
+ * Parse the professional-background arrays. An absent array is `null` (skip);
+ * an invalid one is refused with the field it belongs to, never dropped.
+ */
 export function validateProfessionalBackground(body: Record<string, unknown>) {
-  const workExperiences = Array.isArray(body.workExperiences)
-    ? z.array(WorkExperienceSchema).safeParse(body.workExperiences)
-    : null;
-
-  const educationHistory = Array.isArray(body.educationHistory)
-    ? z.array(EducationSchema).safeParse(body.educationHistory)
-    : null;
-
-  const certificationsList = Array.isArray(body.certificationsList)
-    ? z.array(CertificationSchema).safeParse(body.certificationsList)
-    : null;
-
-  const achievements = Array.isArray(body.achievements)
-    ? z.array(AchievementCreateInputSchema).safeParse(body.achievements)
-    : null;
-
   return {
-    workExperiences: workExperiences?.success ? workExperiences.data : null,
-    educationHistory: educationHistory?.success ? educationHistory.data : null,
-    certificationsList: certificationsList?.success
-      ? certificationsList.data
-      : null,
-    achievements: achievements?.success ? achievements.data : null,
+    workExperiences: parseBackground(
+      body,
+      "workExperiences",
+      z.array(WorkExperienceSchema),
+    ),
+    educationHistory: parseBackground(
+      body,
+      "educationHistory",
+      z.array(EducationSchema),
+    ),
+    certificationsList: parseBackground(
+      body,
+      "certificationsList",
+      z.array(CertificationSchema),
+    ),
+    achievements: parseBackground(
+      body,
+      "achievements",
+      z.array(AchievementCreateInputSchema),
+    ),
   };
+}
+
+function parseBackground<T extends z.ZodTypeAny>(
+  body: Record<string, unknown>,
+  field: string,
+  schema: T,
+): z.infer<T> | null {
+  const value = body[field];
+  if (value === undefined || value === null) return null;
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  const issue = parsed.error.issues[0];
+  const index = issue?.path.find((p): p is number => typeof p === "number");
+  throw new OnboardingRefusedError(
+    "VALIDATION",
+    issue?.message ?? "This entry is not valid",
+    field,
+    index,
+  );
 }

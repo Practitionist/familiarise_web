@@ -116,7 +116,11 @@ export default function StickyFilterBar({
           </div>
           <Sheet open={advancedOpen} onOpenChange={setAdvancedOpen}>
             <SheetTrigger asChild>
-              <Button variant="outline" className="h-14 shrink-0 gap-2 px-4">
+              <Button
+                variant="outline"
+                aria-label="Filters"
+                className="h-14 shrink-0 gap-2 px-4"
+              >
                 <SlidersHorizontal className="h-4 w-4" />
                 <span className="hidden sm:inline">Filters</span>
                 {chips.length > 0 && (

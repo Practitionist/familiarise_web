@@ -1,19 +1,16 @@
 /**
- * GET /api/organizations/[orgId]/documents — the org Library's Documents
- * (#1527), one page of sessions with their files.
+ * GET /api/organizations/[orgId]/documents — the org Library's Documents.
  *
- * `?scope=mine` (default): any ACTIVE or SUSPENDED member's own org sessions,
- * with plan materials, their uploads and the other party's, URLs included.
- * `?scope=everyone`: every org session, metadata only (ADR 20) —
- * `operations.read` on an ACTIVE membership.
- *
- * Filters: `q`, `kind`, `from`, `to` (YYYY-MM-DD), `source`, `page`.
+ * `?scope=mine` (default): the member's own org bookings, rows included.
+ * `?scope=everyone`: every org booking as counts only — `operations.read`
+ * on an ACTIVE membership.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { readOrgLibraryDocuments } from "@/lib/data/org-library";
+import { readDocumentLibrary } from "@/lib/data/document-library";
+import { timedLibraryRead } from "@/lib/library/timed-read";
 import { libraryRequest } from "@/lib/library/library-route";
 
 export async function GET(
@@ -21,12 +18,23 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { allowSuspended: true });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    allowSuspended: true,
+  });
   if (access.error) return access.error;
 
   const request = libraryRequest(req, access);
   if (!request.ok) return request.response;
+  const { userId, scope, query } = request.args;
   return NextResponse.json(
-    await readOrgLibraryDocuments({ orgId, ...request.args }),
+    await timedLibraryRead("documents:org", () =>
+      readDocumentLibrary({
+        userId,
+        owner: { kind: "org", orgId, everyone: scope === "everyone" },
+        query,
+      }),
+    ),
+    { headers: { "Cache-Control": "private, no-store" } },
   );
 }

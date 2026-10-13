@@ -5,9 +5,10 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { DocumentReviewStatus, Prisma } from "@prisma/client";
 import type { Scope } from "./parse";
-import { assertNeverScope } from "./parse";
+import { assertNeverScope, ORG_SCOPE_READABLE_STATUSES } from "./parse";
 
 export interface ListDocumentsParams {
   scope: Scope;
@@ -21,8 +22,8 @@ export interface ListDocumentsParams {
  * #946 select-allowlist, applied to the scope split. Same rule as
  * `list-recordings.ts`, and here the stakes are plainer: the `org` arm has no
  * participant filter, so `include` handed every member's uploaded file to
- * anyone with `operations.read`. `fileUrl` and `storagePath` ARE the document,
- * and `description` is the uploader describing it in their own words — the
+ * anyone with `operations.read`. `description` is the uploader describing the
+ * file in their own words — the
  * schema's example list for that column reads "resume, ITR, legal document",
  * and an ITR is an income-tax return.
  *
@@ -57,11 +58,9 @@ const documentMetadataSelect = {
   },
 } satisfies Prisma.AppointmentDocumentSelect;
 
-/** Participant arms only — the file itself and what it says about itself. */
+/** Participant arms only — what the file says about itself; links are signed per request elsewhere. */
 const documentParticipantSelect = {
   ...documentMetadataSelect,
-  fileUrl: true,
-  storagePath: true,
   description: true,
   originalName: true,
   mimeType: true,
@@ -86,6 +85,61 @@ export interface ListDocumentsResult {
   perPage: number;
 }
 
+export function buildUserAppointmentAccessOr(
+  userId: string,
+): Prisma.AppointmentWhereInput[] {
+  const activeCollabFilter = {
+    some: {
+      status: "ACCEPTED" as const,
+      consultantProfile: {
+        userId,
+        deletedAt: null,
+      },
+    },
+  };
+  return [
+    { consultation: { requestedBy: { userId } } },
+    { subscription: { requestedBy: { userId } } },
+    { trial: { consulteeProfile: { userId } } },
+    { trial: { consultantProfile: { userId } } },
+    { participants: { some: liveParticipant(userId) } },
+    {
+      consultation: {
+        consultationPlan: {
+          consultantProfile: { userId },
+        },
+      },
+    },
+    {
+      subscription: {
+        subscriptionPlan: {
+          consultantProfile: { userId },
+        },
+      },
+    },
+    {
+      webinar: {
+        webinarPlan: {
+          OR: [
+            { consultantProfile: { userId } },
+            { collaborators: activeCollabFilter },
+          ],
+        },
+      },
+    },
+    {
+      class: {
+        classPlan: {
+          OR: [
+            { consultantProfile: { userId } },
+            { collaborators: activeCollabFilter },
+          ],
+        },
+      },
+    },
+  ];
+}
+
 function buildWhere(
   params: ListDocumentsParams,
 ): Prisma.AppointmentDocumentWhereInput {
@@ -96,24 +150,38 @@ function buildWhere(
   };
   if (params.scope.kind === "personal") {
     // Personal docs: docs whose parent Appointment is NOT org-tagged
-    // AND the user is a participant on it. The OR clause mirrors
-    // listAppointmentsScoped for participation.
+    // AND the user is a participant, host, or co-host on it. The OR clause
+    // mirrors listAppointmentsScoped for participation.
     return {
       ...base,
       appointment: {
         organizationId: null,
-        OR: [
-          { consultation: { requestedBy: { userId: params.userId } } },
-          { subscription: { requestedBy: { userId: params.userId } } },
-          { trial: { consulteeProfile: { userId: params.userId } } },
-        ],
+        OR: buildUserAppointmentAccessOr(params.userId),
       },
     };
   }
   if (params.scope.kind === "org") {
     return {
       ...base,
-      appointment: { organizationId: params.scope.orgId },
+      // Read-level twin of the DEACTIVATED refusal in `resolveOrgScope`, and for
+      // the same reason that one is opt-in: this query has no org row in scope
+      // to test, and `resolveOrgScope` is synchronous, so it cannot learn the
+      // org's status from the membership rows the caller pre-fetched. An ACTIVE
+      // membership outlives the org the teardown stamps DEACTIVATED, so without
+      // this clause a torn-down org's documents keep serving through the
+      // personal `?orgScope=` door while `requireOrgAccess` 403s the same org on
+      // the sibling one. SUSPENDED stays readable: its OWNER has to be able to
+      // find whatever got it suspended.
+      //
+      // Reached through the parent Appointment because a document has no
+      // `organizationId` of its own. `is` (rather than the shorthand) matches
+      // `list-appointments.ts`, and is safe here for the same reason it is there:
+      // `organizationId = orgId` is already in the WHERE, so the relation can
+      // never be NULL here and `is` cannot silently drop a matching row.
+      appointment: {
+        organizationId: params.scope.orgId,
+        organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+      },
     };
   }
   // `orgMember` = ONE member's own rows within an org. It must never fall
@@ -126,35 +194,8 @@ function buildWhere(
       ...base,
       appointment: {
         organizationId: params.scope.orgId,
-        OR: [
-          { consultation: { requestedBy: { userId: params.scope.userId } } },
-          { subscription: { requestedBy: { userId: params.scope.userId } } },
-          { trial: { consulteeProfile: { userId: params.scope.userId } } },
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfile: { userId: params.scope.userId },
-              },
-            },
-          },
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfile: { userId: params.scope.userId },
-              },
-            },
-          },
-          {
-            webinar: {
-              webinarPlan: { consultantProfile: { userId: params.scope.userId } },
-            },
-          },
-          {
-            class: {
-              classPlan: { consultantProfile: { userId: params.scope.userId } },
-            },
-          },
-        ],
+        organization: { is: { status: { in: ORG_SCOPE_READABLE_STATUSES } } },
+        OR: buildUserAppointmentAccessOr(params.scope.userId),
       },
     };
   }

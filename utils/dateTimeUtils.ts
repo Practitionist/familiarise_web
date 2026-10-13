@@ -13,50 +13,6 @@ export const DAYS_OF_WEEK = [
 
 export type DayOfWeek = (typeof DAYS_OF_WEEK)[number];
 
-export const convertToUTC = (timeStr: string, dateStr: string): string => {
-  try {
-    // Handle empty time string
-    if (!timeStr) return "";
-
-    // Create a date object in local timezone
-    const localDate = new Date(`${dateStr}T${timeStr}`);
-
-    // Check if date is valid
-    if (isNaN(localDate.getTime())) {
-      return "";
-    }
-
-    // Convert to UTC string
-    return localDate.toISOString();
-  } catch (error) {
-    console.error("Error converting to UTC:", error);
-    return "";
-  }
-};
-
-export const convertToLocalTime = (utcStr: string): string => {
-  try {
-    // Handle empty string
-    if (!utcStr) return "";
-
-    const date = new Date(utcStr);
-
-    // Check if date is valid
-    if (isNaN(date.getTime())) {
-      return "";
-    }
-
-    return date.toLocaleTimeString("en-US", {
-      hour12: false,
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch (error) {
-    console.error("Error converting to local time:", error);
-    return "";
-  }
-};
-
 export const getLocalDateString = (date: Date): string => {
   const year = date.getFullYear();
   const month = (date.getMonth() + 1).toString().padStart(2, "0");
@@ -70,11 +26,6 @@ export const isOvernight = (startTime: string, endTime: string): boolean =>
 
 export const formatDayDisplay = (day: DayOfWeek): string => {
   return day.charAt(0) + day.slice(1).toLowerCase();
-};
-
-export const getNextDay = (day: DayOfWeek): DayOfWeek => {
-  const index = DAYS_OF_WEEK.indexOf(day);
-  return DAYS_OF_WEEK[(index + 1) % DAYS_OF_WEEK.length];
 };
 
 export const getDaysInMonth = (date: Date): number => {
@@ -171,14 +122,23 @@ export const convertTimezoneToUtc = (
   try {
     if (!timeStr || !dateStr) return "";
 
-    // For UTC timezone, return as-is
-    if (timezone === "UTC") {
-      const localDateTime = `${dateStr}T${timeStr}:00`;
-      const date = new Date(localDateTime);
-      return isNaN(date.getTime()) ? "" : date.toISOString();
-    }
-
-    // Create a date in the specified timezone using date-fns-tz
+    // Deliberately NO `timezone === "UTC"` shortcut. The obvious one —
+    // `new Date(`${dateStr}T${timeStr}:00`).toISOString()` — is a LOCAL-TIME
+    // parse: an ES date-time form carrying no offset is read in the host's own
+    // zone, so the one branch that promised an absolute answer was the only
+    // branch that depended on the machine. Both availability write paths fall
+    // back to the literal "UTC" when no zone resolves (`timezone || "UTC"`), so
+    // on a host that is not UTC a consultant's whole week was published shifted
+    // by the host's offset — silently, and only on that host.
+    //
+    // "UTC" is not a mode to detect, it is a zone whose offset is zero, and the
+    // general path below already answers it: `fromZonedTime` reinterprets the
+    // wall clock in the zone it was given, which for UTC is exactly the
+    // conversion the shortcut was reaching for. One path per zone is shorter and
+    // makes "UTC" and "Etc/UTC" provably the same instant.
+    //
+    // An unusable zone still throws into the catch, which turns it into "" —
+    // the failed-conversion signal every caller already handles (#1125).
     const localDateTime = `${dateStr}T${timeStr}:00`;
     const zonedDate = new Date(localDateTime);
 
@@ -195,6 +155,22 @@ export const convertTimezoneToUtc = (
   }
 };
 
+/**
+ * The calendar day after a `YYYY-MM-DD` key.
+ *
+ * UTC fields, deliberately. `new Date("2026-09-20")` is a UTC midnight (the
+ * date-only form is defined as UTC), so incrementing a LOCAL field off it
+ * returned the same string on every host at or behind UTC — the local day was
+ * already the day before — and an overnight end was stamped on its own start's
+ * date. Advancing the key as a calendar date leaves no host in it.
+ */
+const nextDateStr = (dateStr: string): string => {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  if (isNaN(date.getTime())) return dateStr;
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().split("T")[0];
+};
+
 // Enhanced version that handles overnight slots for weekly schedules
 export const convertTimezoneToUtcWithOvernight = (
   timeStr: string,
@@ -206,32 +182,10 @@ export const convertTimezoneToUtcWithOvernight = (
   try {
     if (!timeStr || !dateStr) return "";
 
-    // For UTC timezone, handle overnight detection
-    if (timezone === "UTC") {
-      let workingDate = dateStr;
-
-      // If this is an end time and we have a start time, check for overnight
-      if (isEndTime && startTimeStr) {
-        const [startHour, startMinute] = startTimeStr.split(":").map(Number);
-        const [endHour, endMinute] = timeStr.split(":").map(Number);
-
-        const startMinutes = startHour * 60 + startMinute;
-        const endMinutes = endHour * 60 + endMinute;
-
-        // If end time is before start time, it's an overnight slot
-        if (endMinutes < startMinutes) {
-          const date = new Date(dateStr);
-          date.setDate(date.getDate() + 1);
-          workingDate = date.toISOString().split("T")[0];
-        }
-      }
-
-      const localDateTime = `${workingDate}T${timeStr}:00`;
-      const date = new Date(localDateTime);
-      return isNaN(date.getTime()) ? "" : date.toISOString();
-    }
-
-    // For other timezones, use date-fns-tz with overnight detection
+    // One zone-agnostic path, for the same reason as `convertTimezoneToUtc`
+    // above. This used to fork on `timezone === "UTC"` and BOTH forks carried
+    // the same overnight detection, so the fork bought nothing and doubled the
+    // ways the answer could drift.
     let workingDate = dateStr;
 
     // If this is an end time and we have a start time, check for overnight
@@ -244,9 +198,7 @@ export const convertTimezoneToUtcWithOvernight = (
 
       // If end time is before start time, it's an overnight slot
       if (endMinutes < startMinutes) {
-        const date = new Date(dateStr);
-        date.setDate(date.getDate() + 1);
-        workingDate = date.toISOString().split("T")[0];
+        workingDate = nextDateStr(dateStr);
       }
     }
 

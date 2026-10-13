@@ -13,15 +13,14 @@ import { config } from "./config";
  *
  * A reschedule used to reach the consultant carrying LESS information than the
  * original booking, so the local database had no way to render the proposal
- * banner, the counter-offer round, or the "at most one live reschedule per
- * appointment" guard. These rows give every one of those surfaces something to
- * act on.
+ * banner, or exercise the "at most one live reschedule per appointment" guard.
+ * These rows give every one of those surfaces something to act on.
  *
- * Three invariants are load-bearing here and are enforced in this file rather
+ * Two invariants are load-bearing here and are enforced in this file rather
  * than left to chance:
- *   - `openForAppointmentId` is a nullable @unique. Only PENDING_REVIEW and
- *     COUNTERED rows set it; every terminal row must leave it NULL or the
- *     second request on an appointment collides at the database.
+ *   - `openForAppointmentId` is a nullable @unique. Only the OPEN rows set it;
+ *     every terminal row must leave it NULL or the second request on an
+ *     appointment collides at the database.
  *   - `expiresAt` is min(now + 72h, earliest released slot − 24h), computed by
  *     the same `computeProposalExpiry` the API uses so the seed cannot drift
  *     away from the policy.
@@ -31,8 +30,8 @@ import { config } from "./config";
 
 const NUM_OPEN_CONSULTATION =
   config.volumes.rescheduleProposals.openConsultation;
-const NUM_COUNTERED_SUBSCRIPTION =
-  config.volumes.rescheduleProposals.counteredSubscription;
+const NUM_OPEN_SUBSCRIPTION =
+  config.volumes.rescheduleProposals.openSubscription;
 const NUM_RESOLVED = config.volumes.rescheduleProposals.resolved;
 
 const HOUR_MS = 3_600_000;
@@ -49,12 +48,6 @@ const REASONS = [
   "Recovering from surgery, would prefer the following week.",
   "Interview scheduled at the same hour, apologies for the short notice.",
   "Family commitment I only just found out about.",
-];
-
-const COUNTER_REASONS = [
-  "That week is fully booked — offering the two nearest openings instead.",
-  "Happy to move, though mornings are the only slots I have free.",
-  "Can do the same day one hour later if that still works for you.",
 ];
 
 type Candidate = {
@@ -227,9 +220,12 @@ async function loadSubscriptionCandidates(
 async function openProposal(
   candidate: Candidate,
   args: {
-    status: Extract<RescheduleRequestStatus, "PENDING_REVIEW" | "COUNTERED">;
+    // The one open status. Was `Extract<..., "PENDING_REVIEW" | "COUNTERED">`:
+    // the seed was the ONLY writer of COUNTERED in the whole repo, which is how
+    // a retired feature kept a dev database full of rows the respond route had
+    // no code for. Keeping the union here would have re-created it.
+    status: Extract<RescheduleRequestStatus, "PENDING_REVIEW">;
     initiatorRole: RescheduleInitiatorRole;
-    round: number;
   },
 ): Promise<boolean> {
   const expiresAt = computeProposalExpiry(
@@ -247,16 +243,6 @@ async function openProposal(
     faker.number.int({ min: 3, max: 9 }),
   );
 
-  // Round 2 is the other side's counter, offered on top of round 1 rather than
-  // replacing it — the negotiation history is the point of keeping `round`.
-  const counterRound =
-    args.round > 1
-      ? proposeReplacements(
-          candidate.slots,
-          faker.number.int({ min: 10, max: 16 }),
-        )
-      : [];
-
   await prisma.$transaction(async (tx) => {
     await tx.appointmentOccurrence.updateMany({
       where: { id: { in: candidate.slots.map((slot) => slot.id) } },
@@ -269,32 +255,22 @@ async function openProposal(
         initiatorRole: args.initiatorRole,
         initiatedById,
         status: args.status,
-        round: args.round,
-        reason:
-          args.round > 1
-            ? faker.helpers.arrayElement(COUNTER_REASONS)
-            : faker.helpers.arrayElement(REASONS),
+        // Always 1. There is no counter-round, so no producer anywhere writes 2;
+        // the column stays because `currentRoundProposedSlots` filters on it and
+        // a resurrected counter-proposal would need somewhere to record itself.
+        round: 1,
+        reason: faker.helpers.arrayElement(REASONS),
         releasedOccurrenceIds: candidate.slots.map((slot) => slot.id),
         expiresAt,
         // Reserves the appointment for as long as the request is open.
         openForAppointmentId: candidate.appointmentId,
         organizationId: candidate.organizationId,
         proposedTimes: {
-          create: [
-            ...openingRound.map((time) => ({
-              ...time,
-              round: 1,
-              proposedById: initiatedById,
-            })),
-            ...counterRound.map((time) => ({
-              ...time,
-              round: 2,
-              proposedById:
-                initiatedById === candidate.consulteeUserId
-                  ? candidate.consultantUserId
-                  : candidate.consulteeUserId,
-            })),
-          ],
+          create: openingRound.map((time) => ({
+            ...time,
+            round: 1,
+            proposedById: initiatedById,
+          })),
         },
       },
     });
@@ -382,7 +358,7 @@ async function resolvedProposal(
 
 export async function createRescheduleProposals(): Promise<void> {
   console.log(
-    `Creating ${NUM_OPEN_CONSULTATION} open, ${NUM_COUNTERED_SUBSCRIPTION} countered and ${NUM_RESOLVED} resolved reschedule proposals...`,
+    `Creating ${NUM_OPEN_CONSULTATION} consultation + ${NUM_OPEN_SUBSCRIPTION} subscription open and ${NUM_RESOLVED} resolved reschedule proposals...`,
   );
 
   const cutoff = new Date(Date.now() + EARLIEST_RESCHEDULABLE_MS);
@@ -395,7 +371,7 @@ export async function createRescheduleProposals(): Promise<void> {
   );
   const subscriptionCandidates = await loadSubscriptionCandidates(
     cutoff,
-    NUM_COUNTERED_SUBSCRIPTION * 2,
+    NUM_OPEN_SUBSCRIPTION * 2,
   );
 
   if (
@@ -417,22 +393,23 @@ export async function createRescheduleProposals(): Promise<void> {
     const created = await openProposal(candidate, {
       status: "PENDING_REVIEW",
       initiatorRole: "CONSULTEE",
-      round: 1,
     });
     if (created) opened.push(candidate);
   }
 
-  let countered = 0;
+  // Subscription-origiated open proposals. This cohort existed to produce
+  // COUNTERED rows; it stays because it is the only coverage a subscription
+  // proposal gets, and it is the shape `checkActiveAppointments` counts.
+  let openedSubscription = 0;
   for (const candidate of subscriptionCandidates) {
-    if (countered >= NUM_COUNTERED_SUBSCRIPTION) break;
+    if (openedSubscription >= NUM_OPEN_SUBSCRIPTION) break;
     const created = await openProposal(candidate, {
-      status: "COUNTERED",
+      status: "PENDING_REVIEW",
       initiatorRole: "CONSULTEE",
-      round: 2,
     });
     if (created) {
       opened.push(candidate);
-      countered += 1;
+      openedSubscription += 1;
     }
   }
 
@@ -447,6 +424,6 @@ export async function createRescheduleProposals(): Promise<void> {
   }
 
   console.log(
-    `Created ${opened.length - countered} open, ${countered} countered and ${resolved} resolved reschedule proposals`,
+    `Created ${opened.length} open (${NUM_OPEN_CONSULTATION} consultation + ${openedSubscription} subscription) and ${resolved} resolved reschedule proposals`,
   );
 }

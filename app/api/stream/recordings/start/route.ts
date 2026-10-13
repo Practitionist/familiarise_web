@@ -16,33 +16,54 @@ import { RecordingConsentDecision } from "@prisma/client";
 import { getMeetingOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
+import {
+  answerFileRoute,
+  fileApiError,
+  parseJsonBody,
+} from "@/lib/documents/api-error";
 
 import { getSession } from "@/lib/auth-server";
 const startRecordingSchema = z.object({
   meetingId: z.string().min(1, "Meeting session ID is required"),
 });
 
+function normalizeTrialMeeting<
+  T extends {
+    occurrence?: {
+      appointment?: {
+        trial?: unknown;
+        subscription?: unknown;
+      } | null;
+    } | null;
+  },
+>(meeting: T): T {
+  const appointment = meeting.occurrence?.appointment;
+  if (!appointment?.trial || appointment.subscription) {
+    return meeting;
+  }
+  return {
+    ...meeting,
+    occurrence: {
+      ...meeting.occurrence,
+      appointment: {
+        ...appointment,
+        subscription: appointment.trial,
+      },
+    },
+  };
+}
+
 export async function POST(req: NextRequest) {
-  try {
-    // Check authentication
-    const session = await getSession(true);
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  return answerFileRoute(async () => {
+    const session = await getSession();
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
 
     // Capability, not UserRole (#org-appts): owning a consultantProfile is what
     // matters (an org EXPERT counts); the per-appointment ownership check below
     // is the real authz.
-    if (!session.user.consultantProfileId) {
-      return NextResponse.json(
-        { error: "Only consultants can start recordings" },
-        { status: 403 },
-      );
-    }
+    if (!session.user.consultantProfileId) return fileApiError("FORBIDDEN");
 
-    // Parse and validate request body
-    const body = await req.json();
-    const { meetingId } = startRecordingSchema.parse(body);
+    const { meetingId } = await parseJsonBody(req, startRecordingSchema);
 
     // Verify the meeting session exists and belongs to consultant's appointment
     const meeting = await prisma.meeting.findUnique({
@@ -60,7 +81,10 @@ export async function POST(req: NextRequest) {
                         recordingEnabled: true,
                         // #1580 C-P1-4 — the accepted co-presenter may record too.
                         collaborators: {
-                          where: { status: "ACCEPTED" as const },
+                          where: {
+                            status: "ACCEPTED" as const,
+                            consultantProfile: { deletedAt: null },
+                          },
                           select: { consultantProfileId: true, role: true },
                         },
                       },
@@ -75,7 +99,10 @@ export async function POST(req: NextRequest) {
                         recordingEnabled: true,
                         // #1580 C-P1-4 — the accepted co-presenter may record too.
                         collaborators: {
-                          where: { status: "ACCEPTED" as const },
+                          where: {
+                            status: "ACCEPTED" as const,
+                            consultantProfile: { deletedAt: null },
+                          },
                           select: { consultantProfileId: true, role: true },
                         },
                       },
@@ -106,6 +133,16 @@ export async function POST(req: NextRequest) {
                     },
                   },
                 },
+                trial: {
+                  include: {
+                    subscriptionPlan: {
+                      select: {
+                        consultantProfileId: true,
+                        recordingEnabled: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -113,12 +150,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (!meeting) {
-      return NextResponse.json(
-        { error: "Meeting session not found" },
-        { status: 404 },
-      );
-    }
+    if (!meeting) return fileApiError("NOT_FOUND");
 
     // Look up consultant profile for the logged-in user
     const consultantProfile = await prisma.consultantProfile.findUnique({
@@ -126,26 +158,16 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     });
 
+    const normalizedMeeting = normalizeTrialMeeting(meeting);
+
     // Verify the consultant owns this appointment using helper function
     const { isOwner, recordingEnabled } = getMeetingOwnershipInfo(
-      meeting,
+      normalizedMeeting,
       consultantProfile?.id,
     );
 
-    if (!isOwner) {
-      return NextResponse.json(
-        { error: "Not authorized to record this session" },
-        { status: 403 },
-      );
-    }
-
-    // Check if recording is enabled for this plan
-    if (!recordingEnabled) {
-      return NextResponse.json(
-        { error: "Recording is not enabled for this plan" },
-        { status: 400 },
-      );
-    }
+    if (!isOwner) return fileApiError("FORBIDDEN");
+    if (!recordingEnabled) return fileApiError("RECORDING_NOT_ENABLED");
 
     // #1134 P1-7 — consent gate, BEFORE the claim. A 1:1 participant who
     // declined in the lobby blocks recording outright; declining has to have an
@@ -155,15 +177,15 @@ export async function POST(req: NextRequest) {
     const appointment = meeting.occurrence?.appointment;
 
     /** One shape for a refusal, used by the pre-claim gate and the race re-read. */
-    const refuse = (reason: string | undefined) => {
+    const refuse = () => {
       streamLogger.info("Recording refused — participant declined", {
         meetingId,
       });
-      return NextResponse.json({ error: reason }, { status: 409 });
+      return fileApiError("RECORDING_DECLINED");
     };
 
     const consentBlock = await getRecordingBlock(meetingId, appointment);
-    if (consentBlock.blocked) return refuse(consentBlock.reason);
+    if (consentBlock.blocked) return refuse();
 
     // Claim atomically, and re-assert the consent condition IN the claim.
     //
@@ -201,11 +223,8 @@ export async function POST(req: NextRequest) {
       // this write. Re-read to say which, so a refused host is not told the
       // wrong thing.
       const raced = await getRecordingBlock(meetingId, appointment);
-      if (raced.blocked) return refuse(raced.reason);
-      return NextResponse.json(
-        { error: "Recording is already in progress" },
-        { status: 409 },
-      );
+      if (raced.blocked) return refuse();
+      return fileApiError("RECORDING_IN_PROGRESS");
     }
 
     // Start recording via Stream API (use DB-stored call ID, never trust client)
@@ -224,29 +243,16 @@ export async function POST(req: NextRequest) {
           recordingStartedBy: null,
         },
       });
-      return NextResponse.json(
-        { error: result.error || "Failed to start recording" },
-        { status: 500 },
-      );
+      streamLogger.warn("Stream did not start the recording", {
+        meetingId,
+        error: result.error,
+      });
+      return fileApiError("VENDOR_UNAVAILABLE");
     }
 
     return NextResponse.json({
       success: true,
       message: "Recording started",
     });
-  } catch (error) {
-    streamLogger.error("Error starting recording", error);
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Invalid request", details: error.errors },
-        { status: 400 },
-      );
-    }
-
-    return NextResponse.json(
-      { error: "Failed to start recording" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }

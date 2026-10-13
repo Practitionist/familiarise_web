@@ -5,7 +5,9 @@ import { Bell, Inbox, InboxContent } from "@novu/nextjs";
 import { Bell as BellIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
+import { useToast } from "@/hooks/use-toast";
 import { useHydrated } from "@/hooks/use-hydrated";
+import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
 import {
   Popover,
   PopoverContent,
@@ -22,8 +24,16 @@ type OrgMembershipLite = {
 export function NotificationInbox() {
   const router = useRouter();
   const { data: session } = useSession();
+  const { data: subscriberSync } = useNovuSubscriberSync();
+  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const hydrated = useHydrated();
+
+  const subscriberHash =
+    typeof (subscriberSync as { subscriberHash?: unknown } | undefined)
+      ?.subscriberHash === "string"
+      ? (subscriberSync as { subscriberHash: string }).subscriberHash
+      : undefined;
 
   const memberships = useMemo(() => {
     const raw = (session?.user as Record<string, unknown> | undefined)
@@ -96,6 +106,7 @@ export function NotificationInbox() {
     <Inbox
       applicationIdentifier={NOVU_APP_ID}
       subscriberId={session.user.id}
+      {...(subscriberHash ? { subscriberHash } : {})}
       tabs={tabs}
       appearance={{
         variables: {
@@ -195,12 +206,57 @@ export function NotificationInbox() {
         >
           <InboxContent
             onNotificationClick={(notification) => {
-              const url = notification?.redirect?.url;
               // Closed first: the panel must not still be sitting over the
               // grid it just sent the user to.
               setOpen(false);
-              if (url) {
-                router.push(url);
+              // Mark read so the dot clears. Fire-and-forget: navigation is
+              // what was asked for, and a failed ack must never block it
+              // (sync throws and async rejections both land in the catch).
+              void Promise.resolve()
+                .then(() => notification.read())
+                .catch(() => {});
+              // Redirect first; the wire copy (`payload.href`) and the
+              // event's own field behind it, for a redirect Novu dropped.
+              const data = (notification.data ?? {}) as Record<string, unknown>;
+              const raw =
+                notification.redirect?.url ??
+                (typeof data.href === "string" ? data.href : undefined) ??
+                (typeof data.dashboardUrl === "string"
+                  ? data.dashboardUrl
+                  : undefined);
+              if (!raw) {
+                toast({
+                  title: "No linked page",
+                  description:
+                    "This notification has no destination yet — nothing to open.",
+                });
+                return;
+              }
+              // `dashboardUrl` values are absolute (getAppUrl) and the
+              // router wants a path. Anything off-origin (a recording
+              // file, an invite link) opens in a new tab instead. Only
+              // http(s) ever navigates: a `javascript:`/`data:` payload
+              // must never reach the router or a new tab.
+              try {
+                const parsed = new URL(raw, window.location.origin);
+                if (
+                  parsed.protocol !== "http:" &&
+                  parsed.protocol !== "https:"
+                ) {
+                  throw new Error("unsupported notification protocol");
+                }
+                if (parsed.origin === window.location.origin) {
+                  router.push(
+                    `${parsed.pathname}${parsed.search}${parsed.hash}`,
+                  );
+                } else {
+                  window.open(parsed.href, "_blank", "noopener,noreferrer");
+                }
+              } catch {
+                toast({
+                  title: "Invalid link",
+                  description: "This notification's link could not be opened.",
+                });
               }
             }}
           />
