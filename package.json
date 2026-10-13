@@ -142,7 +142,7 @@
     "jest-environment-jsdom": "^30.5.2",
     "liquidjs": "^10.30.0",
     "oauth2-mock-server": "9.2.0",
-    "postcss": "^8.5.28",
+    "postcss": "^8.5.29",
     "prettier": "^3.9.9",
     "prisma": "7.10.0",
     "tailwindcss": "^3.4.19",
