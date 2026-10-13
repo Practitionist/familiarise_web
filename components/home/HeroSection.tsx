@@ -11,7 +11,10 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import type { ExpertStatKey, IPublicStat } from "@/lib/data/public-stats";
 import { cn } from "@/utils/tailwind";
-import { container, surface } from "./primitives";
+
+const surface =
+  "rounded-2xl border border-white/[0.08] bg-white/[0.02] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)]";
+const container = "mx-auto w-full max-w-6xl px-6 lg:px-8";
 
 /* -------------------------------------------------------------------------- */
 /* Product visual                                                             */
