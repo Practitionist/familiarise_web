@@ -39,7 +39,7 @@ import {
 } from "@/lib/booking/entitlement";
 import { AWAITING_HUMAN } from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
-import { stageTrigger } from "@/lib/novu/outbox";
+import { stageBell } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { goHref } from "@/lib/dashboard/go";
@@ -604,9 +604,8 @@ async function refundAndTell(
     );
     const dashboardUrl = goHref("client", "appointments");
     const [staged, emailRows] = await Promise.all([
-      stageTrigger({
+      stageBell(prisma, {
         workflowId: NOVU_WORKFLOWS.CLASS_SESSION_REFUNDED,
-        kind: "SINGLE",
         recipients: [payment.userId],
         payload: {
           planTitle: planTitleOf(session),
@@ -625,7 +624,13 @@ async function refundAndTell(
         refundText: `A refund of ${formattedAmount} has been issued.`,
         refundUserIds: [payment.userId],
         dashboardUrl,
-      }).catch(() => []),
+      }).catch((err) => {
+        console.error(
+          "[settle-cancelled-sessions] Failed to stage APPOINTMENT_CANCELLED email:",
+          err,
+        );
+        return [];
+      }),
     ]);
     await flushNotificationsAfter(
       {

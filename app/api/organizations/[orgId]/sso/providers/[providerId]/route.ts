@@ -393,7 +393,7 @@ export async function DELETE(
             deletedByName,
             dashboardUrl,
           },
-          tx.notificationOutbox ? { tx } : undefined,
+          { tx },
         )) ?? [];
       const ownerRows = tx.membership?.findMany
         ? await tx.membership.findMany({

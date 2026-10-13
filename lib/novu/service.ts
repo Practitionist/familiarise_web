@@ -741,8 +741,6 @@ export const notifyTrialCancelled = defineZonedMultiNotifier(
 // Subscriptions
 export const notifySubscriptionStarted =
   defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_STARTED);
-export const notifySubscriptionCancelled =
-  defineMultiNotifier<SubscriptionPayload>(W.SUBSCRIPTION_CANCELLED);
 export const notifySubscriptionRenewed =
   defineSingleNotifier<SubscriptionPayload>(W.SUBSCRIPTION_RENEWED);
 
@@ -836,13 +834,11 @@ export const notifyReferralBonusEarned =
     W.REFERRAL_BONUS_EARNED,
     (p): ReferralBonusEarnedPayload => ({
       refereeName: p.refereeName,
-      bonusAmount:
-        typeof p.bonusAmount === "number"
-          ? formatNotificationMoney(p.bonusAmount, p.currency ?? "INR")
-          : p.bonusAmount,
-      ...(typeof p.bonusAmount === "number"
-        ? { bonusAmountPaise: p.bonusAmount }
-        : {}),
+      bonusAmount: formatNotificationMoney(
+        p.bonusAmountPaise,
+        p.currency ?? "INR",
+      ),
+      bonusAmountPaise: p.bonusAmountPaise,
       ...(p.currency ? { currency: p.currency } : {}),
       dashboardUrl: p.dashboardUrl,
     }),
@@ -853,13 +849,11 @@ export const notifyRefereeWelcomeBonus =
     W.REFEREE_WELCOME_BONUS,
     (p): RefereeWelcomeBonusPayload => ({
       referrerName: p.referrerName,
-      bonusAmount:
-        typeof p.bonusAmount === "number"
-          ? formatNotificationMoney(p.bonusAmount, p.currency ?? "INR")
-          : p.bonusAmount,
-      ...(typeof p.bonusAmount === "number"
-        ? { bonusAmountPaise: p.bonusAmount }
-        : {}),
+      bonusAmount: formatNotificationMoney(
+        p.bonusAmountPaise,
+        p.currency ?? "INR",
+      ),
+      bonusAmountPaise: p.bonusAmountPaise,
       ...(p.currency ? { currency: p.currency } : {}),
       dashboardUrl: p.dashboardUrl,
     }),

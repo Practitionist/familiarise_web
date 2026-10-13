@@ -461,6 +461,8 @@ export async function PATCH(
     const result = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
+          stagedRoleEmail = null;
+          stagedRoleBells = [];
           const current = await tx.membership.findFirst({
             where: { id: memberId, organizationId: orgId },
           });
@@ -556,7 +558,7 @@ export async function PATCH(
                     changedByName: actorName,
                     dashboardUrl,
                   },
-                  tx.notificationOutbox ? { tx } : undefined,
+                  { tx },
                 )) ?? [];
             }
           }
@@ -571,8 +573,10 @@ export async function PATCH(
       const staged = stagedRoleEmail;
       const bells = stagedRoleBells;
       await scheduleAfter(async () => {
-        for (const row of bells) await attemptTrigger(row);
-        if (staged) await attemptOnboardingEmail(staged);
+        await Promise.allSettled([
+          ...bells.map((row) => attemptTrigger(row)),
+          ...(staged ? [attemptOnboardingEmail(staged)] : []),
+        ]);
       }, "member.onboarding-email");
     }
 

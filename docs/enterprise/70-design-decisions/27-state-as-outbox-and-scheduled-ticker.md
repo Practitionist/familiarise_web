@@ -3,7 +3,7 @@ title: State-as-outbox with a scheduled ticker
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-10-11
+last-reviewed: 2026-10-13
 ---
 
 # ADR 27 — State-as-outbox with a scheduled ticker
@@ -31,8 +31,8 @@ Serverless functions on Netlify have no built-in durable queue worker and freeze
 1. **Consolidated 3-Table Transactional Outbox + Domain Stamps.**
    - `FailedEmail` (and `FailedEmailBatch`), `NotificationOutbox`, and `OutboundWebhookDelivery` are the dedicated transactional outbox tables.
    - Domain-row obligations use explicit nullable stamps (e.g., `Appointment.chatChannelEnsuredAt`, `Payment.description` `Auto-refund pending:` prefix) walked by idempotent sweepers.
-2. **Pre-Render Outside `$transaction`, Stage Inside `tx` with 60s Lease Window, Flush via `flushNotificationsAfter`.**
-   - Producers pre-render React Email payloads outside database transactions (`prepareRecipientEmails` in `lib/email/send-to-recipients.ts`) so `PG_POOL_MAX=1` connections are never held during CPU-bound rendering.
+2. **Pre-Render Outside `Serializable` `$transaction`, Stage Inside `tx` with 60s Lease Window, Flush via `flushNotificationsAfter`.**
+   - High-contention `Serializable` money and billing transactions (`handlePaymentSuccess`, `handlePaymentFailure`, `invoice-rollup`) pre-render React Email payloads outside database transactions via `prepare*` (`prepareRecipientEmails` / `prepareSpecEmails` in `lib/email/send-to-recipients.ts`) and call `stagePreparedEmails(tx, ...)` inside `tx` so `PG_POOL_MAX=1` connections are never held during CPU-bound rendering, while standard low-contention routes stage via `stage*Email` + `flushNotificationsAfter` and bulk loops (`assignments`, `session-outcome-sweep`) stage/render after commit.
    - Inside `$transaction(tx)`, producers stage emails (`stage()` / `stagePreparedEmails()`) and in-app bells (`stageBell(tx, ...)` in `lib/novu/stage-bell.ts`, which filters out `EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, and muted categories while computing quiet-hours `notBefore`).
    - Staged rows receive `status = "PENDING"` and `nextRetryAt = NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS = 60_000`) so background cron sweeps skip rows whose inline post-commit delivery is still in flight.
    - Post-commit, `flushNotificationsAfter({ bells, emails }, op)` (`lib/novu/stage-then-attempt.ts`) dispatches all staged triggers and emails concurrently via `scheduleAfter` (`lib/api/after-safe.ts`, backed by Next.js `after()` inside a request scope and awaited inline outside request scopes).

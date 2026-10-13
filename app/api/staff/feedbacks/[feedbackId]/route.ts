@@ -96,30 +96,20 @@ export async function PATCH(
         }
       }
 
+      const statusChanged = existing.status !== nextStatus;
       const dashboardUrl = goHref("auto", "feedbacks");
-      const stagedBell =
-        existing.status !== nextStatus
-          ? await stageBell(tx, {
-              workflowId: NOVU_WORKFLOWS.PLATFORM_FEEDBACK_UPDATE,
-              recipients: [existing.userId],
-              payload: {
-                feedbackId,
-                status: nextStatus,
-                dashboardUrl,
-              },
-              dedupeKey: `platform-feedback:${feedbackId}:${existing.status}->${nextStatus}:${Date.now()}`,
-            })
-          : null;
-      const stagedEmails =
-        existing.status !== nextStatus
-          ? await stageFeedbackUpdateEmail(tx, {
+      const stagedBell = statusChanged
+        ? await stageBell(tx, {
+            workflowId: NOVU_WORKFLOWS.PLATFORM_FEEDBACK_UPDATE,
+            recipients: [existing.userId],
+            payload: {
               feedbackId,
-              userId: existing.userId,
-              title: existing.title ?? undefined,
-              statusLabel: nextStatus.toLowerCase().replace(/_/g, " "),
+              status: nextStatus,
               dashboardUrl,
-            }).catch(() => [])
-          : [];
+            },
+            dedupeKey: `platform-feedback:${feedbackId}:${existing.status}->${nextStatus}:${Date.now()}`,
+          })
+        : null;
 
       const feedback = await tx.platformFeedback.findUniqueOrThrow({
         where: { id: feedbackId },
@@ -135,7 +125,20 @@ export async function PATCH(
         },
       });
 
-      return { kind: "ok" as const, feedback, stagedBell, stagedEmails };
+      return {
+        kind: "ok" as const,
+        feedback,
+        stagedBell,
+        emailArgs: statusChanged
+          ? {
+              feedbackId,
+              userId: existing.userId,
+              title: existing.title ?? undefined,
+              statusLabel: nextStatus.toLowerCase().replace(/_/g, " "),
+              dashboardUrl,
+            }
+          : null,
+      };
     });
 
     if (result.kind === "not_found") {
@@ -152,12 +155,21 @@ export async function PATCH(
       );
     }
 
+    const stagedEmails = result.emailArgs
+      ? await stageFeedbackUpdateEmail(prisma, result.emailArgs).catch(
+          (err) => {
+            console.error("[staff.feedback] email stage failed:", err);
+            return [];
+          },
+        )
+      : [];
+
     await flushNotificationsAfter(
       {
         bells: [result.stagedBell],
         emails: [
           {
-            rows: result.stagedEmails,
+            rows: stagedEmails,
             emailType: "PLATFORM_FEEDBACK_UPDATE",
           },
         ],

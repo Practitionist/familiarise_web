@@ -13,11 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
-import {
-  notifyMaintenanceEnded,
-  notifyMaintenanceScheduled,
-  notifyMaintenanceStarted,
-} from "@/lib/novu/service";
+import { notifyMaintenanceScheduled } from "@/lib/novu/service";
 import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
@@ -216,7 +212,9 @@ export async function POST(request: NextRequest) {
     betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
 
-  // Stage broadcast row synchronously before returning; flush Novu trigger in after().
+  // The scheduling moment: broadcast the advance notice (Started/Ended
+  // fire from the drain/post-recovery actions). Stage synchronously and
+  // flush in after().
   await stageNowAttemptAfter("maintenance.scheduled", () =>
     notifyMaintenanceScheduled(
       {
@@ -339,19 +337,6 @@ export async function PATCH(request: NextRequest) {
     betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
 
-  if (targetPhase !== currentPhase) {
-    await stageNowAttemptAfter("maintenance.started", () =>
-      notifyMaintenanceStarted(
-        {
-          phase: targetPhase,
-          ...(nextReason ? { reason: nextReason } : {}),
-          ...(nextEstimatedEnd ? { estimatedEnd: nextEstimatedEnd } : {}),
-        },
-        { deferAttempt: true },
-      ),
-    );
-  }
-
   let offlineActivation: OfflineActivationResult | undefined;
   if (
     currentPhase !== MaintenancePhase.OFFLINE &&
@@ -397,16 +382,6 @@ export async function DELETE() {
   await setMaintenanceState(MaintenancePhase.OFF, {
     endedBy: auth.userId,
   });
-
-  await stageNowAttemptAfter("maintenance.ended", () =>
-    notifyMaintenanceEnded(
-      {
-        phase: MaintenancePhase.OFF,
-        ...(currentState.reason ? { reason: currentState.reason } : {}),
-      },
-      { deferAttempt: true },
-    ),
-  );
 
   // #1146 — the unfreeze must not be able to be skipped by something upstream
   // of it throwing.

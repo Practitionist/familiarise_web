@@ -9,7 +9,6 @@
  * staged when the last live occurrence completes with entitlement left; the
  * caller attempts the staged row after commit (ADR 27).
  */
-import { stageSubscriptionLifecycleEmail, type StagingTx } from "@/lib/email";
 import { notifySubscriptionRenewed } from "@/lib/novu/service";
 import type { StagedTrigger, TriggerOptions } from "@/lib/novu";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -27,13 +26,8 @@ import {
   subscriptionTranches,
 } from "./entitlement";
 
-export type StagedCycleTriggers = StagedTrigger[] & {
-  emailRows?: Awaited<ReturnType<typeof stageSubscriptionLifecycleEmail>>;
-};
-
 type SettleTx = Pick<Tx, "appointment" | "consultantEarnings"> &
-  NonNullable<TriggerOptions["tx"]> &
-  Partial<StagingTx>;
+  NonNullable<TriggerOptions["tx"]>;
 
 /** Tranches the accrual parked and nothing has stamped yet. */
 const UNSTAMPED_STATUSES = ["PENDING", "PENDING_TRUST"] as const;
@@ -82,7 +76,7 @@ export async function settleSubscriptionCycle(
     organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
   },
   args: { appointmentId: string; now: Date },
-): Promise<StagedCycleTriggers> {
+): Promise<StagedTrigger[]> {
   // One read, sequential by construction (PG_POOL_MAX=1): the wrapper, its
   // subscription with plan and both parties, and every occurrence row.
   const wrapper = await tx.appointment.findUnique({
@@ -210,22 +204,5 @@ export async function settleSubscriptionCycle(
     `sub:${sub.id}:cycle:${cycleOrdinal}`,
     { tx },
   );
-  const emailRows = tx.failedEmail
-    ? await stageSubscriptionLifecycleEmail(tx as StagingTx, {
-        subscriptionId: sub.id,
-        userIds: [consulteeUserId],
-        kind: "SUBSCRIPTION_RENEWED",
-        planTitle: sub.subscriptionPlan.title,
-        consultantName,
-        cycleOrdinal,
-        nextBatch: entitlement.cycle.nextBatch,
-        remainingSessions: entitlement.remaining,
-        dashboardUrl,
-      }).catch(() => [])
-    : [];
-  const bells: StagedCycleTriggers = result.staged ? [result.staged] : [];
-  if (emailRows.length > 0) {
-    bells.emailRows = emailRows;
-  }
-  return bells;
+  return result.staged ? [result.staged] : [];
 }

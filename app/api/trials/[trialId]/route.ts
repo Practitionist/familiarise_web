@@ -846,16 +846,28 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 },
                 { deferAttempt: true },
               ),
-            ).catch(() => []),
+            ).catch((err) => {
+              console.error(
+                "[trials] Failed to stage trial completion bell:",
+                err,
+              );
+              return [];
+            }),
             stageTrialLifecycleEmail(prisma, {
               trialId,
-              userIds,
+              userIds: [existingTrial.consulteeProfile.user.id],
               kind: "TRIAL_COMPLETED",
               planTitle: existingTrial.subscriptionPlan.title,
               consultantName,
               consulteeName,
               dashboardUrl,
-            }).catch(() => []),
+            }).catch((err) => {
+              console.error(
+                "[trials] Failed to stage trial completion email:",
+                err,
+              );
+              return [];
+            }),
           ]);
           await flushNotificationsAfter(
             {
@@ -875,10 +887,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       // Handle cancellation / rejection
       if (status === TrialStatus.CANCELLED || status === TrialStatus.REJECTED) {
         afterCommit.push(async () => {
-          const userIds = [
-            existingTrial.consultantProfile.user.id,
-            existingTrial.consulteeProfile.user.id,
-          ];
+          const isRejected = status === TrialStatus.REJECTED;
+          const userIds = isRejected
+            ? [existingTrial.consulteeProfile.user.id]
+            : [
+                existingTrial.consultantProfile.user.id,
+                existingTrial.consulteeProfile.user.id,
+              ].filter((id) => id !== session.user.id);
+          const emailKind = isRejected ? "TRIAL_REJECTED" : "TRIAL_CANCELLED";
           const consultantName =
             existingTrial.consultantProfile.user.name || "Consultant";
           const consulteeName =
@@ -897,16 +913,28 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 },
                 { deferAttempt: true },
               ),
-            ).catch(() => []),
+            ).catch((err) => {
+              console.error(
+                "[trials] Failed to stage trial cancellation bell:",
+                err,
+              );
+              return [];
+            }),
             stageTrialLifecycleEmail(prisma, {
               trialId,
               userIds,
-              kind: "TRIAL_CANCELLED",
+              kind: emailKind,
               planTitle: existingTrial.subscriptionPlan.title,
               consultantName,
               consulteeName,
               dashboardUrl,
-            }).catch(() => []),
+            }).catch((err) => {
+              console.error(
+                "[trials] Failed to stage trial cancellation email:",
+                err,
+              );
+              return [];
+            }),
           ]);
           await flushNotificationsAfter(
             {
@@ -914,11 +942,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               emails: [
                 {
                   list: cancelledEmails,
-                  emailType: "TRIAL_CANCELLED",
+                  emailType: emailKind,
                 },
               ],
             },
-            "trial.cancelled",
+            isRejected ? "trial.rejected" : "trial.cancelled",
           );
         });
 
@@ -1340,7 +1368,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     const userIds = [
       existingTrial.consultantProfile.user.id,
       existingTrial.consulteeProfile.user.id,
-    ];
+    ].filter((id) => id !== session.user.id);
     const consultantName =
       existingTrial.consultantProfile.user.name || "Consultant";
     const consulteeName = existingTrial.consulteeProfile.user.name || "User";
@@ -1358,7 +1386,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
           },
           { deferAttempt: true },
         ),
-      ).catch(() => []),
+      ).catch((err) => {
+        console.error(
+          "[trials] Failed to stage trial delete cancellation bell:",
+          err,
+        );
+        return [];
+      }),
       stageTrialLifecycleEmail(prisma, {
         trialId,
         userIds,
@@ -1367,7 +1401,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         consultantName,
         consulteeName,
         dashboardUrl,
-      }).catch(() => []),
+      }).catch((err) => {
+        console.error(
+          "[trials] Failed to stage trial delete cancellation email:",
+          err,
+        );
+        return [];
+      }),
     ]);
     await flushNotificationsAfter(
       {

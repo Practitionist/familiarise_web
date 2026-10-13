@@ -400,7 +400,7 @@ export async function POST(req: NextRequest) {
             orgSlug: org.slug,
             dashboardUrl: `/dashboard/organization/${org.id}/home`,
           },
-          tx.notificationOutbox ? { tx } : undefined,
+          { tx },
         )) ?? [];
 
       const stagedCreated = await stageOrgCreatedEmail(

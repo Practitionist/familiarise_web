@@ -239,7 +239,7 @@ async function onExitRightTripped(
           planTitle: hosted.cls.classPlan.title,
           missedCount: misses,
           dashboardUrl,
-        }).catch(() => [])
+        })
       : [];
   return { bells, emails };
 }

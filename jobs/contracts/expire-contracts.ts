@@ -86,7 +86,7 @@ async function stageExpiredContractNotifications(
         effectiveDate: contract.effectiveTo?.toISOString(),
         dashboardUrl,
       },
-      tx.notificationOutbox ? { tx } : undefined,
+      { tx },
     )) ?? [];
   const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
     recipientUserIds: operatorRows.map((r) => r.userId),

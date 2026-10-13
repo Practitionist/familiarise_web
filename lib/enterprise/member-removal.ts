@@ -380,7 +380,7 @@ async function removeInTx(
         reason: null,
         dashboardUrl,
       },
-      tx.notificationOutbox ? { tx } : undefined,
+      { tx },
     )) ?? [];
   return {
     removed: true,

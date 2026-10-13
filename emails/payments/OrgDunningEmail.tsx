@@ -9,6 +9,7 @@ import {
 } from "@/emails/components/styles";
 
 export type OrgOperationalEmailKind =
+  | "INVOICE_OVERDUE"
   | "MEMBER_OVERAGE_TIMED_OUT"
   | "LICENSE_RENEWAL_UPCOMING"
   | "PROGRAM_CAP_NEAR"
@@ -19,6 +20,10 @@ export interface OrgDunningEmailProps {
   kind: OrgOperationalEmailKind;
   recipientName?: string;
   orgName: string;
+  invoiceNumber?: string;
+  daysLate?: number;
+  reminderStage?: number;
+  dueDateText?: string;
   programName?: string;
   assigneeName?: string;
   amountText?: string;
@@ -37,10 +42,27 @@ export interface OrgDunningEmailProps {
 export function orgOperationalEmailSubject(
   args: Pick<
     OrgDunningEmailProps,
-    "kind" | "orgName" | "programName" | "daysUntilRenewal"
+    | "kind"
+    | "orgName"
+    | "programName"
+    | "daysUntilRenewal"
+    | "invoiceNumber"
+    | "daysLate"
+    | "reminderStage"
   >,
 ): string {
+  if (args.reminderStage && args.reminderStage > 3 && args.invoiceNumber) {
+    return `Sponsored bookings paused: Invoice ${args.invoiceNumber} overdue`;
+  }
   switch (args.kind) {
+    case "INVOICE_OVERDUE": {
+      const inv = args.invoiceNumber ?? "your invoice";
+      if (typeof args.daysLate === "number") {
+        const dayUnit = args.daysLate === 1 ? "day" : "days";
+        return `Invoice ${inv} is ${args.daysLate} ${dayUnit} overdue`;
+      }
+      return `Invoice ${inv} is overdue`;
+    }
     case "MEMBER_OVERAGE_TIMED_OUT":
       return `Payment window closed for ${args.programName ?? "programme"} at ${args.orgName}`;
     case "LICENSE_RENEWAL_UPCOMING": {
@@ -60,6 +82,7 @@ export function orgOperationalEmailSubject(
 }
 
 const DUNNING_BUTTON_LABEL: Record<OrgOperationalEmailKind, string> = {
+  INVOICE_OVERDUE: "Pay now",
   MEMBER_OVERAGE_TIMED_OUT: "Open billing",
   LICENSE_RENEWAL_UPCOMING: "Open workspace",
   PROGRAM_CAP_NEAR: "Open workspace",
@@ -70,6 +93,10 @@ const DUNNING_BUTTON_LABEL: Record<OrgOperationalEmailKind, string> = {
 function renderOrgDunningBody(args: {
   kind: OrgOperationalEmailKind;
   orgName: string;
+  invoiceNumber?: string;
+  daysLate?: number;
+  reminderStage?: number;
+  dueDateText?: string;
   programName?: string;
   assigneeName?: string;
   amountText?: string;
@@ -84,6 +111,9 @@ function renderOrgDunningBody(args: {
   const {
     kind,
     orgName,
+    invoiceNumber,
+    reminderStage,
+    dueDateText,
     programName,
     assigneeName,
     amountText,
@@ -96,7 +126,47 @@ function renderOrgDunningBody(args: {
     usedPct,
   } = args;
 
+  if (reminderStage && reminderStage > 3) {
+    return (
+      <Text style={paragraph}>
+        {invoiceNumber ? (
+          <>
+            Invoice <strong>{invoiceNumber}</strong> for{" "}
+            <strong>{orgName}</strong>
+            {amountText ? <> ({amountText})</> : null} is past due, and
+            sponsored bookings have been paused until the overdue invoice is
+            settled.
+          </>
+        ) : (
+          <>
+            Sponsored bookings for <strong>{orgName}</strong> have been paused
+            until the overdue invoice is settled.
+          </>
+        )}
+      </Text>
+    );
+  }
+
   switch (kind) {
+    case "INVOICE_OVERDUE":
+      return (
+        <>
+          <Text style={paragraph}>
+            Invoice <strong>{invoiceNumber ?? "your invoice"}</strong> for{" "}
+            <strong>{orgName}</strong>
+            {amountText ? (
+              <>
+                , totalling <strong>{amountText}</strong>,
+              </>
+            ) : null}
+            {dueDateText ? ` was due on ${dueDateText} and` : ""} is still
+            unpaid.
+          </Text>
+          {reminderStage && reminderStage > 0 ? (
+            <Text style={paragraph}>This is reminder {reminderStage}.</Text>
+          ) : null}
+        </>
+      );
     case "MEMBER_OVERAGE_TIMED_OUT":
       return (
         <Text style={paragraph}>
@@ -174,6 +244,10 @@ export function OrgDunningEmail({
   kind,
   recipientName = "there",
   orgName,
+  invoiceNumber,
+  daysLate,
+  reminderStage,
+  dueDateText,
   programName,
   assigneeName,
   amountText,
@@ -193,6 +267,9 @@ export function OrgDunningEmail({
     orgName,
     programName,
     daysUntilRenewal,
+    invoiceNumber,
+    daysLate,
+    reminderStage,
   });
 
   const buttonLabel = DUNNING_BUTTON_LABEL[kind];
@@ -205,6 +282,10 @@ export function OrgDunningEmail({
       {renderOrgDunningBody({
         kind,
         orgName,
+        invoiceNumber,
+        daysLate,
+        reminderStage,
+        dueDateText,
         programName,
         assigneeName,
         amountText,

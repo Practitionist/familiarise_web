@@ -385,12 +385,6 @@ export const sendAppointmentReminderEmail =
     spec: reminderSpec(args),
   }));
 
-export const stageAppointmentReminderEmail =
-  defineLifecycleStager<AppointmentReminderEmailArgs>((args) => ({
-    userIds: args.userIds,
-    spec: reminderSpec(args),
-  }));
-
 // ── New booking request ─────────────────────────────────────────────────────
 
 export interface NewBookingRequestEmailArgs {
@@ -546,39 +540,12 @@ function buildTrialScheduledEmail(args: TrialScheduledEmailArgs): {
   };
 }
 
-export const sendTrialScheduledEmail =
-  defineBudgetedEmailSender<TrialScheduledEmailArgs>(buildTrialScheduledEmail);
-
 export const stageTrialScheduledEmail =
   defineLifecycleStager<TrialScheduledEmailArgs>(buildTrialScheduledEmail);
 
 // ── Window opened ───────────────────────────────────────────────────────────
 
 export const WINDOW_OPENED_EMAIL_TYPE = "WINDOW_OPENED";
-
-export const sendWindowOpenedEmail = defineBudgetedEmailSender<{
-  interestId: string;
-  userId: string;
-  consultantName: string;
-  windowStart: Date;
-  bookUrl: string;
-}>((args) => ({
-  userIds: [args.userId],
-  spec: {
-    emailType: WINDOW_OPENED_EMAIL_TYPE,
-    category: "appointments",
-    entityRef: `window-opened:${args.interestId}`,
-    subject: () => `A time with ${args.consultantName} just opened`,
-    render: (r) =>
-      React.createElement(WindowOpenedEmail, {
-        recipientName: greet(r),
-        consultantName: args.consultantName,
-        windowText: whenText(args.windowStart, r.zone),
-        bookUrl: absolute(args.bookUrl),
-        unsubscribeUrl: r.unsubscribeUrl,
-      }),
-  },
-}));
 
 export async function stageWindowOpenedEmail(
   tx: Tx,
@@ -680,14 +647,6 @@ function buildClassSessionEmail(args: ClassSessionLifecycleEmailArgs): {
   };
 }
 
-export const sendClassSessionEmails =
-  defineBudgetedEmailSender<ClassSessionLifecycleEmailArgs>(
-    buildClassSessionEmail,
-  );
-
-export const stageClassSessionEmails =
-  defineLifecycleStager<ClassSessionLifecycleEmailArgs>(buildClassSessionEmail);
-
 export interface ClassExitAvailableEmailArgs {
   appointmentId: string;
   userIds: string[];
@@ -702,21 +661,6 @@ function buildClassExitAvailableEmail(args: ClassExitAvailableEmailArgs) {
     kind: "EXIT_AVAILABLE",
   });
 }
-
-export function prepareClassExitAvailableEmails(
-  args: ClassExitAvailableEmailArgs,
-): Promise<PreparedRecipientEmails> {
-  const { userIds, spec } = buildClassExitAvailableEmail({
-    ...args,
-    dashboardUrl: absolute(args.dashboardUrl),
-  });
-  return prepareSpecEmails(spec, userIds);
-}
-
-export const sendClassExitAvailableEmails =
-  defineBudgetedEmailSender<ClassExitAvailableEmailArgs>(
-    buildClassExitAvailableEmail,
-  );
 
 export const stageClassExitAvailableEmails =
   defineLifecycleStager<ClassExitAvailableEmailArgs>(
@@ -759,9 +703,6 @@ export function prepareSessionOutcomeEmails(
   return prepareSpecEmails(spec, userIds);
 }
 
-export const sendSessionOutcomeEmails =
-  defineBudgetedEmailSender<SessionOutcomeEmailArgs>(buildSessionOutcomeEmail);
-
 export const stageSessionOutcomeEmails =
   defineLifecycleStager<SessionOutcomeEmailArgs>(buildSessionOutcomeEmail);
 
@@ -784,11 +725,6 @@ function buildAppointmentCompletedEmail(args: AppointmentCompletedEmailArgs) {
   });
 }
 
-export const sendAppointmentCompletedEmails =
-  defineBudgetedEmailSender<AppointmentCompletedEmailArgs>(
-    buildAppointmentCompletedEmail,
-  );
-
 export const stageAppointmentCompletedEmails =
   defineLifecycleStager<AppointmentCompletedEmailArgs>(
     buildAppointmentCompletedEmail,
@@ -801,9 +737,11 @@ export interface TrialLifecycleEmailArgs {
   userIds: string[];
   kind: Extract<
     TrialAndSubscriptionEmailKind,
-    "TRIAL_REQUESTED" | "TRIAL_COMPLETED" | "TRIAL_CANCELLED"
+    "TRIAL_REQUESTED" | "TRIAL_COMPLETED" | "TRIAL_CANCELLED" | "TRIAL_REJECTED"
   >;
   planTitle: string;
+  consultantUserId?: string;
+  consulteeUserId?: string;
   consultantName?: string;
   consulteeName?: string;
   startsAt?: EmailTimestampInput;
@@ -827,10 +765,17 @@ function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
           consulteeName: args.consulteeName,
           consultantName: args.consultantName,
         }),
-      render: (r) =>
-        React.createElement(TrialAndSubscriptionEmail, {
+      render: (r) => {
+        const isConsultant =
+          (args.consultantUserId && r.userId === args.consultantUserId) ||
+          (!args.consultantUserId &&
+            Boolean(
+              args.consultantName && r.name?.trim() === args.consultantName,
+            ));
+        return React.createElement(TrialAndSubscriptionEmail, {
           kind: args.kind,
           recipientName: greet(r),
+          recipientRole: isConsultant ? "consultant" : "consultee",
           planTitle: args.planTitle,
           consultantName: args.consultantName,
           consulteeName: args.consulteeName,
@@ -839,23 +784,11 @@ function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
             : undefined,
           dashboardUrl: absolute(args.dashboardUrl),
           unsubscribeUrl: r.unsubscribeUrl,
-        }),
+        });
+      },
     },
   };
 }
-
-export function prepareTrialLifecycleEmail(
-  args: TrialLifecycleEmailArgs,
-): Promise<PreparedRecipientEmails> {
-  const { userIds, spec } = buildTrialLifecycleEmail({
-    ...args,
-    dashboardUrl: absolute(args.dashboardUrl),
-  });
-  return prepareSpecEmails(spec, userIds);
-}
-
-export const sendTrialLifecycleEmail =
-  defineBudgetedEmailSender<TrialLifecycleEmailArgs>(buildTrialLifecycleEmail);
 
 export const stageTrialLifecycleEmail =
   defineLifecycleStager<TrialLifecycleEmailArgs>(buildTrialLifecycleEmail);
@@ -908,21 +841,6 @@ function buildSubscriptionLifecycleEmail(
     },
   };
 }
-
-export function prepareSubscriptionLifecycleEmail(
-  args: SubscriptionLifecycleEmailArgs,
-): Promise<PreparedRecipientEmails> {
-  const { userIds, spec } = buildSubscriptionLifecycleEmail({
-    ...args,
-    dashboardUrl: absolute(args.dashboardUrl),
-  });
-  return prepareSpecEmails(spec, userIds);
-}
-
-export const sendSubscriptionLifecycleEmail =
-  defineBudgetedEmailSender<SubscriptionLifecycleEmailArgs>(
-    buildSubscriptionLifecycleEmail,
-  );
 
 export const stageSubscriptionLifecycleEmail =
   defineLifecycleStager<SubscriptionLifecycleEmailArgs>(
@@ -978,22 +896,6 @@ function buildDocumentAndRecordingEmail(args: DocumentAndRecordingEmailArgs): {
     },
   };
 }
-
-export function prepareDocumentAndRecordingEmail(
-  args: DocumentAndRecordingEmailArgs,
-): Promise<PreparedRecipientEmails> {
-  const { userIds, spec } = buildDocumentAndRecordingEmail({
-    ...args,
-    actionUrl: args.actionUrl ? absolute(args.actionUrl) : undefined,
-    dashboardUrl: absolute(args.dashboardUrl),
-  });
-  return prepareSpecEmails(spec, userIds);
-}
-
-export const sendDocumentAndRecordingEmail =
-  defineBudgetedEmailSender<DocumentAndRecordingEmailArgs>(
-    buildDocumentAndRecordingEmail,
-  );
 
 export const stageDocumentAndRecordingEmail =
   defineLifecycleStager<DocumentAndRecordingEmailArgs>(

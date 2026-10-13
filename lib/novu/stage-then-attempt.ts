@@ -68,22 +68,39 @@ export function flushNotificationsAfter(
     return Promise.resolve();
   }
   return scheduleAfter(async () => {
+    const errors: unknown[] = [];
     await Promise.all([
       ...bells.map((row) =>
-        attemptTrigger(row).catch((err) =>
-          report(`Failed to deliver ${op}`, err),
-        ),
+        attemptTrigger(row).catch((err: unknown) => {
+          console.error(`Failed to deliver ${op}`, err);
+          errors.push(err);
+        }),
       ),
       ...emails.map((entry) =>
         attemptStaged(
           entryRows(entry),
           entry.emailType,
           entry.budgetMs ?? EMAIL_BUDGET_MS.LIFECYCLE,
-        ).catch((err) =>
-          report(`Failed to deliver email ${entry.emailType}`, err),
-        ),
+        ).catch((err: unknown) => {
+          console.error(`Failed to deliver email ${entry.emailType}`, err);
+          errors.push(err);
+        }),
       ),
     ]);
+    if (errors.length > 0) {
+      const first = errors[0];
+      Sentry.captureException(
+        first instanceof Error ? first : new Error(String(first)),
+        {
+          tags: { subsystem: "novu", op },
+          extra: {
+            errorCount: errors.length,
+            bellCount: bells.length,
+            emailBatchCount: emails.length,
+          },
+        },
+      );
+    }
   }, op);
 }
 

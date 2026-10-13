@@ -140,6 +140,7 @@ type PaymentSuccessTxResult =
       successEmail: StagedOutboxEmail | null;
       bookedEmails: StagedRecipientEmail[];
       stagedBells: StagedTrigger[];
+      stageBellsRan: boolean;
     };
 
 const PHASE_2_DEADLINE_MS = 5_000;
@@ -262,7 +263,10 @@ export async function handlePaymentSuccess(
       where: { paymentIntent: paymentIntentId },
       include: { user: { include: { consulteeProfile: true } } },
     });
-    if (prePayment?.appointmentId) {
+    if (
+      prePayment?.appointmentId &&
+      prePayment.paymentStatus !== PaymentStatus.SUCCEEDED
+    ) {
       const preApptType =
         metadata.appointmentType ||
         (
@@ -830,8 +834,11 @@ export async function handlePaymentSuccess(
                 metadata.appointmentType,
               )
             : [];
+          const stageBellsRan = Boolean(
+            appointmentForEmails && tx.notificationOutbox,
+          );
           const stagedBells =
-            appointmentForEmails && tx.notificationOutbox
+            stageBellsRan && appointmentForEmails
               ? await stagePaymentSuccessBells(
                   tx,
                   payment,
@@ -857,6 +864,7 @@ export async function handlePaymentSuccess(
             successEmail,
             bookedEmails,
             stagedBells,
+            stageBellsRan,
           };
         },
         {
@@ -1150,7 +1158,7 @@ export async function handlePaymentSuccess(
 
   await mintConsumerInvoiceBestEffort({ paymentId });
 
-  if (txResult.stagedBells.length === 0) {
+  if (!txResult.stageBellsRan) {
     try {
       const appointmentForNotif = await resolveAppointmentNotificationContext(
         appointmentId,

@@ -13,20 +13,33 @@ function securityBellKind(
   | "TWO_FACTOR_DISABLED"
   | "PASSKEY_ADDED"
   | "PASSKEY_REMOVED"
-  | null {
+  | "SECURITY_UPDATE" {
   switch (event.kind) {
     case "passkey-added":
       return "PASSKEY_ADDED";
     case "passkey-removed":
       return "PASSKEY_REMOVED";
     case "authenticator-added":
-    case "backup-codes-regenerated":
       return "TWO_FACTOR_ENABLED";
     case "two-factor-reset-by-admin":
       return "TWO_FACTOR_DISABLED";
+    case "backup-codes-regenerated":
     case "backup-code-used":
     case "two-factor-locked":
-      return null;
+      return "SECURITY_UPDATE";
+  }
+}
+
+function securityBellMessage(event: SecurityEvent): string | undefined {
+  switch (event.kind) {
+    case "backup-codes-regenerated":
+      return "Your two-factor backup codes were regenerated.";
+    case "backup-code-used":
+      return "A backup code was used to sign in to your account.";
+    case "two-factor-locked":
+      return "Two-factor authentication was temporarily locked after repeated failed attempts.";
+    default:
+      return undefined;
   }
 }
 
@@ -41,23 +54,29 @@ export async function sendSecurityEventEmail(
   try {
     const occurredAt = new Date();
     const bellKind = securityBellKind(event);
+    const message = securityBellMessage(event);
     const [, bellResults] = await Promise.all([
       sendSecurityNoticeEmail({
         userId: user.id,
         event,
         occurredAt,
-      }).catch(() => undefined),
-      bellKind
-        ? notifyAccountSecurityNotice(
-            user.id,
-            {
-              kind: bellKind,
-              dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
-            },
-            `security-event:${event.kind}:${user.id}:${occurredAt.getTime()}`,
-            { deferAttempt: true },
-          ).catch(() => [])
-        : Promise.resolve([]),
+      }).catch((err) => {
+        console.error("[auth] Failed to send security notice email:", err);
+        return undefined;
+      }),
+      notifyAccountSecurityNotice(
+        user.id,
+        {
+          kind: bellKind,
+          ...(message ? { message } : {}),
+          dashboardUrl: `${getAppUrl()}/dashboard/settings/security`,
+        },
+        `security-event:${event.kind}:${user.id}:${occurredAt.getTime()}`,
+        { deferAttempt: true },
+      ).catch((err) => {
+        console.error("[auth] Failed to stage security notice bell:", err);
+        return [];
+      }),
     ]);
     if (bellResults.length > 0) {
       await flushNotificationsAfter(

@@ -314,7 +314,7 @@ async function enrollOne(params: {
         let stagedEmails: StagedEmail[] = [];
 
         if (created) {
-          const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/programs`;
+          const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}`;
           await adjustActiveSeatCount(tx, { programId, delta: +1 });
           await tx.program.updateMany({
             where: { id: programId, configLockedAt: null },
@@ -343,7 +343,7 @@ async function enrollOne(params: {
                 programName,
                 dashboardUrl,
               },
-              tx.notificationOutbox ? { tx } : undefined,
+              { tx },
             )) ?? [];
           stagedEmails = await stageOrgContractAndSeatEmail(tx, {
             recipientUserIds: [membership.userId],

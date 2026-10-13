@@ -226,7 +226,7 @@ export async function applyTransactionalEffects(
       kind: "CONTENT_REMOVED",
       reason: statementReason,
       supportUrl: "/support",
-    }).catch(() => []);
+    });
     stagedEmails.push({
       rows: contentRemovedRows,
       emailType: "CONTENT_REMOVED_NOTICE",
@@ -237,7 +237,7 @@ export async function applyTransactionalEffects(
       kind: "MODERATION_WARNING",
       reason: statementReason,
       supportUrl: "/support",
-    }).catch(() => []);
+    });
     stagedEmails.push({
       rows: warningRows,
       emailType: "MODERATION_WARNING",
@@ -252,7 +252,7 @@ export async function applyTransactionalEffects(
         dashboardUrl: goHref("expert", "settings"),
       },
       tx,
-    ).catch(() => ({ list: [] }));
+    );
     stagedEmails.push({
       rows: unverifiedEmail.list,
       emailType: "VERIFICATION_DECIDED",
@@ -274,7 +274,7 @@ export async function applyTransactionalEffects(
           input.report.reason,
         ),
         dashboardUrl: goHref("auto", "feedbacks"),
-      }).catch(() => []);
+      });
       stagedEmails.push({
         rows: outcomeRows,
         emailType: "MODERATION_REPORT_OUTCOME",
@@ -515,7 +515,7 @@ async function excludeReviewFromAggregate(
     kind: "REVIEW_EXCLUDED",
     reason: statementReason,
     dashboardUrl,
-  }).catch(() => []);
+  });
   return {
     reviewExcludedFromAggregate: true,
     reviewRemovedConsultantProfileId: review.consultantProfileId,
@@ -852,7 +852,13 @@ async function triggerModerationNotification(
         suspendedUntil: transactional.banExpires,
         appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         supportUrl: "/support",
-      }).catch(() => []);
+      }).catch((err) => {
+        console.error(
+          "[moderation] Failed to stage ACCOUNT_SUSPENDED email:",
+          err,
+        );
+        return [];
+      });
       summary.stagedEmails?.push({
         rows: suspendedRows,
         emailType: "ACCOUNT_SUSPENDED",
@@ -876,7 +882,13 @@ async function triggerModerationNotification(
         reason: statementReason,
         appointmentsCancelled: summary.cancellations?.engagementsCancelled,
         supportUrl: "/support",
-      }).catch(() => []);
+      }).catch((err) => {
+        console.error(
+          "[moderation] Failed to stage ACCOUNT_BANNED email:",
+          err,
+        );
+        return [];
+      });
       summary.stagedEmails?.push({
         rows: bannedRows,
         emailType: "ACCOUNT_BANNED",

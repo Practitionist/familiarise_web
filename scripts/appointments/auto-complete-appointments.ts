@@ -35,6 +35,7 @@ import {
 } from "@prisma/client";
 import {
   stageAppointmentCompletedEmails,
+  stageSubscriptionLifecycleEmail,
   stageTrialLifecycleEmail,
 } from "@/lib/email/senders/booking";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -55,7 +56,6 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { settleSubscriptionCycle } from "@/lib/booking/subscription-cycle";
-import { attemptTrigger } from "@/lib/novu/outbox";
 import {
   sessionsTotalOf,
   subscriptionEntitlement,
@@ -458,7 +458,13 @@ async function completeConsultations(maxParents: number): Promise<{
             planTitle: consultation.consultationPlan.title,
             appointmentType: "Consultation",
             dashboardUrl,
-          }).catch(() => []),
+          }).catch((error) => {
+            console.error(
+              `[auto-complete] Failed to stage consultation completion email:`,
+              error,
+            );
+            return [];
+          }),
         ]);
         await flushNotificationsAfter(
           {
@@ -632,7 +638,13 @@ async function completeSubscriptions(maxParents: number): Promise<{
             planTitle: subscription.subscriptionPlan.title,
             appointmentType: "Subscription",
             dashboardUrl,
-          }).catch(() => []),
+          }).catch((error) => {
+            console.error(
+              `[auto-complete] Failed to stage subscription completion email:`,
+              error,
+            );
+            return [];
+          }),
         ]);
         await flushNotificationsAfter(
           {
@@ -816,14 +828,22 @@ async function completeTrials(maxParents: number): Promise<{
           }),
           stageTrialLifecycleEmail(prisma, {
             trialId: trial.id,
-            userIds: trialUserIds,
+            userIds: trial.consulteeProfile?.user?.id
+              ? [trial.consulteeProfile.user.id]
+              : [],
             kind: "TRIAL_COMPLETED",
             planTitle: trial.subscriptionPlan.title,
             consultantName,
             consulteeName,
             startsAt: lastSlot?.startsAt ?? null,
             dashboardUrl,
-          }).catch(() => []),
+          }).catch((error) => {
+            console.error(
+              `[auto-complete] Failed to stage trial completion email:`,
+              error,
+            );
+            return [];
+          }),
         ]);
         await flushNotificationsAfter(
           {
@@ -922,11 +942,46 @@ async function settleCycleBells(wrappers: Set<string>): Promise<void> {
     const staged = await prisma.$transaction((tx) =>
       settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
     );
+    const firstBell = staged?.[0];
+    const payload = firstBell?.payload as
+      | {
+          subscriptionId?: string;
+          planTitle?: string;
+          consultantName?: string;
+          cycleOrdinal?: number;
+          nextBatch?: number;
+          remainingSessions?: number;
+          dashboardUrl?: string;
+        }
+      | undefined;
+    const emailRows =
+      firstBell &&
+      payload?.subscriptionId &&
+      payload.planTitle &&
+      payload.dashboardUrl
+        ? await stageSubscriptionLifecycleEmail(prisma, {
+            subscriptionId: payload.subscriptionId,
+            userIds: firstBell.recipients,
+            kind: "SUBSCRIPTION_RENEWED",
+            planTitle: payload.planTitle,
+            consultantName: payload.consultantName,
+            cycleOrdinal: payload.cycleOrdinal,
+            nextBatch: payload.nextBatch,
+            remainingSessions: payload.remainingSessions,
+            dashboardUrl: payload.dashboardUrl,
+          }).catch((err) => {
+            console.error(
+              "[auto-complete-appointments] subscription cycle email stage failed:",
+              err,
+            );
+            return [];
+          })
+        : [];
     await flushNotificationsAfter(
       {
         bells: staged ?? [],
-        emails: staged?.emailRows?.length
-          ? [{ rows: staged.emailRows, emailType: "SUBSCRIPTION_RENEWED" }]
+        emails: emailRows.length
+          ? [{ rows: emailRows, emailType: "SUBSCRIPTION_RENEWED" }]
           : [],
       },
       "subscription-cycle.renewed",

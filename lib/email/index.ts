@@ -28,11 +28,10 @@ import {
   type StageOptions,
 } from "./deliver";
 import { renderEmail } from "./render";
+import type { StagedRecipientEmail } from "./send-to-recipients";
 import {
   absolute,
-  defineLifecycleStager,
   greet,
-  prepareSpecEmails,
   stageSpecGuarded,
   type StagingTx,
 } from "./senders/shared";
@@ -59,13 +58,7 @@ export * from "./senders/onboarding";
 export * from "./senders/people";
 export * from "./senders/security";
 export * from "./senders/sso";
-export {
-  absolute,
-  defineLifecycleStager,
-  prepareSpecEmails,
-  stageSpecGuarded,
-  type StagingTx,
-};
+export { absolute, stageSpecGuarded, type StagingTx };
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
 
@@ -173,22 +166,6 @@ export const sendWelcomeEmail = defineDirectEmailSender<{
   defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
 }));
 
-export const stageWelcomeEmail = defineLifecycleStager<{
-  userId: string;
-  dashboardUrl?: string;
-}>(({ userId, dashboardUrl = "/dashboard" }) => ({
-  userIds: [userId],
-  spec: {
-    emailType: "WELCOME",
-    category: null,
-    from: SENDERS.onboarding,
-    entityRef: `user:${userId}:welcome`,
-    subject: () => "Welcome to Familiarise!",
-    render: (r) =>
-      WelcomeEmail({ name: greet(r), dashboardUrl: absolute(dashboardUrl) }),
-  },
-}));
-
 export const sendPasswordResetEmail = defineDirectEmailSender<{
   email: string;
   name: string;
@@ -267,24 +244,6 @@ export const sendPasswordChangedEmail = defineDirectEmailSender<{
   defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
 }));
 
-export const stagePasswordChangedEmail = defineLifecycleStager<{
-  userId: string;
-}>(({ userId }) => ({
-  userIds: [userId],
-  spec: {
-    emailType: "PASSWORD_CHANGED",
-    category: null,
-    from: SENDERS.security,
-    entityRef: `user:${userId}:password_changed`,
-    subject: () => "Your Familiarise password was changed",
-    render: (r) =>
-      PasswordChangedEmail({
-        name: greet(r),
-        resetUrl: `${getAppUrl()}/auth/forgot-password`,
-      }),
-  },
-}));
-
 export const sendAccountLinkedEmail = defineDirectEmailSender<{
   email: string;
   name: string;
@@ -304,27 +263,6 @@ export const sendAccountLinkedEmail = defineDirectEmailSender<{
     subject: `Your Familiarise account is now linked with ${provider}`,
   },
   defaults: { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH },
-}));
-
-export const stageAccountLinkedEmail = defineLifecycleStager<{
-  userId: string;
-  provider: string;
-  dashboardUrl?: string;
-}>(({ userId, provider, dashboardUrl = "/dashboard" }) => ({
-  userIds: [userId],
-  spec: {
-    emailType: "ACCOUNT_LINKED",
-    category: null,
-    from: SENDERS.security,
-    entityRef: `user:${userId}:account_linked:${provider}`,
-    subject: () => `Your Familiarise account is now linked with ${provider}`,
-    render: (r) =>
-      AccountLinkedEmail({
-        name: greet(r),
-        provider,
-        dashboardUrl: absolute(dashboardUrl),
-      }),
-  },
 }));
 
 // ── Payment Senders ─────────────────────────────────────────────────────────
@@ -388,6 +326,99 @@ export const sendPaymentLinkEmail = defineDirectEmailSender<{
     },
   }),
 );
+
+export interface StagePaymentLinkEmailArgs {
+  email?: string;
+  name?: string;
+  userId?: string;
+  consultantName: string;
+  appointmentType: AppointmentType;
+  amount: number;
+  currency: string;
+  paymentUrl: string;
+  expiresAt: Date;
+  paymentId?: string;
+  reminder?: boolean;
+}
+
+export async function stagePaymentLinkEmail(
+  args: StagePaymentLinkEmailArgs,
+  tx?: StagingTx,
+): Promise<StagedRecipientEmail[]> {
+  const {
+    email,
+    name = "there",
+    userId,
+    consultantName,
+    appointmentType,
+    amount,
+    currency,
+    paymentUrl,
+    expiresAt,
+    paymentId,
+    reminder = false,
+  } = args;
+  const emailType = reminder
+    ? PAYMENT_LINK_REMINDER_EMAIL_TYPE
+    : "PAYMENT_LINK";
+  const subject = reminder
+    ? `Reminder: payment due - ${capitalize(appointmentType)} with ${consultantName}`
+    : `Payment Required - ${capitalize(appointmentType)} with ${consultantName}`;
+  const resolvedPayUrl = emailPayUrl(paymentId, paymentUrl);
+  const expiresAtIso = expiresAt.toISOString();
+
+  if (userId && !email) {
+    return stageSpecGuarded(
+      {
+        emailType,
+        category: "payments",
+        from: SENDERS.payments,
+        entityRef: paymentRef(paymentId) ?? `user:${userId}`,
+        subject: () => subject,
+        render: (r) =>
+          PaymentLinkEmail({
+            name: greet(r),
+            consultantName,
+            appointmentType,
+            amount,
+            currency,
+            paymentUrl: resolvedPayUrl,
+            expiresAt: expiresAtIso,
+            reminder,
+          }),
+      },
+      [userId],
+      tx,
+    );
+  }
+
+  if (!email) return [];
+
+  const stagedSend = await stageSend(
+    emailType,
+    PaymentLinkEmail({
+      name,
+      consultantName,
+      appointmentType,
+      amount,
+      currency,
+      paymentUrl: resolvedPayUrl,
+      expiresAt: expiresAtIso,
+      reminder,
+    }),
+    {
+      from: SENDERS.payments,
+      to: email,
+      subject,
+    },
+    {
+      tx,
+      entityRef: paymentRef(paymentId),
+    },
+  );
+  if (!stagedSend) return [];
+  return [{ staged: stagedSend.staged, message: stagedSend.message }];
+}
 
 export interface PaymentSuccessEmailArgs {
   email: string;

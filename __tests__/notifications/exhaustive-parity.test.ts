@@ -190,8 +190,28 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
       { id: "fe-rep-1", emailType: "MODERATION_REPORT_OUTCOME" },
     ]);
     mockStageVerificationDecidedEmail.mockResolvedValue({
-      rows: [{ id: "fe-ver-1", emailType: "VERIFICATION_DECIDED" }],
       emailType: "VERIFICATION_DECIDED",
+      budgetMs: 3000,
+      list: [
+        {
+          row: { id: "fe-verif-1" },
+          message: { to: "u@example.com", subject: "s", html: "<p>h</p>" },
+        },
+      ],
+    });
+    mockNotifyVerificationStatusChanged.mockResolvedValue({
+      success: true,
+      staged: {
+        id: "verif-bell-1",
+        kind: "trigger" as const,
+        workflowId: "verification-status-changed",
+        transactionId: "verif-tx-1",
+        recipients: ["target-1"],
+        payload: {},
+        attempts: 0,
+        status: "PENDING",
+        notBefore: null,
+      },
     });
     mockNotifyAccountSecurityNotice.mockResolvedValue([
       {
@@ -269,9 +289,11 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
     it("maps every single NOVU_WORKFLOWS constant onto a registered FamilyId", () => {
       const validFamilyIds = new Set(FAMILIES.map((f) => f.id));
       const allWorkflowIds = Object.values(NOVU_WORKFLOWS);
+      expect(allWorkflowIds).toContain(NOVU_WORKFLOWS.RECORDING_REMOVED);
       expect(allWorkflowIds).toHaveLength(Object.keys(EVENT_FAMILY).length);
 
       for (const workflowId of allWorkflowIds) {
+        expect(EVENT_FAMILY[workflowId]).toBeDefined();
         const family = familyOf(workflowId);
         expect(validFamilyIds.has(family)).toBe(true);
       }
@@ -343,12 +365,13 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
       }
     });
 
-    it("renders all 4 DocumentAndRecordingEmail and 5 TrialAndSubscriptionEmail kinds", () => {
+    it("renders all 5 DocumentAndRecordingEmail and 6 TrialAndSubscriptionEmail kinds", () => {
       const docKinds: DocumentAndRecordingEmailKind[] = [
         "DOCUMENT_UPLOADED",
         "DOCUMENT_REVIEWED",
         "RECORDING_READY",
         "RECORDING_FAILED",
+        "RECORDING_REMOVED",
       ];
       for (const kind of docKinds) {
         const subject = documentAndRecordingSubject({
@@ -376,6 +399,7 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
         "TRIAL_REQUESTED",
         "TRIAL_COMPLETED",
         "TRIAL_CANCELLED",
+        "TRIAL_REJECTED",
         "SUBSCRIPTION_STARTED",
         "SUBSCRIPTION_RENEWED",
       ];
@@ -468,6 +492,26 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
         );
         expect(html).toContain(subject);
       }
+
+      const stage4DunningHtml = renderToStaticMarkup(
+        React.createElement(OrgDunningEmail, {
+          kind: "INVOICE_OVERDUE",
+          orgName: "Acme Corp",
+          invoiceNumber: "INV-2026-0042",
+          amountText: "INR 48,000",
+          dueDateText: "01 Oct 2026",
+          daysLate: 30,
+          reminderStage: 4,
+          actionUrl: "https://familiarisenow.com/dashboard/org/billing",
+        }),
+      );
+      expect(stage4DunningHtml).toContain("Acme Corp");
+      expect(stage4DunningHtml).toContain(
+        "Sponsored bookings paused: Invoice INV-2026-0042 overdue",
+      );
+      expect(stage4DunningHtml).toContain(
+        "sponsored bookings have been paused",
+      );
 
       const referralKinds: ReferralBonusEmailKind[] = [
         "BONUS_EARNED",
@@ -733,6 +777,58 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
       );
       expect(bestEffort.stagedBells).toHaveLength(1);
       expect(bestEffort.stagedEmails).toHaveLength(1);
+
+      const unverifiedTxSummary = await applyTransactionalEffects(
+        mockTx as never,
+        {
+          actionId: "act-3",
+          actionType: "PROFILE_UNVERIFIED",
+          report: {
+            id: "rep-2",
+            type: "PROFILE",
+            reason: "IMPERSONATION",
+            reportedById: "reporter-1",
+            targetUserId: "target-1",
+            reviewId: null,
+          },
+          staffUserId: "staff-1",
+          notes: "Credentials unverified",
+        },
+      );
+      const unverifiedBestEffort = await applyBestEffortEffects(
+        {
+          actionId: "act-3",
+          actionType: "PROFILE_UNVERIFIED",
+          report: {
+            id: "rep-2",
+            type: "PROFILE",
+            reason: "IMPERSONATION",
+            reportedById: "reporter-1",
+            targetUserId: "target-1",
+            reviewId: null,
+          },
+          staffUserId: "staff-1",
+          notes: "Credentials unverified",
+        },
+        unverifiedTxSummary,
+      );
+      expect(unverifiedBestEffort.stagedEmails).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            emailType: "VERIFICATION_DECIDED",
+            rows: [
+              {
+                row: { id: "fe-verif-1" },
+                message: {
+                  to: "u@example.com",
+                  subject: "s",
+                  html: "<p>h</p>",
+                },
+              },
+            ],
+          }),
+        ]),
+      );
     });
 
     it("pairs every security event email with a Novu ACCOUNT_SECURITY_NOTICE bell flush", async () => {
@@ -744,8 +840,23 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
         { id: "user-sec-1", email: "op@familiarisenow.com", name: "Operator" },
         { kind: "passkey-removed" },
       );
+      await sendSecurityEventEmail(
+        { id: "user-sec-1", email: "op@familiarisenow.com", name: "Operator" },
+        { kind: "backup-code-used", remaining: 3 },
+      );
+      await sendSecurityEventEmail(
+        { id: "user-sec-1", email: "op@familiarisenow.com", name: "Operator" },
+        {
+          kind: "two-factor-locked",
+          lockedUntil: new Date("2026-10-13T12:00:00Z"),
+        },
+      );
+      await sendSecurityEventEmail(
+        { id: "user-sec-1", email: "op@familiarisenow.com", name: "Operator" },
+        { kind: "backup-codes-regenerated" },
+      );
 
-      expect(mockSendSecurityNoticeEmail).toHaveBeenCalledTimes(2);
+      expect(mockSendSecurityNoticeEmail).toHaveBeenCalledTimes(5);
       expect(mockNotifyAccountSecurityNotice).toHaveBeenCalledWith(
         "user-sec-1",
         expect.objectContaining({ kind: "TWO_FACTOR_ENABLED" }),
@@ -760,6 +871,21 @@ describe("Exhaustive Dual-Channel Notification & Template Parity", () => {
         expect.stringContaining("security-event:passkey-removed:user-sec-1:"),
         { deferAttempt: true },
       );
+      for (const updateKind of [
+        "backup-code-used",
+        "two-factor-locked",
+        "backup-codes-regenerated",
+      ] as const) {
+        expect(mockNotifyAccountSecurityNotice).toHaveBeenCalledWith(
+          "user-sec-1",
+          expect.objectContaining({
+            kind: "SECURITY_UPDATE",
+            message: expect.stringMatching(/\S+/),
+          }),
+          expect.stringContaining(`security-event:${updateKind}:user-sec-1:`),
+          { deferAttempt: true },
+        );
+      }
       expect(mockFlushNotificationsAfter).toHaveBeenCalledWith(
         expect.objectContaining({
           bells: [expect.objectContaining({ id: "sec-bell-1" })],

@@ -383,7 +383,6 @@ function resolveRecordingNotificationMeta(
 export async function stageAndSendRecordingReadyNotifications(
   appointment: RecordingNotificationAppointment | null | undefined,
   recordingId: string,
-  _streamCallId: string,
 ): Promise<void> {
   const userIds = await getEventAttendeeIds(appointment);
   if (userIds.length === 0) return;
@@ -644,11 +643,7 @@ export async function handleRecordingReady(
       durationInMinutes,
     });
 
-    await stageAndSendRecordingReadyNotifications(
-      appointment,
-      recordingId,
-      streamCallId,
-    );
+    await stageAndSendRecordingReadyNotifications(appointment, recordingId);
   } catch (error) {
     streamLogger.error("Failed to handle recording ready event", error, {
       streamCallId,

@@ -8,7 +8,6 @@ import { collaboratorRoleLabel } from "@/lib/novu/humanize";
 import {
   absolute,
   defineBudgetedEmailSender,
-  defineLifecycleStager,
   greet,
   type RecipientEmailSpec,
 } from "./shared";
@@ -89,30 +88,5 @@ export const sendCollaboratorWithdrawnEmail =
   );
 export const sendCollaboratorInviteExpiredEmail =
   defineBudgetedEmailSender<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("EXPIRED", args),
-  );
-
-export const stageCollaboratorInvitedEmail =
-  defineLifecycleStager<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("INVITED", args),
-  );
-export const stageCollaboratorAcceptedEmail =
-  defineLifecycleStager<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("ACCEPTED", args),
-  );
-export const stageCollaboratorDeclinedEmail =
-  defineLifecycleStager<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("DECLINED", args),
-  );
-export const stageCollaboratorRemovedEmail =
-  defineLifecycleStager<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("REMOVED", args),
-  );
-export const stageCollaboratorWithdrawnEmail =
-  defineLifecycleStager<CollaboratorLifecycleEmailArgs>((args) =>
-    buildCollaboratorSpec("WITHDRAWN", args),
-  );
-export const stageCollaboratorInviteExpiredEmail =
-  defineLifecycleStager<CollaboratorLifecycleEmailArgs>((args) =>
     buildCollaboratorSpec("EXPIRED", args),
   );

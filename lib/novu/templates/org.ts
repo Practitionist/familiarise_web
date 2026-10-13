@@ -38,8 +38,9 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
     description: "Billing admins. `reminderStage` counts the dunning notices.",
     category: "orgBilling",
     inApp: {
-      subject: "Invoice overdue",
-      body: "Invoice {{payload.invoiceNumber}} for {{payload.total}} is {{payload.daysLate}} day{% if payload.daysLate != 1 %}s{% endif %} overdue.{% if payload.reminderStage >= 1 %} This is reminder {{payload.reminderStage}}.{% endif %}",
+      subject:
+        "{% if payload.reminderStage > 3 %}Sponsored bookings paused{% else %}Invoice overdue{% endif %}",
+      body: "{% if payload.reminderStage > 3 %}Invoice {{payload.invoiceNumber}} ({{payload.amount}}) is past due and sponsored bookings are now paused until payment is received.{% else %}Invoice {{payload.invoiceNumber}} for {{payload.total}} is {{payload.daysLate}} day{% if payload.daysLate != 1 %}s{% endif %} overdue.{% if payload.reminderStage >= 1 %} This is reminder {{payload.reminderStage}}.{% endif %}{% endif %}",
       redirect: "payUrl",
     },
   },

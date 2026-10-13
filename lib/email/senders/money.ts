@@ -9,7 +9,10 @@ import {
   OrgBillingReceiptEmail,
   type OrgBillingReceiptKind,
 } from "@/emails/orgs/OrgBillingReceiptEmail";
-import { OrgInvoiceOverdueEmail } from "@/emails/orgs/OrgInvoiceOverdueEmail";
+import {
+  OrgInvoiceOverdueEmail,
+  orgInvoiceOverdueSubject,
+} from "@/emails/orgs/OrgInvoiceOverdueEmail";
 import { OrgOverageDueEmail } from "@/emails/orgs/OrgOverageDueEmail";
 import { OrgPayoutFailedEmail } from "@/emails/orgs/OrgPayoutFailedEmail";
 import { OrgWalletLowEmail } from "@/emails/orgs/OrgWalletLowEmail";
@@ -229,7 +232,6 @@ export const sendOrgInvoiceOverdueEmail =
     EMAIL_BUDGET_MS.JOB,
     (args) => {
       const amountText = money(args.totalPaise, args.currency);
-      const dayWord = args.daysLate === 1 ? "day" : "days";
       return {
         userIds: args.recipientUserIds,
         spec: {
@@ -238,7 +240,11 @@ export const sendOrgInvoiceOverdueEmail =
           from: SENDERS.finance,
           entityRef: `orgInvoice:${args.invoiceId}`,
           subject: () =>
-            `Invoice ${args.invoiceNumber} is ${args.daysLate} ${dayWord} overdue`,
+            orgInvoiceOverdueSubject({
+              invoiceNumber: args.invoiceNumber,
+              daysLate: args.daysLate,
+              reminderStage: args.reminderStage,
+            }),
           render: (r) =>
             OrgInvoiceOverdueEmail({
               orgName: args.orgName,
@@ -408,20 +414,6 @@ function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
   };
 }
 
-export async function preparePayoutStatusEmail(
-  args: PayoutStatusEmailArgs,
-): Promise<PreparedRecipientEmails> {
-  const { userIds, spec } = buildPayoutStatusEmail(args);
-  return prepareSpecEmails(spec, userIds);
-}
-
-export const sendPayoutStatusEmail =
-  defineBudgetedEmailSender<PayoutStatusEmailArgs>(
-    buildPayoutStatusEmail,
-    NOTHING_SENT,
-    EMAIL_BUDGET_MS.WEBHOOK,
-  );
-
 export const stagePayoutStatusEmail =
   defineLifecycleStager<PayoutStatusEmailArgs>(buildPayoutStatusEmail);
 
@@ -480,13 +472,6 @@ function buildDisputeNoticeEmail(args: DisputeNoticeEmailArgs): {
     },
   };
 }
-
-export const sendDisputeNoticeEmail =
-  defineBudgetedEmailSender<DisputeNoticeEmailArgs>(
-    buildDisputeNoticeEmail,
-    NOTHING_SENT,
-    EMAIL_BUDGET_MS.WEBHOOK,
-  );
 
 export const stageDisputeNoticeEmail =
   defineLifecycleStager<DisputeNoticeEmailArgs>(buildDisputeNoticeEmail);
@@ -559,6 +544,16 @@ function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
         }),
     },
   };
+}
+
+export function prepareOrgBillingEmail(
+  args: OrgBillingEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildOrgBillingEmail({
+    ...args,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+  return prepareSpecEmails(spec, userIds);
 }
 
 export const sendOrgBillingEmail =
@@ -657,9 +652,6 @@ export const sendOrgOperationalEmail =
     EMAIL_BUDGET_MS.JOB,
   );
 
-export const stageOrgOperationalEmail =
-  defineLifecycleStager<OrgOperationalEmailArgs>(buildOrgOperationalEmail);
-
 // ── Referral bonus & welcome credits ────────────────────────────────────────
 
 export interface ReferralBonusEmailArgs {
@@ -710,13 +702,6 @@ function buildReferralBonusEmail(args: ReferralBonusEmailArgs): {
     },
   };
 }
-
-export const sendReferralBonusEmail =
-  defineBudgetedEmailSender<ReferralBonusEmailArgs>(
-    buildReferralBonusEmail,
-    NOTHING_SENT,
-    EMAIL_BUDGET_MS.REQUEST,
-  );
 
 export const stageReferralBonusEmail =
   defineLifecycleStager<ReferralBonusEmailArgs>(buildReferralBonusEmail);

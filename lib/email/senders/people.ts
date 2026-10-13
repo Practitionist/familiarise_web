@@ -117,11 +117,6 @@ export const sendSupportTicketReceivedEmail =
     buildSupportTicketReceivedEmail,
   );
 
-export const stageSupportTicketReceivedEmail =
-  defineLifecycleStager<SupportTicketReceivedEmailArgs>(
-    buildSupportTicketReceivedEmail,
-  );
-
 export interface SupportTicketResponseEmailArgs {
   ticketId: string;
   ownerUserId: string;
@@ -271,9 +266,6 @@ function buildFeedbackUpdateEmail(args: FeedbackUpdateEmailArgs): {
   };
 }
 
-export const sendFeedbackUpdateEmail =
-  defineBudgetedEmailSender<FeedbackUpdateEmailArgs>(buildFeedbackUpdateEmail);
-
 export const stageFeedbackUpdateEmail =
   defineLifecycleStager<FeedbackUpdateEmailArgs>(buildFeedbackUpdateEmail);
 
@@ -344,11 +336,6 @@ function buildModerationReportOutcomeEmail(
   };
 }
 
-export const sendModerationReportOutcomeEmail =
-  defineBudgetedEmailSender<ModerationReportOutcomeEmailArgs>(
-    buildModerationReportOutcomeEmail,
-  );
-
 export const stageModerationReportOutcomeEmail =
   defineLifecycleStager<ModerationReportOutcomeEmailArgs>(
     buildModerationReportOutcomeEmail,
@@ -403,11 +390,6 @@ function buildAccountModerationEmail(args: AccountModerationEmailArgs): {
   };
 }
 
-export const sendAccountModerationEmail =
-  defineBudgetedEmailSender<AccountModerationEmailArgs>(
-    buildAccountModerationEmail,
-  );
-
 export const stageAccountModerationEmail =
   defineLifecycleStager<AccountModerationEmailArgs>(
     buildAccountModerationEmail,
@@ -450,9 +432,6 @@ export const sendAccountSuspendedEmail =
     buildAccountSuspendedEmail,
   );
 
-export const stageAccountSuspendedEmail =
-  defineLifecycleStager<AccountSuspendedEmailArgs>(buildAccountSuspendedEmail);
-
 export interface AccountBannedEmailArgs {
   userId: string;
   reason?: string | null;
@@ -484,9 +463,6 @@ function buildAccountBannedEmail(args: AccountBannedEmailArgs): {
 
 export const sendAccountBannedEmail =
   defineBudgetedEmailSender<AccountBannedEmailArgs>(buildAccountBannedEmail);
-
-export const stageAccountBannedEmail =
-  defineLifecycleStager<AccountBannedEmailArgs>(buildAccountBannedEmail);
 
 // ── Reviews ─────────────────────────────────────────────────────────────────
 

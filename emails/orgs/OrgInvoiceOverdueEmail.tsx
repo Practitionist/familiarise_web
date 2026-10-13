@@ -22,8 +22,18 @@ export interface OrgInvoiceOverdueEmailProps {
   unsubscribeUrl?: string | null;
 }
 
-// #1653 — ORG_INVOICE_OVERDUE; the reminder number and the booking
-// consequence mirror the dunning job's stages.
+export function orgInvoiceOverdueSubject(args: {
+  invoiceNumber: string;
+  daysLate: number;
+  reminderStage?: number;
+}): string {
+  if (args.reminderStage && args.reminderStage > 3) {
+    return `Sponsored bookings paused: Invoice ${args.invoiceNumber} overdue`;
+  }
+  const dayWord = args.daysLate === 1 ? "day" : "days";
+  return `Invoice ${args.invoiceNumber} is ${args.daysLate} ${dayWord} overdue`;
+}
+
 export const OrgInvoiceOverdueEmail = ({
   orgName,
   invoiceNumber,
@@ -34,28 +44,32 @@ export const OrgInvoiceOverdueEmail = ({
   payUrl,
   unsubscribeUrl,
 }: OrgInvoiceOverdueEmailProps) => {
-  const dayWord = daysLate === 1 ? "day" : "days";
+  const isSuspendedStage = Boolean(reminderStage && reminderStage > 3);
+  const subject = orgInvoiceOverdueSubject({
+    invoiceNumber,
+    daysLate,
+    reminderStage,
+  });
   return (
-    <EmailLayout
-      preview={`Invoice ${invoiceNumber} is ${daysLate} ${dayWord} overdue`}
-      unsubscribeUrl={unsubscribeUrl}
-      showSupport
-    >
-      <Text style={heading}>
-        Invoice {invoiceNumber} is {daysLate} {dayWord} overdue
-      </Text>
+    <EmailLayout preview={subject} unsubscribeUrl={unsubscribeUrl} showSupport>
+      <Text style={heading}>{subject}</Text>
       <Text style={paragraph}>
         Invoice <strong>{invoiceNumber}</strong> for <strong>{orgName}</strong>,
         totalling <strong>{amountText}</strong>, was due on {dueDateText} and is
         still unpaid.
       </Text>
-      {reminderStage > 0 ? (
+      {isSuspendedStage ? (
+        <Text style={paragraph}>
+          Sponsored bookings for <strong>{orgName}</strong> have been paused
+          until this overdue invoice is settled.
+        </Text>
+      ) : reminderStage > 0 ? (
         <Text style={paragraph}>This is reminder {reminderStage}.</Text>
       ) : null}
       <Text style={paragraph}>
-        While an invoice stays overdue, new sponsored bookings for the
-        organisation can be blocked. Paying it lifts that restriction on its
-        own.
+        {isSuspendedStage
+          ? "Paying the overdue invoice automatically restores sponsored bookings for your organisation."
+          : "While an invoice stays overdue, new sponsored bookings for the organisation can be blocked. Paying it lifts that restriction on its own."}
       </Text>
       <Section style={buttonContainer}>
         <Button style={button} href={payUrl}>

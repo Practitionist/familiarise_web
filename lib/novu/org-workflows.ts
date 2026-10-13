@@ -308,9 +308,13 @@ export const notifyOrgInvoiceOverdue =
   defineOrgRosterNotifier<OrgInvoiceOverdueInput>(
     W.ORG_INVOICE_OVERDUE,
     VISIBILITY_ROLES,
-    (p): Partial<OrgInvoiceOverduePayload> => ({
-      total: formatNotificationMoney(p.totalPaise, p.currency),
-    }),
+    (p): Partial<OrgInvoiceOverduePayload> => {
+      const formatted = formatNotificationMoney(p.totalPaise, p.currency);
+      return {
+        total: formatted,
+        amount: formatted,
+      };
+    },
   );
 
 export const notifyMemberOverageTimedOut =

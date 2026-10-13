@@ -11,7 +11,6 @@ import SecurityEventEmail, {
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
 import {
   defineFixedBudgetEmailSender,
-  defineLifecycleStager,
   greet,
   whenText,
   type RecipientEmailSpec,
@@ -58,6 +57,3 @@ export const sendSecurityNoticeEmail =
     EMAIL_BUDGET_MS.AUTH,
     buildSecurityEventSpec,
   );
-
-export const stageSecurityNoticeEmail =
-  defineLifecycleStager<SecurityEventEmailArgs>(buildSecurityEventSpec);

@@ -2,7 +2,7 @@
 
 > End-to-end architecture for outbound transactional/lifecycle email (`lib/email/`) and multi-tenant Novu in-app feed orchestration (`lib/novu/`), including transactional outbox staging, 60-second inline lease protection, concurrent post-response flushing, stateless RFC 8058 unsubscribes, subscriber security, and scheduled relays.
 
-**Last Updated**: 2026-10-11
+**Last Updated**: 2026-10-13
 
 ---
 
@@ -53,13 +53,14 @@ graph LR
 
 Every multi-channel user lifecycle event maintains full channel parity across `lib/email/` and `lib/novu/`:
 
-| Domain                 | Events                                                                                                | Email Path (`lib/email/`)                                                 | In-App Bell Path (`lib/novu/`)                                           |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| **Auth & Security**    | Signup welcome, verification OTP, password reset/changed, 2FA/passkey changes, SSO provider lifecycle | Direct via `deliver()` (`senders/security.ts`, `senders/sso.ts`)          | N/A (Auth-only / pre-session notices)                                    |
-| **Bookings & Trials**  | Booked, cancelled, rescheduled, partially scheduled, booking requests, trial scheduled, reminders     | `senders/booking.ts` (`stageAppointmentBookedEmail`, etc.)                | `notifyAppointment*`, `notifyTrial*`, `notifyBookingRequest*`            |
-| **Payments & Payouts** | Payment link, payment success/failed, refund processed/failed, consultant payout status, disputes     | `lib/payments/webhooks/staged-emails.ts`, `senders/money.ts`              | `notifyPayment*`, `notifyRefund*`, `notifyPayout*`, `notifyDispute*`     |
-| **Organizations**      | Invitations, welcome, role changed/removed, billing receipts, overdue invoices, wallet low, overages  | `senders/onboarding.ts`, `senders/money.ts` (`ORG_BILLING_RECEIPT`, etc.) | `lib/novu/org-workflows.ts` (all 17 helpers stamp `NotificationScope`)   |
-| **Support & Trust**    | Ticket received/replied/updated, review received, moderation outcomes, account suspension/ban         | `senders/people.ts` (`SUPPORT_TICKET_*`, `ACCOUNT_SUSPENDED`/`BANNED`)    | `notifySupportTicket*`, `notifyReview*`, `notifyAccountSuspended/Banned` |
+| Domain                 | Events                                                                                               | Email Path (`lib/email/`)                                                 | In-App Bell Path (`lib/novu/`)                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **Auth & Security**    | Signup welcome, verification OTP, password reset/changed, 2FA/passkey/backup-code changes            | Direct via `deliver()` (`senders/security.ts`, `account-lifecycle.ts`)    | Novu (`account` family — `ACCOUNT_SECURITY_NOTICE`)                      |
+| **Enterprise SSO**     | SSO provider submitted, approved, rejected, revoked, or deleted                                      | `senders/sso.ts` (staged `SsoProviderEmail`)                              | `notifyOrgSso*` (`org_security` / `org-membership` family)               |
+| **Bookings & Trials**  | Booked, cancelled, rescheduled, partially scheduled, booking requests, trial scheduled, reminders    | `senders/booking.ts` (`stageAppointmentBookedEmail`, etc.)                | `notifyAppointment*`, `notifyTrial*`, `notifyBookingRequest*`            |
+| **Payments & Payouts** | Payment link, payment success/failed, refund processed/failed, consultant payout status, disputes    | `lib/payments/webhooks/staged-emails.ts`, `senders/money.ts`              | `notifyPayment*`, `notifyRefund*`, `notifyPayout*`, `notifyDispute*`     |
+| **Organizations**      | Created, invitations, welcome, role changed/removed, expert removed, billing, dunning, wallet, seats | `senders/onboarding.ts`, `senders/money.ts` (`ORG_BILLING_RECEIPT`, etc.) | `lib/novu/org-workflows.ts` (all 24 helpers stamp `NotificationScope`)   |
+| **Support & Trust**    | Ticket received/replied/updated, review received, moderation outcomes, account suspension/ban        | `senders/people.ts` (`SUPPORT_TICKET_*`, `ACCOUNT_SUSPENDED`/`BANNED`)    | `notifySupportTicket*`, `notifyReview*`, `notifyAccountSuspended/Banned` |
 
 ---
 
@@ -67,8 +68,9 @@ Every multi-channel user lifecycle event maintains full channel parity across `l
 
 To guarantee atomicity with domain writes while strictly respecting `PG_POOL_MAX=1` connection budgets, multi-channel producers execute in three phases:
 
-1. **Phase 0 — Pre-Render Outside `$transaction`**:
-   - Callers invoke `prepareRecipientEmails` / `prepareSpecEmails` (`lib/email/send-to-recipients.ts`) before entering `prisma.$transaction`. React Email rendering (`render(element)` + `toPlainText(html)` in `lib/email/render.ts`) runs strictly in memory so database locks are never held during template rendering.
+1. **Phase 0 — Pre-Render Outside `Serializable` `$transaction`**:
+   - High-contention `Serializable` money and billing transactions (`handlePaymentSuccess`, `handlePaymentFailure`, `invoice-rollup`) pre-render React Email payloads (`render(element)` + `toPlainText(html)` in `lib/email/render.ts`) via `prepare*` helpers (`prepareRecipientEmails` / `prepareSpecEmails` in `lib/email/send-to-recipients.ts`) before opening `prisma.$transaction`, then call `stagePreparedEmails(tx, ...)` inside `tx` so database locks are never held during CPU-bound rendering.
+   - Standard low-contention interactive routes stage directly inside `tx` via `stage*Email(tx, ...)` + `flushNotificationsAfter`, while bulk loops (`assignments`, `session-outcome-sweep`) stage and render after commit so per-item transactions stay short.
 2. **Phase 1 — Atomic Outbox Staging Inside `$transaction(tx)`**:
    - **Emails**: `stage()` / `stagePreparedEmails(tx, prepared)` (`lib/email/deliver.ts`) evaluates `EMAIL_DELIVERY_MODE` and `EmailSuppression` on `tx`, writes `FailedEmail` with `status: "PENDING"` and `nextRetryAt: new Date(Date.now() + 60_000)`, and generates a row-scoped `Idempotency-Key: <EMAIL_TYPE>/failed-email/<row.id>`.
    - **In-App Bells**: `stageBell(tx, args)` (`lib/novu/stage-bell.ts`) queries `tx.user.findMany` via `resolveRecipientBellPolicy`, filters out recipients who opted out (`EMAIL_ONLY`, `NEITHER`, `allNotifications: false`, `inAppEnabled: false`, or muted category column), computes quiet-hours `notBefore`, and upserts `NotificationOutbox` with `status: "PENDING"` and `nextRetryAt: notBefore ?? NOW() + 60s` (`INLINE_ATTEMPT_LEASE_MS`). If every recipient opted out, `stageBell` returns `null` without writing an outbox row.

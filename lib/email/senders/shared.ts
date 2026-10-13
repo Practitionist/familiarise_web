@@ -117,7 +117,6 @@ export async function stageSpecGuarded(
   tx?: StagingTx,
 ): Promise<StagedRecipientEmail[]> {
   const db = tx ?? prisma;
-  if (tx && !db.user) return [];
   const recipients = await loadEmailRecipients(userIds, spec.category, db);
   return stageToRecipients({
     tx: db,
@@ -161,24 +160,11 @@ export function defineFixedBudgetEmailSender<TArgs>(
   };
 }
 
-function looksLikePrismaClient(val: unknown): val is StagingTx {
-  if (!val || typeof val !== "object") return false;
-  if (
-    "failedEmail" in val ||
-    "notificationOutbox" in val ||
-    "$transaction" in val
-  ) {
-    return true;
-  }
-  return Object.values(val).some(
-    (v) =>
-      typeof v === "object" &&
-      v !== null &&
-      ("findUnique" in v ||
-        "findMany" in v ||
-        "findFirst" in v ||
-        "updateMany" in v ||
-        "create" in v),
+function isPrismaLike(val: unknown): val is StagingTx {
+  return (
+    typeof val === "object" &&
+    val !== null &&
+    ("$transaction" in val || "failedEmail" in val || "user" in val)
   );
 }
 
@@ -197,11 +183,14 @@ export function defineLifecycleStager<TArgs extends object>(
     first: StagingTx | TArgs,
     second?: TArgs | StagingTx,
   ): Promise<StagedRecipientEmail[]> {
-    const isTxFirst = looksLikePrismaClient(first);
+    const isTxFirst =
+      second !== undefined ? !isPrismaLike(second) : isPrismaLike(first);
     const tx = isTxFirst
       ? (first as StagingTx)
-      : (second as StagingTx | undefined);
-    const args = isTxFirst ? (second as TArgs) : (first as TArgs);
+      : isPrismaLike(second)
+        ? second
+        : undefined;
+    const args = (isTxFirst ? second : first) as TArgs;
     const { userIds, spec } = build(args);
     return stageSpecGuarded(spec, userIds, tx);
   }
@@ -224,11 +213,14 @@ export function defineStagedEmailSender<TArgs extends object>(
     first: TArgs | StagingTx,
     second?: StagingTx | TArgs,
   ): Promise<StagedOnboardingEmail> {
-    const isTxFirst = looksLikePrismaClient(first);
+    const isTxFirst =
+      second !== undefined ? !isPrismaLike(second) : isPrismaLike(first);
     const tx = isTxFirst
       ? (first as StagingTx)
-      : (second as StagingTx | undefined);
-    const args = isTxFirst ? (second as TArgs) : (first as TArgs);
+      : isPrismaLike(second)
+        ? second
+        : undefined;
+    const args = (isTxFirst ? second : first) as TArgs;
     const { userIds, spec } = build(args);
     const run = async (): Promise<StagedOnboardingEmail> => ({
       emailType: spec.emailType,

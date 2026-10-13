@@ -121,6 +121,12 @@ function wireTxShim() {
       programAssignment: mockedPrisma.programAssignment,
       billingSubscription: mockedPrisma.billingSubscription,
       orgAuditLog: mockedPrisma.orgAuditLog,
+      notificationOutbox: {
+        upsert: jest.fn().mockResolvedValue({ id: "outbox-1" }),
+      },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
+      failedEmail: { create: jest.fn().mockResolvedValue({ id: "fe-1" }) },
+      emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
     };
     return (fn as (tx: unknown) => unknown)(tx);
   });
@@ -207,9 +213,12 @@ describe("auto-enroll gates", () => {
   });
 
   it("rate-limits before touching the database", async () => {
-    const tooMany = Response.json({ error: "Too many requests." }, {
-      status: 429,
-    });
+    const tooMany = Response.json(
+      { error: "Too many requests." },
+      {
+        status: 429,
+      },
+    );
     mockedApplyRateLimit.mockResolvedValueOnce(tooMany);
 
     const res = await autoEnrollPOST(
@@ -464,9 +473,7 @@ describe("auto-enroll enrollment loop", () => {
     let calls = 0;
     const nowSpy = jest.spyOn(Date, "now").mockImplementation(() => {
       calls++;
-      return calls <= 3
-        ? base
-        : base + AUTO_ENROLL_BATCH_DEADLINE_MS + 60_000;
+      return calls <= 3 ? base : base + AUTO_ENROLL_BATCH_DEADLINE_MS + 60_000;
     });
     try {
       const res = await autoEnrollPOST(
@@ -477,9 +484,9 @@ describe("auto-enroll enrollment loop", () => {
       const body = await res.json();
       expect(body.truncated).toBe(true);
       expect(body.enrolled).toBe(1);
-      expect(body.results.map((r: { membershipId: string }) => r.membershipId)).toEqual([
-        "m-1",
-      ]);
+      expect(
+        body.results.map((r: { membershipId: string }) => r.membershipId),
+      ).toEqual(["m-1"]);
       expect(mockedPrisma.orgAuditLog.create).toHaveBeenCalledTimes(1);
     } finally {
       nowSpy.mockRestore();

@@ -839,14 +839,14 @@ async function stageUnallocatedRefundBell(
     id: string;
     requestedBy: { user: { id: string; name: string | null } } | null;
     subscriptionPlan: {
-      title: string;
+      title: true extends boolean ? string : string;
       consultantProfile: { user: { id: string } };
     };
     appointment: { organizationId: string | null } | null;
   },
 ) {
   const consulteeId = row.requestedBy?.user.id;
-  if (!consulteeId) return { bell: null, emailRows: [] };
+  if (!consulteeId) return { bell: null, emailArgs: null };
   const dashboardUrl = notificationHref(
     row.appointment?.organizationId,
     "appointments",
@@ -861,17 +861,19 @@ async function stageUnallocatedRefundBell(
     },
     dedupeKey: `sub-unalloc:${row.id}`,
   });
-  const emailRows = await stageAppointmentCancelledEmail(tx, {
-    appointmentId: row.id,
-    userIds: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
-    cancelledBy: "Familiarise",
-    reason:
-      "Subscription was not scheduled within 48 hours of payment and is being refunded in full.",
-    refundText: "A full refund is being processed.",
-    refundUserIds: [consulteeId],
-    dashboardUrl,
-  });
-  return { bell, emailRows };
+  return {
+    bell,
+    emailArgs: {
+      appointmentId: row.id,
+      userIds: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
+      cancelledBy: "Familiarise",
+      reason:
+        "Subscription was not scheduled within 48 hours of payment and is being refunded in full.",
+      refundText: "A full refund is being processed.",
+      refundUserIds: [consulteeId],
+      dashboardUrl,
+    },
+  };
 }
 
 const unallocatedRefundKey = (paymentId: string) => `sub-unalloc:${paymentId}`;
@@ -987,12 +989,23 @@ async function expireOneUnallocated(
       // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
       return stageUnallocatedRefundBell(tx, subscription);
     });
+    const emailRows = staged?.emailArgs
+      ? await stageAppointmentCancelledEmail(prisma, staged.emailArgs).catch(
+          (err) => {
+            console.error(
+              "[expire-stale-requests] unallocated cancellation email stage failed:",
+              err,
+            );
+            return [];
+          },
+        )
+      : [];
     await flushNotificationsAfter(
       {
         bells: [staged?.bell],
         emails: [
           {
-            rows: staged?.emailRows ?? [],
+            rows: emailRows,
             emailType: "APPOINTMENT_CANCELLED",
           },
         ],

@@ -11,7 +11,7 @@ import { OccurrenceCompletionStatus, type Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   stageSessionOutcomeEmails,
-  type StagedRecipientEmail,
+  type SessionOutcomeEmailArgs,
 } from "@/lib/email/senders/booking";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import {
@@ -205,66 +205,94 @@ async function writeSlotOutcomeTransaction(
   verdict: SessionOutcomeVerdict,
   now: Date,
 ): Promise<boolean> {
-  const txResult = await prisma.$transaction(async (tx) => {
-    const count = await transitionOccurrenceCompletion(tx, {
-      // voidedAt: null — a re-run never re-stamps a void.
-      where: {
-        id: slot.id,
-        isTentative: false,
-        deletedAt: null,
-        voidedAt: null,
-      },
-      to,
-      fromIn: [OccurrenceCompletionStatus.SCHEDULED],
-      data: {
-        outcome: verdict.outcome,
-        outcomeAt: now,
-        deliveredMinutes: verdict.deliveredMinutes,
-        lostMinutes: verdict.lostMinutes,
-        ...(to === "VOIDED" && { voidedAt: now }),
-        ...(to === "COMPLETED" && { completedAt: now }),
-      },
-      reason: `session-outcome:${verdict.outcome}`,
-      organizationId: slot.appointment.organizationId,
-      allowZero: true,
-    });
-    // A learner seen in a completed session has attended: their seat moves CONFIRMED -> ATTENDED.
-    const presentUserIds = [...new Set(presences.map((p) => p.userId))];
-    if (count > 0 && to === "COMPLETED" && presentUserIds.length > 0) {
-      await transitionParticipant(
-        tx,
-        {
-          appointmentId: slot.appointmentId,
-          role: "CONSULTEE",
-          userId: { in: presentUserIds },
+  const txResult = await prisma.$transaction(
+    async (tx) => {
+      const count = await transitionOccurrenceCompletion(tx, {
+        // voidedAt: null — a re-run never re-stamps a void.
+        where: {
+          id: slot.id,
+          isTentative: false,
+          deletedAt: null,
+          voidedAt: null,
         },
-        "ATTENDED",
-        { fromIn: ["CONFIRMED"] },
-      );
-    }
-    const noShow =
-      count > 0 && verdict.outcome === "LEARNER_ABSENT"
-        ? await stageNoShowBells(tx, slot, "one-to-one")
-        : null;
-    // Owner decision — a group seat absent from a held session hears only of its recording.
-    const isGroup = !!(slot.appointment.classId ?? slot.appointment.webinarId);
-    const missedRecording =
-      count > 0 && verdict.outcome === "HELD" && isGroup
-        ? await stageNoShowBells(tx, { ...slot, presences }, "group")
-        : null;
-    // A void is a class miss: bells, and the exit right re-checked in this tx.
-    const voided =
-      count > 0 && to === "VOIDED" && slot.appointment.classId
-        ? await onClassSessionVoided(tx, {
+        to,
+        fromIn: [OccurrenceCompletionStatus.SCHEDULED],
+        data: {
+          outcome: verdict.outcome,
+          outcomeAt: now,
+          deliveredMinutes: verdict.deliveredMinutes,
+          lostMinutes: verdict.lostMinutes,
+          ...(to === "VOIDED" && { voidedAt: now }),
+          ...(to === "COMPLETED" && { completedAt: now }),
+        },
+        reason: `session-outcome:${verdict.outcome}`,
+        organizationId: slot.appointment.organizationId,
+        allowZero: true,
+      });
+      // A learner seen in a completed session has attended: their seat moves CONFIRMED -> ATTENDED.
+      const presentUserIds = [...new Set(presences.map((p) => p.userId))];
+      if (count > 0 && to === "COMPLETED" && presentUserIds.length > 0) {
+        await transitionParticipant(
+          tx,
+          {
             appointmentId: slot.appointmentId,
-            occurrenceId: slot.id,
-            startsAt: slot.startsAt,
-            voidedAt: now,
-            hostAttributed: verdict.hostAttributed,
-          })
-        : null;
-    return { applied: count > 0, noShow, missedRecording, voided };
-  });
+            role: "CONSULTEE",
+            userId: { in: presentUserIds },
+          },
+          "ATTENDED",
+          { fromIn: ["CONFIRMED"] },
+        );
+      }
+      const noShow =
+        count > 0 && verdict.outcome === "LEARNER_ABSENT"
+          ? await stageNoShowBells(tx, slot, "one-to-one")
+          : null;
+      // Owner decision — a group seat absent from a held session hears only of its recording.
+      const isGroup = !!(
+        slot.appointment.classId ?? slot.appointment.webinarId
+      );
+      const missedRecording =
+        count > 0 && verdict.outcome === "HELD" && isGroup
+          ? await stageNoShowBells(tx, { ...slot, presences }, "group")
+          : null;
+      // A void is a class miss: bells, and the exit right re-checked in this tx.
+      const voided =
+        count > 0 && to === "VOIDED" && slot.appointment.classId
+          ? await onClassSessionVoided(tx, {
+              appointmentId: slot.appointmentId,
+              occurrenceId: slot.id,
+              startsAt: slot.startsAt,
+              voidedAt: now,
+              hostAttributed: verdict.hostAttributed,
+            })
+          : null;
+      return { applied: count > 0, noShow, missedRecording, voided };
+    },
+    { timeout: 15_000 },
+  );
+  const noShowEmails = txResult.noShow?.emailArgs
+    ? await stageSessionOutcomeEmails(prisma, txResult.noShow.emailArgs).catch(
+        (err) => {
+          console.error(
+            "[session-outcome-sweep] Failed to stage NO_SHOW emails:",
+            err,
+          );
+          return [];
+        },
+      )
+    : [];
+  const missedRecordingEmails = txResult.missedRecording?.emailArgs
+    ? await stageSessionOutcomeEmails(
+        prisma,
+        txResult.missedRecording.emailArgs,
+      ).catch((err) => {
+        console.error(
+          "[session-outcome-sweep] Failed to stage MISSED_RECORDING emails:",
+          err,
+        );
+        return [];
+      })
+    : [];
   await flushNotificationsAfter(
     {
       bells: [
@@ -274,11 +302,11 @@ async function writeSlotOutcomeTransaction(
       ],
       emails: [
         {
-          rows: txResult.noShow?.emails ?? [],
+          rows: noShowEmails,
           emailType: "CLASS_SESSION_NO_SHOW",
         },
         {
-          rows: txResult.missedRecording?.emails ?? [],
+          rows: missedRecordingEmails,
           emailType: "CLASS_SESSION_MISSED_RECORDING",
         },
         {
@@ -430,7 +458,10 @@ async function stageNoShowBells(
   tx: Tx,
   slot: OutcomeSlot,
   shape: "one-to-one" | "group",
-): Promise<{ bells: StagedTrigger[]; emails: StagedRecipientEmail[] }> {
+): Promise<{
+  bells: StagedTrigger[];
+  emailArgs: SessionOutcomeEmailArgs | null;
+}> {
   const row = await tx.appointment.findUnique({
     where: { id: slot.appointmentId },
     select: {
@@ -449,7 +480,7 @@ async function stageNoShowBells(
     },
   });
   const plan = resolveNoShowPlan(row, shape);
-  if (!row || !plan) return { bells: [], emails: [] };
+  if (!row || !plan) return { bells: [], emailArgs: null };
   const recording = plan.recordingEnabled
     ? await tx.recording.findFirst({
         where: {
@@ -459,7 +490,7 @@ async function stageNoShowBells(
         select: { id: true },
       })
     : null;
-  if (shape === "group" && !recording) return { bells: [], emails: [] };
+  if (shape === "group" && !recording) return { bells: [], emailArgs: null };
   const present = new Set(slot.presences.map((p) => p.userId));
   const absent =
     shape === "group"
@@ -482,19 +513,22 @@ async function stageNoShowBells(
     if (bell) bells.push(bell);
   }
   const absentUserIds = absent.map((seat) => seat.userId);
-  const emails =
+  const emailArgs =
     absentUserIds.length > 0
-      ? await stageSessionOutcomeEmails(tx, {
+      ? {
           appointmentId: slot.appointmentId,
           userIds: absentUserIds,
-          outcome: shape === "group" ? "MISSED_RECORDING" : "NO_SHOW",
+          outcome:
+            shape === "group"
+              ? ("MISSED_RECORDING" as const)
+              : ("NO_SHOW" as const),
           planTitle: plan.title,
           startsAt: slot.startsAt,
           supportUrl: `${getAppUrl()}/support`,
           dashboardUrl: `${getAppUrl()}/dashboard`,
-        }).catch(() => [])
-      : [];
-  return { bells, emails };
+        }
+      : null;
+  return { bells, emailArgs };
 }
 
 /** Owner decision — a needs-human item older than this raises a Sentry warning. */

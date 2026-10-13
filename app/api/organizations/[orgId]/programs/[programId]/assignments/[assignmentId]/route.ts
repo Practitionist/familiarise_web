@@ -126,7 +126,7 @@ async function stageSeatRevokedNotices(
       })
     : null;
   const programName = prog?.name ?? "Program";
-  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${args.orgId}/programs`;
+  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${args.orgId}`;
   const bells =
     (await notifyOrgSeatRevoked(
       targetMembership.userId,
@@ -136,7 +136,7 @@ async function stageSeatRevokedNotices(
         programName,
         dashboardUrl,
       },
-      tx.notificationOutbox ? { tx } : undefined,
+      { tx },
     )) ?? [];
   const emails = await stageOrgContractAndSeatEmail(tx, {
     recipientUserIds: [targetMembership.userId],

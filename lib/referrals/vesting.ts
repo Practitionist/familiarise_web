@@ -611,12 +611,18 @@ export async function settleQualifyingReferral(
               bonus.referrerUserId,
               {
                 refereeName: bonus.refereeName,
-                bonusAmount: bonus.rewardPaise,
+                bonusAmountPaise: bonus.rewardPaise,
                 currency: "INR",
                 dashboardUrl,
               },
               { deferAttempt: true },
-            ).catch(() => null),
+            ).catch((err) => {
+              console.error(
+                "[vestReferral] Failed to stage referral bonus bell:",
+                err,
+              );
+              return null;
+            }),
             stageReferralBonusEmail(prisma, {
               userId: bonus.referrerUserId,
               referralId,
@@ -625,7 +631,13 @@ export async function settleQualifyingReferral(
               amountPaise: bonus.rewardPaise,
               currency: "INR",
               dashboardUrl,
-            }).catch(() => []),
+            }).catch((err) => {
+              console.error(
+                "[vestReferral] Failed to stage referral bonus email:",
+                err,
+              );
+              return [];
+            }),
           ]);
           await flushNotificationsAfter(
             {

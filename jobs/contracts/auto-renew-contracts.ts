@@ -94,7 +94,7 @@ async function stageAutoRenewedNotifications(
         effectiveDate: oldTo.toISOString(),
         dashboardUrl,
       },
-      tx.notificationOutbox ? { tx } : undefined,
+      { tx },
     )) ?? [];
   const stagedEmails = await stageOrgContractAndSeatEmail(tx, {
     recipientUserIds: operatorRows.map((r) => r.userId),

@@ -12,12 +12,14 @@ export type TrialAndSubscriptionEmailKind =
   | "TRIAL_REQUESTED"
   | "TRIAL_COMPLETED"
   | "TRIAL_CANCELLED"
+  | "TRIAL_REJECTED"
   | "SUBSCRIPTION_STARTED"
   | "SUBSCRIPTION_RENEWED";
 
 export interface TrialAndSubscriptionEmailProps {
   kind: TrialAndSubscriptionEmailKind;
   recipientName?: string;
+  recipientRole?: "consultant" | "consultee";
   planTitle: string;
   consultantName?: string;
   consulteeName?: string;
@@ -42,6 +44,8 @@ export function trialAndSubscriptionSubject(
       return `Trial completed: ${args.planTitle}`;
     case "TRIAL_CANCELLED":
       return `Trial cancelled: ${args.planTitle}`;
+    case "TRIAL_REJECTED":
+      return `Trial request declined: ${args.planTitle}`;
     case "SUBSCRIPTION_STARTED":
       return `Your subscription to ${args.planTitle} is active`;
     case "SUBSCRIPTION_RENEWED":
@@ -64,6 +68,8 @@ function renderNextCycleSummary(
 
 function renderTrialAndSubscriptionBody(args: {
   kind: TrialAndSubscriptionEmailKind;
+  recipientName?: string;
+  recipientRole?: "consultant" | "consultee";
   planTitle: string;
   consultantName?: string;
   consulteeName?: string;
@@ -74,6 +80,8 @@ function renderTrialAndSubscriptionBody(args: {
 }): React.ReactNode {
   const {
     kind,
+    recipientName,
+    recipientRole,
     planTitle,
     consultantName,
     consulteeName,
@@ -82,6 +90,16 @@ function renderTrialAndSubscriptionBody(args: {
     nextBatch,
     remainingSessions,
   } = args;
+
+  const isConsultantRecipient =
+    recipientRole === "consultant" ||
+    (!recipientRole &&
+      Boolean(
+        recipientName &&
+        consultantName &&
+        recipientName === consultantName &&
+        consulteeName,
+      ));
 
   switch (kind) {
     case "TRIAL_REQUESTED":
@@ -98,20 +116,26 @@ function renderTrialAndSubscriptionBody(args: {
           . Open your dashboard to accept or propose another time.
         </Text>
       );
-    case "TRIAL_COMPLETED":
+    case "TRIAL_COMPLETED": {
+      const otherParty = isConsultantRecipient
+        ? consulteeName
+        : (consultantName ?? consulteeName);
       return (
         <Text style={paragraph}>
           Your trial session for <strong>{planTitle}</strong>
-          {consultantName ? (
+          {otherParty ? (
             <>
               {" "}
-              with <strong>{consultantName}</strong>
+              with <strong>{otherParty}</strong>
             </>
           ) : null}{" "}
-          has concluded. Open your dashboard to review notes or continue with a
-          full plan.
+          has concluded.{" "}
+          {isConsultantRecipient
+            ? "Open your dashboard to review session notes or follow up with your client."
+            : "Open your dashboard to review notes or continue with a full plan."}
         </Text>
       );
+    }
     case "TRIAL_CANCELLED":
       return (
         <Text style={paragraph}>
@@ -123,6 +147,12 @@ function renderTrialAndSubscriptionBody(args: {
             </>
           ) : null}{" "}
           has been cancelled.
+        </Text>
+      );
+    case "TRIAL_REJECTED":
+      return (
+        <Text style={paragraph}>
+          {`Your trial session request for ${planTitle}${consultantName ? ` with ${consultantName}` : ""} could not be accommodated at this time.`}
         </Text>
       );
     case "SUBSCRIPTION_STARTED":
@@ -162,6 +192,7 @@ function renderTrialAndSubscriptionBody(args: {
 export function TrialAndSubscriptionEmail({
   kind,
   recipientName = "there",
+  recipientRole,
   planTitle,
   consultantName,
   consulteeName,
@@ -189,6 +220,8 @@ export function TrialAndSubscriptionEmail({
 
       {renderTrialAndSubscriptionBody({
         kind,
+        recipientName,
+        recipientRole,
         planTitle,
         consultantName,
         consulteeName,

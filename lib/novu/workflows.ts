@@ -649,6 +649,7 @@ export type OrgInvoiceOverduePayload = OrgNotificationScope & {
   invoiceNumber: string;
   orgName: string;
   total: string;
+  amount?: string;
   totalPaise: number;
   currency: string;
   daysLate: number;
@@ -656,7 +657,10 @@ export type OrgInvoiceOverduePayload = OrgNotificationScope & {
   payUrl: string;
 };
 
-export type OrgInvoiceOverdueInput = Omit<OrgInvoiceOverduePayload, "total">;
+export type OrgInvoiceOverdueInput = Omit<
+  OrgInvoiceOverduePayload,
+  "total" | "amount"
+>;
 
 export type OrgMemberOverageTimedOutPayload = OrgNotificationScope & {
   orgName: string;
@@ -850,14 +854,14 @@ export type ComplianceAlertPayload = OrgNotificationScope & {
 export type ReferralBonusEarnedPayload = {
   refereeName: string;
   bonusAmount: string;
-  bonusAmountPaise?: number;
+  bonusAmountPaise: number;
   currency?: string;
   dashboardUrl: string;
 };
 
 export type ReferralBonusEarnedInput = {
   refereeName: string;
-  bonusAmount: number | string;
+  bonusAmountPaise: number;
   currency?: string;
   dashboardUrl: string;
 };
@@ -865,14 +869,14 @@ export type ReferralBonusEarnedInput = {
 export type RefereeWelcomeBonusPayload = {
   referrerName: string;
   bonusAmount: string;
-  bonusAmountPaise?: number;
+  bonusAmountPaise: number;
   currency?: string;
   dashboardUrl: string;
 };
 
 export type RefereeWelcomeBonusInput = {
   referrerName: string;
-  bonusAmount: number | string;
+  bonusAmountPaise: number;
   currency?: string;
   dashboardUrl: string;
 };

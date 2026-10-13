@@ -3578,40 +3578,53 @@ async function dispatchProgramBell(
         assigneeName,
         dashboardUrl,
       };
-      if (bell.kind === "EXHAUSTED") {
-        await Promise.all([
-          notifyOrgProgramExhausted(orgId, ctx.membership.userId, common),
-          sendOrgOperationalEmail({
-            recipientUserIds,
-            organizationId: orgId,
-            orgName,
-            kind: "PROGRAM_EXHAUSTED",
-            programName,
-            assigneeName,
-            actionUrl,
-          }),
-        ]);
-      } else {
-        await Promise.all([
-          notifyOrgProgramCapNear(orgId, ctx.membership.userId, {
-            ...common,
-            engagementsUsed: bell.engagementsUsed,
-            cap: bell.cap,
-            usedPct: bell.usedPct,
-          }),
-          sendOrgOperationalEmail({
-            recipientUserIds,
-            organizationId: orgId,
-            orgName,
-            kind: "PROGRAM_CAP_NEAR",
-            programName,
-            assigneeName,
-            engagementsUsed: bell.engagementsUsed,
-            cap: bell.cap,
-            usedPct: bell.usedPct,
-            actionUrl,
-          }),
-        ]);
+      const settled =
+        bell.kind === "EXHAUSTED"
+          ? await Promise.allSettled([
+              notifyOrgProgramExhausted(orgId, ctx.membership.userId, common),
+              sendOrgOperationalEmail({
+                recipientUserIds,
+                organizationId: orgId,
+                orgName,
+                kind: "PROGRAM_EXHAUSTED",
+                programName,
+                assigneeName,
+                actionUrl,
+              }),
+            ])
+          : await Promise.allSettled([
+              notifyOrgProgramCapNear(orgId, ctx.membership.userId, {
+                ...common,
+                engagementsUsed: bell.engagementsUsed,
+                cap: bell.cap,
+                usedPct: bell.usedPct,
+              }),
+              sendOrgOperationalEmail({
+                recipientUserIds,
+                organizationId: orgId,
+                orgName,
+                kind: "PROGRAM_CAP_NEAR",
+                programName,
+                assigneeName,
+                engagementsUsed: bell.engagementsUsed,
+                cap: bell.cap,
+                usedPct: bell.usedPct,
+                actionUrl,
+              }),
+            ]);
+      for (const outcome of settled) {
+        if (outcome.status === "rejected") {
+          console.error(
+            bell.kind === "EXHAUSTED"
+              ? "[notifyOrgProgramExhausted] failed:"
+              : "[notifyOrgProgramCapNear] failed:",
+            outcome.reason,
+          );
+          reportSentryError(outcome.reason, {
+            subsystem: "payments",
+            level: "warning",
+          });
+        }
       }
     } catch (notifyErr) {
       console.error(

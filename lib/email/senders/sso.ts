@@ -13,7 +13,6 @@ import { EMAIL_BUDGET_MS, SENDERS } from "../config";
 import type { SendToRecipientsResult } from "../send-to-recipients";
 import {
   absolute,
-  defineBudgetedEmailSender,
   defineLifecycleStager,
   greet,
   sendSpecGuarded,
@@ -68,11 +67,6 @@ function buildSsoProviderEmailSpec(args: SsoProviderLifecycleEmailArgs): {
     },
   };
 }
-
-export const sendSsoProviderEmail =
-  defineBudgetedEmailSender<SsoProviderLifecycleEmailArgs>(
-    buildSsoProviderEmailSpec,
-  );
 
 export const stageSsoProviderEmail =
   defineLifecycleStager<SsoProviderLifecycleEmailArgs>(

@@ -104,11 +104,6 @@ export const stageVerificationDecidedEmail =
     buildVerificationDecidedSpec,
   );
 
-export const sendVerificationDecidedEmail =
-  defineBudgetedEmailSender<VerificationDecidedEmailArgs>(
-    buildVerificationDecidedSpec,
-  );
-
 // ── Membership role change / removal / operator invite acceptance ───────────
 
 export interface OrgMembershipChangedEmailArgs {
@@ -165,11 +160,6 @@ export const stageOrgMembershipChangedEmail =
     buildOrgMembershipChangedSpec,
   );
 
-export const sendOrgMembershipChangedEmail =
-  defineBudgetedEmailSender<OrgMembershipChangedEmailArgs>(
-    buildOrgMembershipChangedSpec,
-  );
-
 export interface OrgInviteAcceptedOperatorEmailArgs {
   recipientUserIds: string[];
   membershipId: string;
@@ -219,11 +209,6 @@ export const stageOrgInviteAcceptedOperatorEmail =
     buildOrgInviteAcceptedOperatorSpec,
   );
 
-export const sendOrgInviteAcceptedOperatorEmail =
-  defineBudgetedEmailSender<OrgInviteAcceptedOperatorEmailArgs>(
-    buildOrgInviteAcceptedOperatorSpec,
-  );
-
 // ── Org created ─────────────────────────────────────────────────────────────
 
 export interface OrgCreatedEmailArgs {
@@ -261,9 +246,6 @@ export const stageOrgCreatedEmail =
     EMAIL_BUDGET_MS.REQUEST,
     buildOrgCreatedSpec,
   );
-
-export const sendOrgCreatedEmail =
-  defineBudgetedEmailSender<OrgCreatedEmailArgs>(buildOrgCreatedSpec);
 
 // ── Org welcome (acceptee) ──────────────────────────────────────────────────
 
@@ -304,9 +286,6 @@ export const stageOrgWelcomeEmail =
     EMAIL_BUDGET_MS.REQUEST,
     buildOrgWelcomeSpec,
   );
-
-export const sendOrgWelcomeEmail =
-  defineBudgetedEmailSender<OrgWelcomeEmailArgs>(buildOrgWelcomeSpec);
 
 // ── Org contract & seat lifecycle + compliance deadline alerts ──────────────
 
@@ -361,11 +340,6 @@ export const stageOrgContractAndSeatEmail =
     buildOrgContractAndSeatSpec,
   );
 
-export const sendOrgContractAndSeatEmail =
-  defineBudgetedEmailSender<OrgContractAndSeatEmailArgs>(
-    buildOrgContractAndSeatSpec,
-  );
-
 export interface ComplianceAlertEmailArgs {
   recipientUserIds: string[];
   alertId: string;
@@ -408,9 +382,6 @@ function buildComplianceAlertSpec(args: ComplianceAlertEmailArgs): {
     },
   };
 }
-
-export const stageComplianceAlertEmail =
-  defineLifecycleStager<ComplianceAlertEmailArgs>(buildComplianceAlertSpec);
 
 export const sendComplianceAlertEmail =
   defineBudgetedEmailSender<ComplianceAlertEmailArgs>(buildComplianceAlertSpec);

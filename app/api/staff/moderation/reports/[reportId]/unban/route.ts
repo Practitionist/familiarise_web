@@ -70,12 +70,19 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     // Clearing the columns and recording who cleared them commit together, so
     // a reinstated account can never be missing its audit row.
-    const { action, stagedBells, stagedEmails } = await prisma.$transaction(
+    const { action, stagedBells, dashboardUrl } = await prisma.$transaction(
       async (tx) => {
-        await tx.user.updateMany({
+        const lifted = await tx.user.updateMany({
           where: { id: report.targetUserId, banned: true },
           data: { banned: false, banReason: null, banExpires: null },
         });
+        if (lifted?.count === 0) {
+          return {
+            action: null,
+            stagedBells: [],
+            dashboardUrl: null,
+          };
+        }
         const createdAction = await tx.moderationAction.create({
           data: {
             reportId: report.id,
@@ -87,28 +94,42 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             takenBy: { select: { id: true, name: true, email: true } },
           },
         });
-        const dashboardUrl = goHref("auto", "home");
+        const resolvedUrl = goHref("auto", "home");
         const bellResults = await notifyAccountSecurityNotice(
           report.targetUserId,
           {
             kind: "ACCOUNT_REINSTATED",
-            dashboardUrl,
+            dashboardUrl: resolvedUrl,
           },
           `moderation-unban:${createdAction.id}`,
           { tx },
-        ).catch(() => []);
-        const emailRows = await stageAccountModerationEmail(tx, {
-          userId: report.targetUserId,
-          kind: "REINSTATED",
-          dashboardUrl,
-        }).catch(() => []);
+        );
         return {
           action: createdAction,
           stagedBells: bellResults.map((r) => r.staged),
-          stagedEmails: emailRows,
+          dashboardUrl: resolvedUrl,
         };
       },
     );
+
+    if (!action) {
+      return NextResponse.json({
+        action: null,
+        sideEffects: {},
+        message: "User is not currently banned",
+      });
+    }
+
+    const stagedEmails = dashboardUrl
+      ? await stageAccountModerationEmail(prisma, {
+          userId: report.targetUserId,
+          kind: "REINSTATED",
+          dashboardUrl,
+        }).catch((err) => {
+          console.error("[moderation.unban] email stage failed:", err);
+          return [];
+        })
+      : [];
 
     const sideEffects: SideEffectSummary = {};
     try {

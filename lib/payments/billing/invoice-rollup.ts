@@ -24,11 +24,11 @@ import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatc
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { EMAIL_BUDGET_MS } from "@/lib/email/config";
-import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
 import { attemptStaged } from "@/lib/email/send-to-recipients";
 import {
   MONEY_EMAIL_TYPES,
   stageOrgBillingEmail,
+  type OrgBillingEmailArgs,
 } from "@/lib/email/senders/money";
 import { reportSentryError } from "@/lib/observability/report";
 import { getAppUrl } from "@/lib/url";
@@ -189,7 +189,7 @@ export async function rollupOrgInvoiceAccruals(params: {
           return {
             result: EMPTY,
             notifyStaged: [] as StagedTrigger[],
-            emailStaged: [] as StagedEmail[],
+            emailArgs: null as OrgBillingEmailArgs | null,
           };
         }
 
@@ -219,7 +219,7 @@ export async function rollupOrgInvoiceAccruals(params: {
           return {
             result: EMPTY,
             notifyStaged: [] as StagedTrigger[],
-            emailStaged: [] as StagedEmail[],
+            emailArgs: null as OrgBillingEmailArgs | null,
           };
         }
 
@@ -395,7 +395,7 @@ export async function rollupOrgInvoiceAccruals(params: {
         // this tx (#1669 outbox): a rollback takes them too, and one row per
         // invoice is guaranteed by the billableToOrgInvoiceId stamp above.
         let notifyStaged: StagedTrigger[] = [];
-        let emailStaged: StagedEmail[] = [];
+        let emailArgs: OrgBillingEmailArgs | null = null;
         if (issueImmediately) {
           const origin = getAppUrl();
           const dashboardUrl = `${origin}/dashboard/organization/${organizationId}/billing`;
@@ -423,7 +423,7 @@ export async function rollupOrgInvoiceAccruals(params: {
               },
               { tx, entityRef: `orgInvoice:${invoice.id}` },
             )) ?? [];
-          emailStaged = await stageOrgBillingEmail(tx, {
+          emailArgs = {
             recipientUserIds: ownerRows.map((r) => r.userId),
             organizationId,
             orgName: org.name,
@@ -434,7 +434,7 @@ export async function rollupOrgInvoiceAccruals(params: {
             invoiceNumber,
             dueDate,
             dashboardUrl,
-          });
+          };
           await dispatchWebhookEvent({
             prisma: tx,
             organizationId,
@@ -461,27 +461,29 @@ export async function rollupOrgInvoiceAccruals(params: {
             unbackedPo: org.requiresPO && !purchaseOrderId,
           },
           notifyStaged,
-          emailStaged,
+          emailArgs,
         };
       },
       { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
     ),
   );
-  const { result, notifyStaged, emailStaged } = outcome;
+  const { result, notifyStaged, emailArgs } = outcome;
 
   const stagedBells = notifyStaged ?? [];
-  const stagedEmails = emailStaged ?? [];
 
   // #1744 row 2 — the post-commit attempt; `attemptTrigger` never throws, the
   // guard only protects the loop so a bell failure cannot hide a committed invoice.
   try {
     for (const row of stagedBells) await attemptTrigger(row);
-    if (stagedEmails.length > 0) {
-      await attemptStaged(
-        stagedEmails,
-        MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
-        EMAIL_BUDGET_MS.JOB,
-      );
+    if (emailArgs) {
+      const stagedEmails = await stageOrgBillingEmail(prisma, emailArgs);
+      if (stagedEmails.length > 0) {
+        await attemptStaged(
+          stagedEmails,
+          MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
+          EMAIL_BUDGET_MS.JOB,
+        );
+      }
     }
   } catch (e) {
     reportSentryError(e, { subsystem: "payments" });

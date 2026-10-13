@@ -327,7 +327,7 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     category: "payments",
     inApp: {
       subject: "Welcome bonus",
-      body: "Welcome! {{payload.bonusAmount}} in credits from {{payload.referrerName}}'s referral has been added to your account.",
+      body: "Welcome! Your first-booking referral discount (up to {{payload.bonusAmount}}) from {{payload.referrerName}}'s referral is ready to use at checkout.",
       redirect: "dashboardUrl",
     },
   },

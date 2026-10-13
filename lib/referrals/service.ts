@@ -267,12 +267,18 @@ export async function applyReferralCode(
           newUserId,
           {
             referrerName,
-            bonusAmount: welcomeBonusPaise,
+            bonusAmountPaise: welcomeBonusPaise,
             currency: "INR",
             dashboardUrl,
           },
           { deferAttempt: true },
-        ).catch(() => null),
+        ).catch((err) => {
+          console.error(
+            "[referrals] Failed to stage referee welcome bonus bell:",
+            err,
+          );
+          return null;
+        }),
         stageReferralBonusEmail(prisma, {
           userId: newUserId,
           referralId: ref.id,
@@ -281,7 +287,13 @@ export async function applyReferralCode(
           amountPaise: welcomeBonusPaise,
           currency: "INR",
           dashboardUrl,
-        }).catch(() => []),
+        }).catch((err) => {
+          console.error(
+            "[referrals] Failed to stage referee welcome bonus email:",
+            err,
+          );
+          return [];
+        }),
       ]);
       await flushNotificationsAfter(
         {

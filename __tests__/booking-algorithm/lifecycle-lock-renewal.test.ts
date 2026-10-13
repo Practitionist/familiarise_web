@@ -1,3 +1,4 @@
+/** @jest-environment node */
 /**
  * A lifecycle mutation's retry loop must not outlive its lock.
  *

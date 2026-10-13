@@ -373,7 +373,7 @@ export async function PATCH(
                 effectiveDate: effectiveFromVal.toISOString(),
                 dashboardUrl,
               },
-              tx.notificationOutbox ? { tx } : undefined,
+              { tx },
             )) ?? [];
           stagedEmails = await stageOrgContractAndSeatEmail(tx, {
             recipientUserIds: operatorUserIds,
@@ -416,7 +416,7 @@ export async function PATCH(
                 effectiveDate: closedAt.toISOString(),
                 dashboardUrl,
               },
-              tx.notificationOutbox ? { tx } : undefined,
+              { tx },
             )) ?? [];
           stagedEmails = await stageOrgContractAndSeatEmail(tx, {
             recipientUserIds: operatorUserIds,

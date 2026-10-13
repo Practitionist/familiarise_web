@@ -241,12 +241,10 @@ export async function mintApprovalPaymentAfterCommit(args: {
     { ApprovalWindowLapsedError, createApprovalPaymentIntent },
     email,
     { notifyPaymentLink, notificationScope },
-    { flushNotificationsAfter },
   ] = await Promise.all([
     import("@/lib/payments/operations/approval-payment"),
     import("@/lib/email"),
     import("@/lib/novu"),
-    import("@/lib/novu/stage-then-attempt"),
   ]);
   const { reconcileOrphanedPayLink } =
     await import("@/lib/booking/pay-link-persist");
@@ -316,7 +314,7 @@ export async function mintApprovalPaymentAfterCommit(args: {
 
   const expiresAt = new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS);
   const consultantName = plan.consultantProfile.user.name || "Consultant";
-  const [bellResult] = await Promise.all([
+  await Promise.all([
     notifyPaymentLink(
       row.requestedBy.user.id,
       {
@@ -337,8 +335,13 @@ export async function mintApprovalPaymentAfterCommit(args: {
         reminder: false,
       },
       `payment-link:${paymentResult.paymentId}`,
-      { deferAttempt: true },
-    ).catch(() => null),
+    ).catch((bellError) => {
+      console.error(
+        `⚠️ Failed to send payment link bell for ${args.kind} ${row.id}:`,
+        bellError instanceof Error ? bellError.message : "Unknown error",
+      );
+      return null;
+    }),
     email
       .sendPaymentLinkEmail({
         email: row.requestedBy.user.email || "",
@@ -363,10 +366,6 @@ export async function mintApprovalPaymentAfterCommit(args: {
         report(emailError);
       }),
   ]);
-  await flushNotificationsAfter(
-    { bells: [bellResult?.staged] },
-    "approve-request.payment-link",
-  );
   return {
     status: "minted",
     paymentUrl,

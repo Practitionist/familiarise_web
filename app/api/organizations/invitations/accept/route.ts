@@ -404,7 +404,7 @@ export async function POST(req: NextRequest) {
             message: `You joined ${org.name} as ${normalizedRole}.`,
             dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/home`,
           },
-          tx.notificationOutbox ? { tx } : undefined,
+          { tx },
         )) ?? [];
       const joinerBells = welcomeBellResults.flatMap((r) =>
         r.success && r.staged ? [r.staged] : [],

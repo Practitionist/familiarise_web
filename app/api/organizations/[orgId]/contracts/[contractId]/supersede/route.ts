@@ -403,7 +403,7 @@ export async function POST(
             effectiveDate: effectiveDateVal.toISOString(),
             dashboardUrl,
           },
-          tx.notificationOutbox ? { tx } : undefined,
+          { tx },
         )) ?? [];
       stagedEmails =
         (await stageOrgContractAndSeatEmail(tx, {

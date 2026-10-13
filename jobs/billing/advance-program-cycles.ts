@@ -67,6 +67,19 @@ interface AdvanceStats {
 
 type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
+function formatSeatRevokedReason(reason: string): string {
+  switch (reason) {
+    case "CONTRACT_INACTIVE":
+      return "Your organization's contract is no longer active";
+    case "AUTORENEW_OFF":
+      return "Auto-renewal is disabled for this contract";
+    case "CLAMPED":
+      return "Your organization's contract term has ended";
+    default:
+      return reason;
+  }
+}
+
 async function closeProgramAssignmentInTx(
   tx: TxClient,
   args: {
@@ -131,8 +144,8 @@ async function closeProgramAssignmentInTx(
     };
   }
 
-  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/programs`;
-  const outboxOpts = tx.notificationOutbox ? { tx } : undefined;
+  const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}`;
+  const humanReason = formatSeatRevokedReason(reason);
   const stagedBells: StagedTrigger[] =
     (await notifyOrgSeatRevoked(
       targetUserId,
@@ -140,10 +153,10 @@ async function closeProgramAssignmentInTx(
         organizationId: orgId,
         orgName,
         programName,
-        reason,
+        reason: humanReason,
         dashboardUrl,
       },
-      outboxOpts,
+      { tx },
     )) ?? [];
   const stagedEmails: StagedEmail[] = await stageOrgContractAndSeatEmail(tx, {
     recipientUserIds: [targetUserId],
@@ -151,7 +164,7 @@ async function closeProgramAssignmentInTx(
     kind: "SEAT_REVOKED",
     orgName,
     programName,
-    reason,
+    reason: humanReason,
     dashboardUrl,
   });
   return {

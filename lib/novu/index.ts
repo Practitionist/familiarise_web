@@ -54,7 +54,6 @@ export {
   notifyTrialCancelled,
   // Subscriptions
   notifySubscriptionStarted,
-  notifySubscriptionCancelled,
   notifySubscriptionRenewed,
   // Consultant
   notifyNewBookingRequest,
