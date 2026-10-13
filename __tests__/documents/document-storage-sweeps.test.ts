@@ -59,10 +59,11 @@ const rows = (paths: string[]) => paths.map((storagePath) => ({ storagePath }));
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    appointment: { findMany: jest.fn(async () => []) },
     appointmentDocument: {
       findMany: jest.fn(async () => []),
       updateMany: jest.fn(async () => ({ count: 0 })),
-      delete: jest.fn(async () => ({})),
+      deleteMany: jest.fn(async () => ({ count: 1 })),
     },
     planMaterial: { findMany: jest.fn() },
     profileVerificationDocument: { findMany: jest.fn() },
@@ -74,7 +75,7 @@ import prisma from "../../lib/prisma";
 import { reportSentryMessage } from "../../lib/observability/report";
 import { deleteAppointmentDocument } from "../../lib/supabase-storage-core";
 import { reconcileDocumentStorage } from "../../scripts/cleanup/reconcile-document-storage";
-import { purgeExpiredDeletedDocuments } from "../../lib/documents/document-purge";
+import { purgeDeletedDocuments } from "../../lib/documents/document-purge";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -126,22 +127,86 @@ describe("reconcile-document-storage listing failure", () => {
 });
 
 describe("purge-deleted-documents", () => {
-  it("retries rows whose bytes survive and reports the run once", async () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = new Date("2026-10-12T00:00:00Z");
+  const booking = (endsDaysAgo: number) => ({
+    id: `apt-${endsDaysAgo}`,
+    organizationId: null,
+    organization: null,
+    consultation: {
+      status: "COMPLETED",
+      cancelledAt: null,
+      updatedAt: now,
+      requestedBy: { id: "cp", userId: "u-l", user: { name: "L" } },
+      consultationPlan: {
+        title: "Plan",
+        consultantProfile: { id: "xp", userId: "u-e", user: { name: "E" } },
+      },
+    },
+    subscription: null,
+    trial: null,
+    occurrences: [
+      {
+        startsAt: new Date(now.getTime() - endsDaysAgo * DAY - 3600_000),
+        endsAt: new Date(now.getTime() - endsDaysAgo * DAY),
+      },
+    ],
+    statusHistory: [],
+  });
+
+  it("tombstones only bookings past their retention date, with the reason", async () => {
+    (prisma.appointmentDocument.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.appointment.findMany as jest.Mock)
+      .mockResolvedValueOnce([booking(91), booking(89)])
+      .mockResolvedValueOnce([]);
+    (prisma.appointmentDocument.updateMany as jest.Mock).mockResolvedValue({
+      count: 2,
+    });
+
+    const result = await purgeDeletedDocuments(now);
+
+    expect(prisma.appointmentDocument.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.appointmentDocument.updateMany).toHaveBeenCalledWith({
+      where: { appointmentId: "apt-91", deletedAt: null },
+      data: { deletedAt: now, removalReason: "RETENTION_EXPIRY" },
+    });
+    expect(result.tombstoned).toBe(2);
+  });
+
+  it("purges versions before roots, retries surviving bytes and reports once", async () => {
     (prisma.appointmentDocument.findMany as jest.Mock)
       .mockResolvedValueOnce([
-        { id: "d1", storagePath: "a/1.pdf", isStorageMissing: false },
-        { id: "d2", storagePath: "a/2.pdf", isStorageMissing: false },
-        { id: "d3", storagePath: "a/3.pdf", isStorageMissing: false },
+        {
+          id: "v2",
+          storagePath: "a/2.pdf",
+          isStorageMissing: false,
+          removalReason: "USER_REQUEST",
+        },
+        {
+          id: "v3",
+          storagePath: "a/3.pdf",
+          isStorageMissing: false,
+          removalReason: null,
+        },
       ])
       .mockResolvedValueOnce([]);
     (deleteAppointmentDocument as jest.Mock).mockImplementation(
-      async (path: string) => path === "a/1.pdf",
+      async (path: string) => path === "a/2.pdf",
     );
 
-    const result = await purgeExpiredDeletedDocuments(30);
+    const result = await purgeDeletedDocuments(now);
 
-    expect(result).toEqual({ purged: 1, failedStorage: 2, failedRows: 0 });
-    expect(prisma.appointmentDocument.delete).toHaveBeenCalledTimes(1);
+    const where = (prisma.appointmentDocument.findMany as jest.Mock).mock
+      .calls[0][0].where;
+    expect(where.AND).toContainEqual({
+      OR: [{ rootDocumentId: { not: null } }, { threadVersions: { none: {} } }],
+    });
+    expect(result).toMatchObject({
+      purged: 1,
+      failedStorage: 1,
+      byReason: { USER_REQUEST: 1 },
+      success: false,
+    });
     expect(reportSentryMessage).toHaveBeenCalledTimes(1);
   });
 });

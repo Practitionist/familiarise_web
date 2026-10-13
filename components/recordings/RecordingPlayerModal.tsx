@@ -25,6 +25,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/tailwind";
+import { z } from "zod";
+import {
+  friendlyFileError,
+  resolveFileErrorCode,
+} from "@/lib/documents/file-errors";
 import { buildCaptionTrackDataUri } from "./caption-track";
 
 export const PLAYBACK_SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
@@ -56,6 +61,76 @@ export interface RecordingPlayerModalProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly recording: RecordingPlayerItem | null;
+  /** "Part 2 of 3" and similar, shown under the title. */
+  readonly partLabel?: string | null;
+  /** Plays the session's next part. */
+  readonly onNextPart?: (() => void) | null;
+}
+
+const PlaybackPayloadSchema = z.object({
+  code: z.string().optional(),
+  removedAt: z.string().nullish(),
+  removalReason: z.string().nullish(),
+  recording: z
+    .object({
+      playbackUrl: z.string().nullish(),
+      previewTranscript: z.string().nullish(),
+    })
+    .optional(),
+  access: z
+    .object({ level: z.string().optional(), reason: z.string().optional() })
+    .optional(),
+});
+
+const removedDay = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+const PLAYBACK_STALL_MS = 20_000;
+
+const REMOVED_BY_COPY: Partial<Record<string, string>> = {
+  EXPERT_DELETED: "the expert",
+  SUPPORT_ACTION: "Familiarise support",
+};
+
+const RETRYABLE_CODES: ReadonlySet<string> = new Set([
+  "SERVER_ERROR",
+  "NETWORK",
+  "STORAGE_UNAVAILABLE",
+  "VENDOR_UNAVAILABLE",
+  "RATE_LIMITED",
+]);
+
+/** A refusal with fixed copy; a retry is offered only when it could succeed. */
+class PlaybackRefusal extends Error {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "PlaybackRefusal";
+  }
+}
+
+/** Fixed copy for a playback refusal; server text is never shown. */
+function playbackErrorCopy(
+  status: number,
+  payload: z.infer<typeof PlaybackPayloadSchema>,
+): string {
+  const code = resolveFileErrorCode(status, payload.code);
+  if (code === "GONE") {
+    const by = payload.removalReason
+      ? REMOVED_BY_COPY[payload.removalReason]
+      : undefined;
+    if (by && payload.removedAt) {
+      return `Removed by ${by} on ${removedDay.format(new Date(payload.removedAt))}.`;
+    }
+    return "This recording is no longer available.";
+  }
+  if (code === "NOT_FOUND") return "This recording is no longer available.";
+  return friendlyFileError(code).description;
 }
 
 export function resolveActivePlaybackUrl(
@@ -71,9 +146,7 @@ export function resolveActivePlaybackUrl(
 
 function formatDuration(minutes: number | null | undefined): string | null {
   if (typeof minutes !== "number" || minutes <= 0) return null;
-  const hrs = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+  return `${minutes} min`;
 }
 
 function computeStorageBadge(
@@ -89,8 +162,11 @@ function computeStorageBadge(
 }
 
 interface PlayerViewportProps {
+  readonly lastUrl: string | null;
   readonly isLoadingUrl: boolean;
   readonly fetchError: string | null;
+  /** False for refusals a retry cannot change (access, removal). */
+  readonly canRetry: boolean;
   readonly activePlaybackUrl: string | null;
   readonly captionTrackSrc: string;
   readonly videoRef: React.RefObject<HTMLVideoElement>;
@@ -99,11 +175,14 @@ interface PlayerViewportProps {
   readonly onRetry: () => void;
   readonly onVideoError: () => void;
   readonly onVideoCanPlay: () => void;
+  readonly onVideoLoaded: () => void;
 }
 
 function PlayerViewport({
+  lastUrl,
   isLoadingUrl,
   fetchError,
+  canRetry,
   activePlaybackUrl,
   captionTrackSrc,
   videoRef,
@@ -112,19 +191,32 @@ function PlayerViewport({
   onRetry,
   onVideoError,
   onVideoCanPlay,
+  onVideoLoaded,
 }: Readonly<PlayerViewportProps>) {
   if (fetchError) {
     return (
       <div className="flex aspect-video w-full flex-col items-center justify-center gap-2.5 rounded-lg border border-border bg-muted/40 p-6 text-center">
         <AlertCircle className="h-8 w-8 text-muted-foreground" />
         <p className="text-sm font-medium text-foreground">
-          Recording unavailable right now
+          This recording can&apos;t be played
         </p>
         <p className="max-w-sm text-xs text-muted-foreground">{fetchError}</p>
-        <Button variant="outline" size="sm" className="mt-1" onClick={onRetry}>
-          <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-          Retry
-        </Button>
+        <div className="mt-1 flex flex-wrap justify-center gap-2">
+          {canRetry && (
+            <Button variant="outline" size="sm" onClick={onRetry}>
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+              Retry
+            </Button>
+          )}
+          {lastUrl && (
+            <Button variant="ghost" size="sm" asChild>
+              <a href={lastUrl} target="_blank" rel="noopener noreferrer">
+                Open in new tab
+                <ExternalLink className="ml-1.5 h-3.5 w-3.5" aria-hidden />
+              </a>
+            </Button>
+          )}
+        </div>
       </div>
     );
   }
@@ -145,6 +237,7 @@ function PlayerViewport({
           }
         }}
         onLoadedMetadata={() => {
+          onVideoLoaded();
           if (videoRef.current) {
             if (savedTimeRef.current > 0) {
               videoRef.current.currentTime = savedTimeRef.current;
@@ -187,6 +280,8 @@ export function RecordingPlayerModal({
   open,
   onOpenChange,
   recording,
+  partLabel = null,
+  onNextPart = null,
 }: Readonly<RecordingPlayerModalProps>) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const savedTimeRef = useRef<number>(0);
@@ -195,9 +290,12 @@ export function RecordingPlayerModal({
     useState<ResolvedPlaybackState | null>(null);
   const [isLoadingUrl, setIsLoadingUrl] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [canRetry, setCanRetry] = useState(true);
   const [playbackSpeed, setPlaybackSpeed] = useState<PlaybackSpeed>(1);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [retriedOnError, setRetriedOnError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [loadedAttempt, setLoadedAttempt] = useState<number | null>(null);
 
   const recordingId = recording?.id ?? null;
   const initialPlaybackUrl = recording?.playbackUrl ?? null;
@@ -209,35 +307,33 @@ export function RecordingPlayerModal({
 
     setIsLoadingUrl(true);
     setFetchError(null);
+    setCanRetry(true);
     try {
       const response = await fetch(`/api/stream/recordings/${id}`, {
         signal: controller.signal,
       });
-      const payload = (await response.json().catch(() => ({}))) as {
-        recording?: {
-          playbackUrl?: string | null;
-          previewTranscript?: string | null;
-        };
-        access?: {
-          level?: string;
-          reason?: string;
-        };
-        error?: string;
-      };
+      const parsed = PlaybackPayloadSchema.safeParse(
+        await response.json().catch(() => ({})),
+      );
+      const payload = parsed.success ? parsed.data : {};
       if (controller.signal.aborted) return;
 
       if (!response.ok) {
-        throw new Error(payload.error || "Unable to load recording playback");
+        throw new PlaybackRefusal(
+          playbackErrorCopy(response.status, payload),
+          RETRYABLE_CODES.has(
+            resolveFileErrorCode(response.status, payload.code),
+          ),
+        );
       }
       const nextUrl = payload.recording?.playbackUrl ?? null;
       if (!nextUrl) {
-        const operatorReason =
-          payload.access?.level === "METADATA_ONLY"
-            ? payload.access.reason
-            : null;
-        throw new Error(
-          operatorReason ||
-            "Playback URL is not available for this recording yet.",
+        const metadataOnly = payload.access?.level === "METADATA_ONLY";
+        throw new PlaybackRefusal(
+          metadataOnly
+            ? "Organisation and staff roles can see this recording's details but not play it."
+            : "This recording is still processing. Try again in a few minutes.",
+          !metadataOnly,
         );
       }
       setResolvedPlayback({
@@ -248,8 +344,11 @@ export function RecordingPlayerModal({
     } catch (err) {
       if (controller.signal.aborted) return;
       if (err instanceof DOMException && err.name === "AbortError") return;
+      setCanRetry(!(err instanceof PlaybackRefusal) || err.retryable);
       setFetchError(
-        err instanceof Error ? err.message : "Failed to load recording",
+        err instanceof Error && !(err instanceof TypeError)
+          ? err.message
+          : friendlyFileError("NETWORK").description,
       );
     } finally {
       if (abortControllerRef.current === controller) {
@@ -272,6 +371,7 @@ export function RecordingPlayerModal({
     setPlaybackSpeed(1);
     setTranscriptOpen(false);
     setRetriedOnError(false);
+    setLoadedAttempt(null);
 
     if (!open || !recordingId) {
       setIsLoadingUrl(false);
@@ -294,12 +394,46 @@ export function RecordingPlayerModal({
     }
   };
 
-  if (!recording) return null;
-
   const activePlaybackUrl = resolveActivePlaybackUrl(
     recording,
     resolvedPlayback,
   );
+
+  /** One fresh URL and reload per failure; a second failure shows the error state. */
+  const failPlayback = useCallback(() => {
+    if (!recordingId) return;
+    savedTimeRef.current = videoRef.current?.currentTime ?? 0;
+    if (retriedOnError) {
+      setFetchError(friendlyFileError("MEDIA_UNPLAYABLE").description);
+      return;
+    }
+    setRetriedOnError(true);
+    void fetchPresignedUrl(recordingId).then(() => setAttempt((a) => a + 1));
+  }, [recordingId, retriedOnError, fetchPresignedUrl]);
+
+  // Reload per attempt: a retried URL may be identical, so the src alone would not reload.
+  useEffect(() => {
+    if (attempt > 0) videoRef.current?.load();
+  }, [attempt]);
+
+  // A source that never reaches its metadata (stalled or unreachable) counts as a failure.
+  useEffect(() => {
+    if (!open || !activePlaybackUrl || fetchError || isLoadingUrl) return;
+    if (loadedAttempt === attempt) return;
+    const timer = setTimeout(failPlayback, PLAYBACK_STALL_MS);
+    return () => clearTimeout(timer);
+  }, [
+    open,
+    activePlaybackUrl,
+    fetchError,
+    isLoadingUrl,
+    loadedAttempt,
+    attempt,
+    failPlayback,
+  ]);
+
+  if (!recording) return null;
+
   const durationMins =
     recording.durationMinutes ?? recording.durationInMinutes ?? null;
   const formattedDuration = formatDuration(durationMins);
@@ -346,10 +480,11 @@ export function RecordingPlayerModal({
           </DialogTitle>
           <DialogDescription className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             {recording.planTitle && <span>{recording.planTitle}</span>}
+            {partLabel && <span>{partLabel}</span>}
             {recording.recordedAt && (
               <span className="inline-flex items-center gap-1">
                 <Calendar className="h-3.5 w-3.5" />
-                {format(new Date(recording.recordedAt), "MMM d, yyyy")}
+                {format(new Date(recording.recordedAt), "d MMM yyyy")}
               </span>
             )}
             {formattedDuration && (
@@ -363,8 +498,10 @@ export function RecordingPlayerModal({
 
         <div className="space-y-4">
           <PlayerViewport
+            lastUrl={activePlaybackUrl}
             isLoadingUrl={isLoadingUrl}
             fetchError={fetchError}
+            canRetry={canRetry}
             activePlaybackUrl={activePlaybackUrl}
             captionTrackSrc={captionTrackSrc}
             videoRef={videoRef}
@@ -372,22 +509,15 @@ export function RecordingPlayerModal({
             playbackSpeed={playbackSpeed}
             onRetry={() => {
               setRetriedOnError(false);
-              void fetchPresignedUrl(recording.id);
+              void fetchPresignedUrl(recording.id).then(() =>
+                setAttempt((a) => a + 1),
+              );
             }}
             onVideoCanPlay={() => {
               setRetriedOnError(false);
             }}
-            onVideoError={() => {
-              savedTimeRef.current = videoRef.current?.currentTime ?? 0;
-              if (!retriedOnError) {
-                setRetriedOnError(true);
-                void fetchPresignedUrl(recording.id);
-              } else {
-                setFetchError(
-                  "Playback stream interrupted and could not be automatically refreshed.",
-                );
-              }
-            }}
+            onVideoLoaded={() => setLoadedAttempt(attempt)}
+            onVideoError={failPlayback}
           />
 
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -414,6 +544,16 @@ export function RecordingPlayerModal({
             </fieldset>
 
             <div className="flex flex-wrap items-center gap-2">
+              {onNextPart && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={onNextPart}
+                >
+                  Next part
+                </Button>
+              )}
               {recording.appointmentHref && (
                 <Button
                   variant="ghost"
@@ -422,11 +562,11 @@ export function RecordingPlayerModal({
                   asChild
                 >
                   <Link href={recording.appointmentHref}>
-                    Session details &rarr;
+                    Session details <span aria-hidden>&rarr;</span>
                   </Link>
                 </Button>
               )}
-              {activePlaybackUrl && (
+              {activePlaybackUrl && !fetchError && (
                 <Button
                   variant="outline"
                   size="sm"

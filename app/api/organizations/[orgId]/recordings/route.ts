@@ -1,19 +1,16 @@
 /**
- * GET /api/organizations/[orgId]/recordings — the org Library's Recordings
- * (#1527), one page of sessions with their recordings.
+ * GET /api/organizations/[orgId]/recordings — the org Library's Recordings.
  *
- * `?scope=mine` (default): any ACTIVE or SUSPENDED member's own org sessions,
- * playable, with the #1819 late-join rule applied as on the consultee read.
- * `?scope=everyone`: every org session, metadata only (ADR 20) —
- * `operations.read` on an ACTIVE membership.
- *
- * Filters: `q`, `kind`, `from`, `to` (YYYY-MM-DD), `page`.
+ * `?scope=mine` (default): the member's own org bookings, rows included.
+ * `?scope=everyone`: every org booking as counts only — `operations.read`
+ * on an ACTIVE membership.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { readOrgLibraryRecordings } from "@/lib/data/org-library";
+import { readRecordingLibrary } from "@/lib/data/recording-library";
+import { timedLibraryRead } from "@/lib/library/timed-read";
 import { libraryRequest } from "@/lib/library/library-route";
 
 export async function GET(
@@ -29,7 +26,15 @@ export async function GET(
 
   const request = libraryRequest(req, access);
   if (!request.ok) return request.response;
+  const { userId, scope, query } = request.args;
   return NextResponse.json(
-    await readOrgLibraryRecordings({ orgId, ...request.args }),
+    await timedLibraryRead("recordings:org", () =>
+      readRecordingLibrary({
+        userId,
+        owner: { kind: "org", orgId, everyone: scope === "everyone" },
+        query,
+      }),
+    ),
+    { headers: { "Cache-Control": "private, no-store" } },
   );
 }

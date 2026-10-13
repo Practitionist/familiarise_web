@@ -5,13 +5,17 @@
  * Stops recording for a video call. Only consultants can stop recordings.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getMeetingOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
+import {
+  answerFileRoute,
+  fileApiError,
+  parseJsonBody,
+} from "@/lib/documents/api-error";
 
 import { getSession } from "@/lib/auth-server";
 const stopRecordingSchema = z.object({
@@ -19,27 +23,17 @@ const stopRecordingSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  try {
-    // Check authentication
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
 
     // Capability, not UserRole (#org-appts): anyone who OWNS a consultantProfile
     // (incl. an org EXPERT whose marketplace identity is CONSULTEE) may control
     // their own recordings — the per-appointment ownership check below is the
     // real authz. ADMIN/STAFF are handled by that check too.
-    if (!session.user.consultantProfileId) {
-      return NextResponse.json(
-        { error: "Only consultants can stop recordings" },
-        { status: 403 },
-      );
-    }
+    if (!session.user.consultantProfileId) return fileApiError("FORBIDDEN");
 
-    // Parse and validate request body
-    const body = await req.json();
-    const { meetingId } = stopRecordingSchema.parse(body);
+    const { meetingId } = await parseJsonBody(req, stopRecordingSchema);
 
     // Verify the meeting session exists
     const meeting = await prisma.meeting.findUnique({
@@ -119,12 +113,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (!meeting) {
-      return NextResponse.json(
-        { error: "Meeting session not found" },
-        { status: 404 },
-      );
-    }
+    if (!meeting) return fileApiError("NOT_FOUND");
 
     // Look up consultant profile for the logged-in user
     const consultantProfile = await prisma.consultantProfile.findUnique({
@@ -153,20 +142,8 @@ export async function POST(req: NextRequest) {
       consultantProfile?.id,
     );
 
-    if (!isOwner) {
-      return NextResponse.json(
-        { error: "Not authorized to stop this recording" },
-        { status: 403 },
-      );
-    }
-
-    // Verify recording is actually in progress before calling Stream API
-    if (!meeting.isRecording) {
-      return NextResponse.json(
-        { error: "No recording in progress" },
-        { status: 409 },
-      );
-    }
+    if (!isOwner) return fileApiError("FORBIDDEN");
+    if (!meeting.isRecording) return fileApiError("RECORDING_NOT_IN_PROGRESS");
 
     // Atomically claim the stop operation (prevents concurrent stop requests)
     const claimed = await prisma.meeting.updateMany({
@@ -174,13 +151,8 @@ export async function POST(req: NextRequest) {
       data: { isRecording: false },
     });
 
-    if (claimed.count === 0) {
-      // Another concurrent request already claimed the stop
-      return NextResponse.json(
-        { error: "No recording in progress" },
-        { status: 409 },
-      );
-    }
+    // Another concurrent request already claimed the stop.
+    if (claimed.count === 0) return fileApiError("RECORDING_NOT_IN_PROGRESS");
 
     // Stop recording via Stream API (use DB-stored call ID, never trust client)
     const result = await RecordingService.stopRecording(meeting.streamCallId);
@@ -194,34 +166,14 @@ export async function POST(req: NextRequest) {
       streamLogger.error("Stream stop failed, rolled back DB state", null, {
         meetingId,
         streamCallId: meeting.streamCallId,
+        error: result.error,
       });
-      return NextResponse.json(
-        { error: result.error || "Failed to stop recording" },
-        { status: 500 },
-      );
+      return fileApiError("VENDOR_UNAVAILABLE");
     }
 
     return NextResponse.json({
       success: true,
       message: "Recording stopped",
     });
-  } catch (error) {
-    streamLogger.error("Error stopping recording", error);
-
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Invalid request", details: error.errors },
-        { status: 400 },
-      );
-    }
-
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    return NextResponse.json(
-      { error: "Failed to stop recording" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }

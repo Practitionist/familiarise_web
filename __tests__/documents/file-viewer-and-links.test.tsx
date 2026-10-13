@@ -19,12 +19,9 @@ jest.mock("../../components/recordings/RecordingPlayerModal", () => ({
 }));
 
 import { FileViewer, FileViewerError } from "@/components/documents/FileViewer";
-import { AppointmentDocumentsList } from "@/components/appointments/detail/AppointmentDocumentsList";
-import {
-  EventResourceCard,
-  type EventResource,
-} from "@/components/dashboard/consultee/resources/EventResourceCard";
+import { ThreadCard } from "@/components/documents/workspace/ThreadCard";
 import type { AuthorizedFile } from "@/lib/documents/file-access";
+import { buildThreadViews } from "@/lib/documents/thread-view";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -55,6 +52,7 @@ const pdf: AuthorizedFile = {
   mimeType: "application/pdf",
   previewable: true,
   viewerIsUploader: false,
+  viewerRole: "consultee",
   appointmentId: "apt-1",
 };
 
@@ -111,95 +109,80 @@ describe("file viewer route", () => {
     );
     expect(container.querySelector("iframe")).toBeNull();
     expect(container.textContent).toContain(
-      "Ask the person who shared it to upload it again.",
+      "Ask your expert to upload it again.",
     );
   });
 });
 
 describe("Open is a plain new-tab link to the viewer", () => {
-  it("links each document to /files/documents/:id in a new tab, without fetching", async () => {
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        data: [
-          {
-            id: "doc-1",
-            fileName: "cv.pdf",
-            originalName: "cv.pdf",
-            fileUrl: "",
-            uploadedByRole: "CONSULTEE",
-            reviewStatus: "PENDING",
-          },
-          {
-            id: "doc-2",
-            fileName: "reply.pdf",
-            originalName: "reply.pdf",
-            fileUrl: "",
-            uploadedByRole: "CONSULTANT",
-            reviewStatus: "APPROVED",
-          },
-        ],
-      }),
-    });
+  it("links every version to /files/documents/:id in a new tab, without fetching", async () => {
+    const fetchMock = jest.fn();
     global.fetch = fetchMock as unknown as typeof fetch;
-    const client = new QueryClient();
+    const at = new Date("2026-10-01T00:00:00Z");
+    const base = {
+      originalName: "cv.pdf",
+      mimeType: "application/pdf",
+      fileSize: 1000,
+      description: null,
+      reviewNotes: null,
+      reviewedAt: null,
+      uploadedAt: at,
+      isStorageMissing: false,
+      removalRequestedAt: null,
+    };
+    const [thread] = buildThreadViews(
+      [
+        {
+          ...base,
+          id: "doc-1",
+          rootDocumentId: null,
+          versionNo: 1,
+          uploadedByRole: "CONSULTEE",
+          reviewStatus: "NEEDS_REVISION",
+        },
+        {
+          ...base,
+          id: "doc-2",
+          rootDocumentId: "doc-1",
+          versionNo: 2,
+          uploadedByRole: "CONSULTANT",
+          reviewStatus: "APPROVED",
+        },
+      ],
+      { viewerRole: "learner", writable: true },
+    );
 
     await render(
-      <QueryClientProvider client={client}>
-        <AppointmentDocumentsList appointmentId="apt-1" />
+      <QueryClientProvider client={new QueryClient()}>
+        <ThreadCard
+          appointmentId="apt-1"
+          thread={thread!}
+          names={{
+            viewerRole: "learner",
+            learnerName: "Rahul",
+            expertName: "Angela",
+            organizationName: null,
+          }}
+          day={() => "1 Oct 2026"}
+          focused={false}
+          onChanged={() => undefined}
+        />
       </QueryClientProvider>,
     );
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
 
     const links = [...container.querySelectorAll("a")];
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "/files/documents/doc-1",
       "/files/documents/doc-2",
+      "/files/documents/doc-1",
     ]);
     for (const link of links) {
       expect(link.getAttribute("target")).toBe("_blank");
       expect(link.getAttribute("rel")).toContain("noopener");
-      expect(link.textContent).toContain("(opens in a new tab)");
     }
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(container.textContent).not.toContain("Approved");
-  });
-});
-
-describe("EventResourceCard header", () => {
-  const event: EventResource = {
-    id: "cl-1",
-    appointmentId: "apt-own",
-    planTitle: "Python batch",
-    consultantName: "Angela",
-    consultantImage: null,
-    status: "COMPLETED",
-    date: "2026-10-01T10:00:00.000Z",
-    classId: "cl-1",
-    materials: [],
-    recordings: [],
-  };
-
-  it("keeps the session link outside the toggle button", async () => {
-    await render(<EventResourceCard consulteeId="ce-1" event={event} />);
-    const link = container.querySelector(
-      'a[href="/dashboard/consultee/ce-1/appointments/apt-own"]',
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Expert reply");
+    expect(container.textContent).toContain(
+      "Your turn: Angela asked for changes",
     );
-    expect(link).not.toBeNull();
-    expect(link?.closest("button")).toBeNull();
-    expect(container.querySelector("button a")).toBeNull();
-  });
-
-  it("labels another batch's recordings without linking to a booking the viewer is not on", async () => {
-    await render(
-      <EventResourceCard
-        consulteeId="ce-1"
-        event={{ ...event, appointmentId: null, fromOtherRun: true }}
-      />,
-    );
-    expect(container.querySelector("a")).toBeNull();
-    expect(container.textContent).toContain("From another batch");
   });
 });

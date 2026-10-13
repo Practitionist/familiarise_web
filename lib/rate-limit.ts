@@ -103,6 +103,17 @@ export const documentUploadLimiter = makeLimiter(
   "1 m",
   "rl:document-upload",
 );
+/** Per user per minute, presign and commit apart: a bulk upload of a booking's 20-file cap fits each. */
+export const documentUploadUrlLimiter = makeLimiter(
+  20,
+  "1 m",
+  "rl:document-upload-url",
+);
+export const documentCommitLimiter = makeLimiter(
+  20,
+  "1 m",
+  "rl:document-commit",
+);
 /** 30 per minute per user — bulk document review */
 export const documentReviewLimiter = makeLimiter(
   30,

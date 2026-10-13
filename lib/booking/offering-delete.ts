@@ -18,6 +18,8 @@ import { Prisma } from "@prisma/client";
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { reportSentryMessage } from "@/lib/observability/report";
+import { deleteRecordingAssets } from "@/lib/stream/recording-storage";
 import {
   EventCheckoutBusyError,
   EventCheckoutLockUnavailableError,
@@ -27,10 +29,7 @@ import {
 } from "@/utils/appointmentlock";
 
 export type OfferingKind =
-  | "CONSULTATION"
-  | "SUBSCRIPTION"
-  | "WEBINAR"
-  | "CLASS";
+  "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
 
 export class OfferingInUseError extends Error {
   readonly httpStatus = 409 as const;
@@ -61,6 +60,54 @@ const TX_TIMEOUT_MS = 15_000;
 const DELETE_MAX_RETRIES = 1;
 const OFFERING_DELETE_LOCK_TTL_MS = 75_000;
 
+/** Recordings hanging off the offering's appointments; the cascade removes their rows, not their objects. */
+function offeringRecordingsWhere(
+  kind: OfferingKind,
+  id: string,
+): Prisma.RecordingWhereInput {
+  const appointment: Prisma.AppointmentWhereInput =
+    kind === "WEBINAR"
+      ? { webinarId: id }
+      : kind === "CLASS"
+        ? { classId: id }
+        : kind === "CONSULTATION"
+          ? { consultation: { consultationPlanId: id } }
+          : {
+              OR: [
+                { subscription: { subscriptionPlanId: id } },
+                { trial: { subscriptionPlanId: id } },
+              ],
+            };
+  return { meeting: { occurrence: { appointment } } };
+}
+
+/** Best effort after commit: delete the stored objects of cascaded recordings, one report per request. */
+async function deleteCascadedRecordingAssets(
+  kind: OfferingKind,
+  id: string,
+  recordings: { id: string; storagePath: string | null }[],
+): Promise<void> {
+  const failed: string[] = [];
+  for (const recording of recordings) {
+    const result = await deleteRecordingAssets(recording).catch(
+      (error: unknown) => ({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    if (!result.success) failed.push(recording.id);
+  }
+  if (failed.length > 0) {
+    reportSentryMessage("Recording objects left after an offering delete", {
+      subsystem: "stream",
+      op: "offering-delete-recordings",
+      level: "warning",
+      fingerprint: ["offering-delete", "recording-assets"],
+      extra: { kind, id, recordingIds: failed.slice(0, 50) },
+    });
+  }
+}
+
 /**
  * Run `remove` under the offering's checkout lock in one Serializable
  * transaction. `remove` returns the deleted row, `null` when the offering is
@@ -68,7 +115,8 @@ const OFFERING_DELETE_LOCK_TTL_MS = 75_000;
  * matched nothing. Checkout keys its lock by webinar or class id and by
  * subscription plan id; a consultation plan has no checkout key (checkout
  * locks its slot atoms instead), so there the Serializable transaction and the
- * in-WHERE guard carry the race on their own.
+ * in-WHERE guard carry the race on their own. Recording objects of the
+ * cascaded rows are deleted after the commit.
  */
 export async function deleteUntouchedOffering<T>(
   kind: OfferingKind,
@@ -81,19 +129,36 @@ export async function deleteUntouchedOffering<T>(
     OFFERING_DELETE_LOCK_TTL_MS,
     REQUEST_PATH_RETRY_CONFIG,
   );
+  let outcome: {
+    deleted: T | null;
+    recordings: { id: string; storagePath: string | null }[];
+  };
   try {
-    return await withSerializableRetry(
+    outcome = await withSerializableRetry(
       () =>
-        prisma.$transaction(remove, {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          maxWait: TX_MAX_WAIT_MS,
-          timeout: TX_TIMEOUT_MS,
-        }),
+        prisma.$transaction(
+          async (tx) => {
+            const recordings = await tx.recording.findMany({
+              where: offeringRecordingsWhere(kind, id),
+              select: { id: true, storagePath: true },
+            });
+            return { deleted: await remove(tx), recordings };
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: TX_MAX_WAIT_MS,
+            timeout: TX_TIMEOUT_MS,
+          },
+        ),
       DELETE_MAX_RETRIES,
     );
   } finally {
     await unlockEventCheckout(lock);
   }
+  if (outcome.deleted !== null && outcome.recordings.length > 0) {
+    await deleteCascadedRecordingAssets(kind, id, outcome.recordings);
+  }
+  return outcome.deleted;
 }
 
 /** The route answer for this module's refusals, or null for anything else. */

@@ -5,7 +5,7 @@
  * SSR hydration and the client useQuery resolve identical payloads.
  *
  * Includes everything the detail page renders: the polymorphic event with
- * plan + people, ordered slots with meeting sessions AND their recordings,
+ * plan + people, ordered slots with their meeting sessions,
  * payment, sponsoring org — plus sibling appointments of the same
  * subscription/class so the timeline shows the whole program. userId fields
  * on the profile selects exist for the API route's ownership check.
@@ -21,17 +21,6 @@ const userSelect = {
   select: { id: true, name: true, image: true },
 } as const;
 
-const recordingsSelect = {
-  select: {
-    id: true,
-    title: true,
-    thumbnailUrl: true,
-    status: true,
-    durationInMinutes: true,
-    recordedAt: true,
-  },
-} as const;
-
 const slotsInclude = {
   orderBy: { startsAt: "asc" },
   include: {
@@ -40,7 +29,6 @@ const slotsInclude = {
         id: true,
         endedAt: true,
         endedReason: true,
-        recordings: recordingsSelect,
       },
     },
   },
@@ -382,11 +370,3 @@ function participantUserIds(detail: TAppointmentDetail) {
   return { consulteeUserIds, consultantUserIds };
 }
 export type TDetailAppointment = TAppointmentDetail["appointment"];
-export type TDetailRecording =
-  TDetailAppointment["occurrences"][number] extends {
-    meeting: infer M;
-  }
-    ? M extends { recordings: Array<infer R> } | null
-      ? R
-      : never
-    : never;

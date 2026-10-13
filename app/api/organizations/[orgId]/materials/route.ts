@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
+import { fileApiError } from "@/lib/documents/api-error";
 import { resolveMaterialPlanRef } from "@/lib/plans/material-plan-ref";
 
 const QuerySchema = z.object({
@@ -32,12 +33,7 @@ export async function GET(
   const parsed = QuerySchema.safeParse(
     Object.fromEntries(request.nextUrl.searchParams),
   );
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Invalid query", code: "INVALID_INPUT" },
-      { status: 400 },
-    );
-  }
+  if (!parsed.success) return fileApiError("INVALID_INPUT");
   const { page, perPage } = parsed.data;
 
   const where = { organizationId: orgId };
