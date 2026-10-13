@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { answerFileRoute, fileApiError } from "@/lib/documents/api-error";
 import { guardOwnedListingRecording } from "@/lib/stream/recording-listing-access";
 import {
   uploadRecordingPreviewAsset,
@@ -20,25 +21,16 @@ import {
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  try {
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
 
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
-    if (!guard.ok) return guard.response;
+    if (!guard.ok) return fileApiError(guard.code);
 
-    let formData: FormData;
-    try {
-      formData = await request.formData();
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid multipart body", code: "INVALID_INPUT" },
-        { status: 400 },
-      );
-    }
+    const formData = await request.formData().catch(() => null);
+    if (!formData) return fileApiError("INVALID_INPUT");
 
     const clip = formData.get("clip");
     const thumb = formData.get("thumb");
@@ -46,26 +38,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       !(clip instanceof File && clip.size > 0) &&
       !(thumb instanceof File && thumb.size > 0)
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "Provide a `clip` (MP4/WebM ≤50MB) and/or `thumb` (image ≤5MB)",
-          code: "INVALID_INPUT",
-        },
-        { status: 400 },
-      );
+      return fileApiError("FILE_MISSING");
     }
 
-    // Typed payload (no Record<string,…> escape hatch) and PARTIAL-SUCCESS
-    // persistence: if the thumbnail fails after the clip landed, the clip is
-    // still committed before we 400 — otherwise it would sit orphaned in
-    // storage with no DB pointer to clean it up later.
+    // A clip that landed is saved even when the thumbnail then fails, so no stored object is left without a pointer.
     const updates: {
       previewClipUrl?: string;
       previewClipStoragePath?: string;
       thumbnailUrl?: string;
     } = {};
-    let partialError: string | null = null;
+    let thumbFailed = false;
 
     if (clip instanceof File && clip.size > 0) {
       const result = await uploadRecordingPreviewAsset(
@@ -73,18 +55,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         "clip",
         clip,
       );
-      if (result.success && result.url && result.storagePath) {
-        updates.previewClipUrl = result.url;
-        updates.previewClipStoragePath = result.storagePath;
-      } else {
-        return NextResponse.json(
-          {
-            error: result.error ?? "Preview upload failed",
-            code: "UPLOAD_ERROR",
-          },
-          { status: 400 },
-        );
+      if (!(result.success && result.url && result.storagePath)) {
+        return fileApiError("PREVIEW_UPLOAD_FAILED");
       }
+      updates.previewClipUrl = result.url;
+      updates.previewClipStoragePath = result.storagePath;
     }
 
     if (thumb instanceof File && thumb.size > 0) {
@@ -96,7 +71,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       if (result.success && result.url && result.storagePath) {
         updates.thumbnailUrl = result.url;
       } else {
-        partialError = result.error ?? "Thumbnail upload failed";
+        thumbFailed = true;
       }
     }
 
@@ -108,16 +83,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    if (partialError) {
-      return NextResponse.json(
-        {
-          error: partialError,
-          code: "PARTIAL_UPLOAD",
-          message:
-            "Some assets uploaded successfully and were saved; retry the failed one.",
-          persisted: Object.keys(updates),
-        },
-        { status: 400 },
+    if (thumbFailed) {
+      return fileApiError(
+        Object.keys(updates).length > 0
+          ? "PARTIAL_UPLOAD"
+          : "PREVIEW_UPLOAD_FAILED",
+        { fields: { persisted: Object.keys(updates) } },
       );
     }
 
@@ -126,31 +97,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       select: { id: true, previewClipUrl: true, thumbnailUrl: true },
     });
     return NextResponse.json({ data: updated });
-  } catch (error) {
-    console.error("Error uploading recording preview:", error);
-    return NextResponse.json(
-      { error: "Failed to upload preview" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
-  try {
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
 
     const { recordingId } = await params;
     const guard = await guardOwnedListingRecording(recordingId);
-    if (!guard.ok) return guard.response;
+    if (!guard.ok) return fileApiError(guard.code);
 
     if (!(await deleteRecordingPreviewAssets(recordingId))) {
-      return NextResponse.json(
-        { error: "Could not delete the previews. Please try again." },
-        { status: 502 },
-      );
+      return fileApiError("STORAGE_UNAVAILABLE");
     }
     const updated = await prisma.recording.update({
       where: { id: recordingId },
@@ -163,11 +123,5 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
       select: { id: true },
     });
     return NextResponse.json({ data: updated });
-  } catch (error) {
-    console.error("Error deleting recording previews:", error);
-    return NextResponse.json(
-      { error: "Failed to delete previews" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }

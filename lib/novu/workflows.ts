@@ -82,6 +82,7 @@ export const NOVU_WORKFLOWS = {
   // Recordings
   RECORDING_AVAILABLE: "recording-available",
   RECORDING_FAILED: "recording-failed",
+  RECORDING_REMOVED: "recording-removed",
 
   // Documents
   DOCUMENT_UPLOADED: "document-uploaded",
@@ -473,6 +474,12 @@ export type RecordingPayload = NotificationScope & {
   appointmentTypeCode?: string;
   consultantName: string;
   consulteeName?: string;
+  dashboardUrl: string;
+};
+
+export type RecordingRemovedPayload = NotificationScope & {
+  recordingTitle: string;
+  consultantName: string;
   dashboardUrl: string;
 };
 

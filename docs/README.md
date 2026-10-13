@@ -151,6 +151,7 @@ Stream.io integration for messaging and video calls. This is the implemented mes
 - [11-hooks-utilities.md](./stream/11-hooks-utilities.md) - Hooks and utilities
 - [12-error-handling.md](./stream/12-error-handling.md) - Error handling
 - [13-recording-webhooks.md](./stream/13-recording-webhooks.md) - Recording webhooks
+- [19-recordings-lifecycle-and-access.md](./stream/19-recordings-lifecycle-and-access.md) - Recording lifecycle, retention and shared-run access
 - [troubleshooting.md](./stream/troubleshooting.md) - Troubleshooting
 
 ---
@@ -241,6 +242,16 @@ The public reputation rail (`ConsultantReview`, `ConsultantReviewRevision`, the 
 Storage management and document review system.
 
 - [management-strategy.md](./storage/management-strategy.md) - Storage management strategy
+
+---
+
+### Session documents
+
+Session documents, plan materials and their relationship to recordings: the thread and version model, the 30-day upload window, removal requests, 90-day retention, the per-role pages and the typed error model.
+
+- [documents/README.md](./documents/README.md) - Session documents and plan materials architecture
+- [01-architecture.md](./documents/01-architecture.md) - Threading model, CAS transitions, 2-phase direct upload
+- [2026-10-12-session-documents-and-recordings.md](./decisions/2026-10-12-session-documents-and-recordings.md) - ADR-01 to ADR-19
 
 ---
 

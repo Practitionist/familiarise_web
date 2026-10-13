@@ -5150,6 +5150,10 @@ model AppointmentDocument {
   deletedById String?
   deletedBy   User?     @relation("DocumentDeleter", fields: [deletedById], references: [id], onDelete: SetNull)
 
+  // Removal requests are flagged on the thread root; every tombstone records why it was removed.
+  removalRequestedAt DateTime?              @db.Timestamptz
+  removalReason      DocumentRemovalReason?
+
   // Metadata
   uploadedAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -5181,6 +5185,13 @@ enum DocumentReviewStatus {
 enum DocumentUploadRole {
   CONSULTEE
   CONSULTANT
+}
+
+enum DocumentRemovalReason {
+  USER_REQUEST
+  RETENTION_EXPIRY
+  SUPPORT_ACTION
+  ACCOUNT_ERASURE
 }
 
 // Plan Materials - Consultant-uploaded materials at plan level (shared across all instances)
@@ -5638,6 +5649,10 @@ model Recording {
   organization   Organization? @relation("RecordingByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
 
+  // Written with EXPIRED so attendees can tell an expert delete from retention, a decline or a lapsed copy.
+  removedAt     DateTime?               @db.Timestamptz
+  removalReason RecordingRemovalReason?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -5649,6 +5664,15 @@ model Recording {
   @@index([streamUrlExpiresAt])
   @@index([status, storageType, streamUrlExpiresAt, id])
   @@index([listingStatus, publishedAt])
+}
+
+enum RecordingRemovalReason {
+  EXPERT_DELETED
+  RETENTION
+  DECLINED
+  COPY_LAPSED
+  SUPPORT_ACTION
+  ORG_ACTION
 }
 
 enum Platform {

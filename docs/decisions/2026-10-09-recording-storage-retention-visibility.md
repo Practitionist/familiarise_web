@@ -1,6 +1,6 @@
 # ADR: Recordings are pulled to Cloudflare R2, private by default, and deleted on a platform schedule
 
-- **Status**: Accepted
+- **Status**: Accepted; the webinar and class visibility rules are superseded by [ADR-11 (own batch plus catch-up)](2026-10-12-session-documents-and-recordings.md#adr-11-recordings-across-runs-and-batches-own-batch-by-session-with-catch-up-for-missing-sessions), and cancelled-booking access by [ADR-17](2026-10-12-session-documents-and-recordings.md#adr-17-a-cancelled-bookings-files-are-read-only-until-the-retention-date)
 - **Date**: 2026-10-09
 - **Author**: teetangh
 - **Related**: [Mid-session recording decline](2026-08-13-mid-session-recording-decline.md), [ADR 20: org visibility into member sessions](../enterprise/70-design-decisions/20-org-visibility-into-member-sessions.md)
@@ -51,8 +51,8 @@ The consultant storage toggle `recordingStoragePolicy` is removed from the schem
 
 | Session type                                                                | Deleted after                                                 |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| 1:1 consultation                                                            | 90 days after the session                                     |
-| Subscription / trial                                                        | 90 days after the subscription ends (kept while it is active) |
+| 1:1 consultation or trial                                                   | 90 days after the session                                     |
+| Subscription                                                                | 90 days after the subscription ends (kept while it is active) |
 | Webinar                                                                     | 365 days after the session                                    |
 | Class                                                                       | 365 days after the class's final session                      |
 | Published replay, or any recording with a `PENDING` or `SUCCEEDED` purchase | never auto-deleted                                            |

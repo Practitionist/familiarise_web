@@ -1,6 +1,5 @@
 import "server-only";
 
-import * as Sentry from "@sentry/nextjs";
 import Image from "next/image";
 import Link from "next/link";
 import { Download, FileText } from "lucide-react";
@@ -21,13 +20,21 @@ const VIEWER_LINK_TTL_SECONDS = 300;
 export function FileViewerError({
   code,
   viewerIsUploader = false,
+  viewerRole,
   callbackPath,
+  backHref,
 }: Readonly<{
   code: FileErrorCode;
   viewerIsUploader?: boolean;
+  viewerRole?: "consultee" | "consultant";
   callbackPath: string;
+  /** The booking's documents page, when the file belongs to one. */
+  backHref?: string | null;
 }>) {
-  const copy = friendlyFileError(code, { isUploader: viewerIsUploader });
+  const copy = friendlyFileError(code, {
+    isUploader: viewerIsUploader,
+    role: viewerRole,
+  });
   return (
     <main className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center gap-4 px-4 text-center">
       <h1 className="text-2xl font-semibold text-foreground">{copy.title}</h1>
@@ -41,12 +48,27 @@ export function FileViewerError({
           </Link>
         </Button>
       ) : (
-        <Button asChild variant="outline">
-          <Link href={callbackPath}>Try again</Link>
-        </Button>
+        <div className="flex flex-wrap justify-center gap-2">
+          {code === "STORAGE_UNAVAILABLE" && (
+            <Button asChild variant="outline">
+              <Link href={callbackPath}>Try again</Link>
+            </Button>
+          )}
+          {backHref && (
+            <Button asChild>
+              <Link href={backHref}>Back to the session</Link>
+            </Button>
+          )}
+        </div>
       )}
     </main>
   );
+}
+
+function sessionDocumentsHref(appointmentId: string | null): string | null {
+  return appointmentId
+    ? `/dashboard/go/auto/appointments/${encodeURIComponent(appointmentId)}/documents`
+    : null;
 }
 
 /** Signs on every render, so a reload of the viewer tab never shows an expired link. */
@@ -63,6 +85,7 @@ export async function FileViewer({
         code={access.code}
         viewerIsUploader={access.viewerIsUploader}
         callbackPath={callbackPath}
+        backHref={sessionDocumentsHref(access.appointmentId)}
       />
     );
   }
@@ -74,25 +97,23 @@ export async function FileViewer({
       : null,
     signAuthorizedFile(file, "attachment", VIEWER_LINK_TTL_SECONDS),
   ]);
-  if (!attachment.ok || (inline && !inline.ok)) {
-    const failed = !attachment.ok ? attachment : inline;
-    const code =
-      failed && !failed.ok && failed.code === "STORAGE_CONFIG_ERROR"
-        ? "STORAGE_UNAVAILABLE"
-        : "STORAGE_MISSING";
-    if (code === "STORAGE_UNAVAILABLE") {
-      Sentry.captureException(new Error("Document storage not configured"), {
-        tags: { subsystem: "documents" },
-      });
-    }
+  const failed = !attachment.ok
+    ? attachment
+    : inline && !inline.ok
+      ? inline
+      : null;
+  if (failed && !failed.ok) {
     return (
       <FileViewerError
-        code={code}
+        code={failed.code}
         viewerIsUploader={file.viewerIsUploader}
+        viewerRole={file.viewerRole}
         callbackPath={callbackPath}
+        backHref={sessionDocumentsHref(file.appointmentId)}
       />
     );
   }
+  if (!attachment.ok) return null;
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4">

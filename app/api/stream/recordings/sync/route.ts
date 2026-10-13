@@ -7,19 +7,16 @@
  * Consultants sync their own sessions, consultees sync their enrolled sessions.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { applyRateLimit, streamRecordingSyncLimiter } from "@/lib/rate-limit";
+import { answerFileRoute, fileApiError } from "@/lib/documents/api-error";
 
 import { getSession } from "@/lib/auth-server";
 export async function POST(_req: NextRequest) {
-  try {
-    // Check authentication
+  return answerFileRoute(async () => {
     const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (!session?.user) return fileApiError("UNAUTHORIZED");
 
     // #1270 — keyed on the user, after auth and before any Stream work. This
     // route is one cheap POST that fans out a `listRecordings` call to Stream
@@ -68,12 +65,7 @@ export async function POST(_req: NextRequest) {
       );
     }
 
-    if (results.length === 0) {
-      return NextResponse.json(
-        { error: "No consultant or consultee profile found" },
-        { status: 400 },
-      );
-    }
+    if (results.length === 0) return fileApiError("FORBIDDEN");
 
     const recordings = results.flatMap((r) => r.recordings);
 
@@ -88,16 +80,5 @@ export async function POST(_req: NextRequest) {
         status: r.status,
       })),
     });
-  } catch (error) {
-    console.error("Error syncing recordings:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-
-    return NextResponse.json(
-      { error: "Failed to sync recordings" },
-      { status: 500 },
-    );
-  }
+  }, "stream");
 }

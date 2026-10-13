@@ -36,7 +36,7 @@ export function buildConsulteeNav(consulteeId: string): DashboardNav {
       {
         label: "Library",
         items: [
-          { name: "Documents", icon: FileText, path: "documents" },
+          { name: "Session documents", icon: FileText, path: "documents" },
           { name: "Recordings", icon: Video, path: "recordings" },
         ],
       },
@@ -71,7 +71,7 @@ export const CONSULTEE_PAGE_LABELS: Record<string, string> = {
   referrals: "Invite & earn",
   support: "Support requests",
   settings: "Settings",
-  documents: "Documents",
+  documents: "Session documents",
   recordings: "Recordings",
   feedback: "Feedback",
   help: "Help",

@@ -389,7 +389,11 @@ describe("Stream recording webhook handlers & syncSessionRecordings", () => {
           meetingId: "m-4",
           status: { not: "EXPIRED" },
         }),
-        data: { status: "EXPIRED", recordingUrl: "" },
+        data: expect.objectContaining({
+          status: "EXPIRED",
+          recordingUrl: "",
+          removalReason: "DECLINED",
+        }),
       }),
     );
     // Nothing stored yet, so no storage call.

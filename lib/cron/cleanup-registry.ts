@@ -601,6 +601,26 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
         failureMessage: "Failed to reconcile disputes",
       }),
 
+    // @cleanup-twin purge-deleted-documents
+    "purge-deleted-documents": () =>
+      cleanupRoute({
+        job: "purge-deleted-documents",
+        run: async () => {
+          const { purgeDeletedDocuments } =
+            await import("@/lib/documents/document-purge");
+          return purgeDeletedDocuments();
+        },
+        summarize: (r) => ({
+          tombstoned: r.tombstoned,
+          purged: r.purged,
+          failedStorage: r.failedStorage,
+          failedRows: r.failedRows,
+          byReason: r.byReason,
+        }),
+        status: (r) => statusFor(r),
+        failureMessage: "Document purge failed",
+      }),
+
     // @cleanup-twin reconcile-document-storage
     "reconcile-document-storage": () =>
       cleanupRoute({

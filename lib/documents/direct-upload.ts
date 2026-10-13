@@ -1,176 +1,158 @@
+import { z } from "zod";
+
 import {
   FileActionError,
   friendlyErrorFromResponse,
   friendlyFileError,
 } from "./file-errors";
+import { validateUploadFile } from "./file-policy";
 
 /**
- * Client-side 2-phase presigned upload helper with XHR upload progress:
- * mints a single-use upload URL (`/upload-url`), PUTs bytes directly to Supabase Storage,
- * and commits metadata without hitting the 6 MB serverless body ceiling.
+ * Browser side of presign-then-commit: checks the file policy before any
+ * request, PUTs the bytes straight to storage with progress, then commits.
+ * Every failure is thrown as a FileActionError carrying fixed copy.
  */
 
-export interface DirectUploadDocumentParams {
-  appointmentId: string;
-  file: File;
-  role?: "consultee" | "consultant";
-  endpoint?: string;
-  description?: string;
-  responseToDocumentId?: string;
-  onProgress?: (percent: number) => void;
+const PresignSchema = z.object({
+  uploadUrl: z.string().url(),
+  storagePath: z.string().min(1),
+  mimeType: z.string().min(1),
+});
+
+export interface UploadedObject {
+  storagePath: string;
+  originalName: string;
+  mimeType: string;
+  fileSize: number;
 }
 
-function putFileWithProgress(
+class StorageUploadError extends Error {
+  constructor(readonly status: number) {
+    super(`Storage upload failed (${status})`);
+    this.name = "StorageUploadError";
+  }
+}
+
+/** PUTs a file to a signed upload URL, reporting progress. */
+export function putFileWithProgress(
   uploadUrl: string,
   file: File,
+  mimeType: string,
   onProgress?: (percent: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl, true);
-    xhr.setRequestHeader(
-      "Content-Type",
-      file.type || "application/octet-stream",
-    );
-
+    xhr.setRequestHeader("Content-Type", mimeType);
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
         onProgress(Math.round((event.loaded / event.total) * 100));
       }
     };
-
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress?.(100);
         resolve();
       } else {
-        reject(new Error(`Storage upload failed (${xhr.status})`));
+        reject(new StorageUploadError(xhr.status));
       }
     };
-
-    xhr.onerror = () => {
-      reject(new Error("Network error while uploading file to storage"));
-    };
-
+    xhr.onerror = () => reject(new TypeError("Network error"));
     xhr.send(file);
   });
 }
 
-async function ensureOkResponse(res: Response): Promise<Response> {
-  if (!res.ok) {
-    throw new FileActionError(await friendlyErrorFromResponse(res));
+/** Any upload failure as fixed copy. */
+export function asFileActionError(error: unknown): FileActionError {
+  if (error instanceof FileActionError) return error;
+  if (error instanceof StorageUploadError) {
+    return new FileActionError(
+      friendlyFileError(
+        error.status === 413 ? "FILE_TOO_LARGE" : "STORAGE_UNAVAILABLE",
+      ),
+    );
   }
+  return new FileActionError(
+    friendlyFileError(error instanceof TypeError ? "NETWORK" : "SERVER_ERROR"),
+  );
+}
+
+/** POSTs JSON; a failure is thrown as fixed copy. */
+export async function postJson(
+  url: string,
+  body: unknown,
+  method: "POST" | "PUT" = "POST",
+): Promise<Response> {
+  const res = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new FileActionError(await friendlyErrorFromResponse(res));
   return res;
 }
 
-async function tryPresignedDirectUpload(
-  appointmentId: string,
-  targetEndpoint: string,
-  params: DirectUploadDocumentParams,
-): Promise<Response | null> {
-  const { file, description, responseToDocumentId, onProgress } = params;
-
+/** Presigns and uploads one file for a booking; the caller commits it. */
+export async function uploadBookingFile(params: {
+  appointmentId: string;
+  file: File;
+  parentDocumentId?: string | null;
+  onProgress?: (percent: number) => void;
+}): Promise<UploadedObject> {
+  const { appointmentId, file } = params;
   try {
-    const presignRes = await fetch(
+    const policy = validateUploadFile(file);
+    if (!policy.ok) throw new FileActionError(friendlyFileError(policy.code));
+
+    const presignRes = await postJson(
       `/api/appointments/${encodeURIComponent(appointmentId)}/documents/upload-url`,
       {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          originalName: file.name,
-          mimeType: file.type,
-          fileSize: file.size,
-          responseToDocumentId: responseToDocumentId || undefined,
-        }),
+        originalName: file.name,
+        mimeType: policy.mimeType,
+        fileSize: file.size,
+        parentDocumentId: params.parentDocumentId ?? null,
       },
     );
-
-    if (presignRes.ok) {
-      const presignJson = (await presignRes.json()) as {
-        uploadUrl?: string;
-        storagePath?: string;
-      };
-      if (presignJson.uploadUrl && presignJson.storagePath) {
-        await putFileWithProgress(presignJson.uploadUrl, file, onProgress);
-
-        const commitRes = await fetch(targetEndpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            storagePath: presignJson.storagePath,
-            originalName: file.name,
-            mimeType: file.type,
-            fileSize: file.size,
-            description: description?.trim() || undefined,
-            responseToDocumentId: responseToDocumentId || undefined,
-          }),
-        });
-        return ensureOkResponse(commitRes);
-      }
-      return null;
+    const presign = PresignSchema.safeParse(await presignRes.json());
+    if (!presign.success) {
+      throw new FileActionError(friendlyFileError("SERVER_ERROR"));
     }
-
-    if (
-      presignRes.status >= 400 &&
-      presignRes.status < 500 &&
-      presignRes.status !== 404
-    ) {
-      return ensureOkResponse(presignRes);
-    }
-    return null;
-  } catch (err) {
-    if (err instanceof Error && !err.message.includes("Storage upload")) {
-      throw err;
-    }
-    return null;
-  }
-}
-
-async function uploadMultipartFallback(
-  targetEndpoint: string,
-  params: DirectUploadDocumentParams,
-): Promise<Response> {
-  const formData = new FormData();
-  formData.append("file", params.file);
-  if (params.description?.trim()) {
-    formData.append("description", params.description.trim());
-  }
-  if (params.responseToDocumentId) {
-    formData.append("responseToDocumentId", params.responseToDocumentId);
-  }
-
-  const fallbackRes = await fetch(targetEndpoint, {
-    method: "POST",
-    body: formData,
-  });
-  return ensureOkResponse(fallbackRes);
-}
-
-export async function uploadAppointmentDocumentWithProgress(
-  params: DirectUploadDocumentParams,
-): Promise<Response> {
-  const { appointmentId, role = "consultee", endpoint } = params;
-
-  const targetEndpoint =
-    endpoint ??
-    (role === "consultant"
-      ? `/api/appointments/${encodeURIComponent(appointmentId)}/documents/consultant`
-      : `/api/appointments/${encodeURIComponent(appointmentId)}/documents`);
-
-  try {
-    if (typeof XMLHttpRequest !== "undefined") {
-      const directRes = await tryPresignedDirectUpload(
-        appointmentId,
-        targetEndpoint,
-        params,
-      );
-      if (directRes) return directRes;
-    }
-    return await uploadMultipartFallback(targetEndpoint, params);
-  } catch (err) {
-    if (err instanceof FileActionError) throw err;
-    throw new FileActionError(
-      friendlyFileError(err instanceof TypeError ? "NETWORK" : "SERVER_ERROR"),
+    await putFileWithProgress(
+      presign.data.uploadUrl,
+      file,
+      presign.data.mimeType,
+      params.onProgress,
     );
+    return {
+      storagePath: presign.data.storagePath,
+      originalName: file.name,
+      mimeType: presign.data.mimeType,
+      fileSize: file.size,
+    };
+  } catch (error) {
+    throw asFileActionError(error);
+  }
+}
+
+/** Uploads and commits a new document, a new learner version or an expert's shared file. */
+export async function uploadBookingDocument(params: {
+  appointmentId: string;
+  file: File;
+  parentDocumentId?: string | null;
+  description?: string;
+  onProgress?: (percent: number) => void;
+}): Promise<void> {
+  const uploaded = await uploadBookingFile(params);
+  try {
+    await postJson(
+      `/api/appointments/${encodeURIComponent(params.appointmentId)}/documents`,
+      {
+        ...uploaded,
+        parentDocumentId: params.parentDocumentId ?? null,
+        description: params.description?.trim() || null,
+      },
+    );
+  } catch (error) {
+    throw asFileActionError(error);
   }
 }

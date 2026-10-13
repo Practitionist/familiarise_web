@@ -19,12 +19,14 @@ import { streamLogger } from "@/lib/stream-logger";
 import { deleteRecordingAssets } from "@/lib/stream/recording-storage";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { streamCopyExpiresAt } from "@/lib/stream/recording-utils";
+import { RECORDING_RETENTION_SCHEDULE } from "@/lib/stream/recording-retention-schedule";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STREAM_REFRESH_WINDOW_DAYS = 15;
-const ONE_TO_ONE_RETENTION_DAYS = 90;
-const SUBSCRIPTION_RETENTION_DAYS = 90;
-const GROUP_RETENTION_DAYS = 365;
+const ONE_TO_ONE_RETENTION_DAYS = RECORDING_RETENTION_SCHEDULE.oneToOneDays;
+const SUBSCRIPTION_RETENTION_DAYS =
+  RECORDING_RETENTION_SCHEDULE.subscriptionDays;
+const GROUP_RETENTION_DAYS = RECORDING_RETENTION_SCHEDULE.groupDays;
 /** Floor of the owner-set org cap; bounds which rows are worth scanning. */
 export const MIN_ORG_RETENTION_DAYS = 7;
 const DEFAULT_EXPIRE_LIMIT = 200;
@@ -44,6 +46,7 @@ const retainableWhere = {
 /** What the recording's session was; end dates in the future mean "still running". */
 type RetentionSession =
   | { kind: "CONSULTATION"; sessionEndedAt: Date }
+  | { kind: "TRIAL"; sessionEndedAt: Date }
   | { kind: "SUBSCRIPTION"; subscriptionEndsAt: Date }
   | { kind: "WEBINAR"; sessionEndedAt: Date }
   | { kind: "CLASS"; lastSessionEndsAt: Date };
@@ -68,6 +71,7 @@ function platformDeadline(input: RetentionInput): Date | null {
   if (!session) return addDays(input.recordedAt, ONE_TO_ONE_RETENTION_DAYS);
   switch (session.kind) {
     case "CONSULTATION":
+    case "TRIAL":
       return addDays(session.sessionEndedAt, ONE_TO_ONE_RETENTION_DAYS);
     case "SUBSCRIPTION":
       return session.subscriptionEndsAt > now
@@ -144,15 +148,11 @@ const candidateSelect = {
           endsAt: true,
           appointment: {
             select: {
-              consultation: { select: { id: true } },
-              webinar: { select: { id: true } },
-              class: { select: { id: true } },
+              consultationId: true,
+              webinarId: true,
+              classId: true,
               subscription: { select: subscriptionEndSelect },
-              trial: {
-                select: {
-                  convertedToSubscription: { select: subscriptionEndSelect },
-                },
-              },
+              trial: { select: { id: true } },
               occurrences: {
                 where: liveOccurrenceWhere,
                 orderBy: { endsAt: "desc" },
@@ -171,14 +171,27 @@ type Candidate = Prisma.RecordingGetPayload<{
   select: typeof candidateSelect;
 }>;
 
+/** Recordings of one subscription share its renewal chain, so a page walks each chain once. */
+function cachedChainEnd(
+  start: SubscriptionEnd,
+  cache: Map<string, Promise<Date>>,
+): Promise<Date> {
+  const hit = cache.get(start.id);
+  if (hit) return hit;
+  const end = subscriptionChainEnd(start);
+  cache.set(start.id, end);
+  return end;
+}
+
 async function resolveSession(
   candidate: Candidate,
+  chainEnds = new Map<string, Promise<Date>>(),
 ): Promise<RetentionSession | null> {
   const occurrence = candidate.meeting.occurrence;
   const appointment = occurrence.appointment;
   const sessionEndedAt = candidate.meeting.endedAt ?? occurrence.endsAt;
-  if (appointment.webinar) return { kind: "WEBINAR", sessionEndedAt };
-  if (appointment.class) {
+  if (appointment.webinarId) return { kind: "WEBINAR", sessionEndedAt };
+  if (appointment.classId) {
     return {
       kind: "CLASS",
       lastSessionEndsAt: appointment.occurrences[0]?.endsAt ?? sessionEndedAt,
@@ -187,22 +200,67 @@ async function resolveSession(
   if (appointment.subscription) {
     return {
       kind: "SUBSCRIPTION",
-      subscriptionEndsAt: await subscriptionChainEnd(appointment.subscription),
+      subscriptionEndsAt: await cachedChainEnd(
+        appointment.subscription,
+        chainEnds,
+      ),
     };
   }
-  if (appointment.trial) {
-    const converted = appointment.trial.convertedToSubscription;
-    return {
-      kind: "SUBSCRIPTION",
-      subscriptionEndsAt: converted
-        ? await subscriptionChainEnd(converted)
-        : sessionEndedAt,
-    };
-  }
-  if (appointment.consultation) {
+  // A trial is a single 1:1 session, whatever it converted into.
+  if (appointment.trial) return { kind: "TRIAL", sessionEndedAt };
+  if (appointment.consultationId) {
     return { kind: "CONSULTATION", sessionEndedAt };
   }
   return null;
+}
+
+/** What a recording's "kept until" label says; computed by the same rule the sweep applies. */
+export type RecordingRetentionLabel =
+  { kind: "DATE"; until: Date } | { kind: "WHILE_ACTIVE" } | { kind: "NEVER" };
+
+/** Retention labels for a page of recordings, keyed by recording id. */
+export async function recordingRetentionLabels(
+  recordingIds: readonly string[],
+  now: Date = new Date(),
+): Promise<Map<string, RecordingRetentionLabel>> {
+  const labels = new Map<string, RecordingRetentionLabel>();
+  if (recordingIds.length === 0) return labels;
+  const rows = await prisma.recording.findMany({
+    where: { id: { in: [...recordingIds] } },
+    select: {
+      ...candidateSelect,
+      listingStatus: true,
+      purchases: {
+        where: { status: { in: LIVE_PURCHASE_STATUSES } },
+        select: { id: true },
+        take: 1,
+      },
+    },
+  });
+  const chainEnds = new Map<string, Promise<Date>>();
+  for (const row of rows) {
+    const published = row.listingStatus === RecordingListingStatus.PUBLISHED;
+    const hasLivePurchase = row.purchases.length > 0;
+    if (published || hasLivePurchase) {
+      labels.set(row.id, { kind: "NEVER" });
+      continue;
+    }
+    const until = recordingRetentionDeadline({
+      now,
+      recordedAt: row.recordedAt,
+      session: await resolveSession(row, chainEnds),
+      published,
+      hasLivePurchase,
+      orgRetentionDays: row.organizationId
+        ? (row.organization?.streamRecordingRetentionDays ?? null)
+        : null,
+    });
+    labels.set(
+      row.id,
+      until ? { kind: "DATE", until } : { kind: "WHILE_ACTIVE" },
+    );
+  }
+  return labels;
 }
 
 interface ExpireRecordingsResult {
@@ -291,7 +349,12 @@ async function expireLapsedCopies(now: Date): Promise<number> {
       storageType: RecordingStorageType.STREAM_S3,
       streamUrlExpiresAt: { lt: now },
     },
-    data: { status: RecordingStatus.EXPIRED, recordingUrl: "" },
+    data: {
+      status: RecordingStatus.EXPIRED,
+      recordingUrl: "",
+      removedAt: now,
+      removalReason: "COPY_LAPSED",
+    },
   });
   return lapsed.count;
 }
@@ -434,7 +497,12 @@ async function expireGroup(
     id: { in: ids },
     ...retainableWhere,
   };
-  const data = { status: RecordingStatus.EXPIRED, recordingUrl: "" };
+  const data = {
+    status: RecordingStatus.EXPIRED,
+    recordingUrl: "",
+    removedAt: new Date(),
+    removalReason: "RETENTION" as const,
+  };
   if (!organizationId) {
     return (await prisma.recording.updateMany({ where, data })).count;
   }
@@ -472,16 +540,24 @@ export async function purgeExpiredRecordingAssets(row: {
 }): Promise<{ success: boolean; error?: string }> {
   const deleted = await deleteRecordingAssets(row);
   if (!deleted.success) return deleted;
-  await prisma.recording.updateMany({
-    where: { id: row.id, status: RecordingStatus.EXPIRED },
-    data: {
-      storagePath: null,
-      previewClipUrl: null,
-      previewClipStoragePath: null,
-      previewClipDuration: null,
-      thumbnailUrl: null,
-    },
-  });
+  try {
+    await prisma.recording.updateMany({
+      where: { id: row.id, status: RecordingStatus.EXPIRED },
+      data: {
+        storagePath: null,
+        previewClipUrl: null,
+        previewClipStoragePath: null,
+        previewClipDuration: null,
+        thumbnailUrl: null,
+      },
+    });
+  } catch (error) {
+    // The objects are gone; a pointer the database refuses to clear is retried by the sweep.
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "pointer clear failed",
+    };
+  }
   return { success: true };
 }
 

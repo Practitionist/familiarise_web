@@ -116,7 +116,6 @@ interface UploadAssetErrors {
   size?: string;
   type?: string | ((fileType: string) => string);
   bucketNotReady?: string;
-  signFailed?: string;
 }
 
 interface UploadAssetOptions {
@@ -126,8 +125,7 @@ interface UploadAssetOptions {
   maxBytes: number;
   allowedMime: string[];
   /** "private" stores the object without minting any URL; readers sign on demand. */
-  access: "public" | "signed" | "private";
-  signedTtl?: number;
+  access: "public" | "private";
   upsert?: boolean;
   replaceFolder?: boolean;
   cacheControl?: string;
@@ -150,7 +148,6 @@ const uploadAsset = async (
     maxBytes,
     allowedMime,
     access,
-    signedTtl = 3600,
     upsert = false,
     replaceFolder = false,
     cacheControl = "3600",
@@ -224,27 +221,7 @@ const uploadAsset = async (
     }
 
     let fileUrl: string | undefined;
-    if (access === "signed") {
-      const { data: signedUrlData, error: signedUrlError } =
-        await getSignedAssetUrl(bucket, storagePath, signedTtl);
-      if (signedUrlError || !signedUrlData?.signedUrl) {
-        console.error("Failed to create signed URL:", signedUrlError);
-        // Upload succeeded but signing failed — best-effort remove the now-orphaned
-        // object so a failed upload doesn't leave a dangling file. (#945 review)
-        await deleteAsset(bucket, storagePath);
-        Sentry.captureException(
-          signedUrlError instanceof Error
-            ? signedUrlError
-            : new Error("Failed to create signed URL"),
-          { tags: { subsystem: "storage" } },
-        );
-        return {
-          success: false,
-          error: errors?.signFailed ?? "Failed to generate document URL",
-        };
-      }
-      fileUrl = signedUrlData.signedUrl;
-    } else if (access === "public") {
+    if (access === "public") {
       fileUrl = getPublicAssetUrl(bucket, storagePath);
     }
 
@@ -335,142 +312,14 @@ const fetchImagesFromSupabaseStorage = async (
   }
 };
 
-// Allowed MIME types for documents (shared across plan-material + consultant uploads)
-const ALLOWED_DOCUMENT_TYPES = [
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/vnd.ms-powerpoint",
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "text/plain",
-  "text/csv",
-  "text/markdown",
-  "application/zip",
-  "application/x-rar-compressed",
-];
-
-// Shared "File type '<x>' not supported" copy for plan-material + consultant.
-const documentTypeError = (fileType: string): string =>
-  `File type '${fileType}' not supported. Allowed types: PDF, Word, Excel, PowerPoint, images, text files, and archives.`;
-
-// Document upload types
-interface DocumentUploadOptions {
-  appointmentId: string;
-  consulteeId: string;
-  description?: string;
-  file: File;
-}
-
-/**
- * Upload document to Supabase storage with organized folder structure.
- * Structure: appointments/{appointmentId}/consultee-{consulteeId}/{filename}
- */
-const uploadAppointmentDocument = (
-  options: DocumentUploadOptions,
-): Promise<DocumentUploadResult> => {
-  const { appointmentId, consulteeId, file } = options;
-  return uploadAsset({
-    bucket: "documents",
-    folder: `appointments/${appointmentId}/consultee-${consulteeId}`,
-    file,
-    maxBytes: 10 * 1024 * 1024,
-    allowedMime: [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "image/jpeg",
-      "image/png",
-      "image/gif",
-      "text/plain",
-    ],
-    access: "signed",
-    ensureBucket: { public: false },
-    errors: {
-      bucketNotReady:
-        "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard (private), or add SUPABASE_SERVICE_ROLE_KEY to your environment variables for automatic bucket creation.",
-    },
-  });
-};
-
-// Plan material upload types
+// Plan material storage folders are keyed by kind.
 export type PlanType = "consultation" | "subscription" | "webinar" | "class";
-
-interface PlanMaterialUploadOptions {
-  planType: PlanType;
-  planId: string;
-  file: File;
-  description?: string;
-}
-
-// Consultant document upload types (for response documents)
-interface ConsultantDocumentUploadOptions {
-  appointmentId: string;
-  consultantId: string;
-  file: File;
-  responseToDocumentId?: string;
-  description?: string;
-}
-
-/**
- * Upload plan material to Supabase storage.
- * Structure: plans/{planType}-plans/{planId}/{filename}
- */
-const uploadPlanMaterial = (
-  options: PlanMaterialUploadOptions,
-): Promise<DocumentUploadResult> => {
-  const { planType, planId, file } = options;
-  return uploadAsset({
-    bucket: "documents",
-    folder: `plans/${planType}-plans/${planId}`,
-    file,
-    maxBytes: 10 * 1024 * 1024,
-    allowedMime: ALLOWED_DOCUMENT_TYPES,
-    access: "signed",
-    ensureBucket: { public: false },
-    errors: {
-      type: documentTypeError,
-      bucketNotReady:
-        "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard.",
-    },
-  });
-};
 
 /**
  * Delete plan material from Supabase storage
  */
 const deletePlanMaterial = (storagePath: string): Promise<boolean> =>
   deleteAsset("documents", storagePath);
-
-/**
- * Upload consultant document (response document) to Supabase storage.
- * Structure: appointments/{appointmentId}/consultant-{consultantId}/{filename}
- */
-const uploadConsultantDocument = (
-  options: ConsultantDocumentUploadOptions,
-): Promise<DocumentUploadResult> => {
-  const { appointmentId, consultantId, file } = options;
-  return uploadAsset({
-    bucket: "documents",
-    folder: `appointments/${appointmentId}/consultant-${consultantId}`,
-    file,
-    maxBytes: 10 * 1024 * 1024,
-    allowedMime: ALLOWED_DOCUMENT_TYPES,
-    access: "signed",
-    ensureBucket: { public: false },
-    errors: {
-      type: documentTypeError,
-      bucketNotReady:
-        "Document storage bucket not found. Please create a 'documents' bucket in your Supabase dashboard.",
-    },
-  });
-};
 
 // Support ticket attachment types
 interface SupportAttachmentUploadOptions {
@@ -567,10 +416,7 @@ You can find this key in: Dashboard > Settings > API > service_role key
 // adding a type needs no bucket provisioning — only ownership verification,
 // which lives in app/api/plans/image/route.ts.
 export type TPlanImageType =
-  | "webinar-plans"
-  | "class-plans"
-  | "consultation-plans"
-  | "subscription-plans";
+  "webinar-plans" | "class-plans" | "consultation-plans" | "subscription-plans";
 
 interface IPlanImageUploadOptions {
   planType: TPlanImageType;
@@ -970,13 +816,9 @@ const deleteRecordingPreviewAssets = (recordingId: string): Promise<boolean> =>
 export {
   generateStorageFileName,
   fetchImagesFromSupabaseStorage,
-  uploadAppointmentDocument,
   deleteAppointmentDocument,
   // Plan materials
-  uploadPlanMaterial,
   deletePlanMaterial,
-  // Consultant documents (response documents)
-  uploadConsultantDocument,
   // Support ticket attachments
   uploadSupportTicketAttachment,
   signSupportTicketAttachment,
