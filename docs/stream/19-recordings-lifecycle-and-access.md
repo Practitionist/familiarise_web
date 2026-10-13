@@ -325,10 +325,12 @@ type Slot = {
     | "declined"
     | "removed"
     | "expired"
-    | "before_you_joined";
+    | "before_you_joined"
+    | "cancelled";
   missingReason: "not_recorded" | "declined" | "removed" | "expired" | null;
   removedAt: string | null; // when the session's recording was removed
   removedBy: "expert" | "support" | "org" | null;
+  removers: ("expert" | "support" | "org")[]; // every distinct remover, first remover first
   declinedBy: string | null; // 1:1 only
   source:
     | { kind: "own" }
@@ -352,8 +354,9 @@ type Slot = {
   removedParts: {
     partNo: number;
     partCount: number;
+    title: string;
     removedAt: string | null;
-    removedBy: "expert" | "support" | null;
+    removedBy: "expert" | "support" | "org" | null;
   }[];
 };
 ```
@@ -383,10 +386,11 @@ type LibraryRecording = {
     | "preparing"
     | "expired"
     | "upcoming"
-    | "before_you_joined";
+    | "before_you_joined"
+    | "cancelled";
   durationInMinutes: number;
   catchUp: { from: "batch" | "run"; recordedAt: string } | null;
-  removed: { at: string | null; by: "expert" | "support" | null } | null;
+  removed: { at: string | null; by: string[] } | null; // every distinct remover, by name
   declinedBy: string | null;
   keptUntil: RetentionLabel | null;
   parts: {
@@ -401,7 +405,7 @@ type LibraryRecording = {
     partNo: number;
     partCount: number;
     removedAt: string | null;
-    removedBy: "expert" | "support" | null;
+    removedBy: string; // the expert, the organisation or Familiarise support, by name
   }[];
 };
 ```
