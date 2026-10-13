@@ -14,7 +14,6 @@ import prisma from "@/lib/prisma";
 import { UserRole, ConsultantVerificationStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { applyRateLimit, verificationSubmitLimiter } from "@/lib/rate-limit";
-import { getAppUrl } from "@/lib/url";
 import {
   submitVerificationRequest,
   SUBMIT_REFUSAL_STATUS,
@@ -28,8 +27,7 @@ const resubmitSchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    // Force-fresh (see documents route): revocation must bite immediately.
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -86,7 +84,6 @@ export async function POST(req: NextRequest) {
       notes: notes || "Resubmission after addressing feedback",
       documentIds: documentIds ?? [],
       carryOver: true,
-      adminDashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
     });
     if (!outcome.ok) {
       return NextResponse.json(

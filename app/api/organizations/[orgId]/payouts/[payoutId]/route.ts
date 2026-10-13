@@ -32,10 +32,12 @@ import {
   rolesWithOrgPermission,
 } from "@/lib/auth/org-permissions";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { releaseClawbackRecovery } from "@/lib/payments/payouts/clawback-recovery";
 import {
   PAYOUT_ALLOWED_FROM,
   transitionOrgPayout,
 } from "@/lib/enterprise/transitions";
+import { requireFreshSession } from "@/lib/auth/step-up";
 
 const PatchStatusSchema = z.enum(["APPROVED", "CANCELLED"]);
 
@@ -153,7 +155,10 @@ export async function GET(
   },
 ) {
   const { orgId, payoutId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "payouts.read",
+  });
   if (access.error) return access.error;
 
   const payout = await prisma.organizationPayout.findFirst({
@@ -193,8 +198,11 @@ export async function PATCH(
   const { orgId, payoutId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "payouts.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
+  const stale = requireFreshSession(access.session);
+  if (stale) return stale;
 
   const raw = await req.json().catch(() => null);
   const parsed = PatchBodySchema.safeParse(raw);
@@ -274,6 +282,7 @@ export async function PATCH(
           where: { orgPayoutId: payoutId, status: "BATCHED" },
           data: { status: "READY", orgPayoutId: null },
         });
+        await releaseClawbackRecovery(tx, payoutId);
       }
 
       const next = await tx.organizationPayout.findUniqueOrThrow({

@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/prisma";
+import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
 
 /**
@@ -32,7 +33,7 @@ export interface WindowAtom {
   end: Date;
 }
 
-const ATOM_MS = 30 * 60 * 1000;
+const ATOM_MS = SCHEDULING_INTERVAL_MS;
 
 /** The 30-minute atoms of [start, end), keyed by UTC weekday + minute. */
 export function windowAtoms(start: Date, end: Date): WindowAtom[] {

@@ -15,7 +15,10 @@ function Reviewer({ review }: { review: TPublicConsultantReview }) {
   return (
     <div className="flex items-center gap-3">
       <Avatar className="h-9 w-9 border border-white/10">
-        <AvatarImage src={review.consulteeProfile?.user?.image ?? ""} alt="" />
+        <AvatarImage
+          src={review.consulteeProfile?.user?.image ?? ""}
+          alt={name}
+        />
         <AvatarFallback className="bg-zinc-800 text-xs text-zinc-300">
           {name.charAt(0)}
         </AvatarFallback>
@@ -44,7 +47,9 @@ function Stars({ rating }: { rating: number }) {
           aria-hidden
           className={cn(
             "h-3.5 w-3.5",
-            i < rating ? "fill-white text-white" : "fill-zinc-800 text-zinc-800",
+            i < rating
+              ? "fill-white text-white"
+              : "fill-zinc-800 text-zinc-800",
           )}
         />
       ))}

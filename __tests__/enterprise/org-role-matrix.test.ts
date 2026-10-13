@@ -316,8 +316,8 @@ describe("role matrix decisions (#1527 decisions 1–8)", () => {
     expect(read(`${API}/branding/[asset]/route.ts`)).toContain(
       'permission: "settings.manage"',
     );
-    const scimTokens = read(`${API}/scim/tokens/route.ts`);
-    expect(scimTokens.split("export async function POST")[1]).toContain(
+    const ssoProviders = read(`${API}/sso/providers/route.ts`);
+    expect(ssoProviders.split("export async function POST")[1]).toContain(
       'permission: "identity.manage"',
     );
     expect(hasOrgPermission("MAINTAINER", "identity.manage")).toBe(false);
@@ -362,11 +362,6 @@ describe("API guard ↔ page/tab gate parity (#1527)", () => {
       `${API}/sso/route.ts`,
       "identity.read",
       "lib/dashboard/org-settings-sections.ts",
-    ],
-    [
-      `${API}/scim/tokens/route.ts`,
-      "identity.read",
-      `${DASH}/settings/ScimPanel.tsx`,
     ],
     [
       `${API}/branding/[asset]/route.ts`,

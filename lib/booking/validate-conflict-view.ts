@@ -52,3 +52,109 @@ export function conflictDetailsBySlot(
 ): Map<string, ConflictDetail> {
   return new Map((details ?? []).map((d) => [d.slot, d]));
 }
+
+import type prisma from "@/lib/prisma";
+
+export async function findTentativeOccurrenceIdsForEvent(
+  db: {
+    appointment?: Partial<Pick<(typeof prisma)["appointment"], "findMany">>;
+  },
+  where:
+    | { webinarId: string }
+    | { classId: string }
+    | { subscriptionId: string },
+): Promise<string[]> {
+  const rows =
+    (await db.appointment?.findMany?.({
+      where: {
+        ...where,
+        occurrences: { some: { isTentative: true, deletedAt: null } },
+      },
+      select: {
+        id: true,
+        occurrences: {
+          where: { isTentative: true, deletedAt: null },
+          select: { id: true },
+        },
+      },
+    })) ?? [];
+  return rows.flatMap((a) => (a.occurrences ?? []).map((o) => o.id));
+}
+
+export function categorizeValidationErrors(args: {
+  errors: string[];
+  slots: string[];
+  conflictDetails: Map<string, ConflictDetail>;
+  viewer: { userId: string; isEventConsultant: boolean };
+  resolveFallbackType: (message: string) => string;
+}): SlotConflictResult & {
+  weeklyDistributionErrors: {
+    week: string;
+    slotsCount: number;
+    maxAllowed: number;
+  }[];
+} {
+  const conflicts: SlotConflictResult["conflicts"] = [];
+  const outsideAvailability: SlotConflictResult["outsideAvailability"] = [];
+  const weeklyDistributionErrors: {
+    week: string;
+    slotsCount: number;
+    maxAllowed: number;
+  }[] = [];
+
+  for (const error of args.errors) {
+    if (error.startsWith("[CONFLICT]")) {
+      const message = error.replace("[CONFLICT] ", "");
+      const slotMatch = message.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+      if (slotMatch) {
+        conflicts.push(
+          describeConflict(
+            slotMatch[1],
+            args.conflictDetails.get(slotMatch[1]),
+            args.viewer,
+            args.resolveFallbackType(message),
+          ),
+        );
+      }
+    } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
+      const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");
+      const slotMatch = message.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+      if (slotMatch) {
+        outsideAvailability.push({ slot: slotMatch[1] });
+      } else {
+        for (const bodySlot of args.slots) {
+          const normalized = new Date(bodySlot).toISOString().slice(0, 19);
+          if (!outsideAvailability.some((o) => o.slot === normalized)) {
+            outsideAvailability.push({ slot: normalized });
+          }
+        }
+      }
+    } else if (error.startsWith("[WEEKLY_LIMIT]")) {
+      const message = error.replace("[WEEKLY_LIMIT] ", "");
+      const sessionsMatch = message.match(/has (\d+) sessions but max is (\d+)/);
+      const weekMatch = message.match(/Week of (.+?) has/);
+      if (sessionsMatch && weekMatch) {
+        weeklyDistributionErrors.push({
+          week: weekMatch[1],
+          slotsCount: parseInt(sessionsMatch[1], 10),
+          maxAllowed: parseInt(sessionsMatch[2], 10),
+        });
+      }
+    }
+  }
+
+  const validSlots = args.slots.filter((bodySlot) => {
+    const bodySlotSeconds = new Date(bodySlot).toISOString().slice(0, 19);
+    return (
+      !conflicts.some((c) => c.slot === bodySlotSeconds) &&
+      !outsideAvailability.some((o) => o.slot === bodySlotSeconds)
+    );
+  });
+
+  return {
+    conflicts,
+    outsideAvailability,
+    validSlots,
+    weeklyDistributionErrors,
+  };
+}

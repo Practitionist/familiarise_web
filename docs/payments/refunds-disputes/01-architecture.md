@@ -64,7 +64,6 @@
 | File                            | Functions                                                                                             |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `lib/payments/index.ts`         | Gateway abstraction: `createRefund()`, `listRefunds()`, `listDisputes()`, `submitDisputeEvidence()`   |
-| `lib/payments/core/stripe.ts`   | Stripe implementation: `createStripeRefund()`, `listStripeRefunds()`, `submitStripeDisputeEvidence()` |
 | `lib/payments/core/razorpay.ts` | Razorpay implementation: `createRazorpayRefund()`, `listRazorpayRefunds()`                            |
 
 ---

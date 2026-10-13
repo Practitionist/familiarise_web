@@ -4,7 +4,8 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { Input } from "@/components/ui/input";
 import {
   ResponsiveTable,
@@ -92,64 +93,66 @@ export function AuditTab({ initial }: Readonly<{ initial: OpsLogPage }>) {
     : 1;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Audit log</CardTitle>
-        {!viewerIsAdmin && (
-          <p className="text-sm text-muted-foreground">
-            You see the actions you took yourself.
-          </p>
-        )}
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {FILTERS.filter((f) => viewerIsAdmin || !f.adminOnly).map((f) => (
-            <Input
-              key={f.key}
-              aria-label={f.label}
-              placeholder={f.label}
-              value={filters[f.key] ?? ""}
-              onChange={(e) => {
-                setPage(1);
-                setFilters((all) => ({ ...all, [f.key]: e.target.value }));
-              }}
-            />
-          ))}
-        </div>
-        <ResponsiveTable<OpsLogRow>
-          columns={columns}
-          rows={data?.rows ?? []}
-          getRowId={(r) => r.id}
-          empty={
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No actions match these filters.
-            </p>
-          }
-        />
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">
-            Page {page} of {lastPage}
-          </span>
-          <span className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Newer
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={page >= lastPage}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Older
-            </Button>
-          </span>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="space-y-6">
+      <PageHeader
+        title="Audit log"
+        description={
+          viewerIsAdmin
+            ? "Operator money and administrative actions across the platform."
+            : "You see the actions you took yourself."
+        }
+      />
+      <Card>
+        <CardContent className="pt-6 space-y-4">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {FILTERS.filter((f) => viewerIsAdmin || !f.adminOnly).map((f) => (
+              <Input
+                key={f.key}
+                aria-label={f.label}
+                placeholder={f.label}
+                value={filters[f.key] ?? ""}
+                onChange={(e) => {
+                  setPage(1);
+                  setFilters((all) => ({ ...all, [f.key]: e.target.value }));
+                }}
+              />
+            ))}
+          </div>
+          <ResponsiveTable<OpsLogRow>
+            columns={columns}
+            rows={data?.rows ?? []}
+            getRowId={(r) => r.id}
+            empty={
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                No actions match these filters.
+              </p>
+            }
+          />
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">
+              Page {page} of {lastPage}
+            </span>
+            <span className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Newer
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page >= lastPage}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Older
+              </Button>
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

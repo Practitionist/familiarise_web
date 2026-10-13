@@ -22,7 +22,7 @@ jest.mock("../../scripts/cleanup/sweep-abandoned-overage-charges", () => ({
   sweepAbandonedOverageCharges: jest.fn(),
 }));
 
-import { POST } from "../../app/api/cleanup/sweep-abandoned-overage-charges/route";
+import { POST } from "../../app/api/cleanup/[job]/route";
 import { sweepAbandonedOverageCharges } from "../../scripts/cleanup/sweep-abandoned-overage-charges";
 
 const mockSweep = sweepAbandonedOverageCharges as jest.Mock;
@@ -47,7 +47,9 @@ describe("POST /api/cleanup/sweep-abandoned-overage-charges", () => {
       "http://localhost/api/cleanup/sweep-abandoned-overage-charges?limit=7",
     );
 
-    const res = await POST({ headers, nextUrl } as never);
+    const res = await POST({ headers, nextUrl } as never, {
+      params: Promise.resolve({ job: "sweep-abandoned-overage-charges" }),
+    });
 
     expect(res.status).toBe(200);
     expect(mockSweep).toHaveBeenCalledWith({ limit: 7 });

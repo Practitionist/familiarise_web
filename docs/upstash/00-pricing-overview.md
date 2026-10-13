@@ -64,7 +64,7 @@ Custom pricing. Includes:
 
 | Limiter | Endpoint | Window | Key | Layer |
 |---------|----------|--------|-----|-------|
-| `authLimiter` | POST `/api/auth/sign-in,sign-up,forget-password` | 10/15 min | IP | Edge |
+| BetterAuth `rateLimit` (`lib/auth/rate-limit.ts`) | `/api/auth/*` (e.g. `/sign-in/email` 30/15 min, default 100/min) | per path | IP + path | BetterAuth |
 | `searchLimiter` | GET `/api/user/consultants` | 60/min | IP | Edge |
 | `eligibilityLimiter` | GET `/api/trials/check-eligibility` | 20/min | IP | Edge |
 | `newsletterLimiter` | POST `/api/newsletter/subscribe` | 3/hr | IP | Edge |

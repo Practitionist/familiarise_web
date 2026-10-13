@@ -1,73 +1,138 @@
 # Authentication
 
-| Field | Value |
-|---|---|
-| Status | Stable |
-| Audience | All engineers |
-| Last reviewed | 2026-04-26 |
-| Sibling folder | [`docs/authorization/`](../authorization/) for "what can this user do" |
+| Field         | Value                                                                          |
+| ------------- | ------------------------------------------------------------------------------ |
+| Status        | Live                                                                           |
+| Audience      | All engineers, on-call                                                         |
+| Last reviewed | 2026-10-10                                                                     |
+| Sibling       | [`docs/authorization/`](../authorization/) for "what can this user do"         |
+| Schema        | Frozen by [ADR 36](../enterprise/70-design-decisions/35-auth-schema-freeze.md) |
 
-## 1. Background
+This folder answers "who is this user, and how do we know?". It is built on
+[BetterAuth](https://better-auth.com) **1.7.7** with `@better-auth/sso` and
+`@better-auth/passkey` **1.7.7**, all pinned exactly in `package.json`. The
+configuration lives in [`lib/auth.ts`](../../lib/auth.ts); this folder
+explains it.
 
-This folder documents the **authentication** subsystem — every code
-path that answers "who is this user?". Authorization (what they can
-*do* once we know who they are) lives in the sibling folder above.
+## The design in one paragraph
 
-The subsystem is built on [BetterAuth](https://better-auth.com), a
-TypeScript-first auth library. We use it because:
+Sessions are Postgres rows, read from the database on every request (the
+cookie cache is off), so a revoke, ban or role change applies on the next
+request, and a failed read is a 503, never a sign-out. Consumers sign up with
+email and password and prove the address by typing a 6-digit code into the
+same tab, or use Google or GitHub; they stay signed in for 30 days of sliding
+activity. Staff and admins ("operators") sign in only with a password plus a
+mandatory authenticator code, or a passkey; their sessions end 12 hours after
+sign-in or after 2 idle hours. Money, credential and IAM changes need a proof
+from the last 15 minutes (step-up re-authentication). Enterprise organizations
+can add an OIDC identity provider per verified domain; platform staff approve
+it, an org owner proves it by signing in before enforcement can be turned on,
+and users who sign in through it join the organization automatically and pass
+the onboarding gate. Every tab of a browser follows sign-out and account
+switches. Rate limiting for `/api/auth/*` is BetterAuth's own limiter, stored
+in Upstash. There is no captcha, no email or SMS second factor, no account
+lockout on passwords, no break-glass account and no impersonation.
 
-- It's framework-agnostic (Next.js Edge / Node, plain Express, etc).
-- The plugin model lets us add SSO, organizations, and custom session
-  shape without forking the library.
-- Sessions are server-side rows we own (Postgres `Session` table) —
-  no JWT envelope, no signing-key rotation, no opaque-token refresh
-  dance. Revocation is `DELETE FROM Session WHERE …`.
+## System context (HLD)
 
-## 2. Scope
+```mermaid
+flowchart LR
+  subgraph Browser["Browser: one cookie jar, N tabs"]
+    UI["Auth pages<br/>/auth/signin, signup, forgot-password,<br/>reset-password, verify-email,<br/>two-factor, two-factor/setup"]
+    RD["ReauthDialog<br/>step-up retry"]
+    SYNC["AuthSyncProvider<br/>identity ping, BroadcastChannel auth"]
+  end
 
-| In scope | Out of scope |
-|---|---|
-| BetterAuth setup + plugin chain | What roles can do — see [`authorization/`](../authorization/) |
-| Session model + lifecycle | Profile editing UX |
-| OAuth providers (when active) | Payment / KYC identity (separate concern) |
-| Enterprise SSO (SAML + OIDC) | Mobile push-token auth (not in scope yet) |
-| Middleware request lifecycle | API routing for non-auth surfaces |
-| Auth-related rate limiting | Per-feature rate limits — handler-side |
+  subgraph Edge["Netlify Edge: middleware.ts"]
+    MM["Maintenance gate"]
+    ERL["Edge rate limits<br/>non-BetterAuth routes only"]
+    CK["Cookie-presence routing<br/>no DB access"]
+  end
 
-## 3. Where to start
+  subgraph Node["Netlify Functions: Next.js"]
+    BA["/api/auth/[...all]<br/>BetterAuth 1.7.7<br/>get-session 503 on lookup failure"]
+    APP["App routes<br/>/api/user/sessions/*, /api/user/reauthenticate,<br/>/api/admin/team/*, /api/organizations/[orgId]/sso/*"]
+    G["Guards<br/>requireApiAuth, requireFreshSession,<br/>requireOperator, requireOrgAccess"]
+  end
 
-Read the children in this order:
+  PG[("Postgres<br/>User, Session, Account,<br/>Verification, TwoFactor, Passkey,<br/>SsoProvider, Membership")]
+  RDS[("Upstash Redis<br/>rate-limit counters")]
+  SOC["Google, GitHub OAuth"]
+  IDP["Customer OIDC IdPs"]
+  HIBP["Have I Been Pwned<br/>range API"]
+  MAIL["Resend email<br/>via deliver(), after the response"]
+  SEN["Sentry<br/>errors + CSP reports"]
 
-| # | Path | Reading time |
-|---|---|---|
-| 1 | [`betterauth/README.md`](./betterauth/README.md) | 5 min |
-| 2 | [`betterauth/01-architecture.md`](./betterauth/01-architecture.md) | 15 min |
-| 3 | [`betterauth/02-middleware.md`](./betterauth/02-middleware.md) | 10 min |
-| 4 | [`betterauth/03-sessions-and-hooks.md`](./betterauth/03-sessions-and-hooks.md) | 10 min |
-| 5 | [`betterauth/04-rate-limiting.md`](./betterauth/04-rate-limiting.md) | 10 min |
-| 6 | [`betterauth/sso/README.md`](./betterauth/sso/README.md) | 15 min |
-| 7 | [`betterauth/oauth/README.md`](./betterauth/oauth/README.md) | 5 min |
-| 8 | [`betterauth/05-testing.md`](./betterauth/05-testing.md) | 10 min |
-| 9 | [`betterauth/06-ci-deployment.md`](./betterauth/06-ci-deployment.md) | 10 min |
+  UI --> MM --> ERL --> CK --> BA
+  CK --> APP
+  SYNC --> APP
+  RD --> APP
+  ERL <--> RDS
+  BA <--> PG
+  BA <--> RDS
+  BA <--> SOC
+  BA <--> IDP
+  BA --> HIBP
+  BA --> MAIL
+  APP --> G --> BA
+  APP <--> PG
+  Node --> SEN
+```
 
-Total: ~90 minutes for full onboarding. The first four are mandatory
-before touching any auth code.
+## Pages in this folder
 
-## 4. Companion docs
+| Page                                                         | Read it when                                                                                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| [architecture.md](./architecture.md)                         | Before touching any auth code. Plugin chain, hooks, guards, lifetimes, every flow with its sequence, the data model |
+| ↳ [passkeys](./architecture.md#54-passkey-sign-in-operators) | Operator passkey sign-in and registration rules                                                                     |
+| ↳ [step-up](./architecture.md#55-step-up-re-authentication)  | Gating a sensitive action behind `REAUTH_REQUIRED`                                                                  |
+| ↳ [multi-tab](./architecture.md#59-multi-tab-identity-sync)  | Sign-out broadcast, account switches, `X-Expected-User`                                                             |
+| [staff-onboarding.md](./staff-onboarding.md)                 | Adding, suspending or recovering a staff/admin account                                                              |
+| [sso.md](./sso.md)                                           | Enterprise OIDC: registration, approval, proof, enforcement, JIT, secret encryption                                 |
+| [rate-limiting-and-abuse.md](./rate-limiting-and-abuse.md)   | Budgets, the Upstash store, breached-password check, enumeration safety, accepted risks                             |
+| [errors.md](./errors.md)                                     | Adding or changing what a customer is told                                                                          |
+| [failure-modes.md](./failure-modes.md)                       | Before on-call. What breaks when a dependency fails, and the runbooks                                               |
+| [redirects-and-navigation.md](./redirects-and-navigation.md) | Changing auth-page redirects, sign-out navigation or dashboard entry points                                         |
 
-- [`docs/enterprise/20-iam-and-security/01-sso-and-authentication.md`](../enterprise/20-iam-and-security/01-sso-and-authentication.md)
-  — enterprise admin's view of SSO config (allowedEmailDomains,
-  IdP recipes for Okta/Auth0). Configuration-side; this folder is
-  implementation-side. Keep them in lock-step but don't duplicate.
-- `docs/enterprise/playbooks/sso-testing.md` *(planned; not in repo yet)*
-  — four ways to exercise SSO locally
-  (mocksaml.com / saml-idp / Keycloak / real dev tenants). Read after
-  this folder if you need to test.
+Onboarding after sign-in (the wizard and `/onboarding/gate`) is in
+[`docs/onboarding/`](../onboarding/).
 
-## 5. Related docs
+## Rules that hold everywhere
 
-- [`docs/authorization/`](../authorization/) — the sibling folder for
-  authz helpers (`requireApiAuth`, `requireOrgAccess`, role hierarchy).
-- [`docs/api/`](../api/) — general API conventions.
-- [`docs/infrastructure/`](../infrastructure/) — Redis, Docker,
-  deployment topology that auth depends on.
+1. **The session token never leaves the server in JSON.** `customSession`
+   strips it, `hooks.after` (`lib/auth/strip-session-token.ts`) drops it from
+   sign-in, sign-up, change-password, two-factor verify, passkey verify and
+   email-code verify bodies,
+   `/list-sessions` and the revoke endpoints are disabled over HTTP, and the
+   device list reads through `SESSION_PUBLIC_SELECT`.
+2. **Every operator power is behind 2FA.** Until the operator has an
+   authenticator, the app's `getSession()` reads their session as signed out,
+   `requireApiAuth` answers 428 `TWO_FACTOR_REQUIRED`, `requireOperator`
+   redirects to enrolment, and the session lasts at most an hour.
+3. **Sensitive writes need a fresh proof.** Credential, factor, payout, refund
+   and IAM changes answer 403 `REAUTH_REQUIRED` unless the session was opened
+   or re-authenticated in the last 15 minutes.
+4. **Operator actions go through audited app routes.** The admin plugin's HTTP
+   endpoints are all disabled; the plugin stays for its columns, the ban check
+   and the server-side `createUser`.
+5. **Only a confirmed 401 or 403 signs a user out.** A failed session lookup is
+   a 503 with `Retry-After`, never "no session".
+6. **The auth schema is additive-only after launch.** CI's "Auth schema guard"
+   (`scripts/ci/check-auth-schema.ts`) fails the build when Prisma lacks a
+   column BetterAuth writes.
+
+## Related
+
+- [ADR 35: session visibility, lifetime and revocation](../enterprise/70-design-decisions/34-user-session-visibility-and-revocation.md)
+- [ADR 36: auth schema freeze](../enterprise/70-design-decisions/35-auth-schema-freeze.md)
+- [Security headers and CSP](../enterprise/20-iam-and-security/04-security-headers.md)
+- [Runbooks](../enterprise/50-operations/02-runbooks.md)
+
+## Deprecated & Superseded Approaches
+
+- **Verification links, the cookie cache and its force-fresh reads, consumer
+  TOTP, and the `jobs/`/`scripts/` cleanup twins** were removed; details and
+  what to delete are at the bottom of [architecture.md](./architecture.md).
+- **The onboarding wizard's STAFF/ADMIN branches, `POST /api/user/staff` and
+  `PATCH /api/form/onboarding/[id]`.** Operators are created only from the Team
+  page ([staff-onboarding.md](./staff-onboarding.md)).

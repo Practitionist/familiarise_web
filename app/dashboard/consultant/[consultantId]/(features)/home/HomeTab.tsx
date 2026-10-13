@@ -55,13 +55,14 @@ import {
 } from "@/lib/appointments/status";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
+  getJoinableOccurrence,
   getOccurrenceJoinState,
   getProximityLabel,
   type OccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
 import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import { TAppointment } from "@/types/appointment";
-import { getJoinableOccurrence } from "../../utils/joinState";
+import { useNowTick } from "@/hooks/use-now-tick";
 import { getInitials } from "@/utils/formatting";
 import { RequestsInboxPreview } from "@/components/dashboard/shared/requests/RequestsInboxPreview";
 import { ShareProfilePrompt, ThisMonthCard } from "./ThisMonthCard";
@@ -133,6 +134,7 @@ export function HomeTab({
   financialSummary,
 }: Readonly<HomeTabProps>) {
   const joinMeeting = useLazyJoinMeeting();
+  const now = useNowTick();
   const { data: session } = useSession();
   // Sponsoring-org lookup for the indigo "Sponsored · <Org>" badge —
   // shows on org-funded appointments only, mirroring the consultee
@@ -162,7 +164,7 @@ export function HomeTab({
       getTodayAppointments(expandedAppointments, viewerZone.zone).filter(
         (appointment) => getAppointmentStatus(appointment) !== "Completed",
       ),
-    [expandedAppointments, viewerZone.zone],
+    [expandedAppointments, viewerZone.zone, now],
   );
 
   const todayAppointments = useMemo(
@@ -173,9 +175,9 @@ export function HomeTab({
   const allUpcomingAppointments = useMemo(
     () =>
       sortAppointmentsByStartTime(
-        getUpcomingAppointments(expandedAppointments),
+        getUpcomingAppointments(expandedAppointments, now),
       ),
-    [expandedAppointments],
+    [expandedAppointments, now],
   );
 
   const upcomingGroups = useMemo(() => {
@@ -218,12 +220,14 @@ export function HomeTab({
             appointmentId: a.id,
             startsAt: slot.startsAt,
             endsAt: slot.endsAt,
+            completionStatus: slot.completionStatus,
             title: getAppointmentTypeAndPlan(a),
           })),
         ),
         basePath: `/dashboard/consultant/${consultantId}`,
         payoutSetupNeeded: payoutSetup?.needed ?? false,
         livePayoutsEnabled: payoutSetup?.livePayoutsEnabled ?? true,
+        now,
       }),
     [
       allUpcomingAppointments,
@@ -231,6 +235,7 @@ export function HomeTab({
       needsYou,
       consultantId,
       payoutSetup,
+      now,
     ],
   );
 
@@ -267,10 +272,14 @@ export function HomeTab({
                 {todayAppointments.length > 0 ? (
                   <div className="divide-y divide-zinc-100">
                     {todayAppointments.map((appointment) => {
-                      const userName = getConsumeeName(appointment);
+                      const userName = getConsumeeName(
+                        appointment,
+                        consultantId,
+                      );
                       const startTime = getStartTime(appointment);
                       const joinableSlot = getJoinableOccurrence(
                         appointment.occurrences ?? [],
+                        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS, now },
                       );
                       // #1270 — this row had NO status check at all: any
                       // appointment with a slot inside the window lit up Join,
@@ -367,6 +376,7 @@ export function HomeTab({
                             {(() => {
                               const proximity = getProximityLabel(
                                 getNextUpcomingSlotTime(appointment),
+                                now,
                               );
                               return proximity ? (
                                 <span className="text-[10px] text-zinc-400">
@@ -479,7 +489,10 @@ export function HomeTab({
                         groupKey.startsWith("subscription-") ||
                         groupKey.startsWith("class-");
                       const firstAppointment = groupAppointments[0];
-                      const userName = getConsumeeName(firstAppointment);
+                      const userName = getConsumeeName(
+                        firstAppointment,
+                        consultantId,
+                      );
                       const startTime = isRecurring
                         ? getNextUpcomingSlotTime(firstAppointment)
                         : getStartTime(firstAppointment);
@@ -578,6 +591,7 @@ export function HomeTab({
                             {(() => {
                               const proximity = getProximityLabel(
                                 startTime ?? null,
+                                now,
                               );
                               return proximity ? (
                                 <span className="text-[10px] text-zinc-400">
@@ -648,7 +662,7 @@ export function HomeTab({
                     {orgSessions.map((session) => {
                       const joinState = getOccurrenceJoinState(
                         { id: session.occurrenceId, ...session },
-                        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS },
+                        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS, now },
                       );
                       const membership = orgMemberships.find(
                         (m) => m.organizationId === session.organizationId,
@@ -692,14 +706,17 @@ export function HomeTab({
                 </DataCard>
               )}
 
-              {/* #1527 — Available is the Earnings page's word for READY. */}
               <ThisMonthCard
                 consultantId={consultantId}
                 sessionsThisMonth={sessionsDelivered?.thisMonth ?? null}
                 sessionsDelivered={sessionsDelivered?.lifetime ?? null}
                 availablePaise={financialSummary?.availableEarnings ?? 0}
-                averageRating={performanceSnapshot?.averageRating ?? 0}
-                totalReviews={performanceSnapshot?.totalReviews ?? 0}
+                publishedRatingOneToOne={
+                  performanceSnapshot?.publishedRatingOneToOne
+                }
+                publishedRatingGroup={performanceSnapshot?.publishedRatingGroup}
+                ratedClientsOneToOne={performanceSnapshot?.ratedClientsOneToOne}
+                ratedEventsGroup={performanceSnapshot?.ratedEventsGroup}
               />
               <ShareProfilePrompt consultantId={consultantId} />
             </motion.div>

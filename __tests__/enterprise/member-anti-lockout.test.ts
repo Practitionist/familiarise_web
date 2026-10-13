@@ -26,14 +26,8 @@ jest.mock("../../lib/prisma", () => ({
       count: jest.fn(),
       update: jest.fn(),
     },
-    // Why: a role downgrade fires `bumpUserSessionGeneration` inside the
-    // transaction (lib/api/organizations/membership-transitions.ts) which calls
-    // `tx.user.update(...)`. The route would crash with `tx.user undefined`
-    // without this delegate exposed on the prisma mock + the tx shim below.
     user: {
-      update: jest
-        .fn()
-        .mockResolvedValue({ id: "u-victim", sessionGeneration: 2 }),
+      update: jest.fn().mockResolvedValue({ id: "u-victim" }),
     },
     orgAuditLog: {
       create: jest.fn().mockResolvedValue({}),
@@ -65,6 +59,7 @@ jest.mock("../../lib/auth-helpers", () => {
   };
 });
 
+import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { PATCH } from "@/app/api/organizations/[orgId]/members/[memberId]/route";
@@ -95,7 +90,7 @@ function makeRequest(body: unknown) {
     method: "PATCH",
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
-  }) as unknown as Request;
+  }) as unknown as NextRequest;
 }
 
 function makeParams(orgId = "org-1", memberId = "m-target") {
@@ -112,11 +107,6 @@ function wireTxShim() {
     const tx = {
       membership: mockedPrisma.membership,
       orgAuditLog: mockedPrisma.orgAuditLog,
-      // Why: role downgrades bump the user's sessionGeneration counter
-      // inside the same transaction (see bumpUserSessionGeneration in
-      // lib/api/organizations/membership-transitions.ts). The shim has to
-      // forward `tx.user.update` to the module-level mock so the helper
-      // can complete the transaction without crashing.
       user: {
         ...mockedPrisma.user,
         // #1700 — the membership-changed email is staged inside this
@@ -125,8 +115,7 @@ function wireTxShim() {
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (fn as any)(tx);
+    return (fn as (tx: unknown) => unknown)(tx);
   });
 }
 
@@ -148,8 +137,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     mockedPrisma.membership.count.mockResolvedValueOnce(0);
 
     const res = (await PATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeRequest({ role: "MAINTAINER" }) as any,
+      makeRequest({ role: "MAINTAINER" }),
       makeParams(),
     )) as Response;
 
@@ -171,8 +159,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     mockedPrisma.membership.count.mockResolvedValueOnce(0);
 
     const res = (await PATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeRequest({ status: "REMOVED" }) as any,
+      makeRequest({ status: "REMOVED" }),
       makeParams(),
     )) as Response;
 
@@ -197,8 +184,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     });
 
     const res = (await PATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeRequest({ role: "MAINTAINER" }) as any,
+      makeRequest({ role: "MAINTAINER" }),
       makeParams(),
     )) as Response;
 
@@ -216,14 +202,6 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
         payoutRecipient: "SELF",
       },
     });
-    // Why: every role mutation must bump the demoted user's
-    // sessionGeneration so their next request triggers a customSession
-    // refetch (lib/auth.ts), eliminating up to 24h of stale-permission
-    // exposure. Audit phase B.5 — see bumpUserSessionGeneration docstring.
-    expect(mockedPrisma.user.update).toHaveBeenCalledWith({
-      where: { id: "u-victim" },
-      data: { sessionGeneration: { increment: 1 } },
-    });
   });
 
   it("blocks LEARNER → EXPERT role transition with 409", async () => {
@@ -240,8 +218,7 @@ describe("PATCH /api/organizations/[orgId]/members/[memberId] — anti-lockout",
     });
 
     const res = (await PATCH(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      makeRequest({ role: "EXPERT" }) as any,
+      makeRequest({ role: "EXPERT" }),
       makeParams(),
     )) as Response;
 

@@ -33,6 +33,7 @@ import {
   INFRA_THROTTLE_MS,
   SENTRY_DATA_COLLECTION,
   infraThrottleKey,
+  tracesSampler,
 } from "../../sentry.shared.config";
 import { isSentryIdentityEnabled } from "../../lib/observability/identity";
 
@@ -122,5 +123,52 @@ describe("the quota throttle is still intact", () => {
       },
     });
     expect(key).not.toBeNull();
+  });
+});
+
+describe("tracesSampler route-aware sampling (#1926)", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalVercelEnv = process.env.VERCEL_ENV;
+  const originalSentryEnv = process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+
+  afterEach(() => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: originalNodeEnv,
+      configurable: true,
+      writable: true,
+    });
+    if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = originalVercelEnv;
+    if (originalSentryEnv === undefined)
+      delete process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT;
+    else process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = originalSentryEnv;
+  });
+
+  it("drops health checks, down-samples cleanup crons, boosts webhooks/payments, and defaults to 0.1 in production", () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "production",
+      configurable: true,
+      writable: true,
+    });
+    process.env.VERCEL_ENV = "production";
+    process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT = "production";
+
+    type Ctx = Parameters<typeof tracesSampler>[0];
+    expect(tracesSampler({ name: "GET /api/health" } as Ctx)).toBe(0);
+    expect(tracesSampler({ name: "GET /_next/static/chunk.js" } as Ctx)).toBe(
+      0,
+    );
+    expect(
+      tracesSampler({ name: "POST /api/cleanup/outbox-drain" } as Ctx),
+    ).toBe(0.02);
+    expect(tracesSampler({ name: "POST /api/webhooks/razorpay" } as Ctx)).toBe(
+      0.5,
+    );
+    expect(tracesSampler({ name: "POST /api/payments/verify" } as Ctx)).toBe(
+      0.5,
+    );
+    expect(tracesSampler({ name: "GET /explore/consultants" } as Ctx)).toBe(
+      0.1,
+    );
   });
 });

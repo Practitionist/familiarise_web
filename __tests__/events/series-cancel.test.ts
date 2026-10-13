@@ -15,6 +15,10 @@ const refundPayment = jest.fn(async (input: { amountPaise?: number }) => ({
 }));
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => refundPayment(...(a as [never])),
+  // The gateway rail asks this before refunding a pro-rata seat, so a key that
+  // already carries a refund is reported as a skip rather than counted as money
+  // this call moved. No row exists here — this is a first refund.
+  findDedupedRefund: jest.fn(async () => null),
   RefundValidationError: class extends Error {},
 }));
 jest.mock("../../lib/prisma", () => ({

@@ -24,6 +24,7 @@ export interface OrgWizardData {
   // Step 1: Billing (only when canSponsor = true)
   fundingSource?: SelfServiceFundingSource;
   paymentTermsDays: number; // meaningful when fundingSource = INVOICE
+  gstStateCode?: string;
 
   // Step 1 alt: Revenue Rates (only when canHost = true). Stored as basis
   // points to avoid float drift; sum must equal 10000 at submit.
@@ -58,10 +59,13 @@ export interface StepProps {
    *  capability when false. Server-read, threaded through the wizard. */
   hostOrgsEnabled?: boolean;
   /**
-   * Optional hook for the Review step: runs after the final PATCH and
-   * invitations succeed, before navigation. The onboarding caller uses
-   * this to flip `user.onboardingCompleted = true` atomically with the
-   * launch; dashboard (Nth-time) callers leave it undefined.
+   * First-time owner only: the gate fields sent with `POST /api/organizations`,
+   * which completes onboarding in the org-create transaction.
+   */
+  onboarding?: Record<string, unknown>;
+  /**
+   * Optional hook for the Review step: runs after the launch succeeds, before
+   * navigation. The onboarding caller clears its draft here.
    */
   afterLaunch?: (orgId: string) => Promise<void> | void;
   /**
@@ -105,14 +109,16 @@ export function getSteps(capabilities: {
     {
       key: "org-info",
       label: "Org Info",
-      subtitle: "Tell us about your organization. You can always update this later.",
+      subtitle:
+        "Tell us about your organization. You can always update this later.",
     },
     ...(canSponsor
       ? [
           {
             key: "billing" as const,
             label: "Billing",
-            subtitle: "Choose how your organization pays for its members' sessions.",
+            subtitle:
+              "Choose how your organization pays for its members' sessions.",
           },
         ]
       : []),

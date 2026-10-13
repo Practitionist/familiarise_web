@@ -466,6 +466,29 @@ describe("slotsOverlap", () => {
       ),
     ).toBe(false);
   });
+
+  it("should detect overlap between IST Monday night (22:00-01:00) and Tuesday pre-dawn (00:30-02:30) on the same UTC Monday evening", () => {
+    // Mon 22:00-01:00 IST = Mon 16:30-19:30 UTC (990..1170, startDay=MONDAY, endDay=MONDAY)
+    // Tue 00:30-02:30 IST = Mon 19:00-21:00 UTC (1140..1260, startDay=TUESDAY, endDay=TUESDAY)
+    expect(
+      slotsOverlap(
+        {
+          startDay: DayOfWeek.MONDAY,
+          endDay: DayOfWeek.MONDAY,
+          startTimeUtc: 990,
+          endTimeUtc: 1170,
+          utcOffsetMinutes: 330,
+        },
+        {
+          startDay: DayOfWeek.TUESDAY,
+          endDay: DayOfWeek.TUESDAY,
+          startTimeUtc: 1140,
+          endTimeUtc: 1260,
+          utcOffsetMinutes: 330,
+        },
+      ),
+    ).toBe(true);
+  });
 });
 
 // ─── getTimezoneOffsetMinutes: range validation (MED-2) ─────────────────────

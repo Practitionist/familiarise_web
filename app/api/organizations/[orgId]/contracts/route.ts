@@ -14,6 +14,9 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { validateContractLicenseInput } from "@/lib/enterprise/contract-license-validation";
+import { computeCycleEnd } from "@/lib/enterprise/cycle-engine";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 
 const ContractStatusSchema = z.enum([
   "DRAFT",
@@ -27,9 +30,7 @@ const LicenseCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
 const CreateBodySchema = z
   .object({
     billingAccountId: z.string().min(1),
-    // PurchaseOrder is optional — India enterprise orgs have
-    // requiresPO=true, but we surface the UX constraint at the org
-    // level. Server-side we only enforce the FK shape.
+    // Required to sign (status ACTIVE) when the org has requiresPO=true.
     purchaseOrderId: z.string().min(1).nullable().optional(),
     // `effectiveFrom` defaults to now so a contract created via API
     // takes effect immediately unless the caller specifies otherwise.
@@ -56,28 +57,7 @@ const CreateBodySchema = z
     licenseRatePerSeatPaise: z.coerce.number().int().min(1).optional(),
     licenseCycle: LicenseCycleSchema.optional(),
   })
-  .refine(
-    (v) => v.effectiveTo === null || v.effectiveTo === undefined
-      ? true
-      : v.effectiveTo.getTime() > v.effectiveFrom.getTime(),
-    {
-      message: "effectiveTo must be strictly after effectiveFrom",
-      path: ["effectiveTo"],
-    },
-  )
-  .refine(
-    (v) =>
-      // PER_SEAT bills seats × rate, so it needs a per-seat rate and must not
-      // carry a flat fee; FLAT_FEE is the reverse. E2E-audit P1 fix — PER_SEAT
-      // was unreachable: the create route hardcoded FLAT_FEE.
-      v.licenseModel !== "PER_SEAT" ||
-      (v.licenseRatePerSeatPaise !== undefined && v.licenseFeePaise === undefined),
-    {
-      message:
-        "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
-      path: ["licenseModel"],
-    },
-  );
+  .superRefine(validateContractLicenseInput);
 
 export async function GET(
   req: NextRequest,
@@ -85,6 +65,7 @@ export async function GET(
 ) {
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: "contracts.read",
     canSponsor: true,
   });
@@ -92,9 +73,7 @@ export async function GET(
 
   const url = new URL(req.url);
   const statusRaw = url.searchParams.get("status");
-  const status = statusRaw
-    ? ContractStatusSchema.safeParse(statusRaw)
-    : null;
+  const status = statusRaw ? ContractStatusSchema.safeParse(statusRaw) : null;
 
   const contracts = await prisma.contract.findMany({
     where: {
@@ -117,6 +96,8 @@ export async function GET(
           model: true,
           cycle: true,
           flatFeePaise: true,
+          ratePerSeatPaise: true,
+          activeSeatCount: true,
         },
       },
       _count: { select: { programs: true } },
@@ -124,7 +105,14 @@ export async function GET(
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ data: contracts });
+  return NextResponse.json({
+    data: contracts.map((c) => ({
+      ...c,
+      supersededByContractId: c.supersededByContractId ?? null,
+      supersededAt: c.supersededAt ?? null,
+      supersessionReason: c.supersessionReason ?? null,
+    })),
+  });
 }
 
 export async function POST(
@@ -176,7 +164,8 @@ export async function POST(
   // existing subscription via contract create (renewals are a separate
   // flow). Fail loud rather than silently dropping the operator's input.
   const wantsLicenseSubscription =
-    body.licenseFeePaise !== undefined || body.licenseRatePerSeatPaise !== undefined;
+    body.licenseFeePaise !== undefined ||
+    body.licenseRatePerSeatPaise !== undefined;
   if (wantsLicenseSubscription) {
     if (billingAccount.fundingSource !== "LICENSE") {
       return NextResponse.json(
@@ -218,6 +207,21 @@ export async function POST(
     );
   }
 
+  if (
+    access.org.requiresPO &&
+    body.status === "ACTIVE" &&
+    !body.purchaseOrderId
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "This organisation needs a purchase order on every signed contract. Attach an active purchase order and try again.",
+        code: "PO_REQUIRED",
+      },
+      { status: 409 },
+    );
+  }
+
   if (body.purchaseOrderId) {
     const po = await prisma.purchaseOrder.findUnique({
       where: { id: body.purchaseOrderId },
@@ -232,12 +236,14 @@ export async function POST(
   }
 
   const contract = await prisma.$transaction(async (tx) => {
+    const signedAt = body.status === "ACTIVE" ? new Date() : undefined;
     const created = await tx.contract.create({
       data: {
         organizationId: orgId,
         billingAccountId: body.billingAccountId,
         purchaseOrderId: body.purchaseOrderId ?? null,
         status: body.status,
+        ...(signedAt && { signedAt }),
         effectiveFrom: body.effectiveFrom,
         effectiveTo: body.effectiveTo ?? null,
         paymentTermsDays: body.paymentTermsDays,
@@ -247,12 +253,15 @@ export async function POST(
 
     if (wantsLicenseSubscription) {
       const cycleEnd = computeCycleEnd(body.effectiveFrom, body.licenseCycle!);
-      const isPerSeat = body.licenseModel === "PER_SEAT";
+      const isPerSeat =
+        body.licenseModel === "PER_SEAT" ||
+        (body.licenseModel === undefined &&
+          body.licenseRatePerSeatPaise !== undefined);
       await tx.billingSubscription.create({
         data: {
           contractId: created.id,
           billingAccountId: body.billingAccountId,
-          model: body.licenseModel ?? "FLAT_FEE",
+          model: isPerSeat ? "PER_SEAT" : "FLAT_FEE",
           cycle: body.licenseCycle!,
           ratePerSeatPaise: isPerSeat
             ? BigInt(body.licenseRatePerSeatPaise!)
@@ -284,33 +293,40 @@ export async function POST(
           paymentTermsDays: body.paymentTermsDays,
           ...(wantsLicenseSubscription
             ? {
+                licenseModel:
+                  body.licenseModel ??
+                  (body.licenseRatePerSeatPaise !== undefined
+                    ? "PER_SEAT"
+                    : "FLAT_FEE"),
                 licenseFeePaise: body.licenseFeePaise,
+                licenseRatePerSeatPaise: body.licenseRatePerSeatPaise,
                 licenseCycle: body.licenseCycle,
               }
             : {}),
         },
       },
     });
+
+    if (body.status === "ACTIVE") {
+      await dispatchWebhookEvent({
+        prisma: tx,
+        organizationId: orgId,
+        eventType: "contract.signed",
+        payload: {
+          contractId: created.id,
+          billingAccountId: body.billingAccountId,
+          status: created.status,
+          signedAt: (created.signedAt ?? signedAt ?? new Date()).toISOString(),
+          effectiveFrom: body.effectiveFrom.toISOString(),
+          effectiveTo: body.effectiveTo?.toISOString() ?? null,
+          supersededContractId: null,
+          reason: null,
+        },
+      });
+    }
+
     return created;
   });
 
   return NextResponse.json({ contract }, { status: 201 });
-}
-
-/**
- * Compute the end of a billing cycle given a start date and cycle type.
- * Used to seed BillingSubscription.currentCycleEnd + nextInvoiceDate at
- * contract create time. Mirrors the cycle math elsewhere in the codebase
- * (jobs/billing/generate-subscription-invoices.ts uses the same +1mo /
- * +3mo / +1yr offsets).
- */
-function computeCycleEnd(
-  start: Date,
-  cycle: "MONTHLY" | "QUARTERLY" | "ANNUAL",
-): Date {
-  const end = new Date(start);
-  if (cycle === "MONTHLY") end.setMonth(end.getMonth() + 1);
-  else if (cycle === "QUARTERLY") end.setMonth(end.getMonth() + 3);
-  else end.setFullYear(end.getFullYear() + 1);
-  return end;
 }

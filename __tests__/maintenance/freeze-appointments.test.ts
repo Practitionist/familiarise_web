@@ -88,7 +88,7 @@ describe("booking-refund front door (#1161)", () => {
   it("routes free_ intents to credit restoration", () => {
     expect(refundSource).toContain("isFreeCreditIntent");
     expect(refundSource).toContain("refundFreeCreditPayment");
-    expect(refundSource).toContain("reverseCreditsForPayment(payment.id, tx)");
+    expect(refundSource).toContain("reverseCreditsForPayment(");
   });
 
   it("whole-event refunds carry the credits bucket and re-run skips", () => {
@@ -125,7 +125,7 @@ describe("maintenance keys carry a TTL (#697 INF-1)", () => {
   it("sets an expiry on both state keys", () => {
     expect(maintSource).toContain("MAINTENANCE_KEY_TTL_SECONDS");
     expect(maintSource).toMatch(
-      /redis\.set\(REDIS_KEYS\.PHASE, phase, \{ ex: MAINTENANCE_KEY_TTL_SECONDS \}\)/,
+      /redis\.set\(REDIS_KEYS\.PHASE, phase, \{ ex: ttlSeconds \}\)/,
     );
   });
 });

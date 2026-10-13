@@ -9,7 +9,7 @@ import {
   createMockLogger,
   createMockUserCache,
   createMockRoleMapper,
-} from "./__mocks__/stream-mocks";
+} from "../fixtures/stream-mocks";
 
 // Create mock instances
 const mockPrisma = createMockPrisma();
@@ -49,8 +49,7 @@ jest.mock("../../lib/stream-cache", () => mockUserCache);
 // mocked session ("current-user"), not from a client-supplied parameter.
 const mockGetSession = jest.fn();
 jest.mock("../../lib/auth-server", () => ({
-  getSession: (disableCookieCache?: boolean) =>
-    mockGetSession(disableCookieCache),
+  getSession: () => mockGetSession(),
 }));
 
 jest.mock("../../lib/user", () => mockRoleMapper);
@@ -62,7 +61,7 @@ describe("User Actions", () => {
     mockStreamClient.upsertUsers.mockReset();
     mockUserCache.isUserSynced.mockReturnValue(false);
     mockGetSession.mockResolvedValue({
-      user: { id: "current-user", role: "CONSULTANT" },
+      user: { id: "current-user", role: "ADMIN" },
     });
   });
 

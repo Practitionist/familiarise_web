@@ -9,6 +9,7 @@
 import prisma, {
   ALLOCATION_TX_MAX_WAIT_MS,
   ALLOCATION_TX_TIMEOUT_MS,
+  type PrismaLike,
 } from "@/lib/prisma";
 import type {
   SupportIssueType,
@@ -18,8 +19,16 @@ import type {
 import {
   notifySupportTicketActivity,
   notifySupportTicketCreated,
+  notifySupportTicketResponse,
 } from "@/lib/novu";
-import { notificationScope } from "@/lib/novu/workflows";
+import { sendSupportTicketReceivedEmail } from "@/lib/email/senders/people";
+import { stageTrigger, type StagedTrigger } from "@/lib/novu/outbox";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
+import { supportRequestHref } from "@/lib/novu/resolve-href";
+import { reportSentryError } from "@/lib/observability/report";
+import { stripCallbackTags } from "@/lib/validation/phone";
+import { withSupportAttachmentHrefs } from "./attachment-href";
 import { caseKeyOf } from "./case-key";
 import { allocateTicketReference } from "./reference";
 import { slaDeadlinesFor } from "./sla";
@@ -56,6 +65,8 @@ export interface CreateSupportTicketInput {
   userId: string;
   title: string;
   description: string;
+  /** Already Zod-validated; the only source of the callback marker. */
+  callbackPhone?: string | null;
   priority?: SupportPriority;
   category?: string | null;
   issueType?: SupportIssueType | null;
@@ -64,6 +75,8 @@ export interface CreateSupportTicketInput {
   paymentId?: string | null;
   /** Org attribution (operator intake / escalated org threads). Null = B2C. */
   organizationId?: string | null;
+  /** Only a ticket the requester filed themselves earns them a "request received" receipt. */
+  filedBy: "requester" | "system";
 }
 
 /**
@@ -74,6 +87,7 @@ export interface CreateSupportTicketInput {
 async function opsRecipients(
   ticketId: string,
   assigneeId?: string | null,
+  caseKind: "ticket" | "case" = "ticket",
 ): Promise<Array<{ id: string; dashboardUrl: string }>> {
   const users = await prisma.user.findMany({
     where: assigneeId
@@ -82,7 +96,7 @@ async function opsRecipients(
     select: { id: true, role: true },
   });
   // #1527 — the case in the Support inbox, in the recipient's own tree.
-  const caseKey = caseKeyOf({ kind: "ticket", id: ticketId });
+  const caseKey = caseKeyOf({ kind: caseKind, id: ticketId });
   return users.map((u) => ({
     id: u.id,
     dashboardUrl: `/dashboard/${u.role === "ADMIN" ? "admin" : "staff"}/support/${caseKey}`,
@@ -103,6 +117,7 @@ export async function notifySupportStaff(
     SupportTicket,
     "id" | "title" | "organizationId" | "referenceNumber" | "userId"
   >,
+  caseKind: "ticket" | "case" = "ticket",
 ): Promise<void> {
   // ADR 23 — the notification inherits the ticket's org-ness (attribution +
   // deep-link filing only; recipient lists are unchanged).
@@ -114,27 +129,33 @@ export async function notifySupportStaff(
     });
     orgName = org?.name ?? null;
   }
-  const [recipients, customer] = await Promise.all([
-    opsRecipients(ticket.id),
+  const [ops, customer] = await Promise.all([
+    opsRecipients(ticket.id, undefined, caseKind),
     prisma.user.findUnique({
       where: { id: ticket.userId },
       select: { name: true },
     }),
   ]);
-  // Awaited, not void: a Netlify instance freezes once the response is sent,
-  // and a trigger still in flight at that moment is lost (seen on the first
-  // sync, 2026-09-13). The SDK caps a trigger at five seconds.
-  await Promise.all(
-    recipients.map((recipient) =>
-      notifySupportTicketCreated([recipient.id], {
-        ticketId: ticket.id,
-        reference: ticket.referenceNumber ?? undefined,
-        ticketTitle: ticket.title || "Support Ticket",
-        userName: customer?.name ?? undefined,
-        dashboardUrl: recipient.dashboardUrl,
-        ...notificationScope(ticket.organizationId, orgName),
-      }),
+  const results = await Promise.all(
+    ops.map((recipient) =>
+      notifySupportTicketCreated(
+        [recipient.id],
+        {
+          ticketId: ticket.id,
+          reference: ticket.referenceNumber ?? undefined,
+          ticketTitle: ticket.title || "Support Ticket",
+          userName: customer?.name ?? undefined,
+          dashboardUrl: recipient.dashboardUrl,
+          ...notificationScope(ticket.organizationId, orgName),
+        },
+        undefined,
+        { deferAttempt: true },
+      ),
     ),
+  );
+  await flushNotificationsAfter(
+    { bells: results.flat().map((r) => r.staged) },
+    "support.ticket-created",
   );
 }
 
@@ -151,7 +172,7 @@ export async function notifyStaffOfTicketActivity(
   /**
    * Identifies THIS activity. Without it `deriveTransactionId` falls back to
    * hashing the payload, which is byte-identical for every reply on the same
-   * ticket — Novu rejects a repeated transactionId, so only the first reply
+   * ticket — staging upserts on transactionId, so only the first reply
    * would ever have paged anyone.
    */
   eventId?: string,
@@ -160,6 +181,7 @@ export async function notifyStaffOfTicketActivity(
   const ticket = await prisma.supportTicket.findUnique({
     where: { id: ticketId },
     select: {
+      userId: true,
       title: true,
       assignedToId: true,
       referenceNumber: true,
@@ -168,10 +190,11 @@ export async function notifyStaffOfTicketActivity(
     },
   });
   if (!ticket) return;
+  const effectiveOrgId = organizationId ?? ticket.organizationId;
   const recipients = await opsRecipients(ticketId, ticket.assignedToId);
   if (recipients.length === 0) return;
   const dedupeKey = eventId ?? `${ticketId}:${Date.now()}`;
-  await Promise.all(
+  const results = await Promise.all(
     recipients.map((recipient) =>
       notifySupportTicketActivity(
         [recipient.id],
@@ -182,12 +205,86 @@ export async function notifyStaffOfTicketActivity(
           userName: ticket.user.name ?? undefined,
           activity,
           dashboardUrl: recipient.dashboardUrl,
-          ...notificationScope(organizationId ?? ticket.organizationId),
+          ...notificationScope(effectiveOrgId),
         },
         dedupeKey,
+        { deferAttempt: true },
       ),
     ),
   );
+  await flushNotificationsAfter(
+    { bells: results.flat().map((r) => r.staged) },
+    "support.ticket-activity",
+  );
+}
+
+/** The acknowledgement window the ticket was actually given, in whole hours. */
+function slaWindowOf(createdAt: Date, ackDueAt: Date | null): string | null {
+  if (!ackDueAt) return null;
+  const hours = Math.ceil(
+    (ackDueAt.getTime() - createdAt.getTime()) / 3_600_000,
+  );
+  return hours === 1 ? "1 hour" : `${hours} hours`;
+}
+
+/** Send statutory intake receipt (in-app bell + email) without setting acknowledgedAt. */
+export async function notifyRequesterOfTicket(
+  ticket: Pick<
+    SupportTicket,
+    | "id"
+    | "title"
+    | "referenceNumber"
+    | "userId"
+    | "ackDueAt"
+    | "createdAt"
+    | "organizationId"
+  >,
+  caseKind: "ticket" | "case" = "ticket",
+): Promise<void> {
+  const reference = ticket.referenceNumber ?? ticket.id;
+  const title = ticket.title || "Support Ticket";
+  const slaWindow = slaWindowOf(ticket.createdAt, ticket.ackDueAt);
+  const ticketUrl = supportRequestHref(
+    caseKeyOf({ kind: caseKind, id: ticket.id }),
+    ticket.organizationId,
+  );
+
+  const novuOutbox: StagedTrigger | null = await stageTrigger({
+    workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_RECEIVED,
+    kind: "SINGLE",
+    recipients: [ticket.userId],
+    payload: {
+      ticketId: ticket.id,
+      reference,
+      ticketTitle: title,
+      ...(slaWindow ? { slaWindow } : {}),
+      dashboardUrl: ticketUrl,
+      ...notificationScope(ticket.organizationId),
+    },
+    dedupeKey: `ticket-received:${ticket.id}`,
+  }).catch((error) => {
+    reportSentryError(error, {
+      subsystem: "support",
+      op: "ticket-receipt",
+      extra: { ticketId: ticket.id },
+    });
+    return null;
+  });
+
+  await Promise.all([
+    flushNotificationsAfter({ bells: [novuOutbox] }, "support.ticket-receipt"),
+    sendSupportTicketReceivedEmail(
+      {
+        ticketId: ticket.id,
+        ownerUserId: ticket.userId,
+        reference,
+        title,
+        slaWindow,
+        ticketUrl,
+      },
+      3_000,
+    ),
+  ]);
 }
 
 /**
@@ -198,6 +295,10 @@ export async function createSupportTicket(
   input: CreateSupportTicketInput,
 ): Promise<SupportTicket> {
   const priority = input.priority ?? "MEDIUM";
+  const body = stripCallbackTags(input.description).trim();
+  const description = input.callbackPhone
+    ? `[Callback Requested: ${input.callbackPhone}]\n\n${body}`
+    : body;
   // One transaction so a rolled-back ticket cannot leave a live reference
   // behind, and so the SLA clock and the row it belongs to commit together.
   const ticket = await prisma.$transaction(
@@ -208,7 +309,7 @@ export async function createSupportTicket(
       return tx.supportTicket.create({
         data: {
           title: input.title,
-          description: input.description,
+          description,
           priority,
           referenceNumber,
           ackDueAt,
@@ -237,12 +338,22 @@ export async function createSupportTicket(
   );
   // The ticket is already committed — a notification failure must not turn a
   // successful create into a 500, or the retrying client files a duplicate.
-  await notifySupportStaff(ticket).catch((error) => {
-    console.error("support: staff notification failed", {
-      ticketId: ticket.id,
-      error,
-    });
-  });
+  await Promise.all([
+    notifySupportStaff(ticket).catch((error) => {
+      console.error("support: staff notification failed", {
+        ticketId: ticket.id,
+        error,
+      });
+    }),
+    input.filedBy === "requester"
+      ? notifyRequesterOfTicket(ticket).catch((error) => {
+          console.error("support: requester receipt failed", {
+            ticketId: ticket.id,
+            error,
+          });
+        })
+      : undefined,
+  ]);
   return ticket;
 }
 
@@ -274,6 +385,18 @@ export async function findRecentOpenEscalation(
   });
 }
 
+/** An urgent hand-off onto a reused ticket raises it to HIGH: never lowers it, never touches a CLOSED one. */
+export function raiseReusedTicketToHigh(db: PrismaLike, ticketId: string) {
+  return db.supportTicket.updateMany({
+    where: {
+      id: ticketId,
+      status: { not: "CLOSED" },
+      priority: { in: ["LOW", "MEDIUM"] },
+    },
+    data: { priority: "HIGH" },
+  });
+}
+
 /**
  * Dedup: a payment-linked ticket reuses any still-open ticket the user already
  * filed for the same payment. Runtime check (not a schema unique) — a payment
@@ -282,8 +405,8 @@ export async function findRecentOpenEscalation(
 export async function findOpenTicketForPayment(
   userId: string,
   paymentId: string,
-): Promise<SupportTicket | null> {
-  return prisma.supportTicket.findFirst({
+) {
+  const ticket = await prisma.supportTicket.findFirst({
     where: {
       paymentId,
       userId,
@@ -298,4 +421,140 @@ export async function findOpenTicketForPayment(
       attachments: { orderBy: { uploadedAt: "desc" } },
     },
   });
+  return ticket
+    ? { ...ticket, attachments: withSupportAttachmentHrefs(ticket.attachments) }
+    : null;
+}
+
+export interface CreateOutboundStaffSupportTicketInput {
+  staffUserId: string;
+  staffUserName: string | null | undefined;
+  targetLookup: string;
+  title: string;
+  description: string;
+  priority?: SupportPriority;
+  category?: string | null;
+  issueType?: SupportIssueType | null;
+  organizationId?: string | null;
+  paymentId?: string | null;
+}
+
+export async function createOutboundStaffSupportTicket(
+  input: CreateOutboundStaffSupportTicketInput,
+): Promise<SupportTicket | null> {
+  const targetUser = input.targetLookup.includes("@")
+    ? await prisma.user.findFirst({
+        where: { email: { equals: input.targetLookup, mode: "insensitive" } },
+        select: { id: true },
+      })
+    : await prisma.user.findUnique({
+        where: { id: input.targetLookup },
+        select: { id: true },
+      });
+  if (!targetUser) return null;
+
+  const ticketUserId = targetUser.id;
+  const [validMembership, validPayment] = await Promise.all([
+    input.organizationId
+      ? prisma.membership.findFirst({
+          where: {
+            organizationId: input.organizationId,
+            userId: ticketUserId,
+            status: "ACTIVE",
+          },
+          select: { organizationId: true },
+        })
+      : null,
+    input.paymentId
+      ? prisma.payment.findFirst({
+          where: {
+            id: input.paymentId,
+            userId: ticketUserId,
+          },
+          select: { id: true },
+        })
+      : null,
+  ]);
+
+  const resolvedOrganizationId = validMembership?.organizationId ?? null;
+  const resolvedPaymentId = validPayment?.id ?? null;
+  const priority = input.priority ?? "MEDIUM";
+  // The callback marker is server-written from a validated phone only; staff free text never carries one.
+  const description = stripCallbackTags(input.description).trim();
+
+  const ticket = await prisma.$transaction(
+    async (tx) => {
+      const now = new Date();
+      const referenceNumber = await allocateTicketReference(tx, now);
+      const { ackDueAt, resolutionDueAt } = slaDeadlinesFor(priority, now);
+
+      const created = await tx.supportTicket.create({
+        data: {
+          userId: ticketUserId,
+          assignedToId: input.staffUserId,
+          status: "IN_PROGRESS",
+          title: input.title,
+          description,
+          priority,
+          referenceNumber,
+          ackDueAt,
+          resolutionDueAt,
+          acknowledgedAt: now,
+          firstAgentReplyAt: now,
+          awaitingUserSince: now,
+          lastMessageAt: now,
+          category: input.category ?? undefined,
+          issueType: input.issueType ?? "GENERAL_INQUIRY",
+          organizationId: resolvedOrganizationId ?? undefined,
+          paymentId: resolvedPaymentId ?? undefined,
+        },
+      });
+
+      await tx.supportResponse.create({
+        data: {
+          message: description,
+          isInternal: false,
+          supportTicket: { connect: { id: created.id } },
+          user: { connect: { id: input.staffUserId } },
+        },
+      });
+
+      return created;
+    },
+    {
+      maxWait: ALLOCATION_TX_MAX_WAIT_MS,
+      timeout: ALLOCATION_TX_TIMEOUT_MS,
+    },
+  );
+
+  const bellResult = await notifySupportTicketResponse(
+    ticket.userId,
+    {
+      ticketId: ticket.id,
+      reference: ticket.referenceNumber ?? undefined,
+      ticketTitle: ticket.title || "Support Ticket",
+      message: description,
+      respondedBy: input.staffUserName ?? "Support",
+      dashboardUrl: supportRequestHref(
+        caseKeyOf({ kind: "ticket", id: ticket.id }),
+        resolvedOrganizationId,
+      ),
+      ...notificationScope(resolvedOrganizationId),
+    },
+    `ticket-outbound:${ticket.id}`,
+    { deferAttempt: true },
+  ).catch((err) => {
+    reportSentryError(err, {
+      subsystem: "support",
+      op: "outbound.notifyUser",
+      extra: { ticketId: ticket.id },
+    });
+    return null;
+  });
+  await flushNotificationsAfter(
+    { bells: [bellResult?.staged] },
+    "support.outbound-ticket",
+  );
+
+  return ticket;
 }

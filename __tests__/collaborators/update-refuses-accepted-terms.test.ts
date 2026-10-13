@@ -22,6 +22,18 @@ jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorAccepted: jest.fn(),
   notifyCollaboratorRemoved: jest.fn(),
 }));
+jest.mock("../../lib/email/senders/collaborators", () => ({
+  sendCollaboratorInvitedEmail: jest.fn(),
+  sendCollaboratorAcceptedEmail: jest.fn(),
+  sendCollaboratorDeclinedEmail: jest.fn(),
+  sendCollaboratorRemovedEmail: jest.fn(),
+  sendCollaboratorWithdrawnEmail: jest.fn(),
+}));
+jest.mock(
+  "../../utils/organization-roles",
+  () => ({ hasOrgPermission: jest.fn(() => false) }),
+  { virtual: true },
+);
 
 const tx = {
   collaborator: {

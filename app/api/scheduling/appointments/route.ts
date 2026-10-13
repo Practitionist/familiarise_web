@@ -129,7 +129,12 @@ export async function GET(request: NextRequest) {
   // Appointment.organizationId column populated by the #674 backfill.
   const callerMembershipsForScope = await prisma.membership.findMany({
     where: { userId: session.user.id, status: "ACTIVE" },
-    select: { organizationId: true, status: true, role: true },
+    select: {
+      organizationId: true,
+      status: true,
+      role: true,
+      organization: { select: { status: true } },
+    },
   });
   const scopeResolution = resolveOrgScope({
     raw: searchParams.get("orgScope"),

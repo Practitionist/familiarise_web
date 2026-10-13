@@ -14,9 +14,9 @@ react to lifecycle events without polling the dashboard or scraping the
 audit-log export.
 
 > **Outbound, not inbound.** This document is about the events
-> Familiarise *sends out* to an integrator's endpoint (rows in
+> Familiarise _sends out_ to an integrator's endpoint (rows in
 > `OutboundWebhookDelivery`). It is not the same surface as the
-> **inbound** Razorpay/RazorpayX gateway webhooks Familiarise *receives*
+> **inbound** Razorpay/RazorpayX gateway webhooks Familiarise _receives_
 > (rows in `WebhookEvent`), which back payment idempotency and money
 > side-effects; those are documented separately at
 > [`../10-money-and-ledger/12-payment-webhooks.md`](../10-money-and-ledger/12-payment-webhooks.md).
@@ -29,7 +29,7 @@ audit-log export.
 A "webhook" here is one row in `OutboundWebhookDelivery` — that table
 **is** the queue (no SQS/RabbitMQ; the platform runs on Netlify/Vercel
 where a first-class queue is a paid tier — `worker.ts` header, `4b4ce31`).
-A domain event inserts a `PENDING` row inside the *same* transaction as
+A domain event inserts a `PENDING` row inside the _same_ transaction as
 the business mutation, then a 1-minute cron drains it, signs it, POSTs
 it, and walks the backoff schedule on failure. The signature header is
 `t=<unix-seconds>,v1=<sha256-hex>` — Stripe's scheme, so a receiver
@@ -89,16 +89,16 @@ The catalog is closed. Adding a new event requires the corresponding
 emit-point + a doc update; renaming an event is a breaking change to
 every receiver.
 
-| Event | Triggered from | Payload highlights |
-|---|---|---|
-| `member.added` | `POST /api/organizations/[orgId]/members` (in-app invite accept) AND SCIM upsert (Batch 4) | `{ membershipId, userId, role, departmentLabel }` |
-| `member.removed` | `DELETE /api/organizations/[orgId]/members/[memberId]` AND SCIM deprovision | `{ membershipId, userId, role, previousStatus }` |
-| `invoice.issued` | `POST .../billing-account/invoices` when `issueImmediately=true` | `{ invoiceId, invoiceNumber, totalPaise, displayCurrency, dueDate, purchaseOrderId?, contractId? }` |
-| `invoice.paid` | Razorpay payment webhook flips invoice status to `PAID` | `{ invoiceId, invoiceNumber, paidPaise, paymentId, settledAt }` |
-| `payout.completed` | RazorpayX `payout.processed` webhook → status PAID | `{ payoutId, totalPaise, currency, payoutReference, settledAt }` |
-| `payout.failed` | RazorpayX `payout.failed` OR `payout.reversed` webhook | `{ payoutId, reason, lastError }` |
-| `contract.signed` | Contract status transition `DRAFT → ACTIVE` | `{ contractId, status, effectiveFrom, totalAmountPaise? }` |
-| `program.assigned` | `ProgramAssignment.create` (in-app + SCIM-driven) | `{ programId, membershipId, periodStart, periodEnd }` |
+| Event              | Triggered from                                                                                                                                                                      | Payload highlights                                                                                             |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `member.added`     | `POST /api/organizations/invitations/accept` (invite accept), OIDC SSO JIT auto-join (`lib/sso/jit-membership.ts`), and admin `SUSPENDED → ACTIVE` reactivation                     | `{ membershipId, userId, role, previousStatus?, source? }`                                                     |
+| `member.removed`   | `DELETE /api/organizations/[orgId]/members/[memberId]`, admin `ACTIVE → SUSPENDED` suspension, and DPDP erasure deprovisioning                                                      | `{ membershipId, userId?, role, previousStatus, reason?, source? }`                                            |
+| `invoice.issued`   | `POST .../billing-account/invoices` (`issueImmediately=true`), `PATCH .../invoices/[invoiceId]` (`DRAFT → ISSUED`), subscription invoice cron, and monthly accrual rollup           | `{ invoiceId, invoiceNumber, totalPaise, displayCurrency, dueDate, purchaseOrderId?, contractId? }`            |
+| `invoice.paid`     | Razorpay payment webhook flips invoice status to `PAID`                                                                                                                             | `{ invoiceId, invoiceNumber, paidPaise, paymentId, settledAt }`                                                |
+| `payout.completed` | RazorpayX `payout.processed` webhook → status PAID                                                                                                                                  | `{ payoutId, totalPaise, currency, payoutReference, settledAt }`                                               |
+| `payout.failed`    | RazorpayX `payout.failed` OR `payout.reversed` webhook                                                                                                                              | `{ payoutId, reason, lastError }`                                                                              |
+| `contract.signed`  | Contract activation across `POST .../contracts` (`ACTIVE`), `PATCH .../contracts/[contractId]` (`DRAFT → ACTIVE`), `POST .../contracts/[contractId]/supersede`, and auto-renew cron | `{ contractId, billingAccountId, status, signedAt, effectiveFrom, effectiveTo, supersededContractId, reason }` |
+| `program.assigned` | `POST /api/organizations/[orgId]/programs/[programId]/assignments` and `POST .../auto-enroll` when a new seat is claimed                                                            | `{ programId, assignmentId, membershipId, periodStart, periodEnd, source? }`                                   |
 
 ## Receiver contract
 
@@ -106,6 +106,8 @@ Every delivery is a `POST` with `Content-Type: application/json` and:
 
 ```
 X-Familiarise-Signature: t=<unix-seconds>,v1=<sha256-hex>
+X-Familiarise-Delivery-Id: <OutboundWebhookDelivery.id>
+X-Familiarise-Event: <event-type>
 User-Agent: Familiarise-Webhooks/1.0
 ```
 
@@ -120,10 +122,10 @@ Body shape:
 }
 ```
 
-The `id` field is **the** idempotency key. Receivers MUST store the IDs
-they've already processed and skip duplicates — our retry schedule WILL
-deliver the same `id` more than once if your endpoint responds with 5xx
-or times out.
+The `id` field (mirrored in `X-Familiarise-Delivery-Id`) is **the**
+idempotency key. Receivers MUST store the IDs they've already processed
+and skip duplicates — our retry schedule WILL deliver the same `id` more
+than once if your endpoint responds with 5xx or times out.
 
 ## Signature verification
 
@@ -136,33 +138,33 @@ Reference implementation (Node):
 ```ts
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const REPLAY_WINDOW_SECONDS = 9 * 60 * 60; // match producer
+const REPLAY_WINDOW_SECONDS = 5 * 60; // matches DEFAULT_REPLAY_WINDOW_SECONDS in signing.ts
 
 function verify(secret: string, body: string, header: string): boolean {
   const parts = header.split(",");
-  const t = parts.find(p => p.startsWith("t="))?.slice(2);
+  const t = parts.find((p) => p.startsWith("t="))?.slice(2);
   // Scan EVERY v1= entry, not just the first: during a secret rotation
   // we emit two (current + previous) — see "Secret rotation" below. A
   // receiver matching only the first signature would reject deliveries
   // signed with the secret it hasn't adopted yet.
-  const v1s = parts.filter(p => p.startsWith("v1=")).map(p => p.slice(3));
+  const v1s = parts.filter((p) => p.startsWith("v1=")).map((p) => p.slice(3));
   if (!t || v1s.length === 0) return false;
-  if (Math.abs(Date.now() / 1000 - Number(t)) > REPLAY_WINDOW_SECONDS) return false;
+  if (Math.abs(Date.now() / 1000 - Number(t)) > REPLAY_WINDOW_SECONDS)
+    return false;
   const expected = createHmac("sha256", secret).update(`${t}.${body}`).digest();
-  return v1s.some(v1 => {
+  return v1s.some((v1) => {
     const received = Buffer.from(v1, "hex");
-    return received.length === expected.length && timingSafeEqual(received, expected);
+    return (
+      received.length === expected.length && timingSafeEqual(received, expected)
+    );
   });
 }
 ```
 
-The replay window (`DEFAULT_REPLAY_WINDOW_SECONDS` in `signing.ts`)
-must be **at least 9 hours** because our retry schedule (1m / 5m / 30m
-/ 2h / 8h) means the same signature can land at +8h after creation. A
-receiver with a tighter window will mis-reject late retries. (Stripe's
-own default tolerance is 5 minutes — web-validated 2026-06-05 — but
-Stripe redelivers on a much longer, separate schedule; our 9h window
-is sized to our in-band 8h backoff tail, and the rationale is sound.)
+The replay window (`DEFAULT_REPLAY_WINDOW_SECONDS = 5 * 60` in
+`signing.ts`) is **5 minutes** because every delivery attempt signs the
+payload afresh with the current Unix timestamp at send time. Receivers
+only need tolerance for clock skew and HTTP transit.
 
 ## Secret rotation — the 24h dual-sign grace window 🔒
 
@@ -243,7 +245,7 @@ sequenceDiagram
 > during a configurable overlap and its SDK verifiers accept either).
 > The producer side is `signPayload(secret, body, ts, previousSecret)`
 > appending a second `v1=` (`signing.ts`, `WEBHOOK_ROTATION_GRACE_MS =
-> 24h`); the consumer side is the reference verifier already iterating
+24h`); the consumer side is the reference verifier already iterating
 > every `v1=`. Shipped in `e542530` as a follow-up to the base subsystem
 > (`4b4ce31`). One stale doc-comment survives on the `WebhookEndpoint`
 > schema model claiming the route "overwrites secret directly" — that
@@ -267,13 +269,13 @@ Worker schedule (`lib/enterprise/outbound-webhooks/worker.ts`,
 `runDispatchTick`; `MAX_ATTEMPTS = 5`):
 
 | Attempt | Outcome on transient failure | Cumulative wall-clock |
-|--------:|------------------------------|-----------------------|
-| 1 | RETRY, `nextRetryAt` +1m | 1m |
-| 2 | RETRY, +5m | 6m |
-| 3 | RETRY, +30m | 36m |
-| 4 | RETRY, +2h | 2h 36m |
-| 5 | RETRY, +8h | 10h 36m |
-| 6 | (`attempts ≥ 5`) → `FAILED` | terminal |
+| ------: | ---------------------------- | --------------------- |
+|       1 | RETRY, `nextRetryAt` +1m     | 1m                    |
+|       2 | RETRY, +5m                   | 6m                    |
+|       3 | RETRY, +30m                  | 36m                   |
+|       4 | RETRY, +2h                   | 2h 36m                |
+|       5 | RETRY, +8h                   | 10h 36m               |
+|       6 | (`attempts ≥ 5`) → `FAILED`  | terminal              |
 
 Total wall-clock from first attempt to FAILED is ~10h 36m, which is
 why the 9h replay window has headroom to spare. Each delivery POST
@@ -313,14 +315,14 @@ overlapping ticks can no longer double-deliver.
 See `docs/enterprise/00-foundations/04-roles-and-permissions.md` for the canonical
 table. Quick view:
 
-| Verb | Path | Gate |
-|---|---|---|
-| `GET` | `/webhooks` + `/[endpointId]` + `/deliveries` | MANAGER+ |
-| `POST` | `/webhooks` (create) | OWNER + BILLING_ADMIN |
-| `PATCH` | `/webhooks/[endpointId]` | OWNER + BILLING_ADMIN |
-| `POST` | `/webhooks/[endpointId]/deliveries/[deliveryId]/redeliver` | OWNER + BILLING_ADMIN |
-| `POST` | `/webhooks/[endpointId]/rotate-secret` | OWNER only |
-| `DELETE` | `/webhooks/[endpointId]` | OWNER only |
+| Verb     | Path                                                       | Gate                  |
+| -------- | ---------------------------------------------------------- | --------------------- |
+| `GET`    | `/webhooks` + `/[endpointId]` + `/deliveries`              | MANAGER+              |
+| `POST`   | `/webhooks` (create)                                       | OWNER + BILLING_ADMIN |
+| `PATCH`  | `/webhooks/[endpointId]`                                   | OWNER + BILLING_ADMIN |
+| `POST`   | `/webhooks/[endpointId]/deliveries/[deliveryId]/redeliver` | OWNER + BILLING_ADMIN |
+| `POST`   | `/webhooks/[endpointId]/rotate-secret`                     | OWNER only            |
+| `DELETE` | `/webhooks/[endpointId]`                                   | OWNER only            |
 
 The OWNER-only floor on `DELETE` and `rotate-secret` is deliberate —
 both actions are sensitive from the integrator's perspective (deletion
@@ -351,11 +353,11 @@ The fastest path to a green receiver:
 Three GitHub Actions crons touch the webhook surface — and two of them
 are about a **different** table, which is a common source of confusion:
 
-| Job (GH Actions wrapper → `scripts/cleanup/*`) | Table | What it does | Cadence |
-|---|---|---|---|
-| `dispatch-outbound-webhooks` → `runDispatchTick` | **`OutboundWebhookDelivery`** | Drains the delivery queue: signs, POSTs, walks the backoff schedule. The delivery table IS the queue. Emits a `WEBHOOK` SystemEvent warning if the due-backlog exceeds 200. | every 1 min |
-| `sweep-stuck-webhook-events` | **`WebhookEvent`** (inbound) | Re-drives **inbound** Razorpay gateway events left `processed=false` after an `after()`-callback crash, so money side-effects (invoice paid, wallet credited) actually land. Nothing to do with outbound delivery. | every ~10 min |
-| `archive-webhook-events` | **`WebhookEvent`** (inbound) | Prunes old inbound gateway events: processed >30d, failed/errored >90d. | weekly |
+| Job (GH Actions wrapper → `scripts/cleanup/*`)   | Table                         | What it does                                                                                                                                                                                                       | Cadence       |
+| ------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------- |
+| `dispatch-outbound-webhooks` → `runDispatchTick` | **`OutboundWebhookDelivery`** | Drains the delivery queue: signs, POSTs, walks the backoff schedule. The delivery table IS the queue. Emits a `WEBHOOK` SystemEvent warning if the due-backlog exceeds 200.                                        | every 1 min   |
+| `sweep-stuck-webhook-events`                     | **`WebhookEvent`** (inbound)  | Re-drives **inbound** Razorpay gateway events left `processed=false` after an `after()`-callback crash, so money side-effects (invoice paid, wallet credited) actually land. Nothing to do with outbound delivery. | every ~10 min |
+| `archive-webhook-events`                         | **`WebhookEvent`** (inbound)  | Prunes old inbound gateway events: processed >30d, failed/errored >90d.                                                                                                                                            | weekly        |
 
 So: **`dispatch` is the outbound delivery worker; `sweep`/`archive`
 operate on the inbound gateway-event ledger** (`WebhookEvent`), which

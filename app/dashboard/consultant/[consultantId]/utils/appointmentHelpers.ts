@@ -115,11 +115,26 @@ export function getRoleBadgeStyle(role: string): string {
   return "bg-purple-100 text-purple-800";
 }
 
+type AppointmentWithTrial = TAppointment & {
+  trial?: {
+    id?: string;
+    status?: string | null;
+    subscriptionPlan?: { title?: string | null } | null;
+    consulteeProfile?: {
+      user?: { name?: string | null; image?: string | null } | null;
+    } | null;
+  } | null;
+};
+
 // Get the relevant name based on appointment type
-// For consultations/subscriptions: returns the consultee (requester) name
+// For consultations/subscriptions/trials: returns the consultee (requester) name
 // For webinars/classes: returns the consultant (host) name
-export const getConsumeeName = (appointment: TAppointment): string => {
+export const getConsumeeName = (
+  appointment: TAppointment,
+  viewerConsultantId?: string,
+): string => {
   if (!appointment) return "Unknown User";
+  const appt = appointment as AppointmentWithTrial;
 
   switch (appointment.appointmentType) {
     case "CONSULTATION":
@@ -130,28 +145,41 @@ export const getConsumeeName = (appointment: TAppointment): string => {
       return (
         appointment.subscription?.requestedBy?.user?.name ?? "Unknown User"
       );
-    case "WEBINAR":
-      // For webinars, show the consultant (host) name
-      return (
-        appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-        "Unknown expert"
-      );
-    case "CLASS":
-      // For classes, show the consultant (instructor) name
-      return (
-        appointment.class?.classPlan?.consultantProfile?.user?.name ??
-        "Unknown expert"
-      );
+    case "TRIAL":
+      return appt.trial?.consulteeProfile?.user?.name ?? "Unknown User";
+    case "WEBINAR": {
+      const plan = appointment.webinar?.webinarPlan;
+      if (
+        viewerConsultantId &&
+        plan?.consultantProfileId &&
+        plan.consultantProfileId !== viewerConsultantId
+      ) {
+        return plan.consultantProfile?.user?.name ?? "Unknown expert";
+      }
+      return "Registered attendees";
+    }
+    case "CLASS": {
+      const plan = appointment.class?.classPlan;
+      if (
+        viewerConsultantId &&
+        plan?.consultantProfileId &&
+        plan.consultantProfileId !== viewerConsultantId
+      ) {
+        return plan.consultantProfile?.user?.name ?? "Unknown expert";
+      }
+      return "Enrolled learners";
+    }
     default:
       return "Unknown User";
   }
 };
 
 // Get the relevant image based on appointment type
-// For consultations/subscriptions: returns the consultee (requester) image
+// For consultations/subscriptions/trials: returns the consultee (requester) image
 // For webinars/classes: returns the consultant (host) image
 export const getConsumeeImage = (appointment: TAppointment): string => {
   if (!appointment) return "/placeholder.svg";
+  const appt = appointment as AppointmentWithTrial;
 
   switch (appointment.appointmentType) {
     case "CONSULTATION":
@@ -163,6 +191,10 @@ export const getConsumeeImage = (appointment: TAppointment): string => {
       return (
         appointment.subscription?.requestedBy?.user?.image ??
         "/placeholder-user.jpg"
+      );
+    case "TRIAL":
+      return (
+        appt.trial?.consulteeProfile?.user?.image ?? "/placeholder-user.jpg"
       );
     case "WEBINAR":
       // For webinars, show the consultant (host) image
@@ -186,6 +218,7 @@ export const getAppointmentTypeAndPlan = (
   appointment: TAppointment,
 ): string => {
   if (!appointment?.appointmentType) return "Unknown Type";
+  const appt = appointment as AppointmentWithTrial;
 
   const type =
     appointment.appointmentType.charAt(0) +
@@ -200,6 +233,9 @@ export const getAppointmentTypeAndPlan = (
     case "SUBSCRIPTION":
       plan =
         appointment.subscription?.subscriptionPlan?.title ?? "Unknown Plan";
+      break;
+    case "TRIAL":
+      plan = appt.trial?.subscriptionPlan?.title ?? "Unknown Plan";
       break;
     case "WEBINAR":
       plan = appointment.webinar?.webinarPlan?.title ?? "Unknown Plan";
@@ -258,9 +294,7 @@ export const calculateSessionProgress = (
   );
   const sessions = liveOccurrences(rows);
   const sub = groupAppointments[0]?.subscription as
-    | EntitledSubscription
-    | null
-    | undefined;
+    EntitledSubscription | null | undefined;
   const plan = sub?.subscriptionPlan;
 
   let totalSessions = sessions.length;
@@ -307,10 +341,14 @@ export const getStartTime = (appointment: TAppointment): Date | null => {
   return times.length > 0 ? times[0] : null;
 };
 
-// Check if appointment has any future slots
-export const hasUpcomingSlots = (appointment: TAppointment): boolean => {
-  const now = new Date();
-  return getSlotTimes(appointment).some((time) => new Date(time) > now);
+/** Returns true when at least one live occurrence has not ended yet (`endsAt >= referenceDate`). */
+export const hasUpcomingSlots = (
+  appointment: TAppointment,
+  referenceDate: Date = new Date(),
+): boolean => {
+  return liveOccurrences(occurrencesOfAppointment(appointment)).some(
+    (session) => !isOccurrenceOver(session, referenceDate),
+  );
 };
 
 // Get the next upcoming slot time (first future slot), falling back to the earliest slot
@@ -325,27 +363,22 @@ export const getNextUpcomingSlotTime = (
 };
 
 // Check if appointment has any slots today
-export const hasTodaySlots = (appointment: TAppointment): boolean => {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayEnd = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    23,
-    59,
-    59,
-    999,
-  );
+export const hasTodaySlots = (
+  appointment: TAppointment,
+  zone = "Asia/Kolkata",
+): boolean => {
+  const todayKey = formatInViewerZone(new Date(), zone, "yyyy-MM-dd");
 
-  return getSlotTimes(appointment).some((time) => {
-    const date = new Date(time);
-    return date >= todayStart && date <= todayEnd;
-  });
+  return getSlotTimes(appointment).some(
+    (time) => formatInViewerZone(time, zone, "yyyy-MM-dd") === todayKey,
+  );
 };
 
 // Get appointment status
-export const getAppointmentStatus = (appointment: TAppointment): string => {
+export const getAppointmentStatus = (
+  appointment: TAppointment,
+  zone = "Asia/Kolkata",
+): string => {
   const startTime = getStartTime(appointment);
 
   // Handle appointments with no slots
@@ -395,51 +428,33 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
   // For appointments with both past and future slots, use the next upcoming slot
   const effectiveTime = getNextUpcomingSlotTime(appointment) ?? startTime;
 
-  // Calculate time differences using local time
   const diffMs = effectiveTime.getTime() - now.getTime();
   const diffMinutes = Math.floor(diffMs / (1000 * 60));
 
-  // Use calendar-based day comparison for accurate "Today"/"Tomorrow" labels
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrowStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 1,
-  );
-  const dayAfterTomorrowStart = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 2,
-  );
-
-  const appointmentDate = new Date(effectiveTime);
-
-  // Upcoming appointments with more precise timing
   if (diffMinutes <= 5 && diffMinutes > 0) return "Meeting in 5 min";
   if (diffMinutes <= 15 && diffMinutes > 5) return "Starting soon";
 
-  // Check if appointment is today (same calendar day)
-  if (appointmentDate >= todayStart && appointmentDate < tomorrowStart) {
+  const dayNumber = (key: string): number => {
+    const [year, month, day] = key.split("-").map(Number);
+    return Date.UTC(year, month - 1, day) / 86_400_000;
+  };
+  const targetDayKey = formatInViewerZone(effectiveTime, zone, "yyyy-MM-dd");
+  const todayKey = formatInViewerZone(now, zone, "yyyy-MM-dd");
+  const diffDays = dayNumber(targetDayKey) - dayNumber(todayKey);
+
+  if (diffDays === 0) {
     return "Today";
   }
 
-  // Check if appointment is tomorrow (next calendar day)
-  if (
-    appointmentDate >= tomorrowStart &&
-    appointmentDate < dayAfterTomorrowStart
-  ) {
+  if (diffDays === 1) {
     return "Tomorrow";
   }
 
-  // Calculate day difference for appointments further out
-  const diffDays = Math.floor(
-    (appointmentDate.getTime() - todayStart.getTime()) / (1000 * 60 * 60 * 24),
-  );
-
-  if (diffDays < 7) return `In ${diffDays} days`;
+  const boundedDays = Math.max(1, diffDays);
+  if (boundedDays < 7) return `In ${boundedDays} days`;
 
   // For weekly intervals, show exact week number
-  const exactWeeks = Math.ceil(diffDays / 7);
+  const exactWeeks = Math.ceil(boundedDays / 7);
   return `In ${exactWeeks} ${exactWeeks === 1 ? "week" : "weeks"}`;
 };
 
@@ -469,7 +484,7 @@ export const getTodayAppointments = (
   const expandedAppointments = appointments.flatMap((appointment) => {
     const liveSlots = liveSlotsOf(appointment);
     if (liveSlots.length === 0) {
-      return [appointment];
+      return [];
     }
 
     // Only expand subscriptions and classes by slot
@@ -501,9 +516,8 @@ export const getTodayAppointments = (
 // Filter upcoming appointments
 export const getUpcomingAppointments = (
   appointments: TAppointment[],
+  referenceDate: Date = new Date(),
 ): TAppointment[] => {
-  const now = new Date();
-
   // Drop dead/tentative rows up front (B7) so neither the expansion below nor
   // the per-appointment checks can resurrect a released or unconfirmed slot.
   // An appointment whose rows ALL died (every session cancelled or
@@ -527,23 +541,20 @@ export const getUpcomingAppointments = (
         appointment.subscription) ||
       (appointment.appointmentType === "CLASS" && appointment.class)
     ) {
-      // Check if all slots are in the past
-      const upcomingSlotTimes = getSlotTimes(appointment);
-      const allSlotsCompleted =
-        upcomingSlotTimes.length > 0 &&
-        upcomingSlotTimes.every((time) => new Date(time) < now);
-      // Only include if not all slots are completed
-      return !allSlotsCompleted;
+      if (appointment.occurrences.length > 0) {
+        return hasUpcomingSlots(appointment, referenceDate);
+      }
+      return true;
     }
 
-    // For single-slotted appointments (consultation and webinar)
-    if (hasUpcomingSlots(appointment)) {
+    // For single-slotted appointments (consultation, webinar, and trial)
+    if (hasUpcomingSlots(appointment, referenceDate)) {
       // For webinar appointments
       if (appointment.appointmentType === "WEBINAR" && appointment.webinar) {
         return appointment.webinar.status !== "COMPLETED";
       }
 
-      // For consultation appointments
+      // For consultation and trial appointments
       return true;
     }
 

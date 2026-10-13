@@ -31,8 +31,7 @@ export async function GET(request: NextRequest) {
     const { sort, page, limit, skip } = filters;
     const where = buildPlanWhereClause(filters) as Prisma.ClassPlanWhereInput;
     const orderBy = buildPlanOrderBy(sort) as
-      | Prisma.ClassPlanOrderByWithRelationInput
-      | undefined;
+      Prisma.ClassPlanOrderByWithRelationInput | undefined;
 
     // Build classes include based on whether registration data is requested
     let classesInclude: boolean | Record<string, unknown> = true;
@@ -133,7 +132,6 @@ export async function POST(request: NextRequest) {
       topicIds,
       classContents,
       recordingEnabled,
-      recordingStoragePolicy,
     } = body;
 
     // Input validation
@@ -207,7 +205,6 @@ export async function POST(request: NextRequest) {
         materialProvided,
         learningOutcomes,
         recordingEnabled: recordingEnabled ?? false,
-        recordingStoragePolicy: recordingStoragePolicy ?? "STREAM_ONLY",
         consultantProfile: { connect: { id: consultantProfileId } },
         topics: topicIds
           ? { connect: topicIds.map((id: string) => ({ id })) }

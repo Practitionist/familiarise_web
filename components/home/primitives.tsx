@@ -61,7 +61,7 @@ export function Section({
   return (
     <section
       className={cn(
-        "relative py-24 md:py-32",
+        "relative py-24 md:py-32 cv-auto",
         bordered && "border-t border-white/[0.06]",
         className,
       )}

@@ -26,7 +26,10 @@ import prisma from "@/lib/prisma";
 // CDNs don't cache the 410 and serve stale error messages on subsequent navigations.
 function invalidResponse() {
   return NextResponse.json(
-    { error: "This invitation link is no longer valid. Please ask your organization admin for a new invite." },
+    {
+      error:
+        "This invitation link is no longer valid. Please ask your organization admin for a new invite.",
+    },
     { status: 410, headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -56,7 +59,7 @@ export async function GET(req: NextRequest) {
   // not-found, expired, accepted, or cancelled to prevent state enumeration.
   if (
     !invitation ||
-    invitation.status !== "pending" ||
+    invitation.status !== "PENDING" ||
     invitation.expiresAt < new Date()
   ) {
     return invalidResponse();

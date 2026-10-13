@@ -47,7 +47,7 @@
  *
  * Webhook fan-out
  * ---------------
- * Emits `member.removed` per affected organization so SCIM-managed and
+ * Emits `member.removed` per affected organization so
  * webhook-subscribed downstreams see the deprovisioning. The
  * dispatching is fire-and-forget inside the same transaction so a
  * rollback (e.g. constraint violation we didn't anticipate) takes the
@@ -57,6 +57,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { revokeAllUserSessions } from "@/lib/auth/session-revoke";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { releaseSeatsForTerminatedAssignments } from "@/lib/api/organizations/seat-count";
 import {
@@ -67,6 +68,8 @@ import { reportSentryError } from "@/lib/observability/report";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { liveParticipant } from "@/lib/booking/participants";
+import { eraseUserSessionDocuments } from "@/lib/documents/document-erasure";
 
 export interface ScrubResult {
   /// True iff this call performed the scrub. False means the user was
@@ -84,7 +87,7 @@ export interface ScrubResult {
  * emergency — old erasures are NOT re-keyed (their pseudonymousId is
  * locked in at scrub time and stored on the User row).
  */
-function derivePseudonym(userId: string): string {
+export function derivePseudonym(userId: string): string {
   const salt = process.env.ERASURE_SALT;
   // #1584 P1-ER01 — in production a pseudonym keyed on the public fallback is
   // reversible by anyone with the source; refuse rather than scrub with it.
@@ -120,7 +123,7 @@ export async function moneyInFlightForUser(
   db: Db,
   userId: string,
 ): Promise<MoneyInFlight> {
-  const [consultantPayouts, unsettledEarnings, liveDisputes, ownerRows] =
+  const [consultantPayouts, unsettledEarnings, liveDisputes, soleOwned] =
     await Promise.all([
       db.consultantPayout.count({
         where: {
@@ -142,27 +145,18 @@ export async function moneyInFlightForUser(
           status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
         },
       }),
-      db.membership.findMany({
-        where: { userId, role: "OWNER", status: "ACTIVE" },
-        select: { organizationId: true },
-      }),
+      soleOwnedOrganizations(db, userId, { includeInactive: true }),
     ]);
 
-  let orgInvoicesAsSoleOwner = 0;
-  for (const { organizationId } of ownerRows) {
-    const otherOwners = await db.membership.count({
-      where: {
-        organizationId,
-        role: "OWNER",
-        status: "ACTIVE",
-        userId: { not: userId },
-      },
-    });
-    if (otherOwners > 0) continue;
-    orgInvoicesAsSoleOwner += await db.organizationInvoice.count({
-      where: { organizationId, status: { in: ["ISSUED", "OVERDUE"] } },
-    });
-  }
+  const orgInvoicesAsSoleOwner =
+    soleOwned.length > 0
+      ? await db.organizationInvoice.count({
+          where: {
+            organizationId: { in: soleOwned.map((o) => o.id) },
+            status: { in: ["ISSUED", "OVERDUE"] },
+          },
+        })
+      : 0;
 
   return {
     consultantPayouts,
@@ -194,7 +188,9 @@ export async function moneyInFlightForUser(
  * `deleteSubscriber`'s contract rather than in each caller, and changing that
  * return type is a wider change than a hotfix should carry.
  */
-async function offboardNotificationVendor(userId: string): Promise<string[]> {
+export async function offboardNotificationVendor(
+  userId: string,
+): Promise<string[]> {
   const { isNovuConfigured } = await import("@/lib/novu/client");
   if (!isNovuConfigured()) {
     return [
@@ -205,6 +201,461 @@ async function offboardNotificationVendor(userId: string): Promise<string[]> {
   const { deleteSubscriber } = await import("@/lib/novu/subscriber");
   if (await deleteSubscriber(userId)) return [];
   return ["novu: subscriber deletion not confirmed — re-run required"];
+}
+
+export const STREAM_PRINCIPAL_PLAN_ID_PREFIX = "principal:";
+const RECORDING_PREVIEWS_BUCKET = "recordings-previews";
+
+export function principalStreamPlanId(userId: string): string {
+  return `${STREAM_PRINCIPAL_PLAN_ID_PREFIX}${userId}`;
+}
+
+export async function eraseStreamPrincipalFootprint(
+  userId: string,
+): Promise<void> {
+  const { getStreamChatClient, isExpectedStreamError, isStreamConfigured } =
+    await import("@/lib/stream-client");
+  if (!isStreamConfigured()) {
+    throw new Error(
+      "Stream is not configured — cannot confirm principal deletion",
+    );
+  }
+
+  const chat = getStreamChatClient();
+  try {
+    await chat.revokeUserToken(userId, new Date());
+  } catch (err) {
+    if (!isExpectedStreamError(err)) throw err;
+  }
+
+  try {
+    await chat.deleteUsers([userId], { user: "hard", messages: "hard" });
+  } catch (err) {
+    if (!isExpectedStreamError(err)) throw err;
+  }
+}
+
+async function purgeSingleUserRecordingOnErasure(
+  db: Db,
+  rec: {
+    id: string;
+    storagePath: string | null;
+    previewClipStoragePath: string | null;
+  },
+): Promise<void> {
+  const { deleteRecordingObject } =
+    await import("@/lib/stream/recording-storage");
+  const { removeObjects } = await import("@/lib/supabase-storage-core");
+  if (rec.storagePath) {
+    const deleted = await deleteRecordingObject(rec.storagePath);
+    if (!deleted.success) {
+      throw new Error(
+        deleted.error ?? "Failed to delete recording object from storage",
+      );
+    }
+  }
+  if (rec.previewClipStoragePath) {
+    if (
+      !(await removeObjects(RECORDING_PREVIEWS_BUCKET, [
+        rec.previewClipStoragePath,
+      ]))
+    ) {
+      throw new Error("Recording preview clip was not removed from storage");
+    }
+  }
+
+  const expiredData = {
+    status: "EXPIRED" as const,
+    recordingUrl: "",
+    storagePath: null,
+    previewClipUrl: null,
+    previewClipStoragePath: null,
+  };
+  if (db.recording.update) {
+    await db.recording.update({
+      where: { id: rec.id },
+      data: expiredData,
+    });
+  } else if (db.recording.updateMany) {
+    await db.recording.updateMany({
+      where: { id: rec.id },
+      data: expiredData,
+    });
+  }
+}
+
+async function unpublishHostedGroupRecordingsOnErasure(
+  db: Db,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  if (db.recording?.updateMany) {
+    await db.recording.updateMany({
+      where: {
+        listingStatus: "PUBLISHED",
+        meeting: {
+          occurrence: {
+            appointment: {
+              OR: [
+                {
+                  webinar: {
+                    webinarPlan: { consultantProfile: { userId } },
+                  },
+                },
+                {
+                  class: {
+                    classPlan: { consultantProfile: { userId } },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      data: {
+        listingStatus: "UNPUBLISHED",
+        unpublishedAt: now,
+      },
+    });
+  }
+
+  if (db.recordingConsent?.updateMany) {
+    await db.recordingConsent.updateMany({
+      where: { userId, decision: "GRANTED" },
+      data: { decision: "DECLINED", decidedAt: now },
+    });
+  }
+}
+
+async function cleanupUserRecordingsOnErasure(
+  db: Db,
+  userId: string,
+  now: Date,
+): Promise<string[]> {
+  const failures: string[] = [];
+  try {
+    if (db.recording?.findMany) {
+      const oneToOneRecordings = await db.recording.findMany({
+        where: {
+          status: { notIn: ["EXPIRED", "FAILED"] },
+          purchases: { none: {} },
+          meeting: {
+            occurrence: {
+              appointment: {
+                appointmentType: {
+                  in: ["CONSULTATION", "SUBSCRIPTION", "TRIAL"],
+                },
+                OR: [
+                  { participants: { some: liveParticipant(userId) } },
+                  {
+                    consultation: {
+                      OR: [
+                        { requestedBy: { userId } },
+                        {
+                          consultationPlan: {
+                            consultantProfile: { userId },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    subscription: {
+                      OR: [
+                        { requestedBy: { userId } },
+                        {
+                          subscriptionPlan: {
+                            consultantProfile: { userId },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                  {
+                    trial: {
+                      OR: [
+                        { consulteeProfile: { userId } },
+                        { consultantProfile: { userId } },
+                        {
+                          subscriptionPlan: {
+                            consultantProfile: { userId },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+        select: {
+          id: true,
+          storagePath: true,
+          previewClipStoragePath: true,
+        },
+      });
+
+      if (Array.isArray(oneToOneRecordings)) {
+        for (const rec of oneToOneRecordings) {
+          try {
+            await purgeSingleUserRecordingOnErasure(db, rec);
+          } catch (error_) {
+            failures.push(
+              `recording_storage:${rec.id}: deletion not confirmed — re-run required`,
+            );
+            reportSentryError(error_, {
+              subsystem: "compliance",
+              op: "scrubUser.purgeSingleUserRecordingOnErasure",
+              extra: { userId, recordingId: rec.id },
+            });
+          }
+        }
+      }
+    }
+
+    await unpublishHostedGroupRecordingsOnErasure(db, userId, now);
+  } catch (error_) {
+    failures.push(
+      "recording_cleanup: could not complete recording erasure — re-run required",
+    );
+    reportSentryError(error_, {
+      subsystem: "compliance",
+      op: "scrubUser.cleanupUserRecordingsOnErasure",
+      extra: { userId },
+    });
+  }
+  return failures;
+}
+
+async function settleVendorErasureOutbox(
+  prisma: Db,
+  erasureRequestId: string | null,
+  vendor: "STREAM" | "NOVU" | "RAZORPAY",
+  vendorRef: string,
+  error: string | null,
+  now: Date,
+): Promise<void> {
+  if (!erasureRequestId || !prisma.vendorErasureRetry?.update) return;
+  const whereKey = {
+    erasureRequestId_vendor_vendorRef: {
+      erasureRequestId,
+      vendor,
+      vendorRef,
+    },
+  };
+  let nextAttempt = 1;
+  if (error && prisma.vendorErasureRetry.findUnique) {
+    const existing = await prisma.vendorErasureRetry
+      .findUnique({ where: whereKey, select: { attempts: true } })
+      .catch(() => null);
+    nextAttempt = (existing?.attempts ?? 0) + 1;
+  }
+  await prisma.vendorErasureRetry
+    .update({
+      where: whereKey,
+      data: error
+        ? {
+            status: "FAILED",
+            attempts: { increment: 1 },
+            lastError: error,
+            nextRetryAt: nextRetryAt(nextAttempt, now),
+          }
+        : {
+            status: "SUCCEEDED",
+            attempts: { increment: 1 },
+            completedAt: new Date(),
+          },
+    })
+    .catch((error_) =>
+      reportSentryError(error_, {
+        subsystem: "compliance",
+        op: "scrubUser.settleVendorErasureOutbox",
+        extra: { erasureRequestId, vendor, vendorRef },
+      }),
+    );
+}
+
+async function retryErasedUserVendorCleanup(
+  prisma: Db,
+  userId: string,
+): Promise<string[]> {
+  const now = new Date();
+  const vendorFailures = await offboardNotificationVendor(userId);
+  const activeRequest = prisma.erasureRequest?.findFirst
+    ? await prisma.erasureRequest.findFirst({
+        where: { userId, status: { in: ["PENDING", "IN_PROGRESS"] } },
+        orderBy: { requestedAt: "desc" },
+        select: { id: true },
+      })
+    : null;
+  if (activeRequest?.id) {
+    await settleVendorErasureOutbox(
+      prisma,
+      activeRequest.id,
+      "NOVU",
+      userId,
+      vendorFailures.length > 0 ? vendorFailures.join("; ") : null,
+      now,
+    );
+    let streamError: string | null = null;
+    try {
+      await eraseStreamPrincipalFootprint(userId);
+    } catch (error_) {
+      streamError = error_ instanceof Error ? error_.message : String(error_);
+      vendorFailures.push(
+        "stream: principal deletion not confirmed — re-run required",
+      );
+    }
+    await settleVendorErasureOutbox(
+      prisma,
+      activeRequest.id,
+      "STREAM",
+      userId,
+      streamError,
+      now,
+    );
+  }
+  const recordingFailures = await cleanupUserRecordingsOnErasure(
+    prisma,
+    userId,
+    now,
+  );
+  vendorFailures.push(...recordingFailures);
+  vendorFailures.push(
+    ...(await eraseUserSessionDocuments(prisma, userId, now)),
+  );
+  return vendorFailures;
+}
+
+async function settlePrincipalStreamErasure(
+  prisma: Db,
+  userId: string,
+  erasureRequestId: string | null,
+  _principalOutboxQueued: boolean,
+  now: Date,
+): Promise<string[]> {
+  if (!erasureRequestId) return [];
+
+  const principalPlanId = principalStreamPlanId(userId);
+  let principalError: string | null = null;
+  try {
+    await eraseStreamPrincipalFootprint(userId);
+  } catch (error_) {
+    principalError = error_ instanceof Error ? error_.message : String(error_);
+  }
+  if (principalError) {
+    reportSentryError(new Error(`${principalError} on erasure`), {
+      subsystem: "compliance",
+      op: "scrubUser.eraseStreamPrincipalFootprint",
+      extra: { userId },
+    });
+  }
+  if (prisma.streamRevocationRetry?.update) {
+    await prisma.streamRevocationRetry
+      .update({
+        where: {
+          erasureRequestId_planType_planId: {
+            erasureRequestId,
+            planType: "WEBINAR",
+            planId: principalPlanId,
+          },
+        },
+        data: principalError
+          ? {
+              status: "FAILED",
+              attempts: 1,
+              lastError: principalError,
+              nextRetryAt: nextRetryAt(1, now),
+            }
+          : { status: "SUCCEEDED", attempts: 1, completedAt: new Date() },
+      })
+      .catch((error_) =>
+        reportSentryError(error_, {
+          subsystem: "compliance",
+          op: "scrubUser.settlePrincipalRevocationOutbox",
+          extra: { userId },
+        }),
+      );
+  }
+  await settleVendorErasureOutbox(
+    prisma,
+    erasureRequestId,
+    "STREAM",
+    userId,
+    principalError,
+    now,
+  );
+  if (principalError) {
+    return ["stream: principal deletion not confirmed — re-run required"];
+  }
+  return [];
+}
+
+export interface SoleOwnerOrganization {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+export async function soleOwnedOrganizations(
+  db: Db,
+  userId: string,
+  options?: { includeInactive?: boolean },
+): Promise<SoleOwnerOrganization[]> {
+  const owned = await db.membership.findMany({
+    where: {
+      userId,
+      role: "OWNER",
+      status: "ACTIVE",
+      organization: options?.includeInactive
+        ? { deletedAt: null }
+        : {
+            deletedAt: null,
+            status: { not: "DEACTIVATED" },
+          },
+    },
+    select: {
+      organizationId: true,
+      organization: {
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+      },
+    },
+  });
+  if (owned.length === 0) return [];
+
+  const otherOwnerGroups = await db.membership.groupBy({
+    by: ["organizationId"],
+    where: {
+      organizationId: { in: owned.map((o) => o.organizationId) },
+      role: "OWNER",
+      status: "ACTIVE",
+      userId: { not: userId },
+    },
+    _count: true,
+  });
+  const orgIdsWithCoOwner = new Set(
+    otherOwnerGroups.map((g) => g.organizationId),
+  );
+
+  return owned
+    .filter((row) => !orgIdsWithCoOwner.has(row.organizationId))
+    .map((row) => ({
+      id: row.organization.id,
+      name: row.organization.name,
+      slug: row.organization.slug,
+    }));
+}
+
+export async function soleOwnerOrganizationsForUser(
+  db: Db,
+  userId: string,
+): Promise<SoleOwnerOrganization[]> {
+  return soleOwnedOrganizations(db, userId);
 }
 
 /** True when any money-in-flight count is non-zero. */
@@ -243,18 +694,12 @@ export async function scrubUser(
     // transient failure was permanent: re-running the erasure reported a
     // clean success and the processor kept the data forever. This is the
     // retry path for exactly that.
-    //
-    // Payment vendors are NOT re-attempted: they are guarded by the cleared
-    // `razorpayCustomerId`, so a second pass has nothing to act on. A durable
-    // outbox is the correct answer for guaranteed vendor delivery across a
-    // process death between commit and the vendor calls — see the note on
-    // `StreamRevocationRetry`, which is the pattern to extend rather than
-    // reinvent.
+    const vendorFailures = await retryErasedUserVendorCleanup(prisma, userId);
     return {
       scrubbed: false,
       pseudonymousId: existing.pseudonymousId,
       affectedOrganizationIds: [],
-      vendorFailures: await offboardNotificationVendor(userId),
+      vendorFailures,
     };
   }
 
@@ -282,9 +727,15 @@ export async function scrubUser(
     where: { consultantProfile: { userId } },
     select: { id: true, razorpayContactId: true, razorpayFundAccId: true },
   });
+  const hasRazorpayWork =
+    Boolean(existing.razorpayCustomerId) ||
+    payoutAccounts.some((a) =>
+      Boolean(a.razorpayContactId || a.razorpayFundAccId),
+    );
 
   let collaborationsRemoved: CollaborationRef[] = [];
   let erasureRequestId: string | null = null;
+  let principalOutboxQueued = false;
   await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: userId },
@@ -389,22 +840,105 @@ export async function scrubUser(
       select: { id: true },
     });
     erasureRequestId = request?.id ?? null;
-    if (erasureRequestId && collaborationsRemoved.length > 0) {
+    if (erasureRequestId && tx.streamRevocationRetry?.createMany) {
       await tx.streamRevocationRetry.createMany({
-        data: collaborationsRemoved.map(({ planType, planId }) => ({
-          erasureRequestId: erasureRequestId as string,
-          planType: planType === "webinar" ? "WEBINAR" : "CLASS",
-          planId,
-        })),
+        data: [
+          ...collaborationsRemoved.map(({ planType, planId }) => ({
+            erasureRequestId: erasureRequestId as string,
+            planType: (planType === "webinar" ? "WEBINAR" : "CLASS") as
+              "WEBINAR" | "CLASS",
+            planId,
+          })),
+          {
+            erasureRequestId: erasureRequestId as string,
+            planType: "WEBINAR" as const,
+            planId: principalStreamPlanId(userId),
+          },
+        ],
         skipDuplicates: true,
       });
+      principalOutboxQueued = true;
+    }
+
+    if (erasureRequestId && tx.vendorErasureRetry?.upsert) {
+      const vendorStages: Array<{
+        vendor: "NOVU" | "STREAM" | "RAZORPAY";
+        payload?: Record<string, unknown>;
+      }> = [{ vendor: "NOVU" }, { vendor: "STREAM" }];
+      if (hasRazorpayWork) {
+        vendorStages.push({
+          vendor: "RAZORPAY",
+          payload: {
+            customerId: existing.razorpayCustomerId ?? null,
+            payoutAccounts: payoutAccounts.map((a) => ({
+              id: a.id,
+              razorpayContactId: a.razorpayContactId,
+              razorpayFundAccId: a.razorpayFundAccId,
+            })),
+          },
+        });
+      }
+      for (const stage of vendorStages) {
+        const payloadField = stage.payload ? { payload: stage.payload } : {};
+        await tx.vendorErasureRetry.upsert({
+          where: {
+            erasureRequestId_vendor_vendorRef: {
+              erasureRequestId,
+              vendor: stage.vendor,
+              vendorRef: userId,
+            },
+          },
+          create: {
+            erasureRequestId,
+            vendor: stage.vendor,
+            vendorRef: userId,
+            ...payloadField,
+            status: "PENDING",
+          },
+          update: {
+            ...payloadField,
+            status: "PENDING",
+          },
+        });
+      }
     }
 
     // Hard-delete sessions + accounts so SSO and password-based logins
-    // both break immediately. BetterAuth caches sessions in Redis;
-    // those entries expire on TTL and are non-load-bearing.
-    await tx.session.deleteMany({ where: { userId } });
+    // both break immediately.
+    await revokeAllUserSessions(tx, userId);
     await tx.account.deleteMany({ where: { userId } });
+
+    // Withdraw all active DPDP ConsentArtifact rows while preserving their
+    // monotonic 7-year audit retention window (DPDP §6(4)-(6) + §12) and
+    // stamping subjectPseudonymousId on the user's consent artifacts.
+    const subjectPseudonymousId = pseudonymousId;
+    const consentRetainedUntil = new Date(now);
+    consentRetainedUntil.setUTCFullYear(
+      consentRetainedUntil.getUTCFullYear() + 7,
+    );
+    await tx.consentArtifact?.updateMany({
+      where: {
+        userId,
+        withdrawnAt: null,
+        auditRetainedUntil: { lt: consentRetainedUntil },
+      },
+      data: {
+        withdrawnAt: now,
+        auditRetainedUntil: consentRetainedUntil,
+        subjectPseudonymousId,
+      },
+    });
+    await tx.consentArtifact?.updateMany({
+      where: { userId, withdrawnAt: null },
+      data: {
+        withdrawnAt: now,
+        subjectPseudonymousId,
+      },
+    });
+    await tx.consentArtifact?.updateMany({
+      where: { userId, subjectPseudonymousId: null },
+      data: { subjectPseudonymousId },
+    });
 
     // Audit row (under SYSTEM — the actor is the platform, the target
     // is the user). One row per affected org so per-org audit pulls
@@ -420,17 +954,18 @@ export async function scrubUser(
         },
       });
 
-      // Fan webhook events so SCIM + integrators see the deprovisioning.
+      // Fan webhook events so integrators see the deprovisioning.
       // The data payload uses pseudonymousId — never the raw userId or
       // email — to keep with the erasure semantics.
+      const orgMembership = memberships.find((m) => m.organizationId === orgId);
       await dispatchWebhookEvent({
         prisma: tx,
         organizationId: orgId,
         eventType: "member.removed",
         payload: {
-          membershipId: memberships
-            .filter((m) => m.organizationId === orgId)
-            .map((m) => m.id)[0],
+          membershipId: orgMembership?.id,
+          role: orgMembership?.role,
+          previousStatus: orgMembership?.status,
           pseudonymousId,
           source: "dpdp_erasure",
           erasedAt: now.toISOString(),
@@ -467,7 +1002,7 @@ export async function scrubUser(
         extra: { planType, planId },
       });
     }
-    if (!erasureRequestId) continue;
+    if (!erasureRequestId || !prisma.streamRevocationRetry?.update) continue;
     await prisma.streamRevocationRetry
       .update({
         where: {
@@ -495,13 +1030,53 @@ export async function scrubUser(
       );
   }
 
-  const vendorFailures = await offboardPaymentVendors(prisma, {
+  const principalFailures = await settlePrincipalStreamErasure(
+    prisma,
+    userId,
+    erasureRequestId,
+    principalOutboxQueued,
+    now,
+  );
+  const recordingFailures = await cleanupUserRecordingsOnErasure(
+    prisma,
+    userId,
+    now,
+  );
+
+  const paymentFailures = await offboardPaymentVendors(prisma, {
     userId,
     razorpayCustomerId: existing.razorpayCustomerId,
     payoutAccounts,
   });
+  if (hasRazorpayWork) {
+    await settleVendorErasureOutbox(
+      prisma,
+      erasureRequestId,
+      "RAZORPAY",
+      userId,
+      paymentFailures.length > 0 ? paymentFailures.join("; ") : null,
+      now,
+    );
+  }
+
+  const documentFailures = await eraseUserSessionDocuments(prisma, userId, now);
+
+  const vendorFailures = [
+    ...paymentFailures,
+    ...principalFailures,
+    ...recordingFailures,
+    ...documentFailures,
+  ];
 
   const notificationFailures = await offboardNotificationVendor(userId);
+  await settleVendorErasureOutbox(
+    prisma,
+    erasureRequestId,
+    "NOVU",
+    userId,
+    notificationFailures.length > 0 ? notificationFailures.join("; ") : null,
+    now,
+  );
   vendorFailures.push(...notificationFailures);
 
   return {
@@ -519,7 +1094,7 @@ export async function scrubUser(
  * `vendorFailures` entry. The Customer column is cleared only once its tokens
  * are gone and its PII is overwritten, so the reference survives for a retry.
  */
-async function offboardPaymentVendors(
+export async function offboardPaymentVendors(
   prisma: Db,
   input: {
     userId: string;

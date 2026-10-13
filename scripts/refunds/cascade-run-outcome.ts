@@ -17,10 +17,6 @@
  *     which is what external cron health checks key on
  */
 
-import type { RefundEarningCascadeResult } from "./cascade-refund-earnings";
-
-export function cascadeRunFailed(
-  result: Pick<RefundEarningCascadeResult, "success">,
-): boolean {
+export function cascadeRunFailed(result: { success: boolean }): boolean {
   return !result.success;
 }

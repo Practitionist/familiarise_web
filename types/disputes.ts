@@ -8,12 +8,7 @@
  * Used for fields like `evidence` and `metadata` that store arbitrary JSON.
  */
 type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export interface Dispute {
   id: string;
@@ -59,7 +54,8 @@ export interface DisputeDetails {
   paymentId: string;
   dueBy: string | null;
   isChargeRefundable: boolean;
-  evidence: JsonValue | null;
+  /** Present only for viewers holding `disputes.manage`. */
+  evidence?: JsonValue | null;
   evidenceSubmittedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -74,7 +70,46 @@ export interface DisputeDetails {
     user: {
       id: string;
       name: string | null;
-      email: string;
+      /** Present only for viewers holding `disputes.manage`. */
+      email?: string;
     };
   } | null;
+  evidencePack?: DisputeEvidencePack;
+}
+
+export interface DisputeEvidencePack {
+  booking: {
+    appointmentId: string;
+    appointmentType: string;
+    createdAt: string;
+  } | null;
+  occurrences: {
+    total: number;
+    completedCount: number;
+    outcomes: Array<{
+      id: string;
+      startsAt: string;
+      endsAt: string;
+      completionStatus: string;
+      outcome: string | null;
+    }>;
+  };
+  attendance: {
+    presentCount: number;
+    recordsFound: boolean;
+    summary: string;
+  };
+  supportHistory: {
+    ticketCount: number;
+    openCount: number;
+    threads: Array<{
+      id: string;
+      status: string;
+      category: string;
+      referenceNumber: string | null;
+      ticketStatus: string | null;
+      priority: string | null;
+      createdAt: string;
+    }>;
+  };
 }

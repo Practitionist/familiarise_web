@@ -46,6 +46,7 @@ jest.mock("../../lib/auth-helpers", () => {
   };
 });
 
+import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { POST as programsPOST } from "@/app/api/organizations/[orgId]/programs/route";
@@ -72,7 +73,7 @@ function makeRequest(body: unknown) {
     method: "POST",
     body: JSON.stringify(body),
     headers: { "Content-Type": "application/json" },
-  }) as unknown as Request;
+  }) as unknown as NextRequest;
 }
 
 beforeEach(() => {
@@ -83,43 +84,40 @@ beforeEach(() => {
       program: mockedPrisma.program,
       orgAuditLog: mockedPrisma.orgAuditLog,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (fn as any)(tx);
+    return (fn as (tx: unknown) => unknown)(tx);
   });
 });
 
-describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL guard", () => {
-  it("rejects a CREDIT_POOL program under a LICENSE-funded contract (400 UNREACHABLE_FUNDING_PATH)", async () => {
+describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL unlocked permutation", () => {
+  it("allows a CREDIT_POOL program under a LICENSE-funded contract (201)", async () => {
     mockedPrisma.contract.findUnique.mockResolvedValueOnce({
       organizationId: "org-1",
       status: "ACTIVE",
       billingAccount: { fundingSource: "LICENSE" },
     });
+    mockedPrisma.program.create.mockResolvedValueOnce({
+      id: "p-lic-pool",
+      type: "CREDIT_POOL",
+      name: "Pool program under license — unlocked",
+    });
 
     const res = (await programsPOST(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest({
         type: "CREDIT_POOL",
         contractId: "c-1",
-        name: "Pool program under license — bogus",
+        name: "Pool program under license — unlocked",
         coveredPlanTypes: [],
         allowedCategories: [],
         creditPoolConfig: {
           cycle: "MONTHLY",
           creditBudgetPerCycle: 1000,
         },
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1" }) } as any,
+      }),
+      { params: Promise.resolve({ orgId: "org-1" }) },
     )) as Response;
 
-    expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.code).toBe("UNREACHABLE_FUNDING_PATH");
-    expect(body.error).toMatch(/LICENSE/);
-    expect(body.error).toMatch(/CREDIT_POOL/);
-    // Critical: program.create must NOT have fired
-    expect(mockedPrisma.program.create).not.toHaveBeenCalled();
+    expect(res.status).toBe(201);
+    expect(mockedPrisma.program.create).toHaveBeenCalled();
   });
 
   it("allows a CREDIT_POOL program under a WALLET-funded contract", async () => {
@@ -135,7 +133,6 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
     });
 
     const res = (await programsPOST(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest({
         type: "CREDIT_POOL",
         contractId: "c-1",
@@ -146,9 +143,8 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
           cycle: "MONTHLY",
           creditBudgetPerCycle: 1000,
         },
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1" }) } as any,
+      }),
+      { params: Promise.resolve({ orgId: "org-1" }) },
     )) as Response;
 
     expect(res.status).toBe(201);
@@ -168,7 +164,6 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
     });
 
     const res = (await programsPOST(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       makeRequest({
         type: "LICENSED_SEAT",
         contractId: "c-1",
@@ -181,9 +176,8 @@ describe("POST /api/organizations/[orgId]/programs — LICENSE × CREDIT_POOL gu
           coveredEngagementsPerCycle: null,
           overageBehavior: "BLOCK",
         },
-      }) as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { params: Promise.resolve({ orgId: "org-1" }) } as any,
+      }),
+      { params: Promise.resolve({ orgId: "org-1" }) },
     )) as Response;
 
     expect(res.status).toBe(201);

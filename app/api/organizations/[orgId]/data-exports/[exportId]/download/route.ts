@@ -26,6 +26,7 @@ export async function GET(
 ) {
   const { orgId, exportId } = await params;
   const access = await requireOrgAccess(orgId, {
+    readOnly: true,
     permission: ["dataExports.people", "dataExports.finance"],
   });
   if (access.error) return access.error;

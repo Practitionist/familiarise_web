@@ -1,498 +1,100 @@
-import * as Sentry from "@sentry/nextjs";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+
 import prisma from "@/lib/prisma";
-import { Prisma, type AppointmentDocument } from "@prisma/client";
-
 import { getSession } from "@/lib/auth-server";
-import type { Session } from "@/lib/auth";
-import { applyRateLimit, documentReviewLimiter } from "@/lib/rate-limit";
 import {
-  isReviewTransitionAllowed,
-  type ReviewStatus,
-} from "@/lib/documents/document-review";
-import { stageNowAttemptAfter } from "@/lib/novu/stage-then-attempt";
-import { notifyDocumentReviewed } from "@/lib/novu/service";
-import { notificationScope } from "@/lib/novu/workflows";
-import { scopedHref } from "@/lib/novu/resolve-href";
-// GET - Get specific document details
+  FileRouteError,
+  answerFileRoute,
+  fileApiError,
+} from "@/lib/documents/api-error";
+import {
+  lockAppointment,
+  requireWritableParty,
+} from "@/lib/documents/upload-pipeline";
 
-type DocumentReadAction = "view" | "delete";
+type RouteContext = {
+  params: Promise<{ appointmentId: string; documentId: string }>;
+};
 
-// Shared auth + access gate for GET + DELETE (were near-identical 30-line
-// preambles in each handler). PATCH stays separate: consultant-only OR,
-// tombstone filter, rate limit, and body parsing.
-function notFoundMessage(
-  action: DocumentReadAction,
-  isDevelopment: boolean,
-  appointmentId: string,
-  documentId: string,
-): string {
-  if (isDevelopment) {
-    return action === "delete"
-      ? `[DEV MODE] Document ${documentId} not found, not pending, or already reviewed.`
-      : `[DEV MODE] Document ${documentId} not found for appointment ${appointmentId}.`;
-  }
-  return action === "delete"
-    ? "Document not found, access denied, or already reviewed"
-    : "Document not found or access denied";
-}
-
-async function resolveAppointmentDocument(
-  params: Promise<{ appointmentId: string; documentId: string }>,
-  action: DocumentReadAction,
-): Promise<
-  | {
-      session: Session;
-      appointmentId: string;
-      documentId: string;
-      document: AppointmentDocument;
-      isDevelopment: boolean;
-      error?: never;
-    }
-  | {
-      session?: never;
-      appointmentId?: never;
-      documentId?: never;
-      document?: never;
-      isDevelopment?: never;
-      error: NextResponse;
-    }
-> {
-  const session = await getSession(true);
-  if (!session?.user?.id) {
-    return {
-      error: NextResponse.json(
-        {
-          error: "Authentication required",
-          message: `Please sign in to ${action} documents`,
-          code: "UNAUTHORIZED",
-        },
-        { status: 401 },
-      ),
-    };
-  }
-
-  const { appointmentId, documentId } = await params;
-
-  // In development mode with explicit bypass flag, allow access for testing.
-  // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety.
-  const isDevelopment =
-    process.env.NODE_ENV === "development" &&
-    process.env.DEV_BYPASS_AUTH === "true";
-
-  // Build access control conditions - bypass in development
-  const whereClause: Prisma.AppointmentDocumentWhereInput = {
-    id: documentId,
-    appointmentId,
-    ...(action === "delete"
-      ? {
-          reviewStatus: "PENDING" as const, // Only allow deletion of pending documents
-          deletedAt: null, // Already-tombstoned rows are invisible to deletion
-        }
-      : {}),
-  };
-
-  if (!isDevelopment) {
+/**
+ * A learner withdraws the latest version of a thread while it still waits for
+ * review; an expert deletes a file they shared. Anything else is refused.
+ */
+export async function DELETE(_request: Request, { params }: RouteContext) {
+  return answerFileRoute(async () => {
+    const session = await getSession();
+    if (!session?.user?.id) return fileApiError("UNAUTHORIZED");
     const userId = session.user.id;
-    const consulteeBranches = [
-      // User is the consultee
-      {
-        consultation: {
-          requestedBy: {
-            user: {
-              id: userId,
-            },
-          },
-        },
-      },
-      // User is part of subscription (consultee)
-      {
-        subscription: {
-          requestedBy: {
-            user: {
-              id: userId,
-            },
-          },
-        },
-      },
-    ];
-    whereClause.appointment = {
-      OR:
-        action === "delete"
-          ? consulteeBranches
-          : [
-              ...consulteeBranches,
-              // User is the consultant
-              {
-                consultation: {
-                  consultationPlan: {
-                    consultantProfile: {
-                      user: {
-                        id: userId,
-                      },
-                    },
-                  },
-                },
-              },
-              // User is part of subscription (consultant)
-              {
-                subscription: {
-                  subscriptionPlan: {
-                    consultantProfile: {
-                      user: {
-                        id: userId,
-                      },
-                    },
-                  },
-                },
-              },
-            ],
-    };
-  }
-
-  // Verify access and get document
-  const document = await prisma.appointmentDocument.findFirst({
-    where: whereClause,
-  });
-
-  if (!document) {
-    return {
-      error: NextResponse.json(
-        {
-          error: "Document not found",
-          message: notFoundMessage(
-            action,
-            isDevelopment,
-            appointmentId,
-            documentId,
-          ),
-          code: "NOT_FOUND",
-        },
-        { status: 404 },
-      ),
-    };
-  }
-
-  return { session, appointmentId, documentId, document, isDevelopment };
-}
-
-export async function GET(
-  request: NextRequest,
-  {
-    params,
-  }: { params: Promise<{ appointmentId: string; documentId: string }> },
-) {
-  try {
-    const {
-      document,
-      documentId,
-      isDevelopment,
-      error: accessError,
-    } = await resolveAppointmentDocument(params, "view");
-    if (accessError) return accessError;
-    // In development mode, log access bypass
-    if (isDevelopment) {
-      console.log(
-        `[DEV MODE] Bypassing document access control for ${documentId}`,
-      );
-    }
-
-    return NextResponse.json({ data: document });
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
-    console.error("Error fetching document:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch document" },
-      { status: 500 },
-    );
-  }
-}
-
-// PATCH - Update document review status (consultant only)
-export async function PATCH(
-  request: NextRequest,
-  {
-    params,
-  }: { params: Promise<{ appointmentId: string; documentId: string }> },
-) {
-  try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        {
-          error: "Authentication required",
-          message: "Please sign in to review documents",
-          code: "UNAUTHORIZED",
-        },
-        { status: 401 },
-      );
-    }
-
     const { appointmentId, documentId } = await params;
-    const body = await request.json();
-    const { reviewStatus, reviewNotes } = body;
 
-    // Review decisions mutate consultee-visible state; throttle like uploads.
-    if (session?.user?.id) {
-      const rateLimited = await applyRateLimit(
-        documentReviewLimiter,
-        session.user.id,
-      );
-      if (rateLimited) return rateLimited;
-    }
-
-    // In development mode with explicit bypass flag, allow any user to review documents for testing
-    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
-    const isDevelopment =
-      process.env.NODE_ENV === "development" &&
-      process.env.DEV_BYPASS_AUTH === "true";
-
-    // Build access control conditions - bypass in development
-    const whereClause: Prisma.AppointmentDocumentWhereInput = {
-      id: documentId,
-      appointmentId,
-      // Tombstoned rows are awaiting nightly purge — reviewing a deleted
-      // document would resurrect it into the consultee's history.
-      deletedAt: null,
-    };
-
-    if (!isDevelopment) {
-      whereClause.appointment = {
-        OR: [
-          // User is the consultant for consultation
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfile: {
-                  user: {
-                    id: session.user.id,
-                  },
-                },
-              },
-            },
-          },
-          // User is the consultant for subscription
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfile: {
-                  user: {
-                    id: session.user.id,
-                  },
-                },
-              },
-            },
-          },
-        ],
-      };
-    }
-
-    // Verify user is the consultant for this appointment
-    const document = await prisma.appointmentDocument.findFirst({
-      where: whereClause,
-    });
-
-    if (!document) {
-      return NextResponse.json(
-        {
-          error: "Document not found",
-          message: isDevelopment
-            ? `[DEV MODE] Document ${documentId} not found for appointment ${appointmentId}.`
-            : "Document not found or access denied",
-          code: "NOT_FOUND",
-        },
-        { status: 404 },
-      );
-    }
-
-    // Valid review statuses
-    const validStatuses = [
-      "PENDING",
-      "IN_REVIEW",
-      "APPROVED",
-      "REJECTED",
-      "NEEDS_REVISION",
-    ];
-    if (reviewStatus && !validStatuses.includes(reviewStatus)) {
-      return NextResponse.json(
-        { error: "Invalid review status" },
-        { status: 400 },
-      );
-    }
-
-    // Transition guard — APPROVED/REJECTED are terminal. Reopening a decided
-    // review would rewrite history the consultee was already notified about;
-    // corrections go through a threaded upload instead.
-    if (
-      reviewStatus &&
-      !isReviewTransitionAllowed(
-        document.reviewStatus as ReviewStatus,
-        reviewStatus as ReviewStatus,
-      )
-    ) {
-      return NextResponse.json(
-        {
-          error: "Invalid transition",
-          message: `A ${document.reviewStatus.toLowerCase()} document can no longer move to ${reviewStatus}. Upload or request a threaded revision instead.`,
-          code: "INVALID_REVIEW_TRANSITION",
-        },
-        { status: 409 },
-      );
-    }
-
-    // Update document review status
-    const updatedDocument = await prisma.appointmentDocument.update({
-      where: {
-        id: documentId,
-      },
-      data: {
-        ...(reviewStatus && { reviewStatus }),
-        ...(reviewNotes && { reviewNotes }),
-        ...(reviewStatus && { reviewedAt: new Date() }),
-        ...(reviewStatus && { reviewedById: session.user.id }), // A8 — FK scalar (#676)
-      },
-    });
-
-    // Tell the consultee their submission moved. One recipient, known side →
-    // scopedHref links straight at the right dashboard.
-    const appointmentInfo = await prisma.appointment.findUnique({
-      where: { id: appointmentId },
-      select: {
-        organizationId: true,
-        consultation: {
-          select: {
-            requestedBy: {
-              select: { id: true, user: { select: { id: true } } },
-            },
-            consultationPlan: {
-              select: {
-                consultantProfile: { select: { user: { select: { name: true } } } },
-              },
-            },
-          },
-        },
-        subscription: {
-          select: {
-            requestedBy: {
-              select: { id: true, user: { select: { id: true } } },
-            },
-            subscriptionPlan: {
-              select: {
-                consultantProfile: { select: { user: { select: { name: true } } } },
-              },
-            },
-          },
-        },
-      },
-    });
-    const recipientId =
-      appointmentInfo?.consultation?.requestedBy?.user?.id ||
-      appointmentInfo?.subscription?.requestedBy?.user?.id;
-    const consulteeProfileId =
-      appointmentInfo?.consultation?.requestedBy?.id ||
-      appointmentInfo?.subscription?.requestedBy?.id;
-    const reviewerName =
-      appointmentInfo?.consultation?.consultationPlan?.consultantProfile?.user
-        ?.name ||
-      appointmentInfo?.subscription?.subscriptionPlan?.consultantProfile?.user
-        ?.name ||
-      "The consultant";
-
-    if (recipientId && reviewStatus) {
-      // #1861 P2r — the review update already committed above with no open
-      // transaction to piggyback on; stage the outbox row now (awaited,
-      // before the response) and defer only the delivery attempt.
-      await stageNowAttemptAfter("consultee document-review notice", () =>
-        notifyDocumentReviewed(
-          recipientId,
-          {
-            ...notificationScope(appointmentInfo?.organizationId),
-            appointmentId,
-            documentId,
-            reviewStatus: reviewStatus as ReviewStatus,
-            reviewNotes: reviewNotes || undefined,
-            originalName: document.originalName,
-            consultantName: reviewerName,
-            dashboardUrl: scopedHref({
-              organizationId: appointmentInfo?.organizationId,
-              surface: "appointments",
-              personal:
-                consulteeProfileId
-                  ? { kind: "consultee", profileId: consulteeProfileId }
-                  : undefined,
-            }),
-          },
-          { deferAttempt: true },
-        ),
-      );
-    }
-
-    // In development mode, log review action
-    if (isDevelopment) {
-      console.log(
-        `[DEV MODE] Document review updated for ${documentId} - Status: ${reviewStatus || "no change"}`,
-      );
-    }
-
-    return NextResponse.json({ data: updatedDocument });
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
-    console.error("Error updating document review:", error);
-    return NextResponse.json(
-      { error: "Failed to update document review" },
-      { status: 500 },
-    );
-  }
-}
-
-// DELETE - Delete document (consultee only, and only if not reviewed yet)
-export async function DELETE(
-  request: NextRequest,
-  {
-    params,
-  }: { params: Promise<{ appointmentId: string; documentId: string }> },
-) {
-  try {
-    const {
-      session,
-      appointmentId,
-      documentId,
-      isDevelopment,
-      error: accessError,
-    } = await resolveAppointmentDocument(params, "delete");
-    if (accessError) return accessError;
-    // Soft delete — tombstone the row; the nightly cleanup job removes the
-    // storage object after a grace window, then hard-deletes. Immediate
-    // storage deletion here used to make an accidental click unrecoverable
-    // and raced the reconcile job's storage-missing detection.
-    await prisma.appointmentDocument.update({
-      where: {
-        id: documentId,
-      },
-      data: {
+    await prisma.$transaction(async (tx) => {
+      await lockAppointment(tx, appointmentId);
+      const party = await requireWritableParty(tx, appointmentId, userId);
+      const tombstone = {
         deletedAt: new Date(),
-        ...(session.user?.id ? { deletedById: session.user.id } : {}),
-      },
+        deletedById: userId,
+        removalReason: "USER_REQUEST" as const,
+      };
+
+      if (party.role === "learner") {
+        const doc = await tx.appointmentDocument.findFirst({
+          where: { id: documentId, appointmentId, deletedAt: null },
+          select: { rootDocumentId: true, versionNo: true },
+        });
+        if (!doc) throw new FileRouteError("NOT_FOUND");
+        const noNewerVersion = doc.rootDocumentId
+          ? {
+              rootDocument: {
+                is: {
+                  threadVersions: {
+                    none: {
+                      deletedAt: null,
+                      versionNo: { gt: doc.versionNo },
+                    },
+                  },
+                },
+              },
+            }
+          : { threadVersions: { none: { deletedAt: null } } };
+        const withdrawn = await tx.appointmentDocument.updateMany({
+          where: {
+            id: documentId,
+            appointmentId,
+            deletedAt: null,
+            uploadedByRole: "CONSULTEE",
+            reviewStatus: "PENDING",
+            ...noNewerVersion,
+          },
+          data: tombstone,
+        });
+        if (withdrawn.count === 0) {
+          throw new FileRouteError("DOCUMENT_NOT_DELETABLE");
+        }
+        return;
+      }
+
+      const removed = await tx.appointmentDocument.updateMany({
+        where: {
+          id: documentId,
+          appointmentId,
+          deletedAt: null,
+          uploadedByRole: "CONSULTANT",
+          rootDocumentId: null,
+        },
+        data: tombstone,
+      });
+      if (removed.count === 0) {
+        throw new FileRouteError("DOCUMENT_NOT_DELETABLE");
+      }
+      await tx.appointmentDocument.updateMany({
+        where: { rootDocumentId: documentId, deletedAt: null },
+        data: tombstone,
+      });
     });
 
-    // In development mode, log deletion
-    if (isDevelopment) {
-      console.log(
-        `[DEV MODE] Document soft-deleted: ${documentId} from appointment ${appointmentId}`,
-      );
-    }
-
-    return NextResponse.json({
-      message: isDevelopment
-        ? "[DEV MODE] Document deleted successfully"
-        : "Document deleted successfully",
-    });
-  } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
-    console.error("Error deleting document:", error);
     return NextResponse.json(
-      { error: "Failed to delete document" },
-      { status: 500 },
+      { removed: true },
+      { headers: { "Cache-Control": "private, no-store" } },
     );
-  }
+  });
 }

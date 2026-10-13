@@ -1,6 +1,3 @@
-"use client";
-
-import { motion } from "framer-motion";
 import {
   ArrowRight,
   BadgeCheck,
@@ -13,7 +10,6 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import type { ExpertStatKey, IPublicStat } from "@/lib/data/public-stats";
-import { reveal, revealTransition } from "@/lib/motion";
 import { cn } from "@/utils/tailwind";
 import { container, surface } from "./primitives";
 
@@ -51,7 +47,9 @@ function ProductPreview() {
       />
 
       {/* Expert card */}
-      <div className={cn(surface, "relative bg-zinc-950/80 p-6 backdrop-blur-xl")}>
+      <div
+        className={cn(surface, "relative bg-zinc-950/80 p-6 backdrop-blur-xl")}
+      >
         <div className="flex items-start gap-4">
           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-200 to-zinc-500 text-base font-semibold text-zinc-950">
             {PREVIEW_EXPERT.initials}
@@ -190,51 +188,25 @@ export function HeroSection({
         <div className="grid items-center gap-16 lg:grid-cols-[1.1fr_1fr] lg:gap-20">
           {/* Copy */}
           <div>
-            <motion.div
-              variants={reveal}
-              initial="hidden"
-              animate="visible"
-              transition={revealTransition(0)}
-              className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] py-1.5 pl-2 pr-4 text-sm text-zinc-300"
-            >
+            <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] py-1.5 pl-2 pr-4 text-sm text-zinc-300">
               <span className="flex h-5 w-5 items-center justify-center rounded-full bg-white/10">
                 <BadgeCheck className="h-3.5 w-3.5" />
               </span>
-              {/* #1490 — was "Trusted by 10,000+ professionals worldwide", a
-                  number nothing produced. What replaces it is enforced by the
-                  directory reads themselves: only VERIFIED profiles are public. */}
               Every expert is verified before they are listed
-            </motion.div>
+            </div>
 
-            <motion.h1
-              variants={reveal}
-              initial="hidden"
-              animate="visible"
-              transition={revealTransition(0.06)}
-              className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl lg:text-7xl"
-            >
-              Learn from the <em className="italic text-zinc-300">best minds</em>{" "}
+            <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl lg:text-7xl">
+              Learn from the{" "}
+              <em className="italic text-zinc-300">best minds</em>{" "}
               <span className="text-zinc-400">in your industry.</span>
-            </motion.h1>
+            </h1>
 
-            <motion.p
-              variants={reveal}
-              initial="hidden"
-              animate="visible"
-              transition={revealTransition(0.12)}
-              className="mt-6 max-w-xl text-lg leading-relaxed text-zinc-400"
-            >
+            <p className="mt-6 max-w-xl text-lg leading-relaxed text-zinc-400">
               Personal 1-on-1 sessions, mentorship, classes and live webinars
               with verified practitioners — booked, paid and held in one place.
-            </motion.p>
+            </p>
 
-            <motion.div
-              variants={reveal}
-              initial="hidden"
-              animate="visible"
-              transition={revealTransition(0.18)}
-              className="mt-10 flex flex-col gap-3 sm:flex-row"
-            >
+            <div className="mt-10 flex flex-col gap-3 sm:flex-row">
               <Button
                 asChild
                 size="lg"
@@ -255,19 +227,10 @@ export function HeroSection({
               >
                 <Link href="/become-an-expert">Become an expert</Link>
               </Button>
-            </motion.div>
+            </div>
 
-            {/* #1490 — every figure is read from the database, and a figure
-                that is still zero produces no tile at all. With no data the
-                whole row is absent so there's no stray divider. */}
             {stats.length > 0 && (
-              <motion.dl
-                variants={reveal}
-                initial="hidden"
-                animate="visible"
-                transition={revealTransition(0.24)}
-                className="mt-14 flex flex-wrap gap-x-10 gap-y-6 border-t border-white/[0.08] pt-8"
-              >
+              <dl className="mt-14 flex flex-wrap gap-x-10 gap-y-6 border-t border-white/[0.08] pt-8">
                 {stats.map((stat) => (
                   <div key={stat.key}>
                     <dt className="text-sm text-zinc-400">{stat.label}</dt>
@@ -276,18 +239,14 @@ export function HeroSection({
                     </dd>
                   </div>
                 ))}
-              </motion.dl>
+              </dl>
             )}
           </div>
 
           {/* Visual */}
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={revealTransition(0.2)}
-          >
+          <div>
             <ProductPreview />
-          </motion.div>
+          </div>
         </div>
       </div>
     </section>

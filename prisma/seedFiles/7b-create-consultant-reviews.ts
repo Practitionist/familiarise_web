@@ -172,17 +172,16 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
 }
 
 async function createReviews(held: HeldSlot[]): Promise<number> {
-  // One review per pair, on the LAST session that pair held.
   const latestByPair = new Map<string, HeldSlot>();
   for (const h of held) {
     if (!h.consulteeProfileId) continue;
-    const key = `${h.consultantProfileId}:${h.consulteeProfileId}`;
+    const key = h.ratingUnitId
+      ? `${h.consultantProfileId}:${h.consulteeProfileId}:${h.track}:${h.ratingUnitId}`
+      : `${h.consultantProfileId}:${h.consulteeProfileId}:${h.track}`;
     const prev = latestByPair.get(key);
     if (!prev || h.endsAt > prev.endsAt) latestByPair.set(key, h);
   }
 
-  // Every held pair reviews. Small mode holds at most five 1:1 clients and two
-  // past group events per consultant, so any drop-out leaves nobody published.
   let created = 0;
   for (const h of latestByPair.values()) {
     const rating = pickRating();
@@ -235,20 +234,19 @@ async function createReviews(held: HeldSlot[]): Promise<number> {
 }
 
 async function createAppointmentFeedback(held: HeldSlot[]): Promise<number> {
-  // One private rating per (call, user), from roughly half the calls held.
   const seen = new Set<string>();
   const rows = [];
   for (const h of held) {
     const key = `${h.slotId}:${h.userId}`;
-    if (seen.has(key) || !faker.datatype.boolean({ probability: 0.5 }))
-      continue;
+    const shouldInclude =
+      h.organizationId !== null || faker.datatype.boolean({ probability: 0.5 });
+    if (seen.has(key) || !shouldInclude) continue;
     seen.add(key);
     const rating = pickRating();
     rows.push({
       appointmentOccurrenceId: h.slotId,
       appointmentId: h.appointmentId,
       organizationId: h.organizationId,
-      // #1550 — the org rollup groups by this column.
       consultantProfileId: h.consultantProfileId,
       userId: h.userId,
       rating,
@@ -272,10 +270,26 @@ export async function createConsultantReviews(consultants: UserWithProfiles[]) {
   // #1551 — revisions are immutable while their review exists (the
   // review_revision_immutable trigger), so the reviews go first and the
   // Cascade FK takes the revisions with them.
-  await prisma.consultantReview.deleteMany({});
-  await prisma.appointmentFeedback.deleteMany({});
-
-  const held = await loadHeldSlots(now);
+  const seedProfileIds = consultants.flatMap((c) =>
+    c.consultantProfile ? [c.consultantProfile.id] : [],
+  );
+  const held = (await loadHeldSlots(now)).filter((h) =>
+    seedProfileIds.includes(h.consultantProfileId),
+  );
+  await prisma.consultantReview.deleteMany({
+    where: { consultantProfileId: { in: seedProfileIds } },
+  });
+  // Also by appointment: a row with a NULL consultantProfileId still holds the (appointment, occurrence, user) unique.
+  await prisma.appointmentFeedback.deleteMany({
+    where: {
+      OR: [
+        { consultantProfileId: { in: seedProfileIds } },
+        {
+          appointmentId: { in: [...new Set(held.map((h) => h.appointmentId))] },
+        },
+      ],
+    },
+  });
   const reviews = await createReviews(held);
   const feedback = await createAppointmentFeedback(held);
   console.log(

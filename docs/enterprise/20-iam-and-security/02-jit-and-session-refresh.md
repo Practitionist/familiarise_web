@@ -3,7 +3,7 @@ title: JIT auto-join & session refresh
 band: 20-iam-and-security
 audience: sde3
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-10
 ---
 
 # JIT auto-join & session refresh
@@ -12,49 +12,40 @@ This document explains how organization memberships materialize when a
 user signs in through an org's IdP for the very first time (Just-In-Time
 auto-join), and how a role change propagates to an already-active session
 without forcing the user to log out. It is written for engineers touching
-`lib/auth.ts:customSession`, `lib/api/organizations/membership-transitions.ts`,
+`lib/sso/jit-membership.ts`, `lib/auth.ts:customSession`,
+`lib/api/organizations/membership-transitions.ts`,
 the `/api/organizations/[orgId]/members` route family, or the
 `OrganizationSSOSettings` model. The companion docs are
 [`sso-and-authentication`](01-sso-and-authentication.md), which covers the
-SSO enforcement chain, and [`rate-limiting`](04-rate-limiting.md), which
+SSO enforcement chain, and [`rate-limiting`](03-rate-limiting.md), which
 covers the limiter posture.
 
 ---
 
 ## §1 — JIT (Just-In-Time) auto-join
 
-When a user authenticates against an org's IdP for the very first time,
-BetterAuth's SSO plugin writes a row to the `members` table (the
-BetterAuth Member shim) but does NOT create the typed `Membership` row
-the rest of the codebase reads. The bridge is in
-`lib/auth.ts:customSession`:
+The sso() plugin (`@better-auth/sso` 1.7.7) calls our `provisionUser` hook
+(`lib/sso/plugin-options.ts`) after the OIDC callback has created or found
+the user, linked the account and created the session, but before it sets the
+session cookie. The hook first runs the IdP claim checks
+(`lib/sso/idp-claims.ts`: `email_verified`, Google `hd`, Entra `xms_edov`);
+a refusal deletes the account link this login made and fails the callback.
+It then calls `provisionSsoMembership` (`lib/sso/jit-membership.ts`), which
+writes the typed `Membership` directly, and stamps `SsoProvider.provenAt` on
+the first SSO login by an active OWNER (`lib/sso/provider-proof.ts`). There is no BetterAuth
+organization plugin and no `Member` table. Users created by SSO are
+`emailVerified=true`.
 
-```ts
-const bareMembers = await prisma.member.findMany({
-  where: { userId: user.id, membership: null },
-  ...
-});
-for (const bm of bareMembers) {
-  const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
-  await prisma.$transaction(async (tx) => {
-    const roleEffects = await applyMembershipRoleEffects(tx, {
-      userId: user.id,
-      role: defaultRole,
-      preloadedProfiles, // pre-fetched at the top of customSession; B.7
-    });
-    await tx.membership.create({ /* role, FKs, betterAuthMemberId */ });
-  });
-}
-```
-
-Concretely: a new graduate student signs in to **IIT Madras** via the
-campus IdP for the first time. The IdP asserts their identity, BetterAuth
-writes the bare `members` row, and on the very next session load
-`customSession` notices the row has no typed `Membership` sibling and
-mints one as `LEARNER` (the locked `defaultRoleForAutoJoin`). No admin
-touched anything; the student lands on a working dashboard scoped to
-exactly LEARNER capabilities. (IIT Madras is a seeded org; the IdP wiring
-is the operator-configured shape, not part of the seed.)
+Concretely: a new graduate student signs in to **IIT Madras** via the campus
+IdP for the first time. The IdP asserts their identity, BetterAuth creates
+the User + Account + Session, and `provisionUser` mints a `LEARNER`
+membership (the locked `defaultRoleForAutoJoin`) before the redirect, or the
+role of a pending invitation for that email, which it marks accepted. No
+admin touched anything. Before the dashboard, `lib/auth-guard.ts` sends a
+user with an active membership who has not finished onboarding to
+`/onboarding/gate` (date of birth, 18+, and consent), never to the consumer
+wizard. (IIT Madras is a seeded org; the IdP wiring is the
+operator-configured shape, not part of the seed.)
 
 ```mermaid
 sequenceDiagram
@@ -62,200 +53,105 @@ sequenceDiagram
   actor S as New IIT student
   participant IdP as Campus IdP
   participant BA as BetterAuth (SSO plugin)
-  participant CS as customSession hook
+  participant JIT as provisionSsoMembership
   participant DB as Postgres
   S->>IdP: first SSO sign-in
-  IdP-->>BA: assertion (email @ iitm.ac.in)
-  BA->>DB: create User + Account + bare `members` row
-  Note over BA,DB: BetterAuth writes the Member shim but NOT<br/>the typed Membership the app reads
-  BA->>CS: build session
-  CS->>DB: findMany members WHERE membership IS null
-  Note over CS,DB: defaultRole = ssoSettings.defaultRoleForAutoJoin ?? "LEARNER"<br/>(schema-locked to LEARNER)
-  CS->>DB: BEGIN tx — applyMembershipRoleEffects + Membership.create
-  Note over CS,DB: catch swallows P2002 ONLY (concurrent-create race) —<br/>every other error re-throws (audit Phase A.3)
-  CS-->>S: session with LEARNER membership ✅
+  IdP-->>BA: code → token exchange, ID token verified
+  BA->>DB: create User + Account + Session
+  BA->>JIT: provisionUser({ user, token, provider })
+  JIT->>JIT: assertIdpClaims (email_verified, hd, xms_edov)
+  JIT->>DB: Membership exists for (userId, provider.organizationId)?
+  Note over JIT,DB: yes → no-op (REMOVED / SUSPENDED rows are left alone)
+  JIT->>DB: org status gate (SUSPENDED / DEACTIVATED refused)
+  JIT->>DB: Serializable tx — seat cap (PENDING_VERIFICATION) +<br/>applyMembershipRoleEffects + Membership.create
+  Note over JIT,DB: P2002 = a concurrent login already joined;<br/>any other error fails the callback
+  BA-->>S: session cookie + redirect ✅
 ```
 
-Three invariants make this safe:
+`provisionUserOnEveryLogin` is on, so the claim checks run on every login,
+a user who already had a password account and links SSO still gets the
+membership, and a join refused by the seat cap succeeds once a seat frees up.
+The existing-row check keeps the repeat to one indexed lookup.
 
 ### Invariant 1 — Role floor is LEARNER
 
 `OrganizationSSOSettings.defaultRoleForAutoJoin` is locked at
-`z.literal("LEARNER")` (`lib/labels/org-labels.ts:JitDefaultRoleSchema`,
-audit Phase A.1). Pre-Phase-A.1, this field accepted any
-non-privileged role including `OWNER` — which meant the first user to
-sign in via SSO became co-owner of the org. Catastrophic privilege
-grant.
+`z.literal("LEARNER")` (`lib/labels/org-labels.ts:JitDefaultRoleSchema`),
+so an uninvited SSO user can never land above the bottom of the ladder.
 
 The PATCH handler at `app/api/organizations/[orgId]/sso/route.ts`
 rejects any other value with 400. The settings UI shows a locked
-"Learner" label instead of the prior 3-option Select.
+"Learner" label.
 
-If an org needs to promote a new SSO user beyond LEARNER, the
-admin does it explicitly via `/dashboard/organization/[orgId]/members`
-after first signin. That path is audit-logged
-(`MEMBER_ROLE_CHANGED`); JIT auto-join would not be.
+If an org needs a new SSO user above LEARNER, the admin either invites
+that email with the role first (JIT applies a pending invitation's role
+and logs `INVITE_ACCEPTED`) or promotes them via
+`/dashboard/organization/[orgId]/members` after first sign-in
+(`MEMBER_ROLE_CHANGED`).
 
-### Invariant 2 — Catch is narrowed to P2002
+### Invariant 2 — Governance gates run once, at sign-in
 
-The transaction's catch block only swallows `Prisma.PrismaClientKnownRequestError`
-with code `P2002` (unique-constraint race — another concurrent session-
-create won the membership). Every other error re-throws. Audit Phase A.3.
+A SUSPENDED or DEACTIVATED org is refused, and a PENDING_VERIFICATION org
+admits at most `UNVERIFIED_ORG_SEAT_CAP` ACTIVE members, counted in the same
+Serializable transaction as the insert (retried on P2034 via
+`withSerializableRetry`). Each skip writes an `SSO` system event.
 
-Pre-fix, the bare `catch {}` swallowed network drops, Supabase RLS
-denials, FK violations — anything. Users could end up with a
-session cookie but no Membership row, landing on a broken dashboard
-where every org-scoped API call 403'd.
+### Invariant 3 — No half-provisioned sign-in
 
-### Invariant 3 — Profile FKs pre-loaded
-
-`applyMembershipRoleEffects` accepts `preloadedProfiles` so the
-customSession hook fetches the user's `consulteeProfileId` +
-`consultantProfileId` once and passes them through the bareMembers
-loop. For a user in 10 SSO orgs, this is the difference between 10
-redundant `users.findUnique` round-trips per session lookup and zero.
-Audit Phase B.7.
+The catch only swallows `P2002` on `(userId, organizationId)`. Any other
+error propagates out of `provisionUser`, so the plugin fails the callback
+before the cookie is set: the user is never signed in without the membership
+the IdP promised, the transaction leaves no partial profile or membership
+behind, and the next login retries.
 
 ---
 
 ## §2 — Session refresh after role / membership changes
 
-### The problem
+### Sessions are read from the database on every request
 
-BetterAuth's session cookie has `session.updateAge: 24h`. The cookie
-carries a snapshot of `organizationMemberships[]` (built by
-`customSession`). If a user's role changes — promoted from LEARNER to
-MANAGER, or removed entirely — their session cookie keeps the *old*
-role payload for up to 24 hours.
+BetterAuth's cookie cache is off (`session.cookieCache.enabled: false` in
+`lib/auth.ts`), so every server session read re-runs `customSession`, which
+loads the user's memberships from the database. A promotion, demotion or
+removal applies on the user's next request, with no forced logout and no
+marker to bump. The cost is one memberships query per authenticated request.
+Turning the cookie cache back on would let a demoted or removed member keep
+the old `organizationMemberships[]` snapshot until the cookie refreshed.
 
-Concrete failure mode: an OWNER demoted to LEARNER could keep
-acting as OWNER for 24h. A removed member could keep accessing the org
-dashboard for 24h. Both are real bugs, not just hygiene.
+The read is tri-state. `getSession()` (`lib/auth-server.ts`) and
+`lookupSession()` (`lib/auth-session-lookup.ts`) return a session or null,
+and throw `SessionLookupFailedError` when the lookup itself failed; API
+routes answer that with `503 SESSION_LOOKUP_FAILED` and `Retry-After: 2`, and
+`/api/auth/get-session` answers the same 503, so an outage never signs anyone
+out.
 
-### The fix — `sessionGeneration` marker
+Human-initiated revokes (the user's device list, the staff Team page) still
+hard-revoke sessions through `lib/auth/session-revoke.ts`.
 
-Every membership mutation that affects the effective permission set
-calls `bumpUserSessionGeneration(tx, userId)`, and the four mutation
-paths that do so are as follows.
+### Lifetimes
 
-- A `POST /members` adds or reactivates a member.
-- A `PATCH /members/[memberId]` changes a member's role, status, or departmentLabel.
-- A `DELETE /members/[memberId]` soft-deletes a member to `REMOVED`.
-- A `POST /invitations/accept` accepts an invitation.
+`lib/auth/session-lifetime.ts` sets the lifetime when the session is created
+and clamps it on every refresh:
 
-The helper increments `users.sessionGeneration` by 1 inside the same
-transaction as the mutation (`{ increment: 1 }` — an atomic Prisma
-update, not a read-modify-write).
+| Session                                 | Lifetime                                          |
+| --------------------------------------- | ------------------------------------------------- |
+| Consumer                                | 30 days, sliding (`updateAge` 1 day)              |
+| SSO sign-in for an enforced domain      | 24 hours absolute from sign-in                    |
+| Operator (STAFF/ADMIN) with 2FA enabled | 12 hours absolute from sign-in, 2-hour idle limit |
+| Operator without 2FA                    | 1 hour, enough to enrol                           |
 
-`customSession` reads the live row's `sessionGeneration` on every
-session lookup and re-loads memberships from the DB **unconditionally**
-(the `memberships.findMany` always runs; the marker is not yet used as
-a skip-the-refetch guard — that fast-path is the future use noted in
-`lib/auth.ts`). Since memberships are always fresh, the user's effective
-permissions update on the next round-trip — no forced logout needed.
-The marker is what client code can compare against its cached payload to
-*detect* staleness; the always-on refetch is what actually corrects it.
-
-One nuance worth knowing: BetterAuth's cookie cache (`session.cookieCache`,
-`maxAge: 5 min` in `lib/auth.ts`) can serve a cached session shape for
-up to 5 minutes before `customSession` is re-invoked, so "next
-round-trip" means "next round-trip that misses the 5-minute cookie
-cache." The catastrophic 24h figure below is the worst case when the
-bump is *not* called at all and the only refresh is BetterAuth's
-`updateAge: 24h` rotation.
-
-#### Trade-off: 5-minute cookie cache vs a DB hit every request
-
-The cookie cache is a deliberate freshness-for-throughput trade.
-Without it, every authenticated request would re-run `customSession` —
-which reads the live `users` row and a `memberships.findMany` — turning
-the session check into a guaranteed two-query round-trip on *every* page
-load and API call. With `cookieCache.maxAge = 5 min`, most requests are
-served from the signed cookie and skip the DB entirely. The cost is a
-bounded staleness window: a role change can take up to 5 minutes to
-surface. We accept that ceiling for benign role *changes*, where "your new
-capabilities appear within a few minutes, no re-login" is the right UX. The
-*dangerous* staleness — a downgraded OWNER still acting as OWNER, or a
-removed member still inside — is bounded by the **same** window rather than
-cut short by a hard kill: there is no server-side revoke-by-userId
-available (BetterAuth's `admin` plugin, which exposes `revokeUserSessions`,
-is not installed, and core `revokeSession` needs the target's own token),
-so removal also relies on the `sessionGeneration` bump and refetches on the
-next cookie-cache miss, worst case at BetterAuth's 24h `updateAge`
-rotation. Shrink `maxAge` toward zero and you trade DB load for fresher
-roles; the current value says throughput wins for the benign case, and the
-removal window is a known limitation rather than a kill switch.
-
-### Why a counter, not a boolean
-
-Concurrent role mutations (e.g. a script bulk-promoting interns)
-would race against a boolean "stale" flag — the first reader clears
-the flag, and later mutations are lost. A monotonic counter carried
-in the session payload (`additionalFields.sessionGeneration`, see
-`lib/auth.ts`) means each session can compare "I've seen up to N"
-against the current row value, unambiguously.
-
-### Why we don't force logout
-
-The UX cost of "you've been signed out, please log in again" is high
-relative to the marginal security benefit. The catastrophic case is
-role downgrade with a stale OWNER session, or a removed member still
-inside — and that is handled by the same `sessionGeneration` bump, not a
-hard kill: no server-side revoke-by-userId is available (BetterAuth's
-`admin` plugin is not installed, and core `revokeSession` needs the
-target's own session token). So removal, downgrade, and soft-suspend all
-bump the generation and refetch on the next cookie-cache miss, worst case
-at the 24h `updateAge` rotation.
-
-The `sessionGeneration` bump also handles the middle case: the membership
-is still active, but the role / status changed. Next request reflects
-the new permissions; no UX disruption.
-
-### Sequence diagram
-
-Walk it through a real promotion: a **Wipro** admin promotes a member
-from LEARNER to MANAGER. The PATCH bumps `sessionGeneration` inside the
-same transaction as the role write; the promoted user does *not* get
-logged out. Their next request that misses the 5-minute cookie cache
-re-runs `customSession`, which re-reads memberships and the new MANAGER
-capabilities simply appear.
-
-```mermaid
-sequenceDiagram
-  autonumber
-  actor A as Wipro admin
-  participant API as PATCH /members/[id]
-  participant DB as Postgres
-  actor M as Promoted member (live session)
-  A->>API: PATCH { role: "MANAGER" }
-  API->>DB: BEGIN tx
-  API->>DB: Membership.update(role = MANAGER)
-  API->>DB: users.update sessionGeneration { increment: 1 }
-  Note over API,DB: atomic increment, not read-modify-write —<br/>concurrent promotions can't lose a bump
-  API->>DB: COMMIT
-  API-->>A: 200 OK
-  Note over M: no forced logout. Cookie cache (maxAge 5 min)<br/>may still serve the OLD shape briefly.
-  M->>API: next request that MISSES the 5-min cookie cache
-  API->>DB: customSession reads user.sessionGeneration → N+1
-  API->>DB: memberships.findMany (always runs)
-  API-->>M: session.user now reflects MANAGER ✅
-```
-
-The "misses the 5-min cookie cache" qualifier is the honest version of
-"next request": BetterAuth may serve a cached session shape for up to
-`cookieCache.maxAge` (5 min) before `customSession` re-runs. The bump
-itself is the *atomic increment* in the COMMIT box — it can never lose a
-concurrent promotion, which is why the marker is a counter and not a
-boolean (see [Why a counter](#why-a-counter-not-a-boolean)).
+The full design is
+[ADR 34](../70-design-decisions/34-user-session-visibility-and-revocation.md).
 
 ---
 
 ## §3 — Code anchors
 
-- **Bump helper:** `lib/api/organizations/membership-transitions.ts:bumpUserSessionGeneration`
-- **Schema:** `prisma/schema.prisma model User → sessionGeneration Int @default(0)`
-- **Carry in session:** `lib/auth.ts` additionalFields + customSession `liveSessionGeneration`
-- **JIT auto-join loop:** `lib/auth.ts:customSession` bareMembers loop
+- **Fresh memberships per request:** `lib/auth.ts` `customSession` (cookie cache off)
+- **Tri-state read:** `lib/auth-server.ts:getSession`, `lib/auth-session-lookup.ts:lookupSession`, `lib/auth/session-lookup-error.ts`
+- **Lifetimes:** `lib/auth/session-lifetime.ts`
+- **IdP claim checks:** `lib/sso/idp-claims.ts:assertIdpClaims`
+- **JIT auto-join:** `lib/sso/jit-membership.ts:provisionSsoMembership`, wired as the sso() `provisionUser` hook in `lib/sso/plugin-options.ts`
 - **Role floor schema:** `lib/labels/org-labels.ts:JitDefaultRoleSchema`
 - **API gate on settings:** `app/api/organizations/[orgId]/sso/route.ts:PatchBodySchema`
 
@@ -263,10 +159,11 @@ boolean (see [Why a counter](#why-a-counter-not-a-boolean)).
 
 ## §4 — Operator-facing rules
 
-- After enabling SSO, the first user from each domain who signs in
-  becomes a LEARNER in the org. Admins promote them explicitly via the
-  Members page if the user is meant to be a MANAGER / MAINTAINER /
-  OWNER.
+- After enabling SSO, a user who signs in for the first time becomes a
+  LEARNER in the org, unless a pending invitation for their email names
+  another role. Admins promote anyone else explicitly via the Members page.
+- Removing or suspending a member whose email is on one of the org's
+  verified domains ends their sessions immediately.
 - Role changes propagate to active sessions on the next request.
   No "please re-log-in" message; the user just sees their new
   capabilities appear.
@@ -280,9 +177,24 @@ boolean (see [Why a counter](#why-a-counter-not-a-boolean)).
 
 The table below maps the symptoms you are most likely to observe back to their probable cause and the fix for each.
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| New SSO user can't access the dashboard, session cookie present | JIT auto-join transaction failed (non-P2002 error). Check server logs for the thrown error. | Investigate root cause — DB connection, RLS, FK. The narrowed catch surfaces it. |
-| User keeps acting as old role well past the 5-min cookie-cache window after promotion | `bumpUserSessionGeneration` not called on the mutation path (so the only refresh left is BetterAuth's 24h `updateAge` rotation). | Search route handlers for the mutation; ensure `bumpUserSessionGeneration(tx, userId)` is called inside the tx. |
-| `customSession` slow under high SSO sign-in load | The bareMembers loop is running for many orgs without `preloadedProfiles`. | Ensure the pre-fetch at the top of `customSession` is still in place; passes through `preloadedProfiles` to `applyMembershipRoleEffects`. |
-| Settings page shows a role dropdown for `defaultRoleForAutoJoin` | A regression of audit Phase A.1. Schema must be `z.literal("LEARNER")`. | Re-check `JitDefaultRoleSchema` + the SSO settings page UI block. |
+| Symptom                                                                | Likely cause                                                                                   | Fix                                                                                                        |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| SSO callback fails with a server error and no session cookie           | JIT auto-join transaction failed (non-P2002 error). Check server logs for the thrown error.    | Investigate root cause — DB connection, RLS, FK. The narrowed catch surfaces it; the next sign-in retries. |
+| New SSO user signs in but has no org membership                        | A gate skipped the join: org SUSPENDED / DEACTIVATED, or PENDING_VERIFICATION at the seat cap. | Look for the `SSO` category `JIT auto-join skipped` system event for the org.                              |
+| User keeps acting as old role after promotion, across several requests | The cookie cache was turned back on in `lib/auth.ts`.                                          | Set `session.cookieCache.enabled: false`.                                                                  |
+| SSO callback refused with `SSO_EMAIL_NOT_VERIFIED`                     | The IdP did not vouch for the email (Entra: `xms_edov` missing).                               | Add `xms_edov` as an optional ID-token claim in the app registration.                                      |
+| Users see "couldn't confirm your session" and a 503                    | The session lookup failed (database fault or cold start); `SESSION_LOOKUP_FAILED`.             | Transient; clients retry after 2 s. Check database health if it persists.                                  |
+| Settings page shows a role dropdown for `defaultRoleForAutoJoin`       | A regression of the LEARNER lock. Schema must be `z.literal("LEARNER")`.                       | Re-check `JitDefaultRoleSchema` + the SSO settings page UI block.                                          |
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **`sessionGeneration` counter and `bumpUserSessionGeneration`.** Mutation
+  paths bumped a per-user counter so a cached cookie would refresh. Removed:
+  nothing read it once the cookie cache was off.
+- **Any non-privileged `defaultRoleForAutoJoin`.** The field once accepted
+  roles up to `OWNER`, so the first SSO user could become co-owner. Replaced by
+  the `LEARNER` lock.
+- **Two-valued session reads (`getSession(true)`, `getCachedSession`).** A
+  failed lookup read as signed out. Replaced by the tri-state read above.

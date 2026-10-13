@@ -82,7 +82,12 @@ import {
   isHandledEventType,
   recordStreamEventReceipt,
   processStreamEvent,
+  streamRecordingFailedSchema,
 } from "../../lib/stream/webhook-dispatch";
+import {
+  IGNORED_EVENT_TYPES,
+  isIgnoredEventType,
+} from "../../lib/stream/webhook-events";
 import { TERMINAL_ERROR_PREFIXES } from "../../lib/webhooks/event-log";
 
 beforeEach(() => {
@@ -312,5 +317,44 @@ describe("the handled-event list and the switch cannot drift apart", () => {
     ]) {
       expect(HANDLED_EVENT_TYPES as readonly string[]).toContain(t);
     }
+  });
+});
+
+describe("Stream payload shapes the handlers rely on", () => {
+  it("parses the real call.recording_failed payload (no error detail)", () => {
+    const parsed = streamRecordingFailedSchema.parse({
+      type: "call.recording_failed",
+      call_cid: "default:abc",
+      egress_id: "call_recorder:unique",
+      created_at: "2026-10-09T22:54:24.056855645Z",
+      recording_type: "composite",
+    });
+    expect(parsed).toMatchObject({
+      egress_id: "call_recorder:unique",
+      recording_type: "composite",
+    });
+  });
+
+  it("acknowledges call.session_started as ignored, never as a handled event", async () => {
+    expect(isIgnoredEventType("call.session_started")).toBe(true);
+    for (const t of IGNORED_EVENT_TYPES) {
+      expect(isHandledEventType(t)).toBe(false);
+    }
+
+    await processStreamEvent(
+      {},
+      "call.session_started",
+      "stream_ss",
+      undefined,
+      {
+        call_cid: "default:abc",
+      },
+    );
+    expect(mockHandleRecordingReady).not.toHaveBeenCalled();
+    expect(mockMarkProcessed).toHaveBeenCalledWith(
+      "stream_ss",
+      undefined,
+      expect.anything(),
+    );
   });
 });

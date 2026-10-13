@@ -21,6 +21,18 @@ jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorAccepted: jest.fn(),
   notifyCollaboratorRemoved: jest.fn(),
 }));
+jest.mock("../../lib/email/senders/collaborators", () => ({
+  sendCollaboratorInvitedEmail: jest.fn(),
+  sendCollaboratorAcceptedEmail: jest.fn(),
+  sendCollaboratorDeclinedEmail: jest.fn(),
+  sendCollaboratorRemovedEmail: jest.fn(),
+  sendCollaboratorWithdrawnEmail: jest.fn(),
+}));
+jest.mock(
+  "../../utils/organization-roles",
+  () => ({ hasOrgPermission: jest.fn(() => false) }),
+  { virtual: true },
+);
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -71,7 +83,12 @@ describe("calculateRevenueSplit reads through the client it is given", () => {
     expect(globalPrisma.webinarPlan.findUnique).not.toHaveBeenCalled();
     expect(globalPrisma.classPlan.findUnique).not.toHaveBeenCalled();
     expect(splits).toEqual([
-      { consultantProfileId: "owner", share: 7000, role: "OWNER" },
+      {
+        consultantProfileId: "owner",
+        organizationId: null,
+        share: 7000,
+        role: "OWNER",
+      },
       { consultantProfileId: "collab-1", share: 3000, role: "CO_HOST" },
     ]);
   });

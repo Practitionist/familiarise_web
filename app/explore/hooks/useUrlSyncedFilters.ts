@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ReadonlyParams } from "@/lib/explore/filter-codec";
+import { replaceUrl } from "@/lib/navigation/history";
 import { shouldSkipUrlHydrate } from "@/lib/explore/url-hydrate-skip";
 
 const URL_SYNC_DEBOUNCE_MS = 300;
@@ -93,7 +94,7 @@ export function useUrlSyncedFilters<T>({
       const current = window.location.pathname + window.location.search + hash;
       if (target !== current) {
         pendingWrittenQs.current = qs;
-        window.history.replaceState(window.history.state, "", target);
+        replaceUrl(target);
       }
     }, URL_SYNC_DEBOUNCE_MS);
 

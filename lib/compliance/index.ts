@@ -11,14 +11,14 @@
  *   - dpdp.ts         — `buildConsentArtifact` + `checkConsent` (fail-closed)
  *                       live. `checkConsent` is now wired at org-sponsored
  *                       checkout, invite acceptance, and data export (#701);
- *                       the remaining call-site cascade (SCIM / Stream /
+ *                       the remaining call-site cascade (Stream /
  *                       analytics) is tracked in #701.
  *   - form15.ts       — schema-only; cross-border remittance refs not
  *                       yet captured. See compliance doc 07.
  *
  * The full live-implementation plan lives in:
  *
- *   docs/compliance/13-implementation-roadmap.md
+ *   docs/compliance/15-implementation-roadmap.md
  *
  * Callers MUST treat any function still flagged as a stub ("form15.*") as
  * "sensible default, safe but not compliant" and NOT rely on it for:

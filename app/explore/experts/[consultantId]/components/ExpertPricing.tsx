@@ -47,6 +47,7 @@ interface ExpertPricingProps {
   timezone: string;
   autoOpenTrial?: boolean;
   onRefreshSlots?: () => void;
+  onDurationChange?: (durationInHours: number) => void;
 }
 
 export function ExpertPricing({
@@ -65,6 +66,7 @@ export function ExpertPricing({
   timezone,
   autoOpenTrial,
   onRefreshSlots,
+  onDurationChange,
 }: Readonly<ExpertPricingProps>) {
   const [activeServiceTab, setActiveServiceTab] = useState<
     "consultations" | "subscriptions"
@@ -296,6 +298,7 @@ export function ExpertPricing({
                 setSelectedSlot={setSelectedSlot}
                 timezone={timezone}
                 onRefreshSlots={onRefreshSlots}
+                onDurationChange={onDurationChange}
               />
             </TabsContent>
             <TabsContent value="subscriptions">
@@ -323,6 +326,7 @@ export function ExpertPricing({
             setSelectedSlot={setSelectedSlot}
             timezone={timezone}
             onRefreshSlots={onRefreshSlots}
+            onDurationChange={onDurationChange}
           />
         ) : hasSubscriptions ? (
           <SubscriptionPricingToggle

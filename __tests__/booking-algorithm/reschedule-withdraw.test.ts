@@ -28,10 +28,7 @@ describe("WITHDRAWN is a first-class terminal state", () => {
   });
 
   it("is reachable only from a request still awaiting an answer", () => {
-    expect(RESCHEDULE_ALLOWED_FROM.WITHDRAWN).toEqual([
-      "PENDING_REVIEW",
-      "COUNTERED",
-    ]);
+    expect(RESCHEDULE_ALLOWED_FROM.WITHDRAWN).toEqual(["PENDING_REVIEW"]);
   });
 
   it("cannot be reached from a request that already resolved", () => {

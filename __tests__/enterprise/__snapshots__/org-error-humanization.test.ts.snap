@@ -13,7 +13,7 @@ exports[`humanizeOrgError snapshot of the full mapping table 1`] = `
   "PO_BALANCE_EXCEEDED": "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
   "PO_BALANCE_INSUFFICIENT": "This purchase order doesn't have enough remaining budget for the invoice. Reduce the invoice total or add a new PO.",
   "ROLE_TRANSITION_BLOCKED": "Members cannot switch between Learner and Expert roles. Remove the member and re-invite them with the new role instead.",
-  "SSO_PROVIDER_MISCONFIGURED": "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
+  "SSO_PROVIDER_MISCONFIGURED": "Your SSO provider's configuration could not be read. Delete and re-add the provider, or contact your IT admin.",
   "USER_NOT_FOUND": "No user account found with that email. They need to sign up at Familiarise first, or use the Invitations page to send them an invite.",
 }
 `;

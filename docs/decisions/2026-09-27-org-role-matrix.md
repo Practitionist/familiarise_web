@@ -4,6 +4,8 @@
 - **Date**: 2026-09-27
 - **Part of**: #1527, PR #1842
 
+> **Superseded in part (PR #1878):** SCIM was removed before launch, so `identity.manage` and `identity.read` now cover Domains and SSO only.
+
 ## Context
 
 The organization dashboard gates access to its pages through `lib/auth/org-permissions.ts`, a matrix keyed by `OrgSurface` rather than by a numeric rank ladder. The file's own comment explains why a rank ladder does not work here: an organization has an operations track (MANAGER, SUPPORT), a finance track (BILLING*ADMIN), and member roles (EXPERT, LEARNER), and privilege is not one-dimensional across them. BILLING_ADMIN outranks MANAGER numerically in the general role hierarchy, yet must see \_less* on operations surfaces ("operator-blind" by design), and SUPPORT sees _more_ than EXPERT on those same surfaces. A rank comparison stays correct only for genuine management hierarchy — OWNER above MAINTAINER above MANAGER — and surface access needed its own source of truth.

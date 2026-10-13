@@ -29,8 +29,18 @@ const AFFILIATION_TABS: {
   countKey: "all" | "independent" | "agency";
 }[] = [
   { value: null, label: "All Experts", icon: Users, countKey: "all" },
-  { value: "independent", label: "Independent", icon: Zap, countKey: "independent" },
-  { value: "agency", label: "Agency / Org", icon: Building2, countKey: "agency" },
+  {
+    value: "independent",
+    label: "Independent",
+    icon: Zap,
+    countKey: "independent",
+  },
+  {
+    value: "agency",
+    label: "Agency / Org",
+    icon: Building2,
+    countKey: "agency",
+  },
 ];
 
 const ORG_KIND_OPTIONS: { value: OrgKind; label: string }[] = [
@@ -106,7 +116,11 @@ export default function StickyFilterBar({
           </div>
           <Sheet open={advancedOpen} onOpenChange={setAdvancedOpen}>
             <SheetTrigger asChild>
-              <Button variant="outline" className="h-14 shrink-0 gap-2 px-4">
+              <Button
+                variant="outline"
+                aria-label="Filters"
+                className="h-14 shrink-0 gap-2 px-4"
+              >
                 <SlidersHorizontal className="h-4 w-4" />
                 <span className="hidden sm:inline">Filters</span>
                 {chips.length > 0 && (
@@ -187,9 +201,7 @@ export default function StickyFilterBar({
                     aria-pressed={isActive}
                     disabled={disabled}
                     title={
-                      disabled
-                        ? "No experts in this category yet"
-                        : undefined
+                      disabled ? "No experts in this category yet" : undefined
                     }
                     onClick={() =>
                       updateFilters({

@@ -28,9 +28,10 @@ import type { PaymentLegSource } from "@prisma/client";
  *                      sourceRef points at the assignment so reconcile
  *                      reports can answer "which program absorbed this
  *                      spend".
- *   REFERRAL_CREDIT  → ReferralCreditUsage.id created by
- *                      `applyCreditsToPayment`. Refund reversal reads
- *                      this to compute how many credits to restore.
+ *   REFERRAL_CREDIT  → the first ReferralCreditUsage.id written by
+ *                      `applyCreditsToPayment`. One leg carries the whole
+ *                      credit spend; the payment's usage rows are the
+ *                      per-credit trail refund restoration reads.
  *   INVOICE_ACCRUAL          → ProgramAssignment.id that the accrual is being
  *                              rolled into. At month-end the invoice generator
  *                              groups legs by (organizationId, assignmentId) to

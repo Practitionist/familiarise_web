@@ -18,7 +18,11 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
+jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
+
+import { applyMembershipRoleEffects } from "@/lib/api/organizations/membership-transitions";
 import { isOnboardingBlocked } from "@/lib/enterprise/org-status";
+import type { PrismaLike } from "@/lib/prisma";
 
 describe("invitation-accept guards", () => {
   it("ENT-2: SUSPENDED org blocks onboarding (helper)", () => {
@@ -76,8 +80,31 @@ describe("who-is-acting identity gates (#819)", () => {
     expect(src).toContain('existing?.status === "ERASED"');
   });
 
-  it("the lazy-create sanction for invite-accept-as-LEARNER still stands in lib/auth.ts", () => {
-    const src = read("lib/auth.ts");
-    expect(src).toContain("invite-accept as LEARNER");
+  it("accepting as LEARNER lazy-creates and links the ConsulteeProfile", async () => {
+    expect(read("app/api/organizations/invitations/accept/route.ts")).toContain(
+      "applyMembershipRoleEffects(tx",
+    );
+
+    const upsert = jest.fn(async () => ({ id: "cp-1" }));
+    const updateMany = jest.fn(async () => ({ count: 1 }));
+    const tx = {
+      consulteeProfile: { upsert },
+      user: { updateMany },
+    } as unknown as PrismaLike;
+
+    await expect(
+      applyMembershipRoleEffects(tx, { userId: "u-1", role: "LEARNER" }),
+    ).resolves.toEqual({
+      consulteeProfileId: "cp-1",
+      consultantProfileId: null,
+      payoutRecipient: "SELF",
+    });
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: { userId: "u-1" } }),
+    );
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: "u-1", consulteeProfileId: null },
+      data: { consulteeProfileId: "cp-1" },
+    });
   });
 });

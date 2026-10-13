@@ -33,7 +33,7 @@ describe("imminentSessionItem", () => {
     expect(item?.ctaLabel).toBe("View");
   });
 
-  it("escalates to critical once inside the 10-minute join window", () => {
+  it("escalates to critical once inside the 15-minute join window", () => {
     const item = imminentSessionItem(
       [{ startsAt: inMinutes(5), title: "Career review" }],
       "/x",
@@ -47,15 +47,15 @@ describe("imminentSessionItem", () => {
   });
 
   it("uses the exact boundary, not rounded minutes, to decide the window", () => {
-    // 10m29s rounds to 10 and used to read as inside the window.
+    // 15m29s rounds to 15 and used to read as inside the window.
     const justOutside = imminentSessionItem(
-      [{ startsAt: new Date(Date.now() + 10 * 60_000 + 29_000), title: "x" }],
+      [{ startsAt: new Date(Date.now() + 15 * 60_000 + 29_000), title: "x" }],
       "/x",
     );
     expect(justOutside?.severity).toBe("warning");
 
     const justInside = imminentSessionItem(
-      [{ startsAt: new Date(Date.now() + 9 * 60_000 + 30_000), title: "x" }],
+      [{ startsAt: new Date(Date.now() + 14 * 60_000 + 30_000), title: "x" }],
       "/x",
     );
     expect(justInside?.severity).toBe("critical");

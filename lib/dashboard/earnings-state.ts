@@ -64,6 +64,8 @@ export interface PayoutRowInput {
   amount: number;
   tdsDeducted: number;
   netAmount: number | null;
+  /** An earlier clawback netted from this payout; 0 when none stands. */
+  recoveredPaise: number;
   tdsRateAppliedBps: number | null;
   processedAt: Date | string | null;
   gatewayUtr: string | null;
@@ -81,6 +83,7 @@ export interface MoneyWalk {
   share: number;
   tds: number;
   tdsRateBps: number;
+  recovered: number;
   net: number;
 }
 
@@ -307,8 +310,11 @@ export function nextPayoutCopy(now: Date, livePayoutsEnabled: boolean): string {
  * it null, so the fallback is the same arithmetic the row and the tile use.
  */
 export const payoutNet = (
-  p: Pick<PayoutRowInput, "amount" | "tdsDeducted" | "netAmount">,
-): number => p.netAmount ?? p.amount - p.tdsDeducted;
+  p: Pick<
+    PayoutRowInput,
+    "amount" | "tdsDeducted" | "netAmount" | "recoveredPaise"
+  >,
+): number => p.netAmount ?? p.amount - p.tdsDeducted - p.recoveredPaise;
 
 /** Share → TDS at the stamped rate (s.194-O) → net, for the walk sheet. */
 export function moneyWalk(p: PayoutRowInput): MoneyWalk {
@@ -316,6 +322,7 @@ export function moneyWalk(p: PayoutRowInput): MoneyWalk {
     share: p.amount,
     tds: p.tdsDeducted,
     tdsRateBps: p.tdsRateAppliedBps ?? 0,
+    recovered: p.recoveredPaise,
     net: payoutNet(p),
   };
 }

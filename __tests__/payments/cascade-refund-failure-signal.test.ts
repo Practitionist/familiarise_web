@@ -35,23 +35,11 @@ describe("PM-34 — cascade failure decision helper", () => {
   });
 });
 
-describe("PM-34 — both consumers translate a failed run into their failure signal", () => {
-  it("GH Actions entry exits non-zero via process.exitCode (never process.exit)", () => {
-    const jobSrc = read("jobs/refunds/cascade-refund-earnings.ts");
+describe("PM-34 — inlined refund cascade surfaces failure via reconcilePendingRefunds", () => {
+  it("reconcile-pending-refunds invokes applyRefundCascade inline and reports success: errors.length === 0", () => {
+    const src = read("scripts/refunds/reconcile-pending-refunds.ts");
 
-    expect(jobSrc).toMatch(/if \(cascadeRunFailed\(result\)\)/);
-    expect(jobSrc).toMatch(/process\.exitCode = 1;/);
-    // Statement-level: a bare process.exit() would kill the Sentry flush.
-    expect(jobSrc).not.toMatch(/^\s*process\.exit\(/m);
-  });
-
-  it("HTTP shim returns non-2xx on a failed run", () => {
-    // #1319 — the shim is now the shared cleanupRoute factory; the route only
-    // supplies the status callback, not the response wiring itself.
-    const routeSrc = read("app/api/cleanup/cascade-refund-earnings/route.ts");
-
-    expect(routeSrc).toMatch(
-      /status:\s*\(result\)\s*=>\s*\(?\s*cascadeRunFailed\(result\)\s*\?\s*500\s*:\s*200/,
-    );
+    expect(src).toMatch(/applyRefundCascade\(/);
+    expect(src).toMatch(/success:\s*errors\.length === 0/);
   });
 });

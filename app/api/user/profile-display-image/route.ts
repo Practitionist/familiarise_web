@@ -15,7 +15,7 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -89,7 +89,10 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Profile display image upload error:", error);
     return NextResponse.json(
       {
@@ -110,7 +113,7 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -147,8 +150,10 @@ export async function DELETE(request: NextRequest) {
     const deleteResult = await deleteProfileDisplayImage(session.user.id);
 
     if (!deleteResult) {
-      console.warn("Failed to delete profile display image from storage");
-      // Continue anyway to clear the database reference
+      return NextResponse.json(
+        { error: "Could not delete the image. Please try again." },
+        { status: 502 },
+      );
     }
 
     // Update user record to remove profile display image URL
@@ -162,7 +167,10 @@ export async function DELETE(request: NextRequest) {
       message: "Profile display image deleted successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Profile display image delete error:", error);
     return NextResponse.json(
       {
@@ -210,7 +218,10 @@ export async function GET(request: NextRequest) {
       data: { profileDisplayImage: user.profileDisplayImage },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Get profile display image error:", error);
     return NextResponse.json(
       {

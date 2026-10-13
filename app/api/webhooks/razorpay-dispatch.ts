@@ -34,22 +34,35 @@ import {
   razorpayPaymentCapturedEventSchema,
   razorpayPaymentFailedEventSchema,
   razorpayOrderPaidEventSchema,
+  razorpayNotesSchema,
+  razorpayPayoutStatusDetailsSchema,
+  razorpayPayoutErrorSchema,
+  fundAccountValidationEntitySchema,
+  disputeUpdateEntitySchema,
   type RazorpayWebhookEnvelope,
 } from "@/schemas/webhooks/razorpay";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import { handleFundAccountValidationWebhook } from "@/lib/payments/payouts/reverse-penny-drop";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { reportSentryError } from "@/lib/observability/report";
 import { z, ZodError } from "zod";
 
-// Strict inner-entity schemas used to narrow optional envelope fields at the
-// point of consumption (one per event family we actually process).
 const refundEntitySchema = z.object({
   id: z.string(),
   payment_id: z.string(),
   amount: z.number(),
   currency: z.string().optional(),
   status: z.string(),
+  speed_requested: z.enum(["normal", "optimum"]).nullable().optional(),
+  speed_processed: z
+    .enum(["normal", "instant", "optimum"])
+    .nullable()
+    .optional(),
+  notes: razorpayNotesSchema,
 });
 
 const disputeEntitySchema = z.object({
@@ -57,27 +70,20 @@ const disputeEntitySchema = z.object({
   payment_id: z.string(),
   amount: z.number(),
   currency: z.string().optional(),
-  reason_code: z.string().optional(),
-  reason_description: z.string().optional(),
+  reason_code: z.string().nullable().optional(),
+  reason_description: z.string().nullable().optional(),
   status: z.string(),
   respond_by: z.number().nullable().optional(),
   deduct_at_onset: z.boolean().optional(),
-});
-
-const disputeUpdateEntitySchema = z.object({
-  id: z.string(),
-  status: z.string(),
 });
 
 const payoutEntitySchema = z.object({
   id: z.string(),
   status: z.string(),
   failure_reason: z.string().nullable().optional(),
-  // A1+A8: bank-side UTR. Present on `payout.processed`; absent on
-  // queued/initiated/pending. Plumbed through to OrganizationPayout.gatewayUtr.
+  status_details: razorpayPayoutStatusDetailsSchema,
+  error: razorpayPayoutErrorSchema,
   utr: z.string().nullable().optional(),
-  // #1846 N1 — our payout row id, sent as `reference_id` at creation. It
-  // matches a consultant payout whose submit reply was lost.
   reference_id: z.string().nullable().optional(),
 });
 
@@ -132,13 +138,24 @@ export async function routeCapturedPayment(params: {
     return;
   }
   if (notes.type === "overage_member") {
-    await handleOverageMemberSuccess(orderId);
+    // Settle only on gateway truth; withhold order total without a payment entity.
+    await handleOverageMemberSuccess(
+      orderId,
+      gatewayPaymentId ? amountPaise : undefined,
+      gatewayPaymentId,
+    );
     return;
   }
   if (notes.type === "recording_purchase") {
     // #366 — standalone replay sale; not a Payment row, settled on its own
-    // RecordingPurchase record (idempotent per gatewayOrderId).
-    await handleRecordingPurchaseSuccess(orderId, gatewayPaymentId);
+    // RecordingPurchase record (idempotent per gatewayOrderId). Withhold the
+    // order total without a payment entity, like the org and overage rails.
+    await handleRecordingPurchaseSuccess(
+      orderId,
+      gatewayPaymentId,
+      notes,
+      gatewayPaymentId ? amountPaise : undefined,
+    );
     return;
   }
   // #1353 — the B2C pipeline persists the `pay_…` id on the Payment row it is
@@ -182,11 +199,9 @@ export async function processRazorpayWebhookEvent(
     switch (eventType) {
       case "payment.captured": {
         const capturedEvent = razorpayPaymentCapturedEventSchema.parse(event);
-        // #775 — the overage branch inside routeCapturedPayment keys on the
-        // order id stamped at resume-checkout time, not on an appointment.
         await routeCapturedPayment({
-          orderId: capturedEvent.payload.payment.entity.order_id,
-          notes: capturedEvent.payload.payment.entity.notes ?? {},
+          orderId: capturedEvent.payload.payment.entity.order_id ?? "",
+          notes: capturedEvent.payload.payment.entity.notes,
           amountPaise: capturedEvent.payload.payment.entity.amount,
           gatewayPaymentId: capturedEvent.payload.payment.entity.id,
         });
@@ -195,14 +210,11 @@ export async function processRazorpayWebhookEvent(
 
       case "order.paid": {
         const paidEvent = razorpayOrderPaidEventSchema.parse(event);
-        // #1582 F-P0-01 — the `pay_*` id rides along when Razorpay ships the
-        // payment entity; without it the org branch still refuses to mark PAID.
         const paidEntity = paidEvent.payload.payment?.entity;
         await routeCapturedPayment({
           orderId: paidEvent.payload.order.entity.id,
-          notes: paidEvent.payload.order.entity.notes ?? {},
-          amountPaise:
-            paidEntity?.amount ?? paidEvent.payload.order.entity.amount,
+          notes: paidEvent.payload.order.entity.notes,
+          amountPaise: paidEntity?.amount,
           gatewayPaymentId: paidEntity?.id,
         });
         break;
@@ -211,57 +223,52 @@ export async function processRazorpayWebhookEvent(
       case "payment.failed": {
         const failedEvent = razorpayPaymentFailedEventSchema.parse(event);
         const failedEntity = failedEvent.payload.payment.entity;
-        const failedNotes = failedEntity.notes ?? {};
-        // Org-level top-ups and invoice payments do NOT have a `Payment`
-        // row (they live on WalletEntry / OrganizationInvoice), so the
-        // legacy handlePaymentFailure would silently no-op for them.
-        // Route by notes.type first; fall back to the B2C path.
+        const failedNotes = failedEntity.notes;
+        const failedOrderId = failedEntity.order_id ?? "";
         if (
           failedNotes.type === "credit_purchase" ||
           failedNotes.type === "invoice_payment"
         ) {
           await handleOrgPaymentFailure(failedNotes, failedEntity.id);
         } else if (failedNotes.type === "overage_member") {
-          await handleOverageMemberFailure(failedEntity.order_id);
+          await handleOverageMemberFailure(failedOrderId);
         } else if (failedNotes.type === "recording_purchase") {
-          await handleRecordingPurchaseFailure(failedEntity.order_id);
+          await handleRecordingPurchaseFailure(failedOrderId);
         } else {
-          await handlePaymentFailure(failedEntity.order_id);
+          await handlePaymentFailure(
+            failedOrderId,
+            failedEntity.error_description ?? undefined,
+            failedEntity.id,
+          );
         }
         break;
       }
 
-      // Refund events
-      // FIX #5: Razorpay refunds use payment_id, but our DB stores order_id as
-      // paymentIntent. Resolve payment_id → order_id via Razorpay API first.
       case "refund.created":
       case "refund.processed": {
         const refundEvent = refundEntitySchema.parse(
           event.payload?.refund?.entity,
         );
-        let paymentIntentId = refundEvent.payment_id;
+        const embeddedOrderId =
+          event.payload?.payment?.entity?.order_id ?? undefined;
+        let paymentIntentId = embeddedOrderId ?? refundEvent.payment_id;
 
-        // #1353 — ask our own database first. The capture pipeline persists the
-        // `pay_…` id on the Payment row, so the order id this refund needs is
-        // almost always one indexed read away; the gateway call below is now a
-        // fallback for pre-#1353 rows and for captures that never ran through
-        // the pipeline, not the only path. That matters because when the API
-        // call failed we used to continue with the `pay_…` id, which nothing
-        // downstream could match — the refund deferred for up to a week.
-        const knownPayment = await prisma.payment.findFirst({
-          where: { gatewayPaymentId: refundEvent.payment_id },
-          select: { paymentIntent: true },
-        });
-        const razorpayClient = knownPayment ? null : getRazorpayClient();
+        const knownPayment = embeddedOrderId
+          ? null
+          : await prisma.payment.findFirst({
+              where: { gatewayPaymentId: refundEvent.payment_id },
+              select: { paymentIntent: true },
+            });
+        const razorpayClient =
+          embeddedOrderId || knownPayment ? null : getRazorpayClient();
         if (knownPayment) {
           paymentIntentId = knownPayment.paymentIntent;
         }
-        // Only the refund family resolves payment_id → order_id via the SDK;
-        // other event branches must not construct a client.
         if (razorpayClient) {
           try {
-            const rzpPayment = await razorpayClient.payments.fetch(
-              refundEvent.payment_id,
+            const rzpPayment = await withRazorpaySdkTimeout(
+              "payments.fetch",
+              () => razorpayClient.payments.fetch(refundEvent.payment_id),
             );
             if (rzpPayment.order_id) {
               paymentIntentId = rzpPayment.order_id;
@@ -290,8 +297,8 @@ export async function processRazorpayWebhookEvent(
           refundEvent.amount,
           refundEvent.currency || "INR",
           refundEvent.status,
-          "RAZORPAY",
           refundEvent.payment_id,
+          refundEvent.notes,
         );
         if (refundResult instanceof DeferSignal) {
           deferred = true;
@@ -308,8 +315,6 @@ export async function processRazorpayWebhookEvent(
         );
         let failedPaymentIntentId = failedRefundEvent.payment_id;
 
-        // #1353 — same order as the created/processed branch: our own row
-        // first, the gateway API only when we have never seen this capture.
         const knownFailedPayment = await prisma.payment.findFirst({
           where: { gatewayPaymentId: failedRefundEvent.payment_id },
           select: { paymentIntent: true },
@@ -320,8 +325,9 @@ export async function processRazorpayWebhookEvent(
         }
         if (razorpayClient) {
           try {
-            const rzpPayment = await razorpayClient.payments.fetch(
-              failedRefundEvent.payment_id,
+            const rzpPayment = await withRazorpaySdkTimeout(
+              "payments.fetch",
+              () => razorpayClient.payments.fetch(failedRefundEvent.payment_id),
             );
             if (rzpPayment.order_id) {
               failedPaymentIntentId = rzpPayment.order_id;
@@ -350,8 +356,8 @@ export async function processRazorpayWebhookEvent(
           failedRefundEvent.amount,
           failedRefundEvent.currency || "INR",
           "failed",
-          "RAZORPAY",
           failedRefundEvent.payment_id,
+          failedRefundEvent.notes,
         );
         if (failedRefundResult instanceof DeferSignal) {
           deferred = true;
@@ -362,20 +368,42 @@ export async function processRazorpayWebhookEvent(
         break;
       }
 
-      // L1 FIX: Handle refund.speed_changed (informational only)
       case "refund.speed_changed": {
-        console.log(
-          `📄 Refund speed changed: ${event.payload?.refund?.entity?.id}`,
+        const speedEvent = refundEntitySchema.parse(
+          event.payload?.refund?.entity,
         );
+        const existingRefund = await prisma.refund.findFirst({
+          where: { refundId: speedEvent.id },
+          select: { id: true, status: true, metadata: true },
+        });
+        if (!existingRefund) {
+          deferred = true;
+          break;
+        }
+        const prevMeta =
+          existingRefund.metadata &&
+          typeof existingRefund.metadata === "object" &&
+          !Array.isArray(existingRefund.metadata)
+            ? existingRefund.metadata
+            : {};
+        await prisma.refund.updateMany({
+          where: { id: existingRefund.id, status: existingRefund.status },
+          data: {
+            metadata: {
+              ...prevMeta,
+              speedRequested: speedEvent.speed_requested ?? null,
+              speedProcessed: speedEvent.speed_processed ?? null,
+            },
+          },
+        });
         break;
       }
 
-      // Dispute events
       case "payment.dispute.created": {
         const disputeCreatedEvent = disputeEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        await handleDisputeCreated(
+        const createdResult = await handleDisputeCreated(
           disputeCreatedEvent.id,
           disputeCreatedEvent.payment_id,
           disputeCreatedEvent.amount,
@@ -386,25 +414,36 @@ export async function processRazorpayWebhookEvent(
           disputeCreatedEvent.status,
           disputeCreatedEvent.respond_by ?? null,
           disputeCreatedEvent.deduct_at_onset === false,
-          "RAZORPAY",
+          { isRedrive: !claim },
         );
+        if (createdResult instanceof DeferSignal) {
+          deferred = true;
+        }
         break;
       }
 
-      // #789 — these two were dropped to `default`. under_review carries the
-      // gateway moving evidence into review; action_required is the deadline
-      // signal. Both must advance Dispute.status (mapDisputeStatus already maps
-      // them: under_review → UNDER_REVIEW, action_required → NEEDS_RESPONSE).
       case "payment.dispute.under_review":
       case "payment.dispute.action_required": {
         const disputeProgressEvent = disputeUpdateEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        await handleDisputeUpdated(
-          disputeProgressEvent.id,
-          disputeProgressEvent.status,
-          null,
-        );
+        const disputeProgressResult =
+          disputeProgressEvent.respond_by !== undefined &&
+          disputeProgressEvent.respond_by !== null
+            ? await handleDisputeUpdated(
+                disputeProgressEvent.id,
+                disputeProgressEvent.status,
+                null,
+                disputeProgressEvent.respond_by,
+              )
+            : await handleDisputeUpdated(
+                disputeProgressEvent.id,
+                disputeProgressEvent.status,
+                null,
+              );
+        if (disputeProgressResult instanceof DeferSignal) {
+          deferred = true;
+        }
         break;
       }
 
@@ -412,7 +451,19 @@ export async function processRazorpayWebhookEvent(
         const disputeWonEvent = disputeUpdateEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        await handleDisputeUpdated(disputeWonEvent.id, "won", null);
+        const disputeWonResult =
+          disputeWonEvent.respond_by !== undefined &&
+          disputeWonEvent.respond_by !== null
+            ? await handleDisputeUpdated(
+                disputeWonEvent.id,
+                "won",
+                null,
+                disputeWonEvent.respond_by,
+              )
+            : await handleDisputeUpdated(disputeWonEvent.id, "won", null);
+        if (disputeWonResult instanceof DeferSignal) {
+          deferred = true;
+        }
         break;
       }
 
@@ -420,7 +471,19 @@ export async function processRazorpayWebhookEvent(
         const disputeLostEvent = disputeUpdateEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        await handleDisputeUpdated(disputeLostEvent.id, "lost", null);
+        const disputeLostResult =
+          disputeLostEvent.respond_by !== undefined &&
+          disputeLostEvent.respond_by !== null
+            ? await handleDisputeUpdated(
+                disputeLostEvent.id,
+                "lost",
+                null,
+                disputeLostEvent.respond_by,
+              )
+            : await handleDisputeUpdated(disputeLostEvent.id, "lost", null);
+        if (disputeLostResult instanceof DeferSignal) {
+          deferred = true;
+        }
         break;
       }
 
@@ -428,35 +491,77 @@ export async function processRazorpayWebhookEvent(
         const disputeClosedEvent = disputeUpdateEntitySchema.parse(
           event.payload?.dispute?.entity,
         );
-        await handleDisputeUpdated(
-          disputeClosedEvent.id,
-          disputeClosedEvent.status,
-          null,
-        );
+        const disputeClosedResult =
+          disputeClosedEvent.respond_by !== undefined &&
+          disputeClosedEvent.respond_by !== null
+            ? await handleDisputeUpdated(
+                disputeClosedEvent.id,
+                disputeClosedEvent.status,
+                null,
+                disputeClosedEvent.respond_by,
+              )
+            : await handleDisputeUpdated(
+                disputeClosedEvent.id,
+                disputeClosedEvent.status,
+                null,
+              );
+        if (disputeClosedResult instanceof DeferSignal) {
+          deferred = true;
+        }
         break;
       }
 
-      // RazorpayX Payout events. #789 — payout.failed was previously dropped to
-      // `default` even though handleRazorpayPayoutWebhook + markOrgPayoutFailed
-      // already handle it, leaving a failed org payout stuck in PROCESSING with
-      // earnings unreleased; it is now routed alongside the other terminal events.
       case "payout.processed":
       case "payout.reversed":
       case "payout.rejected":
       case "payout.failed":
+      case "payout.initiated":
+      case "payout.updated":
       case "payout.queued":
       case "payout.pending":
       case "payout.cancelled": {
         const payoutEvent = payoutEntitySchema.parse(
           event.payload?.payout?.entity,
         );
+        const failureReason =
+          payoutEvent.failure_reason ??
+          payoutEvent.status_details?.description ??
+          payoutEvent.status_details?.reason ??
+          payoutEvent.error?.description ??
+          payoutEvent.error?.reason ??
+          undefined;
         await handleRazorpayPayoutWebhook(eventType, {
           id: payoutEvent.id,
           status: payoutEvent.status,
-          failure_reason: payoutEvent.failure_reason ?? undefined,
+          failure_reason: failureReason,
           utr: payoutEvent.utr ?? undefined,
           reference_id: payoutEvent.reference_id ?? undefined,
         });
+        break;
+      }
+
+      case "settlement.processed": {
+        const settlementEntity = event.payload?.settlement?.entity;
+        console.log("Razorpay settlement processed", {
+          settlementId: settlementEntity?.id,
+          amount: settlementEntity?.amount,
+          utr: settlementEntity?.utr,
+        });
+        break;
+      }
+
+      case "fund_account.validation.completed":
+      case "fund_account.validation.failed": {
+        const validationEntity = fundAccountValidationEntitySchema.parse(
+          event.payload?.["fund_account.validation"]?.entity,
+        );
+        const validationResult = await handleFundAccountValidationWebhook(
+          eventType,
+          validationEntity,
+        );
+        if (validationResult === "deferred") {
+          deferred = true;
+        }
         break;
       }
 
@@ -469,8 +574,6 @@ export async function processRazorpayWebhookEvent(
     );
   } catch (handlerError) {
     if (handlerError instanceof ZodError) {
-      // FAMILIARISE_WEB-3W — a payload that fails its schema cannot pass on a
-      // re-drive; the `permanent:` prefix keeps the sweeper off it (#785 B5).
       const detail = handlerError.issues
         .slice(0, 5)
         .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
@@ -482,8 +585,6 @@ export async function processRazorpayWebhookEvent(
         `Razorpay webhook ${eventId} is permanently unprocessable:`,
         detail,
       );
-      // A synthetic error, as the Stream dispatch does: the ZodError itself
-      // carries received values and must not ride into Sentry's `thrown`.
       reportSentryError(
         new Error(`Razorpay ${eventType} payload failed schema validation`),
         {
@@ -510,18 +611,14 @@ export async function processRazorpayWebhookEvent(
       });
     }
   } finally {
-    // #813/#812 — on a defer, leave the row processed=false/error=null so the
-    // stuck-event sweeper re-drives it once the awaited payment lands.
     if (deferred) {
-      // #1356 6.2 — that "leave it alone" is deliberately indistinguishable
-      // from "crashed before recording anything", which is exactly why a
-      // permanently-deferring event stayed invisible until the 168h give-up cap
-      // fired. Counting the deferrals is the only mark this path leaves, and it
-      // is what the sweeper alerts on. updateMany, not update, so a row that
-      // was archived between dispatch and here cannot throw inside a `finally`.
       await prisma.webhookEvent
         .updateMany({
-          where: { eventId },
+          where: {
+            eventId,
+            processed: false,
+            ...(claim ? { claimedAt: claim.claimedAt } : {}),
+          },
           data: { deferCount: { increment: 1 } },
         })
         .catch(() => {});

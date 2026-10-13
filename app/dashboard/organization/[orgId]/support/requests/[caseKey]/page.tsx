@@ -22,7 +22,10 @@ export default async function OrgSupportRequestPage({
     params,
     searchParams,
   ]);
-  const access = await requireOrgAccess(orgId, { allowSuspended: true });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    allowSuspended: true,
+  });
   if (access.error) notFound();
   const base = `/dashboard/organization/${orgId}`;
   // The org Support page lists requests only for those who may triage them;

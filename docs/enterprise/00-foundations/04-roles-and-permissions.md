@@ -414,7 +414,7 @@ member flow.
 ## LEARNER ↔ EXPERT is disjoint
 
 LEARNER and EXPERT are treated as disjoint roles on a single
-`Membership`. The server refuses `PATCH /members/[memberId]` and a SCIM reprovision
+`Membership`. The server refuses `PATCH /members/[memberId]`
 when the requested transition is `LEARNER → EXPERT` or `EXPERT → LEARNER`.
 The policy lives in
 `lib/enterprise/role-transitions.ts::isBlockedRoleTransition`, which the
@@ -481,7 +481,7 @@ lazy-create path as a separately authorized provisioning channel.
 
 ### Role changes and removal go through one guard (#1854)
 
-Every role and status move, from the dashboard, from SCIM and from bulk
+Every role and status move, from the dashboard and from bulk
 import, now goes through the shared guard in
 `lib/enterprise/membership-guards.ts`. Operator roles switch freely
 within the grant rules above. A LEARNER or EXPERT who already has
@@ -501,12 +501,7 @@ member's email, and the route receives it as `?force=true`; live seats
 then close at once and the audit row records the forced removal and the
 obligations it overrode.
 
-SCIM provisioning acts with OWNER authority, so it may manage every role,
-but it is fully guarded. It uses the same status compare-and-set, writes
-an audit row, bumps the member's session, releases seats on suspension,
-cannot suspend the last OWNER, and can never revive a REMOVED or ERASED
-membership; a guard refusal answers the identity provider with a SCIM
-conflict rather than a 500. A member created by SSO or SCIM has not
+A member created by SSO JIT has not
 agreed to the sign-up terms, so the org dashboard shows a first sign-in
 consent step (`JoinConsentGate`) to a member with no core-processing
 consent record at all, and an invitation accepted by such an account

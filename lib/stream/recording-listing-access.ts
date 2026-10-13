@@ -60,71 +60,6 @@ export function resolveListingPlan(
 }
 
 // ---------------------------------------------------------------------------
-// Storage-policy resolution — used by the transfer route AND by
-// handleRecordingReady's premium kick. Covers ALL FOUR plan arms because any
-// appointment type can carry a Meeting.
-// ---------------------------------------------------------------------------
-
-const storagePolicyPlanSelect = {
-  consultantProfileId: true,
-  recordingStoragePolicy: true,
-} satisfies Prisma.ConsultationPlanSelect;
-
-export const appointmentStoragePolicySelect = {
-  consultation: {
-    select: {
-      consultationPlan: { select: storagePolicyPlanSelect },
-    },
-  },
-  subscription: {
-    select: {
-      subscriptionPlan: { select: storagePolicyPlanSelect },
-    },
-  },
-  webinar: {
-    select: {
-      webinarPlan: { select: storagePolicyPlanSelect },
-    },
-  },
-  class: {
-    select: {
-      classPlan: { select: storagePolicyPlanSelect },
-    },
-  },
-} satisfies Prisma.AppointmentSelect;
-
-interface PolicyArm {
-  consultantProfileId: string | null;
-  recordingStoragePolicy: string;
-}
-
-interface AppointmentWithAllPlans {
-  consultation?: { consultationPlan: PolicyArm | null } | null;
-  subscription?: { subscriptionPlan: PolicyArm | null } | null;
-  webinar?: { webinarPlan: PolicyArm | null } | null;
-  class?: { classPlan: PolicyArm | null } | null;
-}
-
-/**
- * The effective RecordingStoragePolicy for an appointment, and the owning
- * consultant across any arm. Defaults to STREAM_ONLY when no plan arm matches
- * (fail-closed: unknown provenance never earns permanent storage).
- */
-export function resolveAppointmentStoragePolicy(
-  appointment: AppointmentWithAllPlans,
-): { policy: string; ownerProfileId: string | null } {
-  const plan =
-    appointment.consultation?.consultationPlan ??
-    appointment.subscription?.subscriptionPlan ??
-    appointment.webinar?.webinarPlan ??
-    appointment.class?.classPlan;
-  return {
-    policy: plan?.recordingStoragePolicy ?? "STREAM_ONLY",
-    ownerProfileId: plan?.consultantProfileId ?? null,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Shared route loader — the consultant-profile lookup + recording fetch +
 // ownership resolution scaffold that publish/preview/purchase each used to
 // inline (Sonar flagged the copies; duplicated authz is how endpoints drift).
@@ -250,43 +185,24 @@ export async function loadOwnedListingRecording(
 // shared this 24-line preamble verbatim (Sonar duplication block).
 // ---------------------------------------------------------------------------
 
-import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 
 export type OwnedRecordingGuard =
   | { ok: true; loaded: Extract<OwnedRecordingLoad, { status: "ok" }> }
-  | { ok: false; response: NextResponse };
+  | { ok: false; code: "UNAUTHORIZED" | "NOT_FOUND" | "FORBIDDEN" };
 
 export async function guardOwnedListingRecording(
   recordingId: string,
 ): Promise<OwnedRecordingGuard> {
-  const session = await getSession(true);
-  if (!session?.user?.id) {
-    return {
-      ok: false,
-      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
-    };
-  }
+  const session = await getSession();
+  if (!session?.user?.id) return { ok: false, code: "UNAUTHORIZED" };
 
   const loaded = await loadOwnedListingRecording(
     recordingId,
     session.user.consultantProfileId,
   );
-  if (loaded.status === "not_found") {
-    return {
-      ok: false,
-      response: NextResponse.json(
-        { error: "Recording not found" },
-        { status: 404 },
-      ),
-    };
-  }
-  if (loaded.status === "forbidden") {
-    return {
-      ok: false,
-      response: NextResponse.json({ error: "Not authorized" }, { status: 403 }),
-    };
-  }
+  if (loaded.status === "not_found") return { ok: false, code: "NOT_FOUND" };
+  if (loaded.status === "forbidden") return { ok: false, code: "FORBIDDEN" };
   return { ok: true, loaded };
 }
 

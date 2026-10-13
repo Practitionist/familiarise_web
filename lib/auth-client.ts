@@ -1,8 +1,13 @@
 import { createAuthClient } from "better-auth/react";
-import { customSessionClient } from "better-auth/client/plugins";
+import {
+  customSessionClient,
+  emailOTPClient,
+  twoFactorClient,
+} from "better-auth/client/plugins";
 import { ssoClient } from "@better-auth/sso/client";
+import { passkeyClient } from "@better-auth/passkey/client";
 import type { auth } from "@/lib/auth";
-import { forgetAuthState } from "@/lib/auth-broadcast";
+import { forgetAuthState } from "@/lib/auth-remembered";
 import { clearSentryIdentity } from "@/lib/observability/identity";
 
 export const authClient = createAuthClient({
@@ -13,11 +18,29 @@ export const authClient = createAuthClient({
   // code_verifier/code_challenge pair and persists the verifier so the
   // callback can validate it. A raw POST to /api/auth/sign-in/sso would
   // skip PKCE entirely and break Auth0 / Okta OIDC / Azure AD OIDC flows.
-  plugins: [customSessionClient<typeof auth>(), ssoClient()],
+  // `twoFactorClient` mirrors the server-side `twoFactor()` plugin and exposes
+  // `authClient.twoFactor.*`. Without it the plugin's endpoints exist on the
+  // server but are unreachable from the browser, so `twoFactorEnabled` can
+  // never be flipped from false — which would make the mandatory-2FA gate in
+  // `lib/auth-helpers.ts` a one-way door. It is registered unconditionally
+  // rather than behind a capability check: it adds no cookie and no
+  // interceptor, and gating it would mean a component has to guess whether the
+  // operator is staff before it can render the enrolment form.
+  // `passkeyClient` exposes operator passkey sign-in and management; the
+  // server refuses registration for anyone but an enrolled operator.
+  plugins: [
+    customSessionClient<typeof auth>(),
+    ssoClient(),
+    twoFactorClient(),
+    passkeyClient(),
+    emailOTPClient(),
+  ],
+  // No `sessionOptions.refetchInterval`: BetterAuth's poll cannot skip hidden
+  // tabs and re-renders every consumer on each tick. AuthSyncProvider
+  // re-checks on tab focus, and server guards read the database per request.
 });
 
-export const { signIn, signUp, useSession, getSession, sendVerificationEmail } =
-  authClient;
+export const { signIn, signUp, useSession, getSession, emailOtp } = authClient;
 
 /**
  * `signOut` is wrapped so the navbar's remembered auth state (name + avatar in

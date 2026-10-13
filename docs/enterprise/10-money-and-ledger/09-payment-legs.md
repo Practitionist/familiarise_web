@@ -66,7 +66,7 @@ flowchart LR
   LIC -. "no money moves" .-> X[" "]
 ```
 
-`earnings-service.ts` sums the legs by source and emits one debit per non-zero bucket; `LICENSE` legs (`amountPaise = 0`) post nothing. The credit side is the fee/payable/GST split ([§3 of booking → earnings](05-booking-to-earnings.md)).
+`earnings-service.ts` sums the legs by source and emits one debit per non-zero bucket; `LICENSE` legs (`amountPaise = 0`) post nothing, and a licensed booking's `taxAmount` is 0 because the licence invoice books the GST. The credit side is the fee/payable/GST split ([§3 of booking → earnings](05-booking-to-earnings.md)).
 
 | Source | Writer | Trigger | Booking debit |
 |--------|--------|---------|---------------|

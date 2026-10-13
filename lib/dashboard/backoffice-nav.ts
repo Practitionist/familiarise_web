@@ -9,6 +9,7 @@ import {
   Coins,
   CreditCard,
   FileWarning,
+  Gift,
   Home,
   Inbox,
   Landmark,
@@ -22,6 +23,7 @@ import {
   ScrollText,
   Shield,
   Star,
+  UserPlus,
   Users,
   Wrench,
   Target,
@@ -162,6 +164,13 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           surface: "appointments.manage",
         },
         { name: "Users", icon: Users, path: "users", surface: "users.read" },
+        // #1927 — the operator roster and the invitation door. It exists as a
+        // nav item rather than a tab inside `users` because the two answer
+        // different questions: `users` is "everybody on the platform", this is
+        // "everybody who can reach the console". Gated on `team.read` (an
+        // operator surface) rather than `users.moderate`, so staff can see the
+        // roster; the ACTIONS inside are admin-only and the client hides them.
+        { name: "Team", icon: UserPlus, path: "team", surface: "team.read" },
         // #1527 — one queue for experts and organizations; the document
         // review log is its Documents tab.
         {
@@ -188,6 +197,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: RefreshCw,
           path: "subscriptions",
           surface: "subscriptions.read",
+        },
+        {
+          name: "Referral credits",
+          icon: Gift,
+          path: "referral-credits",
+          surface: "referrals.read",
         },
         {
           name: "TDS",

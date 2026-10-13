@@ -4,7 +4,7 @@ import { MessageSquareIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   Channel,
-  MessageInput,
+  MessageComposer,
   MessageList,
   VirtualizedMessageList,
   Window,
@@ -105,7 +105,7 @@ export const ChatContainer = () => {
                 <span>Chat is temporarily read-only during maintenance.</span>
               </div>
             ) : (
-              <MessageInput focus />
+              <MessageComposer focus />
             )}
           </Window>
         </Channel>

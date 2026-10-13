@@ -35,7 +35,6 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
   __esModule: true,
   razorpayClient: { payments: { fetch: jest.fn() } },
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null }));
 jest.mock("../../lib/novu/service", () => ({
   notifyRefundProcessed: jest.fn().mockResolvedValue(undefined),
   notifyRefundFailed: jest.fn(),
@@ -72,8 +71,12 @@ jest.mock("../../lib/payments/webhooks/handlers", () => ({
 const applyRefundCascade = jest.fn().mockResolvedValue({});
 jest.mock("../../lib/payments/operations/refund", () => ({
   applyRefundCascade: (...a: unknown[]) => applyRefundCascade(...a),
-  mintInvoiceRefundCreditNote: jest.fn(),
+  mintInvoiceRefundCreditNote: jest
+    .fn()
+    .mockResolvedValue({ creditNoteId: null }),
   mintRefundCreditNote: jest.fn(),
+  refundMemberOverageSidePayment: jest.fn(),
+  remainingOrgInvoiceCreditPaise: jest.fn().mockResolvedValue(100_000),
 }));
 jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: jest.fn().mockResolvedValue({ created: true }),
@@ -110,6 +113,7 @@ function resetStore() {
 
 function txStub() {
   return {
+    user: { findMany: jest.fn(async () => []) },
     payment: {
       // #1353 — the handler resolves by EITHER id now, so the stub has to be a
       // real matcher rather than a constant: a test that returns the same row
@@ -133,6 +137,7 @@ function txStub() {
     organizationInvoice: {
       findFirst: jest.fn(async () => null),
       update: jest.fn(async () => ({})),
+      updateMany: jest.fn(async () => ({ count: 1 })),
     },
     ledgerTransaction: { findUnique: jest.fn(async () => null) },
     billingAccount: {
@@ -158,6 +163,22 @@ function txStub() {
         if (row) Object.assign(row, data);
         return row ?? {};
       }),
+      updateMany: jest.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string; status: RefundStatus };
+          data: Partial<RefundRow>;
+        }) => {
+          const row = store.refunds.find(
+            (r) => r.id === where.id && r.status === where.status,
+          );
+          if (!row) return { count: 0 };
+          Object.assign(row, data);
+          return { count: 1 };
+        },
+      ),
     },
   };
 }
@@ -198,7 +219,6 @@ describe("handleRefundCreated status transition guard", () => {
       10_000,
       "INR",
       "pending", // raw gateway string from a late/out-of-order refund.created
-      "RAZORPAY",
     );
 
     // No update may run at all — the row must stay settled.
@@ -215,14 +235,7 @@ describe("handleRefundCreated status transition guard", () => {
       paymentId: "pay_1",
     });
 
-    await handleRefundCreated(
-      "rfnd_1",
-      "order_1",
-      10_000,
-      "INR",
-      "processed",
-      "RAZORPAY",
-    );
+    await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "processed");
 
     expect(store.refunds[0].status).toBe("FAILED");
     expect(applyRefundCascade).not.toHaveBeenCalled();
@@ -236,14 +249,7 @@ describe("handleRefundCreated status transition guard", () => {
       paymentId: "pay_1",
     });
 
-    await handleRefundCreated(
-      "rfnd_1",
-      "order_1",
-      10_000,
-      "INR",
-      "processed",
-      "RAZORPAY",
-    );
+    await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "processed");
 
     expect(store.refunds[0].status).toBe("SUCCEEDED");
     expect(applyRefundCascade).toHaveBeenCalledTimes(1);
@@ -275,7 +281,6 @@ describe("handleRefundCreated status transition guard", () => {
       10_000,
       "INR",
       "processed",
-      "RAZORPAY",
       "pay_gateway_1",
     );
 
@@ -292,14 +297,7 @@ describe("handleRefundCreated status transition guard", () => {
       paymentId: "pay_1",
     });
 
-    await handleRefundCreated(
-      "rfnd_1",
-      "order_1",
-      10_000,
-      "INR",
-      "pending",
-      "RAZORPAY",
-    );
+    await handleRefundCreated("rfnd_1", "order_1", 10_000, "INR", "pending");
 
     expect(applyRefundCascade).not.toHaveBeenCalled();
     expect(store.refunds).toHaveLength(1);
@@ -341,7 +339,6 @@ describe("an invoice refund whose wallet credit fails aborts the transaction", (
         10_000,
         "INR",
         "processed",
-        "RAZORPAY",
         "pay_inv_1",
       ),
     ).rejects.toThrow("wallet cache write failed");

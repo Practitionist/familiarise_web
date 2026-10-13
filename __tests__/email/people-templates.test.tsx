@@ -3,19 +3,16 @@
  */
 
 /**
- * #1653 — the six people templates render inside the shared layout with
- * their key interpolations and their CTA href in the HTML. The suspension,
- * ban and SSO notices carry the required-notice footer sentence and no
- * unsubscribe link; the SSO subject switches on severity.
+ * #1653 — the five people templates render inside the shared layout with
+ * their key interpolations and their CTA href in the HTML. The suspension
+ * and ban notices carry the required-notice footer sentence and no
+ * unsubscribe link.
  */
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import AccountBannedEmail from "@/emails/account/AccountBannedEmail";
 import AccountSuspendedEmail from "@/emails/account/AccountSuspendedEmail";
-import OrgSsoCertExpiringEmail, {
-  orgSsoCertExpiringSubject,
-} from "@/emails/organizations/OrgSsoCertExpiringEmail";
 import NewReviewEmail from "@/emails/reviews/NewReviewEmail";
 import SupportTicketResponseEmail from "@/emails/support/SupportTicketResponseEmail";
 import SupportTicketUpdateEmail from "@/emails/support/SupportTicketUpdateEmail";
@@ -101,40 +98,6 @@ it("banned: required notice, permanent, no cancelled line at zero", () => {
   expect(out).toContain('href="mailto:support@familiarisenow.com"');
   expect(out).toContain(REQUIRED);
   expect(out).not.toContain("Unsubscribe");
-});
-
-it("sso certificate: EXPIRED versus WARN subject, required notice, update CTA", () => {
-  const base = {
-    orgName: "Acme",
-    providerName: "okta-acme",
-    expiresAtText: "Tue, 22 Sep 2026 at 4:30 PM IST",
-    updateUrl: "https://app.test/dashboard/organization/org_1/settings/sso",
-  };
-  expect(
-    orgSsoCertExpiringSubject({
-      orgName: "Acme",
-      severity: "WARN",
-      daysRemaining: 30,
-    }),
-  ).toBe("SSO certificate for Acme expires in 30 days");
-  expect(
-    orgSsoCertExpiringSubject({ orgName: "Acme", severity: "EXPIRED" }),
-  ).toBe("SSO certificate for Acme has expired");
-
-  const warn = html(
-    <OrgSsoCertExpiringEmail {...base} severity="WARN" daysRemaining={30} />,
-  );
-  expect(warn).toContain("SSO certificate for Acme expires in 30 days");
-  expect(warn).toContain("okta-acme");
-  expect(warn).toContain(`href="${base.updateUrl}"`);
-  expect(warn).toContain(REQUIRED);
-  expect(warn).not.toContain("Unsubscribe");
-
-  const expired = html(
-    <OrgSsoCertExpiringEmail {...base} severity="EXPIRED" daysRemaining={-1} />,
-  );
-  expect(expired).toContain("SSO certificate for Acme has expired");
-  expect(expired).toContain("can no longer sign in");
 });
 
 it("new review: names the reviewer, the rating, the excerpt and the CTA", () => {

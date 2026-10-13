@@ -24,6 +24,57 @@ const DAY_NAMES: DayOfWeek[] = [
   "SUNDAY",
 ];
 
+function formatShortSlotDate(iso: string | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function getBookedSlotDate(
+  slot: PickerInterval,
+  rawDaySlots: PickerInterval[],
+): string {
+  const slotStartMs = slot.startsAt
+    ? new Date(slot.startsAt).getTime()
+    : Number.NaN;
+  const slotEndMs = slot.endsAt ? new Date(slot.endsAt).getTime() : slotStartMs;
+  const underlying =
+    !Number.isNaN(slotStartMs) && rawDaySlots.length > 0
+      ? rawDaySlots.filter((raw) => {
+          if (!raw.startsAt) return false;
+          const rawStart = new Date(raw.startsAt).getTime();
+          const rawEnd = raw.endsAt
+            ? new Date(raw.endsAt).getTime()
+            : rawStart;
+          return rawStart >= slotStartMs && rawEnd <= slotEndMs;
+        })
+      : [];
+
+  if (underlying.length > 0) {
+    const allBooked = underlying.every(
+      (raw) =>
+        raw.bookingStatus === "fully-booked" ||
+        raw.bookingStatus === "partially-booked" ||
+        raw.isAllocated,
+    );
+    if (!allBooked) return "";
+    const uniqueDates = Array.from(
+      new Set(
+        underlying
+          .map((raw) => formatShortSlotDate(raw.startsAt))
+          .filter(Boolean),
+      ),
+    );
+    return uniqueDates.length === 1 ? uniqueDates[0] : "";
+  }
+
+  return formatShortSlotDate(slot.startsAt);
+}
+
 export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -52,16 +103,6 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
     }, 0);
   }, [mergedSlotsByDay]);
 
-  // Get the date for booked slots in user timezone
-  const getBookedSlotDate = (slot: PickerInterval) => {
-    if (!slot.startsAt) return "";
-    const date = new Date(slot.startsAt);
-    return date.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    });
-  };
-
   return (
     <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-6 backdrop-blur-sm">
       {/* Glossy overlay effect */}
@@ -71,6 +112,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
         <div className="grid grid-cols-7 gap-3">
           {DAY_NAMES.map((day) => {
             const allSlots = mergedSlotsByDay[day];
+            const rawDaySlots = slotsByDay[day] || [];
             const visibleSlots = isExpanded
               ? allSlots
               : allSlots.slice(0, VISIBLE_SLOT_COUNT);
@@ -93,7 +135,7 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                         bookingStatus === "partially-booked";
                       const bookedDate =
                         isFullyBooked || isPartiallyBooked
-                          ? getBookedSlotDate(slot)
+                          ? getBookedSlotDate(slot, rawDaySlots)
                           : "";
 
                       return (
@@ -125,15 +167,18 @@ export function WeeklyAvailability({ slotsByDay }: WeeklyAvailabilityProps) {
                             {isFullyBooked && (
                               <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
                                 Booked
-                                <br />
-                                {bookedDate && `(${bookedDate})`}
+                                {bookedDate && (
+                                  <>
+                                    <br />({bookedDate})
+                                  </>
+                                )}
                               </div>
                             )}
                             {isPartiallyBooked && (
                               <div className="text-[10px] font-semibold opacity-90 text-center leading-tight">
                                 Partially
                                 <br />
-                                Booked {bookedDate && `(${bookedDate})`}
+                                Booked{bookedDate ? ` (${bookedDate})` : ""}
                               </div>
                             )}
                           </div>

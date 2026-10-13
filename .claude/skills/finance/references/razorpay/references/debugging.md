@@ -1,335 +1,90 @@
-# Razorpay Debugging Guide
-
-Common issues and their solutions, organized by symptom.
-
-## Webhook Not Firing
-
-**Check these in order:**
-
-1. **Webhook URL registered**: Dashboard → Account & Settings → Webhooks → Verify URL is correct
-2. **HTTPS required**: Razorpay won't call HTTP endpoints (except localhost in test mode)
-3. **Events enabled**: Check which events are checked in webhook settings
-4. **Response timeout**: Razorpay expects 2xx within 5 seconds. If your handler takes longer, it times out and retries.
-5. **Check webhook logs**: Dashboard → Developers → Webhooks → select the webhook → View delivery attempts
-
-**Test locally with ngrok:**
-```bash
-ngrok http 3000
-# Copy the https URL → Register as webhook URL in Razorpay Dashboard
-```
-
-## Signature Verification Failing
-
-**Most common causes:**
-
-1. **Using wrong secret**: Webhook signature uses `RAZORPAY_WEBHOOK_SECRET`. Payment verification uses `RAZORPAY_SECRET`. They are DIFFERENT values.
-
-2. **Parsing body as JSON first**: Signature is computed on the RAW string body. If you parse to JSON and re-stringify, whitespace changes break the signature.
-   ```typescript
-   // WRONG
-   const body = await request.json();
-   const raw = JSON.stringify(body);  // May differ from original!
-
-   // CORRECT
-   const raw = await request.text();
-   const body = JSON.parse(raw);
-   ```
-
-3. **Invoice signature format wrong**: Order flow and invoice flow have different signature payloads:
-   ```
-   Order:   HMAC(secret, "order_id|payment_id")
-   Invoice: HMAC(secret, "invoice_id|receipt|status|payment_id")
-   ```
-
-4. **Optional fields undefined**: Invoice `receipt` and `status` may be undefined. Use `?? ""`:
-   ```typescript
-   const payload = `${invoiceId}|${receipt ?? ""}|${status ?? ""}|${paymentId}`;
-   ```
-
-## Duplicate Webhook Events
-
-**Symptom**: Same subscription activated twice, duplicate GST invoices, double access grants.
-
-**Root cause**: Razorpay uses at-least-once delivery. If your handler doesn't return 200 within 5 seconds, it retries.
-
-**Fix**: Track `lastEventId` in your subscription table and skip duplicates:
-```typescript
-const eventId = request.headers.get("x-razorpay-event-id") || event.id;
-if (subscription.lastEventId === eventId) {
-  return new Response("Already processed", { status: 200 });
-}
-```
-
-## Subscription Stuck in "created" Status
-
-**Symptom**: Subscription created but never activates.
-
-**Cause**: User opened checkout but never completed payment.
-
-**Fix**: Implement stale pending cleanup:
-```typescript
-// Before creating new subscription, check for stale ones
-const existing = await getSubscriptionByUserId(userId);
-if (existing?.status === "created" && isOlderThan1Hour(existing.createdAt)) {
-  // Cancel stale subscription on Razorpay
-  await razorpay.subscriptions.cancel(existing.razorpaySubscriptionId, false);
-}
-```
-
-## `subscriptions.cancel()` TypeScript Error
-
-**Symptom**: TypeScript complains about second parameter type.
-
-**Fix**: On the pinned SDK (`razorpay@2.9.6`) the second parameter is a POSITIONAL BOOLEAN (`cancelAtCycleEnd`), not an options object:
-```typescript
-// WRONG
-await razorpay.subscriptions.cancel(id, { cancel_at_cycle_end: true });
-
-// CORRECT
-await razorpay.subscriptions.cancel(id, true);  // cancel at cycle end
-await razorpay.subscriptions.cancel(id, false); // cancel immediately
-```
-
-**Why the object form is dangerous on 2.9.6**: the implementation is `cancelAtCycleEnd && { data: { cancel_at_cycle_end: 1 } }`. An object is always truthy, so `{ cancel_at_cycle_end: false }` does NOT cancel immediately — it silently cancels at cycle end (a foot-gun inversion of your intent). The object-with-`true` form happens to behave correctly by accident, but the object form is still wrong here. This is version-dependent: newer Razorpay SDK docs show an options-object form, so confirm the installed version before switching shapes.
-
-## `customers.create()` TypeScript Error with `fail_existing`
-
-**Symptom**: TypeScript expects `0 | 1` but won't accept the number.
-
-**Fix**: Explicit cast (version-dependent):
-```typescript
-await razorpay.customers.create({
-  email: user.email,
-  fail_existing: 0 as 0 | 1,  // Upsert — return existing customer
-});
-```
-
-The cast is only needed on SDK versions whose typings declare `fail_existing` as `0 | 1` (a bare numeric literal then trips `tsc`). Other versions type it loosely and need no cast — check the installed `.d.ts` before adding the cast.
-
-## Payment Succeeds But Access Not Granted
-
-**This is the #1 production issue. Debug in this order:**
-
-1. **Check auto-capture setting**: Dashboard → Account & Settings → Payment Capture (older dashboards: Settings → Payments → "Automatic capture delay"). If set to manual, payments stay in `authorized` state and `payment.captured` never fires. **Fix: enable automatic capture in Dashboard.** Auto-capture is ON by default for new accounts — check whether it was disabled.
-2. **Check event type**: Were you looking at `subscription.authenticated` or `subscription.activated`? Only `activated` means money was charged. `authenticated` just means card was verified — NO payment.
-3. **Check webhook delivery**: Dashboard → Developers → Webhooks → select the webhook → Delivery attempts. See if Razorpay even tried to send.
-4. **Webhook timeout**: Your handler must return 200 within 5 seconds. If it takes 6 seconds, Razorpay marks it failed and retries. Check your handler latency.
-5. **Check idempotency**: Is `lastEventId` causing a skip? A previous delivery may have succeeded in Razorpay's view but failed to commit in your DB.
-6. **Check signature**: Was 400 returned? Means wrong secret or parsed JSON body.
-7. **Payment succeeded but webhook never arrived**: usually the webhook URL was down or DNS failed. Reach for these in order:
-   - **The sweeper** — `scripts/cleanup/sweep-stuck-webhook-events.ts` re-drives every `WebhookEvent` row still at `processed = false` through the same dispatcher. This covers the common case: the event arrived, the handler died mid-way.
-   - **API reconciliation** — if the event never reached us at all there is no row to sweep, so read the truth back from Razorpay:
-   ```typescript
-   const order = await razorpayClient.orders.fetch(payment.paymentIntent);
-   if (order.status === "paid" && payment.paymentStatus !== "SUCCEEDED") {
-     // app/api/checkout/verify/route.ts already does exactly this, guarded by a
-     // conditional updateMany on PENDING so it cannot race the webhook.
-   }
-   ```
-   - **Support-ticket replay**, last: there is no self-serve replay button. Dashboard → Help → Technical Support → "Issue regarding Webhooks/API", one event per request, event ≤15 days old, and only if the webhook was enabled when it fired. See `webhooks.md`.
-
-## Auto-Capture Is Silently Off
-
-**Symptom**: Payments show as `authorized` in Razorpay Dashboard but never move to `captured`. Webhooks like `payment.captured` never fire.
-
-**Root cause**: Dashboard → Account & Settings → Payment Capture (older dashboards: Settings → Payments → "Automatic capture delay") is set to manual or a delay. Auto-capture is ON by default, but it can have been switched off — and authorized-but-uncaptured payments auto-refund after the configured window (default ~3 days).
-
-**Fix**: Enable automatic capture in Dashboard. Or capture manually via API:
-```typescript
-await razorpay.payments.capture(paymentId, amount, "INR");
-```
-
-**Why this is dangerous**: Everything works in test mode (test payments auto-capture regardless of this setting). You only discover this in production when real customers pay but never get access.
-
-## Edge Runtime / Vercel Edge Functions Break Crypto
-
-**Symptom**: Webhook signature verification fails on Vercel Edge Functions or Cloudflare Workers with "crypto.createHmac is not a function".
-
-**Root cause**: Edge runtimes don't support Node.js `crypto` module. They use Web Crypto API instead.
-
-**Fix**: Use Web Crypto API for edge runtimes:
-```typescript
-// Works in Edge Runtime (Vercel Edge, Cloudflare Workers)
-async function verifyWebhookSignatureEdge(
-  rawBody: string,
-  signature: string,
-  secret: string
-): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(rawBody));
-  const expected = Array.from(new Uint8Array(sig))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("");
-
-  // Timing-safe comparison (no crypto.timingSafeEqual in edge)
-  if (expected.length !== signature.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < expected.length; i++) {
-    mismatch |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
-  }
-  return mismatch === 0;
-}
-```
-
-**Better fix**: Don't use Edge Runtime for webhook routes. In Next.js, ensure your webhook route uses Node.js runtime:
-```typescript
-// app/api/webhooks/razorpay/route.ts
-export const runtime = "nodejs"; // Force Node.js runtime — NOT edge
-```
-
-## Plan Change Not Working
-
-**Debug steps:**
-
-1. **Check `notes.replacesSubscription`**: Is the old subscription ID in the new subscription's notes?
-2. **Check webhook**: Is `subscription.activated` being received for the new subscription?
-3. **Check auto-creation**: If subscription isn't in DB, does your webhook handler auto-create from notes?
-4. **Check old sub cancellation**: Is `razorpay.subscriptions.cancel(oldId, true)` being called in the webhook?
-
-## Razorpay SDK Quirks Reference
-
-| Quirk | Workaround |
-|-------|-----------|
-| `cancel(id, boolean)` typed as object | Use `true` or `false` directly |
-| `fail_existing: 0` type mismatch | Cast: `0 as 0 \| 1` |
-| `notify_info` fails with empty object | Only include if fields are present |
-| `contact` field rejects empty string | Omit field entirely if no phone |
-| period-end field name | Use `current_end` (Unix s), `end_at` as fallback; `current_period_end` is a Stripe-ism, not a Razorpay field |
-| Webhook event ID in header vs payload | Prefer `x-razorpay-event-id` header |
-| Error shape varies by endpoint | Check both `.error.code` and `.statusCode` |
-
-## Quick Diagnostic Commands
-
-```bash
-# Check if webhook endpoint is reachable
-curl -X POST https://your-app.com/api/webhooks/razorpay \
-  -H "Content-Type: application/json" \
-  -d '{"test": true}'
-# Should return 400 (missing signature), NOT 404 or 500
-
-# Verify Razorpay credentials work
-curl -u rzp_test_key:rzp_test_secret \
-  https://api.razorpay.com/v1/plans
-# Should return plan list, NOT 401
-
-# Check subscription status
-curl -u rzp_test_key:rzp_test_secret \
-  https://api.razorpay.com/v1/subscriptions/sub_xxxxx
-```
-
-## Mock Webhook Payloads for Local Testing
-
-Use these sample payloads to test your webhook handler locally without triggering real Razorpay events.
-
-### subscription.activated
-
-Sent when a new subscription is successfully activated after first payment.
-
-```json
-{
-  "event": "subscription.activated",
-  "payload": {
-    "subscription": {
-      "entity": {
-        "id": "sub_test123",
-        "plan_id": "plan_test456",
-        "customer_id": "cust_test789",
-        "status": "active",
-        "current_end": 1700000000,
-        "notes": { "userId": "user_123", "planKey": "pro_monthly" }
-      }
-    },
-    "payment": {
-      "entity": {
-        "id": "pay_test111",
-        "amount": 99900,
-        "currency": "INR",
-        "subscription_id": "sub_test123"
-      }
-    }
-  }
-}
-```
-
-### subscription.charged
-
-Sent on each successful renewal payment.
-
-```json
-{
-  "event": "subscription.charged",
-  "payload": {
-    "subscription": {
-      "entity": {
-        "id": "sub_test123",
-        "plan_id": "plan_test456",
-        "customer_id": "cust_test789",
-        "status": "active",
-        "current_end": 1702592000,
-        "paid_count": 2,
-        "notes": { "userId": "user_123", "planKey": "pro_monthly" }
-      }
-    },
-    "payment": {
-      "entity": {
-        "id": "pay_test222",
-        "amount": 99900,
-        "currency": "INR",
-        "subscription_id": "sub_test123",
-        "method": "card"
-      }
-    }
-  }
-}
-```
-
-### payment.failed
-
-Sent when a payment attempt fails (e.g., insufficient funds, card declined).
-
-```json
-{
-  "event": "payment.failed",
-  "payload": {
-    "payment": {
-      "entity": {
-        "id": "pay_test333",
-        "amount": 99900,
-        "currency": "INR",
-        "status": "failed",
-        "subscription_id": "sub_test123",
-        "error_code": "BAD_REQUEST_ERROR",
-        "error_description": "Payment processing failed because of insufficient balance",
-        "error_reason": "insufficient_funds"
-      }
-    }
-  }
-}
-```
-
-### Testing with curl
-
-```bash
-# Test webhook locally (skip signature verification in test mode or use a known test secret)
-curl -X POST http://localhost:3000/api/webhooks/razorpay \
-  -H "Content-Type: application/json" \
-  -H "x-razorpay-event-id: evt_test_001" \
-  -H "x-razorpay-signature: <generate with your webhook secret>" \
-  -d '<payload>'
-```
-
-### Generating a test signature
-
-```bash
-# Generate test signature
-echo -n '<raw-json-payload>' | openssl dgst -sha256 -hmac "your_webhook_secret"
-```
-
-Replace `<raw-json-payload>` with the exact JSON string you pass as the `-d` body (no trailing newline). Use the hex output as the `x-razorpay-signature` header value.
+# Razorpay Debugging Runbooks (Familiarise Platform)
+
+Production and staging troubleshooting runbooks for our Razorpay + RazorpayX integration.
+
+---
+
+## Runbook 1: Webhook Signature Verification Failing (`400 Invalid signature`)
+
+### Symptoms
+- Razorpay Dashboard (**Developers → Webhooks → Logs**) shows HTTP `400` responses with `{"error":"Invalid signature"}`.
+- `SystemEvent` table shows `WARN` rows with `"Razorpay webhook HMAC verification failed"` or `"Razorpay webhook HMAC verification failed (RazorpayX secret)"`.
+
+### Checklist
+1. **Which event family is failing?**
+   - If `event` starts with `payout.` (`isPayoutEventName(body) === true`), `app/api/webhooks/razorpay/route.ts` tries `RAZORPAY_WEBHOOK_SECRET` (and `RAZORPAY_WEBHOOK_SECRET_PREVIOUS`) first, then falls back to `RAZORPAYX_WEBHOOK_SECRET`. Check that `RAZORPAYX_WEBHOOK_SECRET` matches the secret configured in **RazorpayX Dashboard → Settings → Webhooks**.
+   - If `event` is `payment.*`, `order.paid`, `refund.*`, or `payment.dispute.*`, **only** `RAZORPAY_WEBHOOK_SECRET` and `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` are tried (`RAZORPAYX_WEBHOOK_SECRET` is never accepted for non-payout events).
+2. **Did someone recently rotate `RAZORPAY_WEBHOOK_SECRET`?**
+   - Razorpay signs retried webhook events with the secret that was active **when the event originally fired**. Set `RAZORPAY_WEBHOOK_SECRET_PREVIOUS` to the old secret for 24 hours so in-flight retries verify cleanly (#1377).
+3. **Did someone paste `RAZORPAY_SECRET` (API Key Secret) into `RAZORPAY_WEBHOOK_SECRET`?**
+   - Webhook signatures use the Webhook Secret configured on the webhook endpoint, **not** `RAZORPAY_SECRET`.
+4. **Was the webhook auto-disabled after 24h of failures?**
+   - If an endpoint returns non-2xx or times out (>5s) for 24 consecutive hours, Razorpay disables the webhook and emails the Alert Email Address. Re-enable it in **Razorpay Dashboard → Developers → Webhooks** and run `scripts/payments/reconcile-payment-status.ts`, `scripts/refunds/reconcile-pending-refunds.ts`, and `scripts/disputes/reconcile-disputes.ts` to catch up on missed events.
+
+---
+
+## Runbook 2: Payment Succeeded in Modal, Booking Stuck in `"Confirming..."`
+
+### Symptoms
+- Buyer completed payment in `RazorpayCheckout.tsx`, landed on the confirmation poll screen, and `Payment.paymentStatus` is still `PENDING`.
+
+### Diagnosis Steps
+1. **Check `/api/checkout/verify-signature` outcome**:
+   - In [`app/api/checkout/verify-signature/route.ts`](../../../../../app/api/checkout/verify-signature/route.ts), after verifying `HMAC-SHA256(order_id|payment_id, RAZORPAY_SECRET)`, the route calls `razorpayClient.payments.fetch(razorpay_payment_id)`.
+   - If `gatewayPayment.status !== "captured"` (e.g., still `"authorized"` because of a capture delay), the route intentionally logs `"not captured — deferring to the webhook"` and returns `{ verified: true, pendingConfirmation: true }` without confirming the booking.
+2. **Check `WebhookEvent` table for `payment.captured:<pay_id>` or `order.paid:<order_id>`**:
+   - Look up `SELECT "eventId", "eventType", processed, error, "deferCount", "createdAt" FROM "WebhookEvent" WHERE "eventId" LIKE '%<order_id_or_pay_id>%';`
+   - If `processed = false` and `error` is non-null (and not prefixed with `permanent:`), `scripts/cleanup/sweep-stuck-webhook-events.ts` will re-drive `processRazorpayWebhookEvent`.
+3. **Check for Capture-Amount Parity Mismatch**:
+   - In `handlePaymentSuccess` (`lib/payments/webhooks/handlers.ts`), if `capturedAmountPaise !== payment.amount`, the booking is refused and flagged for review/auto-refund.
+4. **Run the Payment Status Reconciler**:
+   - `scripts/payments/reconcile-payment-status.ts` polls `GET /v1/orders/:id` and `GET /v1/orders/:id/payments` for `PENDING` payments older than 5 minutes and drives `routeCapturedPayment` directly.
+
+---
+
+## Runbook 3: Refund Stuck in `PENDING` or Deferred (`DeferSignal`)
+
+### Symptoms
+- `Refund.status` remains `PENDING` (either with `refundId = "pending_<uuid>"` or `refundId = "rfnd_..."`), or `WebhookEvent` shows `deferCount > 0` for `refund.created:<rfnd_id>`.
+
+### Diagnosis Steps
+1. **Case A — `WebhookEvent.deferCount > 0` (`DeferSignal`)**:
+   - `refund.created` or `refund.processed` arrived before `payment.captured` finished writing `Payment.gatewayPaymentId` / `Payment.paymentStatus = SUCCEEDED`, or `razorpayClient.payments.fetch(payment_id)` failed transiently.
+   - `scripts/cleanup/sweep-stuck-webhook-events.ts` automatically re-drives deferred events every tick until the parent `Payment` row is ready.
+2. **Case B — `Refund.refundId` starts with `pending_` (Phase 2 crash/timeout)**:
+   - Phase 1 reserved the `Refund` row, and `Refund.id` was sent as `X-Refund-Idempotency` and `notes.reservationId` in `postRefund` (`lib/payments/core/razorpay.ts`).
+   - `scripts/refunds/reconcile-pending-refunds.ts` (Pass 1) lists gateway refunds on the order, matches `metadata.reservationId === refund.id`, and binds the real `rfnd_...` ID (or retires the placeholder to `FAILED` after 24 hours if no gateway refund exists).
+3. **Case C — `Refund.refundId` is `rfnd_...` and `status = PENDING`**:
+   - Normal-speed Razorpay refunds (`speed: "normal"`) legitimately take **5–7 business days** to move from `"pending"` to `"processed"`.
+   - Pass 2 of `reconcile-pending-refunds.ts` polls `getRazorpayRefund(rfnd_id)` and **never** ages out a refund while Razorpay still reports `"pending"`.
+4. **Case D — `Refund.status = SUCCEEDED` but `cascadedAt IS NULL`**:
+   - Pass 3 (`redriveStrandedRefunds` in `reconcile-pending-refunds.ts`) automatically re-drives `applyRefundCascade` (up to 3 attempts) for any `SUCCEEDED` refund whose cascade transaction did not commit within 10 minutes.
+
+---
+
+## Runbook 4: Payout Stuck in `PROCESSING` or Failed With `RAZORPAYX_REQUEST_FAILED`
+
+### Symptoms
+- `ConsultantPayout` or `OrganizationPayout` is stuck in `APPROVED` / `PROCESSING`, or `providerPayoutId` is `null` after a submission timeout.
+
+### Diagnosis Steps
+1. **Why didn't a timeout mark the payout `FAILED`? (`#1846 N1`)**:
+   - In [`lib/payments/payouts/razorpay-payouts.ts`](../../../../../lib/payments/payouts/razorpay-payouts.ts), `isDefinitiveGatewayRejection(error)` returns `true` **only** for HTTP `4xx` responses other than `408`, `409`, and `429`.
+   - On a socket timeout, DNS error, `409`, `429`, or `5xx`, the payout may have been accepted by RazorpayX. Marking it `FAILED` immediately would release the earnings into the next batch under a new idempotency key and **pay the consultant twice**.
+2. **How the system recovers a lost submit reply**:
+   - Every `createPayout` call passes our internal payout row ID as `reference_id` and `boundPayoutIdempotencyKey(idempotencyKey)` (4–36 chars) in `X-Payout-Idempotency`.
+   - Either an inbound `payout.initiated` / `payout.processed` webhook matches via `reference_id`, or `findRazorpayPayoutByReference(payout.id)` (`GET /v1/payouts?account_number=...&reference_id=...`) in `scripts/payouts/handle-stuck-payouts.ts` links `providerPayoutId` (`pout_...`) and adopts its status.
+3. **Why did a payout stay in `processing` for days?**:
+   - Official RazorpayX docs note that `IMPS` and `UPI` payouts marked as **Deemed Success** by NPCI can stay in `processing` for up to **T+3 working days** before settling to `processed` or `reversed`.
+
+---
+
+## Runbook 5: Razorpay Circuit Breaker Open (`razorpay`)
+
+### Symptoms
+- Calls wrapped in `withRazorpaySdkTimeout` fail fast because the `razorpay` circuit breaker in [`lib/payments/core/razorpay.ts`](../../../../../lib/payments/core/razorpay.ts) is `OPEN`.
+
+### Key Facts
+- `shouldTripRazorpayCircuitBreaker` (`#697 INF-3`) **ignores all HTTP 4xx errors except `429`** (`BAD_REQUEST_ERROR` on an invalid order/refund ID or contact proves Razorpay is reachable and never trips the breaker).
+- The circuit breaker only trips on **HTTP 5xx**, **HTTP 429 (rate limit)**, or **30-second SDK timeouts / network errors**.
+- Check `await getRazorpayCircuitStatus()` or `https://status.razorpay.com` to confirm whether `api.razorpay.com` is experiencing an outage or rate-limiting our account.

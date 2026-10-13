@@ -43,14 +43,9 @@ export const positioningPayload = (plan: PositioningPlan = {}) => ({
 
 interface RecordingPlan {
   recordingEnabled?: boolean;
-  recordingStoragePolicy?: string;
 }
 
-/**
- * #1134 P1-6 — recording is an explicit per-plan opt-in on all four types;
- * both columns persist on every create/update path.
- */
+/** Recording is an explicit per-plan opt-in on all four types. */
 export const recordingPayload = (plan: RecordingPlan = {}) => ({
   recordingEnabled: plan.recordingEnabled ?? false,
-  recordingStoragePolicy: plan.recordingStoragePolicy ?? "STREAM_ONLY",
 });

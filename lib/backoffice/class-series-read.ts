@@ -7,7 +7,7 @@
 
 import prisma from "@/lib/prisma";
 import { seatLedgerFrom, seriesLedgerFrom } from "@/lib/booking/class-series";
-import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import type { ClassSeriesView } from "./class-series-types";
 
 export type { ClassSeriesView };

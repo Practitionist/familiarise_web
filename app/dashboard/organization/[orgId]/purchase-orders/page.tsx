@@ -1,6 +1,6 @@
 import { permanentRedirect } from "next/navigation";
 
-import { orgTabHref } from "@/lib/dashboard/org-tab-redirect";
+import { orgRetiredRouteHref } from "@/lib/dashboard/org-tab-redirect";
 
 /** #1527 Q7 — purchase orders are a Billing tab; the old URL answers a 308. */
 export default async function OrgPurchaseOrdersRedirect({
@@ -12,6 +12,6 @@ export default async function OrgPurchaseOrdersRedirect({
 }>) {
   const { orgId } = await params;
   permanentRedirect(
-    orgTabHref(orgId, "billing", "purchase-orders", await searchParams),
+    orgRetiredRouteHref(orgId, "purchase-orders", await searchParams),
   );
 }

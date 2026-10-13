@@ -5,7 +5,7 @@
 
 import prisma from "@/lib/prisma";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
-import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
+import { fundingRailForIntent } from "@/lib/payments/funding-rail";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
   findDedupedRefund,

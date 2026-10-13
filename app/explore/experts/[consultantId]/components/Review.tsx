@@ -12,6 +12,7 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
   rating,
   reviewDescription,
   editedAt,
+  notCounted,
   replyBody,
   repliedAt,
 }) => {
@@ -41,12 +42,12 @@ const Review: React.FC<Readonly<TPublicConsultantReview>> = ({
             </h4>
             <p className="text-xs text-muted-foreground">
               {new Date(createdAt).toLocaleDateString("en-IN")}
-              {/* #1300 — BIS IS 19000:2022 asks that an edited review be shown as
-                  edited. Every edit is marked, deliberately: making the mark
-                  conditional on the expert having replied would hand them a
-                  switch, since replying to everything would brand every
-                  subsequent revision. */}
               {editedAt && <span className="ml-1.5">· Edited</span>}
+              {notCounted && (
+                <span className="ml-1.5 text-muted-foreground">
+                  · Not counted in rating
+                </span>
+              )}
             </p>
           </div>
           <div className="flex items-center">

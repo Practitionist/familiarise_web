@@ -8,9 +8,11 @@ import {
   CONSULTEE_JOIN_WINDOW_MS,
   DEFAULT_MEETING_DURATION_MS,
   getOccurrenceVMJoinState,
+  isDeadOccurrence,
   isOccurrenceOver,
   meetingClosedAt,
 } from "@/lib/appointments/occurrences";
+import { useNowTick } from "@/hooks/use-now-tick";
 import type { OccurrenceVM } from "@/lib/appointments/view-model";
 import { TRIAL_STATUS_BADGE } from "@/lib/labels/session-labels";
 import { CountdownBadge } from "./CountdownBadge";
@@ -28,7 +30,14 @@ import { HeldSlotBadge } from "./HeldSlotBadge";
  * room key and the join gate use, so re-grouping here would only undo it.
  */
 
-type SessionStatus = "completed" | "noRecord" | "upcoming" | "joinable";
+type SessionStatus =
+  | "completed"
+  | "cutShort"
+  | "noShow"
+  | "inconclusive"
+  | "noRecord"
+  | "upcoming"
+  | "joinable";
 
 /** Statuses that mean the session did not take place. */
 const DEAD_SESSION = new Set(["CANCELLED", "RESCHEDULED"]);
@@ -85,10 +94,30 @@ interface SessionGroup {
  * hour, dropping whoever clicked it into a fresh empty room. Routing through
  * the shared predicate makes an ended run non-joinable here too.
  */
-function slotStatus(slot: OccurrenceVM, joinWindowMs: number): SessionStatus {
-  const state = getOccurrenceVMJoinState(slot, { joinWindowMs });
+export function slotStatus(
+  slot: OccurrenceVM,
+  joinWindowMs: number = CONSULTEE_JOIN_WINDOW_MS,
+  now?: Date,
+): SessionStatus {
+  const state = getOccurrenceVMJoinState(slot, { joinWindowMs, now });
   if (state === "joinable") return "joinable";
   if (state === "countdown") return "upcoming";
+
+  if (slot.outcome === "DELIVERED") return "completed";
+  if (slot.outcome === "CUT_SHORT") return "cutShort";
+  if (
+    slot.outcome === "CONSULTANT_NO_SHOW" ||
+    slot.outcome === "CONSULTEE_NO_SHOW" ||
+    slot.outcome === "BOTH_NO_SHOW"
+  ) {
+    return "noShow";
+  }
+  if (slot.outcome === "INCONCLUSIVE") return "inconclusive";
+
+  if (slot.completionStatus === "COMPLETED") return "completed";
+  if (slot.completionStatus === "VOIDED") return "noShow";
+  if (slot.completionStatus === "UNVERIFIED") return "inconclusive";
+
   // The host closing the call early is what separates a session we have a
   // record of from one that simply ran past its slot with nobody in it. A
   // timeout or a pre-start end is neither (#1607).
@@ -96,20 +125,19 @@ function slotStatus(slot: OccurrenceVM, joinWindowMs: number): SessionStatus {
   // `disabled` on a session whose time has not arrived is a dead row
   // (cancelled, or released for reschedule) — "no record" would be a lie
   // about the future, so it keeps reading as upcoming.
-  return isOccurrenceOver(slot) ? "noRecord" : "upcoming";
+  return isOccurrenceOver(slot, now) ? "noRecord" : "upcoming";
 }
 
 function sessionStatusOf(
   group: SessionGroup,
   joinWindowMs: number,
+  now?: Date,
 ): SessionStatus {
-  const statuses = group.slots.map((s) => slotStatus(s, joinWindowMs));
-  if (statuses.some((s) => s === "joinable")) return "joinable";
+  const statuses = group.slots.map((s) => slotStatus(s, joinWindowMs, now));
+  if (statuses.includes("joinable")) return "joinable";
+  if (statuses.includes("upcoming")) return "upcoming";
   if (statuses.every((s) => s === "completed")) return "completed";
-  if (statuses.every((s) => s === "completed" || s === "noRecord")) {
-    return "noRecord";
-  }
-  return "upcoming";
+  return statuses.at(-1) ?? "noRecord";
 }
 
 function toSessionGroups(sessions: OccurrenceVM[]): SessionGroup[] {
@@ -129,6 +157,9 @@ function toSessionGroups(sessions: OccurrenceVM[]): SessionGroup[] {
 
 const statusIcon: Record<SessionStatus, string> = {
   completed: "✅",
+  cutShort: "⚠️",
+  noShow: "⚠️",
+  inconclusive: "⏳",
   noRecord: "⚠️",
   joinable: "◉",
   upcoming: "○",
@@ -143,16 +174,22 @@ const statusIcon: Record<SessionStatus, string> = {
  */
 const statusLabel: Record<SessionStatus, string> = {
   completed: "COMPLETED",
+  cutShort: "CUT SHORT",
+  noShow: "NO-SHOW",
+  inconclusive: "VERIFYING",
   noRecord: "NO RECORD",
   joinable: "IN PROGRESS",
   upcoming: "upcoming",
 };
 
 /**
- * Why a row that looks actionable is not. Only the two states that can confuse
+ * Why a row that looks actionable is not. Only the states that can confuse
  * someone carry a reason; everything else is self-evident from its label.
  */
 const INERT_STATUS_TITLES: Partial<Record<SessionStatus, string>> = {
+  cutShort: "This session ended earlier than the scheduled duration.",
+  noShow: "One or more participants did not attend this session.",
+  inconclusive: "Session attendance is being verified.",
   noRecord:
     "No meeting record found for this session. It may have been missed or held outside the platform.",
   joinable:
@@ -173,13 +210,14 @@ export function SessionTimeline({
   heldRowLabel,
 }: SessionTimelineProps) {
   const format = useZonedFormat();
+  const now = useNowTick();
   const [expanded, setExpanded] = useState(defaultExpanded);
   useEffect(() => {
     setExpanded(defaultExpanded);
   }, [defaultExpanded]);
 
   const nonTentative = useMemo(
-    () => occurrences.filter((s) => !s.isTentative),
+    () => occurrences.filter((s) => !s.isTentative && !isDeadOccurrence(s)),
     [occurrences],
   );
   // #1428 — tentative sessions used to be dropped outright here, so a
@@ -187,7 +225,10 @@ export function SessionTimeline({
   // nothing at all. Kept as its own list (never mixed into `groups`) so the
   // held row's countdown/CTA styling doesn't leak into the confirmed rules.
   const tentative = useMemo(
-    () => (showHeld ? occurrences.filter((s) => s.isTentative) : []),
+    () =>
+      showHeld
+        ? occurrences.filter((s) => s.isTentative && !isDeadOccurrence(s))
+        : [],
     [occurrences, showHeld],
   );
   const groups = useMemo(() => toSessionGroups(nonTentative), [nonTentative]);
@@ -197,9 +238,11 @@ export function SessionTimeline({
   const groupStatuses = useMemo(
     () =>
       new Map(
-        groups.map((g) => [g.key, sessionStatusOf(g, joinWindowMs)] as const),
+        groups.map(
+          (g) => [g.key, sessionStatusOf(g, joinWindowMs, now)] as const,
+        ),
       ),
-    [groups, joinWindowMs],
+    [groups, joinWindowMs, now],
   );
 
   // First strictly-upcoming session gets the relative countdown badge;
@@ -220,7 +263,7 @@ export function SessionTimeline({
       if (status === "joinable") return g;
       if (status === "upcoming" && !upcoming) upcoming = g;
     }
-    return upcoming ?? groups[groups.length - 1];
+    return upcoming ?? groups.at(-1);
   }, [groups, groupStatuses]);
 
   if (groups.length === 0 && heldGroups.length === 0) return null;
@@ -305,9 +348,12 @@ export function SessionTimeline({
         const joinable =
           status === "joinable" && onJoinSession
             ? group.slots.find(
-                (s) => slotStatus(s, joinWindowMs) === "joinable",
+                (s) => slotStatus(s, joinWindowMs, now) === "joinable",
               )
             : undefined;
+        const isRejoinAfterStart =
+          joinable !== undefined &&
+          now.getTime() > new Date(joinable.startsAt).getTime();
 
         return (
           <div
@@ -318,7 +364,11 @@ export function SessionTimeline({
                 ? "bg-green-50 border border-green-200 cursor-pointer hover:bg-green-100 dark:bg-green-900/20 dark:border-green-900/40 dark:hover:bg-green-900/30"
                 : "bg-muted",
               status === "completed" && "opacity-70",
-              status === "noRecord" && "opacity-80",
+              (status === "noRecord" ||
+                status === "cutShort" ||
+                status === "noShow" ||
+                status === "inconclusive") &&
+                "opacity-80",
             )}
             onClick={joinable ? () => onJoinSession?.(joinable) : undefined}
             role={joinable ? "button" : undefined}
@@ -362,10 +412,8 @@ export function SessionTimeline({
             {renderSessionExtra &&
             status !== "upcoming" &&
             status !== "joinable" &&
-            !DEAD_SESSION.has(
-              group.slots[group.slots.length - 1].completionStatus ?? "",
-            )
-              ? renderSessionExtra(group.slots[group.slots.length - 1])
+            !DEAD_SESSION.has(group.slots.at(-1)?.completionStatus ?? "")
+              ? renderSessionExtra(group.slots.at(-1)!)
               : null}
 
             {joinable ? (
@@ -382,7 +430,7 @@ export function SessionTimeline({
                 ) : (
                   <Video className="h-3 w-3" />
                 )}
-                JOIN
+                {isRejoinAfterStart ? "Rejoin" : "JOIN"}
               </button>
             ) : group.key === nextUpcomingKey && status === "upcoming" ? (
               <CountdownBadge
@@ -393,7 +441,11 @@ export function SessionTimeline({
               <span
                 className={cn(
                   "text-[10px] font-medium uppercase text-muted-foreground/70",
-                  status === "noRecord" && "text-amber-500 dark:text-amber-400",
+                  (status === "noRecord" ||
+                    status === "cutShort" ||
+                    status === "noShow") &&
+                    "text-amber-500 dark:text-amber-400",
+                  status === "inconclusive" && "text-sky-600 dark:text-sky-400",
                 )}
                 title={INERT_STATUS_TITLES[status]}
               >

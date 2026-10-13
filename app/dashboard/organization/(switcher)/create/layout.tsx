@@ -1,28 +1,13 @@
 import { requireUserRole } from "@/lib/auth-guard";
 
 /**
- * /dashboard/organization/create is a backstop, not the primary entry.
+ * /dashboard/organization/create is a backstop, not the primary entry:
+ * operators with an OrgWorkspaceProfile use /dashboard/org-workspace/<id>/create.
  *
- * After the org-workspace dashboard consolidation (commits f6876b8e +
- * d2bb6e02), every operator with an OrgWorkspaceProfile uses
- * /dashboard/org-workspace/<id>/create — they get the operator chrome,
- * matching cancel target, and consistent visual context.
- *
- * This route still exists for one narrow case: the user has
- * `User.role === "ORG_WORKSPACE"` but NO `orgWorkspaceProfileId` yet. New
- * handoffs no longer open this window — `setOnboardingRoleAction` creates +
- * links the profile, and `PROFILE_KEY_BY_ROLE` enforces it — but rows
- * written before that change (or with the profile unlinked by a
- * `resetOnboardingRoleAction` re-entry edge) still land here.
- *
- * If such a user comes back via this URL, we render the unbranded shell so
- * they can finish creation. Once their profile is created, this URL
- * answers a 307 into the operator chrome (#1527 §17b; session-keyed, so it
- * must stay temporary) — making the dashboard the canonical entry for
- * everyone except half-onboarded recoveries. Do NOT delete this route
- * until the backfill for legacy rows has run; the roadmap item to move the
- * lazy-create into the handoff is done, this shell is what remains for the
- * old rows.
+ * It serves an ORG_WORKSPACE user with no `orgWorkspaceProfileId` (legacy
+ * rows; new owners get the profile inside the org-create transaction). Once
+ * the profile exists this URL answers a temporary 307 into the operator
+ * chrome, since the redirect is session-keyed.
  */
 export default async function CreateOrganizationLayout({
   children,

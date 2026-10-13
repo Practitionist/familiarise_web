@@ -69,6 +69,7 @@ export default function CookieConsentBanner() {
   const contentRef = useReserveBarHeight();
 
   useEffect(() => {
+    if (!showPrefs || loaded) return;
     fetch("/api/cookie-preferences")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -76,7 +77,7 @@ export default function CookieConsentBanner() {
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
-  }, []);
+  }, [showPrefs, loaded]);
 
   const [saveError, setSaveError] = useState(false);
 
@@ -98,6 +99,8 @@ export default function CookieConsentBanner() {
       location="bottom"
       buttonText="Accept all"
       declineButtonText="Essential only"
+      ariaAcceptLabel="Accept all"
+      ariaDeclineLabel="Essential only"
       enableDeclineButton
       cookieName="cookie_consent"
       style={{ background: "#18181b", fontSize: "13px" }}
@@ -115,64 +118,62 @@ export default function CookieConsentBanner() {
           We use cookies to improve your experience. Essential cookies are
           always on.
         </p>
-        {loaded && (
-          <div>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="text-zinc-400 underline text-xs h-auto p-0"
-              onClick={(e) => {
-                e.preventDefault();
-                setShowPrefs((v) => !v);
-              }}
-            >
-              {showPrefs ? "Hide preferences" : "Customize preferences"}
-            </Button>
-            {showPrefs && (
-              <div className="mt-2 space-y-2 text-left">
-                {(
-                  [
-                    ["analytics", "Analytics", "Usage tracking (GA4, Hotjar)"],
-                    ["marketing", "Marketing", "Ad pixels, retargeting"],
-                    ["functional", "Functional", "Chat widgets, video embeds"],
-                  ] as Array<[keyof Prefs, string, string]>
-                ).map(([key, label, desc]) => (
-                  <div key={key} className="flex items-center gap-2">
-                    <Switch
-                      id={`cc-${key}`}
-                      checked={prefs[key]}
-                      onCheckedChange={(v) =>
-                        setPrefs((prev) => ({ ...prev, [key]: v }))
-                      }
-                    />
-                    <Label htmlFor={`cc-${key}`} className="text-xs">
-                      <span className="font-medium">{label}</span> — {desc}
-                    </Label>
-                  </div>
-                ))}
-                <Button
-                  size="sm"
-                  onClick={async () => {
-                    const ok = await save(prefs);
-                    if (ok) {
-                      document.cookie = `cookie_consent=true; max-age=${365 * 24 * 3600}; path=/`;
-                      window.location.reload();
-                    } else {
-                      setSaveError(true);
+        <div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-zinc-400 underline text-xs h-auto p-0"
+            onClick={(e) => {
+              e.preventDefault();
+              setShowPrefs((v) => !v);
+            }}
+          >
+            {showPrefs ? "Hide preferences" : "Customize preferences"}
+          </Button>
+          {showPrefs && (
+            <div className="mt-2 space-y-2 text-left">
+              {(
+                [
+                  ["analytics", "Analytics", "Usage tracking (GA4, Hotjar)"],
+                  ["marketing", "Marketing", "Ad pixels, retargeting"],
+                  ["functional", "Functional", "Chat widgets, video embeds"],
+                ] as Array<[keyof Prefs, string, string]>
+              ).map(([key, label, desc]) => (
+                <div key={key} className="flex items-center gap-2">
+                  <Switch
+                    id={`cc-${key}`}
+                    checked={prefs[key]}
+                    onCheckedChange={(v) =>
+                      setPrefs((prev) => ({ ...prev, [key]: v }))
                     }
-                  }}
-                >
-                  Save preferences
-                </Button>
-                {saveError && (
-                  <p className="text-xs text-red-600">
-                    Could not save — please try again.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+                  />
+                  <Label htmlFor={`cc-${key}`} className="text-xs">
+                    <span className="font-medium">{label}</span> — {desc}
+                  </Label>
+                </div>
+              ))}
+              <Button
+                size="sm"
+                onClick={async () => {
+                  const ok = await save(prefs);
+                  if (ok) {
+                    document.cookie = `cookie_consent=true; max-age=${365 * 24 * 3600}; path=/`;
+                    window.location.reload();
+                  } else {
+                    setSaveError(true);
+                  }
+                }}
+              >
+                Save preferences
+              </Button>
+              {saveError && (
+                <p className="text-xs text-red-600">
+                  Could not save — please try again.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </CookieConsent>
   );

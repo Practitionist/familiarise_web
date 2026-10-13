@@ -67,6 +67,13 @@ export interface AvailabilityGridMarker {
    * though no row was written. Null when nothing is pending.
    */
   nextHoldExpiry: Date | null;
+  /**
+   * #1691 Item 2 — the primary consultant's active scheduleType and userId,
+   * returned alongside the ETag probe so the availability route only loads the
+   * active availability window relation (weekly OR custom) on a cache miss.
+   */
+  scheduleType?: "WEEKLY" | "CUSTOM" | null;
+  consultantUserId?: string | null;
 }
 
 /** The half-open window the grid was asked for; the marker is scoped to it. */
@@ -96,24 +103,49 @@ export interface AvailabilityGridWindow {
  * `consulteeUserId` is the empty string when absent: an index probe that
  * matches nothing, which keeps this one SQL string rather than two.
  */
+export interface AvailabilityGridMarkerOptions {
+  webinarId?: string | null;
+  classId?: string | null;
+}
+
 export async function readAvailabilityGridMarker(
   db: Db,
   consultantId: string,
   consulteeUserId: string | null,
   window: AvailabilityGridWindow,
+  options?: AvailabilityGridMarkerOptions,
 ): Promise<AvailabilityGridMarker | null> {
   const consulteeKey = consulteeUserId ?? "";
+  const webinarKey = options?.webinarId ?? "";
+  const classKey = options?.classId ?? "";
   const rows = await db.$queryRaw<AvailabilityGridMarker[]>`
-    WITH consultant AS (
+    WITH event_cohosts AS (
+      SELECT cb."consultantProfileId" AS id
+        FROM "Collaborator" cb
+        JOIN "Webinar" w ON w."webinarPlanId" = cb."webinarPlanId"
+       WHERE w.id = ${webinarKey}
+         AND cb.status::text = 'ACCEPTED'
+      UNION
+      SELECT cb."consultantProfileId" AS id
+        FROM "Collaborator" cb
+        JOIN "Class" cl ON cl."classPlanId" = cb."classPlanId"
+       WHERE cl.id = ${classKey}
+         AND cb.status::text = 'ACCEPTED'
+    ),
+    consultant AS (
       SELECT id, "userId", "updatedAt"
         FROM "ConsultantProfile"
        WHERE id = ${consultantId}
+      UNION
+      SELECT cp.id, cp."userId", cp."updatedAt"
+        FROM "ConsultantProfile" cp
+        JOIN event_cohosts ec ON ec.id = cp.id
     ),
     candidates AS (
       SELECT s."appointmentId" AS id
         FROM "AppointmentOccurrence" s
-       WHERE s."consultantProfileId" = ${consultantId}
-         AND s."startsAt" < ${window.endsAt}
+        JOIN consultant c ON c.id = s."consultantProfileId"
+       WHERE s."startsAt" < ${window.endsAt}
          AND s."endsAt" > ${window.startsAt}
       UNION
       SELECT p."appointmentId"
@@ -128,48 +160,48 @@ export async function readAvailabilityGridMarker(
         FROM "Appointment" a
         JOIN "Consultation" c ON c.id = a."consultationId"
         JOIN "ConsultationPlan" cp ON cp.id = c."consultationPlanId"
-       WHERE cp."consultantProfileId" = ${consultantId}
+        JOIN consultant co ON co.id = cp."consultantProfileId"
       UNION
       SELECT a.id
         FROM "Appointment" a
         JOIN "Subscription" sb ON sb.id = a."subscriptionId"
         JOIN "SubscriptionPlan" sp ON sp.id = sb."subscriptionPlanId"
-       WHERE sp."consultantProfileId" = ${consultantId}
+        JOIN consultant co ON co.id = sp."consultantProfileId"
       UNION
       SELECT a.id
         FROM "Appointment" a
         JOIN "Webinar" w ON w.id = a."webinarId"
         JOIN "WebinarPlan" wp ON wp.id = w."webinarPlanId"
-       WHERE wp."consultantProfileId" = ${consultantId}
+        JOIN consultant co ON co.id = wp."consultantProfileId"
       UNION
       SELECT a.id
         FROM "Appointment" a
         JOIN "Class" cl ON cl.id = a."classId"
         JOIN "ClassPlan" clp ON clp.id = cl."classPlanId"
-       WHERE clp."consultantProfileId" = ${consultantId}
+        JOIN consultant co ON co.id = clp."consultantProfileId"
       UNION
       SELECT ts."appointmentId"
         FROM "Trial" ts
-       WHERE ts."consultantProfileId" = ${consultantId}
-         AND ts."appointmentId" IS NOT NULL
+        JOIN consultant co ON co.id = ts."consultantProfileId"
+       WHERE ts."appointmentId" IS NOT NULL
       UNION
       -- Co-host commitments: webinar/class appointments on plans where this
-      -- consultant holds an ACCEPTED seat. Co-hosts are not slot participants
-      -- (AE-2 #784), so none of the arms above reach them. Enum compared as
-      -- text: Prisma raw SQL has no enum literal binding for this type.
+      -- consultant (or an event co-host) holds an ACCEPTED seat. Co-hosts are
+      -- not slot participants (AE-2 #784), so none of the arms above reach them.
+      -- Enum compared as text: Prisma raw SQL has no enum literal binding for this type.
       SELECT a.id
         FROM "Appointment" a
         JOIN "Webinar" w ON w.id = a."webinarId"
         JOIN "Collaborator" cb ON cb."webinarPlanId" = w."webinarPlanId"
-       WHERE cb."consultantProfileId" = ${consultantId}
-         AND cb.status::text = 'ACCEPTED'
+        JOIN consultant co ON co.id = cb."consultantProfileId"
+       WHERE cb.status::text = 'ACCEPTED'
       UNION
       SELECT a.id
         FROM "Appointment" a
         JOIN "Class" c ON c.id = a."classId"
         JOIN "Collaborator" cb ON cb."classPlanId" = c."classPlanId"
-       WHERE cb."consultantProfileId" = ${consultantId}
-         AND cb.status::text = 'ACCEPTED'
+        JOIN consultant co ON co.id = cb."consultantProfileId"
+       WHERE cb.status::text = 'ACCEPTED'
     ),
     reach AS (
       SELECT k.id
@@ -190,20 +222,26 @@ export async function readAvailabilityGridMarker(
          AND o."endsAt" > ${window.startsAt}
     )
     SELECT
-      (SELECT c."updatedAt" FROM consultant c) AS "profileUpdatedAt",
+      CASE
+        WHEN EXISTS (SELECT 1 FROM consultant c WHERE c.id = ${consultantId})
+        THEN (SELECT max(c."updatedAt") FROM consultant c)
+        ELSE NULL
+      END AS "profileUpdatedAt",
+      (SELECT cp."scheduleType"::text FROM "ConsultantProfile" cp WHERE cp.id = ${consultantId}) AS "scheduleType",
+      (SELECT cp."userId" FROM "ConsultantProfile" cp WHERE cp.id = ${consultantId}) AS "consultantUserId",
       (SELECT max(t) FROM (
           SELECT max(w."updatedAt") AS t
             FROM "AvailabilityWindowWeekly" w
-           WHERE w."consultantProfileId" = ${consultantId}
+            JOIN consultant co ON co.id = w."consultantProfileId"
           UNION ALL
           SELECT max(cu."updatedAt")
             FROM "AvailabilityWindowCustom" cu
-           WHERE cu."consultantProfileId" = ${consultantId}
+            JOIN consultant co ON co.id = cu."consultantProfileId"
        ) a) AS "availabilityUpdatedAt",
       (SELECT (SELECT count(*) FROM "AvailabilityWindowWeekly" w
-                 WHERE w."consultantProfileId" = ${consultantId})
+                 JOIN consultant co ON co.id = w."consultantProfileId")
             + (SELECT count(*) FROM "AvailabilityWindowCustom" cu
-                 WHERE cu."consultantProfileId" = ${consultantId}))::int
+                 JOIN consultant co ON co.id = cu."consultantProfileId"))::int
         AS "availabilityRowCount",
       (SELECT max(p."updatedAt")
          FROM "Payment" p
@@ -212,7 +250,7 @@ export async function readAvailabilityGridMarker(
       (SELECT count(*) FROM window_slots ws)::int AS "slotRowCount",
       (SELECT max(cb."updatedAt")
          FROM "Collaborator" cb
-        WHERE cb."consultantProfileId" = ${consultantId}) AS "collaboratorsUpdatedAt",
+         JOIN consultant co ON co.id = cb."consultantProfileId") AS "collaboratorsUpdatedAt",
       (SELECT max(t) FROM (
           SELECT max(c."updatedAt") AS t
             FROM "Consultation" c
@@ -261,6 +299,8 @@ export interface AvailabilityGridEtagKey {
   /** Resolved, not requested — this is what actually shapes the payload. */
   includeAppointmentDetails: boolean;
   consulteeUserId: string | null;
+  webinarId?: string | null;
+  classId?: string | null;
 }
 
 /**
@@ -282,6 +322,8 @@ export function availabilityGridEtag(
     key.timezone,
     key.includeAppointmentDetails ? "d1" : "d0",
     key.consulteeUserId ?? "",
+    key.webinarId ?? "",
+    key.classId ?? "",
     iso(marker.profileUpdatedAt),
     iso(marker.availabilityUpdatedAt),
     String(marker.availabilityRowCount ?? 0),
@@ -291,22 +333,40 @@ export function availabilityGridEtag(
     iso(marker.paymentsUpdatedAt ?? null),
     iso(marker.requestsUpdatedAt),
     iso(marker.nextHoldExpiry),
-  ].join(" ");
+  ].join(" ");
   return `"${createHash("sha256").update(material).digest("base64url")}"`;
+}
+
+function stripWeakAndQuotes(token: string): string {
+  return token
+    .trim()
+    .replace(/^W\//i, "")
+    .replace(/^"|"$/g, "");
+}
+
+function stripWeakAndCdnSuffix(token: string): string {
+  return stripWeakAndQuotes(token).replace(/-(?:df|gzip|br)$/i, "");
 }
 
 /**
  * RFC 9110 §13.1.2 — the header is a comma-separated list, may be `*`, and its
  * entries may be weak. A weak match is enough to skip the body.
+ * #1723 — also strips proxy/CDN content-encoding suffixes (`-df`, `-gzip`, `-br`)
+ * appended inside client ETag quotes when compressing responses, while keeping
+ * the server's `currentEtag` intact (only `^W/` and surrounding quotes removed).
  */
 export function ifNoneMatchSatisfied(
   header: string | null,
-  etag: string,
+  currentEtag: string,
 ): boolean {
   if (!header) return false;
-  const target = etag.replace(/^W\//, "");
+  const target = stripWeakAndQuotes(currentEtag);
   return header.split(",").some((candidate) => {
     const trimmed = candidate.trim();
-    return trimmed === "*" || trimmed.replace(/^W\//, "") === target;
+    return (
+      trimmed === "*" ||
+      stripWeakAndQuotes(trimmed) === target ||
+      stripWeakAndCdnSuffix(trimmed) === target
+    );
   });
 }

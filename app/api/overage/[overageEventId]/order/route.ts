@@ -1,11 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
-import { auth } from "@/lib/auth";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
-import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import {
   createRazorpayOrder,
   getRazorpayClient,
+  withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import { PaymentStatus } from "@prisma/client";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
@@ -27,14 +27,9 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ overageEventId: string }> },
 ) {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session?.user?.id) {
-    return NextResponse.json(
-      { error: "Authentication required" },
-      { status: 401 },
-    );
-  }
-  const userId = session.user.id;
+  const authResult = await requireApiAuth();
+  if (authResult.error) return authResult.error;
+  const userId = authResult.session.user.id;
   const { overageEventId } = await params;
 
   const event = await prisma.overageEvent.findUnique({
@@ -146,7 +141,9 @@ export async function POST(
   const razorpayClient = getRazorpayClient();
   if (razorpayClient && existingOrderId?.startsWith("order_")) {
     try {
-      const existingOrder = await razorpayClient.orders.fetch(existingOrderId);
+      const existingOrder = await withRazorpaySdkTimeout("orders.fetch", () =>
+        razorpayClient.orders.fetch(existingOrderId),
+      );
       const amountMatches =
         Number(existingOrder.amount) === event.marginalPaise;
 
@@ -184,11 +181,29 @@ export async function POST(
       // Falls through to mint only when the order exists, is unpaid, and its
       // amount no longer matches (the charge was recalculated).
     } catch (fetchErr) {
-      // Unreadable order (deleted, wrong key, transient) — mint a fresh one
-      // rather than blocking the member from paying.
+      const statusCode =
+        typeof fetchErr === "object" &&
+        fetchErr !== null &&
+        "statusCode" in fetchErr &&
+        typeof fetchErr.statusCode === "number"
+          ? fetchErr.statusCode
+          : undefined;
+      if (statusCode !== 404) {
+        console.warn(
+          `[overage/order] uncertain fetch failure for order ${existingOrderId}; refusing replacement mint`,
+          fetchErr,
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Temporary gateway check failure while verifying existing charge. Please retry in a few seconds.",
+            code: "GATEWAY_CHECK_UNAVAILABLE",
+          },
+          { status: 503 },
+        );
+      }
       console.warn(
-        `[overage/order] could not reuse order ${existingOrderId}; minting a new one`,
-        fetchErr,
+        `[overage/order] stored order ${existingOrderId} not found at gateway (404); minting replacement`,
       );
     }
   }

@@ -14,7 +14,7 @@ import { userIdQuerySchema } from "@/schemas/user";
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -59,7 +59,10 @@ export async function GET(request: NextRequest) {
       data: consulteeProfile,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error fetching consultee profile:", error);
     return NextResponse.json(
       {

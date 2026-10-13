@@ -23,6 +23,7 @@ import {
   histogram,
   ensureServerOrSkip,
 } from "../../utilities/api-client";
+import { buildRazorpayPaymentCapturedEnvelope } from "../../utilities/fixtures";
 
 const SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
 
@@ -36,24 +37,11 @@ async function run() {
 
   const paymentId = `pay_chaos_${process.pid}_${Date.now()}`;
   const expectedEventId = `payment.captured:${paymentId}`;
-  const payload = JSON.stringify({
-    entity: "event",
-    account_id: "acc_chaos",
-    event: "payment.captured",
-    contains: ["payment"],
-    payload: {
-      payment: {
-        entity: {
-          id: paymentId,
-          entity: "payment",
-          order_id: `order_chaos_${process.pid}`,
-          status: "captured",
-          amount: 100,
-          currency: "INR",
-        },
-      },
-    },
-    created_at: Math.floor(Date.now() / 1000),
+  const payload = buildRazorpayPaymentCapturedEnvelope({
+    paymentId,
+    orderId: `order_chaos_${process.pid}`,
+    amount: 100,
+    currency: "INR",
   });
   const signature = crypto
     .createHmac("sha256", SECRET)

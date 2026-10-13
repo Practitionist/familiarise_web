@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { replaceUrl } from "@/lib/navigation/history";
 import {
   DEFAULT_EXPERT_FILTERS,
   filtersFromSearchParams,
@@ -78,7 +79,7 @@ export function useExpertsFilters(): UseExpertsFiltersResult {
       const target = `/explore/experts${qsWithExpert ? `?${qsWithExpert}` : ""}${hash}`;
       const current = window.location.pathname + window.location.search;
       if (target !== current) {
-        window.history.replaceState(window.history.state, "", target);
+        replaceUrl(target);
       }
     }, URL_SYNC_DEBOUNCE_MS);
 

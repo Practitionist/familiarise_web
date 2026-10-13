@@ -10,6 +10,19 @@ export interface CatalogRow {
   visibility: "PUBLIC" | "ORG_ONLY" | "ORG_AND_PUBLIC";
   maxParticipants: number;
   consultantProfileId: string | null;
+  consultantName?: string | null;
+  consultantProfile?: {
+    id: string;
+    userId?: string;
+    user?: { name?: string | null; email?: string | null } | null;
+  } | null;
+  topics?: Array<{ id?: string; name?: string } | string>;
+  topicsCount?: number;
+  _count?: { topics?: number };
+  isDraft?: boolean;
+  status?: string | null;
+  webinars?: Array<{ status?: string | null }>;
+  classes?: Array<{ status?: string | null }>;
   archivedAt: string | null;
 }
 

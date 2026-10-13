@@ -10,37 +10,86 @@
  * slots, so it drives the real `acceptProposal` / `declineProposal` and the real
  * route against a mocked Prisma and a mocked allocator, and asserts what they
  * DO: which times reach the allocator and under which lock, which CAS
- * transition is written and from which from-set, which slots are touched (none,
- * on decline — that is the module's documented contract), and which status code
- * each refusal answers with.
+ * transition is written and from which from-set, which slots a decline restores
+ * (#1846 — all of them, or none of them when the original time has since been
+ * taken), and which status code each refusal answers with.
  *
  * `transitionRescheduleRequest` is deliberately NOT mocked: the from-state guard
  * it builds is the thing under test on the lost-race cases.
  */
+
+// @novu/node pulls undici's Request at import time, which this environment
+// lacks; the notification is fire-and-forget and asserted through the stub.
+import "./setup";
 
 const mockRequestFindUnique = jest.fn();
 const mockRequestFindFirst = jest.fn();
 const mockAllocate = jest.fn();
 const mockGetSession = jest.fn();
 const mockHasActiveDispute = jest.fn();
+// #1846 — the decline's own notify read.
+// `mockOccurrenceCount` is no longer on this path: the route used to recount the
+// restored rows to pick its outcome code, and the module now reports
+// `restoredFully` instead. The stub keeps `count` so it still mirrors the real
+// client, and a test that sets it is asserting nothing.
+const mockOccurrenceFindFirst = jest.fn();
+const mockOccurrenceCount = jest.fn();
 // #1166 ORG-9 — what isOrgAdminOfAppointment reads to tell a payer admin's
 // initiation from a stranger's.
 const mockMembershipFindUnique = jest.fn();
+// #1854 — …and the funding half of the same answer: the booking's own Payment,
+// which is what separates an org-FUNDED booking from one merely TAGGED to the org.
+const mockOrgFundingPayment = jest.fn();
 // #1340 — pass-through by default (set in beforeEach); one case makes it throw.
 const mockWithAppointmentLock = jest.fn();
 const passThroughLock = (...args: unknown[]) =>
   (args[1] as () => Promise<unknown>)();
 
-const txStub = {
-  rescheduleRequest: {
-    updateMany: jest.fn(),
-    findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
-  },
-  bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-  // Present so a decline that wrote slots would be caught rather than silently
-  // passing: "the released slots stay released" is the contract.
-  appointmentOccurrence: { updateMany: jest.fn() },
-};
+/**
+ * A fresh transaction stub. Rebuilt per test rather than cleared, because
+ * `clearMocks` drops call RECORDS only: a `mockResolvedValue` set inside one
+ * test survives into the next, and a shared stub therefore let one case's
+ * override — "the parent's own CAS misses", which makes `consultation
+ * .updateMany` return `{count: 0}` — decide the restore path of every decline
+ * after it. Same `makeTx()` idiom the restore suites use.
+ *
+ * The defaults are the shapes a healthy decline sees: the parent CAS hits, and
+ * the origin it restores to is APPROVED.
+ */
+function makeTxStub() {
+  return {
+    rescheduleRequest: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
+    },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // #1589 R-P1-01 — the origin read `settleParentAfterReschedule` uses to pick
+      // the parent's restore target. APPROVED is the paid-booking shape, which is
+      // also the one that keeps the booking out of the refunded sweeps' cohort.
+      findFirst: jest.fn().mockResolvedValue({ fromStatus: "APPROVED" }),
+    },
+    appointmentOccurrence: {
+      // #1846 — a decline restores, so the occurrence write is on this path, and it
+      // must go through `transitionOccurrenceCompletion`: `updateManyAndReturn`
+      // carries the from-set CAS and the history rows, and `updateMany` is here
+      // only as the tripwire that catches a write which skipped both.
+      findMany: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      updateManyAndReturn: jest.fn(),
+    },
+    consultation: {
+      findUnique: jest.fn().mockResolvedValue({ status: "PENDING" }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    subscription: {
+      findUnique: jest.fn().mockResolvedValue({ status: "PENDING" }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+  };
+}
+
+let txStub = makeTxStub();
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -50,8 +99,15 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: (...a: unknown[]) => mockRequestFindUnique(...a),
       findFirst: (...a: unknown[]) => mockRequestFindFirst(...a),
     },
+    appointmentOccurrence: {
+      findFirst: (...a: unknown[]) => mockOccurrenceFindFirst(...a),
+      count: (...a: unknown[]) => mockOccurrenceCount(...a),
+    },
     membership: {
       findUnique: (...a: unknown[]) => mockMembershipFindUnique(...a),
+    },
+    payment: {
+      findFirst: (...a: unknown[]) => mockOrgFundingPayment(...a),
     },
   },
 }));
@@ -64,13 +120,45 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: (...a: unknown[]) => mockGetSession(...a),
 }));
 
+// CI runs a real Redis; every case here is the same user.
+jest.mock("../../lib/rate-limit", () => ({
+  __esModule: true,
+  applyRateLimit: jest.fn(async () => null),
+  eventMutationLimiter: {},
+  rescheduleAppointmentLimiter: {},
+}));
+
 jest.mock("../../lib/payments/dispute-guard", () => ({
   hasActiveDisputeForAppointment: (...a: unknown[]) =>
     mockHasActiveDispute(...a),
 }));
 
+// #1846 — named so the stranded-decline reports can be asserted by `op`. Both
+// reporters are stubbed: `reschedule-restore.ts` calls the message form when a
+// restore finds no origin history row, and an absent export would throw there.
+const reportSentryError = jest.fn();
+const reportSentryMessage = jest.fn();
 jest.mock("../../lib/observability/report", () => ({
-  reportSentryError: jest.fn(),
+  __esModule: true,
+  reportSentryError: (...args: unknown[]) => reportSentryError(...args),
+  reportSentryMessage: (...args: unknown[]) => reportSentryMessage(...args),
+}));
+
+// #1846 — the email twin of the notification. The real sender resolves
+// recipients and hands off to the provider, which has nothing to talk to here.
+jest.mock("../../lib/email", () => ({
+  __esModule: true,
+  EMAIL_BUDGET_MS: { REQUEST: 250, JOB: 250 },
+  sendAppointmentRescheduledEmail: jest.fn().mockResolvedValue(undefined),
+}));
+
+// #1846 — a decline whose restore could not land records its durable operator
+// trace through this writer, and the call is NOT inside the notify try/catch: an
+// unmocked one throws on the mocked prisma and turns a successful decline into
+// a 500, which would hide the very outcome under test.
+jest.mock("../../lib/enterprise/system-events", () => ({
+  __esModule: true,
+  recordSystemErrorSafe: jest.fn().mockResolvedValue(undefined),
 }));
 
 // #1340 — the accept path now serializes on the appointment atom. The real
@@ -110,6 +198,10 @@ import {
 } from "@/lib/booking/reschedule-respond";
 import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
 import { AppointmentBusyError } from "@/utils/appointmentlock";
+// #1846 — the durable operator trace and the notification, both of which the
+// decline reaches now that it restores.
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { notifyAppointmentRescheduled } from "@/lib/novu";
 import { POST as respondHandler } from "@/app/api/appointments/[appointmentId]/reschedule/respond/route";
 
 const HOUR = 3_600_000;
@@ -117,6 +209,8 @@ const APPT = "appt-1";
 const REQ = "resched-1";
 const CONSULTANT_USER = "consultant-user-1";
 const CONSULTEE_USER = "consultee-user-1";
+/** The sessions the proposal released, and the ones a decline has to put back. */
+const RELEASED_IDS = ["released-slot-1", "released-slot-2"];
 
 function makeParams(id: string = APPT) {
   return { params: Promise.resolve({ appointmentId: id }) };
@@ -153,6 +247,9 @@ function openRequestRow(overrides: Record<string, unknown> = {}) {
   return {
     id: REQ,
     initiatedById: CONSULTANT_USER,
+    // #1846 — the route reads the released ids with the request because it
+    // reports which of the two decline outcomes it got.
+    releasedOccurrenceIds: RELEASED_IDS,
     appointment: {
       consultationId: "cons-1",
       subscriptionId: null,
@@ -166,22 +263,96 @@ function openRequestRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * The row `declineProposal` reads — twice, off two different selects: the
+ * restore fields, then the notification side. One row answers both, so the mock
+ * returns their union rather than switching on the select.
+ */
+function declineRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: REQ,
+    appointmentId: APPT,
+    status: "PENDING_REVIEW",
+    createdAt: new Date("2026-09-01T09:00:00.000Z"),
+    releasedOccurrenceIds: RELEASED_IDS,
+    initiatedById: CONSULTANT_USER,
+    appointment: {
+      id: APPT,
+      organizationId: null,
+      appointmentType: "CONSULTATION",
+      consultationId: "cons-1",
+      subscriptionId: null,
+      consultation: {
+        requestedBy: { user: { id: CONSULTEE_USER, name: "Consultee" } },
+        consultationPlan: {
+          title: "Plan",
+          consultantProfile: {
+            user: { id: CONSULTANT_USER, name: "Consultant" },
+          },
+        },
+      },
+      subscription: null,
+    },
+    ...overrides,
+  };
+}
+
 function sessionOf(userId: string) {
   return { user: { id: userId } };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
-  txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 1 });
-  txStub.appointmentOccurrence.updateMany.mockResolvedValue({ count: 0 });
+  // Rebuilt, not cleared — see `makeTxStub`.
+  // #1846 — a FULL restore is the default: both released rows are in the
+  // from-set, and both come back. Every other decline case narrows one of these.
+  txStub = makeTxStub();
+  txStub.appointmentOccurrence.findMany.mockResolvedValue(
+    RELEASED_IDS.map((id) => ({ id, completionStatus: "RESCHEDULED" })),
+  );
+  txStub.appointmentOccurrence.updateManyAndReturn.mockImplementation(
+    async ({ where }: { where: { id: { in: string[] } } }) =>
+      where.id.in.map((id) => ({ id, appointmentId: APPT })),
+  );
+  mockOccurrenceFindFirst.mockResolvedValue({
+    startsAt: new Date("2026-09-01T10:00:00.000Z"),
+  });
+  // The route no longer recounts what the restore left behind — `declineProposal`
+  // reports `restoredFully` from its own matched count — so this only keeps the
+  // stub aligned with the client. The decline's outcome is driven entirely by the
+  // `updateManyAndReturn` above.
+  mockOccurrenceCount.mockResolvedValue(RELEASED_IDS.length);
   mockAllocate.mockResolvedValue({ success: true });
   mockHasActiveDispute.mockResolvedValue(false);
   mockRequestFindUnique.mockResolvedValue(proposalRow());
   mockRequestFindFirst.mockResolvedValue(openRequestRow());
   mockGetSession.mockResolvedValue(sessionOf(CONSULTEE_USER));
+  // #1854 — the org actor's funding proof, read off the booking's own Payment.
+  // WALLET by default, so the `orgFundedRow` fixture below is honest about
+  // being org-FUNDED; the tagged-but-personal case overrides it.
+  mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "WALLET" });
   mockMembershipFindUnique.mockResolvedValue(null);
   mockWithAppointmentLock.mockImplementation(passThroughLock);
 });
+
+/** Point the module at the decline's own row instead of the accept one. */
+function useDeclineRow(overrides: Record<string, unknown> = {}) {
+  mockRequestFindUnique.mockResolvedValue(declineRow(overrides));
+}
+
+function decline() {
+  return declineProposal({
+    rescheduleRequestId: REQ,
+    resolvedById: CONSULTEE_USER,
+  });
+}
+
+/** The `op` of every report this module emitted, in order. */
+function reportedOps() {
+  return reportSentryError.mock.calls.map(
+    ([, meta]) => (meta as { op?: string } | undefined)?.op,
+  );
+}
 
 describe("accept re-validates through the allocator before anything is written", () => {
   it("sends the proposed times through manual allocation under the wide lock", async () => {
@@ -225,8 +396,9 @@ describe("accept re-validates through the allocator before anything is written",
     ];
     expect(args.where.id).toBe(REQ);
     expect(args.where.status.in).toEqual(
-      expect.arrayContaining(["PENDING_REVIEW", "COUNTERED"]),
+      expect.arrayContaining(["PENDING_REVIEW"]),
     );
+    expect(args.where.status.in).not.toContain("COUNTERED");
     // An already-expired row must not be reachable from the accept edge.
     expect(args.where.status.in).not.toContain("EXPIRED");
     expect(args.data).toMatchObject({
@@ -383,37 +555,176 @@ describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
   });
 });
 
-describe("decline ends the request and leaves the released slots released", () => {
-  it("transitions to DECLINED without touching a single slot", async () => {
-    const out = await declineProposal({
-      rescheduleRequestId: REQ,
-      resolvedById: CONSULTEE_USER,
-    });
+/**
+ * #1846 — a decline puts the original time back.
+ *
+ * It used to be a status transition and nothing else, on the reasoning that the
+ * initiator still wants to move so the booking belongs in the allocate queue.
+ * That left a paid booking in exactly the shape `expireUnallocatedPaidSubscriptions`
+ * selects — PENDING, zero live sessions, no open proposal — and the decline is
+ * what removed the proposal from that cohort, so a consultant saying "no, not
+ * that time" ended with the platform refunding the buyer in full 48 hours later.
+ * Withdraw and expiry already restored; decline joins them, and adds the case
+ * they do not have: the original time has since been taken, so the slots cannot
+ * go back and the booking has to be parked and said out loud.
+ */
+describe("decline ends the request and restores what it released", () => {
+  it("transitions to DECLINED and puts every released session back", async () => {
+    useDeclineRow();
 
-    expect(out).toEqual({ done: true });
+    // `restoredFully` is the new contract: the route reads it instead of
+    // recounting the rows, so the decline's own answer is asserted here rather
+    // than a read-back that could disagree with it.
+    expect(await decline()).toEqual({ done: true, restoredFully: true });
+
     const [args] = txStub.rescheduleRequest.updateMany.mock.calls[0] as [
-      { data: Record<string, unknown> },
+      {
+        where: { id: string; status: { in: string[] } };
+        data: Record<string, unknown>;
+      },
     ];
     expect(args.data).toMatchObject({
       status: "DECLINED",
       resolvedById: CONSULTEE_USER,
     });
-    // The documented semantics: the initiator still wants to move, so the
-    // booking belongs in the consultant's allocate queue. Restoring the slots
-    // here is withdraw's job, not decline's.
+    // The restore is the CAS'd helper's write, not a bare update: the from-set
+    // is what keeps a row an allocation already replaced from being resurrected.
+    expect(
+      txStub.appointmentOccurrence.updateManyAndReturn,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: { in: RELEASED_IDS },
+          completionStatus: { in: ["RESCHEDULED"] },
+        },
+        data: { completionStatus: "SCHEDULED", isTentative: false },
+      }),
+    );
     expect(txStub.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
+    // Never the allocator: a decline does not place new times.
     expect(mockAllocate).not.toHaveBeenCalled();
+    // A lifecycle write on the occurrence rows, so it serialises on the same
+    // appointment atom the accept and the withdraw take.
+    expect(mockWithAppointmentLock).toHaveBeenCalledWith(
+      APPT,
+      expect.any(Function),
+    );
+  });
+
+  it("takes the parent off PENDING, which is the state the refunding sweep selects", async () => {
+    useDeclineRow();
+
+    await decline();
+
+    const [args] = txStub.consultation.updateMany.mock.calls[0] as [
+      {
+        where: { id: string; status: { in: string[] } };
+        data: Record<string, unknown>;
+      },
+    ];
+    expect(args.where.id).toBe("cons-1");
+    expect(args.where.status.in).toEqual(["PENDING"]);
+    // The origin it restores to, not a blanket APPROVED: an unpaid booking must
+    // not come back approved.
+    expect(args.data).toMatchObject({ status: "APPROVED" });
+    // A clean restore is not an anomaly, so nothing is reported.
+    expect(reportedOps()).not.toContain("reschedule-decline-partial");
+    expect(recordSystemErrorSafe).not.toHaveBeenCalled();
+  });
+
+  it("tells the counterparty their original time is back", async () => {
+    useDeclineRow();
+
+    await decline();
+
+    expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
+      expect.arrayContaining([CONSULTEE_USER, CONSULTANT_USER]),
+      expect.objectContaining({ outcome: "DECLINED" }),
+    );
+  });
+
+  /**
+   * The short restore: one released row moved, one did not. It leaves one
+   * booking in two states at once, which is the case an operator has to see —
+   * and it must not be announced with DECLINED's copy, which asserts the
+   * original time stands.
+   */
+  it("reports a partial restore as a booking still owed a time", async () => {
+    useDeclineRow();
+    txStub.appointmentOccurrence.updateManyAndReturn.mockImplementation(
+      async ({ where }: { where: { id: { in: string[] } } }) =>
+        where.id.in.slice(0, 1).map((id) => ({ id, appointmentId: APPT })),
+    );
+    mockOccurrenceCount.mockResolvedValue(1);
+
+    // One of two came back, so the module reports the short restore ITSELF.
+    // Before this contract the route had to re-derive that from a `count`; the
+    // number under test now comes from the same `restored` value the durable
+    // SystemEvent below carries, so the two cannot disagree.
+    expect(await decline()).toEqual({ done: true, restoredFully: false });
+
+    expect(reportedOps()).toContain("reschedule-decline-partial");
+    // The durable half: `reportSentryError` alone evaporates, and this is the
+    // only trace that the buyer is still owed a session.
+    expect(recordSystemErrorSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: "RESCHEDULE",
+        context: expect.objectContaining({ restored: 1, restoreMiss: false }),
+      }),
+    );
+    expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ outcome: "RELEASED" }),
+    );
+  });
+
+  it("re-throws a held lock instead of answering as if the decline landed", async () => {
+    // A lock outcome is the ROUTE's answer (423/503), not this module's to
+    // swallow: returning `{done:true}` here would tell a consultant their decline
+    // was recorded while the proposal is still open and still answerable.
+    useDeclineRow();
+    mockWithAppointmentLock.mockImplementation(() => {
+      throw new AppointmentBusyError(APPT);
+    });
+
+    await expect(decline()).rejects.toBeInstanceOf(AppointmentBusyError);
+    expect(txStub.rescheduleRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("keeps the DECLINED when the parent's own CAS misses", async () => {
+    // The restore settles the parent in the same transaction as the slots, and
+    // that CAS can lose to a state change under it. The decision is the
+    // load-bearing write, so it is committed on its own and the park — which
+    // cannot land either — is reported rather than allowed to veto it.
+    useDeclineRow();
+    txStub.consultation.updateMany.mockResolvedValue({ count: 0 });
+
+    expect(await decline()).toEqual({ done: true, restoredFully: false });
+
+    // Twice: once in the transaction the parent CAS rolled back, once in the
+    // fallback that commits the answer alone.
+    expect(txStub.rescheduleRequest.updateMany).toHaveBeenCalledTimes(2);
+    expect(txStub.consultation.updateMany.mock.calls.length).toBeGreaterThan(1);
+    expect(reportedOps()).toContain("reschedule-decline-park");
+    expect(recordSystemErrorSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({ restored: 0, restoreMiss: true }),
+      }),
+    );
   });
 
   it("reports a lost CAS race as a conflict instead of throwing", async () => {
+    useDeclineRow();
     txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 0 });
 
-    const out = await declineProposal({
-      rescheduleRequestId: REQ,
-      resolvedById: CONSULTEE_USER,
+    expect(await decline()).toEqual({
+      done: false,
+      reason: "PROPOSAL_NOT_OPEN",
     });
-
-    expect(out).toEqual({ done: false, reason: "PROPOSAL_NOT_OPEN" });
+    // Nothing un-released out from under the answer that won.
+    expect(
+      txStub.appointmentOccurrence.updateManyAndReturn,
+    ).not.toHaveBeenCalled();
   });
 });
 
@@ -496,6 +807,8 @@ describe("the respond route drives the loop for the counterparty", () => {
   });
 
   it("declines without asking the allocator for anything", async () => {
+    useDeclineRow();
+
     const res = await respondHandler(
       makeRequest({ action: "decline" }),
       makeParams(),
@@ -505,6 +818,56 @@ describe("the respond route drives the loop for the counterparty", () => {
     expect(res.status).toBe(200);
     expect(body.declined).toBe(true);
     expect(mockAllocate).not.toHaveBeenCalled();
+    // #1846 — the outcome the client branches on. DECLINED here because every
+    // released row came back; the route used to return one fixed sentence that
+    // named the stranded case even when the slots had just been restored.
+    expect(body.outcome).toBe("DECLINED");
+    // The same code the notification for this same event carries, so the toast
+    // the decliner reads and the one the initiator gets agree.
+    expect(notifyAppointmentRescheduled).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ outcome: body.outcome }),
+    );
+  });
+
+  it("answers RELEASED when the decline could not put the original times back", async () => {
+    useDeclineRow();
+    // The restore is short — an allocation replaced one of the rows — so a
+    // session is still owed a time. Saying "your original times have been put
+    // back" here would be the same lie the fixed sentence always told.
+    txStub.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([]);
+    mockOccurrenceCount.mockResolvedValue(0);
+
+    const res = await respondHandler(
+      makeRequest({ action: "decline" }),
+      makeParams(),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.outcome).toBe("RELEASED");
+    expect(body.message).toContain("new times");
+  });
+
+  // #1583 A-P0-04 — decline writes occurrence rows, so it takes the appointment
+  // atom too. A held lock must be answered, not swallowed: reporting a decline
+  // that never landed would tell a consultant their answer was recorded.
+  it("answers 423 on a decline while the appointment lock is held", async () => {
+    useDeclineRow();
+    mockWithAppointmentLock.mockImplementation(() => {
+      throw new AppointmentBusyError(APPT);
+    });
+
+    const res = await respondHandler(
+      makeRequest({ action: "decline" }),
+      makeParams(),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(423);
+    expect(body.code).toBe("APPOINTMENT_BUSY");
+    expect(body.declined).toBeUndefined();
+    expect(txStub.rescheduleRequest.updateMany).not.toHaveBeenCalled();
   });
 
   it("answers 422 — not 409 — when there are no concrete times to accept", async () => {
@@ -591,8 +954,13 @@ describe("#1008 — a disputed booking is frozen against acceptance", () => {
     expect(body.code).toBeUndefined();
   });
 
-  it("lets the counterparty decline — decline moves nothing", async () => {
+  // #1846 — decline restores the released rows, but it moves the booking to no
+  // NEW time, which is the movement the freeze is about. Its terminal state is
+  // the one the hourly expiry job reaches for the same proposal regardless of
+  // any dispute, so refusing it would strand the proposal open for nothing.
+  it("still lets the counterparty decline — decline moves no new time", async () => {
     mockHasActiveDispute.mockResolvedValue(true);
+    useDeclineRow();
 
     const res = await respondHandler(
       makeRequest({ action: "decline" }),
@@ -690,6 +1058,60 @@ describe("who counts as the counterparty", () => {
           },
         },
       }),
+    );
+  });
+
+  // #1854 / ADR 19 — the FUNDING half of "is this an org booking", and the
+  // third way to fail the opener gate. `organizationId: ORG` alone is a TAG:
+  // with a CARD payment behind the booking the org's money did not pay for it,
+  // so its admin is not a payer-side actor here. A proposal they opened then
+  // resolves to NO side at all — the same fail-closed shape as an unidentifiable
+  // opener — and nobody may confirm it. Pre-gate this read as a payer-side act
+  // and let the consultant confirm a move the org had no authority over.
+  it("a booking the org only TAGGED makes its admin opener nobody", async () => {
+    mockRequestFindFirst.mockResolvedValue(orgFundedRow(ORG_ADMIN_USER));
+    mockMembershipFindUnique.mockResolvedValue({
+      status: "ACTIVE",
+      role: "OWNER",
+    });
+    mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "CARD" });
+
+    for (const who of [CONSULTANT_USER, CONSULTEE_USER]) {
+      mockGetSession.mockResolvedValue(sessionOf(who));
+      expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+        404,
+      );
+    }
+    // What refused it: the membership passed and the tag was read, so the
+    // funding proof off the booking's own Payment is the gate that closed.
+    expect(mockOrgFundingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG,
+          appointment: { consultationId: "cons-1" },
+        }),
+      }),
+    );
+  });
+
+  // The same tagged-only booking with a PARTY opener — the case the name above
+  // used to describe. The funding gate is consulted only for an opener who is
+  // NEITHER party, so a learner's own proposal on a booking their org merely
+  // tagged resolves exactly as it does on a funded one: the consultant
+  // answers it, and the learner may not confirm their own request. Pinned so
+  // the tag is never read as authority over a learner's own negotiation.
+  it("a learner who opened a tagged-only proposal is still answered by the consultant", async () => {
+    mockRequestFindFirst.mockResolvedValue(orgFundedRow(CONSULTEE_USER));
+    mockOrgFundingPayment.mockResolvedValue({ paymentMethod: "CARD" });
+
+    mockGetSession.mockResolvedValue(sessionOf(CONSULTANT_USER));
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      200,
+    );
+
+    mockGetSession.mockResolvedValue(sessionOf(CONSULTEE_USER));
+    expect((await respondHandler(makeRequest(), makeParams())).status).toBe(
+      404,
     );
   });
 

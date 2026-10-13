@@ -143,9 +143,7 @@ describe("ensure-webhook-subscription", () => {
     }
   });
 
-  it("never replaces a wildcard subscription with an explicit list", async () => {
-    // A hook on "*" already receives everything; rewriting it to ten named
-    // types would NARROW it.
+  it("replaces a wildcard subscription with the explicit 8 handled events", async () => {
     mockGetAppSettings.mockResolvedValue(
       appWith([{ ...liveWebhook, event_types: ["*"] }]),
     );
@@ -153,7 +151,14 @@ describe("ensure-webhook-subscription", () => {
     const code = await ensureWebhookSubscription("apply");
 
     expect(code).toBe(0);
-    expect(mockUpdateAppSettings).not.toHaveBeenCalled();
+    expect(mockUpdateAppSettings).toHaveBeenCalledWith({
+      event_hooks: [
+        expect.objectContaining({
+          id: "hook_live",
+          event_types: [...HANDLED_EVENT_TYPES].sort(),
+        }),
+      ],
+    });
   });
 
   it("refuses when the app has no webhook hook at all", async () => {
@@ -166,14 +171,6 @@ describe("ensure-webhook-subscription", () => {
   });
 });
 
-/**
- * #1270 — the exit code, which is the whole reason this script can now be a
- * scheduled drift detector rather than something a human remembers to run.
- *
- * Before this, every one of these cases returned 0. The scheduled job would
- * have gone green while the live hook carried six of the ten handled event
- * types, which is the exact state #1134 found in production.
- */
 describe("ensure-webhook-subscription — check mode exit codes", () => {
   it("fails when the live hook is missing a handled event type", async () => {
     mockGetAppSettings.mockResolvedValue(appWith([liveWebhook]));
@@ -184,15 +181,7 @@ describe("ensure-webhook-subscription — check mode exit codes", () => {
     expect(mockUpdateAppSettings).not.toHaveBeenCalled();
   });
 
-  it("passes when the live hook already covers every handled event", async () => {
-    mockGetAppSettings.mockResolvedValue(
-      appWith([{ ...liveWebhook, event_types: [...HANDLED_EVENT_TYPES] }]),
-    );
-
-    // `call.session_started` is subscribed on top of the handled list, so a
-    // hook carrying only the handled types is still one short and must fail.
-    expect(await ensureWebhookSubscription("check")).toBe(DRIFT_EXIT_CODE);
-
+  it("passes when the live hook matches the exact 8 handled events and flags extra events as drift", async () => {
     mockGetAppSettings.mockResolvedValue(
       appWith([
         {
@@ -200,6 +189,12 @@ describe("ensure-webhook-subscription — check mode exit codes", () => {
           event_types: [...HANDLED_EVENT_TYPES, "call.session_started"],
         },
       ]),
+    );
+
+    expect(await ensureWebhookSubscription("check")).toBe(DRIFT_EXIT_CODE);
+
+    mockGetAppSettings.mockResolvedValue(
+      appWith([{ ...liveWebhook, event_types: [...HANDLED_EVENT_TYPES] }]),
     );
 
     expect(await ensureWebhookSubscription("check")).toBe(0);

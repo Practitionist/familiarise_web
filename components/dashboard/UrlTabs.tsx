@@ -10,7 +10,7 @@
  * state has to be addressable — a plain `defaultValue` would drop the user on
  * the first panel regardless of where they came from.
  *
- * URL writes use `history.replaceState` (not `router.replace`) so switching a
+ * URL writes use `replaceUrl` (not `router.replace`) so switching a
  * tab does not trigger a Next.js soft navigation / RSC refetch. Local state
  * keeps the active panel in sync immediately; the address bar stays shareable.
  * History is not pushed — back still leaves the page rather than walking
@@ -25,6 +25,7 @@ import { useCallback, useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { replaceUrl } from "@/lib/navigation/history";
 
 export interface UrlTab {
   value: string;
@@ -38,10 +39,12 @@ export function UrlTabs({
   tabs,
   paramName = "tab",
   className,
+  onTabChange,
 }: {
   tabs: UrlTab[];
   paramName?: string;
   className?: string;
+  onTabChange?: (value: string) => void;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -53,8 +56,8 @@ export function UrlTabs({
   const urlActive =
     visible.find((t) => t.value === requested)?.value ?? visible[0]?.value;
 
-  // Local override so replaceState (which does not update useSearchParams)
-  // still flips the panel immediately.
+  // Local override flips the panel on click; the synced `useSearchParams`
+  // update lands a transition later.
   const [localActive, setLocalActive] = useState<string | null>(null);
   const active = localActive ?? urlActive;
 
@@ -63,10 +66,17 @@ export function UrlTabs({
     setLocalActive(null);
   }, [requested]);
 
+  useEffect(() => {
+    if (active) {
+      onTabChange?.(active);
+    }
+  }, [active, onTabChange]);
+
   const onValueChange = useCallback(
     (value: string) => {
       setLocalActive(value);
-      const params = new URLSearchParams(searchParams?.toString() ?? "");
+      onTabChange?.(value);
+      const params = new URLSearchParams(window.location.search);
       params.set(paramName, value);
       // Panels that paginate all read the same `?page=`. Without this, moving
       // to page 3 of Documents and then clicking Trials would open Trials on
@@ -76,10 +86,10 @@ export function UrlTabs({
       const target = qs ? pathname + "?" + qs : pathname;
       const current = window.location.pathname + window.location.search;
       if (target !== current) {
-        window.history.replaceState(window.history.state, "", target);
+        replaceUrl(target);
       }
     },
-    [paramName, pathname, searchParams],
+    [onTabChange, paramName, pathname],
   );
 
   if (!active) return null;

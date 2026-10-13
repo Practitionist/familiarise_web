@@ -44,10 +44,23 @@ export async function GET(req: NextRequest) {
       prisma.systemJobExecution.count({ where }),
     ]);
 
-    // Get user info for triggered executions
+    const SYSTEM_TRIGGER_LABELS: Record<string, string> = {
+      cron: "System (Cron)",
+      "cron-tick": "System (Cron)",
+      "github-actions": "GitHub Actions",
+      manual: "Manual",
+      system: "System",
+    };
+
+    // Get user info for user-triggered executions (excluding system trigger labels)
     const triggeredByIds = executions
-      .filter((e) => e.triggeredBy)
-      .map((e) => e.triggeredBy as string);
+      .map((e) => e.triggeredBy)
+      .filter(
+        (id): id is string =>
+          typeof id === "string" &&
+          id.length > 0 &&
+          !(id in SYSTEM_TRIGGER_LABELS),
+      );
 
     const triggeredByUsers =
       triggeredByIds.length > 0
@@ -70,11 +83,17 @@ export async function GET(req: NextRequest) {
       itemsProcessed: execution.itemsProcessed,
       errorCount: execution.errorCount,
       triggeredBy: execution.triggeredBy
-        ? userMap.get(execution.triggeredBy) || {
-            id: execution.triggeredBy,
-            name: "Deleted User",
-            email: null,
-          }
+        ? SYSTEM_TRIGGER_LABELS[execution.triggeredBy]
+          ? {
+              id: execution.triggeredBy,
+              name: SYSTEM_TRIGGER_LABELS[execution.triggeredBy],
+              email: null,
+            }
+          : userMap.get(execution.triggeredBy) || {
+              id: execution.triggeredBy,
+              name: "Deleted User",
+              email: null,
+            }
         : null,
       result: execution.result,
       errorLog: execution.errorLog,

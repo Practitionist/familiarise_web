@@ -16,10 +16,11 @@ import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { keysetCsvStream, keysetWhere } from "@/lib/csv/keyset-export";
+import { clawbackRecoveredByPayout } from "@/lib/payments/payouts/clawback-recovery";
 
-const PAYOUT_EXPORT_COLUMNS = 13;
+const PAYOUT_EXPORT_COLUMNS = 14;
 const PAYOUT_EXPORT_HEADER =
-  "id,status,period_start,period_end,currency,gross_paise,platform_fee_paise,refunds_paise,tds_paise,net_pre_tds_paise,disbursed_paise,processed_at,created_at\n";
+  "id,status,period_start,period_end,currency,gross_paise,platform_fee_paise,refunds_paise,tds_paise,net_pre_tds_paise,disbursed_paise,processed_at,created_at,clawback_recovered_paise\n";
 
 export async function GET(
   req: NextRequest,
@@ -27,7 +28,10 @@ export async function GET(
 ) {
   const { orgId } = await params;
   // #1527 decision 1 — the same grant as the payouts list it exports.
-  const access = await requireOrgAccess(orgId, { permission: "payouts.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "payouts.read",
+  });
   if (access.error) return access.error;
 
   await prisma.orgAuditLog.create({
@@ -54,6 +58,7 @@ export async function GET(
     amountPaise: number;
     processedAt: Date | null;
     createdAt: Date;
+    clawbackRecoveredPaise: number;
   }>({
     columnCount: PAYOUT_EXPORT_COLUMNS,
     header: PAYOUT_EXPORT_HEADER,
@@ -85,11 +90,18 @@ export async function GET(
           createdAt: true,
         },
       });
+      const recovered = await clawbackRecoveredByPayout(
+        prisma,
+        rows.map((r) => r.id),
+      );
       // Short page ⇒ exhausted: null closes the stream after this page is
       // emitted (see keyset-export contract).
       const last = rows.at(-1);
       return {
-        rows,
+        rows: rows.map((r) => ({
+          ...r,
+          clawbackRecoveredPaise: recovered.get(r.id) ?? 0,
+        })),
         nextCursor:
           rows.length === take && last
             ? { createdAt: last.createdAt, id: last.id }
@@ -110,6 +122,7 @@ export async function GET(
       r.amountPaise.toString(),
       r.processedAt?.toISOString() ?? "",
       r.createdAt.toISOString(),
+      r.clawbackRecoveredPaise.toString(),
     ],
   });
 

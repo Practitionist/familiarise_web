@@ -4,12 +4,14 @@
  *
  * Org-level SSO settings (separate from the individual IdP configs under
  * /sso/providers). This endpoint governs:
- *   - allowedEmailDomains      — which domains qualify for auto-join
- *   - enforceSSO               — require SSO for all sign-ins
+ *   - enforceSSO               — require SSO on every enforceable domain
  *   - defaultRoleForAutoJoin   — role newly auto-joined users receive
  *
+ * Which domains are enforced is not a setting: it is the org's verified
+ * OrgDomainClaim rows that an approved provider covers.
+ *
  * Settings are upserted on PATCH — the record exists 1:1 with Organization,
- * and missing == defaults (empty domains / no enforcement / LEARNER default).
+ * and missing == defaults (no enforcement / LEARNER default).
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -18,16 +20,20 @@ import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { DomainSchema } from "@/lib/enterprise/validators";
 import { JitDefaultRoleSchema } from "@/lib/labels/org-labels";
 import {
   DomainVerificationRequiredError,
   hasVerifiedDomain,
 } from "@/lib/enterprise/governance";
+import { deriveCallbackUrl } from "@/lib/sso/derive-urls";
+import { revokeEnforcedDomainSessions } from "@/lib/sso/session-sweeps";
+import {
+  countProvenProviders,
+  SSO_NOT_PROVEN_MESSAGE,
+} from "@/lib/sso/provider-proof";
 
 const PatchBodySchema = z
   .object({
-    allowedEmailDomains: z.array(DomainSchema).max(50).optional(),
     enforceSSO: z.boolean().optional(),
     // JIT auto-join is locked to LEARNER. Admins promote new members
     // explicitly after first signin via /dashboard/.../members. This
@@ -82,27 +88,30 @@ async function enforceSsoVersionLock(
   }
 }
 
-// Enforcing SSO without at least one allowed domain OR an SSO provider would
-// lock every user out of the org. Catch it here.
+// Enforcement only bites through an approved provider, and only one an OWNER
+// has signed in through is known to work.
 async function assertEnforceSsoIsSafe(
   tx: Tx,
   orgId: string,
   body: PatchBody,
-  existing: SsoSettingsRow | null,
 ): Promise<void> {
   if (body.enforceSSO !== true) return;
-  const effectiveDomains =
-    body.allowedEmailDomains ?? existing?.allowedEmailDomains ?? [];
-  const providerCount = await tx.ssoProvider.count({
-    where: { organizationId: orgId },
+  const approved = await tx.ssoProvider.count({
+    where: { organizationId: orgId, domainVerified: true },
   });
-  if (effectiveDomains.length === 0 && providerCount === 0) {
+  if (approved === 0) {
     throw Object.assign(
       new Error(
-        "Cannot enforce SSO without at least one allowed domain or SSO provider configured.",
+        "Cannot enforce SSO until at least one SSO provider has been approved.",
       ),
       { httpStatus: 409 },
     );
+  }
+  if ((await countProvenProviders(tx, orgId)) === 0) {
+    throw Object.assign(new Error(SSO_NOT_PROVEN_MESSAGE), {
+      httpStatus: 409,
+      code: "SSO_NOT_PROVEN",
+    });
   }
 }
 
@@ -115,32 +124,20 @@ async function assertSensitiveChangeVerified(
   orgId: string,
   body: PatchBody,
 ): Promise<void> {
-  const sensitiveChange =
-    body.enforceSSO === true ||
-    (body.allowedEmailDomains !== undefined &&
-      body.allowedEmailDomains.length > 0);
-  if (sensitiveChange && !(await hasVerifiedDomain(tx, orgId))) {
+  if (body.enforceSSO === true && !(await hasVerifiedDomain(tx, orgId))) {
     throw new DomainVerificationRequiredError("SSO");
   }
 }
 
-function upsertSsoSettings(
-  tx: Tx,
-  orgId: string,
-  body: PatchBody,
-) {
+function upsertSsoSettings(tx: Tx, orgId: string, body: PatchBody) {
   return tx.organizationSSOSettings.upsert({
     where: { organizationId: orgId },
     create: {
       organizationId: orgId,
-      allowedEmailDomains: body.allowedEmailDomains ?? [],
       enforceSSO: body.enforceSSO ?? false,
       defaultRoleForAutoJoin: body.defaultRoleForAutoJoin ?? "LEARNER",
     },
     update: {
-      ...(body.allowedEmailDomains !== undefined && {
-        allowedEmailDomains: body.allowedEmailDomains,
-      }),
       ...(body.enforceSSO !== undefined && { enforceSSO: body.enforceSSO }),
       ...(body.defaultRoleForAutoJoin !== undefined && {
         defaultRoleForAutoJoin: body.defaultRoleForAutoJoin,
@@ -150,8 +147,11 @@ function upsertSsoSettings(
 }
 
 // SSO_ENABLED/DISABLED specifically fires on enforceSSO flips, not generic
-// setting edits. Domain list changes still count as SETTINGS_CHANGED.
-function resolveSsoAuditAction(existing: SsoSettingsRow | null, body: PatchBody) {
+// setting edits.
+function resolveSsoAuditAction(
+  existing: SsoSettingsRow | null,
+  body: PatchBody,
+) {
   const ssoStateChanged =
     body.enforceSSO !== undefined &&
     body.enforceSSO !== (existing?.enforceSSO ?? false);
@@ -181,13 +181,10 @@ async function writeSsoAuditLog(
       description: "SSO settings updated",
       details: {
         from: {
-          allowedEmailDomains: existing?.allowedEmailDomains ?? [],
           enforceSSO: existing?.enforceSSO ?? false,
-          defaultRoleForAutoJoin:
-            existing?.defaultRoleForAutoJoin ?? "LEARNER",
+          defaultRoleForAutoJoin: existing?.defaultRoleForAutoJoin ?? "LEARNER",
         },
         to: {
-          allowedEmailDomains: next.allowedEmailDomains,
           enforceSSO: next.enforceSSO,
           defaultRoleForAutoJoin: next.defaultRoleForAutoJoin,
         },
@@ -206,8 +203,7 @@ function buildKnownSsoErrorResponse(err: unknown): NextResponse | null {
     );
   }
   if (err instanceof Error && "httpStatus" in err) {
-    const status =
-      typeof err.httpStatus === "number" ? err.httpStatus : 500;
+    const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
     // VERSION_CONFLICT carries currentVersion so the client can
     // refetch-and-retry without an extra GET.
     const code =
@@ -235,7 +231,10 @@ export async function GET(
   const { orgId } = await params;
   // #1527 P0-4 — identity.read (OWNER + MAINTAINER), was a MANAGER rank
   // floor that admitted BILLING_ADMIN; secrets stay OWNER-only below.
-  const access = await requireOrgAccess(orgId, { permission: "identity.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "identity.read",
+  });
   if (access.error) return access.error;
 
   const [settings, providers, claims] = await Promise.all([
@@ -249,8 +248,8 @@ export async function GET(
         providerId: true,
         issuer: true,
         domain: true,
-        samlConfig: true,
-        oidcConfig: true,
+        domainVerified: true,
+        provenAt: true,
       },
     }),
     prisma.orgDomainClaim.findMany({
@@ -259,17 +258,19 @@ export async function GET(
     }),
   ]);
 
+  // The secret envelope is never read here; the detail route reports a row
+  // whose config cannot be decrypted.
   return NextResponse.json({
     settings: settings ?? {
       organizationId: orgId,
-      allowedEmailDomains: [],
       enforceSSO: false,
       defaultRoleForAutoJoin: "LEARNER",
       version: 1,
     },
-    providers: providers.map(({ samlConfig, oidcConfig, ...rest }) => ({
-      ...rest,
-      providerType: samlConfig ? "saml" : oidcConfig ? "oidc" : null,
+    providers: providers.map((provider) => ({
+      ...provider,
+      providerType: "oidc" as const,
+      callbackUrl: deriveCallbackUrl(provider.providerId),
     })),
     domainClaims: claims,
   });
@@ -282,6 +283,7 @@ export async function PATCH(
   const { orgId } = await params;
   const access = await requireOrgAccess(orgId, {
     permission: "identity.manage",
+    requireActive: true,
   });
   if (access.error) return access.error;
 
@@ -304,10 +306,15 @@ export async function PATCH(
       if (existing) {
         await enforceSsoVersionLock(tx, orgId, existing, body.expectedVersion);
       }
-      await assertEnforceSsoIsSafe(tx, orgId, body, existing);
+      await assertEnforceSsoIsSafe(tx, orgId, body);
       await assertSensitiveChangeVerified(tx, orgId, body);
 
       const next = await upsertSsoSettings(tx, orgId, body);
+      if (body.enforceSSO === true && !(existing?.enforceSSO ?? false)) {
+        await revokeEnforcedDomainSessions(tx, orgId, {
+          keepSessionId: access.session.session.id,
+        });
+      }
       await writeSsoAuditLog(tx, {
         orgId,
         actorMembershipId: access.member.id,

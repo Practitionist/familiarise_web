@@ -22,6 +22,10 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { auditRowScope } from "@/lib/enterprise/audit-visibility";
+import {
+  sanitizeAuditDescription,
+  sanitizeAuditDetails,
+} from "@/lib/enterprise/audit-sanitize";
 
 const CategorySchema = z.enum([
   "MEMBER",
@@ -54,7 +58,10 @@ export async function GET(
   // #1527 P0-4 — activity.read (OWNER, MAINTAINER, MANAGER); the MANAGER
   // rank floor admitted BILLING_ADMIN. Rows follow the Audit page's category
   // split, so MANAGER gets no money rows.
-  const access = await requireOrgAccess(orgId, { permission: "activity.read" });
+  const access = await requireOrgAccess(orgId, {
+    readOnly: true,
+    permission: "activity.read",
+  });
   if (access.error) return access.error;
   const rowScope = auditRowScope(access.member.role) ?? {};
 
@@ -95,11 +102,16 @@ export async function GET(
   });
 
   const hasMore = rows.length > q.limit;
-  const data = hasMore ? rows.slice(0, q.limit) : rows;
-  const nextCursor = hasMore ? data[data.length - 1]?.id ?? null : null;
+  const page = hasMore ? rows.slice(0, q.limit) : rows;
+  const nextCursor = hasMore ? (page[page.length - 1]?.id ?? null) : null;
 
+  // The same read-side scrub as the Audit page: no engineering detail leaves the org surface.
   return NextResponse.json({
-    data,
+    data: page.map((r) => ({
+      ...r,
+      description: sanitizeAuditDescription(r.description),
+      details: sanitizeAuditDetails(r.details),
+    })),
     pagination: { hasMore, nextCursor, limit: q.limit },
   });
 }

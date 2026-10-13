@@ -36,10 +36,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS "appointment_feedback_level_key"
 -- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_amounts_nonnegative";
 -- SPLIT
--- #1582 A-P1-04 — GST-TCS collected rides the same floor as the other amounts.
 ALTER TABLE "Payment" ADD CONSTRAINT "payment_amounts_nonnegative"
-  CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "taxAmount" >= 0
-    AND ("gstTcsCollectedPaise" IS NULL OR "gstTcsCollectedPaise" >= 0));
+  CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "taxAmount" >= 0);
 -- SPLIT
 -- #1582 A-P0-02 — a funding leg is non-negative unless it is a *_REVERSAL
 -- sibling (INVOICE_ACCRUAL_REVERSAL / OVERAGE_INVOICE_ACCRUAL_REVERSAL), the
@@ -84,21 +82,17 @@ ALTER TABLE "Class" DROP CONSTRAINT IF EXISTS "class_max_participants_min";
 ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
 
 -- SPLIT
--- #440 — DB-level double-booking backstop for 1:1 bookings. The application
--- guards (consultant allocation lock, #827 confirm-time recheck) are the
--- first line; this exclusion constraint is the last line: two CONFIRMED
--- occurrences for the same consultant may never overlap in time. Scoped to rows
--- carrying the denormalized consultantProfileId — consultation/subscription
--- occurrence creates set it; webinar/class attendee rows deliberately leave it
--- NULL (many same-window rows per event are legitimate there) and legacy
--- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back occurrences don't
--- conflict.
--- #1694 — tombstones are exempt. A cancel or a hold-release keeps the row
--- (CANCELLED + deletedAt, isTentative untouched) and every reader treats it as
--- free, so without the exemption re-booking a cancelled time 409s at commit.
--- On a LIVE database do not replay this chunk by hand: run
--- `scripts/db/swap-occurrence-overlap-constraint.ts`, which verifies and swaps
--- under a lock timeout.
+-- #440 / #2010 — DB-level single-active-session overlap backstop across all 5
+-- offering types (Consultation, Subscription, Webinar, Class, Trial). Since
+-- #1554 unified seat rosters into AppointmentParticipant, group events create
+-- one AppointmentOccurrence per session and denormalize the host's
+-- consultantProfileId onto every occurrence. Two CONFIRMED, live occurrences
+-- for the same consultant may never overlap in time; tstzrange is '[)' so
+-- back-to-back occurrences don't conflict.
+-- #1694 / #2010 — tombstones (deletedAt IS NOT NULL) and replaced/cancelled
+-- sessions (completionStatus IN ('CANCELLED', 'RESCHEDULED'), e.g. class
+-- session cancellations that omit deletedAt so they stay countable as misses)
+-- are exempt so a make-up or re-booked slot can take the vacated time.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- SPLIT
 ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_no_confirmed_overlap";
@@ -108,7 +102,24 @@ ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_no_confirmed_over
     "consultantProfileId" WITH =,
     tstzrange("startsAt", "endsAt") WITH &&
   )
-  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL);
+  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL AND "completionStatus" NOT IN ('CANCELLED', 'RESCHEDULED'));
+
+-- SPLIT
+-- #2010 — every confirmed, live occurrence must carry its host
+-- consultantProfileId so occurrence_no_confirmed_overlap cannot be bypassed
+-- by a NULL consultantProfileId across any offering type.
+ALTER TABLE "AppointmentOccurrence"
+  DROP CONSTRAINT IF EXISTS "occurrence_confirmed_requires_consultant_chk",
+  ADD CONSTRAINT "occurrence_confirmed_requires_consultant_chk"
+    CHECK (
+      "isTentative"
+      OR "deletedAt" IS NOT NULL
+      OR "consultantProfileId" IS NOT NULL
+      OR "completionStatus" IN ('CANCELLED', 'RESCHEDULED')
+    ) NOT VALID;
+-- SPLIT
+ALTER TABLE "AppointmentOccurrence"
+  VALIDATE CONSTRAINT "occurrence_confirmed_requires_consultant_chk";
 
 -- SPLIT
 -- #747 / #685 — DB-enforced "at most one pending invite per (org, email)".
@@ -124,7 +135,7 @@ DROP INDEX IF EXISTS "invitations_org_email_pending_key";
 -- SPLIT
 CREATE UNIQUE INDEX "invitations_org_email_pending_key"
   ON "invitations" ("organizationId", lower("email"))
-  WHERE "status" = 'pending';
+  WHERE "status" = 'PENDING';
 
 -- SPLIT
 -- #676 PM-17 — extend the payment_amounts_nonnegative pattern to every other
@@ -145,7 +156,7 @@ ALTER TABLE "Dispute" ADD CONSTRAINT "dispute_amount_nonnegative" CHECK ("amount
 ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_amounts_nonnegative";
 -- SPLIT
 ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_amounts_nonnegative"
-  CHECK ("amount" >= 0 AND "tdsDeducted" >= 0 AND ("netAmount" IS NULL OR "netAmount" >= 0));
+  CHECK ("amount" >= 0 AND "tdsDeducted" >= 0 AND "clawbackAmountPaise" >= 0 AND ("netAmount" IS NULL OR "netAmount" >= 0));
 -- SPLIT
 ALTER TABLE "OrganizationPayout" DROP CONSTRAINT IF EXISTS "org_payout_amounts_nonnegative";
 -- SPLIT
@@ -168,7 +179,6 @@ ALTER TABLE "ConsultantEarnings" ADD CONSTRAINT "consultant_earnings_amounts_non
     AND "platformFeePaise" >= 0
     AND "consultantSharePaise" >= 0
     AND "refundedShareAmount" >= 0
-    AND ("gstTcsAccruedPaise" IS NULL OR "gstTcsAccruedPaise" >= 0)
   );
 -- SPLIT
 ALTER TABLE "OrganizationEarnings" DROP CONSTRAINT IF EXISTS "org_earnings_amounts_nonnegative";
@@ -219,7 +229,10 @@ ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_tds_fy_format"
 ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_plan_xor";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_plan_xor"
-  CHECK (("webinarPlanId" IS NULL) <> ("classPlanId" IS NULL));
+  CHECK (
+    ("collaboratorType" = 'WEBINAR' AND "webinarPlanId" IS NOT NULL AND "classPlanId" IS NULL)
+    OR ("collaboratorType" = 'CLASS' AND "classPlanId" IS NOT NULL AND "webinarPlanId" IS NULL)
+  );
 
 -- SPLIT
 -- ============================================================================
@@ -278,17 +291,15 @@ ALTER TABLE "ReferralCreditUsage" ADD CONSTRAINT "referral_credit_usage_nonnegat
   CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "restoredAmount" >= 0);
 
 -- SPLIT
--- #775 states the invariant in the schema doc-comment ("marginalPaise ==
--- basePaise + surchargePaise") but nothing enforced it. The member is charged
--- marginalPaise while the org's accrual is carved on basePaise, so a mismatch
--- means one side of a single booking is billed a different number.
+-- marginalPaise is what the payer is charged: base + surcharge + the surcharge's
+-- GST, which is never negative, so it can never fall below base + surcharge.
 ALTER TABLE "OverageEvent" DROP CONSTRAINT IF EXISTS "overage_marginal_is_base_plus_surcharge";
 -- SPLIT
 ALTER TABLE "OverageEvent" ADD CONSTRAINT "overage_marginal_is_base_plus_surcharge"
   CHECK (
     "basePaise" >= 0
     AND "surchargePaise" >= 0
-    AND "marginalPaise" = "basePaise" + "surchargePaise"
+    AND "marginalPaise" >= "basePaise" + "surchargePaise"
   );
 
 -- SPLIT
@@ -311,7 +322,44 @@ ALTER TABLE "RateCard" ADD CONSTRAINT "rate_card_bps_sum_is_whole"
 ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_share_bps_in_range";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_share_bps_in_range"
-  CHECK ("revenueShareBps" >= 0 AND "revenueShareBps" <= 10000);
+  CHECK (1 <= "revenueShareBps" AND "revenueShareBps" <= 9000);
+-- SPLIT
+DO $$
+BEGIN
+  UPDATE "Collaborator"
+  SET "role" = (CASE WHEN "role" = 'CO_INSTRUCTOR' THEN 'CO_HOST' ELSE 'GUEST_SPEAKER' END)::"CollaboratorRole"
+  WHERE "collaboratorType" = 'WEBINAR'
+    AND "role" NOT IN ('CO_HOST', 'MODERATOR', 'GUEST_SPEAKER', 'TECHNICAL_SUPPORT');
+
+  UPDATE "Collaborator"
+  SET "role" = (CASE WHEN "role" = 'CO_HOST' THEN 'CO_INSTRUCTOR' ELSE 'GUEST_LECTURER' END)::"CollaboratorRole"
+  WHERE "collaboratorType" = 'CLASS'
+    AND "role" NOT IN ('CO_INSTRUCTOR', 'TEACHING_ASSISTANT', 'GUEST_LECTURER', 'CONTENT_CREATOR');
+
+  UPDATE "Collaborator"
+  SET "tier" = (CASE WHEN "role" IN ('CO_HOST', 'CO_INSTRUCTOR') THEN 'PRESENTER' ELSE 'CREW' END)::"CollaboratorTier"
+  WHERE ("role" IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" <> 'PRESENTER')
+     OR ("role" NOT IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" <> 'CREW');
+
+  ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_role_matches_plan_type"
+    CHECK (
+      ("collaboratorType" = 'WEBINAR' AND "role" IN ('CO_HOST', 'MODERATOR', 'GUEST_SPEAKER', 'TECHNICAL_SUPPORT'))
+      OR ("collaboratorType" = 'CLASS' AND "role" IN ('CO_INSTRUCTOR', 'TEACHING_ASSISTANT', 'GUEST_LECTURER', 'CONTENT_CREATOR'))
+    );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+-- SPLIT
+DO $$
+BEGIN
+  ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_tier_matches_role"
+    CHECK (
+      ("role" IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" = 'PRESENTER')
+      OR ("role" NOT IN ('CO_HOST', 'CO_INSTRUCTOR') AND "tier" = 'CREW')
+    );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 -- SPLIT
 -- The journal's direction column carries the sign, so an entry amount is
@@ -335,17 +383,9 @@ ALTER TABLE "DiscountCode" ADD CONSTRAINT "discount_code_uses_within_cap"
   );
 
 -- SPLIT
--- #1093 §4 — two partial uniques the schema doc-comments always claimed.
--- Verified duplicate-free on the live database before adding (2026-08-13), so
--- these apply cleanly outside a reset. Two orgs may map the same IdP user;
--- one org must not map them twice — without this, deprovisionScimUser's
--- findFirst picks arbitrarily and an IdP DELETE can leave a twin ACTIVE.
-DROP INDEX IF EXISTS "membership_org_scim_key";
--- SPLIT
-CREATE UNIQUE INDEX "membership_org_scim_key"
-  ON "Membership" ("organizationId", "externalScimId")
-  WHERE "externalScimId" IS NOT NULL;
--- SPLIT
+-- #1093 §4 — a partial unique the schema doc-comment always claimed. Verified
+-- duplicate-free on the live database before adding (2026-08-13), so it
+-- applies cleanly outside a reset.
 DROP INDEX IF EXISTS "erasure_request_active_user_key";
 -- SPLIT
 CREATE UNIQUE INDEX "erasure_request_active_user_key"
@@ -369,7 +409,7 @@ ALTER TABLE "OrganizationInvoice" ADD CONSTRAINT "org_invoice_amounts_nonnegativ
     "subtotalPaise" >= 0
     AND "igstPaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0
     AND "totalPaise" >= 0
-    AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
+    AND "subtotalPaise" + "igstPaise" + "cgstPaise" + "sgstPaise" = "totalPaise"
   );
 -- SPLIT
 ALTER TABLE "InvoiceLineItem" DROP CONSTRAINT IF EXISTS "invoice_line_item_amounts_nonnegative";
@@ -387,13 +427,12 @@ ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_amounts_nonnegative"
     AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
   );
 -- SPLIT
--- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund or a
--- Dispute. Both minters (lib/payments/operations/refund.ts) set exactly one and
--- no seed file writes CreditNote, so the strict XOR is the true shape.
+-- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund, a
+-- Dispute, or an OverageEvent reversal.
 ALTER TABLE "CreditNote" DROP CONSTRAINT IF EXISTS "credit_note_trigger_xor";
 -- SPLIT
 ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_trigger_xor"
-  CHECK (("refundId" IS NULL) <> ("disputeId" IS NULL));
+  CHECK (num_nonnulls("refundId", "disputeId", "overageEventId") = 1);
 -- SPLIT
 ALTER TABLE "WalletTopUp" DROP CONSTRAINT IF EXISTS "wallet_topup_amount_positive";
 -- SPLIT
@@ -549,6 +588,33 @@ ALTER TABLE "OrganizationPayout" ADD CONSTRAINT "org_payout_tds_fy_format"
   CHECK ("tdsFinancialYear" IS NULL OR "tdsFinancialYear" ~ '^[0-9]{4}-[0-9]{2}$');
 
 -- SPLIT
+-- #1367 / #1368 — TdsRate integer-bps and effective-window sanity: rates live
+-- in [0, 10000] bps (covering 194O, 393-8(v), 194J, 194C), thresholds are
+-- non-negative, and a closed window never ends before it started.
+ALTER TABLE "TdsRate" DROP CONSTRAINT IF EXISTS "tds_rate_bps_and_window_sane";
+-- SPLIT
+ALTER TABLE "TdsRate" ADD CONSTRAINT "tds_rate_bps_and_window_sane"
+  CHECK (
+    "rateBps" >= 0 AND "rateBps" <= 10000
+    AND ("noPanRateBps" IS NULL OR ("noPanRateBps" >= 0 AND "noPanRateBps" <= 10000))
+    AND ("thresholdPaise" IS NULL OR "thresholdPaise" >= 0)
+    AND ("effectiveTo" IS NULL OR "effectiveTo" >= "effectiveFrom")
+  );
+-- SPLIT
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'tds_rate_bps_bounds'
+  ) THEN
+    ALTER TABLE "TdsRate" ADD CONSTRAINT "tds_rate_bps_bounds"
+      CHECK (
+        "rateBps" >= 0 AND "rateBps" <= 10000
+        AND ("noPanRateBps" IS NULL OR ("noPanRateBps" >= 0 AND "noPanRateBps" <= 10000))
+      );
+  END IF;
+END $$;
+
+-- SPLIT
 -- #1549 — one review per (consultant, consultee, track, event). ratingUnitId is NULL on
 -- every 1:1 row, so the key needs NULLS NOT DISTINCT, which Prisma cannot express; the
 -- predicate exempts NULL-track legacy rows and is what keeps `db push` from seeing the
@@ -659,6 +725,57 @@ CREATE TRIGGER review_revision_immutable
   EXECUTE FUNCTION assert_review_revision_immutable();
 
 -- SPLIT
+-- #1854 — UsageLedgerEntry is the append-only ledger the entitlement meters are
+-- DERIVED from: `reverseBookingUtilization` computes "how much of this booking
+-- has already been reversed" by summing its negative rows, and
+-- reconcile-ledgers.ts asserts Σ engagementsConsumed against
+-- ProgramAssignment.engagementsUsed nightly. Both are only true while the rows
+-- cannot be edited. A DELETE (or an UPDATE) passed silently, and the next
+-- reversal re-released a seat the org had already paid back.
+--
+-- Nothing in the codebase writes anything but `create` / `aggregate` on this
+-- table (the forward and reverse paths both APPEND, which is what makes the
+-- partial-reversal clamp work), so a raise trigger costs nothing — the same
+-- argument, and the same shape, as ledger_entry_immutable in
+-- ledger-triggers.sql.
+--
+-- NOT staged behind the banner below, unlike the CHECKs there: a trigger fires
+-- on FUTURE writes and never scans existing rows, so it cannot fail to apply
+-- against pre-reset data. Only a constraint that validates what is already in
+-- the table needs the reset window.
+DROP TRIGGER IF EXISTS usage_ledger_entry_immutable ON "UsageLedgerEntry";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_usage_ledger_entry_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'UsageLedgerEntry % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER usage_ledger_entry_immutable
+  BEFORE UPDATE OR DELETE ON "UsageLedgerEntry"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_usage_ledger_entry_immutable();
+
+-- SPLIT
+-- BookingStatusHistory is append-only (reschedule-restore and response-rate read
+-- it as truth). A trigger never scans existing rows, so it ships live, not staged.
+DROP TRIGGER IF EXISTS booking_status_history_immutable ON "BookingStatusHistory";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_booking_status_history_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'BookingStatusHistory % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+-- UPDATE OF lists only the audit columns: the three FKs are ON DELETE SET NULL,
+-- which Postgres runs as an UPDATE of the FK column and must not be refused.
+CREATE TRIGGER booking_status_history_immutable
+  BEFORE UPDATE OF "id", "entity", "entityId", "fromStatus", "toStatus", "reason", "createdAt"
+  OR DELETE ON "BookingStatusHistory"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_booking_status_history_immutable();
+
+-- SPLIT
 -- ============================================================================
 -- APPLIED AT THE PRE-MVP RESET (#1169 decision 8; #1554 uncommented them).
 -- Each of these could fail against pre-reset data, so they shipped commented
@@ -742,3 +859,349 @@ ALTER TABLE "Appointment" ADD CONSTRAINT "appointment_parent_matches_type"
     WHEN 'CLASS'        THEN "classId" IS NOT NULL        AND num_nonnulls("consultationId","subscriptionId","webinarId") = 0
     WHEN 'TRIAL'        THEN num_nonnulls("consultationId","subscriptionId","webinarId","classId") = 0
     ELSE FALSE END);
+-- SPLIT
+-- An SSO providerId is the slug in /api/auth/sso/callback/{providerId} and
+-- shares a namespace with Account.providerId. A provider named after a
+-- social or credential id would shadow that sign-in method and make
+-- enforceSSO's "has an account with this provider" check trivially true.
+-- The create route now generates ids itself (`oidc-<hex>`) and still
+-- refuses these, so this is the backstop for any other writer. Keep the list
+-- equal to RESERVED_PROVIDER_IDS in lib/sso/provider-schemas.ts;
+-- __tests__/sso/provider-schemas.test.ts pins the two together.
+ALTER TABLE "ssoProvider" DROP CONSTRAINT IF EXISTS "sso_provider_id_not_reserved";
+-- SPLIT
+ALTER TABLE "ssoProvider" ADD CONSTRAINT "sso_provider_id_not_reserved"
+  CHECK (lower(btrim("providerId")) NOT IN ('credential', 'facebook', 'github', 'google', 'sso'));
+-- SPLIT
+-- D18 — the app reaches Postgres only as the owner role, through Prisma.
+-- Supabase grants its PostgREST roles (anon, authenticated) full access to
+-- public by default, and the anon key ships in the browser bundle, so without
+-- this every table (sessions, accounts, verifications) is readable over the
+-- Data API. Revoke, and stop future tables created by this role from being
+-- granted. Skipped where the roles do not exist (local and CI Postgres).
+-- Re-apply after every `prisma db push` (npm run db:sidecars).
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+    REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+    REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM anon, authenticated;
+  END IF;
+END $$;
+-- SPLIT
+-- #1926 — Enforce at most one RUNNING SystemJobExecution row per jobName at a time
+-- so concurrent callers (cron-tick.mts vs GitHub Actions) cannot both acquire the
+-- same cron lock in the check-then-insert window. First sweep any pre-existing
+-- older duplicate RUNNING rows so index creation is guaranteed to succeed.
+WITH ranked_running AS (
+  SELECT
+    "id",
+    ROW_NUMBER() OVER (
+      PARTITION BY "jobName"
+      ORDER BY "startedAt" DESC, "id" DESC
+    ) AS rn
+  FROM "SystemJobExecution"
+  WHERE "status" = 'RUNNING'
+)
+UPDATE "SystemJobExecution"
+SET
+  "status" = 'FAILED',
+  "endedAt" = COALESCE("endedAt", NOW()),
+  "errorLog" = COALESCE("errorLog", 'deduplicated stale RUNNING row before unique index')
+WHERE "id" IN (SELECT "id" FROM ranked_running WHERE rn > 1);
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "SystemJobExecution_running_jobName_key"
+  ON "SystemJobExecution" ("jobName")
+  WHERE "status" = 'RUNNING';
+
+-- SPLIT
+-- A fee waiver is consumed by CAS on sessionsRemaining > 0; it never goes negative.
+ALTER TABLE "ConsultantFeeWaiver" DROP CONSTRAINT IF EXISTS "consultant_fee_waiver_sessions_nonnegative";
+-- SPLIT
+ALTER TABLE "ConsultantFeeWaiver" ADD CONSTRAINT "consultant_fee_waiver_sessions_nonnegative"
+  CHECK ("sessionsRemaining" >= 0);
+
+-- SPLIT
+-- Take rates are basis points of the gross; own-link never exceeds marketplace, and the
+-- proposer approves their own schedule only once it has stood 24 hours (sole-admin rule).
+ALTER TABLE "PlatformFeeSchedule" DROP CONSTRAINT IF EXISTS "platform_fee_schedule_valid";
+-- SPLIT
+ALTER TABLE "PlatformFeeSchedule" ADD CONSTRAINT "platform_fee_schedule_valid"
+  CHECK (
+    "marketplaceBps" BETWEEN 0 AND 10000
+    AND "ownLinkBps" BETWEEN 0 AND "marketplaceBps"
+    AND (
+      "checkerUserId" IS NULL
+      OR "checkerUserId" <> "makerUserId"
+      OR "approvedAt" >= "createdAt" + interval '24 hours'
+    )
+    AND (("checkerUserId" IS NULL) = ("approvedAt" IS NULL))
+  );
+
+-- SPLIT
+ALTER TABLE "ReferralProgramConfig" DROP CONSTRAINT IF EXISTS "referral_program_config_ranges";
+-- SPLIT
+ALTER TABLE "ReferralProgramConfig" ADD CONSTRAINT "referral_program_config_ranges"
+  CHECK (
+    "discountBps" BETWEEN 0 AND 10000
+    AND "redemptionCapBps" BETWEEN 0 AND 10000
+    AND "monthlyBudgetPaise" >= 0
+    AND "currentMonthSpentPaise" >= 0
+    AND "referrerRewardPaise" >= 0
+    AND "discountMaxPaise" >= 0
+    AND "minOrderPaise" >= 0
+    AND "perReferrerYearlyCapPaise" >= 0
+    AND "creditExpiryDays" > 0
+    AND "qualifyWindowDays" > 0
+    AND "perCodeLifetimeCap" >= 0
+    AND "weeklyVestCap" >= 0
+    AND "expertYearlyReferralCap" >= 0
+    AND "expertWaiverSessions" >= 0
+    AND "expertWaiverDays" > 0
+    AND "expertReferralBudgetPaise" >= 0
+  );
+
+-- SPLIT
+ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_platform_fee_bps_range";
+-- SPLIT
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_platform_fee_bps_range"
+  CHECK ("platformFeeBps" IS NULL OR "platformFeeBps" BETWEEN 0 AND 10000);
+
+-- SPLIT
+ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_welcome_discount_positive";
+-- SPLIT
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_welcome_discount_positive"
+  CHECK ("welcomeDiscountPaise" IS NULL OR "welcomeDiscountPaise" > 0);
+
+-- SPLIT
+-- At most one live welcome-discounted order per buyer; a second checkout must finish or abandon the first.
+CREATE UNIQUE INDEX IF NOT EXISTS "Payment_live_welcome_discount_user_key"
+  ON "Payment" ("userId")
+  WHERE "welcomeDiscountPaise" IS NOT NULL
+    AND "referralReleasedAt" IS NULL
+    AND "paymentStatus" IN ('PENDING', 'SUCCEEDED')
+    AND "deletedAt" IS NULL;
+
+-- SPLIT
+-- Multiple organizations may register an unverified claim for the same domain,
+-- but at most one organization can hold a verified claim on a domain at a time.
+DROP INDEX IF EXISTS "org_domain_claims_verified_domain_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "org_domain_claims_verified_domain_key"
+  ON "org_domain_claims" ("domain")
+  WHERE "verifiedAt" IS NOT NULL;
+
+-- SPLIT
+-- At most one ACTIVE contract per BillingAccount so active billing-term lookups
+-- never face ambiguous active contracts.
+DROP INDEX IF EXISTS "contract_one_active_per_billing_account_idx";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "contract_one_active_per_billing_account_idx"
+  ON "Contract" ("billingAccountId")
+  WHERE "status" = 'ACTIVE';
+
+-- SPLIT
+-- One OrganizationEarnings split row per (payment, organization, consultant,
+-- role, subscription cycle tranche). NULLS NOT DISTINCT ensures single-session
+-- and legacy rows with NULL consultantProfileId or cycleOrdinal still collide.
+DROP INDEX IF EXISTS "organization_earnings_split_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "organization_earnings_split_key"
+  ON "OrganizationEarnings" ("paymentId", "organizationId", "consultantProfileId", "role", "cycleOrdinal")
+  NULLS NOT DISTINCT;
+
+-- SPLIT
+-- CreditPoolConfig pricing and budget bounds (parity with licensed_seat_config_pricing_sane).
+ALTER TABLE "CreditPoolConfig" DROP CONSTRAINT IF EXISTS "credit_pool_config_pricing_sane";
+-- SPLIT
+ALTER TABLE "CreditPoolConfig" ADD CONSTRAINT "credit_pool_config_pricing_sane"
+  CHECK (
+    "creditBudgetPerCycle" > 0
+    AND ("overageSurchargeBps" IS NULL OR ("overageSurchargeBps" >= 0 AND "overageSurchargeBps" <= 10000))
+    AND ("maxOveragePerCyclePaise" IS NULL OR "maxOveragePerCyclePaise" > 0)
+    AND ("priceCapPerEngagementPaise" IS NULL OR "priceCapPerEngagementPaise" > 0)
+  );
+
+
+-- SPLIT
+-- Org recording-retention cap: NULL follows the platform schedule; a set cap stays inside the PATCH route's 7..3650 range.
+ALTER TABLE "organizations" DROP CONSTRAINT IF EXISTS "org_stream_recording_retention_days_range";
+-- SPLIT
+ALTER TABLE "organizations" ADD CONSTRAINT "org_stream_recording_retention_days_range"
+  CHECK ("streamRecordingRetentionDays" IS NULL OR "streamRecordingRetentionDays" BETWEEN 7 AND 3650);
+
+-- SPLIT
+-- Enforce mutual exclusivity between `processed` and `error` and require `processedAt` iff `processed`.
+DO $$
+BEGIN
+  UPDATE "WebhookEvent"
+  SET "processed" = false, "processedAt" = NULL
+  WHERE "processed" AND "error" IS NOT NULL;
+
+  UPDATE "WebhookEvent"
+  SET "processedAt" = CASE WHEN "processed" THEN COALESCE("processedAt", "receivedAt") ELSE NULL END
+  WHERE ("processed" IS TRUE) IS DISTINCT FROM ("processedAt" IS NOT NULL);
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_event_processed_error_exclusive'
+  ) THEN
+    ALTER TABLE "WebhookEvent" ADD CONSTRAINT "webhook_event_processed_error_exclusive"
+      CHECK (NOT ("processed" AND "error" IS NOT NULL));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_event_processed_timestamp_consistent'
+  ) THEN
+    ALTER TABLE "WebhookEvent" ADD CONSTRAINT "webhook_event_processed_timestamp_consistent"
+      CHECK (("processed" IS TRUE) IS NOT DISTINCT FROM ("processedAt" IS NOT NULL));
+  END IF;
+
+  WITH ranked_recordings AS (
+    SELECT
+      "id",
+      ROW_NUMBER() OVER (
+        PARTITION BY "streamRecordingId"
+        ORDER BY
+          ("status" = 'READY') DESC,
+          "updatedAt" DESC NULLS LAST,
+          "createdAt" DESC NULLS LAST,
+          "id" DESC
+      ) AS rn
+    FROM "Recording"
+    WHERE "streamRecordingId" IS NOT NULL
+  )
+  UPDATE "Recording"
+  SET "streamRecordingId" = NULL
+  WHERE "id" IN (SELECT "id" FROM ranked_recordings WHERE rn > 1);
+END $$;
+
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "WebhookEvent_unprocessed_provider_receivedAt_idx"
+  ON "WebhookEvent" ("provider", "receivedAt")
+  WHERE NOT "processed";
+
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "Recording_streamRecordingId_unique_idx"
+  ON "Recording" ("streamRecordingId")
+  WHERE "streamRecordingId" IS NOT NULL;
+
+-- SPLIT
+-- At most one open non-deleted SupportCase per (appointmentId, appointmentOccurrenceId, requesterUserId, submitterUserId, category)
+-- using NULLS NOT DISTINCT so booking-wide (appointmentOccurrenceId IS NULL) and platform-wide cases collide cleanly without merging cross-submitter threads.
+DROP INDEX IF EXISTS "support_case_open_scope_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_open_scope_key"
+  ON "SupportCase" ("appointmentId", "appointmentOccurrenceId", "requesterUserId", "submitterUserId", "category")
+  NULLS NOT DISTINCT
+  WHERE "closedAt" IS NULL AND "deletedAt" IS NULL;
+
+-- SPLIT
+-- At most one primary subject row per SupportCase.
+DROP INDEX IF EXISTS "support_case_subject_primary_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_subject_primary_key"
+  ON "SupportCaseSubject" ("caseId")
+  WHERE "isPrimary" = true;
+
+-- SPLIT
+-- A SupportCase must carry at least a category or a flowKey, an occurrence requires an appointment,
+-- problem links remain strictly one level deep, and CSAT scores stay between 1 and 5.
+ALTER TABLE "SupportCase" DROP CONSTRAINT IF EXISTS "support_case_scope_and_shape_chk";
+-- SPLIT
+ALTER TABLE "SupportCase" ADD CONSTRAINT "support_case_scope_and_shape_chk"
+  CHECK (
+    ("category" IS NOT NULL OR "flowKey" IS NOT NULL)
+    AND ("appointmentOccurrenceId" IS NULL OR "appointmentId" IS NOT NULL)
+    AND ("problemCaseId" IS NULL OR "caseKind" = 'INCIDENT')
+    AND ("csatRating" IS NULL OR ("csatRating" BETWEEN 1 AND 5))
+  );
+
+-- SPLIT
+-- Each SupportCaseEvent belongs to either a unified SupportCase or a pre-cutover SupportTicket.
+ALTER TABLE "SupportCaseEvent" DROP CONSTRAINT IF EXISTS "support_case_event_target_xor";
+-- SPLIT
+ALTER TABLE "SupportCaseEvent" ADD CONSTRAINT "support_case_event_target_xor"
+  CHECK (("caseId" IS NULL) <> ("legacyTicketId" IS NULL));
+
+-- SPLIT
+-- At most one CSAT rating event per pre-cutover SupportTicket.
+DROP INDEX IF EXISTS "support_case_event_legacy_csat_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "support_case_event_legacy_csat_key"
+  ON "SupportCaseEvent" ("legacyTicketId")
+  WHERE "kind" = 'CSAT_RATED';
+
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "AppointmentDocument_active_storagePath_key"
+  ON "AppointmentDocument" ("storagePath")
+  WHERE "deletedAt" IS NULL;
+
+-- SPLIT
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'AppointmentDocument_fileSize_positive_check') THEN
+    ALTER TABLE "AppointmentDocument"
+      ADD CONSTRAINT "AppointmentDocument_fileSize_positive_check"
+      CHECK ("fileSize" > 0 AND "versionNo" >= 1);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PlanMaterial_single_plan_fk_check') THEN
+    ALTER TABLE "PlanMaterial"
+      ADD CONSTRAINT "PlanMaterial_single_plan_fk_check"
+      CHECK (num_nonnulls("consultationPlanId", "subscriptionPlanId", "webinarPlanId", "classPlanId") = 1 AND "fileSize" > 0);
+  END IF;
+END $$;
+
+-- SPLIT
+-- Recording storage and marketplace listing invariants:
+-- Active PLATFORM rows require a storagePath; AVAILABLE rows require PLATFORM
+-- storage + storagePath; PUBLISHED listings require PLATFORM storage, storagePath,
+-- positive listPricePaise, and explicit consent attestation.
+ALTER TABLE "Recording" DROP CONSTRAINT IF EXISTS "Recording_storage_and_publish_check";
+-- SPLIT
+ALTER TABLE "Recording" ADD CONSTRAINT "Recording_storage_and_publish_check"
+  CHECK (
+    (
+      "storageType" = 'PLATFORM'
+      AND ("status" = 'EXPIRED' OR "storagePath" IS NOT NULL)
+      AND (
+        "listingStatus" <> 'PUBLISHED'
+        OR (
+          "storagePath" IS NOT NULL
+          AND "listPricePaise" IS NOT NULL
+          AND "listPricePaise" > 0
+          AND "consentAttestedAt" IS NOT NULL
+          AND "consentAttestedById" IS NOT NULL
+        )
+      )
+    )
+    OR (
+      "storageType" <> 'PLATFORM'
+      AND "status" <> 'AVAILABLE'
+      AND "listingStatus" <> 'PUBLISHED'
+    )
+  ) NOT VALID;
+-- SPLIT
+ALTER TABLE "Recording" VALIDATE CONSTRAINT "Recording_storage_and_publish_check";
+
+-- SPLIT
+-- Partial indexes backing active outbox relay scans and the 7-day SENT body scrub sweep.
+CREATE INDEX IF NOT EXISTS "FailedEmail_active_outbox_idx"
+  ON "FailedEmail" ("nextRetryAt" ASC NULLS FIRST)
+  WHERE "status" IN ('PENDING', 'RETRY');
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "FailedEmail_sent_unscrubbed_updatedAt_idx"
+  ON "FailedEmail" ("updatedAt")
+  WHERE "status" = 'SENT' AND ("htmlBody" <> '' OR "textBody" IS NOT NULL);
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "FailedEmailBatch_active_outbox_idx"
+  ON "FailedEmailBatch" ("nextRetryAt" ASC NULLS FIRST)
+  WHERE "status" IN ('PENDING', 'RETRY');
+-- SPLIT
+CREATE INDEX IF NOT EXISTS "NotificationOutbox_active_outbox_idx"
+  ON "NotificationOutbox" ("nextRetryAt" ASC NULLS FIRST, "notBefore")
+  WHERE "status" IN ('PENDING', 'RETRY');
+

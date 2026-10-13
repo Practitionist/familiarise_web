@@ -21,9 +21,8 @@ import Link from "next/link";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExternalLink, Loader2 } from "lucide-react";
-import type { TPlanImageType } from "@/lib/supabase";
 import { FormSection } from "@/components/planner/components/form-fields/FormSection";
-import { OfferingField } from "./OfferingFields";
+import { OfferingField, type CoverImageControl } from "./OfferingFields";
 import type { OfferingManifest } from "./manifest";
 
 export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
@@ -35,9 +34,10 @@ export interface OfferingEditorProps<T extends FieldValues = FieldValues> {
    * rather than being forced into a field kind.
    */
   slots?: Record<string, React.ReactNode>;
-  /** Absent while creating: there is no offering to attach an image to yet. */
+  /** Absent while creating. */
   planId?: string;
-  planImageType?: TPlanImageType;
+  /** Absent while creating: there is no offering to attach an image to yet. */
+  coverImage?: CoverImageControl;
   /** Null while creating. DRAFT offerings are not buyable and not discoverable. */
   status?: "DRAFT" | "PUBLISHED" | null;
   /**
@@ -74,7 +74,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   form,
   slots,
   planId,
-  planImageType,
+  coverImage,
   status = null,
   savingAction = null,
   publishBlockedReason = null,
@@ -157,16 +157,11 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           className="contents"
         >
           {/*
-          Full-bleed band: the shell (p-4 sm:p-6 lg:p-8) and DashboardContent
-          (px-6 lg:px-8) stack two paddings, so an inset band leaves gray
-          gutters on both sides. The negative margins cancel both per
-          breakpoint (40/48/64px) and the inner px re-pads the same amount,
-          so the title row and tabs align exactly with the card below. The
-          negative TOP margin cancels the same stack vertically (40/48/56px:
-          shell p + content py-6) so no gray strip separates the band from
-          the banner above it.
+          Full-bleed band matching DashboardShell's wrapper (p-4 sm:p-6 lg:p-8)
+          so the title row and tabs align flush with the form cards below with
+          zero horizontal overflow.
         */}
-          <div className="sticky top-0 z-20 -mx-10 -mt-10 mb-6 border-b bg-background px-10 pb-3 pt-3 sm:-mx-12 sm:-mt-12 sm:px-12 lg:-mx-16 lg:-mt-14 lg:px-16">
+          <div className="sticky top-0 z-20 -mx-4 -mt-4 mb-6 border-b bg-background px-4 pb-3 pt-3 sm:-mx-6 sm:-mt-6 sm:px-6 lg:-mx-8 lg:-mt-8 lg:px-8">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h1 className="text-xl font-semibold">
                 {planId ? "Edit" : "New"} {manifest.noun}
@@ -235,8 +230,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
                           key={spec.name}
                           control={form.control}
                           spec={spec}
-                          planId={planId}
-                          planImageType={planImageType}
+                          coverImage={coverImage}
                         />
                       ))}
                     </div>
@@ -259,17 +253,14 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           after the last section; on a long form mt-auto collapses to 0 and
           plain sticky takes over.
           REQUIRES the page's <DashboardContent> to carry `content-flush-bottom`
-          (see globals.css): without it, the stacked chrome paddings below this
-          bar leave a ~40-56px float above the true bottom edge.
+          (see globals.css).
         */}
         {/*
-          Full-bleed bar, same double-padding cancel as the band above: the
-          background stretches edge to edge while the buttons align with the
-          card edges. No max-w centering — a centered narrow inner is what
-          left the buttons floating inside the card measure.
+          Full-bleed bar matching DashboardShell's wrapper (p-4 sm:p-6 lg:p-8)
+          so buttons align flush with the form card edges.
         */}
-        <div className="sticky bottom-0 z-10 -mx-10 mt-auto border-t bg-background/95 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.15)] backdrop-blur sm:-mx-12 lg:-mx-16">
-          <div className="flex flex-wrap items-center justify-end gap-3 px-10 py-4 sm:px-12 lg:px-16">
+        <div className="sticky bottom-0 z-10 -mx-4 mt-auto border-t bg-background/95 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.15)] backdrop-blur sm:-mx-6 lg:-mx-8">
+          <div className="flex flex-wrap items-center justify-end gap-3 px-4 py-4 sm:px-6 lg:px-8">
             {publishBlockedReason && (
               <p className="mr-auto text-sm text-muted-foreground">
                 {publishBlockedReason}

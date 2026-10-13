@@ -28,6 +28,7 @@ import {
   ResponsiveModalHeader,
   ResponsiveModalTitle,
 } from "@/components/ui/responsive-modal";
+import { fetchWithIdentity } from "@/lib/auth/identity-header";
 
 const ObligationsResponseSchema = z.object({
   items: z.array(
@@ -59,7 +60,7 @@ async function fetchObligations(
 }
 
 async function deleteMember(orgId: string, memberId: string, force: boolean) {
-  const res = await fetch(
+  const res = await fetchWithIdentity(
     `/api/organizations/${orgId}/members/${memberId}${force ? "?force=true" : ""}`,
     { method: "DELETE" },
   );

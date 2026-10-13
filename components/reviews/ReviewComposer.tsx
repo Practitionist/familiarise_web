@@ -19,17 +19,21 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { RatingCause } from "@prisma/client";
 import { Star } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
 
+import { RatingCauseSelector } from "./RatingCauseSelector";
+
 export interface ExistingReview {
   id: string;
   rating: number;
   reviewDescription: string | null;
   isAnonymous?: boolean;
+  ratingCause?: RatingCause | null;
 }
 
 export function ReviewComposer({
@@ -59,11 +63,8 @@ export function ReviewComposer({
   const [hover, setHover] = useState(0);
   const [text, setText] = useState("");
   const [anonymous, setAnonymous] = useState(false);
+  const [ratingCause, setRatingCause] = useState<RatingCause | null>(null);
 
-  // Seed ONCE per review, not on every render of a fresh object. React Query
-  // hands back a new object each refetch, so depending on its identity meant a
-  // background poll reset the textarea to the saved text — and a user who had
-  // just cleared it submitted the old value straight back.
   const seededFor = useRef<string | null>(null);
   const seedKey = existing?.id ?? `none:${appointmentId}`;
   useEffect(() => {
@@ -72,21 +73,17 @@ export function ReviewComposer({
     setRating(existing?.rating ?? 0);
     setText(existing?.reviewDescription ?? "");
     setAnonymous(existing?.isAnonymous ?? false);
+    setRatingCause(existing?.ratingCause ?? null);
   }, [seedKey, existing]);
 
   const save = useMutation({
     mutationFn: async () => {
-      // Explicit null when cleared, never undefined: UpdateReviewSchema is
-      // `.partial()`, so undefined means "leave it alone" and a consultee
-      // deleting their written review could never actually delete it.
       const body = {
         rating,
         reviewDescription: text.trim() || null,
         isAnonymous: anonymous,
+        ratingCause: rating > 3 ? null : (ratingCause ?? null),
       };
-      // Always POST with the session, edit or not: the server moves the
-      // review's provenance and session clock to this session. PUT is the
-      // session-less edit (a "my reviews" page), not the post-session composer.
       const res = await fetch(`/api/user/reviews`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -139,7 +136,10 @@ export function ReviewComposer({
             // Every star is the same size and the same affordance. Making the
             // high ones easier to press is a named dark pattern under the CCPA
             // 2023 guidelines, and it is how a rating stops being data.
-            onClick={() => setRating(n)}
+            onClick={() => {
+              setRating(n);
+              if (n > 3) setRatingCause(null);
+            }}
             onMouseEnter={() => setHover(n)}
             onMouseLeave={() => setHover(0)}
             aria-label={`${n} star${n === 1 ? "" : "s"}`}
@@ -157,6 +157,14 @@ export function ReviewComposer({
           </button>
         ))}
       </div>
+
+      {rating > 0 && rating <= 3 && (
+        <RatingCauseSelector
+          value={ratingCause}
+          onChange={setRatingCause}
+          className="mt-2.5"
+        />
+      )}
 
       <Textarea
         className="mt-3"

@@ -180,13 +180,13 @@ a host arm (RateCard + EXPERT memberships + payouts). T.10.5 / T.10.6
 | Consumer in-org pages — LEARNER `/my-program`, EXPERT `/my-arrangement`                                                                                       | T.14, T.15  |
 | Audit log viewer + CSV export                                                                                                                                 | T.17        |
 | Domain DNS verification + signin gate                                                                                                                         | T.18        |
-| SSO provider config + cert expiry                                                                                                                             | T.19        |
+| SSO provider config + approval                                                                                                                                | T.19        |
 | Invoice lifecycle + PDF cache                                                                                                                                 | T.20        |
 | Wallet top-up + Razorpay popup                                                                                                                                | T.21        |
 | Payout request + 3-way split                                                                                                                                  | T.22        |
 | Anti-lockout guards (3 vectors)                                                                                                                               | T.23        |
 | OrgContextFilter (Personal / Org / All)                                                                                                                       | T.24        |
-| Novu org-lifecycle workflows (9 events)                                                                                                                       | T.25        |
+| Novu org-lifecycle workflows (8 events)                                                                                                                       | T.25        |
 | Reconcile cron (8 checks incl. session, seat, payout, leg drift)                                                                                              | T.26 - T.27 |
 | Invoice-fraud guard (PENDING_TRUST + credit-limit)                                                                                                            | T.8.6       |
 | Domain governance gates (SSO save, bulk seats)                                                                                                                | T.18, T.19  |
@@ -1353,9 +1353,8 @@ ON CONFLICT DO NOTHING;
 ```
 
 (The user's password is set via BetterAuth's signup flow; for the
-tour, set a known temp password via the BetterAuth admin or via a
-direct insert into the BetterAuth account table — check
-`docs/enterprise/playbooks/sso-testing.md` for the exact pattern.)
+tour, set a known temp password via the password-reset flow or via a
+direct insert into the BetterAuth account table.)
 
 **Watch for.** MAINTAINER should NOT see "Delete organization" in
 Settings. They CAN demote/promote other members but they CAN'T
@@ -1664,15 +1663,15 @@ on `tour-2026-04-25-acme`. Observe the DNS TXT record we're asked
 to publish. Since we can't actually set DNS for `tour.example.com`,
 we'll fake it via Supabase MCP — UPDATE the
 `OrgDomainClaim.verifiedAt` directly to mimic a successful DNS
-proof. Then attempt to sign in with an email at that domain and
-observe the SSO redirect kick in.
+proof. Once T.19 approves a provider and turns enforcement on, an
+email at that domain is steered to SSO.
 
 **Why it matters.** Without DNS proof, a malicious OWNER could
 claim `gmail.com` and intercept SSO routing for unrelated users.
 The `verifiedAt IS NOT NULL` enforcement landed in commit
 `4479eb5f` and it gates both
-`/api/auth/sso/domain-check` AND the customSession walk in
-`lib/auth.ts`.
+`/api/auth/sso/domain-check` AND the `session.create.before` SSO
+veto in `lib/auth.ts`.
 
 **Coverage.** Cross-cutting integration — Domain DNS verification.
 
@@ -1681,7 +1680,7 @@ The `verifiedAt IS NOT NULL` enforcement landed in commit
 > Pick one:
 >
 > - `auto` — Navigate to
->   `/dashboard/organization/<acmeId>/sso/domains`, click "Add
+>   `/dashboard/organization/<acmeId>/settings/sso`, click "Add
 >   domain", fill `tour.example.com`, save. Read the
 >   verificationToken from the response. Then run the SQL to fake
 >   the DNS proof (Standing Rule #5 — `tour-` prefix scope, OK).
@@ -1706,7 +1705,9 @@ Then test the signin gate:
 curl -i 'http://localhost:3000/api/auth/sso/domain-check?email=anyone@tour.example.com'
 ```
 
-Expect `enforceSSO=true` (after verifiedAt is set).
+Expect `enforceSSO=false` for now: enforcement also needs an approved
+provider (T.19). Re-run after T.19 turns enforcement on and expect
+`enforceSSO=true`.
 
 **Watch for.** Before `verifiedAt` is set, the same curl should
 return `enforceSSO=false`. This is the security gate — unverified
@@ -1734,51 +1735,53 @@ different ceiling.
 
 ---
 
-### T.19 — SSO provider config + cert expiry warning
+### T.19 — SSO provider config + platform approval
 
-**What we're about to do.** Add a SAML SSO provider to Acme via
-the SSO providers page. Use the test certificate from
-`docs/enterprise/playbooks/sso-testing.md` (or generate one with
-`openssl`). Set the cert's `notAfter` to 20 days from now via
-Supabase MCP, then trigger the cert-expiry alert cron via
-`/api/admin/sso-cert-expiry-alert`. Observe the WARN-level alert
-fire (audit log entry + Novu workflow).
+**What we're about to do.** Add an OIDC SSO provider to Acme from
+the org's Settings → SSO panel (domain, issuer, client ID, client
+secret, discovery URL; SSO is OIDC-only). The server fetches the
+issuer's discovery document, so point it at a real dev IdP tenant.
+The provider is saved with `domainVerified=false`. Then, as a
+platform ADMIN, open the back-office organization detail page for
+Acme and click **Approve** on the provider.
 
-**Why it matters.** SSO certs expire silently in production unless
-someone watches them. The cron + Novu workflow catches it 30 days
-out (WARN) and 7 days out (CRITICAL).
+**Why it matters.** An org can only register a provider for a domain
+it has proven via DNS, and no provider signs anyone in until platform
+staff approve it. That two-key step is what stops a tenant from
+pointing another company's domain at its own IdP.
 
-**Coverage.** Cross-cutting integration — SSO provider config + cert
-expiry.
+**Coverage.** Cross-cutting integration — SSO provider config +
+approval.
 
 **Drive.**
 
 > Pick one:
 >
-> - `auto` — Navigate to provider config, paste cert, save. Then
->   `mcp__supabase__execute_sql` to UPDATE `notAfter`. Then `curl
-POST` the cron route.
+> - `auto` — Fill the provider form and save, then sign in as ADMIN
+>   and approve from the back office (or `POST
+>   /api/admin/organizations/<acmeId>/sso-providers/<providerId>/approval`
+>   with `{"approve": true}`).
 > - `manual` — Same.
 
 **Verify.**
 
 ```sql
-SELECT category, action, description, details
-FROM "OrgAuditLog"
-WHERE "organizationId" = (SELECT id FROM "organizations" WHERE slug = 'tour-2026-04-25-acme')
-  AND action = 'SSO_CERT_EXPIRING'
-ORDER BY "createdAt" DESC LIMIT 1;
+SELECT "providerId", domain, "domainVerified", left("oidcConfig", 7) AS envelope
+FROM "ssoProvider"
+WHERE "organizationId" = (SELECT id FROM "organizations" WHERE slug = 'tour-2026-04-25-acme');
 ```
 
-Expect a row, `details.severity='WARN'`, `details.daysRemaining≈20`.
+Expect `providerId` like `oidc-<16 hex>`, `envelope='sso:v1:'`, and
+`domainVerified` flipping from `false` to `true` after approval.
 
-**Watch for.** The cron has a 20-hour dedup window
-(`scripts/cleanup/sso-cert-expiry-alert.ts`) — re-running it within
-20 hours should NOT produce a duplicate audit row.
+**Watch for.** The provider list shows a copyable Redirect URI
+(`<NEXT_PUBLIC_APP_URL>/api/auth/sso/callback/<providerId>`); that is
+what the IdP admin registers. There is no edit: to change a provider,
+delete and recreate it.
 
 **SSO settings save gate (PR-1d / #675).** Before T.18 fakes the
 domain DNS proof, attempt to PATCH the org's SSO settings with
-`enforceSSO=true` or a non-empty `allowedEmailDomains`:
+`enforceSSO=true`:
 
 ```bash
 curl -i -X PATCH 'http://localhost:3000/api/organizations/<acmeId>/sso' \
@@ -1789,7 +1792,8 @@ curl -i -X PATCH 'http://localhost:3000/api/organizations/<acmeId>/sso' \
 Expect `403 DOMAIN_VERIFICATION_REQUIRED`. Without this gate, an
 attacker org could enforce SSO against an unverified email-domain
 suffix and lock out members of an unrelated tenant. After T.18
-flips `verifiedAt`, the same PATCH succeeds. The PATCH branch that
+flips `verifiedAt` the PATCH returns `409` until the T.19 provider is
+approved, then succeeds. The PATCH branch that
 ONLY changes `defaultRoleForAutoJoin` (a non-sensitive setting)
 still works without a verified domain.
 
@@ -2159,14 +2163,14 @@ reconcile cron that catches drift between the three ledgers.
 
 ### T.25 — Trigger every Novu org workflow
 
-**What we're about to do.** Walk through each of the 9 Novu org
+**What we're about to do.** Walk through each of the 8 Novu org
 workflows (added in commit `aad0027c`) and trigger each one at
 least once during the tour. For each workflow, we'll inspect the
 payload that would have been sent (Novu's debug mode logs the
 payload locally) and confirm the recipient roster matches the
 roster resolver's expectation.
 
-The 9 workflows:
+The 8 workflows:
 
 1. `notifyOrgInviteSent` — sent when an invite is created
 2. `notifyOrgInviteAccepted` — sent when accepted
@@ -2176,14 +2180,13 @@ The 9 workflows:
 6. `notifyOrgPayoutCompleted` — sent on payout success
 7. `notifyOrgProgramExhausted` — sent when ProgramAssignment hits cap
 8. `notifyOrgSsoProviderDeleted` — sent on SSO provider DELETE
-9. `notifyOrgSsoCertExpiring` — sent by the cert-expiry cron
 
 **Why it matters.** If notifications silently fail, customers don't
 know about state changes that affect them. The non-throwing pattern
 in `lib/novu/org-workflows.ts` means we don't break the originating
 mutation, but we DO need observability that the trigger fired.
 
-**Coverage.** Cross-cutting integration — Novu org workflows (9
+**Coverage.** Cross-cutting integration — Novu org workflows (8
 events).
 
 **Drive.**
@@ -2194,8 +2197,7 @@ events).
 >   issue invoice → 3, pay it (we already did in T.20) → 4, top
 >   up wallet (T.21) → 5, request payout (T.22) → 6, exceed
 >   program cap (we may need to create + book a session) → 7,
->   delete the SSO provider from T.19 → 8, the cron in T.19
->   already fired 9.
+>   delete the SSO provider from T.19 → 8.
 > - `manual` — Same; agent narrates each Novu trigger as it fires.
 
 **Verify.** Novu sends are non-throwing — there's no DB row to

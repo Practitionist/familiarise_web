@@ -11,7 +11,10 @@
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireBackofficeSurface: jest.fn(async () => ({
-    session: { user: { id: "admin_1", role: "ADMIN" } },
+    session: {
+      user: { id: "admin_1", role: "ADMIN" },
+      session: { createdAt: new Date() },
+    },
   })),
 }));
 jest.mock("../../lib/backoffice/money-limit", () => ({
@@ -25,7 +28,6 @@ jest.mock("../../lib/prisma", () => ({
 const refundBookingPayment = jest.fn();
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
-  fundingRailForIntent: jest.fn(),
 }));
 jest.mock("../../lib/payments/operations/refund", () => {
   class RefundGatewayError extends Error {

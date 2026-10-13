@@ -39,6 +39,7 @@ import {
   MEMBER_ROLE_LABEL,
 } from "@/lib/labels/org-labels";
 import { ORG_STATUS } from "@/lib/labels/backoffice-labels";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { useWorkspaceBilling } from "../hooks/useWorkspaceBilling";
 import { formatCurrencyTotals } from "../currency-totals";
 
@@ -57,6 +58,7 @@ interface OrgMembershipRow {
     billingAccount: {
       fundingSource: FundingSource;
       walletBalance: number | null;
+      minBalancePaise?: number | null;
       currency: string;
     } | null;
   };
@@ -79,10 +81,30 @@ async function fetchOrgs(): Promise<{ data: OrgMembershipRow[] }> {
   return res.json();
 }
 
+function formatWalletSuffix(
+  funding: string,
+  walletBalance: number | null,
+  currency: string,
+): string {
+  if (funding !== "WALLET") return "";
+  if (walletBalance !== null) {
+    return ` · ${formatCurrencyAmount(walletBalance, currency)}`;
+  }
+  return " · not yet funded";
+}
+
 function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
   const org = row.organization;
   const kind = deriveCapabilityKind(org.canSponsor, org.canHost);
   const funding = org.billingAccount?.fundingSource ?? null;
+  const walletBalance = org.billingAccount?.walletBalance ?? null;
+  const minBalancePaise = org.billingAccount?.minBalancePaise ?? null;
+  const currency = org.billingAccount?.currency ?? "INR";
+  const isLowWallet =
+    funding === "WALLET" &&
+    walletBalance !== null &&
+    minBalancePaise !== null &&
+    walletBalance <= minBalancePaise;
   return (
     // The bare org route lands each role on its own page.
     <Link
@@ -109,7 +131,13 @@ function OrgCard({ row }: Readonly<{ row: OrgMembershipRow }>) {
         <StatusBadge {...ORG_STATUS[org.status]} size="sm" />
         <Badge variant="secondary">{CAPABILITY_LABEL[kind]}</Badge>
         {funding && (
-          <Badge variant="outline">{FUNDING_SOURCE_LABEL[funding]}</Badge>
+          <Badge variant="outline">
+            {FUNDING_SOURCE_LABEL[funding]}
+            {formatWalletSuffix(funding, walletBalance, currency)}
+          </Badge>
+        )}
+        {isLowWallet && (
+          <StatusBadge label="Low wallet balance" tone="caution" size="sm" />
         )}
       </div>
     </Link>

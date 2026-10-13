@@ -43,6 +43,7 @@ import {
 } from "@/lib/payments/webhooks/handlers";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { reportSentryError } from "@/lib/observability/report";
+import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
 export interface RetryAutoRefundsResult {
   success: boolean;
@@ -112,17 +113,32 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
   });
   result.scanned = due.length;
 
+  // One Sentry event per run, never per row.
+  const failedIds: string[] = [];
+  let firstError: unknown;
   for (const payment of due) {
     try {
       await retryOne(payment, result);
     } catch (error) {
       result.errors += 1;
-      reportSentryError(error, {
-        subsystem: "payments",
-        op: "retry-auto-refunds",
-        extra: { paymentId: payment.id },
-      });
+      firstError ??= error;
+      failedIds.push(payment.id);
+      // Console bypasses the Sentry scrubber, so log a scrubbed message only.
+      console.error(
+        `retry-auto-refunds: payment ${payment.id} failed:`,
+        scrubStringValue(
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
     }
+  }
+  if (failedIds.length > 0) {
+    reportSentryError(firstError, {
+      subsystem: "payments",
+      op: "retry-auto-refunds",
+      fingerprint: ["retry-auto-refunds"],
+      extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
+    });
   }
   result.success = result.errors === 0;
   return result;
@@ -163,13 +179,15 @@ async function retryOne(
     return;
   }
 
+  let settled = false;
   try {
-    await refundBookingPayment({
+    const outcome = await refundBookingPayment({
       paymentId: payment.id,
       reason: "auto-refund retry: capture funds no booking",
       initiatedByUserId: null,
     });
     result.refunded += 1;
+    settled = outcome?.status !== "PENDING";
   } catch (error) {
     if (
       error instanceof RefundValidationError &&
@@ -177,6 +195,7 @@ async function retryOne(
     ) {
       // The money is already back (an earlier attempt or an operator).
       result.settled += 1;
+      settled = true;
     } else if (
       error instanceof RefundValidationError &&
       (error.code === "REFUND_BLOCKED_BY_DISPUTE" ||
@@ -198,5 +217,7 @@ async function retryOne(
   if (payment.appointmentId && pending.includes(DOUBLE_BOOKING_BLOCKED_NOTE)) {
     await releaseBlockedBookingHold(payment.appointmentId);
   }
-  await settleAutoRefundMarker(payment.id);
+  if (settled) {
+    await settleAutoRefundMarker(payment.id);
+  }
 }

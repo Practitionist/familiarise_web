@@ -15,7 +15,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth-server";
 
 export default async function OrganizationSwitcherRedirect() {
-  const session = await getSession(true);
+  const session = await getSession();
   if (!session?.user?.id) redirect("/auth/signin");
 
   if (session.user.orgWorkspaceProfileId) {

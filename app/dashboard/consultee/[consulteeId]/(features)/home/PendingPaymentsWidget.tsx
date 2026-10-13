@@ -33,7 +33,10 @@ import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
 import type { ConsulteeFailedRefund } from "@/lib/data/consultee-payments";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
-import { isExternalPayHref } from "@/lib/payments/pay-link-href";
+import {
+  isExternalPayHref,
+  paymentIdFromPayPath,
+} from "@/lib/payments/pay-link-href";
 
 interface PendingPayment {
   id: string;
@@ -175,6 +178,17 @@ function PayNowButton({
       <ExternalLink className="ml-1 h-3 w-3" />
     </Button>
   );
+}
+
+/** The pending-checkout page for a row: a gateway row IS a Payment id, an approval row carries it in its pay-page path. */
+function pendingDetailsHref(payment: PendingPayment): string | null {
+  if (payment.source === "gateway_pending") {
+    return `/checkout/pending/${encodeURIComponent(payment.id)}`;
+  }
+  const paymentId = paymentIdFromPayPath(payment.paymentUrl);
+  return paymentId
+    ? `/checkout/pending/${encodeURIComponent(paymentId)}`
+    : null;
 }
 
 type PendingCancelTarget =
@@ -418,6 +432,7 @@ export function PendingPaymentsWidget({
       <div className="divide-y divide-amber-100 flex-1">
         {pendingPayments.map((payment) => {
           const isGatewayPending = payment.source === "gateway_pending";
+          const detailsHref = pendingDetailsHref(payment);
           const { bookingState, nextAction } = rowPresentation(payment);
           // #1763 — `nextAction.label` runs its own `money()` helper, so an
           // INR row diverged from the row's own `formatPrice` amount above.
@@ -437,9 +452,22 @@ export function PendingPaymentsWidget({
                   <p className="text-sm font-medium text-foreground truncate">
                     {payment.title}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                    with {payment.consultantName}
-                  </p>
+                  <div className="mt-0.5 flex items-baseline gap-1 text-xs text-muted-foreground">
+                    <p className="min-w-0 truncate">
+                      with {payment.consultantName}
+                    </p>
+                    {detailsHref && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <Link
+                          href={detailsHref}
+                          className="shrink-0 underline underline-offset-2 hover:text-foreground"
+                        >
+                          Details
+                        </Link>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <span className="text-sm font-semibold text-foreground tabular-nums shrink-0">
                   {/* `formatPrice` assumes INR paise and applies the viewer's

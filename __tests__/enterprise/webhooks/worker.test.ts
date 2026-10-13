@@ -16,6 +16,7 @@
  *     FAILED with an explicit reason (operator pause wins).
  */
 
+import type { PrismaLike } from "@/lib/prisma";
 import { runDispatchTick } from "@/lib/enterprise/outbound-webhooks/worker";
 
 // #1132 — fixture endpoints use the reserved `.example` TLD, which does not
@@ -66,8 +67,12 @@ function makePrismaStub(
         findMany: jest.fn().mockResolvedValue([initialRow]),
         // #812 — the IN_FLIGHT soft lock is now a guarded atomic claim.
         updateMany: jest.fn().mockImplementation((args) => {
-          claims.push(args);
-          return Promise.resolve({ count: claimCount });
+          if (args.data?.status === "IN_FLIGHT") {
+            claims.push(args);
+            return Promise.resolve({ count: claimCount });
+          }
+          updates.push(args);
+          return Promise.resolve({ count: 1 });
         }),
         update: jest.fn().mockImplementation((args) => {
           updates.push(args);
@@ -112,8 +117,7 @@ describe("runDispatchTick — SSRF guard wiring (#1132)", () => {
     const fetchFn = mockFetch(async () => new Response("", { status: 200 }));
 
     const result = await runDispatchTick({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
@@ -134,8 +138,7 @@ describe("runDispatchTick — success path", () => {
 
     const result = await runDispatchTick({
       assertUrlFn: NOOP_URL_GUARD,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
@@ -173,8 +176,7 @@ describe("runDispatchTick — permanent client error", () => {
 
     const result = await runDispatchTick({
       assertUrlFn: NOOP_URL_GUARD,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
@@ -191,15 +193,14 @@ describe("runDispatchTick — permanent client error", () => {
 });
 
 describe("runDispatchTick — transient error / retry schedule", () => {
-  it("5xx → RETRY with attempt 2's backoff (5 minutes) on the first failure", async () => {
+  it("5xx → RETRY with attempt 1's backoff (1 minute) on the first failure", async () => {
     const row = makeRow();
     const stub = makePrismaStub(row);
     const fetchFn = mockFetch(async () => new Response("", { status: 503 }));
 
     await runDispatchTick({
       assertUrlFn: NOOP_URL_GUARD,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
@@ -210,8 +211,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
       httpStatusCode: 503,
       attempts: 1,
     });
-    // Attempt 1 just failed → schedule attempt 2 at +5min.
-    const expectedNext = new Date(FROZEN_NOW_MS + 5 * 60_000);
+    const expectedNext = new Date(FROZEN_NOW_MS + 60_000);
     expect(
       (finalUpdate.data as { nextRetryAt: Date }).nextRetryAt.toISOString(),
     ).toBe(expectedNext.toISOString());
@@ -224,8 +224,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
 
     await runDispatchTick({
       assertUrlFn: NOOP_URL_GUARD,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
@@ -242,8 +241,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
 
     await runDispatchTick({
       assertUrlFn: NOOP_URL_GUARD,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
@@ -263,8 +261,7 @@ describe("runDispatchTick — transient error / retry schedule", () => {
 
     await runDispatchTick({
       assertUrlFn: NOOP_URL_GUARD,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
@@ -293,8 +290,7 @@ describe("runDispatchTick — operator pause", () => {
 
     await runDispatchTick({
       assertUrlFn: NOOP_URL_GUARD,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });
@@ -319,8 +315,7 @@ describe("runDispatchTick — guarded atomic claim (#812)", () => {
 
     const result = await runDispatchTick({
       assertUrlFn: NOOP_URL_GUARD,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      prisma: stub.prisma as any,
+      prisma: stub.prisma as unknown as PrismaLike,
       fetchFn,
       now: () => FROZEN_NOW_MS,
     });

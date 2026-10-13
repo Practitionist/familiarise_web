@@ -6,6 +6,12 @@
  */
 
 import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
+import {
+  computeWelcomeDiscountPaise,
+  creditCapPaise,
+  keepsWelcomeDiscount,
+  type WelcomeDiscount,
+} from "@/lib/referrals/promo-math";
 
 // Default tax rate (can be overridden via env or region config)
 const DEFAULT_TAX_RATE = parseFloat(
@@ -19,6 +25,10 @@ export interface PricingConfig {
   discountPercent?: number; // Applied discount percentage (0.10 = 10%)
   discountAmount?: number; // Fixed discount amount
   creditsApplied?: number; // Referral credits applied (same unit as baseAmount, typically paise)
+  /** Referee's pre-tax welcome discount; only used when no other discount applies. */
+  welcomeDiscount?: WelcomeDiscount | null;
+  /** Promo may cover at most this many bps of the list price; absent means no credits. */
+  creditCapBps?: number;
 }
 
 export interface PricingBreakdown {
@@ -104,22 +114,39 @@ export function calculatePricing(
   const discountPercent = config.discountPercent ?? 0;
 
   const subtotal = calculateSubtotal(baseAmount);
-  const discountAmount = calculateDiscount(
+  const codeDiscount = calculateDiscount(
     subtotal,
     discountPercent,
     config.discountAmount,
   );
-  const netAmount = calculateNetAmount(subtotal, discountAmount);
-  const taxAmount = calculateTax(netAmount, taxRate);
-  const totalBeforeCredits = calculateTotal(netAmount, taxAmount);
-  // #1592 S-P1-04 — the same ₹500 redemption floor the server applies in
-  // lib/payments/pricing/derive-checkout-amount.ts, so the preview never
-  // shows a credit the charge will not honour.
-  const creditsApplied =
-    totalBeforeCredits >= MIN_CREDIT_REDEMPTION_PAISE
-      ? Math.min(config.creditsApplied ?? 0, totalBeforeCredits)
-      : 0;
-  const total = Math.round((totalBeforeCredits - creditsApplied) * 100) / 100;
+  const welcome = codeDiscount > 0 ? null : config.welcomeDiscount;
+
+  const price = (welcomePaise: number) => {
+    const discountAmount = codeDiscount + welcomePaise;
+    const netAmount = calculateNetAmount(subtotal, discountAmount);
+    const taxAmount = calculateTax(netAmount, taxRate);
+    const totalBeforeCredits = calculateTotal(netAmount, taxAmount);
+    // #1592 S-P1-04 — the same ₹500 redemption floor the server applies in
+    // lib/payments/pricing/derive-checkout-amount.ts, so the preview never
+    // shows a credit the charge will not honour.
+    const creditsApplied =
+      totalBeforeCredits >= MIN_CREDIT_REDEMPTION_PAISE
+        ? Math.min(
+            config.creditsApplied ?? 0,
+            totalBeforeCredits,
+            creditCapPaise(subtotal, config.creditCapBps ?? 0, welcomePaise),
+          )
+        : 0;
+    const total = Math.round((totalBeforeCredits - creditsApplied) * 100) / 100;
+    return { discountAmount, taxAmount, creditsApplied, total };
+  };
+
+  const welcomePaise = computeWelcomeDiscountPaise(subtotal, welcome);
+  const withWelcome = price(welcomePaise);
+  const { discountAmount, taxAmount, creditsApplied, total } =
+    welcomePaise > 0 && !keepsWelcomeDiscount(welcome, withWelcome.total)
+      ? price(0)
+      : withWelcome;
 
   return {
     subtotal,

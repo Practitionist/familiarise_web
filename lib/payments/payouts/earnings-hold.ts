@@ -130,16 +130,23 @@ export async function recomputeEarningsHold(
   );
   // #1766 — a NULL hold is an undelivered subscription tranche; only the
   // completion path may stamp it, so a reschedule leaves it alone.
-  const pending = await db.consultantEarnings.findMany({
-    where: {
-      paymentId: { in: appointment.payment.map((p) => p.id) },
-      status: "PENDING",
-      holdUntil: { not: null },
-    },
-    select: { id: true, createdAt: true, holdUntil: true },
-  });
+  const wherePendingHold = {
+    paymentId: { in: appointment.payment.map((p) => p.id) },
+    status: "PENDING" as const,
+    holdUntil: { not: null },
+  };
+  const [pendingConsultant, pendingOrg] = await Promise.all([
+    db.consultantEarnings.findMany({
+      where: wherePendingHold,
+      select: { id: true, createdAt: true, holdUntil: true },
+    }),
+    db.organizationEarnings?.findMany({
+      where: wherePendingHold,
+      select: { id: true, createdAt: true, holdUntil: true },
+    }) ?? Promise.resolve([]),
+  ]);
   let moved = 0;
-  for (const earning of pending) {
+  for (const earning of pendingConsultant) {
     if (!earning.holdUntil) continue;
     const computed = computeHoldUntil({
       capturedAt: earning.createdAt,
@@ -147,11 +154,33 @@ export async function recomputeEarningsHold(
       holdHours,
     });
     if (computed.getTime() <= earning.holdUntil.getTime()) continue;
-    await db.consultantEarnings.update({
-      where: { id: earning.id },
+    const res = await db.consultantEarnings.updateMany({
+      where: {
+        id: earning.id,
+        status: "PENDING",
+        holdUntil: { lt: computed },
+      },
       data: { holdUntil: computed },
     });
-    moved += 1;
+    moved += res.count;
+  }
+  for (const earning of pendingOrg) {
+    if (!earning.holdUntil) continue;
+    const computed = computeHoldUntil({
+      capturedAt: earning.createdAt,
+      lastOccurrenceEndsAt: lastEnd,
+      holdHours,
+    });
+    if (computed.getTime() <= earning.holdUntil.getTime()) continue;
+    const res = await db.organizationEarnings.updateMany({
+      where: {
+        id: earning.id,
+        status: "PENDING",
+        holdUntil: { lt: computed },
+      },
+      data: { holdUntil: computed },
+    });
+    moved += res.count;
   }
   return moved;
 }

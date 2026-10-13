@@ -22,6 +22,7 @@ import {
   getJoinableOccurrence,
   getOccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
+import { isConfirmedStatus } from "@/lib/appointments/status";
 import type {
   ConsultationPlanEvent,
   PlannerClassEvent,
@@ -30,6 +31,7 @@ import type {
 } from "@/types/planner-events";
 import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
+import { useExpertShareHref } from "@/hooks/useExpertShareHref";
 import { useSession } from "@/lib/auth-client";
 import { useListParams } from "@/hooks/useListParams";
 import { EmptyState } from "@/components/dashboard/EmptyState";
@@ -133,6 +135,7 @@ export function EventManagementDashboard({
     const ids = new Set<string>();
 
     for (const webinar of webinars) {
+      if (!isConfirmedStatus(webinar.status)) continue;
       const run = getJoinableOccurrence(
         webinar.appointment?.occurrences ?? [],
         {
@@ -144,6 +147,7 @@ export function EventManagementDashboard({
     }
 
     for (const cls of classes) {
+      if (!isConfirmedStatus(cls.status)) continue;
       const run = getJoinableOccurrence(cls.appointment?.occurrences ?? [], {
         joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
         now,
@@ -350,6 +354,7 @@ export function EventManagementDashboard({
 
   const consultationPlans = useConsultationPlans(consultantId);
   const subscriptionPlans = useSubscriptionPlans(consultantId);
+  const expertShareHref = useExpertShareHref(consultantId);
 
   const archive: Record<
     OfferingPlanType,
@@ -427,6 +432,7 @@ export function EventManagementDashboard({
       duplicateHref: planId
         ? `${basePath}/offerings/${row.type}/new?from=${planId}`
         : null,
+      shareAttributionHref: expertShareHref,
       trials:
         row.type === "subscription" && planId
           ? {

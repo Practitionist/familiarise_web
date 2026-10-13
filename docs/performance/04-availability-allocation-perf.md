@@ -27,7 +27,7 @@ Narrow windows are fine; cost explodes with width. The allocation dialog opened 
 
 ## Root cause
 
-`app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` calls `processAvailabilitySlots()` (`utils/timeSlotsProcessing.ts`) over the full requested range. That pipeline:
+`app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` calls `processAvailabilitySlots()` (`utils/scheduling-engine/intervals.ts`) over the full requested range. That pipeline:
 
 - `processWeeklySlots()` iterates day-by-day across the whole window.
 - `convertToSlotTimings()` runs `getSlotBookingStatus()` **per slot**, which is `O(appointments)` each.

@@ -10,7 +10,6 @@
 const refundBookingPayment = jest.fn();
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
-  fundingRailForIntent: () => "GATEWAY",
 }));
 const findDedupedRefund = jest.fn();
 jest.mock("../../lib/payments/operations/refund", () => ({

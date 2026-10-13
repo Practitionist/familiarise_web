@@ -62,19 +62,17 @@ export interface ThreadBooking {
 
 export interface ThreadData {
   thread: SupportThread | null;
-  intents: { category: string; title: string }[];
+  intents: { category: string; title: string; escalates?: boolean }[];
   booking: ThreadBooking | null;
 }
 
 export type SupportAction =
-  | { kind: "OFFER_CANCEL_REFUND"; refundPct: number }
-  | { kind: string };
+  { kind: "OFFER_CANCEL_REFUND"; refundPct: number } | { kind: string };
 
 interface TurnResult {
   status: string;
   activeChannel: string;
   currentNodeId: string | null;
-  /** The bot's own reply. Rendered straight from here — see `onSuccess`. */
   messages: {
     sender: Sender;
     body: string;
@@ -82,9 +80,10 @@ interface TurnResult {
   }[];
   escalated: boolean;
   resolved: boolean;
-  /** False when the server refused the write (thread closed underneath us). */
   accepted?: boolean;
   actions: SupportAction[];
+  outcomeId?: string | null;
+  replyByAt?: string | null;
 }
 
 /** One turn's payload, kept so a failed send can be repeated verbatim. */
@@ -92,6 +91,8 @@ export interface TurnVars {
   category?: string;
   chosenOptionId?: string;
   userMessage?: string;
+  /** The customer flagged the escalation as urgent. */
+  urgent?: boolean;
   /** Client-only echo of what was pressed. Never sent. */
   chosenLabel?: string;
 }
@@ -202,10 +203,8 @@ export function useSupportThread(
   } = {},
 ) {
   const [lastActions, setLastActions] = useState<SupportAction[]>([]);
-  // A failed send stays in the transcript, keyed by its optimistic bubble id,
-  // with the payload needed to send it again. Held in component state, NOT in
-  // the query cache: a poll replaces the cache wholesale with server rows,
-  // which would take the failed bubble and its Retry with it.
+  const [lastOutcomeId, setLastOutcomeId] = useState<string | null>(null);
+  const [lastReplyByAt, setLastReplyByAt] = useState<string | null>(null);
   const [failedTurns, setFailedTurns] = useState<
     Record<string, { body: string; vars: TurnVars }>
   >({});
@@ -288,9 +287,12 @@ export function useSupportThread(
         return;
       }
       setLastActions(result.actions ?? []);
-      // Merge the server's own reply rather than only invalidating, so the
-      // answer doesn't wait for a second round trip; the confirming refetch
-      // behind it replaces these bubbles with the persisted rows.
+      if (result.outcomeId !== undefined) {
+        setLastOutcomeId(result.outcomeId ?? null);
+      }
+      if (result.replyByAt !== undefined) {
+        setLastReplyByAt(result.replyByAt ?? null);
+      }
       qc.setQueryData<ThreadData>(queryKey, (old) => {
         const merged = appendMessages(
           old,
@@ -347,9 +349,7 @@ export function useSupportThread(
   const query = useQuery({
     queryKey,
     enabled,
-    // Staff reply from the ops queue and nothing pushes that down, so the page
-    // polls — never once settled, never in a background tab, and never while a
-    // turn is in flight (a late poll would put the pre-turn transcript back).
+    refetchIntervalInBackground: false,
     refetchInterval: (q) => {
       if (turn.isPending) return false;
       const status = q.state.data?.thread?.status;
@@ -360,11 +360,12 @@ export function useSupportThread(
   const data = query.data;
   const thread = data?.thread ?? null;
 
-  // Server-gated intents win; there is NO static fallback. An empty list is a
-  // successful answer (every intent gated out), so a fallback would re-offer
-  // exactly what the server withheld.
   const availableIntents = data
-    ? data.intents.map((i) => ({ category: i.category, label: i.title }))
+    ? data.intents.map((i) => ({
+        category: i.category,
+        label: i.title,
+        escalates: i.escalates,
+      }))
     : [];
 
   const messages = thread?.messages ?? [];
@@ -443,7 +444,8 @@ export function useSupportThread(
     failedTurns,
     retryTurn,
     lastActions,
-    waitingLine: describeWait(thread?.supportTicket?.ackDueAt),
+    lastOutcomeId,
+    waitingLine: describeWait(thread?.supportTicket?.ackDueAt ?? lastReplyByAt),
     handoffIndex,
   };
 }

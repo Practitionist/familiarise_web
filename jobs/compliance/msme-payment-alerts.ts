@@ -15,18 +15,19 @@
  *      #finance-alerts channel via its built-in sink.
  *
  * Schedule: daily at 04:30 UTC (10:00 IST).
- * GH Actions: `.github/workflows/msme-payment-alerts.yml`.
+ * GH Actions: `.github/workflows/cron-daily.yml` (daily 03:00 UTC).
  */
 
 // Why: tsx does not auto-load .env when this script runs outside the
 // Next.js runtime. Without dotenv/config, DATABASE_URL is undefined and
 // PrismaClient throws on the first query. See
-// docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
+// docs/enterprise/50-operations/02-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
+import { OPS_EMAIL } from "@/lib/email/config";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -153,8 +154,9 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
       // #1298 — through deliver() so a failed alert dead-letters and replays.
       const outcome = await deliver(
         {
-          from: SENDERS.finance,
+          from: SENDERS.ops,
           to,
+          replyTo: OPS_EMAIL,
           subject: `[MSME 43B(h)] ${atRisk} payouts approaching deadline`,
           html:
             `<p>The MSME alert cron found <strong>${atRisk}</strong> payouts ` +

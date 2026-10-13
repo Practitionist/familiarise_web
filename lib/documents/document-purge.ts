@@ -1,47 +1,148 @@
 /**
- * Nightly purge of soft-deleted appointment documents.
- *
- * Soft delete (#doc-versions) tombstones the row and defers storage removal
- * so an accidental click is recoverable for a grace window. This job finishes
- * what the DELETE route deferred: remove the Supabase object first (DPDP —
- * bytes must not outlive their tombstone), then hard-delete the row. Rows
- * whose object is already gone (isStorageMissing) skip straight to deletion.
- *
- * Drains MULTIPLE batches per run (a backlog must not grow by exactly one
- * batch/night) and never lets one bad row stall the queue: rows whose storage
- * delete fails — or whose DB delete throws unexpectedly — are logged, counted,
- * and retried on a later run instead of aborting the sweep.
+ * The `purge-deleted-documents` job. Arm 1 tombstones the documents of
+ * bookings past their retention date; arm 2 purges tombstones past the grace
+ * window, versions before roots and each object before its row, so a thread is
+ * never split. Failures are retried next run and reported once per run.
  */
-import prisma from "@/lib/prisma";
-// #1270 — the leaf module, not `@/lib/supabase`. That one carries an
-// `import "server-only"` marker whose main entry throws outside Next's
-// `react-server` resolution condition, so the purge-deleted-documents cron
-// died during module evaluation and had never completed a run.
-import { deleteAppointmentDocument } from "@/lib/supabase-storage-core";
+import type { DocumentRemovalReason, Prisma } from "@prisma/client";
 
+import prisma, { type Db } from "@/lib/prisma";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
+// The marker-free leaf module, so this job can run from a bare Node process.
+import { deleteAppointmentDocument } from "@/lib/supabase-storage-core";
+import { reportSentryMessage } from "@/lib/observability/report";
+import {
+  DOCUMENT_DELETE_GRACE_DAYS,
+  DOCUMENT_RETENTION_DAYS,
+} from "./document-dates";
+import {
+  documentBookingSelect,
+  liveDocumentSessionWhere,
+  toDocumentBooking,
+} from "./document-party";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 const BATCH_SIZE = 50;
 /** Hard ceiling so a pathological run cannot sweep unbounded. */
 const MAX_BATCHES_PER_RUN = 20;
+const TERMINAL_STATUSES = ["CANCELLED", "REJECTED", "EXPIRED"];
 
-export async function purgeExpiredDeletedDocuments(
-  graceDays: number,
-): Promise<{ purged: number; failedStorage: number; failedRows: number }> {
-  const cutoff = new Date(Date.now() - graceDays * 24 * 60 * 60 * 1000);
+type ReasonKey = DocumentRemovalReason | "UNRECORDED";
 
-  let purged = 0;
-  let failedStorage = 0;
-  let failedRows = 0;
-  // Rows already attempted this run — excluded from subsequent fetches so a
-  // failing row cannot spin the drain loop forever.
+export interface PurgeDeletedDocumentsResult {
+  success: boolean;
+  tombstoned: number;
+  purged: number;
+  failedStorage: number;
+  failedRows: number;
+  byReason: Partial<Record<ReasonKey, number>>;
+}
+
+/** Bookings that may be past retention; the pure date rule makes the final call. */
+function retentionCandidateWhere(cutoff: Date): Prisma.AppointmentWhereInput {
+  return {
+    documents: { some: { deletedAt: null } },
+    OR: [
+      {
+        statusHistory: {
+          some: {
+            toStatus: { in: TERMINAL_STATUSES },
+            createdAt: { lt: cutoff },
+          },
+        },
+      },
+      { consultation: { cancelledAt: { lt: cutoff } } },
+      { subscription: { cancelledAt: { lt: cutoff } } },
+      {
+        AND: [
+          { occurrences: { some: liveDocumentSessionWhere } },
+          {
+            occurrences: {
+              none: { ...liveDocumentSessionWhere, endsAt: { gte: cutoff } },
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** Arm 1: tombstone every live document of bookings whose retention date has passed. */
+async function tombstoneExpiredBookings(now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - DOCUMENT_RETENTION_DAYS * DAY_MS);
+  let tombstoned = 0;
+  let afterId: string | undefined;
+  for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch += 1) {
+    const rows = await prisma.appointment.findMany({
+      where: {
+        ...retentionCandidateWhere(cutoff),
+        ...(afterId ? { id: { gt: afterId } } : {}),
+      },
+      select: documentBookingSelect,
+      orderBy: { id: "asc" },
+      take: BATCH_SIZE,
+    });
+    if (rows.length === 0) break;
+    afterId = rows.at(-1)!.id;
+
+    for (const row of rows) {
+      const booking = toDocumentBooking(row, now);
+      if (!booking?.keptUntil || booking.keptUntil > now) continue;
+      const result = await prisma.appointmentDocument.updateMany({
+        where: { appointmentId: row.id, deletedAt: null },
+        data: { deletedAt: now, removalReason: "RETENTION_EXPIRY" },
+      });
+      tombstoned += result.count;
+    }
+  }
+  return tombstoned;
+}
+
+interface PurgeCounts {
+  purged: number;
+  failedStorage: number;
+  failedRows: number;
+  byReason: Partial<Record<ReasonKey, number>>;
+}
+
+/**
+ * Deletes tombstoned rows matching `where`: versions first, a root only once
+ * no row of its thread remains, and each object before its row.
+ */
+export async function purgeTombstonedDocuments(
+  where: Prisma.AppointmentDocumentWhereInput,
+  db: Pick<Db, "appointmentDocument"> = prisma,
+): Promise<PurgeCounts> {
+  const counts: PurgeCounts = {
+    purged: 0,
+    failedStorage: 0,
+    failedRows: 0,
+    byReason: {},
+  };
+  // Rows attempted this run are excluded so a failing row cannot spin the loop.
   const attempted = new Set<string>();
 
   for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch += 1) {
-    const candidates = await prisma.appointmentDocument.findMany({
+    const candidates = await db.appointmentDocument.findMany({
       where: {
-        deletedAt: { lt: cutoff },
-        ...(attempted.size > 0 ? { id: { notIn: [...attempted] } } : {}),
+        AND: [
+          where,
+          { deletedAt: { not: null } },
+          {
+            OR: [
+              { rootDocumentId: { not: null } },
+              { threadVersions: { none: {} } },
+            ],
+          },
+          ...(attempted.size > 0 ? [{ id: { notIn: [...attempted] } }] : []),
+        ],
       },
-      select: { id: true, storagePath: true, isStorageMissing: true },
+      select: {
+        id: true,
+        storagePath: true,
+        isStorageMissing: true,
+        removalReason: true,
+      },
       orderBy: { deletedAt: "asc" },
       take: BATCH_SIZE,
     });
@@ -49,50 +150,56 @@ export async function purgeExpiredDeletedDocuments(
 
     for (const doc of candidates) {
       attempted.add(doc.id);
-
-      let storageCleared = doc.isStorageMissing;
+      const storageCleared =
+        doc.isStorageMissing ||
+        (await deleteAppointmentDocument(doc.storagePath).catch(() => false));
       if (!storageCleared) {
-        try {
-          storageCleared = await deleteAppointmentDocument(doc.storagePath);
-        } catch (error) {
-          console.error(
-            `[purge-deleted-documents] storage delete threw for ${doc.id}:`,
-            error,
-          );
-          storageCleared = false;
-        }
-      }
-
-      if (!storageCleared) {
-        // Retry next night rather than orphaning the row without its bytes
-        // being provably gone.
-        failedStorage += 1;
+        counts.failedStorage += 1;
         continue;
       }
-
       try {
-        await prisma.appointmentDocument.delete({ where: { id: doc.id } });
-        purged += 1;
+        await db.appointmentDocument.deleteMany({ where: { id: doc.id } });
+        counts.purged += 1;
+        const key: ReasonKey = doc.removalReason ?? "UNRECORDED";
+        counts.byReason[key] = (counts.byReason[key] ?? 0) + 1;
       } catch (error) {
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          (error as { code?: string }).code === "P2025"
-        ) {
-          // Cascade-deleted by its appointment mid-run — same outcome.
-          purged += 1;
-        } else {
-          // One broken row must not discard the remaining candidates'
-          // progress; skip and surface.
-          console.error(
-            `[purge-deleted-documents] DB delete failed for ${doc.id}:`,
-            error,
-          );
-          failedRows += 1;
-        }
+        console.error(`[purge-deleted-documents] row ${doc.id}:`, error);
+        counts.failedRows += 1;
       }
     }
   }
+  return counts;
+}
 
-  return { purged, failedStorage, failedRows };
+async function purgeDeletedDocumentsUnlocked(
+  now: Date,
+): Promise<PurgeDeletedDocumentsResult> {
+  const tombstoned = await tombstoneExpiredBookings(now);
+  const graceCutoff = new Date(
+    now.getTime() - DOCUMENT_DELETE_GRACE_DAYS * DAY_MS,
+  );
+  const counts = await purgeTombstonedDocuments({
+    deletedAt: { lt: graceCutoff },
+  });
+
+  const failed = counts.failedStorage + counts.failedRows;
+  if (failed > 0) {
+    reportSentryMessage("purge-deleted-documents left rows for the next run", {
+      subsystem: "documents",
+      op: "purge-deleted-documents",
+      level: "warning",
+      extra: { tombstoned, ...counts },
+      fingerprint: ["purge-deleted-documents", "failures"],
+    });
+  }
+  return { success: failed === 0, tombstoned, ...counts };
+}
+
+/** Daily: retention tombstones, then the grace-window purge. */
+export function purgeDeletedDocuments(
+  now: Date = new Date(),
+): Promise<PurgeDeletedDocumentsResult> {
+  return withCronLock("purge-deleted-documents", { failMode: "open" }, () =>
+    purgeDeletedDocumentsUnlocked(now),
+  );
 }

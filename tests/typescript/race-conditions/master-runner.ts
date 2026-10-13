@@ -5,7 +5,7 @@
  * generates comprehensive reports. Supports both sequential and parallel
  * execution. Categories 01-06 are simulated (in-memory); 07-09 drive the
  * real API and need a seeded DB + running server (see #837 and the chaos
- * runbook, docs/enterprise/50-operations/07-chaos-test-runbook.md).
+ * runbook, docs/enterprise/50-operations/06-chaos-test-runbook.md).
  *
  * Usage:
  *   npx tsx tests/typescript/race-conditions/master-runner.ts [mode]

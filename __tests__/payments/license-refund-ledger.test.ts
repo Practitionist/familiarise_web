@@ -13,7 +13,7 @@
  * consultant's and the org's refunded share and flipped them REFUNDED.
  *
  * The booking journal DOES post for these: with no funding debit it debits
- * DISCOUNT for the gross and credits the payables, the platform fee and GST
+ * DISCOUNT for the gross and credits the payables and the platform fee
  * (earnings-service.ts). Skipping the reversal stranded those credits as
  * permanent EARNINGS_LEDGER_DRIFT that the reconciler flags and cannot repair.
  *
@@ -73,6 +73,7 @@ jest.mock("../../lib/prisma", () => ({
 
 import type { Posting } from "../../lib/payments/ledger/post";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import { txDouble } from "../fixtures/tx-double";
 
 const PAYMENT_ID = "pay-license";
 const REFUND_ID = "refund-1";
@@ -80,11 +81,11 @@ const CONSULTANT = "cp-1";
 const ORG = "org-1";
 
 /**
- * ₹10,000 licence booking + ₹1,800 GST. Consultant keeps 7,000, the host org
- * 2,000, the platform 1,000 — the same split the booking journal credited.
+ * ₹10,000 licence booking. Consultant keeps 7,000, the host org 2,000, the
+ * platform 1,000. Its taxAmount is 0: the licence invoice books the GST.
  */
 const GROSS = 1_000_000;
-const TAX = 180_000;
+const TAX = 0;
 const CONSULTANT_SHARE = 700_000;
 const ORG_SHARE = 200_000;
 
@@ -94,11 +95,11 @@ function paymentRow(overrides: Record<string, unknown> = {}) {
     amount: GROSS,
     originalAmount: GROSS,
     taxAmount: TAX,
+    createdAt: new Date(),
     organizationId: ORG,
     billingAccountId: null,
     billableToOrgInvoiceId: null,
     parentPaymentId: null,
-    gstTcsCollectedPaise: null,
     // The whole point: one leg, worth nothing.
     legs: [
       {
@@ -146,8 +147,18 @@ function txStub() {
       findUniqueOrThrow: jest.fn(async () => payment),
       findUnique: jest.fn(async () => payment),
     },
-    consultantEarnings: { update: jest.fn().mockResolvedValue({}) },
-    organizationEarnings: { update: jest.fn().mockResolvedValue({}) },
+    // W1c — the earnings REFUNDED writers moved from a plain `update` to a
+    // CAS `updateMany` (source status in WHERE, `refundedShareAmount` pinned to
+    // the pre-read). Keep the surface complete so this suite fails on an
+    // assertion rather than on `updateMany is not a function`.
+    consultantEarnings: {
+      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    organizationEarnings: {
+      update: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     organizationPayout: { update: jest.fn().mockResolvedValue({}) },
     organizationInvoice: { findUnique: jest.fn().mockResolvedValue(null) },
     creditNote: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -158,9 +169,11 @@ function txStub() {
     overageEvent: { findFirst: jest.fn().mockResolvedValue(null) },
     orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
     paymentLeg: { upsert: jest.fn().mockResolvedValue({}) },
-    gstTcsAdjustment: { create: jest.fn().mockResolvedValue({}) },
     ledgerTransaction: { findUnique: jest.fn().mockResolvedValue(null) },
     organization: { findUnique: jest.fn().mockResolvedValue(null) },
+    recordingPurchase: {
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
   };
 }
 
@@ -230,7 +243,7 @@ describe("a full refund of a LICENSE-funded booking", () => {
     });
 
     const credits = emittedPostings().filter((p) => p.direction === "CREDIT");
-    // The booking debited DISCOUNT for gross + tax because no funding leg
+    // The booking debited DISCOUNT for the gross because no funding leg
     // carried money; the reversal credits the same account for the same total.
     expect(credits).toEqual([
       expect.objectContaining({
@@ -255,7 +268,7 @@ describe("a full refund of a LICENSE-funded booking", () => {
 
     expect(byKind.CONSULTANT_PAYABLE).toBe(CONSULTANT_SHARE);
     expect(byKind.ORG_PAYABLE).toBe(ORG_SHARE);
-    expect(byKind.GST_PAYABLE).toBe(TAX);
+    expect(byKind.GST_PAYABLE).toBeUndefined();
     // The residual is the platform's own cut, returned in full.
     expect(byKind.PLATFORM_FEE).toBe(GROSS - CONSULTANT_SHARE - ORG_SHARE);
   });
@@ -294,7 +307,7 @@ describe("a half refund of a LICENSE-funded booking", () => {
     );
     expect(byKind.CONSULTANT_PAYABLE).toBe(CONSULTANT_SHARE / 2);
     expect(byKind.ORG_PAYABLE).toBe(ORG_SHARE / 2);
-    expect(byKind.GST_PAYABLE).toBe(TAX / 2);
+    expect(byKind.GST_PAYABLE).toBeUndefined();
   });
 });
 
@@ -312,5 +325,73 @@ describe("bookings that genuinely have nothing to reverse", () => {
     // No share was ever credited, so there is nothing to take back. Inventing
     // a DISCOUNT credit here would fabricate a one-sided journal.
     expect(mockPostLedgerTxn).not.toHaveBeenCalled();
+  });
+});
+
+describe("a replay sale's playback", () => {
+  it("survives a partial refund and is revoked once the charge is fully refunded", async () => {
+    const replay = { appointmentId: null, paymentIntent: "order_replay" };
+    payment = paymentRow({
+      ...replay,
+      refunds: [{ id: "rf-0", amountPaise: GROSS / 2, status: "PENDING" }],
+    });
+    const partialTx = txStub();
+    await applyRefundCascade(partialTx as never, {
+      paymentId: PAYMENT_ID,
+      refundId: "rf-0",
+      amountPaise: GROSS / 2,
+      reason: "goodwill",
+    });
+    expect(partialTx.recordingPurchase.updateMany).not.toHaveBeenCalled();
+
+    payment = paymentRow({
+      ...replay,
+      refunds: [{ id: "rf-0", amountPaise: GROSS / 2, status: "SUCCEEDED" }],
+    });
+    const fullTx = txStub();
+    await applyRefundCascade(fullTx as never, {
+      paymentId: PAYMENT_ID,
+      refundId: REFUND_ID,
+      amountPaise: GROSS / 2,
+      reason: "rest of the charge",
+    });
+    expect(fullTx.recordingPurchase.updateMany).toHaveBeenCalledWith({
+      where: { gatewayOrderId: "order_replay", status: "SUCCEEDED" },
+      data: { status: "REFUNDED" },
+    });
+  });
+});
+
+describe("a past-cutoff refund of a taxed member overage side-payment", () => {
+  it("takes back only the org's net credit; the platform bears the kept GST", async () => {
+    payment = paymentRow({
+      amount: 29_500,
+      originalAmount: 25_000,
+      taxAmount: 4_500,
+      createdAt: new Date("2020-01-01T00:00:00Z"),
+      parentPaymentId: "parent-1",
+      legs: [{ id: "leg-c", source: "CARD", amountPaise: 29_500 }],
+      earnings: [],
+      organizationEarnings: [],
+      bookingUtilization: null,
+    });
+    const tx = txStub();
+    tx.ledgerTransaction.findUnique.mockResolvedValue({ id: "overage-txn" });
+
+    await applyRefundCascade(txDouble(tx), {
+      paymentId: PAYMENT_ID,
+      refundId: REFUND_ID,
+      amountPaise: 29_500,
+      reason: "cancellation",
+    });
+
+    const postings = emittedPostings();
+    const debit = (kind: string) =>
+      postings.find((p) => p.direction === "DEBIT" && p.account.kind === kind)
+        ?.amountPaise;
+    expect(debit("ORG_PAYABLE")).toBe(25_000);
+    expect(debit("PLATFORM_FEE")).toBe(4_500);
+    expect(debit("GST_PAYABLE")).toBeUndefined();
+    expect(sum(postings, "DEBIT")).toBe(sum(postings, "CREDIT"));
   });
 });

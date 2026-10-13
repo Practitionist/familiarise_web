@@ -92,6 +92,7 @@ import { createHash } from "node:crypto";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   SIGNUP_PURPOSES,
+  TERMS_VERSION,
   purposeCodeAliases,
   type PurposeCode,
 } from "./purpose-codes";
@@ -145,6 +146,14 @@ export interface ConsentArtifactDraft {
  * used to, get deleted early).
  */
 export const CONSENT_AUDIT_RETENTION_YEARS = 7;
+
+/** The platform's own fiduciary, stamped on sign-up and account-level consent. */
+export const PLATFORM_DATA_FIDUCIARY = "Familiarise";
+
+/** The fiduciary an org-route consent grant is stamped with. */
+export function orgDataFiduciary(orgId: string): string {
+  return `org:${orgId}`;
+}
 
 /**
  * Calendar-year addition, deliberately not `+ 7 * 365 * 24 * 60 * 60 * 1000`.
@@ -206,13 +215,43 @@ export function buildSignupConsentArtifacts(
   return SIGNUP_PURPOSES.map((purposeCode) =>
     buildConsentArtifact({
       userId,
-      dataFiduciary: "Familiarise",
+      dataFiduciary: PLATFORM_DATA_FIDUCIARY,
       purposeCodes: [purposeCode],
       language: "en-IN",
       consentManager: null,
-      version: 1,
+      version: TERMS_VERSION,
     }),
   );
+}
+
+/**
+ * Write one platform consent artifact for each purpose that has no live one.
+ * Must receive the transaction client when called inside `$transaction`.
+ */
+export async function ensureConsentPurposes(
+  db: Tx,
+  userId: string,
+  purposes: readonly PurposeCode[],
+): Promise<void> {
+  const missing: PurposeCode[] = [];
+  for (const purposeCode of purposes) {
+    if (!(await checkConsent({ userId, purposeCode }, db))) {
+      missing.push(purposeCode);
+    }
+  }
+  if (missing.length === 0) return;
+  await db.consentArtifact.createMany({
+    data: missing.map((purposeCode) =>
+      buildConsentArtifact({
+        userId,
+        dataFiduciary: "Familiarise",
+        purposeCodes: [purposeCode],
+        language: "en-IN",
+        consentManager: null,
+        version: TERMS_VERSION,
+      }),
+    ),
+  });
 }
 
 /**
@@ -302,7 +341,9 @@ export async function checkConsentBatch(params: {
       },
       select: { userId: true },
     });
-    for (const a of artifacts) consented.add(a.userId);
+    for (const a of artifacts) {
+      if (a.userId) consented.add(a.userId);
+    }
   }
   return consented;
 }
@@ -317,12 +358,16 @@ export async function checkConsentBatch(params: {
  * lets a user revoke MARKETING_COMMS without losing their core
  * PRIMARY_PROCESSING consent (canonical codes: lib/compliance/purpose-codes.ts).
  */
-export async function withdrawConsent(params: {
-  userId: string;
-  purposeCode?: PurposeCode;
-}): Promise<{ withdrawnCount: number }> {
+export async function withdrawConsent(
+  params: {
+    userId: string;
+    purposeCode?: PurposeCode;
+    now?: Date;
+  },
+  db: Tx | typeof prisma = prisma,
+): Promise<{ withdrawnCount: number }> {
   const { userId, purposeCode } = params;
-  const now = new Date();
+  const now = params.now ?? new Date();
 
   const where = purposeCode
     ? {
@@ -335,13 +380,30 @@ export async function withdrawConsent(params: {
       }
     : { userId, withdrawnAt: null };
 
-  const { count } = await prisma.consentArtifact.updateMany({
+  const floor = addYears(now, CONSENT_AUDIT_RETENTION_YEARS);
+  const existingRows = await db.consentArtifact.findMany?.({
+    where,
+    select: { auditRetainedUntil: true },
+  });
+  const monotonicRetainedUntil = Array.isArray(existingRows)
+    ? existingRows.reduce(
+        (max, row) =>
+          row.auditRetainedUntil instanceof Date &&
+          row.auditRetainedUntil.getTime() > max.getTime()
+            ? row.auditRetainedUntil
+            : max,
+        floor,
+      )
+    : floor;
+
+  const { count } = await db.consentArtifact.updateMany({
     where,
     data: {
       withdrawnAt: now,
-      // The audit clock restarts at the withdrawal. Without this the row's
-      // `auditRetainedUntil` keeps running from `grantedAt`, so an artifact
-      // granted six years ago and withdrawn today becomes deletable
+      // The audit clock restarts at the withdrawal and is monotonic (never
+      // shortened if an existing row already has a later deadline). Without
+      // this the row's `auditRetainedUntil` keeps running from `grantedAt`, so
+      // an artifact granted six years ago and withdrawn today becomes deletable
       // immediately — and the consent-retention sweeper would delete the only
       // record that the user ever withdrew. That destroys the evidence of the
       // withdrawal itself, which is the thing an audit asks for.
@@ -349,7 +411,7 @@ export async function withdrawConsent(params: {
       // The org consent dashboard already told users retention runs "7 years
       // from grant or withdrawal" (app/dashboard/organization/[orgId]/consent/
       // page.tsx). This is the code that makes that sentence true.
-      auditRetainedUntil: addYears(now, CONSENT_AUDIT_RETENTION_YEARS),
+      auditRetainedUntil: monotonicRetainedUntil,
     },
   });
 
@@ -368,17 +430,22 @@ export async function withdrawConsent(params: {
   // Currently: log a WARN SystemEvent so ops can see who withdrew what and
   // when. The checkout path (validateSlotAvailability) independently
   // checks this consent fail-closed at booking time.
+  // After the response, so it never takes the pool's one connection from a
+  // caller's open transaction.
   if (purposeCode === "SESSION_BOOKING" && count > 0) {
-    const { recordSystemEvent } =
-      await import("@/lib/enterprise/system-events");
-    void recordSystemEvent({
-      organizationId: null,
-      category: "CONSENT",
-      severity: "WARN",
-      message: `User ${userId} withdrew SESSION_BOOKING consent — new bookings will be blocked at checkout`,
-      context: { purposeCode, withdrawnCount: count },
-      correlationId: userId,
-    });
+    const { scheduleAfter } = await import("@/lib/api/after-safe");
+    scheduleAfter(async () => {
+      const { recordSystemEvent } =
+        await import("@/lib/enterprise/system-events");
+      await recordSystemEvent({
+        organizationId: null,
+        category: "CONSENT",
+        severity: "WARN",
+        message: `User ${userId} withdrew SESSION_BOOKING consent — new bookings will be blocked at checkout`,
+        context: { purposeCode, withdrawnCount: count },
+        correlationId: userId,
+      });
+    }, "consent:session-booking-withdrawn");
   }
 
   return { withdrawnCount: count };

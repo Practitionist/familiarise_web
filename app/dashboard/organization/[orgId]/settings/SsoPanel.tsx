@@ -2,16 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Copy, Check } from "lucide-react";
+import { Plus, Trash2, Copy, Check, KeyRound } from "lucide-react";
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import { useToast } from "@/hooks/use-toast";
-import { deriveAcsUrl, deriveMetadataUrl } from "@/lib/sso/derive-urls";
 import {
   CreateSsoProviderPayloadSchema,
   PatchSsoSettingsPayloadSchema,
   SsoSettingsResponseSchema,
+  UpdateSsoProviderPayloadSchema,
   type CreateSsoProviderPayload,
   type SsoSettingsResponse,
+  type UpdateSsoProviderPayload,
 } from "@/schemas/organizations";
 import {
   parseJsonResponse,
@@ -46,14 +47,6 @@ import {
 } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/dashboard/ConfirmDialog";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
 // SsoResponse shape is imported from `@/schemas/organizations` so the
 // same definitions back the UI, the payload validators, and any future
 // operator/admin tooling.
@@ -68,15 +61,23 @@ const providerColumns: ResponsiveColumn<SsoProvider>[] = [
     cell: (p) => <Badge variant="secondary">{p.providerId}</Badge>,
   },
   {
-    key: "type",
-    header: "Type",
-    className: "text-xs uppercase text-muted-foreground",
-    cell: (p) => p.providerType ?? "—",
+    key: "domain",
+    header: "Domains",
+    cell: (p) => p.domain.split(",").join(", "),
   },
   {
-    key: "domain",
-    header: "Domain",
-    cell: (p) => p.domain,
+    key: "status",
+    header: "Status",
+    cell: (p) => {
+      if (!p.domainVerified) {
+        return <Badge variant="outline">Awaiting platform approval</Badge>;
+      }
+      return p.provenAt ? (
+        <Badge variant="secondary">Active</Badge>
+      ) : (
+        <Badge variant="outline">Approved — sign in once as an owner</Badge>
+      );
+    },
   },
   {
     key: "idpUrls",
@@ -84,16 +85,7 @@ const providerColumns: ResponsiveColumn<SsoProvider>[] = [
     className: "space-y-1.5 py-3",
     cell: (p) => (
       <div className="space-y-1.5">
-        <CopyableUrl
-          label={p.providerType === "oidc" ? "Redirect URI" : "ACS URL"}
-          value={deriveAcsUrl(p.providerId, p.providerType)}
-        />
-        {p.providerType === "saml" && (
-          <CopyableUrl
-            label="SP Metadata URL"
-            value={deriveMetadataUrl(p.providerId)}
-          />
-        )}
+        <CopyableUrl label="Redirect URI" value={p.callbackUrl} />
       </div>
     ),
   },
@@ -148,7 +140,6 @@ async function fetchSso(orgId: string): Promise<SsoSettingsResponse> {
 }
 
 type PatchPayload = {
-  allowedEmailDomains?: string[];
   enforceSSO?: boolean;
   // Locked to LEARNER per JIT principle-of-least-privilege (audit
   // Phase A.1). The API rejects any other role with 400 even if the
@@ -178,9 +169,6 @@ async function createProvider(
   orgId: string,
   payload: CreateSsoProviderPayload,
 ) {
-  // Discriminated union enforces "providerType: 'saml' ⇒ samlConfig" and
-  // "providerType: 'oidc' ⇒ oidcConfig" — flipping the radio without
-  // re-validating the matching config block fails before we hit the wire.
   const validated = validateOutboundPayload(
     CreateSsoProviderPayloadSchema,
     payload,
@@ -193,6 +181,29 @@ async function createProvider(
   const body = await res.json().catch(() => null);
   if (!res.ok)
     throw new Error(errorMessageFromBody(body, "Failed to register provider"));
+  return body;
+}
+
+async function updateProvider(
+  orgId: string,
+  providerId: string,
+  payload: UpdateSsoProviderPayload,
+) {
+  const validated = validateOutboundPayload(
+    UpdateSsoProviderPayloadSchema,
+    payload,
+  );
+  const res = await fetch(
+    `/api/organizations/${orgId}/sso/providers/${providerId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(validated),
+    },
+  );
+  const body = await res.json().catch(() => null);
+  if (!res.ok)
+    throw new Error(errorMessageFromBody(body, "Failed to update provider"));
   return body;
 }
 
@@ -231,22 +242,16 @@ export function SsoPanel({ orgId }: { orgId: string }) {
     enabled: allowed,
   });
 
-  const [domains, setDomains] = useState("");
   const [enforce, setEnforce] = useState(false);
 
   useEffect(() => {
     if (!data) return;
-    setDomains(data.settings.allowedEmailDomains.join(", "));
     setEnforce(data.settings.enforceSSO);
   }, [data]);
 
   const settingsMutation = useMutation({
     mutationFn: () =>
       patchSso(orgId, {
-        allowedEmailDomains: domains
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
         enforceSSO: enforce,
         // defaultRoleForAutoJoin is locked to LEARNER server-side; we
         // don't send it in the PATCH so the API can keep its existing
@@ -257,14 +262,8 @@ export function SsoPanel({ orgId }: { orgId: string }) {
   });
 
   const [showAdd, setShowAdd] = useState(false);
-  const [providerType, setProviderType] = useState<"saml" | "oidc">("saml");
-  const [providerId, setProviderId] = useState("");
   const [domain, setDomain] = useState("");
   const [issuer, setIssuer] = useState("");
-  // SAML fields
-  const [samlEntryPoint, setSamlEntryPoint] = useState("");
-  const [samlCert, setSamlCert] = useState("");
-  // OIDC fields
   const [oidcClientId, setOidcClientId] = useState("");
   const [oidcClientSecret, setOidcClientSecret] = useState("");
   const [oidcDiscoveryUrl, setOidcDiscoveryUrl] = useState("");
@@ -272,44 +271,26 @@ export function SsoPanel({ orgId }: { orgId: string }) {
 
   const createProviderMutation = useMutation({
     mutationFn: () => {
-      // Build the discriminated payload up-front so TS narrows correctly
-      // and the schema's union sees a complete object.
-      const payload: CreateSsoProviderPayload =
-        providerType === "saml"
-          ? {
-              providerId: providerId.trim(),
-              domain: domain.trim(),
-              issuer: issuer.trim(),
-              providerType: "saml",
-              samlConfig: {
-                issuer: issuer.trim(),
-                entryPoint: samlEntryPoint.trim(),
-                cert: samlCert.trim(),
-              },
-            }
-          : {
-              providerId: providerId.trim(),
-              domain: domain.trim(),
-              issuer: issuer.trim(),
-              providerType: "oidc",
-              oidcConfig: {
-                issuer: issuer.trim(),
-                clientId: oidcClientId.trim(),
-                clientSecret: oidcClientSecret.trim(),
-                discoveryEndpoint: oidcDiscoveryUrl.trim(),
-                pkce: true,
-              },
-            };
+      const payload: CreateSsoProviderPayload = {
+        domains: domain
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean),
+        issuer: issuer.trim(),
+        providerType: "oidc",
+        oidcConfig: {
+          clientId: oidcClientId.trim(),
+          clientSecret: oidcClientSecret.trim(),
+          discoveryEndpoint: oidcDiscoveryUrl.trim(),
+        },
+      };
       return createProvider(orgId, payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["org-sso", orgId] });
       setShowAdd(false);
-      setProviderId("");
       setDomain("");
       setIssuer("");
-      setSamlEntryPoint("");
-      setSamlCert("");
       setOidcClientId("");
       setOidcClientSecret("");
       setOidcDiscoveryUrl("");
@@ -317,6 +298,22 @@ export function SsoPanel({ orgId }: { orgId: string }) {
     },
     onError: (err: Error) => setProviderError(err.message),
   });
+
+  const [rotating, setRotating] = useState<string | null>(null);
+  const [newSecret, setNewSecret] = useState("");
+  const rotateSecretMutation = useMutation({
+    mutationFn: (providerId: string) =>
+      updateProvider(orgId, providerId, { clientSecret: newSecret.trim() }),
+    onSuccess: () => {
+      setRotating(null);
+      setNewSecret("");
+    },
+  });
+  const closeRotate = () => {
+    setRotating(null);
+    setNewSecret("");
+    rotateSecretMutation.reset();
+  };
 
   const deleteProviderMutation = useMutation({
     mutationFn: (id: string) => deleteProvider(orgId, id),
@@ -338,14 +335,15 @@ export function SsoPanel({ orgId }: { orgId: string }) {
     <>
       {/* No "Back to settings" button — this is a tab within Settings now,
           so the tab bar above already is the way back. */}
-      <PanelHeader description="Configure SAML or OIDC sign-in for this organization" />
+      <PanelHeader description="Configure OIDC sign-in for this organization" />
       <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>Domain policy</CardTitle>
             <CardDescription>
-              Users signing up with these email domains can be auto-joined to
-              this organization.
+              Applies to each verified domain an approved provider covers, once
+              an owner has signed in through that provider. Turning it on signs
+              out everyone else on those domains.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -356,20 +354,6 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                 settingsMutation.mutate();
               }}
             >
-              <div className="space-y-2">
-                <Label htmlFor="domains">Allowed email domains</Label>
-                <Input
-                  id="domains"
-                  value={domains}
-                  onChange={(e) => setDomains(e.target.value)}
-                  placeholder="acme.com, acme.edu"
-                  disabled={!canEdit}
-                />
-                <p className="text-xs text-zinc-500">
-                  Comma-separated list of domains.
-                </p>
-              </div>
-
               <div className="flex items-center justify-between rounded-lg border border-zinc-200 p-3">
                 <div>
                   <p className="text-sm font-medium">Enforce SSO</p>
@@ -398,6 +382,12 @@ export function SsoPanel({ orgId }: { orgId: string }) {
                 </p>
               </div>
 
+              {settingsMutation.error && (
+                <p className="text-sm text-red-600">
+                  {settingsMutation.error.message}
+                </p>
+              )}
+
               {canEdit && (
                 <div>
                   <Button type="submit" disabled={settingsMutation.isPending}>
@@ -414,7 +404,7 @@ export function SsoPanel({ orgId }: { orgId: string }) {
             <div>
               <CardTitle className="text-base">SSO providers</CardTitle>
               <CardDescription>
-                SAML and OIDC providers registered for this organization.
+                OIDC providers registered for this organization.
               </CardDescription>
             </div>
             {canEdit && (
@@ -430,27 +420,39 @@ export function SsoPanel({ orgId }: { orgId: string }) {
               getRowId={(p) => p.id}
               rowActions={(p) =>
                 canEdit && (
-                  // #1527 Q10 — deleting a provider can lock every SSO user
-                  // out, so it takes a typed confirm (it fired on first click).
-                  <ConfirmDialog
-                    title="Delete this SSO provider?"
-                    description={`Members who sign in through ${p.providerId} lose that way in immediately. This can't be undone.`}
-                    confirmLabel="Delete provider"
-                    tone="destructive"
-                    requireTyped={p.providerId}
-                    onConfirm={async () => {
-                      await deleteProviderMutation.mutateAsync(p.id);
-                    }}
-                    trigger={
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Delete provider"
-                      >
-                        <Trash2 className="h-4 w-4 text-red-500" />
-                      </Button>
-                    }
-                  />
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Rotate client secret"
+                      onClick={() => setRotating(p.providerId)}
+                    >
+                      <KeyRound className="h-4 w-4" />
+                    </Button>
+                    {/* Deleting a provider can lock every SSO user out, so it
+                      takes a typed confirm. */}
+                    <ConfirmDialog
+                      title="Delete this SSO provider?"
+                      description={`Members who sign in through ${p.providerId} lose that way in immediately. This can't be undone.`}
+                      confirmLabel="Delete provider"
+                      tone="destructive"
+                      requireTyped={p.providerId}
+                      onConfirm={async () => {
+                        // The DELETE route is keyed on the providerId slug,
+                        // not the row uuid.
+                        await deleteProviderMutation.mutateAsync(p.providerId);
+                      }}
+                      trigger={
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Delete provider"
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      }
+                    />
+                  </div>
                 )
               }
               empty={
@@ -463,32 +465,73 @@ export function SsoPanel({ orgId }: { orgId: string }) {
         </Card>
       </div>
 
+      <Dialog
+        open={rotating !== null}
+        onOpenChange={(open) => {
+          if (!open) closeRotate();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rotate client secret</DialogTitle>
+            <DialogDescription>
+              Paste the new secret from your identity provider. The redirect URI
+              and approval stay the same, and sign-ins use the new secret
+              immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="rotate-secret">New client secret</Label>
+            <Input
+              id="rotate-secret"
+              type="password"
+              autoComplete="off"
+              value={newSecret}
+              onChange={(e) => setNewSecret(e.target.value)}
+            />
+            {rotateSecretMutation.error && (
+              <p className="text-sm text-red-600">
+                {rotateSecretMutation.error.message}
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeRotate}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => rotating && rotateSecretMutation.mutate(rotating)}
+              disabled={rotateSecretMutation.isPending || !newSecret.trim()}
+            >
+              {rotateSecretMutation.isPending ? "Saving…" : "Rotate secret"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add SSO provider</DialogTitle>
             <DialogDescription>
-              Configure a SAML or OIDC identity provider for this organization.
+              Configure an OIDC identity provider for this organization. Once
+              added, copy its Redirect URI from the providers table into your
+              IdP. Sign-in through it starts after platform staff approve it.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="prov-id">Provider ID</Label>
-              <Input
-                id="prov-id"
-                value={providerId}
-                onChange={(e) => setProviderId(e.target.value)}
-                placeholder="acme-okta"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="prov-domain">Domain</Label>
+              <Label htmlFor="prov-domain">Domains</Label>
               <Input
                 id="prov-domain"
                 value={domain}
                 onChange={(e) => setDomain(e.target.value)}
-                placeholder="acme.com"
+                placeholder="acme.com, acme.co.in"
               />
+              <p className="text-xs text-zinc-500">
+                Every verified domain this identity provider signs people in
+                for, separated by commas.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="prov-issuer">Issuer</Label>
@@ -500,98 +543,33 @@ export function SsoPanel({ orgId }: { orgId: string }) {
               />
             </div>
             <div className="space-y-2">
-              <Label>Provider type</Label>
-              <Select
-                value={providerType}
-                onValueChange={(v) => setProviderType(v as "saml" | "oidc")}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="saml">SAML</SelectItem>
-                  <SelectItem value="oidc">OIDC</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="rounded-md bg-zinc-50 border border-zinc-200 p-3 space-y-3">
-              <p className="text-sm font-medium text-zinc-700">
-                Configure these values in your IdP
-              </p>
-              <CopyableUrl
-                label={
-                  providerType === "saml"
-                    ? "ACS / Callback URL"
-                    : "Redirect URI"
-                }
-                value={deriveAcsUrl(providerId, providerType)}
+              <Label htmlFor="oidc-client-id">Client ID</Label>
+              <Input
+                id="oidc-client-id"
+                value={oidcClientId}
+                onChange={(e) => setOidcClientId(e.target.value)}
+                placeholder="abc123..."
               />
-              {providerType === "saml" && (
-                <CopyableUrl
-                  label="SP Metadata URL (Entity ID)"
-                  value={deriveMetadataUrl(providerId)}
-                />
-              )}
-              <p className="text-xs text-zinc-500">
-                Paste these into your IdP app configuration (Okta, Auth0, Azure
-                AD, Google Workspace). URLs update when you change the Provider
-                ID above.
-              </p>
             </div>
-            {providerType === "saml" ? (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="saml-entry">SSO entry point URL</Label>
-                  <Input
-                    id="saml-entry"
-                    value={samlEntryPoint}
-                    onChange={(e) => setSamlEntryPoint(e.target.value)}
-                    placeholder="https://idp.acme.com/sso/saml"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="saml-cert">X.509 certificate</Label>
-                  <textarea
-                    id="saml-cert"
-                    value={samlCert}
-                    onChange={(e) => setSamlCert(e.target.value)}
-                    className="w-full min-h-20 rounded-md border border-zinc-300 px-3 py-2 text-sm font-mono"
-                    placeholder="MIICpDCCAYwCCQC..."
-                  />
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="oidc-client-id">Client ID</Label>
-                  <Input
-                    id="oidc-client-id"
-                    value={oidcClientId}
-                    onChange={(e) => setOidcClientId(e.target.value)}
-                    placeholder="abc123..."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="oidc-secret">Client secret</Label>
-                  <Input
-                    id="oidc-secret"
-                    type="password"
-                    value={oidcClientSecret}
-                    onChange={(e) => setOidcClientSecret(e.target.value)}
-                    placeholder="secret..."
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="oidc-discovery">Discovery URL</Label>
-                  <Input
-                    id="oidc-discovery"
-                    value={oidcDiscoveryUrl}
-                    onChange={(e) => setOidcDiscoveryUrl(e.target.value)}
-                    placeholder="https://idp.acme.com/.well-known/openid-configuration"
-                  />
-                </div>
-              </>
-            )}
+            <div className="space-y-2">
+              <Label htmlFor="oidc-secret">Client secret</Label>
+              <Input
+                id="oidc-secret"
+                type="password"
+                value={oidcClientSecret}
+                onChange={(e) => setOidcClientSecret(e.target.value)}
+                placeholder="secret..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="oidc-discovery">Discovery URL</Label>
+              <Input
+                id="oidc-discovery"
+                value={oidcDiscoveryUrl}
+                onChange={(e) => setOidcDiscoveryUrl(e.target.value)}
+                placeholder="https://idp.acme.com/.well-known/openid-configuration"
+              />
+            </div>
             {providerError && (
               <p className="text-sm text-red-600">{providerError}</p>
             )}

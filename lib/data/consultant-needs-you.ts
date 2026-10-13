@@ -8,7 +8,7 @@ import {
   UNSETTLED_MISS,
   missedAt,
 } from "@/lib/booking/misses";
-import { readRequestsInboxCounts } from "@/lib/data/requests-inbox";
+import { readRequestsToAnswerCount } from "@/lib/data/requests-inbox";
 
 /**
  * #1527 §7.2 — the consultant Home's "Needs you" strip: only what is blocked
@@ -18,7 +18,7 @@ import { readRequestsInboxCounts } from "@/lib/data/requests-inbox";
  */
 
 export interface ConsultantNeedsYou {
-  /** The Requests badge's own number (#1345): the inbox tab counts, summed. */
+  /** The Requests badge's own number: rows waiting on this consultant's answer. */
   requestsToAnswer: number;
   /** A learner proposed new times and waits on this consultant (#1163). */
   rescheduleReplies: { appointmentId: string; counterpartName: string }[];
@@ -51,15 +51,15 @@ const personalOneToOne = (
 async function readRescheduleReplies(consultantProfileId: string) {
   const rows = await prisma.rescheduleRequest.findMany({
     where: {
-      // Propose → accept or decline is the whole flow; COUNTERED is never written.
+      // Propose → accept or decline is the whole flow; the only open status.
       status: "PENDING_REVIEW",
       initiatorRole: "CONSULTEE",
-      deletedAt: null,
       appointment: personalOneToOne(consultantProfileId),
     },
     orderBy: { createdAt: "asc" },
     take: LIST_TAKE,
     select: { appointmentId: true, initiatedBy: { select: { name: true } } },
+    relationLoadStrategy: "join",
   });
   return rows.map((r) => ({
     appointmentId: r.appointmentId,
@@ -95,6 +95,7 @@ async function readOwedMakeUps(consultantProfileId: string, now: Date) {
         },
       },
     },
+    relationLoadStrategy: "join",
   });
   if (misses.length === 0) return [];
 
@@ -132,7 +133,9 @@ export async function readConsultantNeedsYou(
   consultantProfileId: string,
   now: Date = new Date(),
 ): Promise<ConsultantNeedsYou> {
-  const counts = await readRequestsInboxCounts({ consultantProfileId, now });
+  const requestsToAnswer = await readRequestsToAnswerCount({
+    consultantProfileId,
+  });
   const rescheduleReplies = await readRescheduleReplies(consultantProfileId);
   const owedMakeUps = await readOwedMakeUps(consultantProfileId, now);
   const documentsAwaitingReview = await prisma.appointmentDocument.count({
@@ -144,7 +147,7 @@ export async function readConsultantNeedsYou(
     },
   });
   return {
-    requestsToAnswer: Object.values(counts).reduce((sum, n) => sum + n, 0),
+    requestsToAnswer,
     rescheduleReplies,
     owedMakeUps,
     documentsAwaitingReview,

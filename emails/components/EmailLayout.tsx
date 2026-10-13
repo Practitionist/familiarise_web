@@ -13,7 +13,7 @@ interface EmailLayoutProps {
   /** A notice the reader cannot turn off: no unsubscribe or preferences links. */
   requiredNotice?: boolean;
   showSupport?: boolean;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }
 
 // #1653 — the one frame every lifecycle template renders inside. Existing

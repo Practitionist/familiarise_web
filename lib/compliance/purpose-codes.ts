@@ -34,6 +34,9 @@ export const PURPOSE_CODES = {
 
 export type PurposeCode = (typeof PURPOSE_CODES)[keyof typeof PURPOSE_CODES];
 
+/** Terms and privacy-notice version written to every `ConsentArtifact.version`. */
+export const TERMS_VERSION = 1;
+
 /**
  * The purposes a sign-up grants. The SSO join gate and the invite-accept
  * consent step record the same set (#1854).

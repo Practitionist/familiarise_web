@@ -19,7 +19,7 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
-import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 
 // #833 — hours, not days: gateway orders expire well inside a day, so a
@@ -36,20 +36,43 @@ export interface TentativeSlotCleanupResult {
   timestamp: string;
 }
 
+// #1169 PR 6 — per-run cap (expire-event-channels precedent): an
+// unbounded scan over every stale tentative row OOMs/times out the
+// function before it pages. Oldest-first so hourly runs drain a backlog.
+const MAX_SLOTS_PER_RUN = 5000;
+
 /**
  * Find and release stale tentative slots
+ *
+ * `maxPerRun` is the bound, and it is overridable per invocation because the
+ * HTTP twin passes one: a soft cancel per chunk over 5,000 rows is 5,000 row
+ * locks inside the ticker's 6 s abort, and the cohort read carries a four-way OR
+ * over four relations, so it is one of the more expensive reads in the fleet
+ * per row. The write stamps `deletedAt`, which takes the row out of the cohort
+ * the next read collects, so a smaller cap is a budget and not a drop.
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
-export async function cleanupTentativeOccurrences(): Promise<TentativeSlotCleanupResult> {
+// mutual exclusion; fail-closed: this releases holds and blocks rebooking, so
+// a silent unlocked double-run under a Redis outage is worse than a missed
+// 2-hourly tick (#1859 M-P0-11). The release itself stays CAS-guarded (#829),
+// the lock is what collapses the double-fire to a single run.
+export async function cleanupTentativeOccurrences(opts?: {
+  maxPerRun?: number;
+}): Promise<TentativeSlotCleanupResult> {
+  const maxPerRun =
+    opts?.maxPerRun && opts.maxPerRun > 0
+      ? Math.floor(opts.maxPerRun)
+      : MAX_SLOTS_PER_RUN;
   return withCronLock(
     "cleanup-tentative-occurrences",
-    { failMode: "open" },
-    () => cleanupTentativeSlotsUnlocked(),
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => cleanupTentativeSlotsUnlocked(maxPerRun),
   );
 }
 
-async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResult> {
+async function cleanupTentativeSlotsUnlocked(
+  maxPerRun: number,
+): Promise<TentativeSlotCleanupResult> {
   const errors: string[] = [];
   let slotsReleased = 0;
   const appointmentsAffected = new Set<string>();
@@ -60,17 +83,14 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
 
   console.log("🧹 Starting tentative slot cleanup...");
   console.log(`   Expiration threshold: ${TENTATIVE_EXPIRATION_HOURS} hours`);
+  console.log(`   Per-run cap: ${maxPerRun} slot(s)`);
 
   try {
     // Find tentative slots with no successful payment AND whose parent event
     // is not actively pending review (PENDING / APPROVED_PENDING_PAYMENT).
     // Without this check, we could release slots a consultant is reviewing.
-    // #1169 PR 6 — per-run cap (expire-event-channels precedent): an
-    // unbounded scan over every stale tentative row OOMs/times out the
-    // function before it pages. Oldest-first so hourly runs drain a backlog.
-    const MAX_SLOTS_PER_RUN = 5000;
     const staleTentativeSlots = await prisma.appointmentOccurrence.findMany({
-      take: MAX_SLOTS_PER_RUN,
+      take: maxPerRun,
       orderBy: { updatedAt: "asc" },
       where: {
         isTentative: true,
@@ -169,11 +189,11 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
       },
     });
 
-    if (staleTentativeSlots.length === MAX_SLOTS_PER_RUN) {
+    if (staleTentativeSlots.length >= maxPerRun) {
       console.warn(
         JSON.stringify({
           event: "cleanup_tentative_slots_capped",
-          cap: MAX_SLOTS_PER_RUN,
+          cap: maxPerRun,
           note: "backlog exceeds one run; the next scheduled run continues",
           timestamp: new Date().toISOString(),
         }),

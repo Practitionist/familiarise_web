@@ -5,7 +5,7 @@ import {
   readAuthedFlag,
   readAuthedIdentity,
   type AuthIdentity,
-} from "@/lib/auth-broadcast";
+} from "@/lib/auth-remembered";
 
 /**
  * `useLayoutEffect` warns when React renders on the server; `useEffect` never

@@ -41,7 +41,10 @@ export const LOCKED_CONTRACT_FIELDS = [
   "effectiveTo",
   "paymentTermsDays",
   "rateCardId",
+  "terms",
 ] as const;
+
+export const CONTRACT_MONEY_FIELDS = LOCKED_CONTRACT_FIELDS;
 
 export interface ProgramLockSignals {
   assignmentCount: number;
@@ -106,7 +109,7 @@ export async function getProgramLockState(
     ]);
   const signals = { assignmentCount, bookingCount, overageEventCount };
   const locked =
-    program?.configLockedAt != null || isProgramMoneyConfigLocked(signals);
+    Boolean(program?.configLockedAt) || isProgramMoneyConfigLocked(signals);
   return { locked, signals };
 }
 

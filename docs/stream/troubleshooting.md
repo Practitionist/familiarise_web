@@ -32,13 +32,13 @@ Comprehensive troubleshooting guide for Stream Chat and Video integration issues
 
 This section documents known critical bugs and their workarounds. Review before deploying to production.
 
-### Stream Role Mapping (Resolved in #899)
+### Stream Role Mapping
 
 **Severity:** RESOLVED | **Security Impact:** N/A
 
 #### Problem Description
 
-Earlier builds mapped every user to the "admin" role in Stream Chat regardless of their actual role, which left no permission differentiation between user types. As of #899 the mapping follows least privilege, so this is no longer an issue.
+Earlier builds mapped every user to the "admin" role in Stream Chat regardless of their actual role, which left no permission differentiation between user types. The mapping follows strict least privilege, so this is no longer an issue.
 
 #### Location
 
@@ -207,9 +207,7 @@ Atomic creation with members:
 // Create channel AND add members in one call (reduces race window)
 await channel.create({
   members: allParticipants,
-  data: {
-    /* metadata */
-  },
+  data: {/* metadata */},
 });
 ```
 
@@ -318,9 +316,7 @@ import { logger } from "@/lib/logger";
 logger.error("stream.chat.connection_failed", {
   userId,
   error,
-  context: {
-    /* additional context */
-  },
+  context: {/* additional context */},
 });
 ```
 
@@ -328,12 +324,12 @@ logger.error("stream.chat.connection_failed", {
 
 ### Workarounds Summary
 
-| Issue           | Workaround                   | Effectiveness | Notes                            |
-| --------------- | ---------------------------- | ------------- | -------------------------------- |
-| Admin role bug  | Resolved in #899             | Fixed         | Least-privilege role mapping now in place |
-| Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops           |
-| Race conditions | Atomic creation              | Moderate      | Race window still exists         |
-| User cleanup    | Exclusion list               | Good          | Manual maintenance required      |
+| Issue           | Workaround                   | Effectiveness | Notes                                     |
+| --------------- | ---------------------------- | ------------- | ----------------------------------------- |
+| Admin role bug  | Resolved                     | Fixed         | Least-privilege role mapping now in place |
+| Token expiry    | 50-min cache (10-min buffer) | Good          | Still occasional drops                    |
+| Race conditions | Atomic creation              | Moderate      | Race window still exists                  |
+| User cleanup    | Exclusion list               | Good          | Manual maintenance required               |
 
 ---
 
@@ -399,11 +395,11 @@ curl -X GET "https://chat.stream-io-api.com/health"
 - The dashboard visibly remounts a second or two after load
 - Clicking Join appears to do nothing, so the user clicks it several more times
 - Component state (open dialogs, scroll position, half-filled forms) resets on its own
-- Possibly a React error #310 — "rendered more hooks than during the previous render" — pointing into Stream SDK internals
+- Possibly a React invariant violation (hooks mismatch) — "rendered more hooks than during the previous render" — pointing into Stream SDK internals
 
 #### Cause
 
-The provider held the chat and video clients in two independent `useState`s. Their connects race, so the element wrapping the dashboard changed *type* between renders (`children` → `<StreamVideo>` → `<Chat>`, in socket-arrival order). React cannot reconcile a type change in place, so it remounted the whole subtree — destroying any in-flight join.
+The provider held the chat and video clients in two independent `useState`s. Their connects race, so the element wrapping the dashboard changed _type_ between renders (`children` → `<StreamVideo>` → `<Chat>`, in socket-arrival order). React cannot reconcile a type change in place, so it remounted the whole subtree — destroying any in-flight join.
 
 #### Fix
 
@@ -417,17 +413,17 @@ Both clients are committed in a single `setClients` via `Promise.allSettled`, so
 
 - `Refused to connect to 'https://hint.stream-io-video.com/…'` or `'wss://video.stream-io-api.com/…'`
 - Calls connect locally (where CSP is often not exercised) but not on a deploy preview or production
-- `POST /api/csp-report` returning `429`
+- CSP violation events for Stream hosts in Sentry
 
 #### Cause
 
 Stream does **not** use `getstream.io` at runtime — that is the marketing domain. The SDKs talk to `*.stream-io-api.com`, `*.stream-io-video.com`, and `*.stream-io-cdn.com`. An allow-list containing only `*.getstream.io` does not match any of them.
 
-Separately, `/api/csp-report` was rate-limited at 5/hour, so the violation reports that would have revealed this were themselves being dropped.
+At the time, violation reports went to an app route rate-limited at 5/hour, so the reports that would have revealed this were themselves being dropped. That route is gone: reports now go straight to Sentry's security endpoint.
 
 #### Fix
 
-Both are corrected in `next.config.mjs` and `lib/rate-limit.ts`. The full domain breakdown is in `docs/enterprise/20-iam-and-security/05-security-headers.md`.
+The allow-list is corrected in `next.config.mjs`. The full domain breakdown is in `docs/enterprise/20-iam-and-security/04-security-headers.md`.
 
 **Verify with the browser, not the docs.** This class of drift is only visible in a real network log; Stream's documentation does not enumerate the SFU and hint domains in one place.
 
@@ -1754,3 +1750,10 @@ If you're still experiencing issues:
 ---
 
 **Last Updated:** 2025-01-22
+
+---
+
+## Deprecated & Superseded Approaches
+
+- **Diagnosing Live Calls or Channels from Local Seed State Alone**: Superseded by read-only Stream MCP verification (`mcp__stream-io__video_query_calls`, `mcp__stream-io__video_get_call_type`, `mcp__stream-io__chat_query_channels`).
+- **Manual Stream Dashboard Permission Clicking**: Superseded by idempotent declarative enforcement (`npx tsx scripts/stream/ensure.ts --apply --routes-are-deployed`).

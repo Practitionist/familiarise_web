@@ -20,7 +20,6 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 jest.mock("../../app/api/webhooks/utils", () => ({
-  verifyWebhookSignature: jest.fn(),
   logWebhookEvent: jest.fn(),
   isDbHealthy: jest.fn(),
 }));
@@ -31,6 +30,7 @@ jest.mock("../../app/api/webhooks/razorpay/signature", () => ({
   isPayoutEventName: jest.fn().mockReturnValue(false),
   matchRazorpayWebhookSecret: jest.fn().mockReturnValue("current"),
   resolveRazorpayPaymentSecrets: jest.fn().mockReturnValue(["secret"]),
+  resolveRazorpayXSecrets: jest.fn().mockReturnValue([]),
   verifyRazorpaySignature: jest.fn().mockReturnValue(true),
 }));
 

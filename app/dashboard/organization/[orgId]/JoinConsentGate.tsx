@@ -23,7 +23,7 @@ import {
 } from "@/lib/compliance/purpose-codes";
 
 /** The purposes a signup grants (lib/auth.ts user.create hook). A member who
- * joined through SSO JIT or SCIM was never shown them, so this step asks. */
+ * joined through SSO JIT was never shown them, so this step asks. */
 const JOIN_PURPOSES = SIGNUP_PURPOSES;
 
 interface Artifact {
@@ -31,7 +31,7 @@ interface Artifact {
 }
 
 /**
- * #1846 bucket C rule 3 — SSO JIT and SCIM stay automatic because the
+ * #1846 bucket C rule 3 — SSO JIT stays automatic because the
  * employer's IdP vouches for the person, but the member's first sign-in shows
  * the DPDP consent step. It reuses the user-level consent record, so no
  * schema: the step shows only while the member has NO core-processing

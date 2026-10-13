@@ -26,7 +26,7 @@ import {
  * Everything a public review surface is allowed to see.
  *
  * Deliberately absent: `consulteeProfileId` (an enumerable id nothing renders),
- * `revisionNo`, `ratedOccurrenceAt`, `ratingCause`, `excludedFromAggregateAt`,
+ * `revisionNo`, `ratedOccurrenceAt`, `ratingCause`,
  * `removedBy`, `replyRemovedBy` (staff moderation material), and
  * `updatedAt` (which moves when the consultant replies, so it cannot be read as
  * "the review changed" — that is what `editedAt` is for).
@@ -38,6 +38,8 @@ export const publicReviewSelect = {
   createdAt: true,
   /** NULL = never edited. BIS IS 19000:2022 asks that an edit be indicated. */
   editedAt: true,
+  /** Stripped by sanitisePublicReview and exposed only as boolean `notCounted`. */
+  excludedFromAggregateAt: true,
   isAnonymous: true,
   consultantProfileId: true,
   /** Provenance for a "verified booking" badge. Stripped for anonymous rows,
@@ -69,34 +71,31 @@ export const publicReviewSelect = {
 /** A review as a public surface receives it. */
 export type PublicReview<T extends PublicReviewShape> = Omit<
   SanitisedReview<T>,
-  "replyDeletedAt"
->;
+  "replyDeletedAt" | "excludedFromAggregateAt"
+> & {
+  notCounted?: boolean;
+};
 
 interface PublicReviewShape {
   isAnonymous: boolean;
+  excludedFromAggregateAt?: Date | null;
   replyBody?: string | null;
   repliedAt?: Date | null;
   replyDeletedAt?: Date | null;
 }
 
 /**
- * Strip the reviewer where they asked to be anonymous, and drop a reply staff
- * have removed.
- *
- * The second half is not hypothetical waiting to happen: `replyDeletedAt` exists
- * precisely so an abusive reply can be taken down without erasing the consumer
- * review underneath it, and every public read returned `replyBody` regardless.
- * The column was unreachable only because nothing wrote a reply at all.
+ * Strip the reviewer where they asked to be anonymous, drop a reply staff
+ * have removed, and replace `excludedFromAggregateAt` with boolean `notCounted`.
  */
 export function sanitisePublicReview<T extends PublicReviewShape>(
   review: T,
 ): PublicReview<T> {
   const stripped = stripAnonymousReviewer(review);
-  const { replyDeletedAt, ...rest } = stripped as SanitisedReview<T> & {
-    replyDeletedAt?: Date | null;
-  };
-  if (!replyDeletedAt) return rest as PublicReview<T>;
-  return { ...rest, replyBody: null, repliedAt: null } as PublicReview<T>;
+  const { replyDeletedAt, excludedFromAggregateAt, ...rest } = stripped;
+  const notCounted = Boolean(excludedFromAggregateAt);
+  if (!replyDeletedAt) return { ...rest, notCounted };
+  return { ...rest, replyBody: null, repliedAt: null, notCounted };
 }
 
 export function sanitisePublicReviews<T extends PublicReviewShape>(

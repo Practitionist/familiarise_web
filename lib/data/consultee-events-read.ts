@@ -17,6 +17,7 @@
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
+import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
 import type { Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
@@ -35,7 +36,7 @@ import type { TConsulteeEventsResponse } from "@/types/consultee-events";
  * on a TTFB-bound query to render an answer nobody can give.
  */
 const liveProposalInclude = {
-  where: { status: { in: ["PENDING_REVIEW", "COUNTERED"] } },
+  where: { status: { in: RESCHEDULE_OPEN_STATUSES } },
   orderBy: { createdAt: "desc" },
   take: 1,
   select: {
@@ -53,6 +54,14 @@ const liveProposalInclude = {
     },
   },
 } satisfies Prisma.Appointment$rescheduleRequestsArgs;
+
+/** Only the caller's own Payment rows: a group appointment carries every attendee's. */
+function callerPaymentsInclude(userId: string) {
+  return {
+    where: { userId },
+    select: { id: true, paymentStatus: true, createdAt: true },
+  } satisfies Prisma.Appointment$paymentArgs;
+}
 
 /** Thrown when the consulteeId has no profile — route maps to 404. */
 export class ConsulteeProfileNotFoundError extends Error {
@@ -86,6 +95,7 @@ export async function readConsulteeEvents(
   }
 
   const userId = consulteeProfile.userId;
+  const callerPayments = callerPaymentsInclude(userId);
 
   // Build per-resource org filters. The 5 booking models attach to
   // org context differently:
@@ -116,8 +126,8 @@ export async function readConsulteeEvents(
   since.setFullYear(since.getFullYear() - 1);
   const EVENTS_TAKE = 200;
 
-  // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
-  // This avoids network overhead and reduces response time from 11+ seconds to <1 second
+  // Each read is one joined statement: per-relation round trips, not row
+  // counts, dominate this request under the single-connection pool.
   const [consultations, subscriptions, webinars, classes, trials] =
     await Promise.all([
       prisma.consultation.findMany({
@@ -158,12 +168,13 @@ export async function readConsulteeEvents(
                   },
                 },
               },
-              payment: true,
+              payment: callerPayments,
             },
           },
         },
         orderBy: { requestedAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
       prisma.subscription.findMany({
         where: {
@@ -202,12 +213,13 @@ export async function readConsulteeEvents(
                   },
                 },
               },
-              payment: true,
+              payment: callerPayments,
             },
           },
         },
         orderBy: { requestedAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
       // Webinars the user registered for.
       prisma.webinar.findMany({
@@ -264,12 +276,13 @@ export async function readConsulteeEvents(
                   },
                 },
               },
-              payment: true,
+              payment: callerPayments,
             },
           },
         },
         orderBy: { createdAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
       // Classes the user enrolled in.
       prisma.class.findMany({
@@ -326,12 +339,13 @@ export async function readConsulteeEvents(
                   },
                 },
               },
-              payment: true,
+              payment: callerPayments,
             },
           },
         },
         orderBy: { createdAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
       // Trial sessions requested by the consultee
       prisma.trial.findMany({
@@ -371,11 +385,13 @@ export async function readConsulteeEvents(
                   },
                 },
               },
+              payment: callerPayments,
             },
           },
         },
         orderBy: { requestedAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
     ]);
 

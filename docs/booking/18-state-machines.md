@@ -125,10 +125,15 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
 
 `RescheduleRequestStatus` via `transitionRescheduleRequest`:
 
-- Open state: `PENDING_REVIEW`. `COUNTERED` is still declared in the enum and
-  in `RESCHEDULE_ALLOWED_FROM`, but no writer ever transitions a row to it —
-  the counter-round was specified and never built, and `lib/booking/reschedule-proposals.ts`
-  documents the removal — so treat it as an unreachable edge, not a live state.
+- Open state: `PENDING_REVIEW`, and it is the only one. `COUNTERED` (the
+  round-2 counter-offer) was removed from the enum, from
+  `RESCHEDULE_ALLOWED_FROM`, from the operator badge and from the seed. It was
+  specified and never built — `lib/booking/reschedule-proposals.ts` documents
+  the removal — and the only writer in the whole repo was
+  `prisma/seedFiles/6c-create-reschedule-proposals.ts`, so the seed was keeping
+  a dev database full of rows the respond route had no code for. The six read
+  surfaces that filtered on `["PENDING_REVIEW", "COUNTERED"]` now use
+  `RESCHEDULE_OPEN_STATUSES`, so a future open state is added in one place.
 - `AUTO_ACCEPTED` is a second terminal-acceptance state alongside `ACCEPTED`,
   written by `lib/booking/reschedule-auto-confirm.ts` when the responding
   party lets the reschedule window lapse without a reply; it deliberately
@@ -138,17 +143,17 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
   state (initiator only); `EXPIRED ← [PENDING_REVIEW]` (hourly sweep).
   `openForAppointmentId @unique` enforces at most one live reschedule per
   appointment.
-- Decline deliberately LEAVES the slots released, because someone decided:
-  the consultee still wants to move, and the booking belongs in the
-  consultant's allocate queue. Withdrawal and expiry both restore the slots
-  and the parent's origin status through the shared
-  `restoreRescheduledBooking` in `lib/booking/reschedule-restore.ts`. Since
-  #1846 (#1527 decision 9) the hourly expiry sweep moves each lapsed proposal
-  to `EXPIRED` and restores the booking in the same transaction under the
-  appointment lock. If the original time was booked while the proposal was
-  open, the restore meets the overlap constraint, the proposal expires without
-  it, the slots stay released, and the sweep counts the row as
-  `proposalsExpiredUnrestored`.
+- Decline, withdrawal, and expiry all restore the released slots and the
+  parent's origin status through the shared `restoreRescheduledBooking` in
+  `lib/booking/reschedule-restore.ts` inside the same `Serializable`
+  transaction under the appointment lock. If the original time was booked while
+  the proposal was open, the restore meets the overlap constraint and rolls
+  back; the terminal transition (`DECLINED` or `EXPIRED`) then commits alongside
+  `parkParentForUnrestoredEnding` in a single `Serializable` transaction so a
+  whole-booking parent that entered `PENDING` for the reschedule is atomically
+  parked in `APPROVED` (never left in `PENDING` where the 48-hour unpaid-request
+  sweeper could expire a paid booking) and surfaces in the consultant's
+  **Requests** inbox under `answer-today` until new occurrences are placed.
 - A confirmation is two ordered steps: the allocator commits the new times,
   and only then does the caller compare-and-swap the proposal to
   `AUTO_ACCEPTED` or `ACCEPTED`. Because the allocator's supersede sweep

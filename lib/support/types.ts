@@ -117,6 +117,10 @@ export interface SupportTurnResult {
    * moved, so the caller must NOT treat this as progress.
    */
   unrecognized?: boolean;
+  /** Structured promises declared on a reached terminal node. */
+  promises?: ReadonlyArray<{ id: string; text: string }>;
+  /** Typed ask captured when a free-text paragraph reaches a choice prompt. */
+  customerAsk?: string;
 }
 
 /** The uniform contract every channel implements. */
@@ -164,6 +168,8 @@ export type FlowNode =
       resolved?: boolean;
       /** Machine-readable escalation reason — see SupportTurnResult.reason. */
       reason?: string;
+      /** Structured timeline/policy promises made to the user at this node. */
+      promises?: ReadonlyArray<{ id: string; text: string }>;
     };
 
 /** A named flowchart for one intent, with an entry node. Availability can be

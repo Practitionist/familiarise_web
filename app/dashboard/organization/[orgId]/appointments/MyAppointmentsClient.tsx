@@ -24,21 +24,36 @@ import type { AppointmentsType } from "@prisma/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  CONSULTANT_JOIN_WINDOW_MS,
   CONSULTEE_JOIN_WINDOW_MS,
+  getCurrentOrNextOccurrence,
   getJoinableOccurrence,
+  getOccurrenceJoinState,
+  isDeadOccurrence,
+  REJOIN_GRACE_MS,
 } from "@/lib/appointments/occurrences";
+import { isConfirmedStatus } from "@/lib/appointments/status";
 import type { MeetingAppointment } from "@/lib/meeting";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
+import { useNowTick } from "@/hooks/use-now-tick";
 
 // Slot shape as delivered by getOrgMemberAppointments (see the include in
 // lib/api/scope/list-appointments.ts). Dates survive the RSC boundary as
 // Date instances (toPlain preserves them); typed loosely so either survives.
+type SlotTimestamp = string | Date;
+
 export interface MyAppointmentSlot {
   id: string;
-  startsAt: string | Date;
-  endsAt: string | Date | null;
+  startsAt: SlotTimestamp;
+  endsAt: SlotTimestamp | null;
   isTentative: boolean;
   completionStatus: string | null;
+  deletedAt?: SlotTimestamp | null;
+  meeting?: {
+    id: string;
+    endedAt: SlotTimestamp | null;
+    endedReason: string | null;
+  } | null;
 }
 
 interface PlanSide {
@@ -58,15 +73,17 @@ export interface MyAppointmentItem {
   createdAt: string | Date;
   occurrences: MyAppointmentSlot[];
   consultation: {
+    status?: string | null;
     consultationPlan: PlanSide | null;
     requestedBy: RequestedBySide | null;
   } | null;
   subscription: {
+    status?: string | null;
     subscriptionPlan: PlanSide | null;
     requestedBy: RequestedBySide | null;
   } | null;
-  webinar: { webinarPlan: PlanSide | null } | null;
-  class: { classPlan: PlanSide | null } | null;
+  webinar: { status?: string | null; webinarPlan: PlanSide | null } | null;
+  class: { status?: string | null; classPlan: PlanSide | null } | null;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -153,18 +170,21 @@ function resolveIdentity(
   };
 }
 
-/** Earliest slot that hasn't ended yet, else the latest slot (for display). */
-function displaySlot(slots: MyAppointmentSlot[]): MyAppointmentSlot | null {
-  if (slots.length === 0) return null;
-  const now = Date.now();
-  const sorted = [...slots].sort(
+/** Earliest live slot that hasn't ended yet, else the latest live slot (for display). */
+function displaySlot(
+  slots: MyAppointmentSlot[],
+  nowMs: number = Date.now(),
+): MyAppointmentSlot | null {
+  const live = slots.filter((s) => !isDeadOccurrence(s));
+  if (live.length === 0) return null;
+  const sorted = [...live].sort(
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
   const upcoming = sorted.find((s) => {
     const end = s.endsAt
-      ? new Date(s.endsAt).getTime()
+      ? new Date(s.endsAt).getTime() + REJOIN_GRACE_MS
       : new Date(s.startsAt).getTime();
-    return end >= now;
+    return end >= nowMs;
   });
   return upcoming ?? sorted[sorted.length - 1];
 }
@@ -198,6 +218,7 @@ export function MyAppointmentsClient({
 }) {
   const joinMeeting = useLazyJoinMeeting();
   const [joiningId, setJoiningId] = useState<string | null>(null);
+  const now = useNowTick();
 
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
@@ -258,10 +279,34 @@ export function MyAppointmentsClient({
       <ul className="space-y-3">
         {items.map((item) => {
           const identity = resolveIdentity(item, viewerId);
-          const joinable = getJoinableOccurrence(item.occurrences, {
-            joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
-          });
-          const shown = displaySlot(item.occurrences);
+          const bookingStatus =
+            item.consultation?.status ??
+            item.subscription?.status ??
+            item.webinar?.status ??
+            item.class?.status ??
+            "SCHEDULED";
+          const confirmed = isConfirmedStatus(bookingStatus);
+          const viewerIsConsultant =
+            identity.consultantUserId === viewerId ||
+            (identity.consulteeUserId !== null &&
+              identity.consulteeUserId !== viewerId);
+          const joinWindowMs = viewerIsConsultant
+            ? CONSULTANT_JOIN_WINDOW_MS
+            : CONSULTEE_JOIN_WINDOW_MS;
+          const joinable = confirmed
+            ? getJoinableOccurrence(item.occurrences, {
+                joinWindowMs,
+                now,
+              })
+            : null;
+          const nextSlot = confirmed
+            ? getCurrentOrNextOccurrence(item.occurrences, now)
+            : null;
+          const hasUpcomingCountdown =
+            nextSlot !== null &&
+            getOccurrenceJoinState(nextSlot, { joinWindowMs, now }) ===
+              "countdown";
+          const shown = displaySlot(item.occurrences, now.getTime());
           const busy = joiningId === item.id;
           return (
             <li
@@ -298,7 +343,7 @@ export function MyAppointmentsClient({
                     Details
                   </Link>
                 </Button>
-                {joinable ? (
+                {joinable && (
                   <Button
                     size="sm"
                     disabled={busy}
@@ -311,7 +356,8 @@ export function MyAppointmentsClient({
                     )}
                     Join
                   </Button>
-                ) : (
+                )}
+                {!joinable && hasUpcomingCountdown && (
                   <span className="text-xs text-muted-foreground">
                     Join opens near the start time
                   </span>

@@ -63,12 +63,7 @@ export function useCuratedPrograms(
               ...typedPlan,
               classes: typedPlan.classes || [],
               type: "class",
-              imageUrl: generateProgramImageUrl(
-                typedPlan.id,
-                600,
-                400,
-                typedPlan.imageUrl,
-              ),
+              imageUrl: generateProgramImageUrl(typedPlan.imageUrl),
             } as ClassPlanProgram;
           }),
         );
@@ -86,12 +81,7 @@ export function useCuratedPrograms(
               ...typedPlan,
               webinars: typedPlan.webinars || [],
               type: "webinar",
-              imageUrl: generateProgramImageUrl(
-                typedPlan.id,
-                600,
-                400,
-                typedPlan.imageUrl,
-              ),
+              imageUrl: generateProgramImageUrl(typedPlan.imageUrl),
             } as WebinarPlanProgram;
           }),
         );

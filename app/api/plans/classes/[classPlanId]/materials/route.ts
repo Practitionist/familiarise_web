@@ -1,4 +1,3 @@
-import { NextRequest } from "next/server";
 import {
   handleGetMaterials,
   handleUploadMaterial,
@@ -11,18 +10,14 @@ const CONFIG: PlanMaterialsConfig = {
   planModel: "classPlan",
 };
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ classPlanId: string }> },
-) {
+type RouteContext = { params: Promise<{ classPlanId: string }> };
+
+export async function GET(_request: Request, { params }: RouteContext) {
   const { classPlanId } = await params;
-  return handleGetMaterials(request, classPlanId, CONFIG);
+  return handleGetMaterials(classPlanId, CONFIG);
 }
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ classPlanId: string }> },
-) {
+export async function POST(request: Request, { params }: RouteContext) {
   const { classPlanId } = await params;
   return handleUploadMaterial(request, classPlanId, CONFIG);
 }

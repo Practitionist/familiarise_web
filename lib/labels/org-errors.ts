@@ -59,12 +59,10 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "Your organization hasn't claimed this email domain yet. Add it under Settings → SSO → Domains and verify before registering a provider.",
   DOMAIN_NOT_VERIFIED:
     "The domain claim is pending DNS verification. Finish the TXT-record step under Settings → SSO → Domains.",
-  // Why: pre-auth runtime guard at /api/auth/sso/domain-check — see
-  // docs/enterprise/20-iam-and-security/01-sso-and-authentication.md "Pre-auth runtime
-  // guard". Surfaced when a stored SAML cert is unparseable; we want
-  // operators (not end users) to know to re-paste the PEM.
+  // Why: surfaced on the SSO settings page when a provider's stored config
+  // cannot be read; we want operators (not end users) to know to re-enter it.
   SSO_PROVIDER_MISCONFIGURED:
-    "Your SSO provider's certificate is invalid. Contact your IT admin to re-paste the X.509 PEM.",
+    "Your SSO provider's configuration could not be read. Delete and re-add the provider, or contact your IT admin.",
   // Why: hard-gate replacing the WIP banner on `canHost`. The friendly
   // copy points operators at the recovery path (talk to ops) rather
   // than leaving them stranded with a generic 400.

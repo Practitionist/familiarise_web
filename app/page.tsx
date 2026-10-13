@@ -10,11 +10,7 @@ import { TestimonialsSection } from "@/components/home/TestimonialsSection";
 import { AudiencePathsSection } from "@/components/home/AudiencePathsSection";
 import { FAQSection } from "@/components/home/FAQSection";
 import { LandingMotion } from "@/components/home/LandingMotion";
-import {
-  getHomeExperts,
-  getHomeReviews,
-  getHomeStats,
-} from "@/lib/data/home";
+import { getHomeExperts, getHomeReviews, getHomeStats } from "@/lib/data/home";
 import { buildExpertHeroStats } from "@/lib/data/public-stats";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {

@@ -16,7 +16,6 @@ export type OrgSettingsKey =
   | "general"
   | "branding"
   | "sso"
-  | "scim"
   | "billing"
   | "webhooks"
   | "data-exports";
@@ -51,13 +50,6 @@ export const ORG_SETTINGS_SECTIONS: readonly OrgSettingsSection[] = [
     label: "Domains & SSO",
     description: "Verified email domains and single sign-on",
     // Reads are identity.read; claim/verify/SSO writes need identity.manage.
-    show: (can) => can("identity.read"),
-  },
-  {
-    key: "scim",
-    group: "Security",
-    label: "Directory sync",
-    description: "SCIM provisioning from your identity provider",
     show: (can) => can("identity.read"),
   },
   {

@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
+import { PageHeader } from "@/components/dashboard/PageScaffold";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
 
@@ -71,56 +72,59 @@ export function ReconcileTab() {
   });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-lg">Reconcile</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <ul className="divide-y divide-border">
-          {(data?.jobs ?? []).map((job) => (
-            <li
-              key={job.key}
-              className="flex flex-wrap items-center justify-between gap-3 py-3"
-            >
-              <div className="min-w-0 flex-1 text-sm">
-                <p className="font-medium">{job.label}</p>
-                <p className="text-muted-foreground">{job.description}</p>
-                <p className="text-muted-foreground">{lastRun(job)}</p>
-                {lastBatch[job.key] && (
-                  <output className="block font-medium">
-                    {batchLine(lastBatch[job.key])}
-                  </output>
-                )}
-              </div>
-              <Button variant="outline" onClick={() => setRunning(job)}>
-                Run now
-              </Button>
-            </li>
-          ))}
-        </ul>
-        {data?.ledgerReport && (
-          <p className="mt-3 text-sm text-muted-foreground">
-            Latest ledger report ({data.ledgerReport.scope}):{" "}
-            {new Date(data.ledgerReport.runAt).toLocaleString()},{" "}
-            {data.ledgerReport.ok ? "clean" : "found drift"}.
-          </p>
-        )}
-      </CardContent>
-      <ReasonDialog
-        open={running !== null}
-        onOpenChange={(o) => !o && setRunning(null)}
-        title={`Run ${running?.label ?? "job"} now`}
-        description="If it is already running, nothing starts twice."
-        confirmLabel="Run"
-        pending={door.isPending}
-        onConfirm={(reason) =>
-          running &&
-          door.mutate({
-            url: `/api/admin/reconcile/${running.key}`,
-            body: { reason },
-          })
-        }
+    <div className="space-y-6">
+      <PageHeader
+        title="Reconcile"
+        description="Trigger vendor and ledger reconciliation jobs on demand under cron mutual exclusion."
       />
-    </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <ul className="divide-y divide-border">
+            {(data?.jobs ?? []).map((job) => (
+              <li
+                key={job.key}
+                className="flex flex-wrap items-center justify-between gap-3 py-3"
+              >
+                <div className="min-w-0 flex-1 text-sm">
+                  <p className="font-medium">{job.label}</p>
+                  <p className="text-muted-foreground">{job.description}</p>
+                  <p className="text-muted-foreground">{lastRun(job)}</p>
+                  {lastBatch[job.key] && (
+                    <output className="block font-medium">
+                      {batchLine(lastBatch[job.key])}
+                    </output>
+                  )}
+                </div>
+                <Button variant="outline" onClick={() => setRunning(job)}>
+                  Run now
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {data?.ledgerReport && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Latest ledger report ({data.ledgerReport.scope}):{" "}
+              {new Date(data.ledgerReport.runAt).toLocaleString()},{" "}
+              {data.ledgerReport.ok ? "clean" : "found drift"}.
+            </p>
+          )}
+        </CardContent>
+        <ReasonDialog
+          open={running !== null}
+          onOpenChange={(o) => !o && setRunning(null)}
+          title={`Run ${running?.label ?? "job"} now`}
+          description="If it is already running, nothing starts twice."
+          confirmLabel="Run"
+          pending={door.isPending}
+          onConfirm={(reason) =>
+            running &&
+            door.mutate({
+              url: `/api/admin/reconcile/${running.key}`,
+              body: { reason },
+            })
+          }
+        />
+      </Card>
+    </div>
   );
 }

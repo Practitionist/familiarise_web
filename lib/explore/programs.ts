@@ -112,15 +112,11 @@ export interface ProgramFilters {
   level?: string;
 }
 
-// Generate program image URL based on ID with dimensions, using DB image if available
-export function generateProgramImageUrl(
-  id: string,
-  width: number = 600,
-  height: number = 400,
-  dbImageUrl?: string | null,
-): string {
-  if (dbImageUrl) return dbImageUrl;
-  return `https://picsum.photos/seed/${id}/${width}/${height}`;
+export const PROGRAM_COVER_PLACEHOLDER = "/placeholder.svg";
+
+// Program cover: the DB image when present, else the local static placeholder.
+export function generateProgramImageUrl(dbImageUrl?: string | null): string {
+  return dbImageUrl || PROGRAM_COVER_PLACEHOLDER;
 }
 
 export function isClassProgram(program: Program): program is ClassPlanProgram {

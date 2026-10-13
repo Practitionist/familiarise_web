@@ -52,7 +52,10 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import { paymentStatusBadge } from "@/lib/labels/session-labels";
+import {
+  participantStatusBadge,
+  paymentStatusBadge,
+} from "@/lib/labels/session-labels";
 
 import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
 
@@ -79,7 +82,17 @@ type SeatPayment = {
 
 // Registered-participant rows are the route's roster (#1554): every live seat
 // holder on the event's appointment(s), deduplicated by user id server-side.
-type RegisteredParticipant = { id: string; name?: string; email?: string };
+// The seat's own status rides along: `liveParticipant()` already drops released
+// seats, so what survives is HELD/CONFIRMED/ATTENDED — and a host cannot tell
+// a held seat from a paid one without it. `null` means the person appears on
+// the roster without holding a seat (an approved request that never booked).
+type RegisteredParticipant = {
+  id: string;
+  name?: string;
+  email?: string;
+  participantStatus?: string | null;
+  participantRole?: string | null;
+};
 
 type ParticipantsResponse = (
   | { webinarEvent: WebinarEvent; classEvent?: never }
@@ -278,6 +291,24 @@ export default function EventParticipantsPage() {
   const registeredColumns: ResponsiveColumn<RegisteredParticipant>[] = [
     { key: "name", header: "Name", primary: true, cell: (p) => p.name },
     { key: "email", header: "Email", cell: (p) => p.email },
+    {
+      key: "seat",
+      header: "Seat",
+      // The seat, not the money: a held seat is a promise the host has made to
+      // someone who has not paid yet, and "Payment: No payment" alone reads as
+      // a free ticket rather than an unpaid hold.
+      cell: (p) =>
+        p.participantStatus === null ? (
+          <span className="text-xs text-muted-foreground">No seat</span>
+        ) : p.participantStatus ? (
+          <StatusBadge
+            {...participantStatusBadge(p.participantStatus)}
+            size="sm"
+          />
+        ) : (
+          <span className="text-xs text-muted-foreground">Unknown</span>
+        ),
+    },
     {
       key: "payment",
       header: "Payment",

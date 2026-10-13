@@ -213,7 +213,9 @@ export function SidebarNavLink({
         ) : (
           <span className="ml-auto min-w-[18px] shrink-0 rounded-full bg-red-500 px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white">
             {badge}
-            <span className="sr-only"> new</span>
+            <span className="sr-only">
+              {item.badgeKey === "requests" ? " to answer" : " new"}
+            </span>
           </span>
         ))}
     </Link>

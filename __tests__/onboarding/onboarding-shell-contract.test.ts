@@ -37,7 +37,7 @@ function read(rel: string): string {
  * step that could be wrong in either direction.
  */
 
-const PAGE = "app/form/onboarding/page.tsx";
+const PAGE = "app/form/onboarding/OnboardingWizard.tsx";
 const STEP0 = "app/form/onboarding/components/PersonalInfoAndRoleForm.tsx";
 const STEPPER = "components/onboarding/onboarding-stepper.tsx";
 const SHELL = "components/onboarding/OnboardingShell.tsx";

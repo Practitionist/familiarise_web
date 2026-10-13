@@ -69,9 +69,10 @@ export interface BookingTimelineEntry {
   /**
    * Null on reschedule rows: a proposal is raised, it does not move out of a
    * prior state. On status rows this is the pre-image the CAS observed, which
-   * is `"UNKNOWN"` when a concurrent writer moved the row between the pre-read
-   * and the update (the documented A12 limitation) and `"CREATED"` on the one
-   * row that is not a transition at all (#1333).
+   * is `HISTORY_FROM_UNKNOWN` when the pre-read missed the row (the documented
+   * A12 limitation, and one that reports itself per occurrence) and
+   * `HISTORY_FROM_CREATED` on the one row that is not a transition at all
+   * (#1333). Both are named constants in lib/booking/transitions.ts.
    */
   from: string | null;
   /** On reschedule rows this is where the proposal ended up, not a transition. */
@@ -82,7 +83,7 @@ export interface BookingTimelineEntry {
   createdAt: string;
   /** Reschedule rows only — how many concrete times the proposal named. */
   proposedSlotCount?: number;
-  /** Reschedule rows only — 1 is the opening proposal, 2 the single counter. */
+  /** Reschedule rows only — always 1 now that the counter-round is gone. */
   round?: number;
   /** Reschedule rows only — which side raised it. */
   initiatorRole?: RescheduleInitiatorRole;

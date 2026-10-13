@@ -132,3 +132,23 @@ describe("firstCycleWindow", () => {
     expect(end.toISOString()).toBe("2026-03-08T18:29:59.999Z");
   });
 });
+
+describe("subscriptionEntitlement — rescheduling & cycle window Start", () => {
+  it("counts tentative RESCHEDULED rows in rescheduling and does not advance windowStart past remaining SCHEDULED sessions in the active cycle", () => {
+    const e = plan12([
+      row(0, "RESCHEDULED", true),
+      row(2, "SCHEDULED", false),
+      row(3, "SCHEDULED", false),
+      row(4, "SCHEDULED", false),
+    ]);
+    expect(e.rescheduling).toBe(1);
+    expect(e.scheduled).toBe(3);
+    expect(e.completed).toBe(0);
+    expect(e.held).toBe(3);
+    expect(e.cycle.nextBatch).toBe(1);
+    // Because rescheduling > 0 and no completed sessions exist, windowStart stays at NOW
+    // rather than advancing to the end of row(4) (which is later in the same cycle).
+    expect(e.cycle.windowStart).toEqual(NOW);
+  });
+});
+

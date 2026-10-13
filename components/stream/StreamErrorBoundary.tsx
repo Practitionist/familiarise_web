@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import { AlertCircle, RefreshCw, MessageSquare, Video } from "lucide-react";
 
@@ -9,6 +10,7 @@ interface StreamErrorBoundaryState {
   error: Error | null;
   errorInfo: React.ErrorInfo | null;
   errorType: "chat" | "video" | "general";
+  eventId?: string;
 }
 
 interface StreamErrorBoundaryProps {
@@ -21,7 +23,7 @@ interface StreamErrorBoundaryProps {
 // Default error fallback component
 const DefaultStreamErrorFallback: React.FC<
   StreamErrorBoundaryState & { onRetry?: () => void }
-> = ({ error, errorType, onRetry }) => {
+> = ({ error, errorType, eventId, onRetry }) => {
   const getErrorMessage = () => {
     if (!error) return "An unknown error occurred";
 
@@ -80,6 +82,11 @@ const DefaultStreamErrorFallback: React.FC<
             {getTitle()}
           </h3>
           <p className="text-sm text-gray-600 max-w-md">{getErrorMessage()}</p>
+          {eventId && (
+            <p className="mt-1 font-mono text-xs text-gray-400">
+              Error ID: {eventId}
+            </p>
+          )}
         </div>
 
         {onRetry && (
@@ -123,6 +130,7 @@ class StreamErrorBoundary extends React.Component<
       error: null,
       errorInfo: null,
       errorType: "general",
+      eventId: undefined,
     };
   }
 
@@ -157,26 +165,34 @@ class StreamErrorBoundary extends React.Component<
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error("StreamErrorBoundary caught an error:", error, errorInfo);
 
+    let eventId: string | undefined;
+    try {
+      const captured = Sentry.captureException(error, {
+        tags: {
+          subsystem: "stream",
+          stream_type: this.state.errorType,
+        },
+        extra: {
+          componentStack: errorInfo.componentStack,
+          retryCount: this.retryCount,
+        },
+      });
+      if (typeof captured === "string" && captured) {
+        eventId = captured;
+      }
+    } catch {
+      // Telemetry must not break the fallback render.
+    }
+
     this.setState({
       error,
       errorInfo,
+      eventId,
     });
 
     // Call custom error handler if provided
     if (this.props.onError) {
       this.props.onError(error, errorInfo);
-    }
-
-    // Log to monitoring service in production
-    if (process.env.NODE_ENV === "production") {
-      // You can integrate with error monitoring services like Sentry here
-      console.error("Stream Error Boundary:", {
-        error: error.message,
-        stack: error.stack,
-        componentStack: errorInfo.componentStack,
-        errorType: this.state.errorType,
-        retryCount: this.retryCount,
-      });
     }
   }
 
@@ -192,6 +208,7 @@ class StreamErrorBoundary extends React.Component<
         error: null,
         errorInfo: null,
         errorType: "general",
+        eventId: undefined,
       });
     } else {
       console.warn("Maximum retry attempts reached for Stream component");

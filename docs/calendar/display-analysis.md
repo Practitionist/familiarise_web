@@ -28,7 +28,7 @@ Investigation of consultant `31e2e9f4-c9d5-4c4c-b281-e8531da623dd` (Mr. Jimmy Gi
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 3. SLOT PROCESSING (utils/timeSlotsProcessing.ts)           │
+│ 3. SLOT PROCESSING (utils/scheduling-engine/intervals.ts)   │
 ├─────────────────────────────────────────────────────────────┤
 │ • processWeeklySlots()  - Projects weekly patterns to dates │
 │ • processCustomSlots()  - Filters custom slots by date      │

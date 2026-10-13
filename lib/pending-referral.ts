@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { REFERRAL_CODE_COOKIE } from "@/lib/referrals/attribution-token-shape";
+
 /**
  * Deferred referral code (client-only).
  *
@@ -21,6 +23,8 @@ const KEY = "familiarise.pendingReferral";
 // they stay outside the schema.) The server remains the source of truth for
 // code validity; this is just a cheap client-side normalize.
 const referralCodeSchema = z.string().trim().min(1).max(64);
+/** The `/r/<code>` route writes the code verbatim, so the cookie is read raw. */
+const cookieCodeSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 
 export function setPendingReferral(code: string): void {
   if (typeof window === "undefined") return;
@@ -33,18 +37,30 @@ export function setPendingReferral(code: string): void {
   }
 }
 
+/** The `/r/<code>` cookie, which survives an OAuth round trip on another tab. */
+function readReferralCookie(): string | null {
+  const prefix = `${REFERRAL_CODE_COOKIE}=`;
+  const raw = document.cookie
+    .split("; ")
+    .find((c) => c.startsWith(prefix))
+    ?.slice(prefix.length);
+  const parsed = cookieCodeSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 export function getPendingReferral(): string | null {
   if (typeof window === "undefined") return null;
   try {
     const parsed = referralCodeSchema.safeParse(localStorage.getItem(KEY));
-    return parsed.success ? parsed.data : null;
+    return parsed.success ? parsed.data : readReferralCookie();
   } catch {
-    return null;
+    return readReferralCookie();
   }
 }
 
 export function clearPendingReferral(): void {
   if (typeof window === "undefined") return;
+  document.cookie = `${REFERRAL_CODE_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax`;
   try {
     localStorage.removeItem(KEY);
   } catch {

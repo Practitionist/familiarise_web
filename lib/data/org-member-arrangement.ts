@@ -70,12 +70,21 @@ export async function getMyArrangementData(params: {
         })
       : null;
 
-  // Recent earnings for this consultant on this org's hosted payments. The org
-  // link lives on OrganizationEarnings; join via paymentId to ConsultantEarnings.
+  // Recent earnings for this consultant on this org's hosted payments. Push the
+  // consultantProfileId filter into the organizationEarnings query before
+  // take: 20 so other experts' payments in the org cannot crowd out this
+  // consultant's recent rows.
   const orgEarningPaymentIds = consultantProfileId
     ? (
         await prisma.organizationEarnings.findMany({
-          where: { organizationId: orgId },
+          where: {
+            organizationId: orgId,
+            payment: {
+              earnings: {
+                some: { consultantProfileId },
+              },
+            },
+          },
           select: { paymentId: true },
           orderBy: { createdAt: "desc" },
           take: 20,

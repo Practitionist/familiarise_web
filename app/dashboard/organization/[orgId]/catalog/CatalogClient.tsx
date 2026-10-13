@@ -24,7 +24,11 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { CatalogPanel } from "./CatalogPanel";
-import { MaterialsPanel, type OrgMaterialRow } from "./MaterialsPanel";
+import {
+  MaterialsPanel,
+  type OrgMaterialRow,
+  type OrgPlanOption,
+} from "./MaterialsPanel";
 import type { CatalogRow, CatalogResponse, Kind } from "./types";
 
 interface Expert {
@@ -37,11 +41,13 @@ export function CatalogClient({
   experts,
   materials,
   materialsTotal,
+  orgPlans,
 }: Readonly<{
   orgId: string;
   experts: Expert[];
   materials: OrgMaterialRow[];
   materialsTotal: number;
+  orgPlans: OrgPlanOption[];
 }>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -121,6 +127,14 @@ export function CatalogClient({
       setArchived.mutate({ kind: "CLASS", planId, restore }),
     [setArchived],
   );
+
+  const expertNamesById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const e of experts) {
+      map[e.consultantProfileId] = e.name;
+    }
+    return map;
+  }, [experts]);
 
   // The fetch asks for everything; the split happens here so restoring a plan
   // does not need a second round trip.
@@ -229,6 +243,7 @@ export function CatalogClient({
                   error={error}
                   onToggleArchive={archiveWebinar}
                   isMutating={setArchived.isPending}
+                  expertNamesById={expertNamesById}
                 />
               ),
             },
@@ -245,6 +260,7 @@ export function CatalogClient({
                   error={error}
                   onToggleArchive={archiveClass}
                   isMutating={setArchived.isPending}
+                  expertNamesById={expertNamesById}
                 />
               ),
             },
@@ -265,6 +281,7 @@ export function CatalogClient({
                         error={error}
                         onToggleArchive={archiveWebinar}
                         isMutating={setArchived.isPending}
+                        expertNamesById={expertNamesById}
                       />
                     </Section>
                   )}
@@ -277,6 +294,7 @@ export function CatalogClient({
                         error={error}
                         onToggleArchive={archiveClass}
                         isMutating={setArchived.isPending}
+                        expertNamesById={expertNamesById}
                       />
                     </Section>
                   )}
@@ -288,7 +306,11 @@ export function CatalogClient({
               value: "materials",
               label: "Materials",
               content: (
-                <MaterialsPanel items={materials} total={materialsTotal} />
+                <MaterialsPanel
+                  items={materials}
+                  total={materialsTotal}
+                  plans={orgPlans}
+                />
               ),
             },
             {

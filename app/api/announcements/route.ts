@@ -46,10 +46,17 @@ export async function GET() {
   try {
     const announcements = await getActiveAnnouncements();
 
-    return NextResponse.json({
-      success: true,
-      data: announcements,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        data: announcements,
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      },
+    );
   } catch (error) {
     // The announcements banner is non-critical and polled often. A transient
     // pooler connect/read timeout (cross-region cold connect) should degrade to
@@ -89,7 +96,7 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession(true);
+    const session = await getSession();
 
     if (!session?.user?.id) {
       return NextResponse.json(

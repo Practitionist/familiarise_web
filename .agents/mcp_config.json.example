@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "<stdio-server-name>": {
+      "command": "<NVM_BIN_DIR>/npx",
+      "args": ["-y", "<mcp-package-name>"],
+      "env": {
+        "PATH": "<NVM_BIN_DIR>:/usr/local/bin:/usr/bin:/bin",
+        "API_ACCESS_TOKEN": "<API_ACCESS_TOKEN>"
+      }
+    },
+    "<remote-sse-server-name>": {
+      "serverUrl": "https://<remote-mcp-host>/sse"
+    }
+  }
+}

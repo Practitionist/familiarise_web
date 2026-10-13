@@ -1,4 +1,8 @@
-import { HydrationBoundary, QueryClient, dehydrate } from "@tanstack/react-query";
+import {
+  HydrationBoundary,
+  QueryClient,
+  dehydrate,
+} from "@tanstack/react-query";
 import { requireAuth } from "@/lib/auth-guard";
 import { getWorkspaceActivity } from "@/lib/data/org-workspace";
 import { ActivityPageClient } from "./ActivityPageClient";
@@ -24,7 +28,7 @@ export default async function OrgWorkspaceActivityPage({
 
   await Promise.allSettled([
     queryClient.prefetchInfiniteQuery({
-      queryKey: ["org-workspace-activity", orgWorkspaceId],
+      queryKey: ["org-workspace-activity", orgWorkspaceId, "all", "all"],
       queryFn: ({ pageParam }) =>
         getWorkspaceActivity(userId, pageParam as string | null),
       initialPageParam: null as string | null,

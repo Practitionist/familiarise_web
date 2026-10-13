@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AppointmentsType } from "@prisma/client";
+import { AppointmentsType, PaymentGateway } from "@prisma/client";
 import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 import {
   SUPPORTED_CURRENCY_CODES,
@@ -27,12 +27,12 @@ export const appointmentTypeSchema = z.enum([
   "TRIAL",
 ]);
 
-export const paymentGatewaySchema = z.enum(["STRIPE", "RAZORPAY", "CARD"]);
+// The checkout-selectable subset of PaymentGateway; unimplemented labels never validate here.
+export const paymentGatewaySchema = z.enum([
+  PaymentGateway.RAZORPAY,
+  PaymentGateway.CARD,
+]);
 
-// The implemented checkout gateways — a strict subset of the PaymentGateway
-// Prisma enum. Post-MVP stubs (e.g. DODO_PAYMENTS, #984) are NOT valid at
-// checkout, so everything flowing into CheckoutInput.paymentGateway uses this
-// narrow type, never the full enum.
 export type SupportedCheckoutGateway = z.infer<typeof paymentGatewaySchema>;
 
 // Search params validation (URL query parameters)
@@ -71,6 +71,7 @@ export const consultationSearchParamsSchema = searchParamsSchema
 export const subscriptionSearchParamsSchema = searchParamsSchema.extend({
   schedulingPeriodStartsAt: z.string().datetime().optional(),
   schedulingPeriodEndsAt: z.string().datetime().optional(),
+  renewsSubscriptionId: z.string().optional(),
 });
 
 // Webinar-specific validation
@@ -99,7 +100,7 @@ export const checkoutSchema = z
     // #828 — one key per logical checkout attempt; the server replays the
     // original response for a duplicate instead of minting a second order.
     clientIdempotencyKey: z.string().min(8).max(128).optional(),
-    paymentGateway: paymentGatewaySchema.default("RAZORPAY"), // Server auto-routes; client hint only
+    paymentGateway: paymentGatewaySchema.default(PaymentGateway.RAZORPAY), // Server auto-routes; client hint only
     // #1396 — this lands in `Payment.displayCurrencyAtCheckout` and it comes
     // from localStorage. `z.string().length(3)` let any three letters through
     // and `Intl.NumberFormat` renders an invented code without complaint
@@ -138,6 +139,9 @@ export const checkoutSchema = z
     //   INVOICE   → deferred billing; line item lands on next invoice.
     //   PROJECT   → reserved for v2.
     organizationId: z.string().optional(),
+    // #1743 — optional renewal link to an APPROVED or COMPLETED subscription
+    // for the same plan and consultee.
+    renewsSubscriptionId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     // === CONSULTATION validation ===
@@ -169,9 +173,11 @@ export const checkoutSchema = z
       const hasSlotData = data.startsAt && data.endsAt;
       // #1766 — the server derives the window (first cycle) from the start;
       // `schedulingPeriodEndsAt` stays accepted for old clients and is ignored.
-      const hasSchedulingPeriod = !!data.schedulingPeriodStartsAt;
+      // #1743 — a renewal anchors its start to the prior subscription's end.
+      const hasSchedulingPeriod =
+        !!data.schedulingPeriodStartsAt || !!data.renewsSubscriptionId;
 
-      // Require EITHER slot data OR a scheduling start
+      // Require EITHER slot data OR a scheduling start / renewal source
       if (!hasSlotData && !hasSchedulingPeriod) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -281,6 +287,7 @@ export const checkoutSuccessResponseSchema = z.object({
   skipPayment: z.boolean().optional(),
   isMockPayment: z.boolean().optional(), // Mock payment flag
   isZeroAmountPayment: z.boolean().optional(), // Credits fully covered payment
+  referralCreditsDropped: z.boolean().optional(), // Org funding refused the buyer's credits
   // Production flow fields
   paymentIntent: z
     .object({
@@ -354,6 +361,7 @@ export const createCheckoutData = (params: {
   useReferralCredits?: boolean;
   organizationId?: string;
   consumerStateCode?: string;
+  renewsSubscriptionId?: string;
 }): CheckoutInput => {
   return {
     appointmentType: params.appointmentType,
@@ -372,5 +380,6 @@ export const createCheckoutData = (params: {
     useReferralCredits: params.useReferralCredits,
     organizationId: params.organizationId,
     consumerStateCode: params.consumerStateCode,
+    renewsSubscriptionId: params.renewsSubscriptionId,
   };
 };

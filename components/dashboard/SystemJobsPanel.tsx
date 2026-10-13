@@ -70,7 +70,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-refunds",
     name: "Reconcile Pending Refunds",
-    description: "Sync refund status with payment gateways (Stripe, Razorpay)",
+    description: "Sync refund status with Razorpay",
     schedule: "Every 15 minutes",
     category: "Refunds",
   },
@@ -78,26 +78,11 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "reconcile-disputes",
     name: "Reconcile Disputes",
-    description: "Sync dispute status with Stripe and track urgent deadlines",
-    schedule: "Every 6 hours",
-    category: "Disputes",
-  },
-  {
-    id: "handle-lost-disputes",
-    name: "Handle Lost Disputes",
-    description:
-      "Reverse earnings on lost disputes (CRITICAL alerts if already paid)",
+    description: "Sync dispute status with Razorpay and track urgent deadlines",
     schedule: "Every 6 hours",
     category: "Disputes",
   },
   // Earnings
-  {
-    id: "cascade-refund-earnings",
-    name: "Cascade Refund to Earnings",
-    description: "Mark earnings as REFUNDED when associated refund succeeds",
-    schedule: "Every 15 minutes",
-    category: "Earnings",
-  },
   {
     id: "sync-payment-earnings",
     name: "Sync Payment to Earnings",
@@ -112,15 +97,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Hourly",
     category: "Earnings",
   },
-  // Appointments
-  {
-    id: "cleanup-invalid-appointments",
-    name: "Cleanup Invalid Appointments",
-    description:
-      "Cancel duplicate and invalid-duration consultations/subscriptions",
-    schedule: "Hourly",
-    category: "Appointments",
-  },
   // Payouts
   {
     id: "create-payout-batch",
@@ -132,7 +108,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "process-payouts",
     name: "Process Payouts",
-    description: "Send approved payouts via RazorpayX and Stripe Connect",
+    description: "Send approved payouts via RazorpayX",
     schedule: "Weekly (Mon 9PM UTC)",
     category: "Payouts",
   },
@@ -158,13 +134,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Every 6 hours",
     category: "Alerts",
   },
-  {
-    id: "alert-dispute-deadlines",
-    name: "Alert Dispute Deadlines",
-    description: "Alert when dispute dueBy is within 48h (URGENT)",
-    schedule: "Hourly",
-    category: "Alerts",
-  },
   // Cleanup
   {
     id: "auth-tokens",
@@ -175,9 +144,9 @@ const SYSTEM_JOBS: SystemJob[] = [
     category: "Cleanup",
   },
   {
-    id: "tentative-slots",
-    name: "Tentative Slot Cleanup",
-    description: "Release slots held for abandoned booking flows >7 days",
+    id: "tentative-occurrences",
+    name: "Tentative Occurrence Cleanup",
+    description: "Release occurrences held for abandoned booking flows >7 days",
     schedule: "Every 2 hours",
     category: "Cleanup",
   },
@@ -196,27 +165,27 @@ const SYSTEM_JOBS: SystemJob[] = [
     schedule: "Weekly",
     category: "Cleanup",
   },
-  {
-    id: "deactivate-expired-discounts",
-    name: "Deactivate Expired Discounts",
-    description: "Deactivate discount codes past expiresAt or at max uses",
-    schedule: "Daily",
-    category: "Cleanup",
-  },
   // Reconciliation
   {
     id: "reconcile-payment-status",
     name: "Reconcile Payment Status",
-    description:
-      "Query Stripe/Razorpay for actual status on stale PENDING payments",
+    description: "Query Razorpay for actual status on stale PENDING payments",
     schedule: "Every 30 minutes",
     category: "Reconciliation",
   },
   {
-    id: "reconcile-slot-availability",
-    name: "Reconcile Slot Availability",
+    id: "reconcile-occurrence-availability",
+    name: "Reconcile Occurrence Availability",
     description: "Fix tentative flags, detect double-bookings",
     schedule: "Hourly",
+    category: "Reconciliation",
+  },
+  {
+    id: "purge-deleted-documents",
+    name: "Purge Deleted Documents",
+    description:
+      "Tombstone session documents past retention, then purge tombstones past the grace window",
+    schedule: "Daily",
     category: "Reconciliation",
   },
   {
@@ -538,7 +507,7 @@ export function SystemJobsPanel({ className }: SystemJobsPanelProps) {
                         {execution.jobName}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        by {execution.triggeredBy.name || "System"} •{" "}
+                        by {execution.triggeredBy?.name || "System"} •{" "}
                         {formatExecutionTime(execution.startedAt)}
                       </p>
                     </div>

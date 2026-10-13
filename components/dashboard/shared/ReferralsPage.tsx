@@ -28,7 +28,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { WhatsAppIcon } from "@/components/icons/WhatsAppIcon";
-import { QUALIFICATION_WINDOW_DAYS } from "@/lib/referrals/constants";
+import {
+  referralTermsSchema,
+  type ReferralTerms,
+} from "@/lib/referrals/promo-math";
+import type { ReferralStatus } from "@prisma/client";
 import { creditSourceLabel } from "@/lib/labels/credit-source";
 import Link from "next/link";
 
@@ -43,17 +47,42 @@ interface ReferralCode {
   totalEarned: number;
   isActive: boolean;
   maxReferrals: number;
+  weekVests?: number;
+  weeklyVestCap?: number;
 }
+
+export interface ConsultantFeeWaiverItem {
+  id: string;
+  reason?: string;
+  sessionsRemaining: number;
+  sessionsGranted: number;
+  expiresAt: string;
+}
+
+/** A friend counts as qualified once their first paid booking is captured. */
+const QUALIFIED_STATUSES: ReadonlySet<ReferralStatus> = new Set([
+  "QUALIFIED",
+  "REWARDED",
+  "QUALIFYING",
+  "VESTED",
+]);
+/** Statuses whose referrer reward has been released. */
+const REWARDED_STATUSES: ReadonlySet<ReferralStatus> = new Set([
+  "REWARDED",
+  "VESTED",
+]);
 
 interface Referral {
   id: string;
-  status: string;
+  status: ReferralStatus;
   signedUpAt: string;
   qualifiedAt: string | null;
   referrerRewardAmount: number;
   refereeRewardAmount: number;
   referredUser: { name: string; image: string | null };
 }
+
+export type CreditVestingState = "PENDING" | "VESTED" | "EXPIRED" | "VOID";
 
 interface CreditData {
   totalAvailable: number;
@@ -62,9 +91,43 @@ interface CreditData {
     amount: number;
     remainingAmount: number;
     source: string;
+    state?: CreditVestingState;
     createdAt: string;
     expiresAt: string | null;
   }[];
+}
+
+function resolveCreditRowState(
+  credit: CreditData["history"][number],
+): CreditVestingState {
+  if (
+    credit.state === "PENDING" ||
+    credit.state === "VESTED" ||
+    credit.state === "EXPIRED" ||
+    credit.state === "VOID"
+  ) {
+    return credit.state;
+  }
+  if (credit.expiresAt && new Date(credit.expiresAt).getTime() <= Date.now()) {
+    return "EXPIRED";
+  }
+  return "VESTED";
+}
+
+function creditStateBadge(state: CreditVestingState): {
+  label: string;
+  tone: "warning" | "success" | "neutral" | "critical";
+} {
+  switch (state) {
+    case "PENDING":
+      return { label: "PENDING", tone: "warning" };
+    case "VESTED":
+      return { label: "VESTED", tone: "success" };
+    case "EXPIRED":
+      return { label: "EXPIRED", tone: "neutral" };
+    case "VOID":
+      return { label: "VOID", tone: "critical" };
+  }
 }
 
 function formatDate(dateStr: string): string {
@@ -92,8 +155,7 @@ export interface ReferralsPageProps {
    */
   role: "CONSULTANT" | "CONSULTEE";
   /**
-   * #1527 — where the tree already lists credits (the consultee's Payments ›
-   * Credits). When set, the page links there instead of repeating the table.
+   * Where the tree already lists credits (the consultee's Payments › Credits).
    */
   creditsHref?: string;
 }
@@ -113,12 +175,26 @@ export function ReferralsPage({
     isLoading: codeLoading,
     error: codeError,
     refetch: refetchCode,
-  } = useQuery<{ data: ReferralCode }>({
+  } = useQuery<{
+    data: ReferralCode;
+    terms: ReferralTerms | null;
+    feeWaivers: ConsultantFeeWaiverItem[];
+  }>({
     queryKey: ["referral-code"],
     queryFn: async () => {
       const res = await fetch("/api/referrals/code", { method: "POST" });
       if (!res.ok) throw new Error("Failed to fetch referral code");
-      return res.json();
+      const body: {
+        data: ReferralCode;
+        terms?: unknown;
+        feeWaivers?: ConsultantFeeWaiverItem[];
+      } = await res.json();
+      const terms = referralTermsSchema.safeParse(body.terms);
+      return {
+        data: body.data,
+        terms: terms.success ? terms.data : null,
+        feeWaivers: Array.isArray(body.feeWaivers) ? body.feeWaivers : [],
+      };
     },
     staleTime: 60_000,
   });
@@ -154,13 +230,16 @@ export function ReferralsPage({
   });
 
   const code = codeData?.data;
+  const terms = codeData?.terms ?? null;
+  const feeWaivers = codeData?.feeWaivers ?? [];
+  const friendOffer = terms
+    ? `${terms.discountPercent}% off your first booking, up to ${formatAmount(terms.discountMaxPaise)}`
+    : null;
   const referrals = referralsData?.data ?? [];
   const credits = creditsData?.data;
   const totalReferred = referrals.length;
-  // A referral counts as qualified once it completes the paid booking
-  // (QUALIFIED) — REWARDED is the same milestone after the credit lands.
-  const qualified = referrals.filter(
-    (r) => r.status === "QUALIFIED" || r.status === "REWARDED",
+  const qualified = referrals.filter((r) =>
+    QUALIFIED_STATUSES.has(r.status),
   ).length;
   // `window` is only safe here because `code` happens to be undefined on the
   // server pass today. Add an SSR prefetch for ["referral-code"] — the exact
@@ -173,14 +252,24 @@ export function ReferralsPage({
   const referralLink =
     code && origin ? `${origin}/r/${code.customCode || code.code}` : "";
 
+  const sharePitch = friendOffer
+    ? `Use my referral link to get ${friendOffer}`
+    : "Join with my referral link";
+  const shareSubject = friendOffer
+    ? `Get ${friendOffer} on Familiarise`
+    : "Join me on Familiarise";
+  const capNote = terms
+    ? `, and can cover up to ${terms.redemptionCapPercent}% of a booking`
+    : "";
+  const balanceTooltip = `Credit you can spend now. Credit from a referral becomes spendable after your friend's first session${capNote}.`;
   const shareMessage = referralLink
-    ? `Hey! I've been using Familiarise and it's been great. Use my referral link to get ${formatAmount(code?.refereeReward ?? 0)} off your first booking: ${referralLink}`
+    ? `I've been using Familiarise. ${sharePitch}: ${referralLink}`
     : "";
   const whatsappUrl = referralLink
     ? `https://wa.me/?text=${encodeURIComponent(shareMessage)}`
     : "";
   const emailUrl = referralLink
-    ? `mailto:?subject=${encodeURIComponent(`Get ${formatAmount(code?.refereeReward ?? 0)} off your first booking on Familiarise`)}&body=${encodeURIComponent(shareMessage)}`
+    ? `mailto:?subject=${encodeURIComponent(shareSubject)}&body=${encodeURIComponent(shareMessage)}`
     : "";
 
   const handleCopy = () => {
@@ -269,7 +358,7 @@ export function ReferralsPage({
       headClassName: "text-right",
       className: "text-right",
       cell: (ref) =>
-        ref.status === "REWARDED"
+        REWARDED_STATUSES.has(ref.status)
           ? formatAmount(ref.referrerRewardAmount)
           : "-",
     },
@@ -281,6 +370,24 @@ export function ReferralsPage({
       header: "Source",
       primary: true,
       cell: (credit) => creditSourceLabel(credit.source),
+    },
+    {
+      key: "state",
+      header: "Status",
+      cell: (credit) => {
+        const state = resolveCreditRowState(credit);
+        const badge = creditStateBadge(state);
+        return (
+          <div className="space-y-0.5">
+            <StatusBadge label={badge.label} tone={badge.tone} size="sm" />
+            {state === "PENDING" && (
+              <p className="text-[11px] text-zinc-500">
+                In post-session hold window — not yet spendable
+              </p>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: "amount",
@@ -303,14 +410,17 @@ export function ReferralsPage({
     },
   ];
 
+  const weekVests = code?.weekVests ?? 0;
+  const weeklyVestCap = code?.weeklyVestCap ?? 3;
+
   return (
     <>
       <DashboardHeader
         title="Invite & earn"
         subtitle={
           isConsultant
-            ? "Invite others and earn credits when they make their first booking"
-            : "Invite friends and earn credits towards your next booking"
+            ? "Invite learners for booking credit, or other experts for fee-free sessions"
+            : "Invite friends and earn credit towards your next booking"
         }
       />
       <DashboardContent>
@@ -332,7 +442,11 @@ export function ReferralsPage({
               value={statsError ? "—" : qualified}
               icon={Gift}
               variant="success"
-              tooltip={`Friends who signed up and completed their first paid booking within ${QUALIFICATION_WINDOW_DAYS} days`}
+              tooltip={
+                terms
+                  ? `Friends who made their first paid booking within ${terms.qualifyWindowDays} days of signing up`
+                  : "Friends who made their first paid booking after signing up"
+              }
             />
             {isConsultant && (
               <StatCard
@@ -346,9 +460,39 @@ export function ReferralsPage({
               value={formatAmount(credits?.totalAvailable ?? 0)}
               icon={IndianRupee}
               variant="info"
-              tooltip="Credits earned from referrals. Applied at checkout."
+              tooltip={balanceTooltip}
             />
           </DashboardGrid>
+        )}
+
+        {isConsultant && feeWaivers.length > 0 && (
+          <div
+            data-testid="consultant-fee-waivers"
+            className="mt-6 rounded-xl border border-zinc-200 bg-white p-6"
+          >
+            <h3 className="text-sm font-medium text-zinc-900 mb-3">
+              Active Platform Fee Waivers
+            </h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {feeWaivers.map((waiver) => (
+                <div
+                  key={waiver.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50/70 px-4 py-3"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-950">
+                      {waiver.sessionsRemaining} / {waiver.sessionsGranted}{" "}
+                      fee-free sessions remaining
+                    </p>
+                    <p className="text-xs text-emerald-800">
+                      Expires {formatDate(waiver.expiresAt)}
+                    </p>
+                  </div>
+                  <StatusBadge label="Active waiver" tone="success" size="sm" />
+                </div>
+              ))}
+            </div>
+          </div>
         )}
 
         {/* Referral Link */}
@@ -372,14 +516,38 @@ export function ReferralsPage({
               {code && (
                 <>
                   <div className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
-                    Earn {formatAmount(code.referrerReward)} for each friend who
-                    books. Your friend gets {formatAmount(code.refereeReward)}{" "}
-                    off their first booking!
+                    {terms ? (
+                      <>
+                        Your friend gets {friendOffer}. You get{" "}
+                        {formatAmount(terms.referrerRewardPaise)} credit after
+                        your friend&apos;s first session, once its refund window
+                        has passed.
+                      </>
+                    ) : (
+                      "The referral programme is paused right now. Friends who sign up while it is paused get no welcome discount and earn you nothing; rewards for new sign-ups resume when it reopens."
+                    )}
+                    {isConsultant && terms && (
+                      <span className="mt-1 block">
+                        Refer another expert and you both pay no platform fee on{" "}
+                        {terms.expertWaiverSessions} sessions once they have
+                        verified their payout details and delivered their first
+                        paid session.
+                      </span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-sm text-zinc-500">Your code:</span>
-                    <span className="font-mono font-semibold text-zinc-900 bg-zinc-100 px-3 py-1 rounded-md">
-                      {code.customCode || code.code}
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-zinc-500">Your code:</span>
+                      <span className="font-mono font-semibold text-zinc-900 bg-zinc-100 px-3 py-1 rounded-md">
+                        {code.customCode || code.code}
+                      </span>
+                    </div>
+                    <span
+                      data-testid="weekly-vest-cap"
+                      className="text-xs text-zinc-500"
+                    >
+                      Weekly vesting cap: {weekVests} / {weeklyVestCap} vested
+                      this week
                     </span>
                   </div>
                 </>
@@ -404,9 +572,6 @@ export function ReferralsPage({
                     <Copy className="h-4 w-4" />
                   )}
                 </Button>
-                {/* `disabled` is not a valid anchor attribute, so with `asChild`
-                    React dropped it and the button stayed clickable with an
-                    empty href while the code query was loading or failed. */}
                 {referralLink ? (
                   <Button variant="outline" size="icon" asChild>
                     <a
@@ -428,9 +593,6 @@ export function ReferralsPage({
                     <WhatsAppIcon className="h-4 w-4" />
                   </Button>
                 )}
-                {/* `disabled` is not a valid anchor attribute, so with `asChild`
-                    React dropped it and the button stayed clickable with an
-                    empty href while the code query was loading or failed. */}
                 {referralLink ? (
                   <Button variant="outline" size="icon" asChild>
                     <a
@@ -453,8 +615,6 @@ export function ReferralsPage({
                   </Button>
                 )}
               </div>
-              {/* Vanity codes are a consultant affordance — they share the
-                  link publicly. Consultees refer people they already know. */}
               {isConsultant && (
                 <div className="flex gap-2 mt-3">
                   <Input
@@ -477,47 +637,22 @@ export function ReferralsPage({
         </div>
 
         {/* Referrals List */}
-        <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-zinc-200">
-            <h3 className="text-sm font-medium text-zinc-900">
-              Your Referrals
-            </h3>
-          </div>
-          {referralsLoading && !referralsData ? (
-            <div className="p-4">
-              <DataCardSkeleton />
-            </div>
-          ) : referralsError ? (
-            <EmptyState
-              icon={AlertTriangle}
-              title="Couldn't load your referrals"
-              description="Retry, or come back later."
-              action={
-                <Button variant="outline" onClick={() => refetchReferrals()}>
-                  Retry
-                </Button>
-              }
-            />
-          ) : (
-            <ResponsiveTable
-              columns={referralColumns}
-              rows={referrals}
-              getRowId={(ref) => ref.id}
-              className="[&>ul]:p-3"
-              empty={
-                <EmptyState
-                  icon={Users}
-                  title="No referrals yet"
-                  description="Share your link to get started!"
-                />
-              }
-            />
-          )}
-        </div>
+        <ReferralsListSection
+          loading={referralsLoading && !referralsData}
+          error={Boolean(referralsError)}
+          onRetry={() => void refetchReferrals()}
+          rows={referrals}
+          columns={referralColumns}
+        />
 
-        {/* Credit History — one ledger view per tree (#1527): link to it
-            where the tree has one, else list it here. */}
-        {creditsHref ? (
+        <CreditHistory
+          error={!!creditsError}
+          onRetry={() => void refetchCredits()}
+          rows={credits?.history ?? []}
+          columns={creditColumns}
+        />
+
+        {creditsHref && (
           <p className="mt-6 text-sm text-muted-foreground">
             Your credits and how you used them are in{" "}
             <Link
@@ -528,16 +663,70 @@ export function ReferralsPage({
             </Link>
             .
           </p>
-        ) : (
-          <CreditHistory
-            error={!!creditsError}
-            onRetry={() => void refetchCredits()}
-            rows={credits?.history ?? []}
-            columns={creditColumns}
-          />
         )}
       </DashboardContent>
     </>
+  );
+}
+
+function ReferralsListSection({
+  loading,
+  error,
+  onRetry,
+  rows,
+  columns,
+}: Readonly<{
+  loading: boolean;
+  error: boolean;
+  onRetry: () => void;
+  rows: Referral[];
+  columns: ResponsiveColumn<Referral>[];
+}>) {
+  let body: React.ReactNode;
+  if (loading) {
+    body = (
+      <div className="p-4">
+        <DataCardSkeleton />
+      </div>
+    );
+  } else if (error) {
+    body = (
+      <EmptyState
+        icon={AlertTriangle}
+        title="Couldn't load your referrals"
+        description="Retry, or come back later."
+        action={
+          <Button variant="outline" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      />
+    );
+  } else {
+    body = (
+      <ResponsiveTable
+        columns={columns}
+        rows={rows}
+        getRowId={(ref) => ref.id}
+        className="[&>ul]:p-3"
+        empty={
+          <EmptyState
+            icon={Users}
+            title="No referrals yet"
+            description="Share your link to get started!"
+          />
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="mt-6 bg-white rounded-xl border border-zinc-200 overflow-hidden">
+      <div className="px-6 py-4 border-b border-zinc-200">
+        <h3 className="text-sm font-medium text-zinc-900">Your Referrals</h3>
+      </div>
+      {body}
+    </div>
   );
 }
 

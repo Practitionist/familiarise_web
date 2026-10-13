@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 // has never contained, passed to the rupees formatter — so it rendered ₹NaN
 // rather than a number that was merely 100× too large.
 import { formatCurrencyAmount } from "@/utils/formatting";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,6 +88,8 @@ export interface RefundsPageProps {
   description?: string;
   /** React Query key prefix */
   queryKeyPrefix?: string;
+  /** Operational panel rendered directly below DashboardHeader */
+  beforeContent?: React.ReactNode;
 }
 
 export function RefundsPage({
@@ -95,6 +97,7 @@ export function RefundsPage({
   title = "Refunds",
   description = "View and track refund requests",
   queryKeyPrefix = "refunds",
+  beforeContent,
 }: RefundsPageProps) {
   const { basePath } = useBackofficeCapability();
   const { toast } = useToast();
@@ -255,6 +258,8 @@ export function RefundsPage({
         }
       />
 
+      {beforeContent}
+
       {/* Stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
@@ -356,13 +361,7 @@ export function RefundsPage({
 
       {/* Refunds Table */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <RotateCcw className="h-5 w-5 text-foreground" />
-            Refunds ({total})
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0 sm:p-6 sm:pt-0">
+        <CardContent className="p-0 sm:p-6">
           {loading ? (
             <div className="flex items-center justify-center h-64">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />

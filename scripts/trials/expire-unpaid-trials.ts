@@ -29,6 +29,7 @@ import { transitionTrial } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
 import { notifyTrialCancelled } from "@/lib/novu/service";
+import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
@@ -48,11 +49,27 @@ export interface ExpireUnpaidTrialsResult {
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion. #1775 C-12 — fail-closed: arm (ii) refunds money.
-export async function expireUnpaidTrials(): Promise<ExpireUnpaidTrialsResult> {
+//
+// `maxTrials` is the Netlify ticker's bite (#1583 P1). The cohort below is a
+// loop of 500-row batches (4 × 500 for Actions) and each row costs a guarded
+// transition, a tombstone and a bell — plus, in arm (ii), a full gateway
+// refund. CANCELLED leaves the cohort and there is no persisted cursor, so a
+// smaller cap is a budget and not a drop.
+export async function expireUnpaidTrials(opts?: {
+  maxTrials?: number;
+}): Promise<ExpireUnpaidTrialsResult> {
+  const maxTrials =
+    opts?.maxTrials && opts.maxTrials > 0
+      ? Math.floor(opts.maxTrials)
+      : BATCH_SIZE * MAX_BATCHES_PER_RUN;
   return withCronLock("expire-unpaid-trials", { failMode: "closed" }, () =>
-    expireUnpaidTrialsUnlocked(),
+    expireUnpaidTrialsUnlocked(maxTrials),
   );
 }
+
+/** One guarded transition per lapsed trial, and the batch/run bounds. */
+const BATCH_SIZE = 500;
+const MAX_BATCHES_PER_RUN = 4;
 
 /** What the tombstone and the consultee notice need, read with the cohort. */
 const EXPIRY_SELECT = {
@@ -142,7 +159,9 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
       planTitle: trial.subscriptionPlan.title,
       status: TrialStatus.CANCELLED,
       dateTime: trial.appointment?.occurrences[0]?.startsAt.toISOString(),
-      dashboardUrl: "/dashboard",
+      // The learner's own appointments — the wire renders the dateTime
+      // in their zone, so the ISO here is correct, not a leak.
+      dashboardUrl: goHref("client", "appointments"),
     });
   } catch (error) {
     reportSentryError(error, {
@@ -325,7 +344,10 @@ async function retryUnansweredTrialRefunds(now: Date): Promise<number> {
  * answered within 48 h of the request ends CANCELLED (TRIAL_UNANSWERED; the
  * enum has no EXPIRED) and is refunded in full after the commit.
  */
-async function expireUnansweredPaidTrials(now: Date): Promise<number> {
+async function expireUnansweredPaidTrials(
+  now: Date,
+  maxTrials: number,
+): Promise<number> {
   const cutoff = new Date(now.getTime() - TRIAL_ANSWER_HOURS * 60 * 60 * 1000);
   const unanswered: Prisma.TrialWhereInput = {
     paymentId: { not: null },
@@ -334,7 +356,7 @@ async function expireUnansweredPaidTrials(now: Date): Promise<number> {
   const rows: UnansweredTrial[] = await prisma.trial.findMany({
     where: { status: TrialStatus.PENDING, ...unanswered },
     orderBy: { requestedAt: "asc" },
-    take: 500,
+    take: maxTrials,
     select: {
       ...EXPIRY_SELECT,
       paymentId: true,
@@ -366,13 +388,16 @@ async function expireUnansweredPaidTrials(now: Date): Promise<number> {
   return refunded;
 }
 
-async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
+async function expireUnpaidTrialsUnlocked(
+  maxTrials: number,
+): Promise<ExpireUnpaidTrialsResult> {
   const errors: string[] = [];
   let trialsExpired = 0;
   let trialsUnansweredRefunded = 0;
   const now = new Date();
 
   console.log("🧹 Starting unpaid trial expiry...");
+  console.log(`   Per-run cap: ${maxTrials} trial(s)`);
 
   try {
     // One guarded transition per lapsed trial rather than a bulk updateMany.
@@ -383,27 +408,25 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
     // emits. Idempotent: CANCELLED leaves the cohort.
     //
     // Bounded batches: see expire-reschedule-proposals — same hourly-cron
-    // ceiling reasoning. Capped per invocation too (4 x 500 rows max); the
-    // next hourly tick continues, since CANCELLED leaves the cohort.
-    const BATCH_SIZE = 500;
-    const MAX_BATCHES_PER_RUN = 4;
-    let batchesRun = 0;
+    // ceiling reasoning, plus the caller's own per-run budget. CANCELLED
+    // leaves the cohort, so the next tick continues.
+    let processed = 0;
     for (;;) {
-      if (batchesRun >= MAX_BATCHES_PER_RUN) break;
+      if (processed >= maxTrials) break;
       // A null paymentDueAt on AWAITING_PAYMENT means the pay-link was never
       // minted after acceptance; holding a slot nobody can pay for is the worst case.
       const stale = await prisma.trial.findMany({
         where: unpaidLapsed(now),
         orderBy: { id: "asc" },
-        take: BATCH_SIZE,
+        take: Math.min(BATCH_SIZE, maxTrials - processed),
         select: EXPIRY_SELECT,
       });
       if (stale.length === 0) break;
 
       for (const row of stale) {
         if (await expireOneTrial(row, now)) trialsExpired += 1;
+        processed += 1;
       }
-      batchesRun += 1;
 
       if (stale.length < BATCH_SIZE) break;
     }
@@ -413,7 +436,7 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
     const repaired = await repairUntombstonedCancelledTrials();
     if (repaired > 0) console.log(`   Held calls re-tombstoned: ${repaired}`);
 
-    trialsUnansweredRefunded = await expireUnansweredPaidTrials(now);
+    trialsUnansweredRefunded = await expireUnansweredPaidTrials(now, maxTrials);
     console.log(
       `   Unanswered paid trials refunded: ${trialsUnansweredRefunded}`,
     );

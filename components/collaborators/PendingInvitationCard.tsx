@@ -5,7 +5,7 @@
  * Requires an ancestor <TooltipProvider>.
  */
 
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -32,7 +32,10 @@ export function PendingInvitationCard({
   }) => void;
   isResponding: boolean;
 }) {
-  const inviter = collab.invitedBy.user;
+  const inviterUser = collab.invitedBy?.user ?? {
+    name: "Plan Host",
+    image: null,
+  };
   const planTypeLabel = collab.planType === "webinar" ? "Webinar" : "Class";
 
   return (
@@ -72,14 +75,15 @@ export function PendingInvitationCard({
 
           <div className="mt-2 flex items-center gap-2">
             <Avatar className="h-6 w-6 ring-1 ring-amber-100">
+              <AvatarImage src={inviterUser.image ?? undefined} />
               <AvatarFallback className="bg-amber-100 text-[9px] text-amber-900">
-                {(inviter.name ?? "?").charAt(0)}
+                {(inviterUser.name ?? "Plan Host").charAt(0)}
               </AvatarFallback>
             </Avatar>
             <p className="text-sm text-zinc-600">
               Invited by{" "}
               <span className="font-medium text-zinc-800">
-                {inviter.name ?? "Unknown"}
+                {inviterUser.name ?? "Plan Host"}
               </span>
             </p>
           </div>

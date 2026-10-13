@@ -20,13 +20,14 @@ jest.mock("@sentry/nextjs", () => ({
   logger: { info: jest.fn(), fmt: (s: TemplateStringsArray) => s.join("") },
 }));
 
-// `var`: the hoisted jest.mock factory runs before `const` initialisers.
-// eslint-disable-next-line no-var
-var held: Map<string, string>;
+// The Map is created inside the hoisted jest.mock factory (it runs before any
+// `const` below is initialised) and read back via jest.requireMock after the
+// imports, so no `var` hoisting trick is needed.
 jest.mock("../../lib/redis", () => {
-  held = new Map<string, string>();
+  const held = new Map<string, string>();
   return {
     __esModule: true,
+    __held: held,
     default: {
       set: async (key: string, value: string, opts?: { nx?: boolean }) => {
         if (opts?.nx && held.has(key)) return null;
@@ -56,7 +57,7 @@ jest.mock("../../lib/stream/recording-listing-access", () => ({
   loadOwnedListingRecording: jest.fn(async () => ({
     status: "ok",
     listingStatus: "PUBLISHED",
-    listPricePaise: BigInt(49_900),
+    listPricePaise: 49_900,
     recordingStatus: "AVAILABLE",
     storageType: "SUPABASE",
     plan: { plan: { consultantProfileId: "cp_owner" } },
@@ -93,6 +94,7 @@ const purchaseCreate = jest.fn(async ({ data }: { data: (typeof rows)[0] }) => {
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
+    user: { findUnique: async () => ({ country: "IN" }) },
     recordingPurchase: {
       findFirst: async ({
         where,
@@ -112,6 +114,10 @@ jest.mock("../../lib/prisma", () => ({
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/recordings/[recordingId]/purchase/route";
+
+const held = (
+  jest.requireMock("../../lib/redis") as { __held: Map<string, string> }
+).__held;
 
 function post() {
   return POST(

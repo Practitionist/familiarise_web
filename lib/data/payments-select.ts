@@ -41,6 +41,15 @@ export const REFUND_SUMMARY_SELECT = {
   createdAt: true,
 } as const;
 
+/** The buyer's refund details: the gateway refund id is the support reference;
+ *  `failureReason` stays server-side and the page shows fixed copy instead. */
+export const BUYER_REFUND_DETAIL_SELECT = {
+  ...REFUND_SUMMARY_SELECT,
+  currency: true,
+  refundId: true,
+  updatedAt: true,
+} as const;
+
 /** The operator view adds the gateway's own refund id, the currency and the
  *  rail, which the buyer's history has no use for. */
 export const ADMIN_REFUND_SELECT = {

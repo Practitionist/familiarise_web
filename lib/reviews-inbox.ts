@@ -25,6 +25,8 @@ export interface OwnReviewRow {
   body: string | null;
   createdAt: string;
   editedAt: string | null;
+  editCount: number;
+  isOrgSponsored: boolean;
   track: ReviewTrack | null;
   reviewer: { name: string | null; image: string | null } | null;
   offeringTitle: string | null;
@@ -61,6 +63,7 @@ const ROW_SELECT = {
   reviewDescription: true,
   createdAt: true,
   editedAt: true,
+  revisionNo: true,
   isAnonymous: true,
   track: true,
   replyBody: true,
@@ -72,6 +75,8 @@ const ROW_SELECT = {
   },
   appointment: {
     select: {
+      organizationId: true,
+      payment: { select: { organizationId: true } },
       consultation: {
         select: { consultationPlan: { select: { title: true } } },
       },
@@ -100,12 +105,18 @@ function offeringTitle(appointment: ReviewRecord["appointment"]) {
 
 export function toOwnReviewRow(r: ReviewRecord): OwnReviewRow {
   const replyLive = r.replyBody !== null && r.replyDeletedAt === null;
+  const isOrgSponsored = Boolean(
+    r.appointment?.organizationId ||
+    r.appointment?.payment?.some((p) => p.organizationId != null),
+  );
   return {
     id: r.id,
     rating: r.rating,
     body: r.reviewDescription,
     createdAt: r.createdAt.toISOString(),
     editedAt: r.editedAt?.toISOString() ?? null,
+    editCount: Math.max(0, (r.revisionNo ?? 1) - 1),
+    isOrgSponsored,
     track: r.track,
     reviewer: r.isAnonymous
       ? null
@@ -129,6 +140,7 @@ export async function readOwnReviews(args: {
   consultantProfileId: string;
   cursor?: string | null;
   rating?: number | null;
+  track?: ReviewTrack | null;
   needsReply?: boolean;
   limit?: number;
 }): Promise<OwnReviewsPage> {
@@ -142,6 +154,7 @@ export async function readOwnReviews(args: {
     where: {
       ...base,
       ...(args.rating ? { rating: args.rating } : {}),
+      ...(args.track ? { track: args.track } : {}),
       ...(args.needsReply ? NEEDS_REPLY_WHERE : {}),
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],

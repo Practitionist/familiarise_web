@@ -1,7 +1,7 @@
 /**
  * Payout Status Reconciliation - Core Logic
  *
- * Reconciles payout status with payment gateways (Stripe/RazorpayX).
+ * Reconciles payout status with RazorpayX.
  * Finds PENDING/PROCESSING payouts older than 48h and queries gateways for actual status.
  *
  * This catches cases where:
@@ -20,12 +20,15 @@
 import prisma from "../../lib/prisma";
 import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { handlePayoutWebhook } from "@/lib/payments/payouts";
+import {
+  handlePayoutWebhook,
+  markConsultantPayoutReversed,
+  markOrgPayoutReversed,
+} from "@/lib/payments/payouts";
 import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-payouts";
 import {
   type PayoutLookup,
   WEBHOOK_STATUS_MAP,
-  getStripePayoutStatus,
   getRazorpayPayoutStatus,
   mapGatewayStatus,
   retireUnknownGatewayPayout,
@@ -139,9 +142,7 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     // Query gateway for actual status
     let lookup: PayoutLookup | null = null;
 
-    if (payout.provider === PaymentGateway.STRIPE) {
-      lookup = await getStripePayoutStatus(payout.providerPayoutId);
-    } else if (payout.provider === PaymentGateway.RAZORPAY) {
+    if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
         skippedCount++;
@@ -247,6 +248,110 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
       }
     } else {
       console.log(`   Status unchanged (${mappedStatus})`);
+    }
+  }
+
+  const completedReversalCutoff = new Date(
+    Date.now() - 14 * 24 * 60 * 60 * 1000,
+  );
+  const recentCompletedPayouts = prisma.consultantPayout?.findMany
+    ? await prisma.consultantPayout.findMany({
+        where: {
+          status: PayoutStatus.COMPLETED,
+          providerPayoutId: { not: null },
+          processedAt: { gte: completedReversalCutoff },
+        },
+        select: {
+          id: true,
+          providerPayoutId: true,
+          provider: true,
+        },
+        orderBy: { processedAt: "desc" },
+        take: 100,
+      })
+    : [];
+
+  for (const completed of recentCompletedPayouts) {
+    if (
+      !completed.providerPayoutId ||
+      completed.provider !== PaymentGateway.RAZORPAY
+    ) {
+      continue;
+    }
+    try {
+      const gatewayStatus = await getRazorpayPayoutStatus(
+        completed.providerPayoutId,
+      );
+      if (
+        gatewayStatus.kind === "status" &&
+        gatewayStatus.status.toLowerCase() === "reversed"
+      ) {
+        const rev = await markConsultantPayoutReversed(
+          completed.providerPayoutId,
+          gatewayStatus.failureReason ||
+            gatewayStatus.failureMessage ||
+            "Bank reversal detected during payout reconciliation",
+        );
+        if (!rev.wasNoOp) {
+          reconciledCount++;
+          failedCount++;
+          discrepancies.push(
+            `Completed payout ${completed.id} (${completed.providerPayoutId}) reversed at gateway`,
+          );
+        }
+      }
+    } catch (err) {
+      errors.push(
+        `Completed payout check failed for ${completed.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const recentCompletedOrgPayouts = prisma.organizationPayout?.findMany
+    ? await prisma.organizationPayout.findMany({
+        where: {
+          status: PayoutStatus.COMPLETED,
+          paymentGateway: PaymentGateway.RAZORPAY,
+          gatewayPayoutId: { not: null },
+          processedAt: { gte: completedReversalCutoff },
+        },
+        select: {
+          id: true,
+          gatewayPayoutId: true,
+        },
+        orderBy: { processedAt: "desc" },
+        take: 100,
+      })
+    : [];
+
+  for (const orgCompleted of recentCompletedOrgPayouts) {
+    if (!orgCompleted.gatewayPayoutId) continue;
+    try {
+      const gatewayStatus = await getRazorpayPayoutStatus(
+        orgCompleted.gatewayPayoutId,
+      );
+      if (
+        gatewayStatus.kind === "status" &&
+        gatewayStatus.status.toLowerCase() === "reversed"
+      ) {
+        const rev = await markOrgPayoutReversed(
+          orgCompleted.id,
+          gatewayStatus.failureReason ||
+            gatewayStatus.failureMessage ||
+            "Bank reversal detected during payout reconciliation",
+        );
+        if (!rev.wasNoOp) {
+          reconciledCount++;
+          failedCount++;
+          discrepancies.push(
+            `Completed org payout ${orgCompleted.id} (${orgCompleted.gatewayPayoutId}) reversed at gateway`,
+          );
+        }
+      }
+    } catch (err) {
+      errors.push(
+        `Completed org payout check failed for ${orgCompleted.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

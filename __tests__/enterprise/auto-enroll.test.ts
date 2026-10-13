@@ -109,9 +109,9 @@ function makeRequest(body: unknown): NextRequest {
   ) as unknown as NextRequest;
 }
 
-const routeArgs = () =>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ({ params: Promise.resolve({ orgId: "org-1", programId: "p-1" }) } as any);
+const routeArgs = () => ({
+  params: Promise.resolve({ orgId: "org-1", programId: "p-1" }),
+});
 
 function wireTxShim() {
   mockedPrisma.$transaction.mockImplementation(async (fn: unknown) => {
@@ -122,8 +122,7 @@ function wireTxShim() {
       billingSubscription: mockedPrisma.billingSubscription,
       orgAuditLog: mockedPrisma.orgAuditLog,
     };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (fn as any)(tx);
+    return (fn as (tx: unknown) => unknown)(tx);
   });
 }
 
