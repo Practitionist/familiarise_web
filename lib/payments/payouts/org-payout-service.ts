@@ -38,11 +38,22 @@ import { postPayoutClawback } from "@/lib/payments/operations/reversal-engine";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { PAYOUT_ALLOWED_FROM } from "@/lib/enterprise/transitions";
 import {
+  VISIBILITY_ROLES,
   notifyOrgPayoutCompleted,
   notifyOrgPayoutFailed,
 } from "@/lib/novu/org-workflows";
+import { formatNotificationMoney } from "@/lib/novu/humanize";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { sendOrgPayoutFailedEmail } from "@/lib/email";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import {
+  MONEY_EMAIL_TYPES,
+  stagePayoutStatusEmail,
+} from "@/lib/email/senders/money";
+import {
+  attemptStaged as attemptStagedEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
 import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
@@ -1230,6 +1241,8 @@ async function reportOrgPayoutCompletionFollowups(
   result: {
     shortfall: OrgPayoutCompletionShortfall | null;
     missingTdsRate: { organizationId: string; tdsAmountPaise: number } | null;
+    notifyStaged: StagedTrigger[];
+    notifyEmails: StagedRecipientEmail[];
     notify: {
       organizationId: string;
       orgName: string;
@@ -1281,16 +1294,70 @@ async function reportOrgPayoutCompletionFollowups(
   }
 
   if (result.notify) {
-    await notifyOrgPayoutCompleted(result.notify.organizationId, {
-      orgName: result.notify.orgName,
-      payoutId,
-      amountPaise: result.notify.amountPaise,
-      netPayoutPaise: result.notify.netPayoutPaise,
-      tdsAmountPaise: result.notify.tdsAmountPaise,
-      currency: result.notify.currency,
-      dashboardUrl: `${getAppUrl()}/dashboard/organization/${result.notify.organizationId}/payouts`,
-    });
+    const dashboardUrl = `${getAppUrl()}/dashboard/organization/${result.notify.organizationId}/payouts`;
+    await Promise.allSettled([
+      ...(result.notifyStaged.length > 0
+        ? [attemptStagedBells(result.notifyStaged, "COMPLETED")]
+        : [
+            notifyOrgPayoutCompleted(result.notify.organizationId, {
+              orgName: result.notify.orgName,
+              payoutId,
+              amountPaise: result.notify.amountPaise,
+              netPayoutPaise: result.notify.netPayoutPaise,
+              tdsAmountPaise: result.notify.tdsAmountPaise,
+              currency: result.notify.currency,
+              dashboardUrl,
+            }),
+          ]),
+      attemptStagedEmails(
+        result.notifyEmails,
+        MONEY_EMAIL_TYPES.PAYOUT_STATUS,
+        EMAIL_BUDGET_MS.WEBHOOK,
+      ),
+    ]);
   }
+}
+
+async function stageOrgPayoutEmailsInTx(
+  tx: Tx,
+  params: {
+    organizationId: string;
+    orgName: string;
+    payoutId: string;
+    status: "COMPLETED" | "FAILED" | "REVERSED";
+    amountPaise: number;
+    currency: string;
+    tdsAmountPaise: number;
+    reason?: string | null;
+  },
+): Promise<StagedRecipientEmail[]> {
+  if (!tx.membership || !tx.user || !tx.failedEmail) {
+    return [];
+  }
+  const members = await tx.membership.findMany({
+    where: {
+      organizationId: params.organizationId,
+      status: "ACTIVE",
+      role: { in: VISIBILITY_ROLES },
+    },
+    select: { userId: true },
+  });
+  if (members.length === 0) return [];
+  const withheldText =
+    params.tdsAmountPaise > 0
+      ? `${formatNotificationMoney(params.tdsAmountPaise, params.currency)} TDS withheld`
+      : null;
+  return stagePayoutStatusEmail(tx, {
+    recipientUserIds: members.map((m) => m.userId),
+    payoutId: params.payoutId,
+    status: params.status,
+    amountPaise: params.amountPaise,
+    currency: params.currency,
+    orgName: params.orgName,
+    reason: params.reason,
+    withheldText,
+    dashboardUrl: `${getAppUrl()}/dashboard/organization/${params.organizationId}/payouts`,
+  });
 }
 
 export async function markOrgPayoutCompleted(payoutId: string): Promise<{
@@ -1313,6 +1380,8 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
           return {
             wasNoOp: true,
             status,
+            notifyStaged: [] as StagedTrigger[],
+            notifyEmails: [] as StagedRecipientEmail[],
             notify: null,
             missingTdsRate: null,
             shortfall: null,
@@ -1402,9 +1471,39 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
           },
         });
 
+        const canStageBells =
+          typeof tx.notificationOutbox?.upsert === "function" &&
+          typeof tx.membership?.findMany === "function";
+        const notifyStaged = canStageBells
+          ? await notifyOrgPayoutCompleted(
+              payout.organizationId,
+              {
+                orgName: payout.organization.name,
+                payoutId,
+                amountPaise: payout.amountPaise,
+                netPayoutPaise: payout.netPayoutPaise,
+                tdsAmountPaise: orgTds,
+                currency: payout.currency,
+                dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
+              },
+              { tx, entityRef: `orgPayout:${payoutId}` },
+            )
+          : [];
+        const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
+          organizationId: payout.organizationId,
+          orgName: payout.organization.name,
+          payoutId,
+          status: "COMPLETED",
+          amountPaise: payout.amountPaise,
+          currency: payout.currency,
+          tdsAmountPaise: orgTds,
+        });
+
         return {
           wasNoOp: false,
           status: "COMPLETED" as PayoutStatus,
+          notifyStaged,
+          notifyEmails,
           notify: {
             organizationId: payout.organizationId,
             orgName: payout.organization.name,
@@ -1511,6 +1610,7 @@ async function markOrgPayoutFailedInternal(
             wasNoOp: true,
             status: current.status,
             notifyStaged: [],
+            notifyEmails: [] as StagedRecipientEmail[],
             notify: null,
           };
         }
@@ -1579,11 +1679,22 @@ async function markOrgPayoutFailedInternal(
           },
           { tx, entityRef: `orgPayout:${payoutId}` },
         );
+        const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
+          organizationId: payout.organizationId,
+          orgName: payout.organization.name,
+          payoutId,
+          status: kind,
+          amountPaise: payout.netPayoutPaise,
+          currency: payout.currency,
+          tdsAmountPaise: 0,
+          reason: reason.slice(0, 200),
+        });
 
         return {
           wasNoOp: false,
           status: "FAILED" as PayoutStatus,
           notifyStaged,
+          notifyEmails,
           notify: {
             organizationId: payout.organizationId,
             orgName: payout.organization.name,
@@ -1598,17 +1709,27 @@ async function markOrgPayoutFailedInternal(
     ),
   );
 
-  await attemptStagedBells(result.notifyStaged, kind);
-  if (result.notify) {
-    await emailOrgPayoutFailed(payoutId, kind, reason, result.notify);
-  }
+  await Promise.allSettled([
+    attemptStagedBells(result.notifyStaged, kind),
+    ...(result.notifyEmails.length > 0
+      ? [
+          attemptStagedEmails(
+            result.notifyEmails,
+            MONEY_EMAIL_TYPES.PAYOUT_STATUS,
+            EMAIL_BUDGET_MS.WEBHOOK,
+          ),
+        ]
+      : result.notify
+        ? [emailOrgPayoutFailed(payoutId, kind, reason, result.notify)]
+        : []),
+  ]);
 
   return { wasNoOp: result.wasNoOp, status: result.status };
 }
 
 async function attemptStagedBells(
   staged: StagedTrigger[],
-  site: "FAILED" | "REVERSED",
+  site: "COMPLETED" | "FAILED" | "REVERSED",
 ): Promise<void> {
   try {
     for (const row of staged) await attemptTrigger(row);
@@ -1728,11 +1849,22 @@ export async function markOrgPayoutReversed(
             },
             { tx, entityRef: `orgPayout:${payoutId}` },
           );
+          const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
+            organizationId: payout.organizationId,
+            orgName: payout.organization.name,
+            payoutId,
+            status: "REVERSED",
+            amountPaise: payout.amountPaise,
+            currency: payout.currency,
+            tdsAmountPaise: payout.tdsAmountPaise ?? 0,
+            reason: reason.slice(0, 200),
+          });
 
           return {
             wasNoOp: false,
             status: "REVERSED" as PayoutStatus,
             notifyStaged,
+            notifyEmails,
             notify: {
               organizationId: payout.organizationId,
               orgName: payout.organization.name,
@@ -1770,6 +1902,7 @@ export async function markOrgPayoutReversed(
             wasNoOp: true,
             status: current.status,
             notifyStaged: [],
+            notifyEmails: [] as StagedRecipientEmail[],
             notify: null,
           };
         }
@@ -1836,11 +1969,22 @@ export async function markOrgPayoutReversed(
           },
           { tx, entityRef: `orgPayout:${payoutId}` },
         );
+        const notifyEmails = await stageOrgPayoutEmailsInTx(tx, {
+          organizationId: payout.organizationId,
+          orgName: payout.organization.name,
+          payoutId,
+          status: "REVERSED",
+          amountPaise: payout.netPayoutPaise,
+          currency: payout.currency,
+          tdsAmountPaise: 0,
+          reason: reason.slice(0, 200),
+        });
 
         return {
           wasNoOp: false,
           status: "REVERSED" as PayoutStatus,
           notifyStaged,
+          notifyEmails,
           notify: {
             organizationId: payout.organizationId,
             orgName: payout.organization.name,
@@ -1863,10 +2007,27 @@ export async function markOrgPayoutReversed(
   });
 
   if (!txResult.wasNoOp) {
-    await attemptStagedBells(txResult.notifyStaged, "REVERSED");
-    if (txResult.notify) {
-      await emailOrgPayoutFailed(payoutId, "REVERSED", reason, txResult.notify);
-    }
+    await Promise.allSettled([
+      attemptStagedBells(txResult.notifyStaged, "REVERSED"),
+      ...(txResult.notifyEmails.length > 0
+        ? [
+            attemptStagedEmails(
+              txResult.notifyEmails,
+              MONEY_EMAIL_TYPES.PAYOUT_STATUS,
+              EMAIL_BUDGET_MS.WEBHOOK,
+            ),
+          ]
+        : txResult.notify
+          ? [
+              emailOrgPayoutFailed(
+                payoutId,
+                "REVERSED",
+                reason,
+                txResult.notify,
+              ),
+            ]
+          : []),
+    ]);
   }
 
   return { wasNoOp: txResult.wasNoOp, status: txResult.status };

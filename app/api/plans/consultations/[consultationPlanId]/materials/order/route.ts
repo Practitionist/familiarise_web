@@ -1,0 +1,18 @@
+import {
+  handleReorderMaterials,
+  type PlanMaterialsConfig,
+} from "@/app/api/plans/shared/materials-handler";
+
+const CONFIG: PlanMaterialsConfig = {
+  planType: "consultation",
+  planIdField: "consultationPlanId",
+  planModel: "consultationPlan",
+};
+
+export async function PUT(
+  request: Request,
+  { params }: { params: Promise<{ consultationPlanId: string }> },
+) {
+  const { consultationPlanId } = await params;
+  return handleReorderMaterials(request, consultationPlanId, CONFIG);
+}

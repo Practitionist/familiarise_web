@@ -7,9 +7,10 @@ import {
   sanitisePublicReviews,
 } from "@/lib/data/review-public";
 import { Prisma } from "@prisma/client";
-import { attemptTrigger, notifyNewReview } from "@/lib/novu";
+import { notifyNewReview } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { goHref } from "@/lib/dashboard/go";
-import { EMAIL_BUDGET_MS, sendNewReviewEmail } from "@/lib/email";
+import { stageNewReviewEmail } from "@/lib/email/senders/people";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
 import { getSession } from "@/lib/auth-server";
@@ -359,23 +360,24 @@ export async function POST(req: NextRequest) {
     const { review: newReview, isNew, stagedBell } = writeResult;
 
     if (isNew) {
-      if (stagedBell) {
-        await attemptTrigger(stagedBell);
-      }
       const reviewerName = newReview.isAnonymous
         ? "A verified client"
         : newReview.consulteeProfile?.user?.name || "User";
       const reviewsInboxHref = goHref("expert", "reviews");
-      await sendNewReviewEmail(
+      const emailRows = await stageNewReviewEmail(prisma, {
+        reviewId: newReview.id,
+        consultantUserId: newReview.consultantProfile.userId,
+        reviewerName,
+        rating: newReview.rating,
+        comment: newReview.reviewDescription,
+        reviewUrl: reviewsInboxHref,
+      }).catch(() => []);
+      await flushNotificationsAfter(
         {
-          reviewId: newReview.id,
-          consultantUserId: newReview.consultantProfile.userId,
-          reviewerName,
-          rating: newReview.rating,
-          comment: newReview.reviewDescription,
-          reviewUrl: reviewsInboxHref,
+          bells: [stagedBell],
+          emails: [{ rows: emailRows, emailType: "NEW_REVIEW" }],
         },
-        EMAIL_BUDGET_MS.REQUEST,
+        "reviews.create",
       );
     }
 

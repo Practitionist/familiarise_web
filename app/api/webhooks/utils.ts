@@ -26,6 +26,11 @@ import {
   notifyOrgInvoicePaid,
   notifyOrgWalletTopupConfirmed,
 } from "@/lib/novu/org-workflows";
+import {
+  sendOrgBillingEmail,
+  stageDisputeNoticeEmail,
+  stageOrgBillingEmail,
+} from "@/lib/email/senders/money";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { toCurrencyEnum } from "@/lib/payments/validation/currency-guards";
 import { getAppUrl } from "@/lib/url";
@@ -223,15 +228,42 @@ export async function handleOrgPaymentSuccess(
           },
         });
         if (orgRow) {
-          notifyOrgWalletTopupConfirmed(organizationId, {
-            orgName: orgRow.name,
-            amountPaise: paise,
-            currency: orgRow.billingAccount?.currency ?? "INR",
-            newBalancePaise: orgRow.billingAccount?.walletBalance ?? 0,
-            dashboardUrl: `${getAppUrl()}/dashboard/organization/${organizationId}/billing`,
-          }).catch((err) =>
-            console.error("[notifyOrgWalletTopupConfirmed] failed:", err),
-          );
+          const dashboardUrl = `${getAppUrl()}/dashboard/organization/${organizationId}/billing`;
+          const currency = orgRow.billingAccount?.currency ?? "INR";
+          const newBalancePaise = orgRow.billingAccount?.walletBalance ?? 0;
+          const owners =
+            (await prisma.membership?.findMany({
+              where: { organizationId, status: "ACTIVE", role: "OWNER" },
+              select: { userId: true },
+            })) ?? [];
+          await Promise.allSettled([
+            notifyOrgWalletTopupConfirmed(organizationId, {
+              orgName: orgRow.name,
+              amountPaise: paise,
+              currency,
+              newBalancePaise,
+              dashboardUrl,
+            }),
+            ...(owners.length > 0 &&
+            typeof prisma.user?.findMany === "function" &&
+            typeof prisma.failedEmail?.create === "function"
+              ? [
+                  sendOrgBillingEmail(
+                    {
+                      recipientUserIds: owners.map((o) => o.userId),
+                      organizationId,
+                      orgName: orgRow.name,
+                      kind: "WALLET_TOPUP_CONFIRMED",
+                      amountPaise: paise,
+                      currency,
+                      newBalancePaise,
+                      dashboardUrl,
+                    },
+                    EMAIL_BUDGET_MS.WEBHOOK,
+                  ),
+                ]
+              : []),
+          ]);
         }
       }
     } catch (err) {
@@ -322,6 +354,8 @@ export async function handleOrgPaymentSuccess(
     const resolvedOrgId = invoiceRow.organizationId ?? organizationId;
 
     let claimedCount = 0;
+    let stagedInvoiceBells: StagedTrigger[] = [];
+    let stagedBillingEmails: StagedRecipientEmail[] = [];
     try {
       const txResult = await prisma.$transaction(async (tx) => {
         const paidAt = new Date();
@@ -337,8 +371,14 @@ export async function handleOrgPaymentSuccess(
           },
         });
         if (claimed.count === 0) {
-          return { count: 0 as const };
+          return {
+            count: 0 as const,
+            invoiceBells: [] as StagedTrigger[],
+            billingEmails: [] as StagedRecipientEmail[],
+          };
         }
+        let invoiceBells: StagedTrigger[] = [];
+        let billingEmails: StagedRecipientEmail[] = [];
         if (resolvedOrgId) {
           if (gatewayAmountPaise > 0) {
             await postLedgerTxn(tx, {
@@ -374,6 +414,61 @@ export async function handleOrgPaymentSuccess(
               settledAt: paidAt.toISOString(),
             },
           });
+
+          const orgName =
+            (
+              await tx.organization?.findUnique({
+                where: { id: resolvedOrgId },
+                select: { name: true },
+              })
+            )?.name ?? "your organization";
+          const dashboardUrl = `${getAppUrl()}/dashboard/organization/${resolvedOrgId}/billing`;
+          const canStageOutbox =
+            typeof tx.notificationOutbox?.upsert === "function" &&
+            typeof tx.membership?.findMany === "function";
+          invoiceBells =
+            (await notifyOrgInvoicePaid(
+              resolvedOrgId,
+              {
+                invoiceNumber: invoiceRow.invoiceNumber,
+                orgName,
+                totalPaise: invoiceRow.totalPaise,
+                currency: invoiceRow.displayCurrency,
+                paidAt: paidAt.toISOString(),
+                dashboardUrl,
+              },
+              canStageOutbox
+                ? { tx, entityRef: `orgInvoice:${invoiceId}` }
+                : undefined,
+            )) ?? [];
+
+          if (
+            typeof tx.membership?.findMany === "function" &&
+            typeof tx.user?.findMany === "function" &&
+            typeof tx.failedEmail?.create === "function"
+          ) {
+            const owners = await tx.membership.findMany({
+              where: {
+                organizationId: resolvedOrgId,
+                status: "ACTIVE",
+                role: "OWNER",
+              },
+              select: { userId: true },
+            });
+            if (owners.length > 0) {
+              billingEmails = await stageOrgBillingEmail(tx, {
+                recipientUserIds: owners.map((o) => o.userId),
+                organizationId: resolvedOrgId,
+                orgName,
+                kind: "INVOICE_PAID",
+                amountPaise: invoiceRow.totalPaise,
+                currency: invoiceRow.displayCurrency,
+                invoiceId: invoiceRow.id,
+                invoiceNumber: invoiceRow.invoiceNumber,
+                dashboardUrl,
+              });
+            }
+          }
         }
         await tx.overageEvent.updateMany({
           where: {
@@ -403,9 +498,15 @@ export async function handleOrgPaymentSuccess(
             data: { status: "PENDING" },
           });
         }
-        return { count: claimed.count };
+        return {
+          count: claimed.count,
+          invoiceBells,
+          billingEmails,
+        };
       });
       claimedCount = txResult.count;
+      stagedInvoiceBells = txResult.invoiceBells;
+      stagedBillingEmails = txResult.billingEmails;
     } catch (err) {
       // Webhook delivery is at-least-once; throwing causes Razorpay to
       // retry. The tx already rolled back so a retry sees the original
@@ -448,27 +549,14 @@ export async function handleOrgPaymentSuccess(
           ),
         );
 
-      // Novu bell notification to OWNERs. Look up the invoice number +
-      // org name here rather than passing them down — the webhook entry
-      // site doesn't have them.
-      const ctx = await prisma.organizationInvoice.findUnique({
-        where: { id: invoiceId },
-        select: {
-          invoiceNumber: true,
-          paidAt: true,
-          organization: { select: { name: true } },
-        },
-      });
-      if (ctx) {
-        notifyOrgInvoicePaid(resolvedOrgId, {
-          invoiceNumber: ctx.invoiceNumber,
-          orgName: ctx.organization.name,
-          totalPaise: invoiceRow.totalPaise,
-          currency: invoiceRow.displayCurrency,
-          paidAt: (ctx.paidAt ?? new Date()).toISOString(),
-          dashboardUrl: `${getAppUrl()}/dashboard/organization/${resolvedOrgId}/billing`,
-        }).catch((err) => console.error("[notifyOrgInvoicePaid] failed:", err));
-      }
+      await Promise.allSettled([
+        ...stagedInvoiceBells.map((bell) => attemptTrigger(bell)),
+        attemptStagedEmails(
+          stagedBillingEmails,
+          MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
+          EMAIL_BUDGET_MS.WEBHOOK,
+        ),
+      ]);
     }
   }
 }
@@ -1343,8 +1431,11 @@ export async function handleDisputeCreated(
   }
 
   let stagedNotification: StagedTrigger | null = null;
-  const result = await withSerializableRetry(() =>
-    prisma.$transaction(
+  let stagedDisputeEmails: StagedRecipientEmail[] = [];
+  const result = await withSerializableRetry(() => {
+    stagedNotification = null;
+    stagedDisputeEmails = [];
+    return prisma.$transaction(
       async (tx) => {
         const payment = await tx.payment.findFirst({
           where: {
@@ -1585,7 +1676,7 @@ export async function handleDisputeCreated(
           );
         }
 
-        // --- Novu notification (staged in the tx, attempted after commit) ---
+        const dashboardUrl = `${getAppUrl()}${goHref("client", "payments")}`;
         const notifications = await notifyDisputeCreated(
           [payment.userId],
           {
@@ -1594,21 +1685,35 @@ export async function handleDisputeCreated(
             currency,
             reason,
             status: createdStatus ?? "NEEDS_RESPONSE",
-            // #1527 — the recipient is always the payer.
-            dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+            dashboardUrl,
           },
           { tx, entityRef: `dispute:${disputeId}` },
         );
-        // Optional chaining: the barrel is stubbed to `undefined` in tests.
         stagedNotification = notifications?.[0]?.staged ?? null;
+        if (
+          typeof tx.user?.findMany === "function" &&
+          typeof tx.failedEmail?.create === "function"
+        ) {
+          stagedDisputeEmails = await stageDisputeNoticeEmail(tx, {
+            userId: payment.userId,
+            disputeId,
+            paymentId: payment.id,
+            kind: "OPENED",
+            amountPaise: amount,
+            currency,
+            reason,
+            respondBy: dueBy ? new Date(dueBy * 1000) : null,
+            dashboardUrl,
+          });
+        }
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         maxWait: 10_000,
         timeout: 15_000,
       },
-    ),
-  );
+    );
+  });
   if (result instanceof DeferSignal && !options?.isRedrive) {
     await recordSystemErrorSafe({
       category: "razorpay_webhook",
@@ -1617,7 +1722,14 @@ export async function handleDisputeCreated(
       context: { disputeId, chargeId, amount },
     });
   }
-  await attemptStaged(stagedNotification);
+  await Promise.allSettled([
+    attemptStaged(stagedNotification),
+    attemptStagedEmails(
+      stagedDisputeEmails,
+      MONEY_EMAIL_TYPES.DISPUTE_NOTICE,
+      EMAIL_BUDGET_MS.WEBHOOK,
+    ),
+  ]);
   return result;
 }
 
@@ -2042,12 +2154,21 @@ async function stageDisputeUpdatedNotification(
   priorStatus: DisputeStatus,
   mappedStatus: DisputeStatus,
   disputeId: string,
-): Promise<StagedTrigger | null> {
+  respondBy?: number | null,
+): Promise<{
+  notification: StagedTrigger | null;
+  emails: StagedRecipientEmail[];
+}> {
+  const canStageEmail =
+    typeof tx.user?.findMany === "function" &&
+    typeof tx.failedEmail?.create === "function";
+  const dashboardUrl = `${getAppUrl()}${goHref("client", "payments")}`;
+
   if (priorStatus === "UNDER_REVIEW" && mappedStatus === "NEEDS_RESPONSE") {
     const disputePayment = await tx.payment.findUnique({
       where: { id: dispute.paymentId },
     });
-    if (!disputePayment) return null;
+    if (!disputePayment) return { notification: null, emails: [] };
     const notifications = await notifyDisputeCreated(
       [disputePayment.userId],
       {
@@ -2056,18 +2177,31 @@ async function stageDisputeUpdatedNotification(
         currency: dispute.currency,
         reason: dispute.reason || "",
         status: mappedStatus,
-        dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+        dashboardUrl,
       },
       { tx, entityRef: `dispute:${disputeId}:reopened` },
     );
-    return notifications?.[0]?.staged ?? null;
+    const emails = canStageEmail
+      ? await stageDisputeNoticeEmail(tx, {
+          userId: disputePayment.userId,
+          disputeId,
+          paymentId: dispute.paymentId,
+          kind: "OPENED",
+          amountPaise: dispute.amountPaise,
+          currency: dispute.currency,
+          reason: dispute.reason,
+          respondBy: respondBy ? new Date(respondBy * 1000) : null,
+          dashboardUrl,
+        })
+      : [];
+    return { notification: notifications?.[0]?.staged ?? null, emails };
   }
 
   if (TERMINAL_DISPUTE_STATUSES.includes(mappedStatus)) {
     const disputePayment = await tx.payment.findUnique({
       where: { id: dispute.paymentId },
     });
-    if (!disputePayment) return null;
+    if (!disputePayment) return { notification: null, emails: [] };
     const notifications = await notifyDisputeResolved(
       [disputePayment.userId],
       {
@@ -2076,14 +2210,27 @@ async function stageDisputeUpdatedNotification(
         currency: dispute.currency,
         reason: dispute.reason || undefined,
         status: mappedStatus,
-        dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+        dashboardUrl,
       },
       { tx, entityRef: `dispute:${disputeId}` },
     );
-    return notifications?.[0]?.staged ?? null;
+    const emails = canStageEmail
+      ? await stageDisputeNoticeEmail(tx, {
+          userId: disputePayment.userId,
+          disputeId,
+          paymentId: dispute.paymentId,
+          kind: "RESOLVED",
+          amountPaise: dispute.amountPaise,
+          currency: dispute.currency,
+          reason: dispute.reason,
+          outcome: mappedStatus,
+          dashboardUrl,
+        })
+      : [];
+    return { notification: notifications?.[0]?.staged ?? null, emails };
   }
 
-  return null;
+  return { notification: null, emails: [] };
 }
 
 export async function handleDisputeUpdated(
@@ -2113,6 +2260,7 @@ export async function handleDisputeUpdated(
           return {
             deferred: new DeferSignal("dispute_not_created_yet"),
             notification: null,
+            emails: [] as StagedRecipientEmail[],
             clawbackPage: null,
           };
         }
@@ -2122,7 +2270,11 @@ export async function handleDisputeUpdated(
           console.warn(
             `Unknown dispute status "${status}" for ${disputeId} — skipping update`,
           );
-          return { notification: null, clawbackPage: null };
+          return {
+            notification: null,
+            emails: [] as StagedRecipientEmail[],
+            clawbackPage: null,
+          };
         }
 
         const priorStatus = dispute.status;
@@ -2130,7 +2282,11 @@ export async function handleDisputeUpdated(
           priorStatus === mappedStatus ||
           !isLegalDisputeTransition(priorStatus, mappedStatus)
         ) {
-          return { notification: null, clawbackPage: null };
+          return {
+            notification: null,
+            emails: [] as StagedRecipientEmail[],
+            clawbackPage: null,
+          };
         }
 
         const updateData = {
@@ -2145,7 +2301,11 @@ export async function handleDisputeUpdated(
             data: updateData,
           });
           if (updated.count === 0) {
-            return { notification: null, clawbackPage: null };
+            return {
+              notification: null,
+              emails: [] as StagedRecipientEmail[],
+              clawbackPage: null,
+            };
           }
         } else {
           await tx.dispute.update({
@@ -2175,15 +2335,20 @@ export async function handleDisputeUpdated(
           clawbackPage = settlement.consultantClawbackPage;
         }
 
-        const notification = await stageDisputeUpdatedNotification(
+        const stagedNotice = await stageDisputeUpdatedNotification(
           tx,
           dispute,
           priorStatus,
           mappedStatus,
           disputeId,
+          respondBy,
         );
 
-        return { notification, clawbackPage };
+        return {
+          notification: stagedNotice.notification,
+          emails: stagedNotice.emails,
+          clawbackPage,
+        };
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -2193,7 +2358,14 @@ export async function handleDisputeUpdated(
     ),
   );
 
-  await attemptStaged(txOutcome.notification);
+  await Promise.allSettled([
+    attemptStaged(txOutcome.notification),
+    attemptStagedEmails(
+      txOutcome.emails,
+      MONEY_EMAIL_TYPES.DISPUTE_NOTICE,
+      EMAIL_BUDGET_MS.WEBHOOK,
+    ),
+  ]);
 
   if (txOutcome.clawbackPage) {
     const page = txOutcome.clawbackPage;

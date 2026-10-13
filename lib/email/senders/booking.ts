@@ -31,6 +31,7 @@ import {
 import {
   absolute,
   defineBudgetedEmailSender,
+  defineLifecycleStager,
   greet,
   money,
   stageSpecGuarded,
@@ -126,36 +127,44 @@ export interface AppointmentCancelledEmailArgs {
   dashboardUrl: string;
 }
 
+function buildCancelledEmail(args: AppointmentCancelledEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const showRefund = (r: EmailRecipient) =>
+    !!args.refundText &&
+    (!args.refundUserIds || args.refundUserIds.includes(r.userId));
+  return {
+    userIds: args.userIds,
+    spec: {
+      emailType: "APPOINTMENT_CANCELLED",
+      category: "appointments",
+      entityRef: `appointment:${args.appointmentId}`,
+      subject: (r) =>
+        args.startsAt
+          ? `Your session on ${whenText(args.startsAt, r.zone)} was cancelled`
+          : "Your session was cancelled",
+      render: (r) =>
+        React.createElement(AppointmentCancelledEmail, {
+          recipientName: greet(r),
+          startsAtText: args.startsAt
+            ? whenText(args.startsAt, r.zone)
+            : undefined,
+          cancelledBy: args.cancelledBy,
+          reason: args.reason ?? undefined,
+          refundText: showRefund(r) ? args.refundText : undefined,
+          dashboardUrl: absolute(args.dashboardUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
 export const sendAppointmentCancelledEmail =
-  defineBudgetedEmailSender<AppointmentCancelledEmailArgs>((args) => {
-    const showRefund = (r: EmailRecipient) =>
-      !!args.refundText &&
-      (!args.refundUserIds || args.refundUserIds.includes(r.userId));
-    return {
-      userIds: args.userIds,
-      spec: {
-        emailType: "APPOINTMENT_CANCELLED",
-        category: "appointments",
-        entityRef: `appointment:${args.appointmentId}`,
-        subject: (r) =>
-          args.startsAt
-            ? `Your session on ${whenText(args.startsAt, r.zone)} was cancelled`
-            : "Your session was cancelled",
-        render: (r) =>
-          React.createElement(AppointmentCancelledEmail, {
-            recipientName: greet(r),
-            startsAtText: args.startsAt
-              ? whenText(args.startsAt, r.zone)
-              : undefined,
-            cancelledBy: args.cancelledBy,
-            reason: args.reason ?? undefined,
-            refundText: showRefund(r) ? args.refundText : undefined,
-            dashboardUrl: absolute(args.dashboardUrl),
-            unsubscribeUrl: r.unsubscribeUrl,
-          }),
-      },
-    };
-  });
+  defineBudgetedEmailSender<AppointmentCancelledEmailArgs>(buildCancelledEmail);
+
+export const stageAppointmentCancelledEmail =
+  defineLifecycleStager<AppointmentCancelledEmailArgs>(buildCancelledEmail);
 
 // ── Rescheduled ─────────────────────────────────────────────────────────────
 
@@ -171,46 +180,56 @@ export interface AppointmentRescheduledEmailArgs {
   dashboardUrl: string;
 }
 
+function buildRescheduledEmail(args: AppointmentRescheduledEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const type = humanType(args.appointmentType);
+  const subjects: Record<RescheduleEmailOutcome, string> = {
+    PROPOSED: `New time proposed for your ${type}`,
+    MOVED: `Your ${type} has moved`,
+    RELEASED: `Your ${type} time was released`,
+    DECLINED: `Proposed time declined for your ${type}`,
+    WITHDRAWN: `Reschedule request withdrawn for your ${type}`,
+    EXPIRED: `Your ${type} keeps its original time`,
+  };
+  return {
+    userIds: args.userIds,
+    spec: {
+      emailType: "APPOINTMENT_RESCHEDULED",
+      category: "appointments",
+      entityRef: `appointment:${args.appointmentId}`,
+      subject: () => subjects[args.outcome],
+      render: (r) =>
+        React.createElement(AppointmentRescheduledEmail, {
+          outcome: args.outcome,
+          recipientName: greet(r),
+          appointmentType: type,
+          oldStartsAtText: args.oldStartsAt
+            ? whenText(args.oldStartsAt, r.zone)
+            : undefined,
+          newStartsAtText: args.newStartsAt
+            ? whenText(args.newStartsAt, r.zone)
+            : undefined,
+          proposedBy: args.proposedBy,
+          respondByText:
+            args.outcome === "PROPOSED" && args.respondBy
+              ? whenText(args.respondBy, r.zone)
+              : undefined,
+          dashboardUrl: absolute(args.dashboardUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
 export const sendAppointmentRescheduledEmail =
-  defineBudgetedEmailSender<AppointmentRescheduledEmailArgs>((args) => {
-    const type = humanType(args.appointmentType);
-    const subjects: Record<RescheduleEmailOutcome, string> = {
-      PROPOSED: `New time proposed for your ${type}`,
-      MOVED: `Your ${type} has moved`,
-      RELEASED: `Your ${type} time was released`,
-      DECLINED: `Proposed time declined for your ${type}`,
-      WITHDRAWN: `Reschedule request withdrawn for your ${type}`,
-      EXPIRED: `Your ${type} keeps its original time`,
-    };
-    return {
-      userIds: args.userIds,
-      spec: {
-        emailType: "APPOINTMENT_RESCHEDULED",
-        category: "appointments",
-        entityRef: `appointment:${args.appointmentId}`,
-        subject: () => subjects[args.outcome],
-        render: (r) =>
-          React.createElement(AppointmentRescheduledEmail, {
-            outcome: args.outcome,
-            recipientName: greet(r),
-            appointmentType: type,
-            oldStartsAtText: args.oldStartsAt
-              ? whenText(args.oldStartsAt, r.zone)
-              : undefined,
-            newStartsAtText: args.newStartsAt
-              ? whenText(args.newStartsAt, r.zone)
-              : undefined,
-            proposedBy: args.proposedBy,
-            respondByText:
-              args.outcome === "PROPOSED" && args.respondBy
-                ? whenText(args.respondBy, r.zone)
-                : undefined,
-            dashboardUrl: absolute(args.dashboardUrl),
-            unsubscribeUrl: r.unsubscribeUrl,
-          }),
-      },
-    };
-  });
+  defineBudgetedEmailSender<AppointmentRescheduledEmailArgs>(
+    buildRescheduledEmail,
+  );
+
+export const stageAppointmentRescheduledEmail =
+  defineLifecycleStager<AppointmentRescheduledEmailArgs>(buildRescheduledEmail);
 
 // ── Reminder ────────────────────────────────────────────────────────────────
 
@@ -366,34 +385,46 @@ export interface NewBookingRequestEmailArgs {
   reviewUrl: string;
 }
 
+function buildNewBookingRequestEmail(args: NewBookingRequestEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const type = humanType(args.appointmentType);
+  return {
+    userIds: [args.consultantUserId],
+    spec: {
+      emailType: "NEW_BOOKING_REQUEST",
+      category: "appointments",
+      entityRef: `request:${args.requestId}`,
+      subject: () => `${args.consulteeName} requested a ${type} with you`,
+      render: (r) =>
+        React.createElement(NewBookingRequestEmail, {
+          consultantName: greet(r),
+          consulteeName: args.consulteeName,
+          planTitle: args.planTitle,
+          appointmentType: type,
+          requestedAtText: args.requestedAt
+            ? whenText(args.requestedAt, r.zone)
+            : undefined,
+          respondByText: args.respondBy
+            ? whenText(args.respondBy, r.zone)
+            : undefined,
+          reviewUrl: absolute(args.reviewUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
 export const sendNewBookingRequestEmail =
-  defineBudgetedEmailSender<NewBookingRequestEmailArgs>((args) => {
-    const type = humanType(args.appointmentType);
-    return {
-      userIds: [args.consultantUserId],
-      spec: {
-        emailType: "NEW_BOOKING_REQUEST",
-        category: "appointments",
-        entityRef: `request:${args.requestId}`,
-        subject: () => `${args.consulteeName} requested a ${type} with you`,
-        render: (r) =>
-          React.createElement(NewBookingRequestEmail, {
-            consultantName: greet(r),
-            consulteeName: args.consulteeName,
-            planTitle: args.planTitle,
-            appointmentType: type,
-            requestedAtText: args.requestedAt
-              ? whenText(args.requestedAt, r.zone)
-              : undefined,
-            respondByText: args.respondBy
-              ? whenText(args.respondBy, r.zone)
-              : undefined,
-            reviewUrl: absolute(args.reviewUrl),
-            unsubscribeUrl: r.unsubscribeUrl,
-          }),
-      },
-    };
-  });
+  defineBudgetedEmailSender<NewBookingRequestEmailArgs>(
+    buildNewBookingRequestEmail,
+  );
+
+export const stageNewBookingRequestEmail =
+  defineLifecycleStager<NewBookingRequestEmailArgs>(
+    buildNewBookingRequestEmail,
+  );
 
 // ── Unscheduled-subscription nudge ─────────────────────────────────────────
 

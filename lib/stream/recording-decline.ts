@@ -60,7 +60,12 @@ export async function discardDeclinedRecording(args: {
         },
       ],
     },
-    data: { status: RecordingStatus.EXPIRED, recordingUrl: "" },
+    data: {
+      status: RecordingStatus.EXPIRED,
+      recordingUrl: "",
+      removedAt: new Date(),
+      removalReason: "DECLINED",
+    },
     select: {
       id: true,
       storagePath: true,

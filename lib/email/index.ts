@@ -10,6 +10,7 @@ import { PaymentLinkEmail } from "@/emails/payments/PaymentLinkEmail";
 import { PaymentSuccessEmail } from "@/emails/payments/PaymentSuccessEmail";
 import { PaymentFailedEmail } from "@/emails/payments/PaymentFailedEmail";
 import { OrgInvitationEmail } from "@/emails/organizations/OrgInvitationEmail";
+import { ContactInquiryEmail } from "@/emails/contact/ContactInquiryEmail";
 import { WaitlistConfirmEmail } from "@/emails/waitlist/WaitlistConfirmEmail";
 import { WaitlistWelcomeEmail } from "@/emails/waitlist/WaitlistWelcomeEmail";
 import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
@@ -42,12 +43,19 @@ export {
   type StagedEmail,
   type StageOptions,
 } from "./deliver";
+export * from "./send-to-recipients";
 export * from "./senders/booking";
 export * from "./senders/money";
 export * from "./senders/onboarding";
 export * from "./senders/people";
 export * from "./senders/security";
 export * from "./senders/sso";
+export {
+  defineLifecycleStager,
+  prepareSpecEmails,
+  stageSpecGuarded,
+  type StagingTx,
+} from "./senders/shared";
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
 
@@ -526,59 +534,26 @@ export async function sendContactInquiryEmail(
   },
   opts: SendOptions = {},
 ) {
-  const name = `${firstName} ${lastName}`.trim();
-  const esc = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-
-  const rows: Array<[string, string]> = [
-    ...(referenceNumber
-      ? ([["Reference", referenceNumber]] as Array<[string, string]>)
-      : []),
-    ["Name", name],
-    ["Email", email],
-    ["Phone", phone || "—"],
-    ["Category", category || "—"],
-    ["Subject", subject],
-  ];
-
-  const html = `
-      <h2>New contact inquiry</h2>
-      <table cellpadding="6" style="border-collapse:collapse">
-        ${rows
-          .map(
-            ([k, v]) =>
-              `<tr><td style="font-weight:600">${esc(k)}</td><td>${esc(v)}</td></tr>`,
-          )
-          .join("")}
-      </table>
-      <h3>Message</h3>
-      <p style="white-space:pre-wrap">${esc(message)}</p>
-    `;
-  const text = [
-    "New contact inquiry",
-    "",
-    ...rows.map(([k, v]) => `${k}: ${v}`),
-    "",
-    "Message",
-    message,
-  ].join("\n");
-
-  return deliver(
+  return send(
+    "CONTACT_INQUIRY",
+    ContactInquiryEmail({
+      firstName,
+      lastName,
+      email,
+      phone,
+      subject,
+      message,
+      category,
+      referenceNumber,
+    }),
     {
       from: SENDERS.notifications,
       to: contactInboxAddress(),
       subject: referenceNumber
         ? `[Grievance ${referenceNumber}] ${subject}`
         : `[Contact] ${subject}`,
-      html,
-      text,
       replyTo: email,
     },
-    "CONTACT_INQUIRY",
     {
       entityRef: referenceNumber
         ? `grievance:${referenceNumber}`

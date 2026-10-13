@@ -1,5 +1,6 @@
 "use client";
 
+import { RECORDING_RETENTION_SCHEDULE } from "@/lib/stream/recording-retention-schedule";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
@@ -547,6 +548,32 @@ function RecordingRetentionCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
+        <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+          <p className="font-medium text-foreground">Platform schedule</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            <li>
+              1:1 sessions and trials:{" "}
+              {RECORDING_RETENTION_SCHEDULE.oneToOneDays} days after the session
+            </li>
+            <li>
+              Subscriptions: {RECORDING_RETENTION_SCHEDULE.subscriptionDays}{" "}
+              days after the subscription ends
+            </li>
+            <li>
+              Webinars: {RECORDING_RETENTION_SCHEDULE.groupDays} days after the
+              session
+            </li>
+            <li>
+              Classes: {RECORDING_RETENTION_SCHEDULE.groupDays} days after the
+              final session
+            </li>
+            <li>Published or bought replays: never</li>
+          </ul>
+          <p className="mt-2">
+            A cap shorter than the schedule wins. Lowering the cap removes older
+            recordings on the next daily run.
+          </p>
+        </div>
         <Label htmlFor="recording-retention-days">
           Delete org session recordings after N days (leave empty to follow the
           platform schedule)

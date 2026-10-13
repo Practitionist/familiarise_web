@@ -29,7 +29,11 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: { findMany: jest.fn(), groupBy: jest.fn() },
     appointment: { findMany: jest.fn() },
     activityLog: { findMany: jest.fn() },
-    consultantEarnings: { aggregate: jest.fn(), count: jest.fn() },
+    consultantEarnings: {
+      aggregate: jest.fn(),
+      count: jest.fn(),
+      groupBy: jest.fn(),
+    },
     consultantReview: { aggregate: jest.fn() },
     bookingStatusHistory: { findMany: jest.fn() },
   },
@@ -248,6 +252,7 @@ describe("Home strip parity (A-6)", () => {
     m.consultantEarnings.aggregate.mockResolvedValue({
       _sum: { consultantSharePaise: null, refundedShareAmount: null },
     });
+    m.consultantEarnings.groupBy.mockResolvedValue([]);
     m.consultantReview.aggregate.mockResolvedValue({
       _avg: { rating: null },
       _count: { rating: 0 },

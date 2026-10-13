@@ -38,20 +38,25 @@ export interface RenderedEmail {
 }
 
 export type DeliverResult =
-  // #1703 — `staged` on success says the outbox row exists; a sweep whose
-  // once-guard is that row must not count a send that has none.
-  | { success: true; data: CreateEmailResponse; staged: boolean }
-  // #1654 — `staged` tells a caller whether the message is durable in the
-  // outbox despite the failed inline send (the contact form answers on it).
-  | { success: false; error: unknown; staged?: boolean };
+  | {
+      success: true;
+      data?: CreateEmailResponse;
+      staged: boolean;
+      stagedRow?: StagedEmail;
+      stagedEmail?: StagedEmail;
+    }
+  | {
+      success: false;
+      error: unknown;
+      staged?: boolean;
+      stagedRow?: StagedEmail;
+      stagedEmail?: StagedEmail;
+    };
 
-/** #1654 — the outbox row `stage()` wrote; `attempt()` settles it. */
 export interface StagedEmail {
   id: string;
   idempotencyKey: string;
-  /** #1647 — set when the recipient is suppressed; the row is already DEAD_LETTER. */
   suppressed?: EmailSuppressionReason;
-  /** Set when the pre-launch guard withheld the message; the row is already DEAD_LETTER. */
   held?: true;
 }
 
@@ -66,6 +71,8 @@ export interface DeliverOptions {
   entityRef?: string;
   /** Inline send budget; defaults to the auth budget, the most generous one. */
   budgetMs?: number;
+  /** Persist to outbox (`stage`) and return immediately so `attempt()` runs post-response. */
+  deferAttempt?: boolean;
 }
 
 // #1298 — thrown INSIDE deliver's try so a missing key dead-letters the
@@ -184,12 +191,9 @@ export async function stage(
   opts: StageOptions = {},
 ): Promise<StagedEmail | null> {
   const payload = withReplyTo(message);
-  const idempotencyKey = idempotencyKeyFor(payload, emailType);
   const db = opts.tx ?? prisma;
   const heldDomain = heldRecipientDomain(recipientsOf(payload));
   const write = async (): Promise<StagedEmail> => {
-    // A held or suppressed recipient is dead-lettered at stage time: the row
-    // records the refusal and neither the inline path nor the relay sends.
     let refusal: string | null = null;
     let suppressed: EmailSuppressionReason | undefined;
     if (heldDomain) {
@@ -213,14 +217,13 @@ export async function stage(
         ...storedBodies(payload, emailType),
         emailType,
         status: refusal ? "DEAD_LETTER" : "PENDING",
-        // Give the inline/post-commit attempt() a 60s lease window before the
-        // retry relay considers the row eligible for background pickup.
         nextRetryAt: new Date(Date.now() + 60_000),
         lastError: refusal,
         entityRef: opts.entityRef ?? null,
       },
       select: { id: true },
     });
+    const idempotencyKey = idempotencyKeyFor(payload, emailType, row.id);
     if (heldDomain) return { id: row.id, idempotencyKey, held: true };
     return suppressed
       ? { id: row.id, idempotencyKey, suppressed }
@@ -389,6 +392,24 @@ export async function deliver(
   const staged = await stage(message, emailType, {
     entityRef: opts.entityRef,
   });
+  if (opts.deferAttempt && staged) {
+    if (staged.suppressed) {
+      return {
+        success: false,
+        error: new EmailSuppressedError(staged.suppressed),
+        staged: true,
+      };
+    }
+    if (staged.held) {
+      return { success: false, error: new EmailHeldError(), staged: true };
+    }
+    return {
+      success: true,
+      staged: true,
+      stagedRow: staged,
+      stagedEmail: staged,
+    };
+  }
   return attempt(staged, message, emailType, {
     budgetMs: opts.budgetMs ?? EMAIL_BUDGET_MS.AUTH,
   });

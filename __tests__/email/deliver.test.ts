@@ -120,7 +120,7 @@ describe("stage + attempt (#1654)", () => {
     });
     expect(staged).toEqual({
       id: "fe-tx",
-      idempotencyKey: idempotencyKeyFor(message, "PAYMENT_SUCCESS"),
+      idempotencyKey: idempotencyKeyFor(message, "PAYMENT_SUCCESS", "fe-tx"),
     });
     // The row went through the transaction, not the global client.
     expect(txCreate.mock.calls[0][0].data).toMatchObject({
@@ -248,6 +248,7 @@ describe("idempotencyKeyFor", () => {
     const workerKey = idempotencyKeyFor(
       { to: row.recipient, subject: row.subject, html: row.htmlBody },
       row.emailType,
+      "fe-1",
     );
     expect(workerKey).toBe(senderKey);
     // A transient error stays a warning; only terminal causes page.

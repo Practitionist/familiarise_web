@@ -10,6 +10,7 @@ import {
 } from "@/lib/observability/identity";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { renderMemo } from "@/lib/render-memo";
 import { Prisma } from "@prisma/client";
 import type {
   FundingSource,
@@ -360,16 +361,29 @@ export type OrgCapabilityGate = {
   expectUser?: true;
 };
 
+// The org layout and its page each gate on requireOrgAccess; these reads
+// resolve once per render and stay uncached in route handlers.
+const findOrganizationWithBilling = renderMemo((organizationId: string) =>
+  prisma.organization.findUnique({
+    where: { id: organizationId },
+    include: {
+      billingAccount: {
+        select: { id: true, fundingSource: true },
+      },
+    },
+    relationLoadStrategy: "join",
+  }),
+);
+
+const findMembership = renderMemo((userId: string, organizationId: string) =>
+  prisma.membership.findUnique({
+    where: { userId_organizationId: { userId, organizationId } },
+  }),
+);
+
 async function fetchOrganizationWithBilling(organizationId: string) {
   try {
-    const org = await prisma.organization.findUnique({
-      where: { id: organizationId },
-      include: {
-        billingAccount: {
-          select: { id: true, fundingSource: true },
-        },
-      },
-    });
+    const org = await findOrganizationWithBilling(organizationId);
     if (!org) {
       return {
         error: NextResponse.json(
@@ -543,9 +557,7 @@ export async function requireOrgAccess(
     return { session: auth.session, member: stub, org };
   }
 
-  const member = await prisma.membership.findUnique({
-    where: { userId_organizationId: { userId, organizationId: org.id } },
-  });
+  const member = await findMembership(userId, org.id);
 
   const memberError = checkMemberPermissionGate(member, opts);
   if (memberError) return { error: memberError };

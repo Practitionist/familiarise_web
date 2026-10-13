@@ -12,6 +12,10 @@
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
+// Session-document erasure has its own suite; this one pins the money gate.
+jest.mock("../../lib/documents/document-erasure", () => ({
+  eraseUserSessionDocuments: jest.fn(async () => []),
+}));
 jest.mock("../../lib/auth-helpers", () => ({
   requireAdminAuth: jest.fn(async () => ({
     session: { user: { id: "admin_1" } },

@@ -4,8 +4,8 @@
  * Non-throwing: logs errors and returns success/failure status.
  */
 import * as Sentry from "@sentry/nextjs";
-import prisma, { type Tx } from "@/lib/prisma";
-import { computeQuietHoursNotBefore } from "./quiet-hours";
+import type { Tx } from "@/lib/prisma";
+import { getAppUrl } from "@/lib/url";
 import { getNovuClient, isNovuConfigured } from "./client";
 import {
   attemptTrigger,
@@ -16,9 +16,9 @@ import {
   type StageTriggerArgs,
   type TriggerResult,
 } from "./outbox";
-import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
-import { templateFor, toWire } from "./templates";
-import type { NovuWorkflowId, PreferenceCategory } from "./templates/types";
+import { resolveRecipientBellPolicy } from "./policy";
+import { toWire } from "./templates";
+import type { NovuWorkflowId } from "./templates/types";
 import {
   NOVU_WORKFLOWS,
   type AccountBannedPayload,
@@ -52,11 +52,14 @@ import {
   type OrgExpertRemovedPayload,
   type PaymentFailedInput,
   type PaymentFailedPayload,
+  type PaymentLinkInput,
+  type PaymentLinkPayload,
   type PaymentSuccessInput,
   type PaymentSuccessPayload,
   type PayoutInput,
   type PayoutPayload,
   type RecordingFailedPayload,
+  type RecordingRemovedPayload,
   type RecordingPayload,
   type ReferralCreditsAppliedInput,
   type ReferralCreditsAppliedPayload,
@@ -93,125 +96,14 @@ import {
 export interface TriggerOptions {
   tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
   entityRef?: string;
+  dedupeKey?: string;
   /** Urgent workflows (payment/payout failure) bypass quiet-hours deferral. */
   deferrable?: boolean;
   /** Stage the outbox row and return without attempting inline delivery. */
   deferAttempt?: boolean;
 }
 
-const BELL_PREFERENCE_SELECT = {
-  allNotifications: true,
-  inAppEnabled: true,
-  appointmentReminders: true,
-  paymentNotifications: true,
-  subscriptionAlerts: true,
-  trialNotifications: true,
-  supportUpdates: true,
-  feedbackAlerts: true,
-  orgBillingAlerts: true,
-  orgMembershipAlerts: true,
-  orgProgramAlerts: true,
-  quietHoursEnabled: true,
-  quietHoursStart: true,
-  quietHoursEnd: true,
-  quietHoursTimezone: true,
-} as const;
-
-type BellUserRow = {
-  id?: string;
-  timezone?: string | null;
-  orgWorkspaceProfile?: {
-    notificationRoutingMode?:
-      "BELL_AND_EMAIL" | "BELL_ONLY" | "EMAIL_ONLY" | "NEITHER" | null;
-  } | null;
-  notificationPreferences?: Partial<
-    Record<keyof typeof BELL_PREFERENCE_SELECT, boolean | string | null>
-  > | null;
-};
-
-function isBellAllowedForRecipient(
-  row: BellUserRow | undefined,
-  category: PreferenceCategory | null,
-): boolean {
-  if (!row) return true;
-  const routingMode = row.orgWorkspaceProfile?.notificationRoutingMode;
-  if (routingMode === "EMAIL_ONLY" || routingMode === "NEITHER") {
-    return false;
-  }
-  const pref = row.notificationPreferences;
-  if (!pref) return true;
-  if (pref.allNotifications === false) return false;
-  if (pref.inAppEnabled === false) return false;
-  if (category !== null && pref[EMAIL_CATEGORY_COLUMN[category]] === false) {
-    return false;
-  }
-  return true;
-}
-
-async function resolveRecipientBellPolicy(
-  workflowId: NovuWorkflowId,
-  recipients: string[],
-  opts: TriggerOptions | undefined,
-): Promise<{ allowedRecipients: string[]; notBefore: Date | undefined }> {
-  if (recipients.length === 0) {
-    return { allowedRecipients: recipients, notBefore: undefined };
-  }
-  try {
-    const db = opts?.tx ?? prisma;
-    const rows = (await db.user.findMany({
-      where: { id: { in: recipients } },
-      select: {
-        id: true,
-        timezone: true,
-        orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
-        notificationPreferences: { select: BELL_PREFERENCE_SELECT },
-      },
-    })) as BellUserRow[];
-
-    const category = templateFor(workflowId)?.category ?? null;
-    const byId = new Map<string, BellUserRow>();
-    for (const row of rows) {
-      if (typeof row.id === "string") byId.set(row.id, row);
-    }
-
-    const allowedRecipients = recipients.filter((id) =>
-      isBellAllowedForRecipient(byId.get(id), category),
-    );
-    if (allowedRecipients.length === 0 || opts?.deferrable === false) {
-      return { allowedRecipients, notBefore: undefined };
-    }
-
-    const allowedSet = new Set(allowedRecipients);
-    const now = new Date();
-    let latest: Date | undefined;
-    for (const row of rows) {
-      if (typeof row.id === "string" && !allowedSet.has(row.id)) continue;
-      const pref = row.notificationPreferences;
-      if (!pref?.quietHoursEnabled) continue;
-      const notBefore = computeQuietHoursNotBefore(
-        {
-          quietHoursEnabled: true,
-          quietHoursStart:
-            typeof pref.quietHoursStart === "string"
-              ? pref.quietHoursStart
-              : null,
-          quietHoursEnd:
-            typeof pref.quietHoursEnd === "string" ? pref.quietHoursEnd : null,
-          quietHoursTimezone:
-            typeof pref.quietHoursTimezone === "string"
-              ? pref.quietHoursTimezone
-              : null,
-          fallbackTimezone: row.timezone ?? null,
-        },
-        now,
-      );
-      if (notBefore && (!latest || notBefore > latest)) latest = notBefore;
-    }
-    return { allowedRecipients, notBefore: latest };
-  } catch {
-    return { allowedRecipients: recipients, notBefore: undefined };
-  }
-}
+export { resolveRecipientBellPolicy } from "./policy";
 
 function reportNotConfigured(workflowId: string): void {
   console.warn(`[Novu] Not configured. Staged only: ${workflowId}`);
@@ -643,6 +535,25 @@ function paymentFailedWire(payload: PaymentFailedInput): PaymentFailedPayload {
   };
 }
 
+function paymentLinkWire(
+  payload: PaymentLinkInput,
+  timezone: string,
+): PaymentLinkPayload {
+  const { expiresAt: rawExpiresAt, ...rest } = payload;
+  const rawIso =
+    rawExpiresAt instanceof Date ? rawExpiresAt.toISOString() : rawExpiresAt;
+  const expiresAt = formatNotificationDateTime(rawIso, timezone);
+  return {
+    ...rest,
+    amount: formatNotificationAmountBare(payload.amount, payload.currency),
+    amountFormatted: formatNotificationMoney(payload.amount, payload.currency),
+    amountPaise: payload.amount,
+    appointmentType: appointmentTypeLabel(payload.appointmentType),
+    appointmentTypeCode: payload.appointmentType,
+    ...(expiresAt ? { expiresAt, expiresAtIso: rawIso } : {}),
+  };
+}
+
 function refundWire(payload: RefundInput): RefundPayload {
   const { reason: rawReason, ...rest } = payload;
   const reason = refundReasonLabel(rawReason);
@@ -671,6 +582,7 @@ function accountSuspendedWire(
     ...rest,
     suspendedUntil: suspendedUntil ?? "further notice",
     ...(suspendedUntil ? { suspendedUntilIso: raw } : {}),
+    supportUrl: payload.supportUrl ?? `${getAppUrl()}/contactus`,
   };
 }
 
@@ -721,6 +633,7 @@ function maintenanceWire(payload: MaintenanceInput): MaintenancePayload {
   return {
     ...rest,
     ...(estimatedEnd ? { estimatedEnd, estimatedEndIso: raw } : {}),
+    statusUrl: payload.statusUrl ?? `${getAppUrl()}/maintenance`,
   };
 }
 
@@ -757,6 +670,10 @@ export const notifyAppointmentReminder = defineZonedMultiNotifier(
 );
 
 // Payments & Refunds
+export const notifyPaymentLink = defineZonedSingleNotifier(
+  W.PAYMENT_LINK,
+  paymentLinkWire,
+);
 export const notifyPaymentSuccess = defineSingleNotifier(
   W.PAYMENT_SUCCESS,
   paymentSuccessWire,
@@ -833,13 +750,20 @@ export const notifyUnscheduledSubscriptionNudge = defineZonedSingleNotifier<
 export const notifyVerificationStatusChanged =
   defineSingleNotifier<VerificationPayload>(W.VERIFICATION_STATUS_CHANGED);
 export const notifyModerationWarning =
-  defineSingleNotifier<ModerationWarningPayload>(W.MODERATION_WARNING);
+  defineSingleNotifier<ModerationWarningPayload>(W.MODERATION_WARNING, (p) => ({
+    ...p,
+    supportUrl: p.supportUrl ?? `${getAppUrl()}/dashboard/go/auto/support`,
+  }));
 export const notifyAccountSuspended = defineZonedSingleNotifier(
   W.ACCOUNT_SUSPENDED,
   accountSuspendedWire,
 );
 export const notifyAccountBanned = defineSingleNotifier<AccountBannedPayload>(
   W.ACCOUNT_BANNED,
+  (p) => ({
+    ...p,
+    supportUrl: p.supportUrl ?? `${getAppUrl()}/contactus`,
+  }),
 );
 export const notifyPayoutProcessed = defineSingleNotifier(
   W.PAYOUT_PROCESSED,
@@ -885,6 +809,8 @@ export const notifyRecordingAvailable = defineMultiNotifier<
 }));
 export const notifyRecordingFailed =
   defineSingleNotifier<RecordingFailedPayload>(W.RECORDING_FAILED);
+export const notifyRecordingRemoved =
+  defineMultiNotifier<RecordingRemovedPayload>(W.RECORDING_REMOVED);
 
 // Document Review
 export const notifyDocumentUploaded =

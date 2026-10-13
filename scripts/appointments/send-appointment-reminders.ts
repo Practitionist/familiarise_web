@@ -15,19 +15,28 @@
 
 import prisma from "../../lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import redis from "../../lib/redis";
-import { notifyAppointmentReminder } from "../../lib/novu/service";
+import {
+  notifyAppointmentReminder,
+  type TriggerOptions,
+} from "../../lib/novu/service";
+import { attemptTrigger } from "../../lib/novu/outbox";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "../../lib/novu/humanize";
 import {
   APPOINTMENT_REMINDER_EMAIL_TYPE,
   appointmentReminderEntityRef,
+  attemptStaged,
   EMAIL_BUDGET_MS,
+  reminderSpec,
   sendAppointmentReminderEmail,
   type ReminderWindowLabel,
 } from "../../lib/email";
+import {
+  stageSpecGuarded,
+  type StagingTx,
+} from "../../lib/email/senders/shared";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Reminder windows (in milliseconds)
@@ -51,90 +60,85 @@ export interface ReminderResult {
   timestamp: string;
 }
 
-/**
- * Per-window per-run ceiling, and the default for every caller that does not
- * pass one.
- *
- * This cohort used to have NO bound at all: the read below was time-windowed
- * and nothing else, and the Netlify ticker drives it inside a 20 s abort. The
- * cost per row is a Redis round trip, a Novu trigger, a recipient
- * preference read, a React render and a Resend call, so an unbounded window at
- * a burst is a guaranteed abort with a partial send — and the rows past the
- * abort point leave the window unnoticed.
- *
- * The value is a REMINDER cap, not a correctness cap: within the two-hour 24h
- * window a capped run simply re-reads the same window next tick and finishes
- * the remainder, so the bound is a budget and not a drop. The 1h window is only
- * 30 minutes wide against a 15-minute tick, so a burst wider than this cap in
- * one half hour DOES lose the tail of that window's 1h reminders — see
- * {@link warnIfWindowCapped}, which makes that loud instead of silent.
- */
 const MAX_SESSIONS_PER_WINDOW_PER_RUN = 25;
 
-/** Redis dedupe key for one slot+window. Slot-scoped on purpose (#1554/#1589). */
+/** Redis dedupe key for one slot+window. */
 function reminderKey(slotId: string, window: ReminderWindowLabel): string {
   return `reminder:${slotId}:${window}`;
 }
 
-/** The `FailedEmail.entityRef` the email twin stages under (#1653). */
+/** The `FailedEmail.entityRef` the email twin stages under. */
 function reminderEntityRef(appointmentId: string, window: ReminderWindowLabel) {
   return appointmentReminderEntityRef(appointmentId, window);
 }
 
-/**
- * The full dedupe window: from this run until the reminder window has closed
- * behind us.
- *
- * Every slot in the window starts in the FUTURE of this run, so the key has to
- * outlive the whole window, not just the send. The old values (26 h / 2 h) were
- * flat and considerably longer than the windows they guard (25 h / 2 h), which
- * meant a session re-timed inside its own reminder window could never be
- * re-reminded at the new time — the key followed the slot, not the time.
- */
+/** Dedupe TTL extending past the end of the reminder window (+1 min safety margin). */
 function fullDedupeTtlSeconds(window: { maxMs: number }): number {
-  // +1 min of margin so a run that starts a second before the window's tail
-  // still suppresses the next tick's re-read of that same tail.
   return Math.ceil(window.maxMs / 1000) + 60;
 }
 
-/**
- * The in-flight TTL the key is written with.
- *
- * A kill between "key written" and "reminder sent" used to lose the reminder
- * permanently: the key WAS the dedupe, nothing re-read the slot because the
- * key suppressed it, and no relay owns this side effect. So the key is now
- * written short and extended only after the send settles. A process that dies
- * in the gap leaves a key that expires, and the next tick re-reads the slot
- * and re-sends.
- *
- * The floor is the real recovery bound, so it must comfortably exceed the
- * send: two outbox stages plus a Resend call on a cold instance have been seen
- * past 20 s, and a key that expired mid-send would let the next tick
- * double-send rather than merely re-offer.
- */
+/** Short in-flight claim TTL before full promotion post-send. */
 const IN_FLIGHT_TTL_SECONDS = 300;
 
-async function sendRemindersForWindow(
-  window: {
-    label: ReminderWindowLabel;
-    minMs: number;
-    maxMs: number;
+const USER_BATCH_SELECT = {
+  id: true,
+  email: true,
+  name: true,
+  timezone: true,
+  orgWorkspaceProfile: { select: { notificationRoutingMode: true } },
+  notificationPreferences: {
+    select: {
+      allNotifications: true,
+      inAppEnabled: true,
+      emailEnabled: true,
+      appointmentReminders: true,
+      paymentNotifications: true,
+      subscriptionAlerts: true,
+      trialNotifications: true,
+      supportUpdates: true,
+      feedbackAlerts: true,
+      orgBillingAlerts: true,
+      orgMembershipAlerts: true,
+      orgProgramAlerts: true,
+      quietHoursEnabled: true,
+      quietHoursStart: true,
+      quietHoursEnd: true,
+      quietHoursTimezone: true,
+    },
   },
-  maxPerRun: number,
-): Promise<{ sent: number; errors: string[]; capped: boolean }> {
-  const now = Date.now();
-  const windowStart = new Date(now + window.minMs);
-  const windowEnd = new Date(now + window.maxMs);
-  const errors: string[] = [];
-  let sent = 0;
+} as const;
 
-  // Find slots starting within the reminder window.
-  //
-  // Soonest-first, because "oldest-first" is the wrong order for a reminder:
-  // the session nearest its start is the one whose notice is worth most, and
-  // if the cap is ever hit the rows that lose their notice must be the ones
-  // with the most runway left.
-  const upcomingOccurrences = await prisma.appointmentOccurrence.findMany({
+type UpcomingOccurrence = Awaited<
+  ReturnType<typeof queryUpcomingOccurrences>
+>[number];
+
+interface PreparedSlotReminder {
+  slotId: string;
+  startsAt: Date;
+  appointmentId: string;
+  organizationId: string | null;
+  isMultiSession: boolean;
+  appointmentType: string;
+  planTitle: string;
+  consultantName: string;
+  consulteeName: string;
+  consultantUserId?: string;
+  collabIds: string[];
+  uniqueUserIds: string[];
+}
+
+interface PreloadedWindowContext {
+  alreadyStaged: Set<string>;
+  bellTx?: TriggerOptions["tx"];
+  emailTx?: StagingTx;
+}
+
+function queryUpcomingOccurrences(
+  windowStart: Date,
+  windowEnd: Date,
+  maxPerRun: number,
+) {
+  return prisma.appointmentOccurrence.findMany({
     where: {
       startsAt: {
         gte: windowStart,
@@ -148,7 +152,6 @@ async function sendRemindersForWindow(
     include: {
       appointment: {
         include: {
-          // #1554 — the roster: every live seat holder.
           participants: {
             where: liveParticipant(),
             select: { userId: true },
@@ -207,8 +210,6 @@ async function sendRemindersForWindow(
               },
             },
           },
-          // #1589 N-P1-02 — a trial's held call is a non-tentative SCHEDULED
-          // occurrence from acceptance on; the status gate is on the trial.
           trial: {
             select: {
               status: true,
@@ -229,6 +230,323 @@ async function sendRemindersForWindow(
       },
     },
   });
+}
+
+function appendUnique(map: Map<string, string[]>, key: string, value: string) {
+  const existing = map.get(key);
+  if (!existing) {
+    map.set(key, [value]);
+  } else if (!existing.includes(value)) {
+    existing.push(value);
+  }
+}
+
+// Single batch collaborator query for all webinar and class plans in the window.
+async function batchLoadCollaborators(
+  occurrences: UpcomingOccurrence[],
+): Promise<Map<string, string[]>> {
+  const webinarPlanIds = Array.from(
+    new Set(
+      occurrences.flatMap((slot) =>
+        slot.appointment?.webinar?.webinarPlanId
+          ? [slot.appointment.webinar.webinarPlanId]
+          : [],
+      ),
+    ),
+  );
+  const classPlanIds = Array.from(
+    new Set(
+      occurrences.flatMap((slot) =>
+        slot.appointment?.class?.classPlanId
+          ? [slot.appointment.class.classPlanId]
+          : [],
+      ),
+    ),
+  );
+
+  const byPlan = new Map<string, string[]>();
+  if (webinarPlanIds.length === 0 && classPlanIds.length === 0) {
+    return byPlan;
+  }
+
+  const planFilters = [
+    ...(webinarPlanIds.length > 0
+      ? [{ webinarPlanId: { in: webinarPlanIds } }]
+      : []),
+    ...(classPlanIds.length > 0 ? [{ classPlanId: { in: classPlanIds } }] : []),
+  ];
+
+  const rows = await prisma.collaborator.findMany({
+    where: {
+      OR: planFilters,
+      status: "ACCEPTED",
+      consultantProfile: { deletedAt: null },
+    },
+    select: {
+      webinarPlanId: true,
+      classPlanId: true,
+      consultantProfile: { select: { userId: true } },
+    },
+  });
+
+  for (const row of rows) {
+    const userId = row.consultantProfile.userId;
+    if (row.webinarPlanId) {
+      appendUnique(byPlan, `webinar:${row.webinarPlanId}`, userId);
+    } else if (row.classPlanId) {
+      appendUnique(byPlan, `class:${row.classPlanId}`, userId);
+    } else {
+      for (const id of webinarPlanIds)
+        appendUnique(byPlan, `webinar:${id}`, userId);
+      for (const id of classPlanIds)
+        appendUnique(byPlan, `class:${id}`, userId);
+    }
+  }
+
+  return byPlan;
+}
+
+function prepareSlotReminder(
+  slot: UpcomingOccurrence,
+  collaboratorsByPlan: Map<string, string[]>,
+): PreparedSlotReminder | null {
+  const apt = slot.appointment;
+  if (!apt) return null;
+
+  let appointmentType = "consultation";
+  let planTitle = "";
+  let consultantName = "Consultant";
+  let consulteeName = "Consultee";
+  let consultantUserId: string | undefined;
+  let collabIds: string[] = [];
+  const userIds: string[] = [];
+
+  if (apt.consultation) {
+    appointmentType = "consultation";
+    planTitle = apt.consultation.consultationPlan?.title ?? "Consultation";
+    consultantName =
+      apt.consultation.consultationPlan?.consultantProfile?.user?.name ??
+      "Consultant";
+    consulteeName = apt.consultation.requestedBy?.user?.name ?? "Consultee";
+    const cId = apt.consultation.consultationPlan?.consultantProfile?.userId;
+    const eId = apt.consultation.requestedBy?.userId;
+    consultantUserId = cId;
+    if (cId) userIds.push(cId);
+    if (eId) userIds.push(eId);
+  } else if (apt.subscription) {
+    appointmentType = "subscription";
+    planTitle = apt.subscription.subscriptionPlan?.title ?? "Subscription";
+    consultantName =
+      apt.subscription.subscriptionPlan?.consultantProfile?.user?.name ??
+      "Consultant";
+    consulteeName = apt.subscription.requestedBy?.user?.name ?? "Consultee";
+    const cId = apt.subscription.subscriptionPlan?.consultantProfile?.userId;
+    const eId = apt.subscription.requestedBy?.userId;
+    consultantUserId = cId;
+    if (cId) userIds.push(cId);
+    if (eId) userIds.push(eId);
+  } else if (apt.webinar) {
+    appointmentType = "webinar";
+    planTitle = apt.webinar.webinarPlan?.title ?? "Webinar";
+    consultantName =
+      apt.webinar.webinarPlan?.consultantProfile?.user?.name ?? "Consultant";
+    for (const seat of apt.participants) {
+      userIds.push(seat.userId);
+    }
+    const hostId = apt.webinar.webinarPlan?.consultantProfile?.userId;
+    consultantUserId = hostId;
+    if (hostId) userIds.push(hostId);
+    collabIds =
+      collaboratorsByPlan.get(`webinar:${apt.webinar.webinarPlanId}`) ?? [];
+    userIds.push(...collabIds);
+  } else if (apt.class) {
+    appointmentType = "class";
+    planTitle = apt.class.classPlan?.title ?? "Class";
+    consultantName =
+      apt.class.classPlan?.consultantProfile?.user?.name ?? "Consultant";
+    for (const seat of apt.participants) {
+      userIds.push(seat.userId);
+    }
+    const hostId = apt.class.classPlan?.consultantProfile?.userId;
+    consultantUserId = hostId;
+    if (hostId) userIds.push(hostId);
+    collabIds = collaboratorsByPlan.get(`class:${apt.class.classPlanId}`) ?? [];
+    userIds.push(...collabIds);
+  } else if (apt.trial) {
+    if (apt.trial.status !== "SCHEDULED") return null;
+    appointmentType = "trial";
+    planTitle = apt.trial.subscriptionPlan?.title ?? "Trial";
+    consultantName =
+      apt.trial.subscriptionPlan?.consultantProfile?.user?.name ?? "Consultant";
+    consulteeName = apt.trial.consulteeProfile?.user?.name ?? "Consultee";
+    const cId = apt.trial.subscriptionPlan?.consultantProfile?.userId;
+    const eId = apt.trial.consulteeProfile?.userId;
+    consultantUserId = cId;
+    if (cId) userIds.push(cId);
+    if (eId) userIds.push(eId);
+  }
+
+  const uniqueUserIds = Array.from(new Set(userIds));
+  if (uniqueUserIds.length === 0) return null;
+
+  return {
+    slotId: slot.id,
+    startsAt: slot.startsAt,
+    appointmentId: apt.id,
+    organizationId: apt.organizationId,
+    isMultiSession: Boolean(apt.class || apt.subscription),
+    appointmentType,
+    planTitle,
+    consultantName,
+    consulteeName,
+    consultantUserId,
+    collabIds,
+    uniqueUserIds,
+  };
+}
+
+// Batch-loads staged reminder refs, participant user profiles/timezones/preferences, and email suppressions upfront.
+async function preloadWindowContext(
+  upcomingOccurrences: UpcomingOccurrence[],
+  preparedSlots: PreparedSlotReminder[],
+  windowLabel: ReminderWindowLabel,
+  legacyReminderEntityRef: (
+    appointmentId: string,
+    label: ReminderWindowLabel,
+  ) => string,
+): Promise<PreloadedWindowContext> {
+  const entityRefs = upcomingOccurrences.flatMap((slot) => {
+    const refs = [appointmentReminderEntityRef(slot.id, windowLabel)];
+    if (slot.appointment?.id) {
+      refs.push(legacyReminderEntityRef(slot.appointment.id, windowLabel));
+    }
+    return refs;
+  });
+
+  const allUserIds = Array.from(
+    new Set(preparedSlots.flatMap((item) => item.uniqueUserIds)),
+  );
+
+  const [stagedRows, preloadedUsers] = await Promise.all([
+    prisma.failedEmail.findMany({
+      where: {
+        emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
+        entityRef: { in: entityRefs },
+      },
+      select: { entityRef: true },
+    }),
+    "user" in prisma && allUserIds.length > 0
+      ? prisma.user.findMany({
+          where: { id: { in: allUserIds } },
+          select: USER_BATCH_SELECT,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const alreadyStaged = new Set(
+    stagedRows
+      .map((row) => row.entityRef)
+      .filter((ref): ref is string => ref !== null),
+  );
+
+  if (!("user" in prisma)) {
+    return { alreadyStaged };
+  }
+
+  const usersById = new Map(preloadedUsers.map((u) => [u.id, u]));
+  const cachedUserDelegate = new Proxy(prisma.user, {
+    get(target, prop, receiver) {
+      if (prop === "findMany") {
+        return async (args?: {
+          where?: { id?: { in?: string[] } | string };
+        }) => {
+          const idFilter = args?.where?.id;
+          if (!idFilter) return Array.from(usersById.values());
+          if (typeof idFilter === "string") {
+            const match = usersById.get(idFilter);
+            return match ? [match] : [];
+          }
+          if (idFilter.in) {
+            return idFilter.in.flatMap((id) => {
+              const match = usersById.get(id);
+              return match ? [match] : [];
+            });
+          }
+          return Array.from(usersById.values());
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
+  const bellTx: TriggerOptions["tx"] = {
+    user: cachedUserDelegate,
+    membership: prisma.membership,
+    notificationOutbox: prisma.notificationOutbox,
+  };
+
+  if (!("emailSuppression" in prisma)) {
+    return { alreadyStaged, bellTx };
+  }
+
+  const normalizedEmails = Array.from(
+    new Set(
+      preloadedUsers
+        .map((u) => u.email?.trim().toLowerCase())
+        .filter((email): email is string => Boolean(email)),
+    ),
+  );
+
+  const suppressions =
+    normalizedEmails.length > 0
+      ? await prisma.emailSuppression.findMany({
+          where: { email: { in: normalizedEmails } },
+        })
+      : [];
+  const suppressionsByEmail = new Map(
+    suppressions.map((row) => [row.email.trim().toLowerCase(), row]),
+  );
+
+  const cachedSuppressionDelegate = new Proxy(prisma.emailSuppression, {
+    get(target, prop, receiver) {
+      if (prop === "findUnique") {
+        return async (args: { where: { email?: string } }) => {
+          const lookup = args.where.email?.trim().toLowerCase();
+          return lookup ? (suppressionsByEmail.get(lookup) ?? null) : null;
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
+  const emailTx: StagingTx = {
+    user: cachedUserDelegate,
+    emailSuppression: cachedSuppressionDelegate,
+    failedEmail: prisma.failedEmail,
+  };
+
+  return { alreadyStaged, bellTx, emailTx };
+}
+
+async function sendRemindersForWindow(
+  window: {
+    label: ReminderWindowLabel;
+    minMs: number;
+    maxMs: number;
+  },
+  maxPerRun: number,
+): Promise<{ sent: number; errors: string[]; capped: boolean }> {
+  const now = Date.now();
+  const windowStart = new Date(now + window.minMs);
+  const windowEnd = new Date(now + window.maxMs);
+  const errors: string[] = [];
+  let sent = 0;
+
+  const upcomingOccurrences = await queryUpcomingOccurrences(
+    windowStart,
+    windowEnd,
+    maxPerRun,
+  );
 
   console.log(
     `Found ${upcomingOccurrences.length} slots in ${window.label} reminder window`,
@@ -237,276 +555,142 @@ async function sendRemindersForWindow(
   const capped = upcomingOccurrences.length >= maxPerRun;
   if (capped) warnIfWindowCapped(window.label, maxPerRun);
 
-  /**
-   * The DURABLE half of the dedupe, and the reason a capped run is safe to
-   * repeat.
-   *
-   * The Redis key is per SLOT and lives only in Redis, so it cannot be part of
-   * a SQL predicate — a re-read of the same capped batch re-collects the rows
-   * it already handled, and without this the cap would turn every tick after
-   * the first into N no-op Redis round trips with no progress. The email twin
-   * stages a `FailedEmail` row under a per-APPOINTMENT+window entityRef before
-   * it sends, so that set is queryable, and an appointment already reminded
-   * for this window is dropped from the batch.
-   *
-   * This is also what makes a kill recoverable rather than merely detectable:
-   * the row is written before the send, so a process that dies after staging
-   * leaves a durable record the next tick can see, and a process that dies
-   * before staging leaves none — and the short-TTL Redis key below has already
-   * expired, so the slot is offered again.
-   */
   const legacyReminderEntityRef = (
     appointmentId: string,
     windowLabel: ReminderWindowLabel,
   ) => `appointment:${appointmentId}:${windowLabel}`;
 
-  const alreadyStaged = new Set(
-    (
-      await prisma.failedEmail.findMany({
-        where: {
-          emailType: APPOINTMENT_REMINDER_EMAIL_TYPE,
-          entityRef: {
-            in: upcomingOccurrences.flatMap((slot) => {
-              const refs = [
-                appointmentReminderEntityRef(slot.id, window.label),
-              ];
-              if (slot.appointment?.id) {
-                refs.push(
-                  legacyReminderEntityRef(slot.appointment.id, window.label),
-                );
-              }
-              return refs;
-            }),
-          },
-        },
-        select: { entityRef: true },
-      })
-    ).map((row) => row.entityRef),
+  const collaboratorsByPlan = await batchLoadCollaborators(upcomingOccurrences);
+  const preparedSlots = upcomingOccurrences
+    .map((slot) => prepareSlotReminder(slot, collaboratorsByPlan))
+    .filter((item): item is PreparedSlotReminder => item !== null);
+
+  const { alreadyStaged, bellTx, emailTx } = await preloadWindowContext(
+    upcomingOccurrences,
+    preparedSlots,
+    window.label,
+    legacyReminderEntityRef,
   );
 
-  // Per-slot dedupe via the Redis key below (not per-appointment): a
-  // multi-slot booking notifies each session in the window exactly once.
-  // Sessions of one class share a plan; one collaborator read per plan (#1593).
-  const collaboratorsByPlan = new Map<string, Promise<string[]>>();
-  const planCollaborators = (planType: "webinar" | "class", planId: string) => {
-    const key = `${planType}:${planId}`;
-    let ids = collaboratorsByPlan.get(key);
-    if (!ids) {
-      ids = collaboratorUserIds(planType, planId);
-      collaboratorsByPlan.set(key, ids);
-      // A failed lookup must not be memoised, or every later session of the
-      // plan in this window would skip its reminders too.
-      ids.catch(() => collaboratorsByPlan.delete(key));
-    }
-    return ids;
-  };
-
-  for (const slot of upcomingOccurrences) {
-    const apt = slot.appointment;
-    if (!apt) continue;
-    const isMultiSession = Boolean(apt.class || apt.subscription);
+  for (const item of preparedSlots) {
     if (
-      alreadyStaged.has(reminderEntityRef(slot.id, window.label)) ||
-      (!isMultiSession &&
-        alreadyStaged.has(legacyReminderEntityRef(apt.id, window.label)))
+      alreadyStaged.has(reminderEntityRef(item.slotId, window.label)) ||
+      (!item.isMultiSession &&
+        alreadyStaged.has(
+          legacyReminderEntityRef(item.appointmentId, window.label),
+        ))
     ) {
       continue;
     }
 
     try {
-      // Determine event type and plan info
-      let appointmentType = "consultation";
-      // #536 — empty, not "Unknown": an appointment matching none of the four
-      // shapes below would have named the customer's session "Unknown".
-      let planTitle = "";
-      let consultantName = "Consultant";
-      let consulteeName = "Consultee";
-      // #1653 — lets the email name the consultee as the consultant's other party.
-      let consultantUserId: string | undefined;
-      let collabIds: string[] = [];
-      const userIds: string[] = [];
-
-      if (apt.consultation) {
-        appointmentType = "consultation";
-        planTitle = apt.consultation.consultationPlan?.title ?? "Consultation";
-        consultantName =
-          apt.consultation.consultationPlan?.consultantProfile?.user?.name ??
-          "Consultant";
-        consulteeName = apt.consultation.requestedBy?.user?.name ?? "Consultee";
-        const cId =
-          apt.consultation.consultationPlan?.consultantProfile?.userId;
-        const eId = apt.consultation.requestedBy?.userId;
-        consultantUserId = cId;
-        if (cId) userIds.push(cId);
-        if (eId) userIds.push(eId);
-      } else if (apt.subscription) {
-        appointmentType = "subscription";
-        planTitle = apt.subscription.subscriptionPlan?.title ?? "Subscription";
-        consultantName =
-          apt.subscription.subscriptionPlan?.consultantProfile?.user?.name ??
-          "Consultant";
-        consulteeName = apt.subscription.requestedBy?.user?.name ?? "Consultee";
-        const cId =
-          apt.subscription.subscriptionPlan?.consultantProfile?.userId;
-        const eId = apt.subscription.requestedBy?.userId;
-        consultantUserId = cId;
-        if (cId) userIds.push(cId);
-        if (eId) userIds.push(eId);
-      } else if (apt.webinar) {
-        appointmentType = "webinar";
-        planTitle = apt.webinar.webinarPlan?.title ?? "Webinar";
-        consultantName =
-          apt.webinar.webinarPlan?.consultantProfile?.user?.name ??
-          "Consultant";
-        // Attendees, the host (missing until #1580 — only the slot's joined
-        // users were reminded) and the accepted collaborators (C-P1-5).
-        for (const seat of apt.participants) {
-          userIds.push(seat.userId);
-        }
-        const hostId = apt.webinar.webinarPlan?.consultantProfile?.userId;
-        consultantUserId = hostId;
-        if (hostId) userIds.push(hostId);
-        collabIds = await planCollaborators(
-          "webinar",
-          apt.webinar.webinarPlanId,
-        );
-        userIds.push(...collabIds);
-      } else if (apt.class) {
-        appointmentType = "class";
-        planTitle = apt.class.classPlan?.title ?? "Class";
-        consultantName =
-          apt.class.classPlan?.consultantProfile?.user?.name ?? "Consultant";
-        // Same three parties as the webinar branch above.
-        for (const seat of apt.participants) {
-          userIds.push(seat.userId);
-        }
-        const hostId = apt.class.classPlan?.consultantProfile?.userId;
-        consultantUserId = hostId;
-        if (hostId) userIds.push(hostId);
-        collabIds = await planCollaborators("class", apt.class.classPlanId);
-        userIds.push(...collabIds);
-      } else if (apt.trial) {
-        // An AWAITING_PAYMENT trial still holds its occurrence; only a
-        // SCHEDULED (paid or free) trial gets the reminder pair.
-        if (apt.trial.status !== "SCHEDULED") continue;
-        appointmentType = "trial";
-        planTitle = apt.trial.subscriptionPlan?.title ?? "Trial";
-        consultantName =
-          apt.trial.subscriptionPlan?.consultantProfile?.user?.name ??
-          "Consultant";
-        consulteeName = apt.trial.consulteeProfile?.user?.name ?? "Consultee";
-        const cId = apt.trial.subscriptionPlan?.consultantProfile?.userId;
-        const eId = apt.trial.consulteeProfile?.userId;
-        consultantUserId = cId;
-        if (cId) userIds.push(cId);
-        if (eId) userIds.push(eId);
-      }
-
-      // Deduplicate user IDs
-      const uniqueUserIds = Array.from(new Set(userIds));
-
-      if (uniqueUserIds.length === 0) continue;
-
-      // Claim the slot, then send, then EXTEND the claim.
-      //
-      // The claim is written with the short in-flight TTL, not the dedupe
-      // window. Writing the full TTL first is what made a kill in the gap
-      // unrecoverable: the key existed, so every later tick skipped the slot,
-      // and nothing else owns this side effect — the reminder was simply gone.
-      // Short-first means a kill leaves a key that expires, and the next tick
-      // re-offers the session.
-      //
-      // On Redis failure skip the send (unchanged): a fail-open double-notify
-      // is worse than a missed reminder the next tick redrives. The dedupe is
-      // fail-closed; the cron lock stays fail-open.
-      const redisKey = reminderKey(slot.id, window.label);
+      const redisKey = reminderKey(item.slotId, window.label);
       try {
         const alreadySent = await redis.set(redisKey, "1", {
           nx: true,
           ex: IN_FLIGHT_TTL_SECONDS,
         });
-        if (!alreadySent) continue; // Key existed — another claim is in flight
+        if (!alreadySent) continue;
       } catch {
         continue;
       }
 
-      // Only now is the claim promoted to the full dedupe window. Every
-      // failure path below returns to here with the short key still in place,
-      // so a partial send re-offers on the next tick rather than being
-      // suppressed forever.
       let claimExtendable = true;
       try {
-        await notifyAppointmentReminder(
-          uniqueUserIds,
-          {
-            ...notificationScope(apt.organizationId),
-            appointmentType,
-            consultantName,
-            consulteeName,
-            planTitle: planTitleOrSessionLabel(planTitle, appointmentType),
-            // Rendered per recipient timezone at the trigger boundary (#536).
-            dateTime: slot.startsAt.toISOString(),
-            dashboardUrl: notificationHref(apt.organizationId, "appointments"),
-          },
-          // 24h and 1h payloads are identical — key the Novu transactionId by
-          // slot+window so each session notifies once and the second window
-          // isn't deduped away. This is what keeps the BELL arm at-most-once
-          // across a re-offer: Novu rejects a repeated transactionId, so a
-          // tick that re-sends after a kill stages an existing row and the
-          // vendor drops it.
-          `${slot.id}:${window.label}`,
+        const formattedPlanTitle = planTitleOrSessionLabel(
+          item.planTitle,
+          item.appointmentType,
         );
+        const dashboardUrl = notificationHref(
+          item.organizationId,
+          "appointments",
+        );
+        const bellPayload = {
+          ...notificationScope(item.organizationId),
+          appointmentType: item.appointmentType,
+          consultantName: item.consultantName,
+          consulteeName: item.consulteeName,
+          planTitle: formattedPlanTitle,
+          dateTime: item.startsAt.toISOString(),
+          dashboardUrl,
+        };
 
-        // #1653 — the email twin, inside the same claim so a re-run does not
-        // send twice. No join link: the meeting route is not known here. This
-        // stages its `FailedEmail` row BEFORE the wire call, which is the
-        // durable record the next tick reads above.
-        await sendAppointmentReminderEmail(
-          {
-            appointmentId: apt.id,
-            occurrenceId: slot.id,
-            userIds: uniqueUserIds,
-            collaboratorUserIds: collabIds,
-            windowLabel: window.label,
-            consultantUserId,
-            consultantName,
-            consulteeName,
-            planTitle: planTitleOrSessionLabel(planTitle, appointmentType),
-            appointmentType,
-            startsAt: slot.startsAt,
-            dashboardUrl: notificationHref(apt.organizationId, "appointments"),
-          },
-          EMAIL_BUDGET_MS.JOB,
-        );
+        if (bellTx) {
+          const bellResults = await notifyAppointmentReminder(
+            item.uniqueUserIds,
+            bellPayload,
+            `${item.slotId}:${window.label}`,
+            { tx: bellTx },
+          );
+          const stagedRows = new Map(
+            bellResults
+              .map((result) => result.staged)
+              .filter((row): row is NonNullable<typeof row> => Boolean(row))
+              .map((row) => [row.id, row] as const),
+          );
+          await Promise.all(
+            [...stagedRows.values()].map((row) => attemptTrigger(row)),
+          );
+        } else {
+          await notifyAppointmentReminder(
+            item.uniqueUserIds,
+            bellPayload,
+            `${item.slotId}:${window.label}`,
+          );
+        }
+
+        const emailArgs = {
+          appointmentId: item.appointmentId,
+          occurrenceId: item.slotId,
+          userIds: item.uniqueUserIds,
+          collaboratorUserIds: item.collabIds,
+          windowLabel: window.label,
+          consultantUserId: item.consultantUserId,
+          consultantName: item.consultantName,
+          consulteeName: item.consulteeName,
+          planTitle: formattedPlanTitle,
+          appointmentType: item.appointmentType,
+          startsAt: item.startsAt,
+          dashboardUrl,
+        };
+
+        if (emailTx && reminderSpec) {
+          const staged = await stageSpecGuarded(
+            reminderSpec(emailArgs),
+            item.uniqueUserIds,
+            emailTx,
+          );
+          await attemptStaged(
+            staged,
+            APPOINTMENT_REMINDER_EMAIL_TYPE,
+            EMAIL_BUDGET_MS.JOB,
+          );
+        } else {
+          await sendAppointmentReminderEmail(emailArgs, EMAIL_BUDGET_MS.JOB);
+        }
 
         sent++;
       } catch (error) {
         claimExtendable = false;
         errors.push(
-          `Failed to send ${window.label} reminder for appointment ${apt.id}: ${error instanceof Error ? error.message : "Unknown error"}`,
+          `Failed to send ${window.label} reminder for appointment ${item.appointmentId}: ${error instanceof Error ? error.message : "Unknown error"}`,
         );
       } finally {
         if (claimExtendable) {
-          // Best-effort promote. A failure here costs a duplicate on the next
-          // tick (the bell's transactionId absorbs it; the email twin would
-          // re-send), which is the cheaper of the two available errors.
           await redis
             .set(redisKey, "1", { ex: fullDedupeTtlSeconds(window) })
             .catch(() => {
               errors.push(
-                `Could not extend the reminder dedupe for slot ${slot.id}; the next tick may repeat it`,
+                `Could not extend the reminder dedupe for slot ${item.slotId}; the next tick may repeat it`,
               );
             });
         } else {
-          // Release the claim outright rather than waiting out the in-flight
-          // TTL: the send already failed, so there is nothing to protect and
-          // the next tick should be free to retry immediately.
           await redis.del(redisKey).catch(() => {});
         }
       }
     } catch (error) {
       errors.push(
-        `Failed to send ${window.label} reminder for appointment ${apt.id}: ${error instanceof Error ? error.message : "Unknown error"}`,
+        `Failed to send ${window.label} reminder for appointment ${item.appointmentId}: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
   }

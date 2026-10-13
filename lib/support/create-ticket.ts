@@ -22,7 +22,8 @@ import {
   notifySupportTicketResponse,
 } from "@/lib/novu";
 import { sendSupportTicketReceivedEmail } from "@/lib/email/senders/people";
-import { attemptTrigger, stageTrigger } from "@/lib/novu/outbox";
+import { stageTrigger, type StagedTrigger } from "@/lib/novu/outbox";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { reportSentryError } from "@/lib/observability/report";
@@ -128,27 +129,33 @@ export async function notifySupportStaff(
     });
     orgName = org?.name ?? null;
   }
-  const [recipients, customer] = await Promise.all([
+  const [ops, customer] = await Promise.all([
     opsRecipients(ticket.id, undefined, caseKind),
     prisma.user.findUnique({
       where: { id: ticket.userId },
       select: { name: true },
     }),
   ]);
-  // Awaited, not void: a Netlify instance freezes once the response is sent,
-  // and a trigger still in flight at that moment is lost (seen on the first
-  // sync, 2026-09-13). The SDK caps a trigger at five seconds.
-  await Promise.all(
-    recipients.map((recipient) =>
-      notifySupportTicketCreated([recipient.id], {
-        ticketId: ticket.id,
-        reference: ticket.referenceNumber ?? undefined,
-        ticketTitle: ticket.title || "Support Ticket",
-        userName: customer?.name ?? undefined,
-        dashboardUrl: recipient.dashboardUrl,
-        ...notificationScope(ticket.organizationId, orgName),
-      }),
+  const results = await Promise.all(
+    ops.map((recipient) =>
+      notifySupportTicketCreated(
+        [recipient.id],
+        {
+          ticketId: ticket.id,
+          reference: ticket.referenceNumber ?? undefined,
+          ticketTitle: ticket.title || "Support Ticket",
+          userName: customer?.name ?? undefined,
+          dashboardUrl: recipient.dashboardUrl,
+          ...notificationScope(ticket.organizationId, orgName),
+        },
+        undefined,
+        { deferAttempt: true },
+      ),
     ),
+  );
+  await flushNotificationsAfter(
+    { bells: results.flat().map((r) => r.staged) },
+    "support.ticket-created",
   );
 }
 
@@ -174,6 +181,7 @@ export async function notifyStaffOfTicketActivity(
   const ticket = await prisma.supportTicket.findUnique({
     where: { id: ticketId },
     select: {
+      userId: true,
       title: true,
       assignedToId: true,
       referenceNumber: true,
@@ -182,10 +190,11 @@ export async function notifyStaffOfTicketActivity(
     },
   });
   if (!ticket) return;
+  const effectiveOrgId = organizationId ?? ticket.organizationId;
   const recipients = await opsRecipients(ticketId, ticket.assignedToId);
   if (recipients.length === 0) return;
   const dedupeKey = eventId ?? `${ticketId}:${Date.now()}`;
-  await Promise.all(
+  const results = await Promise.all(
     recipients.map((recipient) =>
       notifySupportTicketActivity(
         [recipient.id],
@@ -196,11 +205,16 @@ export async function notifyStaffOfTicketActivity(
           userName: ticket.user.name ?? undefined,
           activity,
           dashboardUrl: recipient.dashboardUrl,
-          ...notificationScope(organizationId ?? ticket.organizationId),
+          ...notificationScope(effectiveOrgId),
         },
         dedupeKey,
+        { deferAttempt: true },
       ),
     ),
+  );
+  await flushNotificationsAfter(
+    { bells: results.flat().map((r) => r.staged) },
+    "support.ticket-activity",
   );
 }
 
@@ -235,7 +249,7 @@ export async function notifyRequesterOfTicket(
     ticket.organizationId,
   );
 
-  const novuOutbox = await stageTrigger({
+  const novuOutbox: StagedTrigger | null = await stageTrigger({
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_RECEIVED,
     kind: "SINGLE",
     recipients: [ticket.userId],
@@ -258,7 +272,7 @@ export async function notifyRequesterOfTicket(
   });
 
   await Promise.all([
-    novuOutbox ? attemptTrigger(novuOutbox).catch(() => undefined) : undefined,
+    flushNotificationsAfter({ bells: [novuOutbox] }, "support.ticket-receipt"),
     sendSupportTicketReceivedEmail(
       {
         ticketId: ticket.id,
@@ -513,7 +527,7 @@ export async function createOutboundStaffSupportTicket(
     },
   );
 
-  await notifySupportTicketResponse(
+  const bellResult = await notifySupportTicketResponse(
     ticket.userId,
     {
       ticketId: ticket.id,
@@ -528,13 +542,19 @@ export async function createOutboundStaffSupportTicket(
       ...notificationScope(resolvedOrganizationId),
     },
     `ticket-outbound:${ticket.id}`,
+    { deferAttempt: true },
   ).catch((err) => {
     reportSentryError(err, {
       subsystem: "support",
       op: "outbound.notifyUser",
       extra: { ticketId: ticket.id },
     });
+    return null;
   });
+  await flushNotificationsAfter(
+    { bells: [bellResult?.staged] },
+    "support.outbound-ticket",
+  );
 
   return ticket;
 }

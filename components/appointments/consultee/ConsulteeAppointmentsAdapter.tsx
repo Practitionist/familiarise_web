@@ -42,14 +42,13 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
-import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import {
   DM_ELIGIBLE_STATUSES,
   OPENABLE_EVENT_STATUSES,
 } from "@/lib/stream/dm-eligibility-statuses";
 
-type DialogKind = "cancel" | "leave" | "documents";
+type DialogKind = "cancel" | "leave";
 
 const DM_ELIGIBLE_SET = new Set<string>(DM_ELIGIBLE_STATUSES);
 const OPENABLE_EVENT_SET = new Set<string>(OPENABLE_EVENT_STATUSES);
@@ -453,10 +452,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
         onClick: () => openDialog(vm, "leave"),
       });
     }
-    // #1527 — a finished booking keeps its files (DOC-1 only closes
-    // cancelled/rejected/expired ones), so COMPLETED lists them too.
+    // A finished or cancelled booking keeps its files readable until retention.
     if (
       vm.appointmentId &&
+      consulteeId &&
       (isConfirmedStatus(vm.status) || isCompletedLikeStatus(vm.status)) &&
       (vm.kind === "CONSULTATION" ||
         vm.kind === "TRIAL" ||
@@ -465,7 +464,10 @@ export function useConsulteeAppointmentsAdapter(options?: {
       items.push({
         key: "documents",
         label: "Documents",
-        onClick: () => openDialog(vm, "documents"),
+        onClick: () =>
+          router.push(
+            `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/documents`,
+          ),
       });
     }
     if (consulteeId) {
@@ -663,16 +665,6 @@ export function useConsulteeAppointmentsAdapter(options?: {
               : null
           }
         />
-
-        {activeVm.appointmentId && dialog === "documents" && (
-          <DocumentUpload
-            appointmentId={activeVm.appointmentId}
-            appointmentTitle={activeVm.title}
-            appointmentType={typeLabel}
-            defaultOpen
-            onOpenChange={(open) => !open && closeDialog()}
-          />
-        )}
       </>
     );
   };

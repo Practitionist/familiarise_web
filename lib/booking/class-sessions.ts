@@ -26,14 +26,20 @@ import {
 } from "@/lib/payments/operations/refund";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import {
   DEFAULT_NOTIFICATION_TIMEZONE,
   formatNotificationDateTime,
   groupRecipientsByTimezone,
   resolveRecipientTimezones,
 } from "@/lib/novu/humanize";
-import type { NovuPayload } from "@/lib/novu/outbox";
+import type { NovuPayload, StagedTrigger } from "@/lib/novu/outbox";
 import type { NovuWorkflowId } from "@/lib/novu/templates/types";
+import {
+  stageAppointmentCancelledEmail,
+  stageAppointmentRescheduledEmail,
+  type StagedRecipientEmail,
+} from "@/lib/email/senders/booking";
 import { goHref } from "@/lib/dashboard/go";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
@@ -86,16 +92,19 @@ async function stageBellsByZone(
   userIds: string[],
   payload: (zone: string) => NovuPayload,
   dedupeKey: string,
-): Promise<void> {
+): Promise<StagedTrigger[]> {
   const zones = await resolveRecipientTimezones(userIds, tx);
+  const bells: StagedTrigger[] = [];
   for (const [zone, ids] of groupRecipientsByTimezone(userIds, zones)) {
-    await stageBell(tx, {
+    const bell = await stageBell(tx, {
       workflowId,
       recipients: ids,
       payload: payload(zone),
       dedupeKey,
     });
+    if (bell) bells.push(bell);
   }
+  return bells;
 }
 
 /** House format in the recipient's zone (`Sat, 6 Sep 2026 · 7:53 AM IST`). */
@@ -179,7 +188,7 @@ async function onExitRightTripped(
   ledger: SeriesLedger,
   seatUserIds: string[],
   opts: { missedAt: Date; hostAttributed: boolean; firstTrip: boolean },
-): Promise<void> {
+): Promise<StagedTrigger[]> {
   const correlationId = `class-reliability:${hosted.cls.id}`;
   if (opts.hostAttributed && exitRightFor(ledger.hostMisses, ledger.N)) {
     const latest = await tx.systemEvent.findFirst({
@@ -203,10 +212,11 @@ async function onExitRightTripped(
       });
     }
   }
-  if (!opts.firstTrip) return;
+  if (!opts.firstTrip) return [];
   const misses = ledger.misses;
+  const bells: StagedTrigger[] = [];
   for (const userId of seatUserIds) {
-    await stageBell(tx, {
+    const bell = await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.CLASS_EXIT_AVAILABLE,
       recipients: [userId],
       payload: {
@@ -217,7 +227,9 @@ async function onExitRightTripped(
       },
       dedupeKey: `exit-avail:${hosted.cls.id}:${userId}`,
     });
+    if (bell) bells.push(bell);
   }
+  return bells;
 }
 
 /** E-2 — cancel one future session; no deletedAt, so it stays a miss. */
@@ -226,7 +238,7 @@ export async function cancelClassSession(
   occurrenceId: string,
 ) {
   const appointmentId = hosted.appointment.id;
-  return withAppointmentLock(appointmentId, () =>
+  const result = await withAppointmentLock(appointmentId, () =>
     prisma.$transaction(async (tx) => {
       const now = new Date();
       const moved = await transitionOccurrenceCompletion(tx, {
@@ -258,32 +270,47 @@ export async function cancelClassSession(
         select: { userId: true },
       });
       const seatUserIds = seats.map((s) => s.userId);
+      const hostName =
+        hosted.cls.classPlan.consultantProfile?.user.name ?? "Your host";
+      const dashboardUrl = goHref("client", "appointments");
+      const bells: StagedTrigger[] = [];
+      let emails: StagedRecipientEmail[] = [];
       if (seatUserIds.length > 0) {
-        await stageBellsByZone(
-          tx,
-          NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
-          seatUserIds,
-          (zone) => ({
-            planTitle: hosted.cls.classPlan.title,
-            consultantName:
-              hosted.cls.classPlan.consultantProfile?.user.name ?? "Your host",
-            dateTime: zoned(session.startsAt, zone),
-            makeUpBy: zoned(makeUpBy, zone),
-            // #1527 — every seat holder here is a consultee.
-            dashboardUrl: goHref("client", "appointments"),
-          }),
-          `occ-cancel:${occurrenceId}`,
+        bells.push(
+          ...(await stageBellsByZone(
+            tx,
+            NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+            seatUserIds,
+            (zone) => ({
+              planTitle: hosted.cls.classPlan.title,
+              consultantName: hostName,
+              dateTime: zoned(session.startsAt, zone),
+              makeUpBy: zoned(makeUpBy, zone),
+              // #1527 — every seat holder here is a consultee.
+              dashboardUrl,
+            }),
+            `occ-cancel:${occurrenceId}`,
+          )),
         );
+        emails = await stageAppointmentCancelledEmail(tx, {
+          appointmentId,
+          userIds: seatUserIds,
+          startsAt: session.startsAt,
+          cancelledBy: hostName,
+          dashboardUrl,
+        });
       }
       const ledger = await seriesLedger(tx, appointmentId, now);
       // Past the threshold every miss re-checks the flag (an ops clear may
       // precede it); the learners' bells go out only on the first trip.
       if (ledger.exitRight) {
-        await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
-          missedAt: now,
-          hostAttributed: true,
-          firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
-        });
+        bells.push(
+          ...(await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
+            missedAt: now,
+            hostAttributed: true,
+            firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+          })),
+        );
       }
       return {
         occurrenceId,
@@ -291,9 +318,25 @@ export async function cancelClassSession(
         makeUpBy,
         misses: ledger.misses,
         exitRight: ledger.exitRight,
+        bells,
+        emails,
       };
     }),
   );
+  await flushNotificationsAfter(
+    {
+      bells: result.bells,
+      emails: [{ rows: result.emails, emailType: "APPOINTMENT_CANCELLED" }],
+    },
+    "class-sessions.cancel",
+  );
+  return {
+    occurrenceId: result.occurrenceId,
+    hostCancelledAt: result.hostCancelledAt,
+    makeUpBy: result.makeUpBy,
+    misses: result.misses,
+    exitRight: result.exitRight,
+  };
 }
 
 /**
@@ -310,13 +353,13 @@ export async function onClassSessionVoided(
     voidedAt: Date;
     hostAttributed: boolean;
   },
-): Promise<void> {
+): Promise<{ bells: StagedTrigger[]; emails: StagedRecipientEmail[] }> {
   const appointment = await tx.appointment.findUnique({
     where: { id: args.appointmentId },
     select: HOSTED_CLASS_SELECT,
   });
   const cls = appointment?.class;
-  if (!appointment || !cls) return;
+  if (!appointment || !cls) return { bells: [], emails: [] };
   const hosted: HostedClass = {
     found: true,
     isHost: false,
@@ -328,35 +371,50 @@ export async function onClassSessionVoided(
     select: { userId: true },
   });
   const seatUserIds = seats.map((s) => s.userId);
+  const hostName = cls.classPlan.consultantProfile?.user.name ?? "Your host";
+  const dashboardUrl = goHref("client", "appointments");
+  const bells: StagedTrigger[] = [];
+  let emails: StagedRecipientEmail[] = [];
   if (seatUserIds.length > 0) {
-    await stageBellsByZone(
-      tx,
-      NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
-      seatUserIds,
-      (zone) => ({
-        voided: true,
-        planTitle: cls.classPlan.title,
-        consultantName:
-          cls.classPlan.consultantProfile?.user.name ?? "Your host",
-        dateTime: zoned(args.startsAt, zone),
-        makeUpBy: zoned(
-          new Date(args.voidedAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS),
-          zone,
-        ),
-        // #1527 — every seat holder here is a consultee.
-        dashboardUrl: goHref("client", "appointments"),
-      }),
-      `occ-void:${args.occurrenceId}`,
+    bells.push(
+      ...(await stageBellsByZone(
+        tx,
+        NOVU_WORKFLOWS.CLASS_SESSION_CANCELLED,
+        seatUserIds,
+        (zone) => ({
+          voided: true,
+          planTitle: cls.classPlan.title,
+          consultantName: hostName,
+          dateTime: zoned(args.startsAt, zone),
+          makeUpBy: zoned(
+            new Date(args.voidedAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS),
+            zone,
+          ),
+          // #1527 — every seat holder here is a consultee.
+          dashboardUrl,
+        }),
+        `occ-void:${args.occurrenceId}`,
+      )),
     );
+    emails = await stageAppointmentCancelledEmail(tx, {
+      appointmentId: args.appointmentId,
+      userIds: seatUserIds,
+      startsAt: args.startsAt,
+      cancelledBy: hostName,
+      dashboardUrl,
+    });
   }
   const ledger = await seriesLedger(tx, args.appointmentId, args.voidedAt);
   if (ledger.exitRight) {
-    await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
-      missedAt: args.voidedAt,
-      hostAttributed: args.hostAttributed,
-      firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
-    });
+    bells.push(
+      ...(await onExitRightTripped(tx, hosted, ledger, seatUserIds, {
+        missedAt: args.voidedAt,
+        hostAttributed: args.hostAttributed,
+        firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+      })),
+    );
   }
+  return { bells, emails };
 }
 
 /**
@@ -448,7 +506,7 @@ export async function scheduleClassMakeUp(
     );
   }
   const appointmentId = hosted.appointment.id;
-  return withAppointmentLock(appointmentId, () =>
+  const result = await withAppointmentLock(appointmentId, () =>
     prisma.$transaction(async (tx) => {
       const now = new Date();
       const source = await tx.appointmentOccurrence.findFirst({
@@ -508,23 +566,50 @@ export async function scheduleClassMakeUp(
         where: { appointmentId, ...SEATED },
         select: { userId: true },
       });
-      if (seats.length > 0) {
-        await stageBellsByZone(
+      const seatUserIds = seats.map((s) => s.userId);
+      const dashboardUrl = goHref("client", "appointments");
+      let bells: StagedTrigger[] = [];
+      let emails: StagedRecipientEmail[] = [];
+      if (seatUserIds.length > 0) {
+        bells = await stageBellsByZone(
           tx,
           NOVU_WORKFLOWS.CLASS_MAKEUP_SCHEDULED,
-          seats.map((s) => s.userId),
+          seatUserIds,
           (zone) => ({
             planTitle: hosted.cls.classPlan.title,
             dateTime: zoned(startsAt, zone),
             // #1527 — every seat holder here is a consultee.
-            dashboardUrl: goHref("client", "appointments"),
+            dashboardUrl,
           }),
           `makeup:${sourceOccurrenceId}`,
         );
+        emails = await stageAppointmentRescheduledEmail(tx, {
+          appointmentId,
+          userIds: seatUserIds,
+          outcome: "MOVED",
+          appointmentType: "CLASS",
+          oldStartsAt: source.startsAt,
+          newStartsAt: startsAt,
+          proposedBy:
+            hosted.cls.classPlan.consultantProfile?.user.name ?? "Your host",
+          dashboardUrl,
+        });
       }
-      return { occurrenceId: makeUp.id, startsAt, endsAt };
+      return { occurrenceId: makeUp.id, startsAt, endsAt, bells, emails };
     }),
   );
+  await flushNotificationsAfter(
+    {
+      bells: result.bells,
+      emails: [{ rows: result.emails, emailType: "APPOINTMENT_RESCHEDULED" }],
+    },
+    "class-sessions.make-up",
+  );
+  return {
+    occurrenceId: result.occurrenceId,
+    startsAt: result.startsAt,
+    endsAt: result.endsAt,
+  };
 }
 
 /**

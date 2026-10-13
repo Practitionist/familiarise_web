@@ -125,9 +125,11 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
 
   "recording-available": "session-media",
   "recording-failed": "session-media",
+  "recording-removed": "session-media",
   "document-uploaded": "session-media",
   "document-reviewed": "session-media",
 
+  "payment-link": "payment",
   "payment-success": "payment",
   "payment-failed": "payment",
   "referral-credits-applied": "payment",

@@ -69,6 +69,7 @@ const ISSUE_TYPE_BY_REASON: Readonly<Record<string, SupportIssueType>> = {
   recording_broken: "DOCUMENT_ISSUE",
   documents_missing: "DOCUMENT_ISSUE",
   documents_wrong: "DOCUMENT_ISSUE",
+  documents_removal: "DOCUMENT_ISSUE",
 
   // Scheduling
   timezone_mismatch: "TIMEZONE_CONFUSION",

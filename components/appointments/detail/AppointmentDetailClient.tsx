@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useZonedFormat } from "@/lib/time/zoned-format";
@@ -9,10 +9,8 @@ import {
   ArrowLeft,
   CalendarX,
   CreditCard,
-  FileText,
   LifeBuoy,
   Users,
-  Video,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -42,7 +40,6 @@ import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   paymentStatusBadge,
   paymentStatusDot,
-  recordingStatusBadge,
   resolveSponsoringOrgName,
 } from "@/lib/labels/session-labels";
 import { AppointmentsType } from "@prisma/client";
@@ -84,7 +81,7 @@ import { caseKeyOf } from "@/lib/support/case-key";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
 import { SessionRatingRow } from "@/components/reviews/SessionRatingRow";
 import { useSessionFeedback } from "@/hooks/useSessionFeedback";
-import { RecordingPlayerModal } from "@/components/recordings/RecordingPlayerModal";
+import { ResourceSnapshot, type ResourceHrefs } from "./ResourceSnapshot";
 
 const PARTICIPANTS_PREVIEW = 5;
 
@@ -110,26 +107,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
       <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {title}
-      </p>
-      {children}
-    </div>
-  );
-}
-
-function ResourceSubgroup({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon: typeof FileText;
-  children: ReactNode;
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
-        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
         {title}
       </p>
       {children}
@@ -239,8 +216,8 @@ interface AppointmentDetailClientProps {
   role: "consultee" | "consultant";
   adapter: AppointmentActionAdapter;
   backHref: string;
-  /** Role-specific documents block (consultee upload widget / consultant list). */
-  renderDocuments?: (vm: AppointmentVM) => ReactNode;
+  /** This booking's Documents workspace and Recording details pages in the viewer's tree. */
+  resourceHrefs: ResourceHrefs;
   /** Consultant-only: participants management link resolver. */
   participantsHref?: (detail: TAppointmentDetail) => string | null;
   joinWindowMs?: number;
@@ -257,7 +234,7 @@ export function AppointmentDetailClient({
   role,
   adapter,
   backHref,
-  renderDocuments,
+  resourceHrefs,
   participantsHref,
   joinWindowMs,
   consultantId,
@@ -268,14 +245,6 @@ export function AppointmentDetailClient({
   const { data: session } = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [activeRecording, setActiveRecording] = useState<{
-    id: string;
-    title: string;
-    status: string;
-    durationInMinutes: number;
-    recordedAt: Date;
-    previewTranscript?: string | null;
-  } | null>(null);
   const {
     data: detail,
     isLoading,
@@ -354,7 +323,7 @@ export function AppointmentDetailClient({
     );
   }
 
-  const { vm, recordings } = mapped;
+  const { vm } = mapped;
   const action = adapter.primaryAction(vm);
   const orgName =
     detail.appointment.organization?.name ??
@@ -1109,91 +1078,15 @@ export function AppointmentDetailClient({
 
           <aside className="min-w-0 lg:sticky lg:top-20">
             <Section title="Resources">
-              <div className="space-y-5">
-                {supportsDocuments(vm.kind) && (
-                  <>
-                    <ResourceSubgroup title="Documents" icon={FileText}>
-                      {renderDocuments ? (
-                        renderDocuments(vm)
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          No documents for this booking.
-                        </p>
-                      )}
-                    </ResourceSubgroup>
-
-                    <div className="border-t border-border" />
-                  </>
-                )}
-
-                <ResourceSubgroup
-                  title={`Recordings · ${recordings.length}`}
-                  icon={Video}
-                >
-                  {recordings.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      No recordings for this booking yet. Recorded sessions are
-                      listed here once they finish processing.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {recordings.map((rec) => (
-                        <div
-                          key={rec.id}
-                          className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-foreground">
-                              {rec.title}
-                            </p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {format(rec.recordedAt, "d MMM yyyy")} ·{" "}
-                              {rec.durationInMinutes} min
-                            </p>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <StatusBadge
-                              {...recordingStatusBadge(rec.status)}
-                              size="sm"
-                            />
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setActiveRecording(rec)}
-                            >
-                              Watch
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </ResourceSubgroup>
-              </div>
+              <ResourceSnapshot
+                appointmentId={appointmentId}
+                supportsDocuments={supportsDocuments(vm.kind)}
+                hrefs={resourceHrefs}
+              />
             </Section>
           </aside>
         </div>
       </div>
-
-      <RecordingPlayerModal
-        open={Boolean(activeRecording)}
-        onOpenChange={(open) => {
-          if (!open) setActiveRecording(null);
-        }}
-        recording={
-          activeRecording
-            ? {
-                id: activeRecording.id,
-                title: activeRecording.title,
-                recordedAt: activeRecording.recordedAt,
-                durationInMinutes: activeRecording.durationInMinutes,
-                playbackUrl: null,
-                previewTranscript: activeRecording.previewTranscript ?? null,
-                planTitle: vm.title,
-              }
-            : null
-        }
-      />
 
       {/* Mounted HERE, not by each caller. This component renders the overflow
           menu whose every item opens one of these dialogs, so making the host

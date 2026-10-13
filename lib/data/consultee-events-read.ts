@@ -126,8 +126,8 @@ export async function readConsulteeEvents(
   since.setFullYear(since.getFullYear() - 1);
   const EVENTS_TAKE = 200;
 
-  // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
-  // This avoids network overhead and reduces response time from 11+ seconds to <1 second
+  // Each read is one joined statement: per-relation round trips, not row
+  // counts, dominate this request under the single-connection pool.
   const [consultations, subscriptions, webinars, classes, trials] =
     await Promise.all([
       prisma.consultation.findMany({
@@ -174,6 +174,7 @@ export async function readConsulteeEvents(
         },
         orderBy: { requestedAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
       prisma.subscription.findMany({
         where: {
@@ -218,6 +219,7 @@ export async function readConsulteeEvents(
         },
         orderBy: { requestedAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
       // Webinars the user registered for.
       prisma.webinar.findMany({
@@ -280,6 +282,7 @@ export async function readConsulteeEvents(
         },
         orderBy: { createdAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
       // Classes the user enrolled in.
       prisma.class.findMany({
@@ -342,6 +345,7 @@ export async function readConsulteeEvents(
         },
         orderBy: { createdAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
       // Trial sessions requested by the consultee
       prisma.trial.findMany({
@@ -387,6 +391,7 @@ export async function readConsulteeEvents(
         },
         orderBy: { requestedAt: "desc" },
         take: EVENTS_TAKE,
+        relationLoadStrategy: "join",
       }),
     ]);
 

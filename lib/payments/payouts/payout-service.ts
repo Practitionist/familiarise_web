@@ -71,8 +71,19 @@ import {
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
 import { notifyPayoutFailed, notifyPayoutProcessed } from "@/lib/novu/service";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import {
+  MONEY_EMAIL_TYPES,
+  stagePayoutStatusEmail,
+} from "@/lib/email/senders/money";
+import {
+  attemptStaged as attemptStagedEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
 import { getAppUrl } from "@/lib/url";
 import { goHref } from "@/lib/dashboard/go";
+import { formatNotificationMoney } from "@/lib/novu/humanize";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   buildPayoutCompletionPostings,
@@ -527,10 +538,196 @@ export async function approvePayout(
   }
 }
 
+type StagedConsultantPayoutNotice = {
+  userId?: string;
+  payoutId: string;
+  status: "COMPLETED" | "FAILED" | "REVERSED";
+  amountPaise: number;
+  currency: string;
+  method?: string | null;
+  reason?: string | null;
+  withheldText?: string;
+  bell: StagedTrigger | null;
+  emails: StagedRecipientEmail[];
+  stagedInTx: boolean;
+};
+
+async function stageConsultantPayoutNotice(
+  tx: Tx,
+  params: {
+    userId?: string | null;
+    consultantProfileId?: string | null;
+    payoutId: string;
+    status: "COMPLETED" | "FAILED" | "REVERSED";
+    amountPaise: number;
+    currency: string;
+    method?: string | null;
+    reason?: string | null;
+    withheldText?: string;
+  },
+): Promise<StagedConsultantPayoutNotice> {
+  const dashboardUrl = `${getAppUrl()}${goHref("expert", "earnings")}`;
+  let resolvedUserId = params.userId ?? undefined;
+  if (
+    !resolvedUserId &&
+    params.consultantProfileId &&
+    typeof tx.consultantProfile?.findUnique === "function"
+  ) {
+    const profile = await tx.consultantProfile.findUnique({
+      where: { id: params.consultantProfileId },
+      select: { userId: true },
+    });
+    resolvedUserId = profile?.userId;
+  }
+
+  let bell: StagedTrigger | null = null;
+  let emails: StagedRecipientEmail[] = [];
+  let stagedInTx = false;
+
+  if (resolvedUserId && typeof tx.notificationOutbox?.upsert === "function") {
+    stagedInTx = true;
+    if (params.status === "COMPLETED") {
+      const triggered = await notifyPayoutProcessed(
+        resolvedUserId,
+        {
+          amount: params.amountPaise,
+          currency: params.currency,
+          payoutId: params.payoutId,
+          dashboardUrl,
+        },
+        { tx, entityRef: `consultantPayout:${params.payoutId}` },
+      );
+      bell = triggered?.staged ?? null;
+    } else {
+      const triggered = await notifyPayoutFailed(
+        resolvedUserId,
+        {
+          amount: params.amountPaise,
+          currency: params.currency,
+          payoutId: params.payoutId,
+          kind: params.status === "REVERSED" ? "REVERSED" : "FAILED",
+          ...(params.reason ? { reason: params.reason } : {}),
+          dashboardUrl,
+        },
+        {
+          tx,
+          entityRef: `consultantPayout:${params.payoutId}:${params.status}`,
+        },
+      );
+      bell = triggered?.staged ?? null;
+    }
+  }
+
+  if (
+    resolvedUserId &&
+    typeof tx.user?.findMany === "function" &&
+    typeof tx.failedEmail?.create === "function"
+  ) {
+    emails = await stagePayoutStatusEmail(tx, {
+      userId: resolvedUserId,
+      payoutId: params.payoutId,
+      status: params.status,
+      amountPaise: params.amountPaise,
+      currency: params.currency,
+      method: params.method,
+      reason: params.reason,
+      withheldText: params.withheldText,
+      dashboardUrl,
+    });
+  }
+
+  return {
+    userId: resolvedUserId,
+    payoutId: params.payoutId,
+    status: params.status,
+    amountPaise: params.amountPaise,
+    currency: params.currency,
+    method: params.method,
+    reason: params.reason,
+    withheldText: params.withheldText,
+    bell,
+    emails,
+    stagedInTx,
+  };
+}
+
+async function flushConsultantPayoutNotice(
+  notice: StagedConsultantPayoutNotice | null,
+): Promise<void> {
+  if (!notice) return;
+  try {
+    const dashboardUrl = `${getAppUrl()}${goHref("expert", "earnings")}`;
+    if (notice.stagedInTx) {
+      await Promise.allSettled([
+        ...(notice.bell ? [attemptTrigger(notice.bell)] : []),
+        attemptStagedEmails(
+          notice.emails,
+          MONEY_EMAIL_TYPES.PAYOUT_STATUS,
+          EMAIL_BUDGET_MS.REQUEST,
+        ),
+      ]);
+      return;
+    }
+
+    if (!notice.userId) return;
+    await Promise.allSettled([
+      notice.status === "COMPLETED"
+        ? notifyPayoutProcessed(notice.userId, {
+            amount: notice.amountPaise,
+            currency: notice.currency,
+            payoutId: notice.payoutId,
+            dashboardUrl,
+          })
+        : notifyPayoutFailed(notice.userId, {
+            amount: notice.amountPaise,
+            currency: notice.currency,
+            payoutId: notice.payoutId,
+            ...(notice.status === "REVERSED" ? { kind: "REVERSED" } : {}),
+            ...(notice.reason ? { reason: notice.reason } : {}),
+            dashboardUrl,
+          }),
+      ...(notice.emails.length > 0
+        ? [
+            attemptStagedEmails(
+              notice.emails,
+              MONEY_EMAIL_TYPES.PAYOUT_STATUS,
+              EMAIL_BUDGET_MS.REQUEST,
+            ),
+          ]
+        : typeof prisma.user?.findMany === "function" &&
+            typeof prisma.failedEmail?.create === "function"
+          ? [
+              stagePayoutStatusEmail(prisma, {
+                userId: notice.userId,
+                payoutId: notice.payoutId,
+                status: notice.status,
+                amountPaise: notice.amountPaise,
+                currency: notice.currency,
+                method: notice.method,
+                reason: notice.reason,
+                withheldText: notice.withheldText,
+                dashboardUrl,
+              }).then((rows) =>
+                attemptStagedEmails(
+                  rows,
+                  MONEY_EMAIL_TYPES.PAYOUT_STATUS,
+                  EMAIL_BUDGET_MS.REQUEST,
+                ),
+              ),
+            ]
+          : []),
+    ]);
+  } catch (error) {
+    console.error("[payouts] Failed to deliver payout notice:", error);
+    reportSentryError(error, { subsystem: "payments", level: "warning" });
+  }
+}
+
 export async function rejectPayout(
   payoutId: string,
   reason: string,
 ): Promise<void> {
+  let stagedNotice: StagedConsultantPayoutNotice | null = null;
   await prisma.$transaction(async (tx) => {
     const claimed = await tx.consultantPayout.updateMany({
       where: { id: payoutId, status: PayoutStatus.PENDING },
@@ -560,30 +757,30 @@ export async function rejectPayout(
       },
     });
     await releaseClawbackRecovery(tx, payoutId);
-  });
 
-  try {
-    const rejected = await prisma.consultantPayout.findUnique({
+    const rejected = await tx.consultantPayout.findUnique({
       where: { id: payoutId },
       select: {
         amount: true,
         currency: true,
+        method: true,
         consultantProfile: { select: { userId: true } },
       },
     });
-    const userId = rejected?.consultantProfile?.userId;
-    if (rejected && userId) {
-      await notifyPayoutFailed(userId, {
-        amount: Number(rejected.amount),
-        currency: rejected.currency,
+    if (rejected?.consultantProfile?.userId) {
+      stagedNotice = await stageConsultantPayoutNotice(tx, {
+        userId: rejected.consultantProfile.userId,
         payoutId,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
+        status: "FAILED",
+        amountPaise: Number(rejected.amount),
+        currency: rejected.currency,
+        method: rejected.method,
+        reason,
       });
     }
-  } catch (error) {
-    console.error("[payouts] Failed to send payout-rejected notice:", error);
-    reportSentryError(error, { subsystem: "payments", level: "warning" });
-  }
+  });
+
+  await flushConsultantPayoutNotice(stagedNotice);
 }
 
 const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
@@ -1315,6 +1512,7 @@ async function handleProcessSinglePayoutError(
   }
 
   // Never submitted or definitively rejected: CAS transition PROCESSING → FAILED and release BATCHED earnings back to READY.
+  let stagedNotice: StagedConsultantPayoutNotice | null = null;
   await prisma.$transaction(async (tx) => {
     const failed = await tx.consultantPayout.updateMany({
       where: { id: payoutId, status: PayoutStatus.PROCESSING },
@@ -1335,7 +1533,30 @@ async function handleProcessSinglePayoutError(
       data: { payoutId: null, status: EarningStatus.READY },
     });
     await releaseClawbackRecovery(tx, payoutId);
+
+    const row = await tx.consultantPayout.findUnique?.({
+      where: { id: payoutId },
+      select: {
+        amount: true,
+        currency: true,
+        method: true,
+        consultantProfileId: true,
+      },
+    });
+    if (row) {
+      stagedNotice = await stageConsultantPayoutNotice(tx, {
+        consultantProfileId: row.consultantProfileId,
+        payoutId,
+        status: "FAILED",
+        amountPaise: Number(row.amount),
+        currency: row.currency,
+        method: row.method,
+        reason: errorMessage.slice(0, 500),
+      });
+    }
   });
+
+  await flushConsultantPayoutNotice(stagedNotice);
 
   return {
     payoutId,
@@ -1813,58 +2034,6 @@ async function failOrCancelConsultantPayoutInTx(
   await releaseClawbackRecovery(tx, payoutId);
 }
 
-async function notifyConsultantPayoutWebhookOutcome(
-  payoutStatus: PayoutStatus,
-  matched: {
-    id: string;
-    consultantProfileId: string;
-    amount: number;
-    netAmount: number | null;
-    currency: string;
-  },
-): Promise<void> {
-  if (payoutStatus === PayoutStatus.COMPLETED) {
-    const profile = await prisma.consultantProfile.findUnique({
-      where: { id: matched.consultantProfileId },
-      select: { userId: true },
-    });
-    if (profile?.userId) {
-      // The bank receives the staged net: after TDS and any clawback recovery.
-      await notifyPayoutProcessed(profile.userId, {
-        amount: matched.netAmount ?? matched.amount,
-        currency: matched.currency,
-        payoutId: matched.id,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
-      }).catch((error) => {
-        console.error("[payouts] Failed to send payout notification:", error);
-        reportSentryError(error, { subsystem: "payments", level: "warning" });
-      });
-    }
-    return;
-  }
-
-  if (
-    payoutStatus === PayoutStatus.FAILED ||
-    payoutStatus === PayoutStatus.CANCELLED
-  ) {
-    const profile = await prisma.consultantProfile.findUnique({
-      where: { id: matched.consultantProfileId },
-      select: { userId: true },
-    });
-    if (profile?.userId) {
-      await notifyPayoutFailed(profile.userId, {
-        amount: Number(matched.amount),
-        currency: matched.currency,
-        payoutId: matched.id,
-        dashboardUrl: `${getAppUrl()}${goHref("expert", "earnings")}`,
-      }).catch((error) => {
-        console.error("[payouts] Failed to send payout-failed notice:", error);
-        reportSentryError(error, { subsystem: "payments", level: "warning" });
-      });
-    }
-  }
-}
-
 export async function handlePayoutWebhook(
   _provider: PaymentGateway,
   providerPayoutId: string,
@@ -1928,8 +2097,10 @@ export async function handlePayoutWebhook(
     });
   }
 
-  const didTransition = await withSerializableRetry(() =>
-    prisma.$transaction(
+  let stagedNotice: StagedConsultantPayoutNotice | null = null;
+  await withSerializableRetry(() => {
+    stagedNotice = null;
+    return prisma.$transaction(
       async (tx) => {
         const terminalIncoming =
           payoutStatus === PayoutStatus.COMPLETED ||
@@ -2001,6 +2172,22 @@ export async function handlePayoutWebhook(
 
         if (payoutStatus === PayoutStatus.COMPLETED) {
           await completeConsultantPayoutInTx(tx, matched);
+          stagedNotice = await stageConsultantPayoutNotice(tx, {
+            consultantProfileId: matched.consultantProfileId,
+            payoutId: matched.id,
+            status: "COMPLETED",
+            amountPaise: Number(matched.amount),
+            currency: matched.currency,
+            method: matched.method,
+            ...(matched.tdsDeducted > 0
+              ? {
+                  withheldText: formatNotificationMoney(
+                    matched.tdsDeducted,
+                    matched.currency,
+                  ),
+                }
+              : {}),
+          });
           return true;
         }
 
@@ -2009,16 +2196,23 @@ export async function handlePayoutWebhook(
           payoutStatus === PayoutStatus.CANCELLED
         ) {
           await failOrCancelConsultantPayoutInTx(tx, matched.id);
+          stagedNotice = await stageConsultantPayoutNotice(tx, {
+            consultantProfileId: matched.consultantProfileId,
+            payoutId: matched.id,
+            status: "FAILED",
+            amountPaise: Number(matched.amount),
+            currency: matched.currency,
+            method: matched.method,
+            reason: failureReason,
+          });
         }
         return true;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    ),
-  );
+    );
+  });
 
-  if (didTransition) {
-    await notifyConsultantPayoutWebhookOutcome(payoutStatus, matched);
-  }
+  await flushConsultantPayoutNotice(stagedNotice);
 }
 
 export async function markConsultantPayoutReversed(
@@ -2026,8 +2220,10 @@ export async function markConsultantPayoutReversed(
   reason: string,
   referenceId?: string,
 ): Promise<{ wasNoOp: boolean }> {
-  const result = await withSerializableRetry(() =>
-    prisma.$transaction(
+  let stagedNotice: StagedConsultantPayoutNotice | null = null;
+  const result = await withSerializableRetry(() => {
+    stagedNotice = null;
+    return prisma.$transaction(
       async (tx) => {
         const selectShape = {
           id: true,
@@ -2035,6 +2231,7 @@ export async function markConsultantPayoutReversed(
           amount: true,
           tdsDeducted: true,
           currency: true,
+          method: true,
         } as const;
         let payout = await tx.consultantPayout.findFirst({
           where: { providerPayoutId },
@@ -2122,6 +2319,16 @@ export async function markConsultantPayoutReversed(
 
           await releaseClawbackRecovery(tx, payout.id);
 
+          stagedNotice = await stageConsultantPayoutNotice(tx, {
+            consultantProfileId: payout.consultantProfileId,
+            payoutId: payout.id,
+            status: "REVERSED",
+            amountPaise: Number(payout.amount),
+            currency: payout.currency,
+            method: payout.method,
+            reason,
+          });
+
           console.log(
             `↩️  Consultant payout ${payout.id} reversed after completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,
           );
@@ -2144,6 +2351,15 @@ export async function markConsultantPayoutReversed(
         });
         if (claimPreSettlement.count > 0) {
           await failOrCancelConsultantPayoutInTx(tx, payout.id);
+          stagedNotice = await stageConsultantPayoutNotice(tx, {
+            consultantProfileId: payout.consultantProfileId,
+            payoutId: payout.id,
+            status: "REVERSED",
+            amountPaise: Number(payout.amount),
+            currency: payout.currency,
+            method: payout.method,
+            reason,
+          });
           console.log(
             `↩️  Consultant payout ${payout.id} reversed prior to completion (provider=${providerPayoutId}): ${reason.slice(0, 200)}`,
           );
@@ -2158,8 +2374,10 @@ export async function markConsultantPayoutReversed(
         return { wasNoOp: true };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    ),
-  );
+    );
+  });
+
+  await flushConsultantPayoutNotice(stagedNotice);
 
   return { wasNoOp: result.wasNoOp };
 }

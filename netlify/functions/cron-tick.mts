@@ -33,9 +33,9 @@ const TARGETS = [
   "dispatch-outbound-webhooks",
   "sync-payment-earnings",
   "release-earnings",
-  // #1648 / #1654 — the email outbox relay; every 15 minutes, see TARGET_EVERY_MINUTES.
+  // Email outbox relay; every 15 minutes at offset :00 (see TARGET_EVERY_MINUTES).
   "retry-failed-emails",
-  // #1654 — the Novu outbox relay, every tick.
+  // Novu outbox relay; every 10 minutes at offset :05 (see TARGET_EVERY_MINUTES).
   "drain-notification-outbox",
   // #1583 E-P0-04 / #1589 P-P0-01, N-P1-03 / #1591 J1-P1-05 / #1599 C-P1-06 —
   // the booking sweeps whose hourly Actions twin let a lapsed pay-link, a
@@ -373,7 +373,10 @@ async function hitTarget(
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${secret}` },
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        "sentry-propagate-traces": "false",
+      },
       signal: controller.signal,
     });
     // Only the twin's own maintenance refusal carries `phase`; a platform or
@@ -446,17 +449,22 @@ export function reportableToSentry(name: string): boolean {
   return name !== "sentry-ingest-canary";
 }
 
-/** #1582 F-P2-02 — a missing secret is a silent fleet outage; page Sentry, not just the log. */
+/** A missing secret is a silent fleet outage; page Sentry, not just the log. */
 async function alertMissingSecret(error: string): Promise<void> {
   try {
     const Sentry = await import("@sentry/node");
     const { applyErrorBudget } = await import("../../sentry.shared.config");
+    const { scrubSentryEvent } =
+      await import("../../lib/observability/sentry-scrubber");
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
-      beforeSend: applyErrorBudget,
+      beforeSend(event) {
+        const budgeted = applyErrorBudget(event);
+        return budgeted === null ? null : scrubSentryEvent(budgeted);
+      },
     });
     Sentry.captureMessage(error, "fatal");
     await Sentry.flush(2_000);
@@ -520,12 +528,17 @@ async function alertFailedTargets(
   try {
     const Sentry = await import("@sentry/node");
     const { applyErrorBudget } = await import("../../sentry.shared.config");
+    const { scrubSentryEvent } =
+      await import("../../lib/observability/sentry-scrubber");
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
       tracesSampleRate: 0,
       tracePropagationTargets: [],
       registerEsmLoaderHooks: false,
-      beforeSend: applyErrorBudget,
+      beforeSend(event) {
+        const budgeted = applyErrorBudget(event);
+        return budgeted === null ? null : scrubSentryEvent(budgeted);
+      },
       // Same posture as the app: no IP, no cookies, no headers. The ticker's
       // only caller is the Netlify scheduler, so there is nothing to collect.
       dataCollection: {

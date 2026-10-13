@@ -24,6 +24,7 @@ export const NOVU_WORKFLOWS = {
   APPOINTMENT_COMPLETED: "appointment-completed",
 
   // Payment events
+  PAYMENT_LINK: "payment-link",
   PAYMENT_SUCCESS: "payment-success",
   PAYMENT_FAILED: "payment-failed",
   REFUND_PROCESSED: "refund-processed",
@@ -81,6 +82,7 @@ export const NOVU_WORKFLOWS = {
   // Recordings
   RECORDING_AVAILABLE: "recording-available",
   RECORDING_FAILED: "recording-failed",
+  RECORDING_REMOVED: "recording-removed",
 
   // Documents
   DOCUMENT_UPLOADED: "document-uploaded",
@@ -258,6 +260,36 @@ export type PaymentFailedInput = Omit<
   amount: number;
 };
 
+export type PaymentLinkPayload = Partial<NotificationScope> & {
+  paymentId?: string;
+  appointmentId?: string;
+  amount: string;
+  amountFormatted: string;
+  amountPaise: number;
+  currency: string;
+  consultantName: string;
+  appointmentType: string;
+  appointmentTypeCode?: string;
+  planTitle?: string;
+  paymentUrl: string;
+  expiresAt?: string;
+  expiresAtIso?: string;
+  reminder?: boolean;
+};
+
+export type PaymentLinkInput = Omit<
+  PaymentLinkPayload,
+  | "amount"
+  | "amountFormatted"
+  | "amountPaise"
+  | "appointmentTypeCode"
+  | "expiresAt"
+  | "expiresAtIso"
+> & {
+  amount: number;
+  expiresAt?: string | Date;
+};
+
 export type RefundPayload = NotificationScope & {
   amount: string;
   amountFormatted: string;
@@ -378,6 +410,7 @@ export type VerificationPayload = {
 
 export type ModerationWarningPayload = {
   reason?: string;
+  supportUrl?: string;
 };
 
 export type AccountSuspendedPayload = {
@@ -385,6 +418,7 @@ export type AccountSuspendedPayload = {
   suspendedUntil: string;
   suspendedUntilIso?: string;
   appointmentsCancelled?: number;
+  supportUrl?: string;
 };
 
 export type AccountSuspendedInput = Omit<
@@ -395,6 +429,7 @@ export type AccountSuspendedInput = Omit<
 export type AccountBannedPayload = {
   reason?: string;
   appointmentsCancelled?: number;
+  supportUrl?: string;
 };
 
 export type PayoutPayload = {
@@ -402,6 +437,8 @@ export type PayoutPayload = {
   amountPaise: number;
   currency: string;
   payoutId?: string;
+  kind?: "FAILED" | "REVERSED";
+  reason?: string;
   dashboardUrl: string;
 };
 
@@ -437,6 +474,12 @@ export type RecordingPayload = NotificationScope & {
   appointmentTypeCode?: string;
   consultantName: string;
   consulteeName?: string;
+  dashboardUrl: string;
+};
+
+export type RecordingRemovedPayload = NotificationScope & {
+  recordingTitle: string;
+  consultantName: string;
   dashboardUrl: string;
 };
 
@@ -528,6 +571,7 @@ export type MaintenancePayload = {
   reason?: string;
   estimatedEnd?: string;
   estimatedEndIso?: string;
+  statusUrl?: string;
 };
 
 export type MaintenanceInput = Omit<MaintenancePayload, "estimatedEndIso">;

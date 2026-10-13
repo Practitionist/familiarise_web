@@ -23,9 +23,16 @@ function outputToGitHubActions(result: SystemJobExecutionPruneResult): void {
   if (!process.env.GITHUB_ACTIONS) return;
   const outputFile = process.env.GITHUB_OUTPUT;
   if (!outputFile) return;
-  const lines = [`pruned=${result.pruned}`, `stranded=${result.stranded}`].join(
-    "\n",
-  );
+  const lines = [
+    `pruned=${result.pruned}`,
+    `stranded=${result.stranded}`,
+    `failedEmailsBodyScrubbed=${result.failedEmailsBodyScrubbed ?? 0}`,
+    `failedEmailBatchesScrubbed=${result.failedEmailBatchesScrubbed ?? 0}`,
+    `failedEmailsPruned=${result.failedEmailsPruned ?? 0}`,
+    `failedEmailBatchesPruned=${result.failedEmailBatchesPruned ?? 0}`,
+    `notificationOutboxPruned=${result.notificationOutboxPruned ?? 0}`,
+    `emailEventsPruned=${result.emailEventsPruned ?? 0}`,
+  ].join("\n");
   fs.appendFileSync(outputFile, lines + "\n");
 }
 
@@ -48,6 +55,12 @@ if (require.main === module) {
       Sentry.logger.info("job:prune-system-job-executions finished", {
         pruned: result.pruned,
         stranded: result.stranded,
+        failedEmailsBodyScrubbed: result.failedEmailsBodyScrubbed ?? 0,
+        failedEmailBatchesScrubbed: result.failedEmailBatchesScrubbed ?? 0,
+        failedEmailsPruned: result.failedEmailsPruned ?? 0,
+        failedEmailBatchesPruned: result.failedEmailBatchesPruned ?? 0,
+        notificationOutboxPruned: result.notificationOutboxPruned ?? 0,
+        emailEventsPruned: result.emailEventsPruned ?? 0,
       });
     } finally {
       await disconnectDatabase();

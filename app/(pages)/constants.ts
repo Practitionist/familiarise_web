@@ -5,6 +5,10 @@ import {
 
 export const ACK_PROMISE_COPY = `within ${STATUTORY_ACK_HOURS} hours` as const;
 
+export const SUPPORT_CONTACT_EMAIL = "support@familiarisenow.com" as const;
+export const PRIVACY_CONTACT_EMAIL = "privacy@familiarisenow.com" as const;
+export const DPDP_CONTACT_EMAIL = "dpdp@familiarisenow.com" as const;
+
 export function resolveLiveMailbox(): string {
   return (
     process.env.CONTACT_INBOX_ADDRESS?.trim() || "support@practitionist.com"
@@ -32,11 +36,11 @@ export const GRIEVANCE_OFFICER = {
 } as const;
 
 export const POLICY_DATES = {
-  privacyLastUpdated: "October 10, 2026",
-  termsLastUpdated: "July 12, 2026",
-  refundLastUpdated: "September 26, 2026",
-  grievanceLastUpdated: "October 10, 2026",
-  reviewsPolicyLastUpdated: "October 10, 2026",
+  privacyLastUpdated: "October 2026",
+  termsLastUpdated: "October 2026",
+  refundLastUpdated: "October 2026",
+  grievanceLastUpdated: "October 2026",
+  reviewsPolicyLastUpdated: "October 2026",
 } as const;
 
 export const ANTI_SCAM_NOTICE =

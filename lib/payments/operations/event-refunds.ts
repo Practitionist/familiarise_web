@@ -629,36 +629,36 @@ export async function refundRemovedAttendeeSeat(args: {
       paymentId: payment.id,
       amountPaise,
       reason: `removed from ${args.kind} ${args.eventId} by the ${actorLabel} (${refundPct}%)`,
+      ...(isOrganiserInitiated
+        ? { customerReason: `You were removed from this ${args.kind}.` }
+        : {}),
       initiatedByUserId: args.initiatedByUserId,
       dedupeKey,
     });
 
-    // Only the gateway rail puts money back where this person can see it. On
-    // the internal rail the value returned to the org's wallet, accrual or
-    // licence — the member never paid, so telling them a refund is coming is
-    // simply false.
-    if (result.rail === "GATEWAY") {
-      await notifyRefundProcessed(args.attendeeUserId, {
-        ...notificationScope(payment.organizationId),
-        amount: amountPaise,
-        currency: payment.currency,
-        reason: isOrganiserInitiated
-          ? `You were removed from this ${args.kind}.`
-          : `You left this ${args.kind}.`,
-        // #1527 — the recipient is always the attendee who paid.
-        dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
-      }).catch(() => {});
-      // #1653 — the email twin; the sender never throws, the catch is belt
-      // and braces so a settled refund can never fail on its receipt.
-      await sendRefundProcessedEmail(
-        {
-          userId: args.attendeeUserId,
-          paymentId: payment.id,
-          amountPaise,
+    // Gateway refunds with status SUCCEEDED stage notices inside refundPayment
+    // Phase 3b, and PENDING refunds wait for the settlement webhook.
+    if (result.rail === "GATEWAY" && !result.status) {
+      await Promise.allSettled([
+        notifyRefundProcessed(args.attendeeUserId, {
+          ...notificationScope(payment.organizationId),
+          amount: amountPaise,
           currency: payment.currency,
-        },
-        { budgetMs: EMAIL_BUDGET_MS.REQUEST },
-      ).catch(() => {});
+          reason: isOrganiserInitiated
+            ? `You were removed from this ${args.kind}.`
+            : `You left this ${args.kind}.`,
+          dashboardUrl: `${getAppUrl()}${goHref("client", "payments")}`,
+        }),
+        sendRefundProcessedEmail(
+          {
+            userId: args.attendeeUserId,
+            paymentId: payment.id,
+            amountPaise,
+            currency: payment.currency,
+          },
+          { budgetMs: EMAIL_BUDGET_MS.REQUEST },
+        ),
+      ]);
     }
 
     return {

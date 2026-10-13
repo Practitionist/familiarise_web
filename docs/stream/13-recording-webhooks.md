@@ -222,9 +222,9 @@ erDiagram
     Meeting ||--|| AppointmentOccurrence : "belongs to"
     AppointmentOccurrence ||--|| Appointment : "belongs to"
     Appointment ||--o| Webinar : "may have"
-    Appointment ||--o| Class : "may have"
+    Appointment ||--o| ClassBatch : "may have"
     Webinar ||--|| WebinarPlan : "belongs to"
-    Class ||--|| ClassPlan : "belongs to"
+    ClassBatch ||--|| ClassPlan : "belongs to"
     WebinarPlan ||--|| ConsultantProfile : "owned by"
     ClassPlan ||--|| ConsultantProfile : "owned by"
 
@@ -541,7 +541,7 @@ sequenceDiagram
 - **Out-of-order webhook CAS (`endedAt: null`):** `handleRecordingStarted` sets `isRecording = true` strictly via `updateMany({ where: { id, endedAt: null } })`. If `call.ended` arrived earlier (`count === 0`), only `{ recordingStartedAt, recordingStartedBy }` metadata is updated without re-arming `isRecording`.
 - **Transfer resilience & exponential backoff (`[15m, 1h, 6h, 24h]`):** Failed copies return to `READY` and retry up to `MAX_TRANSFER_ATTEMPTS = 12` spaced by `15 min`, `1 hour`, `6 hours`, and `24 hours`. While `READY` or `TRANSFERRING`, playback serves Stream's URL seamlessly.
 - **Attempt-isolated R2 object keys (`recordings/{recordingId}/attempt-{attempt}.mp4`):** Each upload writes to its own `attempt-{attempt}.mp4` key so a timed-out worker's failure cleanup (`deleteR2Object`) can only delete its own object and can never remove a newer winning worker's published MP4. Once `status = AVAILABLE` commits, prior `attempt-1..{attempt-1}.mp4` keys are deleted asynchronously best-effort.
-- **Database CHECK invariant (`Recording_storage_and_publish_check`):** Enforced in `prisma/sql/check-constraints.sql` (`NOT VALID` + `VALIDATE CONSTRAINT`): active `PLATFORM` rows require `storagePath IS NOT NULL`; `AVAILABLE` rows require `PLATFORM` storage; `PUBLISHED` rows require `PLATFORM`, `storagePath`, `listPricePaise > 0`, and consent attestation.
+- **Database CHECK invariant (`Recording_storage_and_publish_check`):** Enforced in `prisma/sql/check-constraints.sql` (`NOT VALID` + `VALIDATE CONSTRAINT`): active `PLATFORM` rows require `storagePath IS NOT NULL` (an `EXPIRED` platform row may have a null `storagePath`); `AVAILABLE` rows require `PLATFORM` storage; `PUBLISHED` rows require `PLATFORM`, `storagePath`, `listPricePaise > 0`, and consent attestation.
 - **Playback continuity (`>= 4h` TTL & `savedTimeRef` resume):** Presigned R2 GET URLs expire after `max(4 hours, min(24 hours, 1 hour + 2 × duration))` (`playbackUrlTtlSeconds`). If a viewer's session outlives a presigned URL or the parent refreshes `recording.playbackUrl`, `RecordingPlayerModal` preserves `savedTimeRef.current` (`[open, recordingId]` reset boundary), fetches a fresh presigned URL in the background without unmounting `<video>`, and restores `video.currentTime` automatically on `loadedmetadata`.
 
 ### Storage Path Format
@@ -879,6 +879,8 @@ const hasPaidEnrollment = payment != null && isPaymentEntitled(payment); // lib/
 ```
 
 ### Recording Visibility Rules
+
+> The shared-run and multi-batch rule (own batch by session, with catch-up) is specified in [19. Recordings: Lifecycle, Retention and Access](./19-recordings-lifecycle-and-access.md#shared-run-and-multi-batch-access) and supersedes the plan-wide extensions below once it lands.
 
 Recordings are private by default. The playback route evaluates these rules ([ADR](../decisions/2026-10-09-recording-storage-retention-visibility.md)):
 

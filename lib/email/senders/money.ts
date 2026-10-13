@@ -5,10 +5,22 @@
  */
 
 import type { ReactElement } from "react";
+import {
+  OrgBillingReceiptEmail,
+  type OrgBillingReceiptKind,
+} from "@/emails/orgs/OrgBillingReceiptEmail";
 import { OrgInvoiceOverdueEmail } from "@/emails/orgs/OrgInvoiceOverdueEmail";
 import { OrgOverageDueEmail } from "@/emails/orgs/OrgOverageDueEmail";
 import { OrgPayoutFailedEmail } from "@/emails/orgs/OrgPayoutFailedEmail";
 import { OrgWalletLowEmail } from "@/emails/orgs/OrgWalletLowEmail";
+import {
+  DisputeNoticeEmail,
+  type DisputeNoticeKind,
+} from "@/emails/payments/DisputeNoticeEmail";
+import {
+  PayoutStatusEmail,
+  type PayoutStatusKind,
+} from "@/emails/payments/PayoutStatusEmail";
 import { RefundFailedEmail } from "@/emails/payments/RefundFailedEmail";
 import { RefundProcessedEmail } from "@/emails/payments/RefundProcessedEmail";
 import { getAppUrl } from "@/lib/url";
@@ -23,17 +35,29 @@ import {
   dateText,
   defineBudgetedEmailSender,
   defineFixedBudgetEmailSender,
+  defineLifecycleStager,
   greet,
   money,
+  prepareSpecEmails,
   stageSpecGuarded,
   type Paise,
+  type PreparedRecipientEmails,
   type RecipientEmailSpec,
   type StagingTx,
 } from "./shared";
 
+export {
+  type DisputeNoticeKind,
+  type OrgBillingReceiptKind,
+  type PayoutStatusKind,
+};
+
 export const MONEY_EMAIL_TYPES = {
   REFUND_PROCESSED: "REFUND_PROCESSED",
   REFUND_FAILED: "REFUND_FAILED",
+  PAYOUT_STATUS: "PAYOUT_STATUS",
+  DISPUTE_NOTICE: "DISPUTE_NOTICE",
+  ORG_BILLING_RECEIPT: "ORG_BILLING_RECEIPT",
   ORG_INVOICE_OVERDUE: "ORG_INVOICE_OVERDUE",
   ORG_WALLET_LOW: "ORG_WALLET_LOW",
   ORG_PAYOUT_FAILED: "ORG_PAYOUT_FAILED",
@@ -295,9 +319,7 @@ export const sendOrgOverageDueEmail =
               orgName: args.orgName,
               programTitle: args.programTitle,
               amountText,
-              dueByText: args.dueBy
-                ? dateText(args.dueBy, r.zone)
-                : undefined,
+              dueByText: args.dueBy ? dateText(args.dueBy, r.zone) : undefined,
               payUrl: args.payUrl,
               unsubscribeUrl: r.unsubscribeUrl,
             }),
@@ -306,3 +328,214 @@ export const sendOrgOverageDueEmail =
     },
     NOTHING_SENT,
   );
+
+// ── Payout status (B2C consultant & Org) ────────────────────────────────────
+
+export interface PayoutStatusEmailArgs {
+  userId?: string;
+  recipientUserIds?: string[];
+  payoutId: string;
+  status: PayoutStatusKind;
+  amountPaise: Paise;
+  currency: string;
+  orgName?: string | null;
+  method?: string | null;
+  reason?: string | null;
+  withheldText?: string | null;
+  dashboardUrl?: string;
+}
+
+function buildPayoutStatusEmail(args: PayoutStatusEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const userIds = args.recipientUserIds ?? (args.userId ? [args.userId] : []);
+  const amountText = money(args.amountPaise, args.currency);
+  const target = args.orgName ? ` to ${args.orgName}` : "";
+  const subject =
+    args.status === "COMPLETED"
+      ? `Your payout of ${amountText}${target} is complete`
+      : args.status === "REVERSED"
+        ? `Your payout${target} was reversed`
+        : `Your payout${target} could not be completed`;
+  const resolvedDashboardUrl =
+    args.dashboardUrl ?? `${getAppUrl()}${goHref("expert", "earnings")}`;
+
+  return {
+    userIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.PAYOUT_STATUS,
+      category: args.orgName ? "orgBilling" : "payments",
+      from: SENDERS.finance,
+      entityRef: args.orgName
+        ? `orgPayout:${args.payoutId}`
+        : `payout:${args.payoutId}`,
+      subject: () => subject,
+      render: (r: EmailRecipient): ReactElement =>
+        PayoutStatusEmail({
+          status: args.status,
+          recipientName: greet(r),
+          orgName: args.orgName,
+          amountText,
+          payoutId: args.payoutId,
+          method: args.method,
+          reason: args.reason,
+          withheldText: args.withheldText,
+          dashboardUrl: resolvedDashboardUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export async function preparePayoutStatusEmail(
+  args: PayoutStatusEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildPayoutStatusEmail(args);
+  return prepareSpecEmails(spec, userIds);
+}
+
+export const sendPayoutStatusEmail =
+  defineBudgetedEmailSender<PayoutStatusEmailArgs>(
+    buildPayoutStatusEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.WEBHOOK,
+  );
+
+export const stagePayoutStatusEmail =
+  defineLifecycleStager<PayoutStatusEmailArgs>(buildPayoutStatusEmail);
+
+// ── Dispute notice ──────────────────────────────────────────────────────────
+
+export interface DisputeNoticeEmailArgs {
+  userId?: string;
+  recipientUserIds?: string[];
+  disputeId: string;
+  paymentId?: string | null;
+  kind: DisputeNoticeKind;
+  amountPaise: Paise;
+  currency: string;
+  reason?: string | null;
+  outcome?: "WON" | "LOST" | string | null;
+  respondBy?: Date | null;
+  dashboardUrl?: string;
+}
+
+function buildDisputeNoticeEmail(args: DisputeNoticeEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const userIds = args.recipientUserIds ?? (args.userId ? [args.userId] : []);
+  const amountText = money(args.amountPaise, args.currency);
+  const subject =
+    args.kind === "OPENED"
+      ? `Payment dispute opened (${amountText})`
+      : `Payment dispute resolved (${amountText})`;
+  const resolvedDashboardUrl =
+    args.dashboardUrl ?? `${getAppUrl()}${goHref("expert", "earnings")}`;
+
+  return {
+    userIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.DISPUTE_NOTICE,
+      category: null,
+      from: SENDERS.finance,
+      entityRef: `dispute:${args.disputeId}`,
+      subject: () => subject,
+      render: (r: EmailRecipient): ReactElement =>
+        DisputeNoticeEmail({
+          kind: args.kind,
+          recipientName: greet(r),
+          amountText,
+          disputeId: args.disputeId,
+          paymentId: args.paymentId,
+          reason: args.reason,
+          outcome: args.outcome,
+          respondByText: args.respondBy
+            ? dateText(args.respondBy, r.zone)
+            : null,
+          dashboardUrl: resolvedDashboardUrl,
+        }),
+    },
+  };
+}
+
+export const sendDisputeNoticeEmail =
+  defineBudgetedEmailSender<DisputeNoticeEmailArgs>(
+    buildDisputeNoticeEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.WEBHOOK,
+  );
+
+export const stageDisputeNoticeEmail =
+  defineLifecycleStager<DisputeNoticeEmailArgs>(buildDisputeNoticeEmail);
+
+// ── Org billing receipts (invoice issued/paid & wallet top-up) ──────────────
+
+export interface OrgBillingEmailArgs {
+  recipientUserIds: string[];
+  organizationId: string;
+  orgName: string;
+  kind: OrgBillingReceiptKind;
+  amountPaise: Paise;
+  currency: string;
+  invoiceId?: string | null;
+  invoiceNumber?: string | null;
+  dueDate?: Date | null;
+  newBalancePaise?: Paise | null;
+  dashboardUrl: string;
+}
+
+function buildOrgBillingEmail(args: OrgBillingEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const amountText = money(args.amountPaise, args.currency);
+  const invLabel = args.invoiceNumber ? ` ${args.invoiceNumber}` : "";
+  const subject =
+    args.kind === "INVOICE_ISSUED"
+      ? `Invoice${invLabel} issued for ${args.orgName}`
+      : args.kind === "INVOICE_PAID"
+        ? `Invoice${invLabel} paid for ${args.orgName}`
+        : `Wallet top-up confirmed for ${args.orgName}`;
+  const entityRef = args.invoiceId
+    ? `orgInvoice:${args.invoiceId}`
+    : `org:${args.organizationId}`;
+  const newBalanceText =
+    args.newBalancePaise !== undefined && args.newBalancePaise !== null
+      ? money(args.newBalancePaise, args.currency)
+      : null;
+
+  return {
+    userIds: args.recipientUserIds,
+    spec: {
+      emailType: MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
+      category: "orgBilling",
+      from: SENDERS.finance,
+      entityRef,
+      subject: () => subject,
+      render: (r: EmailRecipient): ReactElement =>
+        OrgBillingReceiptEmail({
+          kind: args.kind,
+          recipientName: greet(r),
+          orgName: args.orgName,
+          amountText,
+          invoiceNumber: args.invoiceNumber,
+          dueDateText: args.dueDate ? dateText(args.dueDate, r.zone) : null,
+          newBalanceText,
+          dashboardUrl: args.dashboardUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const sendOrgBillingEmail =
+  defineBudgetedEmailSender<OrgBillingEmailArgs>(
+    buildOrgBillingEmail,
+    NOTHING_SENT,
+    EMAIL_BUDGET_MS.WEBHOOK,
+  );
+
+export const stageOrgBillingEmail =
+  defineLifecycleStager<OrgBillingEmailArgs>(buildOrgBillingEmail);

@@ -98,6 +98,7 @@ export function SubscriptionDetails({
               curriculumHeading="Your roadmap"
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
+              filesIncluded={plan.materials}
               faqs={plan.faqs}
               topics={plan.topics}
             />
@@ -118,8 +119,8 @@ export function SubscriptionDetails({
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
                     for {plan.durationInMonths} month
-                    {plan.durationInMonths !== 1 ? "s" : ""} ·{" "}
-                    {plan.totalHours}h total
+                    {plan.durationInMonths !== 1 ? "s" : ""} · {plan.totalHours}
+                    h total
                   </p>
                 </div>
 
@@ -140,9 +141,7 @@ export function SubscriptionDetails({
                 </div>
 
                 <Button asChild className="w-full h-11">
-                  <Link
-                    href={`/checkout/plans/subscription/${plan.id}`}
-                  >
+                  <Link href={`/checkout/plans/subscription/${plan.id}`}>
                     Subscribe
                   </Link>
                 </Button>
@@ -158,7 +157,9 @@ export function SubscriptionDetails({
                     >
                       <div className="relative w-11 h-11 flex-shrink-0">
                         <Image
-                          src={consultant.user?.image ?? "/placeholder-user.jpg"}
+                          src={
+                            consultant.user?.image ?? "/placeholder-user.jpg"
+                          }
                           alt={mentorName}
                           fill
                           className="rounded-xl object-cover"

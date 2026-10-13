@@ -181,6 +181,14 @@ const SYSTEM_JOBS: SystemJob[] = [
     category: "Reconciliation",
   },
   {
+    id: "purge-deleted-documents",
+    name: "Purge Deleted Documents",
+    description:
+      "Tombstone session documents past retention, then purge tombstones past the grace window",
+    schedule: "Daily",
+    category: "Reconciliation",
+  },
+  {
     id: "reconcile-document-storage",
     name: "Reconcile Document Storage",
     description: "Find orphaned/missing files in Supabase storage",

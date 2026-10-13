@@ -29,7 +29,14 @@ import SupportTicketUpdateEmail, {
   supportTicketUpdateSubject,
 } from "@/emails/support/SupportTicketUpdateEmail";
 import { SENDERS, supportEmail } from "../config";
-import { absolute, defineBudgetedEmailSender, greet, whenText } from "./shared";
+import {
+  absolute,
+  defineBudgetedEmailSender,
+  defineLifecycleStager,
+  greet,
+  whenText,
+  type RecipientEmailSpec,
+} from "./shared";
 
 const EXCERPT_LENGTH = 140;
 
@@ -107,8 +114,13 @@ export interface SupportTicketResponseEmailArgs {
   ticketUrl: string;
 }
 
-export const sendSupportTicketResponseEmail =
-  defineBudgetedEmailSender<SupportTicketResponseEmailArgs>((args) => ({
+function buildSupportTicketResponseEmail(
+  args: SupportTicketResponseEmailArgs,
+): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  return {
     userIds: [args.ownerUserId],
     spec: {
       emailType: "SUPPORT_TICKET_RESPONSE",
@@ -127,7 +139,18 @@ export const sendSupportTicketResponseEmail =
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
-  }));
+  };
+}
+
+export const sendSupportTicketResponseEmail =
+  defineBudgetedEmailSender<SupportTicketResponseEmailArgs>(
+    buildSupportTicketResponseEmail,
+  );
+
+export const stageSupportTicketResponseEmail =
+  defineLifecycleStager<SupportTicketResponseEmailArgs>(
+    buildSupportTicketResponseEmail,
+  );
 
 export function supportNextStepText(status: SupportTicketStatus): string {
   switch (status) {
@@ -154,8 +177,11 @@ export interface SupportTicketUpdateEmailArgs {
   ticketUrl: string;
 }
 
-export const sendSupportTicketUpdateEmail =
-  defineBudgetedEmailSender<SupportTicketUpdateEmailArgs>((args) => ({
+function buildSupportTicketUpdateEmail(args: SupportTicketUpdateEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  return {
     userIds: [args.ownerUserId],
     spec: {
       emailType: "SUPPORT_TICKET_UPDATE",
@@ -174,7 +200,18 @@ export const sendSupportTicketUpdateEmail =
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
-  }));
+  };
+}
+
+export const sendSupportTicketUpdateEmail =
+  defineBudgetedEmailSender<SupportTicketUpdateEmailArgs>(
+    buildSupportTicketUpdateEmail,
+  );
+
+export const stageSupportTicketUpdateEmail =
+  defineLifecycleStager<SupportTicketUpdateEmailArgs>(
+    buildSupportTicketUpdateEmail,
+  );
 
 // ── Account ─────────────────────────────────────────────────────────────────
 
@@ -305,8 +342,11 @@ export interface NewReviewEmailArgs {
   reviewUrl: string;
 }
 
-export const sendNewReviewEmail = defineBudgetedEmailSender<NewReviewEmailArgs>(
-  (args) => ({
+function buildNewReviewEmail(args: NewReviewEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  return {
     userIds: [args.consultantUserId],
     spec: {
       emailType: "NEW_REVIEW_RECEIVED",
@@ -324,5 +364,11 @@ export const sendNewReviewEmail = defineBudgetedEmailSender<NewReviewEmailArgs>(
           unsubscribeUrl: r.unsubscribeUrl,
         }),
     },
-  }),
-);
+  };
+}
+
+export const sendNewReviewEmail =
+  defineBudgetedEmailSender<NewReviewEmailArgs>(buildNewReviewEmail);
+
+export const stageNewReviewEmail =
+  defineLifecycleStager<NewReviewEmailArgs>(buildNewReviewEmail);
