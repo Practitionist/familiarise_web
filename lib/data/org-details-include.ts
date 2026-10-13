@@ -35,6 +35,8 @@ export const orgDetailsInclude = {
   // #1230 — settings UI renders the MSME declaration; the payout deadline
   // engine already reads this satellite server-side.
   msmeInfo: { select: { msmeStatus: true, msmeWrittenAgreementOnFile: true } },
+  // Read with relationLoadStrategy "join": each count is then a per-org
+  // LATERAL subquery instead of an unfiltered GROUP BY over the child table.
   _count: {
     select: {
       memberships: true,

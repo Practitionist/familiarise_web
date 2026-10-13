@@ -29,7 +29,7 @@ jest.mock("../../lib/prisma", () => ({
     consultation: { findMany: jest.fn(), count: jest.fn() },
     subscription: { findMany: jest.fn(), count: jest.fn() },
     activityLog: { findMany: jest.fn() },
-    consultantEarnings: { aggregate: jest.fn() },
+    consultantEarnings: { aggregate: jest.fn(), groupBy: jest.fn() },
     consultantReview: { aggregate: jest.fn() },
     trial: { groupBy: jest.fn() },
     membership: { findMany: jest.fn() },
@@ -60,6 +60,7 @@ describe("consultant Home read shape (#1101)", () => {
     (prisma.consultantEarnings.aggregate as jest.Mock).mockResolvedValue({
       _sum: { consultantSharePaise: null, refundedShareAmount: null },
     });
+    (prisma.consultantEarnings.groupBy as jest.Mock).mockResolvedValue([]);
     (prisma.consultantReview.aggregate as jest.Mock).mockResolvedValue({
       _avg: { rating: null },
       _count: { rating: 0 },
@@ -204,17 +205,16 @@ describe("consultant Home read shape (#1101)", () => {
   it("issues no display read at all when there is nothing upcoming (#1121)", async () => {
     // slotFindMany resolves [] from beforeEach, so homeAppointmentIds is empty —
     // a new consultant, an entirely past book, or one whose upcoming work was
-    // cancelled. Prisma renders an empty `in` as `IN (NULL)`, and the display
-    // read's include graph then costs nine follow-up SELECTs on `users` for a
-    // result that is guaranteed to be empty.
+    // cancelled. Prisma renders an empty `in` as `IN (NULL)` and still pays a
+    // round trip for a result that is guaranteed to be empty.
     await getConsultantDashboard("cp-1");
 
-    const displayReads = apptFindMany.mock.calls.filter((c) => c[0].include);
+    const displayReads = apptFindMany.mock.calls.filter((c) => c[0].where.id);
     expect(displayReads).toEqual([]);
 
     // The active-book read is id-independent and MUST still run — the guard is
     // per-query, not an early return, or Financial Summary goes blank.
-    expect(apptFindMany.mock.calls.some((c) => c[0].select)).toBe(true);
+    expect(apptFindMany.mock.calls.some((c) => !c[0].where.id)).toBe(true);
   });
 
   it("still issues the display read when there IS something upcoming (#1121)", async () => {
@@ -228,9 +228,35 @@ describe("consultant Home read shape (#1101)", () => {
 
     await getConsultantDashboard("cp-1");
 
-    const displayReads = apptFindMany.mock.calls.filter((c) => c[0].include);
+    const displayReads = apptFindMany.mock.calls.filter((c) => c[0].where.id);
     expect(displayReads).toHaveLength(1);
     expect(displayReads[0][0].where.id.in).toEqual(["appt-1"]);
+    expect(displayReads[0][0].relationLoadStrategy).toBe("join");
+  });
+
+  it("derives Net, Ready and Available from one grouped earnings read", async () => {
+    const group = (status: string, share: bigint, refunded: bigint) => ({
+      status,
+      _sum: { consultantSharePaise: share, refundedShareAmount: refunded },
+    });
+    (prisma.consultantEarnings.groupBy as jest.Mock).mockResolvedValue([
+      group("READY", BigInt(50_000), BigInt(5_000)),
+      group("BATCHED", BigInt(20_000), BigInt(0)),
+      group("PAID", BigInt(100_000), BigInt(0)),
+      group("REFUNDED", BigInt(30_000), BigInt(30_000)),
+    ]);
+
+    const { financialSummary } = await getConsultantDashboard("cp-1");
+
+    expect(financialSummary.netEarnings).toBe(165_000);
+    expect(financialSummary.nextPayout).toBe(45_000);
+    expect(financialSummary.availableEarnings).toBe(65_000);
+    expect(prisma.consultantEarnings.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        by: ["status"],
+        where: { consultantProfileId: "cp-1" },
+      }),
+    );
   });
 
   it("derives active clients from a dedicated query, not the truncated display list", async () => {
@@ -242,16 +268,16 @@ describe("consultant Home read shape (#1101)", () => {
       class: null,
     }));
 
-    apptFindMany.mockImplementation((args: { select?: unknown }) =>
-      // The active-book read is the `select` one; the display read uses `include`.
-      Promise.resolve(args.select ? activeBook : []),
+    apptFindMany.mockImplementation((args: { where: { id?: unknown } }) =>
+      // The display read is keyed on ids; the active-book read is not.
+      Promise.resolve(args.where.id ? [] : activeBook),
     );
 
     const result = await getConsultantDashboard("cp-1");
 
     expect(result.financialSummary.activeClients).toBe(64);
 
-    const activeBookCall = apptFindMany.mock.calls.find((c) => c[0].select);
+    const activeBookCall = apptFindMany.mock.calls.find((c) => !c[0].where.id);
     expect(activeBookCall).toBeDefined();
     // No cap on the counting read.
     expect(activeBookCall![0].take).toBeUndefined();

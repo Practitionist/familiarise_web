@@ -34,6 +34,7 @@ export async function getOrgDetailsForSeed(
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
     include: orgDetailsInclude,
+    relationLoadStrategy: "join",
   });
   if (!org) return null;
 

@@ -154,6 +154,7 @@ export async function GET(
     // Shared with the server-side seed in lib/data/org-details-server.ts so
     // the route and the prefetch cannot drift apart.
     include: orgDetailsInclude,
+    relationLoadStrategy: "join",
   });
   if (!org) {
     return NextResponse.json(
