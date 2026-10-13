@@ -1,3 +1,4 @@
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -18,7 +19,7 @@ import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 const webinarInclude = {
   webinarPlan: {
     include: {
-      consultantProfile: { select: { id: true, userId: true } },
+      consultantProfile: PROFILE_OWNER_SELECT,
       topics: true,
     },
   },
@@ -68,7 +69,7 @@ const classInclude = (now: Date) =>
   ({
     classPlan: {
       include: {
-        consultantProfile: { select: { id: true, userId: true } },
+        consultantProfile: PROFILE_OWNER_SELECT,
         topics: true,
         classContents: {
           orderBy: {

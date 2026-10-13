@@ -25,7 +25,10 @@ import {
   releaseDeclinedRequestHold,
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
-import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import {
+  PARTY_PROFILE_SELECT,
+  PARTY_USER_SELECT,
+} from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -64,20 +67,7 @@ export async function GET(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: {
-              select: {
-                id: true,
-                userId: true,
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -227,20 +217,7 @@ export async function PUT(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: {
-              select: {
-                id: true,
-                userId: true,
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -338,13 +315,7 @@ export async function PATCH(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: {
-              select: {
-                id: true,
-                userId: true,
-                user: PARTY_USER_SELECT,
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -449,13 +420,7 @@ export async function PATCH(
               include: {
                 subscriptionPlan: {
                   include: {
-                    consultantProfile: {
-                      select: {
-                        id: true,
-                        userId: true,
-                        user: PARTY_USER_SELECT,
-                      },
-                    },
+                    consultantProfile: PARTY_PROFILE_SELECT,
                   },
                 },
                 requestedBy: {
@@ -522,13 +487,7 @@ export async function PATCH(
               include: {
                 subscriptionPlan: {
                   include: {
-                    consultantProfile: {
-                      select: {
-                        id: true,
-                        userId: true,
-                        user: PARTY_USER_SELECT,
-                      },
-                    },
+                    consultantProfile: PARTY_PROFILE_SELECT,
                   },
                 },
                 requestedBy: {

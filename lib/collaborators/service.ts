@@ -1403,7 +1403,11 @@ export async function getCollaborators(
     },
     include: {
       consultantProfile: {
-        include: { user: { select: { name: true, image: true } } },
+        select: {
+          id: true,
+          userId: true,
+          user: { select: { name: true, image: true } },
+        },
       },
     },
     orderBy: { createdAt: "asc" },
@@ -1772,7 +1776,11 @@ async function hostedCollaborationsWhere(
           where: { status: { in: ["PENDING", "ACCEPTED"] } },
           include: {
             consultantProfile: {
-              include: { user: { select: { name: true, image: true } } },
+              select: {
+                id: true,
+                userId: true,
+                user: { select: { name: true, image: true } },
+              },
             },
           },
           orderBy: { createdAt: "asc" },
@@ -1830,7 +1838,11 @@ async function hostedCollaborationsWhere(
           where: { status: { in: ["PENDING", "ACCEPTED"] } },
           include: {
             consultantProfile: {
-              include: { user: { select: { name: true, image: true } } },
+              select: {
+                id: true,
+                userId: true,
+                user: { select: { name: true, image: true } },
+              },
             },
           },
           orderBy: { createdAt: "asc" },

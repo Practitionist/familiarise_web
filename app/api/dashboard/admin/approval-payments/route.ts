@@ -1,3 +1,4 @@
+import { PARTY_PROFILE_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -38,18 +39,7 @@ export async function GET() {
           include: {
             consultationPlan: {
               include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: {
-                      select: {
-                        name: true,
-                        email: true,
-                      },
-                    },
-                  },
-                },
+                consultantProfile: PARTY_PROFILE_SELECT,
               },
             },
             requestedBy: {
@@ -92,18 +82,7 @@ export async function GET() {
           include: {
             subscriptionPlan: {
               include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: {
-                      select: {
-                        name: true,
-                        email: true,
-                      },
-                    },
-                  },
-                },
+                consultantProfile: PARTY_PROFILE_SELECT,
               },
             },
             requestedBy: {
@@ -146,13 +125,7 @@ export async function GET() {
           include: {
             subscriptionPlan: {
               include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: { select: { name: true, email: true } },
-                  },
-                },
+                consultantProfile: PARTY_PROFILE_SELECT,
               },
             },
             consulteeProfile: {

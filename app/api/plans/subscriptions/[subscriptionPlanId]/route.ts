@@ -1,3 +1,7 @@
+import {
+  PARTY_PROFILE_SELECT,
+  PROFILE_OWNER_SELECT,
+} from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -99,7 +103,7 @@ export async function PUT(
     // Verify ownership - user must own this subscription plan
     const existingPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
-      include: { consultantProfile: { select: { id: true, userId: true } } },
+      include: { consultantProfile: PROFILE_OWNER_SELECT },
     });
 
     if (!existingPlan) {
@@ -261,20 +265,7 @@ export async function PUT(
               : undefined,
         },
         include: {
-          consultantProfile: {
-            select: {
-              id: true,
-              userId: true,
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
-              },
-            },
-          },
+          consultantProfile: PARTY_PROFILE_SELECT,
           subscriptions: {
             include: {
               requestedBy: {
@@ -356,7 +347,7 @@ export async function PATCH(
 
     const existingPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
-      include: { consultantProfile: { select: { id: true, userId: true } } },
+      include: { consultantProfile: PROFILE_OWNER_SELECT },
     });
 
     if (!existingPlan) {
@@ -439,7 +430,7 @@ export async function DELETE(
     // Verify ownership - user must own this subscription plan
     const existingPlan = await prisma.subscriptionPlan.findUnique({
       where: { id: subscriptionPlanId },
-      include: { consultantProfile: { select: { id: true, userId: true } } },
+      include: { consultantProfile: PROFILE_OWNER_SELECT },
     });
 
     if (!existingPlan) {
@@ -472,15 +463,7 @@ export async function DELETE(
         const plan = await tx.subscriptionPlan.findFirst({
           where: ownedPlan,
           include: {
-            consultantProfile: {
-              select: {
-                id: true,
-                userId: true,
-                user: {
-                  select: { id: true, name: true, email: true, image: true },
-                },
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
             topics: true,
           },
         });

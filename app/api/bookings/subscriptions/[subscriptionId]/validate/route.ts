@@ -57,7 +57,7 @@ const subscriptionInclude = {
     include: {
       consultantProfile: {
         select: {
-          user: true,
+          user: { select: { id: true, timezone: true } },
           scheduleType: true,
           availabilityWindowsWeekly: true,
           availabilityWindowsCustom: true,

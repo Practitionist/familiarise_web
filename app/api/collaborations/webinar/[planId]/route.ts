@@ -1,3 +1,4 @@
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { inviteWebinarCollaboratorSchema } from "@/schemas/collaborators";
 import { createPlanCollaborationHandlers } from "@/lib/api/collaborations/plan-route";
@@ -13,7 +14,7 @@ const { GET, POST } = createPlanCollaborationHandlers({
   findPlan: (planId) =>
     prisma.webinarPlan.findUnique({
       where: { id: planId },
-      include: { consultantProfile: { select: { id: true, userId: true } } },
+      include: { consultantProfile: PROFILE_OWNER_SELECT },
     }),
   findExisting: (planId, consultantProfileId) =>
     prisma.collaborator.findFirst({

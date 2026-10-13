@@ -1,3 +1,4 @@
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { coalesceAndResolveCustom } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
@@ -387,7 +388,7 @@ export async function DELETE(
     const deletedSlot = await prisma.availabilityWindowCustom.delete({
       where: { id: id },
       include: {
-        consultantProfile: { select: { id: true, userId: true } },
+        consultantProfile: PROFILE_OWNER_SELECT,
       },
     });
     // Shrink notice + completion recompute (allowed, reported — see contract doc).

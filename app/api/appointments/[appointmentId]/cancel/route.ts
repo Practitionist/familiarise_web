@@ -1,3 +1,4 @@
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
@@ -272,13 +273,7 @@ export async function POST(
           include: {
             consultationPlan: {
               include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: { select: { id: true, name: true } },
-                  },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
             requestedBy: {
@@ -290,13 +285,7 @@ export async function POST(
           include: {
             subscriptionPlan: {
               include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: { select: { id: true, name: true } },
-                  },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
             requestedBy: {
@@ -308,13 +297,7 @@ export async function POST(
           include: {
             webinarPlan: {
               include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: { select: { id: true, name: true } },
-                  },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
           },
@@ -323,13 +306,7 @@ export async function POST(
           include: {
             classPlan: {
               include: {
-                consultantProfile: {
-                  select: {
-                    id: true,
-                    userId: true,
-                    user: { select: { id: true, name: true } },
-                  },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
           },

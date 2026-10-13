@@ -142,7 +142,11 @@ export async function getOperatorInvoices(
                 consultationPlan: {
                   include: {
                     consultantProfile: {
-                      include: { user: { select: { name: true } } },
+                      select: {
+                        id: true,
+                        userId: true,
+                        user: { select: { name: true } },
+                      },
                     },
                   },
                 },
@@ -153,7 +157,11 @@ export async function getOperatorInvoices(
                 subscriptionPlan: {
                   include: {
                     consultantProfile: {
-                      include: { user: { select: { name: true } } },
+                      select: {
+                        id: true,
+                        userId: true,
+                        user: { select: { name: true } },
+                      },
                     },
                   },
                 },
@@ -164,7 +172,11 @@ export async function getOperatorInvoices(
                 webinarPlan: {
                   include: {
                     consultantProfile: {
-                      include: { user: { select: { name: true } } },
+                      select: {
+                        id: true,
+                        userId: true,
+                        user: { select: { name: true } },
+                      },
                     },
                   },
                 },
@@ -175,7 +187,11 @@ export async function getOperatorInvoices(
                 classPlan: {
                   include: {
                     consultantProfile: {
-                      include: { user: { select: { name: true } } },
+                      select: {
+                        id: true,
+                        userId: true,
+                        user: { select: { name: true } },
+                      },
                     },
                   },
                 },

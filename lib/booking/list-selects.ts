@@ -31,6 +31,16 @@ export const PROFILE_WITH_USER_SELECT = {
   },
 } as const;
 
+/** A consultant profile reduced to the ids an ownership check compares. */
+export const PROFILE_OWNER_SELECT = {
+  select: { id: true, userId: true },
+} as const;
+
+/** The plan's consultant as one party of a booking on the detail routes. */
+export const PARTY_PROFILE_SELECT = {
+  select: { id: true, userId: true, user: PARTY_USER_SELECT },
+} as const;
+
 /** Appointment payload for list rows: org tag, ordered slot atoms, and the
  * payment identity fields the requests/approvals tables render. */
 export const APPOINTMENT_LIST_SELECT = {
