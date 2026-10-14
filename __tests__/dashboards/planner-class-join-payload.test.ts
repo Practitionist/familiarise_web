@@ -24,6 +24,11 @@ import {
   getJoinableOccurrence,
   getOccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
+import {
+  consultantProfileValues,
+  isBare,
+} from "../fixtures/consultant-projection";
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 jest.mock("../../lib/auth-helpers", () => ({
@@ -423,4 +428,86 @@ describe("the planner payload carries what a class join reads", () => {
 
 afterEach(() => {
   jest.useRealTimers();
+});
+
+// The plan owner's profile reaches collaborators through this payload, so it is ids only.
+describe("planner GET projects consultantProfile", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedAuth.mockResolvedValue({
+      session: {
+        user: { id: "u-1", role: "CONSULTANT", consultantProfileId: "cp-1" },
+      },
+    });
+    db.consultantProfile.findUnique.mockResolvedValue({ userId: "u-1" });
+    db.membership.findMany.mockResolvedValue([]);
+    db.collaborator.findMany.mockResolvedValue([]);
+    db.webinar.findMany.mockResolvedValue([]);
+    db.class.findMany.mockResolvedValue([]);
+  });
+
+  it("hands the owner select to every webinar and class query", async () => {
+    const res = await GET(new Request("http://localhost/api/x"), {
+      params: Promise.resolve({ consultantId: "cp-1" }),
+    });
+    expect(res.status).toBe(200);
+
+    const webinarCalls = db.webinar.findMany.mock.calls;
+    const classCalls = db.class.findMany.mock.calls;
+    expect(webinarCalls).toHaveLength(2);
+    expect(classCalls).toHaveLength(2);
+    for (const [args] of webinarCalls) {
+      expect(args.include.webinarPlan.include.consultantProfile).toEqual(
+        PROFILE_OWNER_SELECT,
+      );
+    }
+    for (const [args] of classCalls) {
+      expect(args.include.classPlan.include.consultantProfile).toEqual(
+        PROFILE_OWNER_SELECT,
+      );
+    }
+  });
+
+  it("never passes a bare or included consultantProfile to Prisma", async () => {
+    await GET(new Request("http://localhost/api/x"), {
+      params: Promise.resolve({ consultantId: "cp-1" }),
+    });
+    const calls = [
+      ...db.webinar.findMany.mock.calls,
+      ...db.class.findMany.mock.calls,
+      ...db.consultantProfile.findUnique.mock.calls,
+    ];
+    const values = consultantProfileValues(calls);
+    expect(values.length).toBeGreaterThan(0);
+    expect(values.filter(isBare)).toEqual([]);
+  });
+
+  it("returns only the planner payload keys", async () => {
+    db.webinar.findMany.mockResolvedValueOnce([
+      {
+        id: "w-1",
+        webinarPlanId: "wp-1",
+        webinarPlan: {
+          id: "wp-1",
+          consultantProfile: { id: "cp-1", userId: "u-1" },
+          topics: [],
+        },
+        appointment: null,
+      },
+    ]);
+    const res = await GET(new Request("http://localhost/api/x"), {
+      params: Promise.resolve({ consultantId: "cp-1" }),
+    });
+    const body = await res.json();
+    expect(Object.keys(body).sort()).toEqual(["data", "success"]);
+    expect(Object.keys(body.data).sort()).toEqual([
+      "classes",
+      "participantCounts",
+      "webinars",
+    ]);
+    expect(body.data.webinars[0].webinarPlan.consultantProfile).toEqual({
+      id: "cp-1",
+      userId: "u-1",
+    });
+  });
 });

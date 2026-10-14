@@ -4,134 +4,13 @@
 
 /**
  * Planner group: every consultantProfile relation the planner reads is an
- * explicit select, never a bare include or `true`.
+ * explicit select. The route itself is driven in
+ * `__tests__/dashboards/planner-class-join-payload.test.ts`, which owns its mocks.
  */
 
-import {
-  allKeys,
-  consultantProfileValues,
-  isBare,
-  readSource as read,
-} from "../fixtures/consultant-projection";
-import { GET } from "../../app/api/dashboard/consultant/[consultantId]/planner/route";
-import prisma from "@/lib/prisma";
-import { requireApiAuth } from "@/lib/auth-helpers";
+import { allKeys, readSource as read } from "../fixtures/consultant-projection";
 import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import { CONSULTANT_PII_FIELDS } from "@/lib/data/consultant-public";
-
-jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
-jest.mock("../../lib/auth-helpers", () => ({
-  __esModule: true,
-  requireApiAuth: jest.fn(),
-  isPrivileged: () => false,
-  forbiddenResponse: jest.fn(),
-}));
-jest.mock("../../lib/api/scope/parse", () => ({
-  __esModule: true,
-  resolveOrgScope: () => ({ ok: true, scope: { kind: "all" } }),
-  scopeOrgId: () => null,
-}));
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    webinar: { findMany: jest.fn() },
-    class: { findMany: jest.fn() },
-    collaborator: { findMany: jest.fn() },
-    consultantProfile: { findUnique: jest.fn() },
-    membership: { findMany: jest.fn() },
-    appointmentOccurrence: { groupBy: jest.fn() },
-  },
-}));
-
-const db = prisma as unknown as {
-  webinar: { findMany: jest.Mock };
-  class: { findMany: jest.Mock };
-  collaborator: { findMany: jest.Mock };
-  consultantProfile: { findUnique: jest.Mock };
-  membership: { findMany: jest.Mock };
-};
-const mockedAuth = requireApiAuth as unknown as jest.Mock;
-
-describe("planner GET projects consultantProfile", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mockedAuth.mockResolvedValue({
-      session: {
-        user: { id: "u-1", role: "CONSULTANT", consultantProfileId: "cp-1" },
-      },
-    });
-    db.consultantProfile.findUnique.mockResolvedValue({ userId: "u-1" });
-    db.membership.findMany.mockResolvedValue([]);
-    db.collaborator.findMany.mockResolvedValue([]);
-    db.webinar.findMany.mockResolvedValue([]);
-    db.class.findMany.mockResolvedValue([]);
-  });
-
-  it("hands the owner select to every webinar and class query", async () => {
-    const res = await GET(new Request("http://localhost/api/x"), {
-      params: Promise.resolve({ consultantId: "cp-1" }),
-    });
-    expect(res.status).toBe(200);
-
-    const webinarCalls = db.webinar.findMany.mock.calls;
-    const classCalls = db.class.findMany.mock.calls;
-    expect(webinarCalls).toHaveLength(2);
-    expect(classCalls).toHaveLength(2);
-    for (const [args] of webinarCalls) {
-      expect(args.include.webinarPlan.include.consultantProfile).toEqual(
-        PROFILE_OWNER_SELECT,
-      );
-    }
-    for (const [args] of classCalls) {
-      expect(args.include.classPlan.include.consultantProfile).toEqual(
-        PROFILE_OWNER_SELECT,
-      );
-    }
-  });
-
-  it("never passes a bare or included consultantProfile to Prisma", async () => {
-    await GET(new Request("http://localhost/api/x"), {
-      params: Promise.resolve({ consultantId: "cp-1" }),
-    });
-    const calls = [
-      ...db.webinar.findMany.mock.calls,
-      ...db.class.findMany.mock.calls,
-      ...db.consultantProfile.findUnique.mock.calls,
-    ];
-    const values = consultantProfileValues(calls);
-    expect(values.length).toBeGreaterThan(0);
-    expect(values.filter(isBare)).toEqual([]);
-  });
-
-  it("returns only the planner payload keys", async () => {
-    db.webinar.findMany.mockResolvedValueOnce([
-      {
-        id: "w-1",
-        webinarPlanId: "wp-1",
-        webinarPlan: {
-          id: "wp-1",
-          consultantProfile: { id: "cp-1", userId: "u-1" },
-          topics: [],
-        },
-        appointment: null,
-      },
-    ]);
-    const res = await GET(new Request("http://localhost/api/x"), {
-      params: Promise.resolve({ consultantId: "cp-1" }),
-    });
-    const body = await res.json();
-    expect(Object.keys(body).sort()).toEqual(["data", "success"]);
-    expect(Object.keys(body.data).sort()).toEqual([
-      "classes",
-      "participantCounts",
-      "webinars",
-    ]);
-    expect(body.data.webinars[0].webinarPlan.consultantProfile).toEqual({
-      id: "cp-1",
-      userId: "u-1",
-    });
-  });
-});
 
 describe("planner sources use explicit consultantProfile projections", () => {
   const files = [

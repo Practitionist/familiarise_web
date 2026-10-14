@@ -4,35 +4,14 @@
 
 /**
  * Profiles group: the public consultant GET, the owner PUT and the onboarding
- * result hand back only the projected keys.
+ * result hand back only the projected keys. The onboarding result is driven in
+ * `__tests__/onboarding/recovery.test.ts`, which owns its mocks.
  */
 
-jest.mock("server-only", () => ({}));
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
-jest.mock("../../lib/verification/notify-admins", () => ({
-  attemptBellsAfterResponse: jest.fn(),
-}));
-jest.mock("../../lib/verification/submit-request", () => ({
-  submitVerificationRequest: jest.fn(),
-}));
-jest.mock("../../lib/profiles/profile-completion", () => ({
-  recomputeProfileCompletion: jest.fn(),
-}));
-jest.mock("../../lib/compliance/dpdp", () => ({
-  ensureConsentPurposes: jest.fn(),
-}));
-
-const tx = {
-  user: { updateMany: jest.fn(), update: jest.fn() },
-  consulteeProfile: { upsert: jest.fn() },
-};
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: {
-    $transaction: jest.fn(),
-    user: { findUnique: jest.fn() },
-    consultantProfile: { findFirst: jest.fn() },
-  },
+  default: { consultantProfile: { findFirst: jest.fn() } },
 }));
 
 import {
@@ -44,15 +23,12 @@ import {
 import { NextRequest } from "next/server";
 import prisma from "../../lib/prisma";
 import { GET } from "../../app/api/profiles/consultant/route";
-import { processOnboardingData } from "../../utils/onboarding-server";
 import {
   CONSULTANT_PII_FIELDS,
   consultantPublicScalars,
 } from "../../lib/data/consultant-public";
 
 const db = prisma as unknown as {
-  $transaction: jest.Mock;
-  user: { findUnique: jest.Mock };
   consultantProfile: { findFirst: jest.Mock };
 };
 
@@ -118,58 +94,6 @@ describe("GET /api/profiles/consultant", () => {
     expect(res.status).toBe(500);
     expect(text).not.toContain("ABCDE1234F");
     expect(JSON.parse(text)).not.toHaveProperty("data");
-  });
-});
-
-describe("processOnboardingData result", () => {
-  const consulteeBody = {
-    role: "CONSULTEE",
-    name: "Ada Lovelace",
-    email: "ada@example.com",
-    dateOfBirth: "1990-06-15",
-    consulteeProfile: { create: {} },
-    termsAccepted: true,
-    privacyAccepted: true,
-  };
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    db.$transaction.mockImplementation(async (fn: (t: typeof tx) => unknown) =>
-      fn(tx),
-    );
-    db.user.findUnique.mockResolvedValue({ id: "user-1" });
-    tx.user.updateMany.mockResolvedValue({ count: 1 });
-    tx.consulteeProfile.upsert.mockResolvedValue({ id: "cee_1" });
-    tx.user.update.mockResolvedValue({
-      id: "user-1",
-      email: "ada@example.com",
-      phone: "+910000000000",
-      role: "CONSULTEE",
-      consultantProfileId: "cp_1",
-      consulteeProfileId: "cee_1",
-      consultantProfile: { id: "cp_1" },
-    });
-  });
-
-  it("hands the browser exactly the id and the two profile ids", async () => {
-    const result = await processOnboardingData("user-1", consulteeBody);
-    expect(result.success).toBe(true);
-    expect(result.user).toEqual({
-      id: "user-1",
-      consultantProfileId: "cp_1",
-      consulteeProfileId: "cee_1",
-    });
-    expect(Object.keys(result.user ?? {}).sort()).toEqual([
-      "consultantProfileId",
-      "consulteeProfileId",
-      "id",
-    ]);
-  });
-
-  it("reads the consultant profile through an id-only select", async () => {
-    await processOnboardingData("user-1", consulteeBody);
-    const args = tx.user.update.mock.calls[0][0];
-    expect(args.include.consultantProfile).toEqual({ select: { id: true } });
   });
 });
 
