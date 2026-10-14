@@ -25,7 +25,6 @@ export type BookingState = BookingStateKind;
 export type MoneyState = MoneyStateKind;
 
 const VERIFY_INCLUDE = {
-  user: true,
   appointment: {
     include: {
       consultation: { include: { consultationPlan: true, requestedBy: true } },

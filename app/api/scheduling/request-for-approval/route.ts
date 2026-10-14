@@ -135,7 +135,6 @@ export async function POST(req: NextRequest) {
     await ensureConsulteeProfile(prisma, session.user.id);
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { userId: session.user.id },
-      include: { user: true },
     });
 
     if (!consulteeProfile) {
@@ -439,7 +438,7 @@ export async function POST(req: NextRequest) {
                 },
                 requestedBy: {
                   include: {
-                    user: true,
+                    user: { select: { name: true } },
                   },
                 },
                 appointment: {

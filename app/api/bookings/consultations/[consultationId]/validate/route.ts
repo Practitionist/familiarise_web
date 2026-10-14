@@ -42,7 +42,7 @@ const consultationInclude = {
   },
   requestedBy: {
     include: {
-      user: true,
+      user: { select: { id: true } },
     },
   },
 } as const;

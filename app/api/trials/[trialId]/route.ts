@@ -327,7 +327,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       include: {
         consulteeProfile: {
           include: {
-            user: true,
+            user: { select: { id: true, name: true, image: true } },
           },
         },
         consultantProfile: {

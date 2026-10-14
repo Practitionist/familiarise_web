@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { userId: session.user.id },
       include: {
-        user: true,
+        user: { select: { name: true, email: true } },
         payoutAccounts: true,
       },
     });
