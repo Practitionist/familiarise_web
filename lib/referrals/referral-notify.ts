@@ -70,3 +70,34 @@ export async function notifyCreditsAppliedBestEffort(args: {
     console.error("[credits-applied-bell] failed:", err);
   }
 }
+
+/**
+ * #1726 — the bell for a payment the gateway captured. Checkout took the credits
+ * (ReferralCreditUsage rows keyed by the payment) but bells only the payments
+ * that never see a capture webhook; the webhook calls this once the capture
+ * commits. Never throws.
+ */
+export async function notifyCreditsAppliedForPaymentBestEffort(args: {
+  paymentId: string;
+  userId: string;
+  appointmentType: string;
+}): Promise<void> {
+  try {
+    const usages = await prisma.referralCreditUsage.findMany({
+      where: { paymentId: args.paymentId },
+      select: { originalAmount: true },
+    });
+    const creditsUsedPaise = usages.reduce(
+      (sum, u) => sum + Number(u.originalAmount),
+      0,
+    );
+    if (creditsUsedPaise <= 0) return;
+    await notifyCreditsAppliedBestEffort({
+      userId: args.userId,
+      creditsUsedPaise,
+      appointmentType: args.appointmentType,
+    });
+  } catch (err) {
+    console.error("[credits-applied-bell] failed:", err);
+  }
+}
