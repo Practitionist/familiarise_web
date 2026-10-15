@@ -138,7 +138,11 @@ jobs:
         run: npm run db:generate
 
       - name: TypeScript Check
+        # Same flaky-OOM as Build below: the default ~2 GB heap sits at tsc's
+        # peak for this project, so it intermittently exits 134.
         run: npx tsc --noEmit
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Money-column guard
         # #780 — no money column may be declared Int (int4 overflows at
