@@ -256,6 +256,8 @@ const nextConfig = {
   },
   typescript: {
     ignoreBuildErrors: process.env.NETLIFY === "true" && !STRICT_BUILD,
+    // App code only; the Jest suites are type-checked by the CI tsc job.
+    tsconfigPath: "tsconfig.build.json",
   },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
