@@ -27,6 +27,7 @@ import {
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
 import {
+  HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PARTY_USER_SELECT,
 } from "@/lib/booking/list-selects";
@@ -70,7 +71,7 @@ export async function GET(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: PARTY_PROFILE_SELECT,
+            consultantProfile: HOST_PROFILE_SELECT,
           },
         },
         requestedBy: {

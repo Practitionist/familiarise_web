@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { liveParticipant } from "@/lib/booking/participants";
 import {
+  HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PUBLIC_USER_SELECT,
 } from "@/lib/booking/list-selects";
@@ -183,7 +184,7 @@ export async function GET(
           include: {
             webinarPlan: {
               include: {
-                consultantProfile: PARTY_PROFILE_SELECT,
+                consultantProfile: HOST_PROFILE_SELECT,
               },
             },
           },
@@ -192,7 +193,7 @@ export async function GET(
           include: {
             classPlan: {
               include: {
-                consultantProfile: PARTY_PROFILE_SELECT,
+                consultantProfile: HOST_PROFILE_SELECT,
               },
             },
           },

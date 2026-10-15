@@ -15,6 +15,7 @@ import {
   readSource,
 } from "../fixtures/consultant-projection";
 import {
+  HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PARTY_USER_SELECT,
   PROFILE_OWNER_SELECT,
@@ -89,7 +90,7 @@ const ID = "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d";
 beforeEach(() => jest.clearAllMocks());
 
 describe("booking consultant projection (behavioural)", () => {
-  it("consultation detail GET uses PARTY_PROFILE_SELECT", async () => {
+  it("consultation detail GET uses HOST_PROFILE_SELECT", async () => {
     mockConsultationFind.mockResolvedValue({
       consultationPlan: { consultantProfile: { id: "cp" } },
     });
@@ -101,11 +102,11 @@ describe("booking consultant projection (behavioural)", () => {
     expect(res.status).toBe(200);
     expectProjection(
       mockConsultationFind.mock.calls[0][0],
-      PARTY_PROFILE_SELECT,
+      HOST_PROFILE_SELECT,
     );
   });
 
-  it("subscription detail GET uses PARTY_PROFILE_SELECT", async () => {
+  it("subscription detail GET uses HOST_PROFILE_SELECT", async () => {
     mockSubscriptionFind.mockResolvedValue({
       subscriptionPlan: { consultantProfile: { id: "cp" } },
     });
@@ -117,7 +118,7 @@ describe("booking consultant projection (behavioural)", () => {
     expect(res.status).toBe(200);
     expectProjection(
       mockSubscriptionFind.mock.calls[0][0],
-      PARTY_PROFILE_SELECT,
+      HOST_PROFILE_SELECT,
     );
   });
 
@@ -185,6 +186,7 @@ describe("booking consultant projection (source)", () => {
   );
 
   it.each([
+    ["HOST_PROFILE_SELECT", HOST_PROFILE_SELECT],
     ["PARTY_PROFILE_SELECT", PARTY_PROFILE_SELECT],
     ["PARTY_USER_SELECT", PARTY_USER_SELECT],
     ["PROFILE_WITH_USER_SELECT", PROFILE_WITH_USER_SELECT],

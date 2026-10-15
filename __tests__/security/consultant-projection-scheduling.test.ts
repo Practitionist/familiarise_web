@@ -16,6 +16,7 @@ import {
   valuesAtKey,
 } from "../fixtures/consultant-projection";
 import {
+  HOST_PROFILE_SELECT,
   PARTY_PROFILE_SELECT,
   PROFILE_WITH_USER_SELECT,
 } from "../../lib/booking/list-selects";
@@ -46,7 +47,7 @@ import { getConsultantAppointments } from "../../lib/data/consultant-appointment
 beforeEach(() => jest.clearAllMocks());
 
 describe("scheduling consultant projection (behavioural)", () => {
-  it("appointment detail reads every consultantProfile as PARTY_PROFILE_SELECT", async () => {
+  it("appointment detail gives 1:1 parties the party select and seat holders the host select", async () => {
     mockRequireApiAuth.mockResolvedValue({
       session: { user: { id: "admin", role: "ADMIN" } },
     });
@@ -63,9 +64,18 @@ describe("scheduling consultant projection (behavioural)", () => {
     expect(res.status).toBe(200);
     const args = mockAppointmentFindUnique.mock.calls[0][0];
     expectNoBareProfile(args);
-    expect(valuesAtKey(args, "consultantProfile")).toEqual(
-      valuesAtKey(args, "consultantProfile").map(() => PARTY_PROFILE_SELECT),
+    const planProfile = (event: string, plan: string) =>
+      args.include[event].include[plan].include.consultantProfile;
+    expect(planProfile("consultation", "consultationPlan")).toEqual(
+      PARTY_PROFILE_SELECT,
     );
+    expect(planProfile("subscription", "subscriptionPlan")).toEqual(
+      PARTY_PROFILE_SELECT,
+    );
+    expect(planProfile("webinar", "webinarPlan")).toEqual(HOST_PROFILE_SELECT);
+    expect(planProfile("class", "classPlan")).toEqual(HOST_PROFILE_SELECT);
+    expect(hasKey(HOST_PROFILE_SELECT, "email")).toBe(false);
+    expect(valuesAtKey(args, "consultantProfile")).toHaveLength(4);
   });
 
   it("getConsultantAppointments selects id, userId and a user projection only", async () => {
@@ -116,6 +126,7 @@ describe("scheduling consultant projection (source)", () => {
   });
 
   it.each([
+    ["HOST_PROFILE_SELECT", HOST_PROFILE_SELECT],
     ["PARTY_PROFILE_SELECT", PARTY_PROFILE_SELECT],
     ["PROFILE_WITH_USER_SELECT", PROFILE_WITH_USER_SELECT],
   ])("%s carries no sensitive profile column", (_name, projection) => {

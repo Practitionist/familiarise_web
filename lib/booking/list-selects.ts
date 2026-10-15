@@ -41,6 +41,12 @@ export const PARTY_PROFILE_SELECT = {
   select: { id: true, userId: true, user: PARTY_USER_SELECT },
 } as const;
 
+/** The plan's consultant on read-only detail payloads a learner or seat
+ * holder receives: ids plus public identity, no email. */
+export const HOST_PROFILE_SELECT = {
+  select: { id: true, userId: true, user: PUBLIC_USER_SELECT },
+} as const;
+
 /** Appointment payload for list rows: org tag, ordered slot atoms, and the
  * payment identity fields the requests/approvals tables render. */
 export const APPOINTMENT_LIST_SELECT = {
