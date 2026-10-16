@@ -44,6 +44,17 @@ const PDFKIT_FONT_FILES = [
 const STRICT_BUILD = process.env.STRICT_BUILD === "true";
 
 /**
+ * Set only by ci.yaml's Build job. Its separate `TypeScript & guards` and `Lint`
+ * jobs already type-check and lint the same commit, and a PR build has no
+ * business uploading source maps or cutting a Sentry release. Re-doing all of
+ * that inside `next build` was what tipped the private-repo runner (~7 GB RAM)
+ * over: the VM was killed at "Linting and checking validity of types".
+ */
+const CI_LEAN_BUILD = process.env.CI_LEAN_BUILD === "true";
+const SKIP_BUILD_CHECKS =
+  (process.env.NETLIFY === "true" || CI_LEAN_BUILD) && !STRICT_BUILD;
+
+/**
  * CSP violations go straight to Sentry's security-report endpoint, derived
  * from the DSN (`https://<key>@<host>/<project>` →
  * `https://<host>/api/<project>/security/?sentry_key=<key>`). Without a DSN
@@ -250,12 +261,13 @@ const nextConfig = {
   // Skipped on Netlify by default: with them on, the deploy preview was killed
   // (exit 137) at "Linting and checking validity of types" on the 6144 MB
   // heap. CI type-checks and lints every PR and every push to dev/staging/prod
-  // instead. STRICT_BUILD=true turns them back on for a Netlify build.
+  // instead. STRICT_BUILD=true turns them back on for a Netlify build. CI's own
+  // Build job skips them too (CI_LEAN_BUILD) — the dedicated jobs cover them.
   eslint: {
-    ignoreDuringBuilds: process.env.NETLIFY === "true" && !STRICT_BUILD,
+    ignoreDuringBuilds: SKIP_BUILD_CHECKS,
   },
   typescript: {
-    ignoreBuildErrors: process.env.NETLIFY === "true" && !STRICT_BUILD,
+    ignoreBuildErrors: SKIP_BUILD_CHECKS,
   },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
@@ -567,9 +579,13 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
   sourcemaps: {
     disable:
-      process.env.NETLIFY === "true" && process.env.CONTEXT !== "production",
+      CI_LEAN_BUILD ||
+      (process.env.NETLIFY === "true" && process.env.CONTEXT !== "production"),
   },
-  widenClientFileUpload: process.env.NETLIFY !== "true",
+  widenClientFileUpload: process.env.NETLIFY !== "true" && !CI_LEAN_BUILD,
+  // A CI PR build is never deployed, so it must not create or finalize a
+  // Sentry release (it was doing so — and failing — on every PR run).
+  ...(CI_LEAN_BUILD ? { release: { create: false, finalize: false } } : {}),
 
   webpack: {
     treeshake: {
