@@ -183,20 +183,10 @@ jobs:
       fail-fast: false
       matrix:
         shard: ["1/2", "2/2"]
-    services:
-      redis:
-        # Docker Hub's anonymous pull limit fails shared runners; ECR Public mirrors the official images.
-        # Pinned + alpine: `latest` is ~4x the bytes and counts against ECR
-        # Public's anonymous data limit ("toomanyrequests: Data limit exceeded").
-        image: public.ecr.aws/docker/library/redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    # No redis service: nothing in the app speaks TCP redis (it uses Upstash
+    # over REST, and tests mock it). The old container was dead weight whose
+    # anonymous ECR Public pull failed jobs with "toomanyrequests: Data limit
+    # exceeded" before a single test ran.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -225,17 +215,7 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
-    services:
-      redis:
-        image: public.ecr.aws/docker/library/redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # No redis service — see the note on unit-tests.
     steps:
       - uses: actions/checkout@v7
         with:
