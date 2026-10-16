@@ -270,27 +270,33 @@ jobs:
     permissions:
       contents: read
 
-    services:
-      postgres:
-        # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
-        image: public.ecr.aws/docker/library/postgres:17
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ci
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     # No .env exists here, so these are the only URLs prisma.config.ts and lib/prisma.ts see.
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ci
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ci
 
     steps:
+      # Supabase runs 17; the sidecars need 15+ (NULLS NOT DISTINCT) and btree_gist.
+      # Not a `services:` container: those pull from exactly one registry, and
+      # ECR Public's anonymous per-IP quota on shared runners fails the job
+      # outright ("toomanyrequests: Data limit exceeded"). Same official image,
+      # tried from ECR, then Google's Docker Hub mirror, then Docker Hub.
+      # Started first so it initialises while dependencies install.
+      - name: Start Postgres 17
+        run: |
+          for img in public.ecr.aws/docker/library/postgres:17 \
+                     mirror.gcr.io/library/postgres:17 \
+                     docker.io/library/postgres:17; do
+            if docker pull -q "$img"; then IMG="$img"; break; fi
+            echo "::warning::postgres pull failed from $img, trying next mirror"
+          done
+          if [ -z "${IMG:-}" ]; then
+            echo "::error::postgres:17 unavailable from every mirror"
+            exit 1
+          fi
+          docker run -d --name pg -p 5432:5432 \
+            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=ci "$IMG"
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -307,8 +313,19 @@ jobs:
       - name: Generate Prisma Client
         run: npm run db:generate
 
+      - name: Wait for Postgres
+        # Over TCP on purpose: during first-boot init the entrypoint runs a
+        # socket-only temporary server, so a socket check can pass too early.
+        run: |
+          for _ in $(seq 1 30); do
+            docker exec pg pg_isready -h 127.0.0.1 -U postgres -d ci && exit 0
+            sleep 2
+          done
+          docker logs pg
+          exit 1
+
       - name: Push schema + sidecars
-        # Only ever the service container above; `db push` alone drops the ledger trigger and every CHECK.
+        # Only ever the throwaway container above; `db push` alone drops the ledger trigger and every CHECK.
         run: |
           node_modules/.bin/prisma db push
           npm run db:sidecars
