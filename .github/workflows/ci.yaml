@@ -137,8 +137,18 @@ jobs:
       - name: Generate Prisma Client
         run: npm run db:generate
 
+      - name: Runner resources
+        # Private-repo ubuntu-latest is ~2 vCPU / ~7 GB. Printed so a future
+        # OOM can be read against the real ceiling instead of guessed.
+        run: nproc && free -m
+
       - name: TypeScript Check
+        # tsc's peak for this project sits at Node's RAM-derived default heap
+        # (~2 GB on this runner), so without a flag it exits 134. 4 GB leaves
+        # the OS headroom on a ~7 GB VM; tsc is the only thing running here.
         run: npx tsc --noEmit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Money-column guard
         # #780 — no money column may be declared Int (int4 overflows at
@@ -176,7 +186,9 @@ jobs:
     services:
       redis:
         # Docker Hub's anonymous pull limit fails shared runners; ECR Public mirrors the official images.
-        image: public.ecr.aws/docker/library/redis:latest
+        # Pinned + alpine: `latest` is ~4x the bytes and counts against ECR
+        # Public's anonymous data limit ("toomanyrequests: Data limit exceeded").
+        image: public.ecr.aws/docker/library/redis:7-alpine
         ports:
           - 6379:6379
         options: >-
@@ -216,7 +228,7 @@ jobs:
 
     services:
       redis:
-        image: public.ecr.aws/docker/library/redis:latest
+        image: public.ecr.aws/docker/library/redis:7-alpine
         ports:
           - 6379:6379
         options: >-
@@ -241,14 +253,20 @@ jobs:
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
+      - name: Runner resources
+        run: nproc && free -m
+
       - name: Build
-        # Raise the V8 heap so `next build` (+ Sentry source-map generation) does
-        # not flaky-OOM on the runner — mirrors netlify.toml's NODE_OPTIONS. The
-        # default heap sits right at the build's peak, so it intermittently exits
-        # 134 (heap out of memory) on otherwise-identical builds.
+        # Raise the V8 heap so `next build` does not flaky-OOM on the runner. It
+        # was 6144, which on a ~7 GB VM left the OS nothing: the runner itself
+        # was killed ("received a shutdown signal") at "Linting and checking
+        # validity of types". CI_LEAN_BUILD (next.config.mjs) drops that phase —
+        # the TypeScript & guards and Lint jobs already cover it — plus Sentry
+        # source maps / release, so the build fits in 5 GB with room to spare.
         run: npm run build
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          NODE_OPTIONS: --max-old-space-size=5120
+          CI_LEAN_BUILD: "true"
 
   test-and-build:
     name: TypeScript, Tests & Build
