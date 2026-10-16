@@ -137,8 +137,18 @@ jobs:
       - name: Generate Prisma Client
         run: npm run db:generate
 
+      - name: Runner resources
+        # Private-repo ubuntu-latest is ~2 vCPU / ~7 GB. Printed so a future
+        # OOM can be read against the real ceiling instead of guessed.
+        run: nproc && free -m
+
       - name: TypeScript Check
+        # tsc's peak for this project sits at Node's RAM-derived default heap
+        # (~2 GB on this runner), so without a flag it exits 134. 4 GB leaves
+        # the OS headroom on a ~7 GB VM; tsc is the only thing running here.
         run: npx tsc --noEmit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Money-column guard
         # #780 — no money column may be declared Int (int4 overflows at
@@ -173,18 +183,10 @@ jobs:
       fail-fast: false
       matrix:
         shard: ["1/2", "2/2"]
-    services:
-      redis:
-        # Docker Hub's anonymous pull limit fails shared runners; ECR Public mirrors the official images.
-        image: public.ecr.aws/docker/library/redis:latest
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    # No redis service: nothing in the app speaks TCP redis (it uses Upstash
+    # over REST, and tests mock it). The old container was dead weight whose
+    # anonymous ECR Public pull failed jobs with "toomanyrequests: Data limit
+    # exceeded" before a single test ran.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -213,17 +215,7 @@ jobs:
     if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
-    services:
-      redis:
-        image: public.ecr.aws/docker/library/redis:latest
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # No redis service — see the note on unit-tests.
     steps:
       - uses: actions/checkout@v7
         with:
@@ -241,14 +233,20 @@ jobs:
       - name: Load environment
         run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
 
+      - name: Runner resources
+        run: nproc && free -m
+
       - name: Build
-        # Raise the V8 heap so `next build` (+ Sentry source-map generation) does
-        # not flaky-OOM on the runner — mirrors netlify.toml's NODE_OPTIONS. The
-        # default heap sits right at the build's peak, so it intermittently exits
-        # 134 (heap out of memory) on otherwise-identical builds.
+        # Raise the V8 heap so `next build` does not flaky-OOM on the runner. It
+        # was 6144, which on a ~7 GB VM left the OS nothing: the runner itself
+        # was killed ("received a shutdown signal") at "Linting and checking
+        # validity of types". CI_LEAN_BUILD (next.config.mjs) drops that phase —
+        # the TypeScript & guards and Lint jobs already cover it — plus Sentry
+        # source maps / release, so the build fits in 5 GB with room to spare.
         run: npm run build
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          NODE_OPTIONS: --max-old-space-size=5120
+          CI_LEAN_BUILD: "true"
 
   test-and-build:
     name: TypeScript, Tests & Build
