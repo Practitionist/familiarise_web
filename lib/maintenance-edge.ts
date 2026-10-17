@@ -42,10 +42,15 @@ let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 180_000;
 const FAILURE_CACHE_MS = 30_000;
+// A failed read keeps serving the last state Redis confirmed for this long, so a
+// slow Upstash call never turns into a 503 on checkout; only a cold isolate fails closed.
+const STALE_IF_ERROR_MS = 15 * 60_000;
+let lastGoodState: MaintenanceState | null = null;
+let lastGoodAt = 0;
 
 const REDIS_FETCH_TIMEOUT_MS = (() => {
   const v = Number(process.env.REDIS_FETCH_TIMEOUT_MS);
-  return Number.isFinite(v) && v > 0 ? v : 200;
+  return Number.isFinite(v) && v > 0 ? v : 500;
 })();
 
 async function redisGet(key: string): Promise<string | null> {
@@ -64,47 +69,56 @@ async function redisGet(key: string): Promise<string | null> {
   return data.result ?? null;
 }
 
+async function readMaintenanceState(): Promise<MaintenanceState> {
+  const [phase, configRaw] = await Promise.all([
+    redisGet(REDIS_KEYS.PHASE),
+    redisGet(REDIS_KEYS.CONFIG),
+  ]);
+
+  if (!phase || phase === "OFF") return OFF_STATE;
+
+  let config: Partial<MaintenanceState> = {};
+  if (configRaw) {
+    try {
+      config = JSON.parse(configRaw);
+    } catch {
+      // Malformed config — treat as no config
+    }
+  }
+
+  return {
+    phase: phase as MaintenanceState["phase"],
+    reason: config.reason ?? null,
+    estimatedEnd: config.estimatedEnd ?? null,
+    bypassSecret: config.bypassSecret ?? null,
+  };
+}
+
 export async function getMaintenanceState(): Promise<MaintenanceState> {
   const now = Date.now();
   if (cachedState && now - cacheTimestamp < CACHE_TTL_MS) {
     return cachedState;
   }
 
+  let state: MaintenanceState;
   try {
-    const [phase, configRaw] = await Promise.all([
-      redisGet(REDIS_KEYS.PHASE),
-      redisGet(REDIS_KEYS.CONFIG),
-    ]);
-
-    if (!phase || phase === "OFF") {
-      cachedState = OFF_STATE;
-      cacheTimestamp = now;
-      return OFF_STATE;
-    }
-
-    let config: Partial<MaintenanceState> = {};
-    if (configRaw) {
-      try {
-        config = JSON.parse(configRaw);
-      } catch {
-        // Malformed config — treat as no config
-      }
-    }
-
-    const state: MaintenanceState = {
-      phase: phase as MaintenanceState["phase"],
-      reason: config.reason ?? null,
-      estimatedEnd: config.estimatedEnd ?? null,
-      bypassSecret: config.bypassSecret ?? null,
-    };
-    cachedState = state;
-    cacheTimestamp = now;
-    return state;
+    state = await readMaintenanceState().catch(() => readMaintenanceState());
   } catch {
-    cachedState = UNREADABLE_STATE;
+    // Serve the last confirmed state while it is fresh enough, and retry soon.
+    const fallback =
+      lastGoodState && now - lastGoodAt < STALE_IF_ERROR_MS
+        ? lastGoodState
+        : UNREADABLE_STATE;
+    cachedState = fallback;
     cacheTimestamp = now - CACHE_TTL_MS + FAILURE_CACHE_MS;
-    return UNREADABLE_STATE;
+    return fallback;
   }
+
+  cachedState = state;
+  cacheTimestamp = now;
+  lastGoodState = state;
+  lastGoodAt = now;
+  return state;
 }
 
 let isRefreshing = false;
