@@ -179,7 +179,11 @@ export async function GET(req: NextRequest) {
         where: { financialYear: fy, reportedInForm26Q: false },
         include: {
           consultantProfile: {
-            include: { taxInfo: true, user: { select: { name: true } } },
+            select: {
+              id: true,
+              taxInfo: true,
+              user: { select: { name: true } },
+            },
           },
           organization: {
             select: {

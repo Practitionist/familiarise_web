@@ -108,7 +108,17 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import { NextRequest } from "next/server";
+import prisma from "../../lib/prisma";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
+import { PROFILE_WITH_USER_SELECT } from "../../lib/booking/list-selects";
+import {
+  expectNoBareProfile,
+  valuesAtKey,
+} from "../fixtures/consultant-projection";
+
+const mockedPrisma = prisma as unknown as {
+  consultation: { create: jest.Mock };
+};
 
 function request(startsAt = "2030-01-01T10:00:00.000Z") {
   return new NextRequest("https://x.test/api/scheduling/request-for-approval", {
@@ -207,5 +217,18 @@ describe("request-for-approval slot edge (#1583)", () => {
       "cp_1",
       "user_consultee",
     );
+  });
+});
+
+// The created consultation is echoed to the learner, so the consultant is the public projection.
+describe("request-for-approval consultant projection", () => {
+  it("creates the consultation with PROFILE_WITH_USER_SELECT and no bare profile", async () => {
+    const res = await POST(request());
+    expect(res.status).toBe(201);
+    const args = mockedPrisma.consultation.create.mock.calls[0][0];
+    expectNoBareProfile(args);
+    expect(valuesAtKey(args, "consultantProfile")).toEqual([
+      PROFILE_WITH_USER_SELECT,
+    ]);
   });
 });

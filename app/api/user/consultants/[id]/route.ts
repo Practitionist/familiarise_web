@@ -610,55 +610,12 @@ export async function PUT(
       throw error;
     }
 
-    // Fetch and return the updated consultant with all relations
-    const updatedConsultant = await prisma.consultantProfile.findUnique({
-      where: { id },
-      include: {
-        user: {
-          include: {
-            workExperiences: {
-              orderBy: [{ isCurrent: "desc" }, { startDate: "desc" }],
-            },
-            education: {
-              orderBy: { endYear: "desc" },
-            },
-            certifications: {
-              orderBy: { issueDate: "desc" },
-            },
-          },
-        },
-        domain: true,
-        subDomains: true,
-        tags: true,
-        availabilityWindowsWeekly: true,
-        availabilityWindowsCustom: true,
-        consultationPlans: true,
-        subscriptionPlans: {
-          include: {
-            subscriptionContents: {
-              orderBy: { order: "asc" },
-            },
-          },
-        },
-        webinarPlans: true,
-        classPlans: true,
-        // #1300 — `reviews` deliberately NOT included. This response is
-        // authenticated as the profile OWNER, i.e. the reviewed consultant, and a
-        // bare relation include returns every scalar: `consulteeProfileId`,
-        // `appointmentId`, `ratingUnitId` and `isAnonymous` for every row. Those
-        // are exactly the join keys `stripAnonymousReviewer` nulls, and the
-        // consultant is the one party `isAnonymous` exists to withhold them from
-        // — they know their own appointment ids. Nothing read it either: the only
-        // caller checks `response.ok` and then issues a fresh GET.
-      },
-    });
-
     // Headline, description, experience, domain and tags are all rendered on the
     // public profile and the directory cards, so an expert editing their profile
     // should see it live rather than wait out the ISR window.
     purgeExpertSurfaces(id);
 
-    return NextResponse.json({ data: updatedConsultant, uncoveredUpcoming });
+    return NextResponse.json({ data: { id }, uncoveredUpcoming });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

@@ -66,6 +66,15 @@ export {
 
 export type PlanType = "webinar" | "class";
 
+/** A collaborator's profile as the rosters render it: ids, name and avatar. */
+const collaboratorProfileSelect = {
+  select: {
+    id: true,
+    userId: true,
+    user: { select: { name: true, image: true } },
+  },
+} as const;
+
 const MIN_HOST_SHARE = 10; // Host must keep at least 10%
 
 // #1580 §6 — at most three collaborators in PENDING + ACCEPTED per plan, and
@@ -1431,9 +1440,7 @@ export async function getCollaborators(
       consultantProfile: { deletedAt: null },
     },
     include: {
-      consultantProfile: {
-        include: { user: { select: { name: true, image: true } } },
-      },
+      consultantProfile: collaboratorProfileSelect,
     },
     orderBy: { createdAt: "asc" },
   });
@@ -1607,7 +1614,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
             },
           },
           invitedBy: {
-            include: { user: { select: { name: true } } },
+            select: { id: true, user: { select: { name: true } } },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -1685,7 +1692,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
             },
           },
           invitedBy: {
-            include: { user: { select: { name: true } } },
+            select: { id: true, user: { select: { name: true } } },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -1800,9 +1807,7 @@ async function hostedCollaborationsWhere(
         collaborators: {
           where: { status: { in: ["PENDING", "ACCEPTED"] } },
           include: {
-            consultantProfile: {
-              include: { user: { select: { name: true, image: true } } },
-            },
+            consultantProfile: collaboratorProfileSelect,
           },
           orderBy: { createdAt: "asc" },
         },
@@ -1858,9 +1863,7 @@ async function hostedCollaborationsWhere(
         collaborators: {
           where: { status: { in: ["PENDING", "ACCEPTED"] } },
           include: {
-            consultantProfile: {
-              include: { user: { select: { name: true, image: true } } },
-            },
+            consultantProfile: collaboratorProfileSelect,
           },
           orderBy: { createdAt: "asc" },
         },

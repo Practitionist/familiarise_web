@@ -8,6 +8,7 @@
  * POST (batch creation) stays inline because staff does not have it.
  */
 
+import { PARTY_PROFILE_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -103,11 +104,7 @@ export async function POST(req: NextRequest) {
     const payouts = await prisma.consultantPayout.findMany({
       where: { batchId },
       include: {
-        consultantProfile: {
-          include: {
-            user: { select: { name: true, email: true } },
-          },
-        },
+        consultantProfile: PARTY_PROFILE_SELECT,
       },
     });
 

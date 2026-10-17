@@ -25,7 +25,11 @@ import {
   releaseDeclinedRequestHold,
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
-import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import {
+  HOST_PROFILE_SELECT,
+  PARTY_PROFILE_SELECT,
+  PARTY_USER_SELECT,
+} from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -58,18 +62,7 @@ export async function GET(
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: HOST_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -153,7 +146,7 @@ export async function PUT(
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: true,
+            consultantProfile: { select: { id: true } },
           },
         },
         // bookingOrgId's fallback when the plan carries no org.
@@ -243,18 +236,7 @@ export async function PUT(
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -369,11 +351,7 @@ export async function PATCH(
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: PARTY_USER_SELECT,
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -474,11 +452,7 @@ export async function PATCH(
               include: {
                 consultationPlan: {
                   include: {
-                    consultantProfile: {
-                      include: {
-                        user: PARTY_USER_SELECT,
-                      },
-                    },
+                    consultantProfile: PARTY_PROFILE_SELECT,
                   },
                 },
                 requestedBy: {
@@ -537,11 +511,7 @@ export async function PATCH(
                   include: {
                     consultationPlan: {
                       include: {
-                        consultantProfile: {
-                          include: {
-                            user: PARTY_USER_SELECT,
-                          },
-                        },
+                        consultantProfile: PARTY_PROFILE_SELECT,
                       },
                     },
                     requestedBy: {
@@ -596,11 +566,7 @@ export async function PATCH(
                     include: {
                       consultationPlan: {
                         include: {
-                          consultantProfile: {
-                            include: {
-                              user: PARTY_USER_SELECT,
-                            },
-                          },
+                          consultantProfile: PARTY_PROFILE_SELECT,
                         },
                       },
                       requestedBy: {
@@ -651,11 +617,7 @@ export async function PATCH(
               include: {
                 consultationPlan: {
                   include: {
-                    consultantProfile: {
-                      include: {
-                        user: PARTY_USER_SELECT,
-                      },
-                    },
+                    consultantProfile: PARTY_PROFILE_SELECT,
                   },
                 },
                 requestedBy: {

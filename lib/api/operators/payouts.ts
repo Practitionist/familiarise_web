@@ -153,7 +153,9 @@ export async function getOperatorPayouts(
       where,
       include: {
         consultantProfile: {
-          include: {
+          select: {
+            id: true,
+            userId: true,
             user: { select: { name: true, email: true } },
           },
         },

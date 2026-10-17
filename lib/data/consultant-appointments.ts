@@ -294,6 +294,9 @@ export async function getConsultantAppointments(
     image: true,
   } as const;
 
+  // Host and co-host rows render name and image only, so no email is selected.
+  const hostUserSelect = { id: true, name: true, image: true } as const;
+
   const appointments = await prisma.appointment.findMany({
     where: whereClause,
     include: {
@@ -311,8 +314,10 @@ export async function getConsultantAppointments(
           consultationPlan: {
             include: {
               consultantProfile: {
-                include: {
-                  user: { select: listUserSelect },
+                select: {
+                  id: true,
+                  userId: true,
+                  user: { select: hostUserSelect },
                 },
               },
             },
@@ -330,8 +335,10 @@ export async function getConsultantAppointments(
           subscriptionPlan: {
             include: {
               consultantProfile: {
-                include: {
-                  user: { select: listUserSelect },
+                select: {
+                  id: true,
+                  userId: true,
+                  user: { select: hostUserSelect },
                 },
               },
             },
@@ -356,15 +363,19 @@ export async function getConsultantAppointments(
           webinarPlan: {
             include: {
               consultantProfile: {
-                include: {
-                  user: { select: listUserSelect },
+                select: {
+                  id: true,
+                  userId: true,
+                  user: { select: hostUserSelect },
                 },
               },
               collaborators: {
                 where: { status: "ACCEPTED" },
                 include: {
                   consultantProfile: {
-                    include: {
+                    select: {
+                      id: true,
+                      userId: true,
                       user: {
                         select: {
                           id: true,
@@ -385,15 +396,19 @@ export async function getConsultantAppointments(
           classPlan: {
             include: {
               consultantProfile: {
-                include: {
-                  user: { select: listUserSelect },
+                select: {
+                  id: true,
+                  userId: true,
+                  user: { select: hostUserSelect },
                 },
               },
               collaborators: {
                 where: { status: "ACCEPTED" },
                 include: {
                   consultantProfile: {
-                    include: {
+                    select: {
+                      id: true,
+                      userId: true,
                       user: {
                         select: {
                           id: true,

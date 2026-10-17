@@ -1,8 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
-  PROFILE_WITH_USER_SELECT,
   APPOINTMENT_LIST_SELECT,
+  PARTY_PROFILE_SELECT,
+  PROFILE_WITH_USER_SELECT,
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -247,7 +248,7 @@ export async function PATCH(request: NextRequest) {
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: true,
+            consultantProfile: { select: { id: true } },
           },
         },
       },
@@ -319,20 +320,7 @@ export async function PATCH(request: NextRequest) {
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                    role: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {

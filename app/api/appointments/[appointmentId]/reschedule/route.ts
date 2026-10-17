@@ -1,3 +1,4 @@
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import {
   applyRateLimit,
@@ -257,7 +258,7 @@ export async function POST(
                 include: {
                   consultationPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: PROFILE_OWNER_SELECT,
                     },
                   },
                   requestedBy: true,
@@ -267,7 +268,7 @@ export async function POST(
                 include: {
                   subscriptionPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: PROFILE_OWNER_SELECT,
                     },
                   },
                   requestedBy: true,

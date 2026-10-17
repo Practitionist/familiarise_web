@@ -1,3 +1,4 @@
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -91,7 +92,7 @@ export async function PUT(
     // Verify ownership - user must own this consultation plan
     const existingPlan = await prisma.consultationPlan.findUnique({
       where: { id: consultationPlanId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: PROFILE_OWNER_SELECT },
     });
 
     if (!existingPlan) {
@@ -158,21 +159,7 @@ export async function PUT(
         ...topicsUpdate,
       },
       include: {
-        consultantProfile: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                image: true,
-              },
-            },
-            domain: true,
-            subDomains: true,
-            tags: true,
-          },
-        },
+        consultantProfile: { select: planConsultantSelect },
         consultations: true,
         topics: true,
         faqs: { orderBy: { order: "asc" } },
@@ -236,7 +223,7 @@ export async function PATCH(
 
     const existingPlan = await prisma.consultationPlan.findUnique({
       where: { id: consultationPlanId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: PROFILE_OWNER_SELECT },
     });
 
     if (!existingPlan) {
@@ -319,7 +306,7 @@ export async function DELETE(
     // Verify ownership - user must own this consultation plan
     const existingPlan = await prisma.consultationPlan.findUnique({
       where: { id: consultationPlanId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: PROFILE_OWNER_SELECT },
     });
 
     if (!existingPlan) {
@@ -352,16 +339,7 @@ export async function DELETE(
         const plan = await tx.consultationPlan.findFirst({
           where: ownedPlan,
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: { id: true, name: true, email: true, image: true },
-                },
-                domain: true,
-                subDomains: true,
-                tags: true,
-              },
-            },
+            consultantProfile: { select: planConsultantSelect },
             topics: true,
           },
         });
