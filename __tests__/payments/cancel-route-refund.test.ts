@@ -986,7 +986,11 @@ describe("the refund is bound to the click", () => {
       },
     ]);
 
-    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+    // The retry carries the first click's figure; the requote no longer matches.
+    const res = await cancelHandler(
+      makeRequest({ expectedRefundPaise: GROSS / 2 }),
+      makeParams(APPT),
+    );
 
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({

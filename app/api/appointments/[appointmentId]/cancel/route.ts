@@ -962,16 +962,17 @@ export async function POST(
       ),
     ).catch(async (err: unknown) => {
       // A retry after a 504 finds the booking already cancelled by this
-      // caller: answer with what that first click committed. A failed replay
-      // read answers the original 409, which the client handles.
-      const replay = isNotCancellable(err)
-        ? await replayCommittedCancel(appointment, session.user.id).catch(
-            (readErr: unknown) => {
-              console.warn("[cancel] replay read failed:", readErr);
-              return null;
-            },
-          )
-        : null;
+      // caller (its requote differs once the first click refunded): answer
+      // with what that click committed. Otherwise the original 409 stands.
+      const replay =
+        isNotCancellable(err) || err instanceof RefundQuoteChangedError
+          ? await replayCommittedCancel(appointment, session.user.id).catch(
+              (readErr: unknown) => {
+                console.warn("[cancel] replay read failed:", readErr);
+                return null;
+              },
+            )
+          : null;
       if (replay) return { replay };
       throw err;
     });
