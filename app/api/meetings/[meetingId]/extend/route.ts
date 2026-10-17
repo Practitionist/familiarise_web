@@ -15,6 +15,7 @@ import {
 import { streamLogger } from "@/lib/stream-logger";
 import { STREAM_CALL_TYPE, toCallId } from "@/lib/stream/call-cid";
 import { reportSentryError } from "@/lib/observability/report";
+import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
   buildCohostCommitmentFilter,
   buildOccupiedAppointmentFilter,
@@ -215,17 +216,21 @@ async function hasExtensionScheduleConflict(
   return false;
 }
 
-async function applyStreamCallExtension(
-  resolvedCallId: string,
-  baseCapSeconds: number,
-  appointmentType: string | null,
-  slotEndsAt: Date,
-): Promise<{
+type StreamExtensionPlan = {
   alreadyExtended: boolean;
   updatedCapSeconds: number;
   extensionsUsed: number;
   targetEndsAt: Date;
-}> {
+  apply: () => Promise<void>;
+};
+
+/** Reads the call and plans the +15 m extension; `apply` performs the Stream write. */
+async function planStreamCallExtension(
+  resolvedCallId: string,
+  baseCapSeconds: number,
+  appointmentType: string | null,
+  slotEndsAt: Date,
+): Promise<StreamExtensionPlan> {
   return withStreamCircuitBreaker(async () => {
     const call = getStreamVideoClient().video.call(
       STREAM_CALL_TYPE,
@@ -281,6 +286,7 @@ async function applyStreamCallExtension(
         updatedCapSeconds: currentCapSeconds,
         extensionsUsed,
         targetEndsAt,
+        apply: async () => {},
       };
     }
 
@@ -296,22 +302,25 @@ async function applyStreamCallExtension(
       limits: { max_duration_seconds: updatedCapSeconds },
     };
 
-    await call.update({
-      settings_override: settingsOverride,
-      custom: {
-        ...existingCustom,
-        extendedSeconds: prevExtended + EXTENSION_SECONDS,
-        extensionsUsed: nextExtensionsUsed,
-        sessionBaseEndsAt: baseEndsAt.toISOString(),
-        sessionEndsAt: targetEndsAt.toISOString(),
-      },
-    });
-
     return {
       alreadyExtended: false,
       updatedCapSeconds,
       extensionsUsed: nextExtensionsUsed,
       targetEndsAt,
+      apply: async () => {
+        await withStreamCircuitBreaker(() =>
+          call.update({
+            settings_override: settingsOverride,
+            custom: {
+              ...existingCustom,
+              extendedSeconds: prevExtended + EXTENSION_SECONDS,
+              extensionsUsed: nextExtensionsUsed,
+              sessionBaseEndsAt: baseEndsAt.toISOString(),
+              sessionEndsAt: targetEndsAt.toISOString(),
+            },
+          }),
+        );
+      },
     };
   });
 }
@@ -441,25 +450,63 @@ export async function POST(
       resolveMaxCallDurationSeconds({ endsAt: slotEndsAt }, slotStartsAt) ??
       3600;
     const resolvedCallId = toCallId(access.streamCallId);
-    const extendResult = await applyStreamCallExtension(
+    const extendResult = await planStreamCallExtension(
       resolvedCallId,
       baseCapSeconds,
       resolveAppointmentType(appt),
       slotEndsAt,
     );
 
+    // The DB holds the slot first, so the exclusion constraint can refuse a
+    // clash before Stream grants the time.
     const { targetEndsAt } = extendResult;
-    let persistedEndsAt = occurrence.endsAt ?? targetEndsAt;
-    if (
-      !occurrence.endsAt ||
-      occurrence.endsAt.getTime() < targetEndsAt.getTime()
-    ) {
-      const updated = await prisma.appointmentOccurrence.updateMany({
-        where: { id: occurrence.id, endsAt: { lt: targetEndsAt } },
-        data: { endsAt: targetEndsAt },
-      });
-      if (updated.count > 0) {
-        persistedEndsAt = targetEndsAt;
+    let persistedEndsAt = occurrence.endsAt;
+    let wroteEndsAt = false;
+    if (occurrence.endsAt.getTime() < targetEndsAt.getTime()) {
+      try {
+        const updated = await prisma.$transaction((tx) =>
+          tx.appointmentOccurrence.updateMany({
+            where: { id: occurrence.id, endsAt: { lt: targetEndsAt } },
+            data: { endsAt: targetEndsAt },
+          }),
+        );
+        wroteEndsAt = updated.count > 0;
+      } catch (err) {
+        if (!isExclusionViolation(err)) throw err;
+        return NextResponse.json(
+          {
+            extended: false,
+            hasConflictingNextBooking: true,
+            code: "EXTEND_CONFLICT",
+            error:
+              "Cannot extend because another confirmed session starts within 15 minutes.",
+          },
+          { status: 409 },
+        );
+      }
+      if (wroteEndsAt) persistedEndsAt = targetEndsAt;
+    }
+
+    if (!extendResult.alreadyExtended) {
+      try {
+        await extendResult.apply();
+      } catch (streamErr) {
+        // Undo only our own write: a concurrent endsAt change is never clobbered.
+        const reverted = wroteEndsAt
+          ? await prisma.appointmentOccurrence.updateMany({
+              where: { id: occurrence.id, endsAt: targetEndsAt },
+              data: { endsAt: occurrence.endsAt },
+            })
+          : { count: 0 };
+        reportSentryError(streamErr, {
+          subsystem: "stream",
+          op: "meetings.extend.stream-failed",
+          extra: { meetingId, reverted: reverted.count > 0 },
+        });
+        return NextResponse.json(
+          { error: "Video is temporarily unavailable. Please try again." },
+          { status: 503 },
+        );
       }
     }
 
