@@ -61,6 +61,7 @@ import {
   ENABLE_TDS_194O_GROSS,
 } from "@/lib/feature-flags";
 import { resolveEffectiveTdsRate } from "@/lib/compliance/tds";
+import { TDS_194O_EXEMPTION_PAISE } from "@/lib/compliance/tds-194o";
 import {
   getCurrentFYCumulativePayments,
   getFYDateRange,
@@ -1359,7 +1360,7 @@ async function computeConsultantPayoutTaxableBase(
         )
       : payout.amount;
 
-  // Include both PAID and active BATCHED earnings in the FY so concurrent batches cannot double-spend the ₹5L exemption.
+  // Prior FY gross counts only payouts whose TDS is already stamped; a queued batch is taxed when it runs.
   const fyRange = getFYDateRange(financialYear);
   const priorGrossAgg = await prisma.consultantEarnings.aggregate({
     where: {
@@ -1373,14 +1374,8 @@ async function computeConsultantPayoutTaxableBase(
         {
           status: EarningStatus.BATCHED,
           payout: {
-            createdAt: { gte: fyRange.start, lt: fyRange.end },
-            status: {
-              notIn: [
-                PayoutStatus.FAILED,
-                PayoutStatus.CANCELLED,
-                PayoutStatus.REVERSED,
-              ],
-            },
+            status: PayoutStatus.PROCESSING,
+            tdsFinancialYear: financialYear,
           },
         },
       ],
@@ -1397,9 +1392,23 @@ async function computeConsultantPayoutTaxableBase(
     sumPaise(priorGrossAgg._sum.refundedShareAmount),
   );
 
+  // Excludes this payout, so a retried crossing payout recomputes the same catch-up.
+  const withheldEarlierThisFy =
+    grossBeforePaise + grossThisPayoutPaise > TDS_194O_EXEMPTION_PAISE &&
+    (await prisma.consultantPayout.count({
+      where: {
+        consultantProfileId: payout.consultantProfileId,
+        id: { not: payout.id },
+        tdsFinancialYear: financialYear,
+        tdsDeducted: { gt: 0 },
+        status: { in: [PayoutStatus.PROCESSING, PayoutStatus.COMPLETED] },
+      },
+    })) > 0;
+
   const resolved = resolve194OTaxablePaise({
     grossBeforePaise,
     grossThisPayoutPaise,
+    withheldEarlierThisFy,
     entityType: consultantTaxInfo?.taxEntityType ?? null,
     panOnFile: !!consultantTaxInfo?.panEncrypted,
   });

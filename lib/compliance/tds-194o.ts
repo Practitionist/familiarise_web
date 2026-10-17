@@ -40,14 +40,15 @@ export const TDS_194O_EXEMPT_ENTITY_TYPES = ["INDIVIDUAL", "HUF"] as const;
 /**
  * Resolves the 194-O taxable amount for a payout, applying the three-limb ₹5L
  * exemption. `grossBeforePaise` / `grossThisPayoutPaise` are GROSS consideration
- * (not net of platform commission) — see ENABLE_TDS_194O_GROSS.
+ * (not net of platform commission), after refunds, for the current financial year.
  *
- * Returns the portion of this payout that is taxable. On the payout that
- * crosses the exemption, only the excess is taxable.
+ * `withheldEarlierThisFy` is true when another live payout this FY already
+ * withheld, so the year-to-date catch-up is never taken twice.
  */
 export function resolve194OTaxablePaise(params: {
   grossBeforePaise: number;
   grossThisPayoutPaise: number;
+  withheldEarlierThisFy: boolean;
   entityType: string | null;
   panOnFile: boolean;
 }): { taxablePaise: number; reason: string } {
@@ -75,14 +76,23 @@ export function resolve194OTaxablePaise(params: {
       reason: `below ₹5L 194-O exemption (cumulative gross=${cumulative} paise)`,
     };
   }
-  if (params.grossBeforePaise >= TDS_194O_EXEMPTION_PAISE) {
+  if (params.withheldEarlierThisFy) {
     return {
       taxablePaise: params.grossThisPayoutPaise,
       reason: "194-O exemption already exhausted this FY — fully taxable",
     };
   }
   return {
-    taxablePaise: cumulative - TDS_194O_EXEMPTION_PAISE,
-    reason: `crossing the ₹5L 194-O exemption — taxable on the excess only`,
+    taxablePaise: crossingTaxablePaise(cumulative),
+    reason: `crossing the ₹5L 194-O exemption (cumulative gross=${cumulative} paise)`,
   };
+}
+
+/**
+ * Taxable base on the payout that first takes the FY gross past ₹5L: the whole
+ * year-to-date gross, pending CA confirmation. The excess-only reading would be
+ * `cumulativePaise - TDS_194O_EXEMPTION_PAISE`.
+ */
+function crossingTaxablePaise(cumulativePaise: number): number {
+  return cumulativePaise;
 }

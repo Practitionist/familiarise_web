@@ -225,30 +225,48 @@ describe("Section 194-O taxable base (#1132)", () => {
     const r = resolve194OTaxablePaise({
       grossBeforePaise: 0,
       grossThisPayoutPaise: 10_000_000, // ₹1L
+      withheldEarlierThisFy: false,
       entityType: "INDIVIDUAL",
       panOnFile: true,
     });
     expect(r.taxablePaise).toBe(0);
   });
 
-  it("taxes only the excess on the payout that crosses the exemption", () => {
-    const r = resolve194OTaxablePaise({
-      grossBeforePaise: FIVE_LAKH - 1_000_000,
-      grossThisPayoutPaise: 3_000_000,
-      entityType: "HUF",
-      panOnFile: true,
-    });
-    expect(r.taxablePaise).toBe(2_000_000);
-  });
+  // Whole-gross reading pending CA confirmation: ₹4,90,000 before + ₹20,000 now → base ₹5,10,000 (₹510 at 0.1 %).
+  it.each(["INDIVIDUAL", "HUF"])(
+    "taxes the whole year-to-date gross on the payout that crosses the exemption (%s)",
+    (entityType) => {
+      const r = resolve194OTaxablePaise({
+        grossBeforePaise: 49_000_000,
+        grossThisPayoutPaise: 2_000_000,
+        withheldEarlierThisFy: false,
+        entityType,
+        panOnFile: true,
+      });
+      expect(r.taxablePaise).toBe(51_000_000);
+    },
+  );
 
-  it("taxes the whole payout once the exemption is exhausted", () => {
+  it("exempts a year-to-date gross of exactly ₹5,00,000", () => {
     const r = resolve194OTaxablePaise({
-      grossBeforePaise: FIVE_LAKH + 1,
-      grossThisPayoutPaise: 2_500_000,
+      grossBeforePaise: FIVE_LAKH - 2_000_000,
+      grossThisPayoutPaise: 2_000_000,
+      withheldEarlierThisFy: false,
       entityType: "INDIVIDUAL",
       panOnFile: true,
     });
-    expect(r.taxablePaise).toBe(2_500_000);
+    expect(r.taxablePaise).toBe(0);
+  });
+
+  it("taxes only the payout's own gross once an earlier payout this FY has withheld", () => {
+    const r = resolve194OTaxablePaise({
+      grossBeforePaise: 51_000_000,
+      grossThisPayoutPaise: 2_000_000,
+      withheldEarlierThisFy: true,
+      entityType: "INDIVIDUAL",
+      panOnFile: true,
+    });
+    expect(r.taxablePaise).toBe(2_000_000);
   });
 
   // The three limbs are conjunctive. Companies, firms and LLPs have NO
@@ -259,6 +277,7 @@ describe("Section 194-O taxable base (#1132)", () => {
       const r = resolve194OTaxablePaise({
         grossBeforePaise: 0,
         grossThisPayoutPaise: 100_000,
+        withheldEarlierThisFy: false,
         entityType,
         panOnFile: true,
       });
@@ -270,6 +289,7 @@ describe("Section 194-O taxable base (#1132)", () => {
     const r = resolve194OTaxablePaise({
       grossBeforePaise: 0,
       grossThisPayoutPaise: 100_000,
+      withheldEarlierThisFy: false,
       entityType: "INDIVIDUAL",
       panOnFile: false,
     });
@@ -282,6 +302,7 @@ describe("Section 194-O taxable base (#1132)", () => {
     const r = resolve194OTaxablePaise({
       grossBeforePaise: 0,
       grossThisPayoutPaise: 100_000,
+      withheldEarlierThisFy: false,
       entityType: null,
       panOnFile: true,
     });
