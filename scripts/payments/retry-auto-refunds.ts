@@ -51,6 +51,7 @@ import {
 } from "@/lib/payments/webhooks/handlers";
 import {
   recordSystemError,
+  recordSystemErrorSafe,
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
 import {
@@ -229,7 +230,23 @@ async function retryRefundsOwed(
       ((outcome.kind === "refunded" || outcome.kind === "replayed") &&
         outcome.refund.status !== "PENDING");
     if (settled && marker.key.startsWith("trial-cancel:")) {
-      await stampTrialEarningsOnCancel(prisma, { paymentId: marker.paymentId });
+      try {
+        await stampTrialEarningsOnCancel(prisma, {
+          paymentId: marker.paymentId,
+        });
+      } catch (error) {
+        // The marker is already cleared, so the durable row is the recovery path.
+        result.errors += 1;
+        firstError ??= error;
+        failedIds.push(marker.paymentId);
+        await recordSystemErrorSafe({
+          organizationId: null,
+          category: "PAYMENT",
+          summary: `Trial refund settled for payment ${marker.paymentId} but its earnings hold was not started`,
+          err: error,
+          context: { paymentId: marker.paymentId, key: marker.key },
+        });
+      }
     }
     if (outcome.kind === "refunded") result.owed.refunded += 1;
     else if (outcome.kind === "replayed" || outcome.kind === "settled") {
