@@ -163,6 +163,12 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn(() => ({ isFull: false, registered: 1, max: 10 })),
 }));
 
+const notifyCreditsApplied = jest.fn();
+jest.mock("../../lib/referrals/referral-notify", () => ({
+  notifyCreditsAppliedForPaymentBestEffort: (...args: unknown[]) =>
+    notifyCreditsApplied(...args),
+}));
+
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 
@@ -353,5 +359,34 @@ describe("#1446 — Phase 2 outbound steps are bounded", () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("novu-trigger"),
     );
+  });
+});
+
+describe("credits-applied bell on capture", () => {
+  it("bells once for the payment the capture confirmed", async () => {
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    expect(notifyCreditsApplied).toHaveBeenCalledTimes(1);
+    expect(notifyCreditsApplied).toHaveBeenCalledWith({
+      paymentId: "pay1",
+      userId: CONSULTEE_USER,
+      appointmentType: "CONSULTATION",
+    });
+  });
+
+  it("does not bell again when an operator recovers the payment", async () => {
+    await handlePaymentSuccess(
+      "order1",
+      METADATA as unknown as Record<string, string>,
+      undefined,
+      undefined,
+      { recover: true },
+    );
+
+    expect(notifyCreditsApplied).not.toHaveBeenCalled();
   });
 });

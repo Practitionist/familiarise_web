@@ -71,12 +71,8 @@ export async function notifyCreditsAppliedBestEffort(args: {
   }
 }
 
-/**
- * #1726 — the bell for a payment the gateway captured. Checkout took the credits
- * (ReferralCreditUsage rows keyed by the payment) but bells only the payments
- * that never see a capture webhook; the webhook calls this once the capture
- * commits. Never throws.
- */
+/** The credits-applied bell for a captured gateway payment, from what checkout
+ * recorded in ReferralCreditUsage. Never throws. */
 export async function notifyCreditsAppliedForPaymentBestEffort(args: {
   paymentId: string;
   userId: string;

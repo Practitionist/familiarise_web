@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  *
- * #1726 — a card payment that spent referral credits bells "credits applied"
- * when its capture commits. Checkout bells only the payments that never see a
+ * A card payment that spent referral credits bells "credits applied" when its
+ * capture commits. Checkout bells only the payments that never see a
  * capture webhook; the webhook calls notifyCreditsAppliedForPaymentBestEffort
  * with the payment, which reads what checkout took from ReferralCreditUsage.
  */
