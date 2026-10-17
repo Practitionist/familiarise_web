@@ -318,6 +318,24 @@ export async function refusalFromStreamEvidence(
  */
 const BOTH_ABSENT_TITLE_PREFIX = "Nobody joined the session for";
 
+const REPORTED_SAMPLE_SIZE = 10;
+
+/** One Sentry message per run however many rows hit it; `extra` carries a sample. */
+function reportOncePerRun(
+  message: string,
+  entries: Array<{ consultationId: string; refusal?: string }>,
+): void {
+  if (entries.length === 0) return;
+  Sentry.captureMessage(message, {
+    level: "warning",
+    tags: { subsystem: "jobs", job: "detect-consultant-no-shows" },
+    extra: {
+      count: entries.length,
+      sample: entries.slice(0, REPORTED_SAMPLE_SIZE),
+    },
+  });
+}
+
 /**
  * A per-run cache over `getCallPresenceEvidence`.
  *
@@ -403,6 +421,7 @@ export async function detectBothAbsent(
   lookup: PresenceLookup,
 ): Promise<number> {
   let raised = 0;
+  const lostDeliveries: string[] = [];
 
   for (const consultation of candidates) {
     try {
@@ -429,14 +448,7 @@ export async function detectBothAbsent(
       if (sawSomeone) {
         // Someone WAS there and we have no row for them — a lost delivery, and
         // this is the only place it becomes visible.
-        Sentry.captureMessage(
-          "Attendance rows missing for a session Stream saw participants in",
-          {
-            level: "warning",
-            tags: { subsystem: "jobs", job: "detect-consultant-no-shows" },
-            extra: { consultationId: consultation.id },
-          },
-        );
+        lostDeliveries.push(consultation.id);
         continue;
       }
       // Neither our rows nor Stream can speak for this session. Raising a
@@ -479,6 +491,11 @@ export async function detectBothAbsent(
       errors.push(msg);
     }
   }
+
+  reportOncePerRun(
+    "Attendance rows missing for a session Stream saw participants in",
+    lostDeliveries.map((consultationId) => ({ consultationId })),
+  );
 
   return raised;
 }
@@ -706,6 +723,7 @@ async function detectConsultantNoShowsUnlocked(
   let refunded = 0;
   let contradicted = 0;
   let bothAbsentTickets = 0;
+  const refusals: Array<{ consultationId: string; refusal: string }> = [];
   // One cache for the whole run: both passes examine overlapping candidates.
   const presence = makePresenceLookup();
 
@@ -743,11 +761,7 @@ async function detectConsultantNoShowsUnlocked(
         // Worth an alert rather than a log line. Either a webhook was lost — in
         // which case attendance data is wrong platform-wide and this is the only
         // place it surfaces — or the detector's own predicate needs revisiting.
-        Sentry.captureMessage("Consultant no-show refused on Stream evidence", {
-          level: "warning",
-          tags: { subsystem: "jobs", job: "detect-consultant-no-shows" },
-          extra: { consultationId: consultation.id, refusal },
-        });
+        refusals.push({ consultationId: consultation.id, refusal });
         continue;
       }
 
@@ -786,6 +800,8 @@ async function detectConsultantNoShowsUnlocked(
   // no-show is a partial refund of one session out of N, not a whole-booking
   // cancel. Deferred pending per-session refund design; consultations (the
   // single-session exclusive case) are handled above.
+
+  reportOncePerRun("Consultant no-show refused on Stream evidence", refusals);
 
   // Runs after the consultant-fault pass so a session it already cancelled is
   // no longer a candidate here — the query only reads APPROVED/SCHEDULED.

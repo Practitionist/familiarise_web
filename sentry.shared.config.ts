@@ -98,11 +98,11 @@ export function tracesSampler(
  * Deliberately process-local, not Redis-backed: Redis IS the outage this
  * guards — a shared limiter needs the downed dependency to answer, and must
  * then fail open (restoring the firehose) or fail closed (dropping
- * legitimate errors). Bound: warm instances × 6/hr/class, versus ~3,000/hr
+ * legitimate errors). Bound: warm instances × 1/hr/class, versus ~3,000/hr
  * unthrottled during the 2026-09-21 outage. The complementary server-side
  * inbound filter (dashboard-side, drops before quota) is the follow-up.
  */
-export const INFRA_THROTTLE_MS = 10 * 60 * 1000;
+export const INFRA_THROTTLE_MS = 60 * 60 * 1000;
 export const INFRA_TRANSIENT_PATTERNS = [
   /max requests limit exceeded/i, // Upstash quota wall
   /CronLockUnavailableError/, // fail-closed lock refusal (pager already fires)
@@ -133,7 +133,7 @@ export function infraThrottleKey(event: {
 // of it, leaving ten days dark. These three guards bound what one process can
 // send; they are in-memory on purpose, because Redis is often what is down.
 const BUDGET_MAX_KEYS = 500;
-const BUDGET_BREAKER_MAX = 30;
+const BUDGET_BREAKER_MAX = 10;
 const BUDGET_BREAKER_WINDOW_MS = 60 * 60 * 1000;
 
 // Named fingerprint families: one issue and one throttle key per class, however
