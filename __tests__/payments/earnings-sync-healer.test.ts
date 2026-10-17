@@ -54,6 +54,7 @@ jest.mock("../../lib/payments/payouts/earnings-service", () => ({
 
 jest.mock("../../lib/enterprise/system-events", () => {
   return {
+    recordSystemEvent: (...a: unknown[]) => mockRecordSystemError(...a),
     recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
     recordSystemErrorSafe: (...a: unknown[]) => mockRecordSystemError(...a),
   };
@@ -310,7 +311,7 @@ describe("a payment nobody can ever be paid for gets escalated", () => {
         appointmentId: "appt-pay-stuck",
       }),
     );
-    expect(String(call.err)).toContain("EARNINGS_UNACCRUABLE_NO_CONSULTANT");
+    expect(call.message).toContain("EARNINGS_UNACCRUABLE_NO_CONSULTANT");
 
     // And it did not pretend to heal it.
     expect(mockCreateEarningsFromPayment).not.toHaveBeenCalled();
@@ -342,6 +343,13 @@ describe("a payment nobody can ever be paid for gets escalated", () => {
     const result = await syncPaymentEarnings();
 
     expect(result.pagedCount).toBe(3);
+    // Three durable rows, one Sentry message for the run.
+    expect(mockRecordSystemError).toHaveBeenCalledTimes(3);
+    expect(
+      mockReportSentryMessage.mock.calls.filter(([m]) =>
+        String(m).startsWith("EARNINGS_UNACCRUABLE_NO_CONSULTANT"),
+      ),
+    ).toHaveLength(1);
     expect(mockSystemEventFindMany).toHaveBeenCalledTimes(1);
     expect(
       mockSystemEventFindMany.mock.calls[0][0].where.correlationId.in,

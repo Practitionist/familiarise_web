@@ -19,6 +19,7 @@ import {
   type WebhookClaim,
 } from "@/lib/webhooks/event-log";
 import { reportSentryMessage } from "@/lib/observability/report";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 
 const DEFER_ALERT_THRESHOLD = 5;
 const ALERT_AGE_HOURS = 1;
@@ -45,6 +46,7 @@ interface StuckWebhookRow {
 interface SweepCounters {
   recovered: number;
   stillFailing: number;
+  stillFailingIds: string[];
   deferred: number;
   gaveUp: number;
   errors: string[];
@@ -120,13 +122,13 @@ export async function sweepStuckWebhookEvents(
   );
 }
 
-function emitBatchWarningsIfNeeded(
+async function emitBatchWarningsIfNeeded(
   stuck: StuckWebhookRow[],
   warnOlderThan: Date,
   warnAgeHours: number,
   alertOlderThan: Date,
   alertState: { warnedAged: boolean; alertedStalling: boolean },
-): void {
+): Promise<void> {
   if (!alertState.warnedAged) {
     const aged = stuck.filter((ev) => ev.receivedAt < warnOlderThan);
     if (aged.length > 0) {
@@ -147,25 +149,32 @@ function emitBatchWarningsIfNeeded(
     );
     if (stalling.length > 0) {
       alertState.alertedStalling = true;
-      Sentry.captureMessage(
+      const message =
         `sweep-stuck-webhook-events: ${stalling.length} webhook event(s) still unprocessed ` +
-          `(deferCount >= ${DEFER_ALERT_THRESHOLD} or older than ${ALERT_AGE_HOURS}h)`,
+        `(deferCount >= ${DEFER_ALERT_THRESHOLD} or older than ${ALERT_AGE_HOURS}h)`;
+      await reportStandingFinding(
         {
-          level: "warning",
-          tags: { subsystem: "payments", job: "sweep-stuck-webhook-events" },
-          contexts: {
-            stuckWebhooks: {
-              count: stalling.length,
-              events: stalling.slice(0, 20).map((ev) => ({
-                eventId: ev.eventId,
-                provider: ev.provider,
-                eventType: ev.eventType,
-                deferCount: ev.deferCount,
-                receivedAt: ev.receivedAt.toISOString(),
-              })),
-            },
-          },
+          key: "sweep-stuck-webhook-events:stalling",
+          ids: stalling.map((ev) => ev.eventId),
+          message,
         },
+        () =>
+          Sentry.captureMessage(message, {
+            level: "warning",
+            tags: { subsystem: "payments", job: "sweep-stuck-webhook-events" },
+            contexts: {
+              stuckWebhooks: {
+                count: stalling.length,
+                events: stalling.slice(0, 20).map((ev) => ({
+                  eventId: ev.eventId,
+                  provider: ev.provider,
+                  eventType: ev.eventType,
+                  deferCount: ev.deferCount,
+                  receivedAt: ev.receivedAt.toISOString(),
+                })),
+              },
+            },
+          }),
       );
     }
   }
@@ -296,6 +305,7 @@ async function settleDispatchedEventOutcome(
         .catch(() => {});
     }
     counts.stillFailing++;
+    counts.stillFailingIds.push(ev.eventId);
     counts.errors.push(`${ev.eventId}: ${after.error}`);
     return;
   }
@@ -383,6 +393,7 @@ async function processOneStuckEvent(
         },
       });
       counts.stillFailing++;
+      counts.stillFailingIds.push(ev.eventId);
       counts.errors.push(`${ev.eventId}: ${invalidReason}`);
       return true;
     }
@@ -396,6 +407,7 @@ async function processOneStuckEvent(
     );
   } catch (e) {
     counts.stillFailing++;
+    counts.stillFailingIds.push(ev.eventId);
     const msg = toErrorMessage(e);
     counts.errors.push(`${ev.eventId}: ${msg}`);
     await markWebhookEventFailed(ev, claim, msg);
@@ -420,6 +432,7 @@ async function sweepStuckWebhookEventsUnlocked(
   const counts: SweepCounters = {
     recovered: 0,
     stillFailing: 0,
+    stillFailingIds: [],
     deferred: 0,
     gaveUp: 0,
     errors: [],
@@ -458,7 +471,7 @@ async function sweepStuckWebhookEventsUnlocked(
     if (stuck.length === 0) break;
     scanned += stuck.length;
 
-    emitBatchWarningsIfNeeded(
+    await emitBatchWarningsIfNeeded(
       stuck,
       warnOlderThan,
       warnAgeHours,
@@ -481,18 +494,24 @@ async function sweepStuckWebhookEventsUnlocked(
   }
 
   if (counts.stillFailing > 0) {
-    reportSentryMessage(
-      `sweep-stuck-webhook-events: ${counts.stillFailing} re-driven webhook event(s) still failing`,
+    const message = `sweep-stuck-webhook-events: ${counts.stillFailing} re-driven webhook event(s) still failing`;
+    await reportStandingFinding(
       {
-        subsystem: "jobs",
-        op: "sweep-stuck-webhook-events",
-        level: "error",
-        expected: false,
-        extra: {
-          stillFailing: counts.stillFailing,
-          errors: counts.errors.slice(0, 20),
-        },
+        key: "sweep-stuck-webhook-events:still-failing",
+        ids: counts.stillFailingIds,
+        message,
       },
+      () =>
+        reportSentryMessage(message, {
+          subsystem: "jobs",
+          op: "sweep-stuck-webhook-events",
+          level: "error",
+          expected: false,
+          extra: {
+            stillFailing: counts.stillFailing,
+            errors: counts.errors.slice(0, 20),
+          },
+        }),
     );
   }
 

@@ -25,6 +25,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
+import { reportStandingFinding } from "../../lib/observability/standing-finding";
 import { createSupportTicket } from "../../lib/support/create-ticket";
 import {
   getCallPresenceEvidence,
@@ -324,20 +325,31 @@ const BOTH_ABSENT_TITLE_PREFIX = "Nobody joined the session for";
 
 const REPORTED_SAMPLE_SIZE = 10;
 
-/** One Sentry message per run however many rows hit it; `extra` carries a sample. */
-function reportOncePerRun(
+/**
+ * One Sentry message per run however many rows hit it, and only when the set of
+ * affected consultations has a member not already reported inside the window.
+ */
+async function reportOncePerRun(
   message: string,
   entries: Array<{ consultationId: string; refusal?: string }>,
-): void {
+): Promise<void> {
   if (entries.length === 0) return;
-  Sentry.captureMessage(message, {
-    level: "warning",
-    tags: { subsystem: "jobs", job: "detect-consultant-no-shows" },
-    extra: {
-      count: entries.length,
-      sample: entries.slice(0, REPORTED_SAMPLE_SIZE),
+  await reportStandingFinding(
+    {
+      key: `detect-consultant-no-shows:${message}`,
+      ids: entries.map((e) => e.consultationId),
+      message,
     },
-  });
+    () =>
+      Sentry.captureMessage(message, {
+        level: "warning",
+        tags: { subsystem: "jobs", job: "detect-consultant-no-shows" },
+        extra: {
+          count: entries.length,
+          sample: entries.slice(0, REPORTED_SAMPLE_SIZE),
+        },
+      }),
+  );
 }
 
 /**
@@ -496,7 +508,7 @@ export async function detectBothAbsent(
     }
   }
 
-  reportOncePerRun(
+  await reportOncePerRun(
     "Attendance rows missing for a session Stream saw participants in",
     lostDeliveries.map((consultationId) => ({ consultationId })),
   );
@@ -805,7 +817,10 @@ async function detectConsultantNoShowsUnlocked(
   // cancel. Deferred pending per-session refund design; consultations (the
   // single-session exclusive case) are handled above.
 
-  reportOncePerRun("Consultant no-show refused on Stream evidence", refusals);
+  await reportOncePerRun(
+    "Consultant no-show refused on Stream evidence",
+    refusals,
+  );
 
   // Runs after the consultant-fault pass so a session it already cancelled is
   // no longer a candidate here — the query only reads APPROVED/SCHEDULED.

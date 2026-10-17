@@ -55,6 +55,7 @@ import {
   sendPaymentLinkEmail,
 } from "@/lib/email";
 import { notifyPaymentLink } from "@/lib/novu/service";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { APPROVAL_PAYMENT_REMINDER_MS } from "@/lib/payments/constants";
 
@@ -356,6 +357,30 @@ interface FailureSink {
   messages: string[];
   /** Added to `CleanupResult.errorCount` by the caller. */
   count: number;
+  /** Payment ids whose order still has a live gateway payment; reported once per run. */
+  liveSkips: string[];
+}
+
+/** One event per run for the orders skipped over a live payment, once per new id set. */
+async function reportLiveGatewaySkips(paymentIds: string[]): Promise<void> {
+  const message = "Abandoned sweep skipped an order with a live payment";
+  await reportStandingFinding(
+    {
+      key: "cleanup-abandoned-payments:live-payment",
+      ids: paymentIds,
+      message,
+    },
+    () =>
+      reportSentryMessage(message, {
+        subsystem: "payments",
+        expected: true,
+        level: "warning",
+        extra: {
+          count: paymentIds.length,
+          paymentIds: paymentIds.slice(0, 20),
+        },
+      }),
+  );
 }
 
 /**
@@ -499,15 +524,7 @@ function gatewayClearsExpiry(
           timestamp: new Date().toISOString(),
         }),
       );
-      reportSentryMessage(
-        "Abandoned sweep skipped an order with a live payment",
-        {
-          subsystem: "payments",
-          expected: true,
-          level: "warning",
-          extra: { paymentId: payment.id, appointmentId: appointment.id },
-        },
-      );
+      failures.liveSkips.push(payment.id);
     }
   }
   return clear;
@@ -796,11 +813,12 @@ export async function retireOrphanPendingPayment(
       ...appointment,
       payment: appointment.payment.filter((p) => p.id === paymentId),
     };
-    const failures: FailureSink = { messages: [], count: 0 };
+    const failures: FailureSink = { messages: [], count: 0, liveSkips: [] };
     const { outcome, notice } = await cleanupAbandonedAppointment(
       scoped,
       failures,
     );
+    await reportLiveGatewaySkips(failures.liveSkips);
     if (outcome === "cleaned" && notice) {
       await notifyConsulteeRequestExpired(notice);
     }
@@ -866,10 +884,15 @@ async function cleanupAbandonedPaymentsUnlocked(
       `📊 Found ${abandonedAppointments.length} abandoned appointments to clean up`,
     );
 
+    const liveSkips: string[] = [];
     for (const appointment of abandonedAppointments) {
       // #1464 — per appointment, so the gateway failures counted below belong
       // to this one and are not added again for the next.
-      const failures: FailureSink = { messages: result.errors, count: 0 };
+      const failures: FailureSink = {
+        messages: result.errors,
+        count: 0,
+        liveSkips,
+      };
       try {
         const { outcome, notice } = await cleanupAbandonedAppointment(
           appointment,
@@ -906,6 +929,7 @@ async function cleanupAbandonedPaymentsUnlocked(
       }
     }
 
+    await reportLiveGatewaySkips(liveSkips);
     result.success = result.errorCount === 0;
     logCleanupSummary("Cleanup Summary", "appointments", result);
   } catch (error) {

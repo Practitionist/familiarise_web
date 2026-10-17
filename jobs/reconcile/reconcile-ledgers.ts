@@ -27,6 +27,9 @@ import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
 import { freezeWalletSpend } from "../../lib/payments/wallet-freeze";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
+import { reportStandingFinding } from "../../lib/observability/standing-finding";
+
+const LEDGER_FINDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 async function main(): Promise<void> {
   await abortIfMaintenance("reconcile-ledgers");
@@ -88,19 +91,38 @@ async function main(): Promise<void> {
           kinds: Array.from(new Set(report.findings.map((f) => f.kind))),
         },
       });
-      Sentry.captureException(
-        new Error(
-          `Ledger reconciliation: ${report.summary.discrepanciesCount} discrepancies found`,
-        ),
+      // The same discrepancies recur nightly (the Actions run already fails on
+      // exit code 2); Sentry hears of a new finding, or the standing set weekly.
+      const message = `Ledger reconciliation: ${report.summary.discrepanciesCount} discrepancies found`;
+      await reportStandingFinding(
         {
-          tags: { subsystem: "jobs", job: "reconcile-ledgers" },
-          contexts: {
-            ledger: {
-              reportId: report.id,
-              discrepancyCount: report.summary.discrepanciesCount,
-            },
-          },
+          key: "reconcile-ledgers:discrepancies",
+          ids: report.findings.map(
+            (f) =>
+              `${f.kind}:${
+                f.billingAccountId ??
+                f.paymentId ??
+                f.payoutId ??
+                f.invoiceId ??
+                f.programAssignmentId ??
+                f.billingSubscriptionId ??
+                f.organizationId ??
+                `platform:${f.expectedPaise}:${f.actualPaise}`
+              }`,
+          ),
+          message,
+          windowMs: LEDGER_FINDING_WINDOW_MS,
         },
+        () =>
+          Sentry.captureException(new Error(message), {
+            tags: { subsystem: "jobs", job: "reconcile-ledgers" },
+            contexts: {
+              ledger: {
+                reportId: report.id,
+                discrepancyCount: report.summary.discrepanciesCount,
+              },
+            },
+          }),
       );
 
       // #837 — a wallet cache/journal drift means the balance can't be trusted,

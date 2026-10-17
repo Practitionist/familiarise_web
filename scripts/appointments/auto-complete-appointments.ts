@@ -67,6 +67,7 @@ import {
   readOutageWindows,
   type SlotDecision,
 } from "@/lib/booking/session-outcome-sweep";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { sessionHostUserIds } from "@/lib/booking/session-hosts";
@@ -916,21 +917,20 @@ async function settleMenteesHelped(hostUserIds: Set<string>): Promise<void> {
     where: { userId: { in: [...hostUserIds] } },
     select: { id: true },
   });
+  const failures = createRunFailureReporter("bookings");
   for (const profile of profiles) {
     try {
       await recomputeMenteesHelped(prisma, profile.id);
     } catch (error) {
-      reportSentryMessage("mentees helped recompute failed", {
-        subsystem: "bookings",
-        op: "auto-complete-appointments",
-        level: "warning",
-        extra: {
-          consultantProfileId: profile.id,
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
+      failures.add(
+        "auto-complete-appointments.mentees-helped",
+        error,
+        { consultantProfileId: profile.id },
+        { level: "warning" },
+      );
     }
   }
+  failures.flush();
 }
 
 /**

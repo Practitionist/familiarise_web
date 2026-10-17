@@ -21,6 +21,7 @@ import {
 } from "../../lib/payments/core/razorpay";
 import type { RefundResult } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
+import { reportStandingFinding } from "../../lib/observability/standing-finding";
 import {
   notifyRefundFailed,
   notifyRefundProcessed,
@@ -575,13 +576,19 @@ async function reconcilePendingRefundsUnlocked(
   }
 
   if (ambiguousPlaceholders.length > 0) {
-    reportSentryMessage(
-      `Ambiguous placeholder refund(s) skipped in reconcile-pending-refunds (${ambiguousPlaceholders.length})`,
+    const message = `Ambiguous placeholder refund(s) skipped in reconcile-pending-refunds (${ambiguousPlaceholders.length})`;
+    await reportStandingFinding(
       {
-        subsystem: "payments",
-        tags: { feature: "refund-reconcile" },
-        extra: { ambiguous: ambiguousPlaceholders },
+        key: "reconcile-pending-refunds:ambiguous",
+        ids: ambiguousPlaceholders,
+        message,
       },
+      () =>
+        reportSentryMessage(message, {
+          subsystem: "payments",
+          tags: { feature: "refund-reconcile" },
+          extra: { ambiguous: ambiguousPlaceholders },
+        }),
     );
   }
 

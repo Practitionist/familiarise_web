@@ -26,9 +26,8 @@
  */
 import "dotenv/config";
 
-import * as Sentry from "@sentry/nextjs";
-
 import prisma from "../../lib/prisma";
+import { createRunFailureReporter } from "../../lib/observability/run-failures";
 import {
   getStreamChatClient,
   isStreamConfigured,
@@ -666,10 +665,7 @@ async function runDmStage(
       result.errors.push(
         `dm delete batch: ${error instanceof Error ? error.message : String(error)}`,
       );
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "stream" } },
-      );
+      streamFailures.add("dm-delete-batch", error);
     }
   }
 }
@@ -798,9 +794,22 @@ async function writeDmLedger(
   }
 }
 
+// Per-batch Stream failures collapse to one event per op per run.
+const streamFailures = createRunFailureReporter("stream");
+
 export async function expireEventChannels(): Promise<ExpireEventChannelsResult> {
-  return withCronLock("expire-event-channels", { failMode: "open" }, () =>
-    expireEventChannelsUnlocked(),
+  // Flush inside the lock: a call refused by the lock never flushes the
+  // running sweep's failures.
+  return withCronLock(
+    "expire-event-channels",
+    { failMode: "open" },
+    async () => {
+      try {
+        return await expireEventChannelsUnlocked();
+      } finally {
+        streamFailures.flush();
+      }
+    },
   );
 }
 
@@ -947,10 +956,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
       result.errors.push(
         `delete batch: ${error instanceof Error ? error.message : String(error)}`,
       );
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "stream" } },
-      );
+      streamFailures.add("event-delete-batch", error);
     }
   }
 
@@ -977,10 +983,7 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
     result.errors.push(
       `dm stage: ${error instanceof Error ? error.message : String(error)}`,
     );
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
+    streamFailures.add("dm-stage", error);
   }
 
   console.log(
