@@ -22,6 +22,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Refusal } from "@/lib/errors/refusal";
 import {
@@ -56,19 +57,19 @@ import {
 } from "@/lib/redis";
 import { CronLockUnavailableError } from "@/lib/cron/with-cron-lock";
 import { assertPayoutBalance } from "./balance-preflight";
-import {
-  ENABLE_LIVE_PAYOUTS,
-  ENABLE_TDS_194O_GROSS,
-} from "@/lib/feature-flags";
+import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import { resolveEffectiveTdsRate } from "@/lib/compliance/tds";
 import {
+  earningsGrossPaise,
+  planConsultantPayoutTds,
+  type ConsultantTdsInput,
+  type ConsultantTdsPlan,
+} from "./consultant-tds";
+import {
   getCurrentFYCumulativePayments,
-  getFYDateRange,
   getIndianFinancialYear,
   recordTDSDeduction,
   recordTdsReversal,
-  resolve194OTaxablePaise,
-  TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
 import { notifyPayoutFailed, notifyPayoutProcessed } from "@/lib/novu/service";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
@@ -88,13 +89,11 @@ import { sumPaise } from "@/lib/payments/utils/money";
 import {
   buildPayoutCompletionPostings,
   buildPayoutReversalPostings,
-  computeResidentPayoutTds,
   DISPUTE_GATED_PAYMENT_WHERE,
   PayoutMakerCheckerError,
   REFUND_GATED_PAYMENT_WHERE,
   resolveCompletionTdsWindow,
   resolvePayoutMsmeDeadline,
-  tdsRateToBps,
 } from "./shared-lifecycle";
 
 export { PayoutMakerCheckerError };
@@ -1073,15 +1072,10 @@ export async function previewInstantPayout(
     }),
     prisma.consultantTaxInfo.findUnique({
       where: { consultantProfileId },
-      select: { panEncrypted: true },
+      select: { panEncrypted: true, taxEntityType: true },
     }),
   ]);
   const readyPaise = Math.max(eligibility.readyAmount, 0);
-  const tdsEstimatePaise =
-    readyPaise > 0
-      ? computeResidentPayoutTds(readyPaise, taxInfo?.panEncrypted)
-          .tdsAmountPaise
-      : 0;
   const recoveryPaise = Math.min(
     await outstandingClawbackPaise(prisma, {
       rail: "CONSULTANT",
@@ -1089,45 +1083,44 @@ export async function previewInstantPayout(
     }),
     recoverablePaise(readyPaise, PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT, false),
   );
+  // Same planner as processSinglePayout, so the preview matches the payout it previews.
+  const plan =
+    readyPaise > 0
+      ? await planConsultantPayoutTds(prisma, {
+          consultantProfileId,
+          payoutId: null,
+          netSharePaise: readyPaise,
+          grossThisPayoutPaise: await earningsGrossPaise(
+            prisma,
+            {
+              consultantProfileId,
+              status: EarningStatus.READY,
+              payoutId: null,
+            },
+            readyPaise,
+          ),
+          capacityPaise: readyPaise - recoveryPaise,
+          financialYear: getIndianFinancialYear(now),
+          cumulativeBeforePayout: await getCurrentFYCumulativePayments(
+            consultantProfileId,
+            getIndianFinancialYear(now),
+          ),
+          taxInfo,
+          resolvedRate: await resolveEffectiveTdsRate(prisma, "194O", now),
+          allowCatchUp: true,
+        })
+      : null;
+  const tdsEstimatePaise = plan?.withholdPaise ?? 0;
   return {
     readyPaise,
     tdsEstimatePaise,
     recoveryPaise,
-    netPaise: readyPaise - tdsEstimatePaise - recoveryPaise,
+    netPaise:
+      readyPaise - tdsEstimatePaise - recoveryPaise + (plan?.creditPaise ?? 0),
     label: "Free · once a day",
     nextAllowedAt: usedToday ? nextIstMidnight(now) : null,
     reason: eligibility.reason,
   };
-}
-
-function subtractProportionalGrossRefund(
-  grossPaise: number,
-  sharePaise: number,
-  refundedSharePaise: number,
-): number {
-  if (grossPaise <= 0 || refundedSharePaise <= 0) {
-    return Math.max(0, grossPaise);
-  }
-  if (sharePaise > 0) {
-    const proportionalGrossRefund = Math.round(
-      (grossPaise * refundedSharePaise) / sharePaise,
-    );
-    return Math.max(0, grossPaise - proportionalGrossRefund);
-  }
-  return Math.max(0, grossPaise - refundedSharePaise);
-}
-
-function resolveTdsRateAppliedBps(tds: {
-  rateAppliedBps?: number;
-  tdsRate?: number | null;
-}): number | null {
-  if (tds.rateAppliedBps !== undefined) {
-    return tds.rateAppliedBps;
-  }
-  if (tds.tdsRate !== null && tds.tdsRate !== undefined) {
-    return tdsRateToBps(tds.tdsRate);
-  }
-  return null;
 }
 
 async function isMakerCheckerDisbursementBlocked(
@@ -1216,6 +1209,9 @@ async function runConsultantPayoutClaimGate(
         netAmount: null,
         tdsRateAppliedBps: null,
         tdsFinancialYear: null,
+        tdsCatchUpFy: null,
+        tdsCarryPaise: 0,
+        tdsCreditPaise: 0,
       },
     });
     if (failed.count > 0) {
@@ -1228,9 +1224,10 @@ async function runConsultantPayoutClaimGate(
     return { kind: "shortfall", owedPaise, shortfallReason };
   }
 
+  // A retried payout re-enters the live catch-up index unstamped; staging restamps it.
   const claimed = await db.consultantPayout.updateMany({
     where: { id: payoutId, status: PayoutStatus.APPROVED },
-    data: { status: PayoutStatus.PROCESSING },
+    data: { status: PayoutStatus.PROCESSING, tdsCatchUpFy: null },
   });
   if (claimed.count === 0) {
     return { kind: "already_claimed" };
@@ -1309,123 +1306,6 @@ async function claimConsultantPayoutForDisbursement(
     return { payoutId, success: false, skipped: true };
   }
   return null;
-}
-
-async function computeConsultantPayoutTaxableBase(
-  payout: { id: string; consultantProfileId: string; amount: number },
-  cumulativeBeforePayout: number,
-  financialYear: string,
-  consultantTaxInfo: {
-    taxEntityType?: string | null;
-    panEncrypted?: unknown;
-  } | null,
-): Promise<{ taxablePaise: number; thresholdReason: string | null }> {
-  const engine = process.env.TDS_ENGINE ?? "194O";
-  const pure194O = engine !== "LEGACY";
-  const gross194OEnabled =
-    ENABLE_TDS_194O_GROSS && process.env.ENABLE_TDS_194O_GROSS !== "false";
-  const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
-
-  if (!pure194O) {
-    if (cumulativeAfterPayout <= TDS_THRESHOLD_PAISE) {
-      return { taxablePaise: 0, thresholdReason: null };
-    }
-    const taxablePaise =
-      cumulativeBeforePayout >= TDS_THRESHOLD_PAISE
-        ? payout.amount
-        : cumulativeAfterPayout - TDS_THRESHOLD_PAISE;
-    return { taxablePaise, thresholdReason: null };
-  }
-
-  // #1901 — Always compute Section 194-O gross sale receipts (with the ₹5L
-  // FY exemption for individuals/HUFs with PAN). When ENABLE_TDS_194O_GROSS
-  // is explicitly "false", emit a shadow-diff SystemEvent if the gross base
-  // differs from `payout.amount`.
-  const grossAgg = await prisma.consultantEarnings.aggregate({
-    where: { payoutId: payout.id },
-    _sum: {
-      grossAmount: true,
-      consultantSharePaise: true,
-      refundedShareAmount: true,
-    },
-  });
-  const rawGrossThisPayout = sumPaise(grossAgg._sum.grossAmount);
-  const grossThisPayoutPaise =
-    rawGrossThisPayout > 0
-      ? subtractProportionalGrossRefund(
-          rawGrossThisPayout,
-          sumPaise(grossAgg._sum.consultantSharePaise),
-          sumPaise(grossAgg._sum.refundedShareAmount),
-        )
-      : payout.amount;
-
-  // Include both PAID and active BATCHED earnings in the FY so concurrent batches cannot double-spend the ₹5L exemption.
-  const fyRange = getFYDateRange(financialYear);
-  const priorGrossAgg = await prisma.consultantEarnings.aggregate({
-    where: {
-      consultantProfileId: payout.consultantProfileId,
-      payoutId: { not: payout.id },
-      OR: [
-        {
-          status: EarningStatus.PAID,
-          paidAt: { gte: fyRange.start, lt: fyRange.end },
-        },
-        {
-          status: EarningStatus.BATCHED,
-          payout: {
-            createdAt: { gte: fyRange.start, lt: fyRange.end },
-            status: {
-              notIn: [
-                PayoutStatus.FAILED,
-                PayoutStatus.CANCELLED,
-                PayoutStatus.REVERSED,
-              ],
-            },
-          },
-        },
-      ],
-    },
-    _sum: {
-      grossAmount: true,
-      consultantSharePaise: true,
-      refundedShareAmount: true,
-    },
-  });
-  const grossBeforePaise = subtractProportionalGrossRefund(
-    sumPaise(priorGrossAgg._sum.grossAmount),
-    sumPaise(priorGrossAgg._sum.consultantSharePaise),
-    sumPaise(priorGrossAgg._sum.refundedShareAmount),
-  );
-
-  const resolved = resolve194OTaxablePaise({
-    grossBeforePaise,
-    grossThisPayoutPaise,
-    entityType: consultantTaxInfo?.taxEntityType ?? null,
-    panOnFile: !!consultantTaxInfo?.panEncrypted,
-  });
-
-  if (gross194OEnabled) {
-    return {
-      taxablePaise: resolved.taxablePaise,
-      thresholdReason: resolved.reason,
-    };
-  }
-
-  if (resolved.taxablePaise !== payout.amount) {
-    await recordSystemEventSafe({
-      category: "PAYOUT",
-      severity: "INFO",
-      message: `TDS_194O_GROSS_SHADOW_DIFF: payout ${payout.id} grossTaxablePaise=${resolved.taxablePaise} differs from netSharePaise=${payout.amount}`,
-      context: {
-        payoutId: payout.id,
-        consultantProfileId: payout.consultantProfileId,
-        grossTaxablePaise: resolved.taxablePaise,
-        netSharePaise: payout.amount,
-        reason: resolved.reason,
-      },
-    });
-  }
-  return { taxablePaise: payout.amount, thresholdReason: null };
 }
 
 async function handleProcessSinglePayoutError(
@@ -1524,6 +1404,9 @@ async function handleProcessSinglePayoutError(
         netAmount: null,
         tdsRateAppliedBps: null,
         tdsFinancialYear: null,
+        tdsCatchUpFy: null,
+        tdsCarryPaise: 0,
+        tdsCreditPaise: 0,
       },
     });
     if (failed.count === 0) return;
@@ -1635,81 +1518,87 @@ async function processSinglePayout(
       payout.consultantProfileId,
       financialYear,
     );
-    const cumulativeAfterPayout = cumulativeBeforePayout + payout.amount;
-    const { taxablePaise, thresholdReason } =
-      await computeConsultantPayoutTaxableBase(
-        payout,
-        cumulativeBeforePayout,
-        financialYear,
-        consultantTaxInfo,
-      );
-
-    const resolvedTdsRate = await resolveEffectiveTdsRate(
-      prisma,
-      "194O",
-      new Date(),
-    );
-    const tds =
-      taxablePaise > 0
-        ? computeResidentPayoutTds(
-            taxablePaise,
-            consultantTaxInfo?.panEncrypted,
-            resolvedTdsRate,
-          )
-        : {
-            tdsSection: "194O",
-            rateAppliedBps: 0,
-            rateApplied: 0,
-            tdsRate: 0,
-            tdsAmountPaise: 0,
-            dtaaRateApplied: null,
-            fallbackApplied: false,
-            reason:
-              thresholdReason ??
-              `below ₹50K FY threshold (cumulative=${cumulativeAfterPayout} paise) — no TDS`,
-          };
-
     const recoveredPaise = await clawbackRecoveredPaise(prisma, payout.id);
-    const payoutAmountAfterTDS =
-      payout.amount - tds.tdsAmountPaise - recoveredPaise;
-    if (payoutAmountAfterTDS <= 0) {
+    if (payout.amount - recoveredPaise <= 0) {
       throw new Error(
-        `Payout ${payout.id} nets to ${payoutAmountAfterTDS} paise after TDS and clawback recovery`,
+        `Payout ${payout.id} nets to ${payout.amount - recoveredPaise} paise after clawback recovery`,
       );
     }
-    const tdsRateAppliedBps = resolveTdsRateAppliedBps(tds);
+    const tdsInput: ConsultantTdsInput = {
+      consultantProfileId: payout.consultantProfileId,
+      payoutId: payout.id,
+      netSharePaise: payout.amount,
+      grossThisPayoutPaise: await earningsGrossPaise(
+        prisma,
+        { payoutId: payout.id },
+        payout.amount,
+      ),
+      capacityPaise: payout.amount - recoveredPaise,
+      financialYear,
+      cumulativeBeforePayout,
+      taxInfo: consultantTaxInfo,
+      resolvedRate: await resolveEffectiveTdsRate(prisma, "194O", new Date()),
+      allowCatchUp: true,
+    };
+    let plan = await planConsultantPayoutTds(prisma, tdsInput);
+    const netAfter = (p: ConsultantTdsPlan) =>
+      payout.amount - recoveredPaise - p.withholdPaise + p.creditPaise;
 
-    if (tds.tdsAmountPaise > 0) {
+    // Stage TDS fields before gateway submission so an immediate completion webhook posts the net cash leg.
+    const stage = (p: ConsultantTdsPlan) =>
+      prisma.consultantPayout.updateMany({
+        where: { id: payout.id, status: PayoutStatus.PROCESSING },
+        data: {
+          tdsDeducted: p.withholdPaise,
+          netAmount: netAfter(p),
+          tdsRateAppliedBps: p.rateAppliedBps,
+          tdsFinancialYear: financialYear,
+          tdsCatchUpFy: p.catchUpFy,
+          tdsCarryPaise: p.carryPaise,
+          tdsCreditPaise: p.creditPaise,
+        },
+      });
+    let staged: Prisma.BatchPayload;
+    try {
+      staged = await stage(plan);
+    } catch (err) {
+      // The database allows one catch-up per expert per FY; the loser pays on its own gross.
+      if (!plan.catchUpFy || !isTdsCatchUpRace(err)) throw err;
+      plan = await planConsultantPayoutTds(prisma, {
+        ...tdsInput,
+        allowCatchUp: false,
+      });
+      staged = await stage(plan);
+    }
+    const payoutAmountAfterTDS = netAfter(plan);
+
+    if (
+      plan.withholdPaise > 0 ||
+      plan.creditPaise > 0 ||
+      plan.carryPaise !== 0
+    ) {
       console.log(
         JSON.stringify({
           event: "tds_deduction",
           payoutId: payout.id,
           consultantProfileId: payout.consultantProfileId,
-          grossAmount: payout.amount,
-          taxableAmount: taxablePaise,
+          grossAmount: tdsInput.grossThisPayoutPaise,
+          taxableAmount: plan.taxablePaise,
           cumulativeBeforePayout,
-          cumulativeAfterPayout,
-          tdsAmount: tds.tdsAmountPaise,
-          tdsRate: tds.tdsRate,
-          tdsSection: tds.tdsSection,
+          tdsAmount: plan.withholdPaise,
+          tdsCreditPaise: plan.creditPaise,
+          tdsCarryPaise: plan.carryPaise,
+          tdsCatchUpFy: plan.catchUpFy,
+          tdsRateAppliedBps: plan.rateAppliedBps,
+          tdsSection: plan.tdsSection,
           netAmount: payoutAmountAfterTDS,
           financialYear,
-          reason: tds.reason,
+          reason: plan.reason,
           timestamp: new Date().toISOString(),
         }),
       );
     }
 
-    // Stage TDS fields before gateway submission so an immediate completion webhook posts the net cash leg.
-    const staged = await prisma.consultantPayout.updateMany({
-      where: { id: payout.id, status: PayoutStatus.PROCESSING },
-      data: {
-        tdsDeducted: tds.tdsAmountPaise,
-        netAmount: payoutAmountAfterTDS,
-        tdsRateAppliedBps,
-        tdsFinancialYear: financialYear,
-      },
-    });
     if (staged.count === 0) {
       console.warn(
         `[Payouts] Payout ${payout.id} left PROCESSING before submission — skipping`,
@@ -1720,6 +1609,11 @@ async function processSinglePayout(
         extra: { payoutId: payout.id },
       });
       return { payoutId: payout.id, success: false, skipped: true };
+    }
+
+    if (payoutAmountAfterTDS === 0) {
+      await completeZeroCashConsultantPayout(payout.id);
+      return { payoutId: payout.id, success: true };
     }
 
     const payoutForGateway = { ...payout, amount: payoutAmountAfterTDS };
@@ -1877,6 +1771,48 @@ async function loadCompletionEarningsForShortfall(
   return [];
 }
 
+function isTdsCatchUpRace(err: unknown): boolean {
+  return (
+    isUniqueViolationOn(err, "tdsCatchUpFy") ||
+    isUniqueViolationOn(err, "consultant_payout_one_tds_catch_up_per_fy")
+  );
+}
+
+/** A payout whose TDS absorbs all of it moves no cash, so it completes here instead of at the gateway. */
+async function completeZeroCashConsultantPayout(
+  payoutId: string,
+): Promise<void> {
+  let stagedNotice: StagedConsultantPayoutNotice | null = null;
+  await withSerializableRetry(() => {
+    stagedNotice = null;
+    return prisma.$transaction(
+      async (tx) => {
+        const { count } = await tx.consultantPayout.updateMany({
+          where: { id: payoutId, status: PayoutStatus.PROCESSING },
+          data: { status: PayoutStatus.COMPLETED, processedAt: new Date() },
+        });
+        if (count === 0) return;
+        const row = await tx.consultantPayout.findUniqueOrThrow({
+          where: { id: payoutId },
+          include: { earnings: true },
+        });
+        await completeConsultantPayoutInTx(tx, row);
+        stagedNotice = await stageConsultantPayoutNotice(tx, {
+          consultantProfileId: row.consultantProfileId,
+          payoutId,
+          status: "COMPLETED",
+          amountPaise: row.amount,
+          currency: row.currency,
+          method: row.method,
+          withheldText: formatNotificationMoney(row.tdsDeducted, row.currency),
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  });
+  await flushConsultantPayoutNotice(stagedNotice);
+}
+
 async function completeConsultantPayoutInTx(
   tx: Tx,
   matched: {
@@ -1885,10 +1821,12 @@ async function completeConsultantPayoutInTx(
     amount: number;
     tdsDeducted: number;
     tdsRateAppliedBps: number | null;
+    tdsCreditPaise?: number;
     earnings?: unknown;
   },
 ): Promise<void> {
   const { financialYear, quarter, start, end } = resolveCompletionTdsWindow();
+  const creditPaise = matched.tdsCreditPaise ?? 0;
   const previousCompletedPayouts = await tx.consultantPayout.aggregate({
     where: {
       consultantProfileId: matched.consultantProfileId,
@@ -1968,7 +1906,7 @@ async function completeConsultantPayoutInTx(
   // The recovered slice already left the payable when the payout was built.
   const recoveredPaise = await clawbackRecoveredPaise(tx, matched.id);
   if (matched.amount - recoveredPaise > 0) {
-    const tdsPaise = matched.tdsDeducted ?? 0;
+    const tdsPaise = (matched.tdsDeducted ?? 0) - creditPaise;
     const cashPaise = matched.amount - tdsPaise - recoveredPaise;
     await postLedgerTxn(tx, {
       idempotencyKey: `payout:${matched.id}`,
@@ -1983,6 +1921,38 @@ async function completeConsultantPayoutInTx(
         netCashPaise: cashPaise,
         tdsPaise,
       }),
+    });
+  }
+
+  // Excess FY TDS returned on this payout files as a negative record, like a refund reversal.
+  if (creditPaise > 0) {
+    await tx.tDSRecord.deleteMany({
+      where: { payoutId: matched.id, isReversal: true },
+    });
+    const credit = await tx.tDSRecord.create({
+      data: {
+        consultantProfileId: matched.consultantProfileId,
+        financialYear,
+        quarter,
+        cumulativeAmountCredited: cumulativeCreditedPayments,
+        tdsDeducted: -creditPaise,
+        tdsRateBps: matched.tdsRateAppliedBps ?? 0,
+        tdsSection: "194O",
+        payoutId: matched.id,
+        isReversal: true,
+      },
+    });
+    await tx.tdsAdjustment.create({
+      data: {
+        consultantProfileId: matched.consultantProfileId,
+        tdsRecordId: credit.id,
+        payoutId: matched.id,
+        financialYear,
+        quarter,
+        amountPaise: -creditPaise,
+        reason:
+          "194-O threshold credit — FY gross fell back to ₹5L or below after refunds",
+      },
     });
   }
 
@@ -2028,6 +1998,9 @@ async function failOrCancelConsultantPayoutInTx(
       netAmount: null,
       tdsRateAppliedBps: null,
       tdsFinancialYear: null,
+      tdsCatchUpFy: null,
+      tdsCarryPaise: 0,
+      tdsCreditPaise: 0,
     },
   });
 
@@ -2230,6 +2203,9 @@ export async function markConsultantPayoutReversed(
           consultantProfileId: true,
           amount: true,
           tdsDeducted: true,
+          tdsCreditPaise: true,
+          tdsRateAppliedBps: true,
+          tdsFinancialYear: true,
           currency: true,
           method: true,
         } as const;
@@ -2290,7 +2266,8 @@ export async function markConsultantPayoutReversed(
 
           const recoveredPaise = await clawbackRecoveredPaise(tx, payout.id);
           if (payout.amount - recoveredPaise > 0) {
-            const tdsPaise = payout.tdsDeducted ?? 0;
+            const tdsPaise =
+              (payout.tdsDeducted ?? 0) - (payout.tdsCreditPaise ?? 0);
             const cashPaise = payout.amount - tdsPaise - recoveredPaise;
             await postLedgerTxn(tx, {
               idempotencyKey: `payout-reversal:${payout.id}`,
@@ -2314,6 +2291,19 @@ export async function markConsultantPayoutReversed(
               consultantProfileId: payout.consultantProfileId,
               refundAmountPaise: payout.amount,
               paymentAmountPaise: payout.amount,
+            });
+          }
+          // A returned credit payout re-owes the credited TDS; the next payout recomputes it.
+          if ((payout.tdsCreditPaise ?? 0) > 0) {
+            await recordTDSDeduction({
+              consultantProfileId: payout.consultantProfileId,
+              financialYear: getIndianFinancialYear(),
+              tdsDeducted: payout.tdsCreditPaise,
+              tdsRateBps: payout.tdsRateAppliedBps ?? 0,
+              cumulativeAmountCredited: 0,
+              payoutId: payout.id,
+              tdsSection: "194O",
+              db: tx,
             });
           }
 

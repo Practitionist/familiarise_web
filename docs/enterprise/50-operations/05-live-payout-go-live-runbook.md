@@ -139,15 +139,15 @@ DATABASE_URL=… DIRECT_URL=… npx tsx scripts/smoke/org-payout-sandbox-smoke.t
 Sandbox-proof items, each mapped to an assertion the smoke makes (or a manual
 step for the ones that need real sandbox creds):
 
-| Proof item                                      | How                                                                                                                                                                                      |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Flag off ⇒ no disbursement                      | smoke: `submittedToGateway === false`, status stays `PENDING` (not claimed)                                                                                                             |
-| No money leaves while gated                     | smoke: `providerPayoutId == null` after process                                                                                                                                          |
-| TDS/MSME stamped before submit                  | inspect a real batch in staging (`tdsAmountPaise`, `mustPayByDate`)                                                                                                                      |
-| Idempotency key never null                      | schema `@unique` + creator stamps `payout_<profile>_<batch>`                                                                                                                             |
-| Real sandbox submit succeeds                    | **manual**: set `RAZORPAYX_SANDBOX_KEY`/`_SECRET`, submit one payout against the RazorpayX sandbox host, confirm the `payout.processed` webhook lands and `markOrgPayoutCompleted` fires |
-| `TDS_ENGINE` is not accidentally `LEGACY`       | inspect the deployed environment: the default is `"194O"` (Section 194-O, the e-commerce-operator posture), `LEGACY` is deprecated and must be an explicit opt-in                        |
-| `ENABLE_TDS_194O_GROSS` is off unless CA-signed | the 194-O gross-base switch stays off in production until chartered-accountant sign-off, per [TDS overview](../../compliance/02-tds-overview.md)                                         |
+| Proof item                                | How                                                                                                                                                                                      |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flag off ⇒ no disbursement                | smoke: `submittedToGateway === false`, status stays `PENDING` (not claimed)                                                                                                              |
+| No money leaves while gated               | smoke: `providerPayoutId == null` after process                                                                                                                                          |
+| TDS/MSME stamped before submit            | inspect a real batch in staging (`tdsAmountPaise`, `mustPayByDate`)                                                                                                                      |
+| Idempotency key never null                | schema `@unique` + creator stamps `payout_<profile>_<batch>`                                                                                                                             |
+| Real sandbox submit succeeds              | **manual**: set `RAZORPAYX_SANDBOX_KEY`/`_SECRET`, submit one payout against the RazorpayX sandbox host, confirm the `payout.processed` webhook lands and `markOrgPayoutCompleted` fires |
+| `TDS_ENGINE` is not accidentally `LEGACY` | inspect the deployed environment: the default is `"194O"` (Section 194-O, the e-commerce-operator posture), `LEGACY` is deprecated and must be an explicit opt-in                        |
+| `ENABLE_TDS_194O_GROSS` is not `"false"`  | the 194-O gross base is on by default; `"false"` is shadow mode that withholds on the net share, per [TDS overview](../../compliance/02-tds-overview.md)                                 |
 
 ## Flip procedure
 

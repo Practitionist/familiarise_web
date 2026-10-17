@@ -20,6 +20,7 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn(),
       updateMany: jest.fn(),
       update: jest.fn(),
+      groupBy: async () => [],
     },
     // #1020 — the disbursement dispute guard probes for live disputes.
     consultantEarnings: {
@@ -71,8 +72,6 @@ jest.mock("../../lib/payments/tax/tds-service", () => ({
   }),
   getIndianFinancialYear: jest.fn().mockReturnValue("2026-27"),
   recordTDSDeduction: jest.fn(),
-  resolve194OTaxablePaise: jest.requireActual("../../lib/compliance/tds-194o")
-    .resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE: 5_000_000,
 }));
 jest.mock("../../lib/novu/service", () => ({
