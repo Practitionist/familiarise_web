@@ -2,8 +2,9 @@
  * @jest-environment node
  */
 
-// Invariant: allocation is host-side (plan consultant, host-org operator, staff),
-// and a sponsor org allocates only a booking the expert already APPROVED.
+// Invariant: allocation is host-side (plan consultant, host-org operator, staff);
+// only the expert or staff may waive the rules; a sponsor org allocates only
+// a booking the expert already APPROVED.
 
 const consultationFindUnique = jest.fn();
 const membershipFindUnique = jest.fn();
@@ -20,8 +21,10 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 jest.mock("../../lib/auth-server", () => ({ getSession: jest.fn() }));
+let apiUser: Record<string, unknown> = {};
 jest.mock("../../lib/auth-helpers", () => ({
   ...jest.requireActual("../../lib/auth-helpers"),
+  requireApiAuth: async () => ({ session: { user: apiUser } }),
   requireOrgAccess: async () => ({
     session: { user: { id: "u-payer-owner" } },
     member: { id: "mem-1" },
@@ -35,16 +38,24 @@ jest.mock("../../lib/booking/org-actor", () => ({
   isActForOrgBooking: () => true,
   isOrgFundedByOrg: async () => true,
 }));
+jest.mock("../../lib/booking/approve-request", () => ({
+  mintApprovalPaymentAfterCommit: jest.fn(),
+  approvalMintConflict: () => null,
+}));
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemErrorSafe: jest.fn().mockResolvedValue(undefined),
+}));
 const allocate = jest.fn();
 jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
   SchedulingService: { allocate: (...a: unknown[]) => allocate(...a) },
 }));
 
 import { NextRequest } from "next/server";
-import { isEventHost } from "@/lib/auth-helpers";
+import { resolveEventHostActor } from "@/lib/auth-helpers";
+import { handleAllocate } from "@/lib/scheduling/allocate-route";
 import { POST as orgAllocate } from "@/app/api/organizations/[orgId]/appointments/[appointmentId]/allocate/route";
 
-type HostSession = Parameters<typeof isEventHost>[0];
+type HostSession = Parameters<typeof resolveEventHostActor>[0];
 const sessionOf = (user: Partial<HostSession["user"]> = {}): HostSession => ({
   user: {
     id: "u-x",
@@ -66,31 +77,87 @@ beforeEach(() => {
   allocate.mockResolvedValue({ success: true, appointments: [] });
 });
 
-describe("isEventHost", () => {
+const hostOrgOperator = () =>
+  membershipFindUnique.mockResolvedValue({
+    status: "ACTIVE",
+    role: "OWNER",
+    organization: { status: "ACTIVE" },
+  });
+
+describe("resolveEventHostActor", () => {
+  const actor = (user: Partial<HostSession["user"]>) =>
+    resolveEventHostActor(sessionOf(user), "consultation", "c1");
+
   it("refuses the consultee", async () => {
-    expect(await isEventHost(sessionOf({}), "consultation", "c1")).toBe(false);
+    expect(await actor({})).toBeNull();
   });
 
   it("admits the plan's own consultant", async () => {
-    const s = sessionOf({ role: "CONSULTANT", consultantProfileId: "cp-host" });
-    expect(await isEventHost(s, "consultation", "c1")).toBe(true);
+    expect(
+      await actor({ role: "CONSULTANT", consultantProfileId: "cp-host" }),
+    ).toBe("consultant");
   });
 
   it("refuses a consultant who is this booking's consultee", async () => {
-    const s = sessionOf({
-      role: "CONSULTANT",
-      consultantProfileId: "cp-other",
-    });
-    expect(await isEventHost(s, "consultation", "c1")).toBe(false);
+    expect(
+      await actor({ role: "CONSULTANT", consultantProfileId: "cp-other" }),
+    ).toBeNull();
   });
 
   it("admits an operator of the plan's host org", async () => {
-    membershipFindUnique.mockResolvedValue({
-      status: "ACTIVE",
-      role: "OWNER",
-      organization: { status: "ACTIVE" },
+    hostOrgOperator();
+    expect(await actor({})).toBe("host-org");
+  });
+});
+
+describe("allocate rule-waiving flags", () => {
+  const patch = () =>
+    handleAllocate(
+      new NextRequest("http://localhost/x", {
+        method: "PATCH",
+        body: JSON.stringify({
+          isAuto: false,
+          useRequestedSlots: true,
+          override: true,
+          allowPartial: true,
+          topUp: true,
+        }),
+      }),
+      "consultation",
+      "clzzzzzzz000consultation1",
+    );
+  const flags = () => {
+    const [request] = allocate.mock.calls[0];
+    return {
+      override: request.override,
+      allowPartial: request.allowPartial,
+      topUp: request.topUp,
+    };
+  };
+
+  it("ignores them for a host-org operator", async () => {
+    apiUser = { id: "u-op", role: "CONSULTEE" };
+    hostOrgOperator();
+    expect((await patch()).status).toBe(200);
+    expect(flags()).toEqual({
+      override: false,
+      allowPartial: false,
+      topUp: false,
     });
-    expect(await isEventHost(sessionOf({}), "consultation", "c1")).toBe(true);
+  });
+
+  it("honours them for the plan's own consultant", async () => {
+    apiUser = {
+      id: "u-cp",
+      role: "CONSULTANT",
+      consultantProfileId: "cp-host",
+    };
+    expect((await patch()).status).toBe(200);
+    expect(flags()).toEqual({
+      override: true,
+      allowPartial: true,
+      topUp: true,
+    });
   });
 });
 

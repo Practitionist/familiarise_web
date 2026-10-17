@@ -618,23 +618,25 @@ async function findEventPlanOwner(
 
 /**
  * Host-side actor for an event: ADMIN/STAFF, the plan's own consultant, or an
- * operator of the plan's host org. A consultee of the booking never qualifies.
+ * operator of the plan's host org; `null` for anyone else, the consultee included.
  */
-export async function isEventHost(
+export async function resolveEventHostActor(
   session: {
     user: Pick<Session["user"], "id" | "role" | "consultantProfileId">;
   },
   eventType: EventType,
   eventId: string,
-): Promise<boolean> {
-  if (isPrivileged(session.user.role)) return true;
+): Promise<"staff" | "consultant" | "host-org" | null> {
+  if (isPrivileged(session.user.role)) return "staff";
 
   const plan = await findEventPlanOwner(eventType, eventId);
-  if (!plan) return false;
+  if (!plan) return null;
 
   const consultantProfileId = session.user.consultantProfileId;
   if (consultantProfileId && consultantProfileId === plan.consultantProfileId) {
-    return true;
+    return "consultant";
   }
-  return hasOrgEventAccess(session.user.id, plan.organizationId);
+  return (await hasOrgEventAccess(session.user.id, plan.organizationId))
+    ? "host-org"
+    : null;
 }

@@ -26,7 +26,7 @@ import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import {
   requireApiAuth,
   authorizeEventAccess,
-  isEventHost,
+  resolveEventHostActor,
 } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
@@ -76,8 +76,12 @@ export async function handleAllocate(
     if (authzError) return authzError;
 
     // Allocation is a host-side act; the consultee answers through reschedule.
-    const isHost = await isEventHost(authResult.session, eventType, eventId);
-    if (!isHost) {
+    const hostActor = await resolveEventHostActor(
+      authResult.session,
+      eventType,
+      eventId,
+    );
+    if (!hostActor) {
       return NextResponse.json(
         {
           error:
@@ -87,6 +91,8 @@ export async function handleAllocate(
         { status: 403 },
       );
     }
+
+    const canOverride = hostActor !== "host-org";
 
     // #831 — event mutations previously had no limiter
     const rl = await applyRateLimit(
@@ -135,11 +141,11 @@ export async function handleAllocate(
             idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined,
             initialAllocation: body.initialAllocation,
             expectedTentativeSlotCount: resolvedExpectedTentativeSlotCount,
-            // The host-side gate above already holds, so these consultant
-            // decisions pass through as sent.
-            override: body.override === true,
-            allowPartial: body.allowPartial === true,
-            topUp: body.topUp === true,
+            // Waiving availability or placing fewer sessions is the expert's
+            // (or staff's) call; a host-org operator allocates within the rules.
+            override: body.override === true && canOverride,
+            allowPartial: body.allowPartial === true && canOverride,
+            topUp: body.topUp === true && canOverride,
           }),
       );
 
