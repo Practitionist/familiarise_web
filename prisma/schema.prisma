@@ -6152,6 +6152,12 @@ model ConsultantPayout {
   netAmount         BigInt? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
   tdsRateAppliedBps Int? // #781 §C — bps; rate reserved for this payout, stamped into the final audit record
   tdsFinancialYear  String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
+  // 194-O threshold: the FY whose catch-up this payout took (one per expert per FY,
+  // `consultant_payout_one_tds_catch_up_per_fy`), TDS carried to later payouts (+) or
+  // collected from earlier ones (−), and excess TDS credited back in cash.
+  tdsCatchUpFy      String?
+  tdsCarryPaise     BigInt  @default(0)
+  tdsCreditPaise    BigInt  @default(0)
 
   // MSME 43B(h) settlement deadline; mirrors OrganizationPayout. #776 — the
   // consultant is the supplier here, so the deadline derives from the

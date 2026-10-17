@@ -18,6 +18,7 @@ import {
 
 import {
   resolve194OTaxablePaise,
+  settle194OWithholding,
   TDS_194O_EXEMPTION_PAISE,
 } from "@/lib/compliance/tds-194o";
 
@@ -225,7 +226,6 @@ describe("Section 194-O taxable base (#1132)", () => {
     const r = resolve194OTaxablePaise({
       grossBeforePaise: 0,
       grossThisPayoutPaise: 10_000_000, // ₹1L
-      withheldEarlierThisFy: false,
       entityType: "INDIVIDUAL",
       panOnFile: true,
     });
@@ -239,7 +239,6 @@ describe("Section 194-O taxable base (#1132)", () => {
       const r = resolve194OTaxablePaise({
         grossBeforePaise: 49_000_000,
         grossThisPayoutPaise: 2_000_000,
-        withheldEarlierThisFy: false,
         entityType,
         panOnFile: true,
       });
@@ -251,22 +250,40 @@ describe("Section 194-O taxable base (#1132)", () => {
     const r = resolve194OTaxablePaise({
       grossBeforePaise: FIVE_LAKH - 2_000_000,
       grossThisPayoutPaise: 2_000_000,
-      withheldEarlierThisFy: false,
       entityType: "INDIVIDUAL",
       panOnFile: true,
     });
     expect(r.taxablePaise).toBe(0);
   });
 
-  it("taxes only the payout's own gross once an earlier payout this FY has withheld", () => {
+  it("keeps a year-to-date base after the crossing, for the caller to net against TDS already assigned", () => {
     const r = resolve194OTaxablePaise({
       grossBeforePaise: 51_000_000,
       grossThisPayoutPaise: 2_000_000,
-      withheldEarlierThisFy: true,
       entityType: "INDIVIDUAL",
       panOnFile: true,
     });
-    expect(r.taxablePaise).toBe(2_000_000);
+    expect(r).toMatchObject({ taxablePaise: 53_000_000, yearToDate: true });
+  });
+
+  it.each([
+    // ₹510 due, ₹300 of room: ₹300 now and ₹210 carried.
+    [
+      { dueTdsPaise: 51_000, carryInPaise: 0, capacityPaise: 30_000 },
+      { withholdPaise: 30_000, creditPaise: 0, carryPaise: 21_000 },
+    ],
+    // The next payout owes ₹20 of its own and collects the ₹210.
+    [
+      { dueTdsPaise: 2_000, carryInPaise: 21_000, capacityPaise: 1_600_000 },
+      { withholdPaise: 23_000, creditPaise: 0, carryPaise: -21_000 },
+    ],
+    // Refunds pulled the year back under ₹5L: ₹490 already withheld comes back.
+    [
+      { dueTdsPaise: -49_000, carryInPaise: 0, capacityPaise: 1_600_000 },
+      { withholdPaise: 0, creditPaise: 49_000, carryPaise: 0 },
+    ],
+  ])("settles %o as %o", (input, expected) => {
+    expect(settle194OWithholding(input)).toEqual(expected);
   });
 
   // The three limbs are conjunctive. Companies, firms and LLPs have NO
@@ -277,7 +294,6 @@ describe("Section 194-O taxable base (#1132)", () => {
       const r = resolve194OTaxablePaise({
         grossBeforePaise: 0,
         grossThisPayoutPaise: 100_000,
-        withheldEarlierThisFy: false,
         entityType,
         panOnFile: true,
       });
@@ -289,7 +305,6 @@ describe("Section 194-O taxable base (#1132)", () => {
     const r = resolve194OTaxablePaise({
       grossBeforePaise: 0,
       grossThisPayoutPaise: 100_000,
-      withheldEarlierThisFy: false,
       entityType: "INDIVIDUAL",
       panOnFile: false,
     });
@@ -302,7 +317,6 @@ describe("Section 194-O taxable base (#1132)", () => {
     const r = resolve194OTaxablePaise({
       grossBeforePaise: 0,
       grossThisPayoutPaise: 100_000,
-      withheldEarlierThisFy: false,
       entityType: null,
       panOnFile: true,
     });

@@ -139,6 +139,8 @@ export const moneyResultExtensions = {
     // W1a — the clawback counter crosses the JS boundary as a number, like
     // organizationPayout's own clawback mapping.
     clawbackAmountPaise: f("clawbackAmountPaise"),
+    tdsCarryPaise: f("tdsCarryPaise"),
+    tdsCreditPaise: f("tdsCreditPaise"),
   },
   tDSRecord: {
     cumulativeAmountCredited: f("cumulativeAmountCredited"),

@@ -27,6 +27,7 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(),
       updateMany: jest.fn(),
       update: jest.fn(),
+      groupBy: async () => [],
     },
     consultantEarnings: {
       updateMany: jest.fn(),
@@ -65,8 +66,6 @@ jest.mock("../../lib/payments/tax/tds-service", () => ({
   }),
   getIndianFinancialYear: jest.fn().mockReturnValue("2026-27"),
   recordTDSDeduction: jest.fn(),
-  resolve194OTaxablePaise: jest.requireActual("../../lib/compliance/tds-194o")
-    .resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE: 5_000_000,
 }));
 jest.mock("../../lib/novu/service", () => ({
@@ -153,9 +152,7 @@ function refundRowBlocks(
   }
 
   const status = filter.status as
-    | { notIn?: RefundStatus[] }
-    | RefundStatus
-    | undefined;
+    { notIn?: RefundStatus[] } | RefundStatus | undefined;
   if (status !== undefined) {
     if (typeof status === "object" && status.notIn) {
       if (status.notIn.includes(row.status)) return false;
@@ -189,8 +186,7 @@ function stubEarnings(refunds: RefundRow[]): void {
       const payment = args?.where?.payment;
       if (payment?.disputes) return null; // no live dispute in any case here
       const some = payment?.refunds as
-        | { some: Record<string, unknown> }
-        | undefined;
+        { some: Record<string, unknown> } | undefined;
       if (some) {
         return refunds.some((row) => refundRowBlocks(some.some, row))
           ? { id: "ce_refund_blocked" }
@@ -208,8 +204,7 @@ function refundFilterSent(): Record<string, unknown> | undefined {
       !!arg?.where?.payment?.refunds,
   );
   return call?.[0].where.payment?.refunds?.some as
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
 }
 
 let gatewayFetch: jest.Mock;
@@ -348,7 +343,9 @@ describe("consultant rail — payout.amount vs what its earnings still owe", () 
       where: { id: "po_1", status: "APPROVED" },
       data: expect.objectContaining({
         status: "FAILED",
-        failureReason: expect.stringContaining("SHORTFALL_BEFORE_DISBURSEMENT:"),
+        failureReason: expect.stringContaining(
+          "SHORTFALL_BEFORE_DISBURSEMENT:",
+        ),
         tdsDeducted: 0,
         netAmount: null,
       }),

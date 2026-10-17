@@ -47,8 +47,8 @@ export type PayableLedgerAccount =
 /**
  * Builds the balanced journal postings for a payout completion (`COMPLETED`):
  *   DEBIT  <CONSULTANT_PAYABLE | ORG_PAYABLE> = grossPayablePaise
- *   CREDIT CASH                               = netCashPaise
- *   CREDIT TDS_PAYABLE (when tdsPaise > 0)    = tdsPaise
+ *   CREDIT CASH (when netCashPaise > 0)       = netCashPaise
+ *   CREDIT TDS_PAYABLE = tdsPaise, or DEBIT it when tdsPaise < 0 (excess TDS credited back)
  */
 export function buildPayoutCompletionPostings(params: {
   payableAccount: PayableLedgerAccount;
@@ -56,34 +56,13 @@ export function buildPayoutCompletionPostings(params: {
   netCashPaise: number;
   tdsPaise: number;
 }): Posting[] {
-  const postings: Posting[] = [
-    {
-      account: params.payableAccount,
-      direction: "DEBIT",
-      amountPaise: params.grossPayablePaise,
-    },
-    {
-      account: { kind: "CASH" },
-      direction: "CREDIT",
-      amountPaise: params.netCashPaise,
-    },
-  ];
-  if (params.tdsPaise > 0) {
-    postings.push({
-      account: { kind: "TDS_PAYABLE" },
-      direction: "CREDIT",
-      amountPaise: params.tdsPaise,
-    });
-  }
-  return postings;
+  return payoutPostings(params, "DEBIT");
 }
 
 /**
  * Builds the symmetric reversal postings when a previously `COMPLETED` payout
- * reverses (`payout.reversed` after completion):
- *   DEBIT  CASH                               = netCashPaise
- *   CREDIT <CONSULTANT_PAYABLE | ORG_PAYABLE> = grossPayablePaise
- *   DEBIT  TDS_PAYABLE (when tdsPaise > 0)    = tdsPaise
+ * reverses (`payout.reversed` after completion): every completion posting with
+ * its direction flipped.
  */
 export function buildPayoutReversalPostings(params: {
   payableAccount: PayableLedgerAccount;
@@ -91,23 +70,42 @@ export function buildPayoutReversalPostings(params: {
   netCashPaise: number;
   tdsPaise: number;
 }): Posting[] {
-  const postings: Posting[] = [
-    {
-      account: { kind: "CASH" },
-      direction: "DEBIT",
-      amountPaise: params.netCashPaise,
-    },
-    {
-      account: params.payableAccount,
-      direction: "CREDIT",
-      amountPaise: params.grossPayablePaise,
-    },
-  ];
-  if (params.tdsPaise > 0) {
+  return payoutPostings(params, "CREDIT");
+}
+
+function payoutPostings(
+  params: {
+    payableAccount: PayableLedgerAccount;
+    grossPayablePaise: number;
+    netCashPaise: number;
+    tdsPaise: number;
+  },
+  payableDirection: "DEBIT" | "CREDIT",
+): Posting[] {
+  const opposite = payableDirection === "DEBIT" ? "CREDIT" : "DEBIT";
+  const payable: Posting = {
+    account: params.payableAccount,
+    direction: payableDirection,
+    amountPaise: params.grossPayablePaise,
+  };
+  const cash: Posting[] =
+    params.netCashPaise > 0
+      ? [
+          {
+            account: { kind: "CASH" },
+            direction: opposite,
+            amountPaise: params.netCashPaise,
+          },
+        ]
+      : [];
+  // Completions list the payable first and reversals list cash first.
+  const postings: Posting[] =
+    payableDirection === "DEBIT" ? [payable, ...cash] : [...cash, payable];
+  if (params.tdsPaise !== 0) {
     postings.push({
       account: { kind: "TDS_PAYABLE" },
-      direction: "DEBIT",
-      amountPaise: params.tdsPaise,
+      direction: params.tdsPaise > 0 ? opposite : payableDirection,
+      amountPaise: Math.abs(params.tdsPaise),
     });
   }
   return postings;
@@ -190,9 +188,7 @@ export class PayoutMakerCheckerError extends Error {
  */
 export function resolvePayoutMsmeDeadline(
   msmeStatus:
-    | Parameters<
-        typeof computeMsmePaymentDeadline
-      >[0]["counterpartyMsmeStatus"]
+    | Parameters<typeof computeMsmePaymentDeadline>[0]["counterpartyMsmeStatus"]
     | null
     | undefined,
   writtenAgreement: boolean | null | undefined,
@@ -206,8 +202,7 @@ export function resolvePayoutMsmeDeadline(
 }
 
 export type GatewaySubmissionFailureClass =
-  | "PERMANENT_4XX"
-  | "TRANSIENT_OR_UNKNOWN";
+  "PERMANENT_4XX" | "TRANSIENT_OR_UNKNOWN";
 
 /**
  * Classifies a gateway payout submission error as a definitive 4xx rejection
