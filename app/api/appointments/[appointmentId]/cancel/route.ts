@@ -336,13 +336,13 @@ async function settleCancelRefund(
     case "blocked":
       return { amountRefundedPaise: 0, refundPct, status: "PENDING" };
     case "failed":
-      return failedCancelRefund(outcome.error, owed, quote, refundPct, ctx);
+      return failedCancelRefund(outcome, owed, quote, refundPct, ctx);
   }
 }
 
 /** Reports a failed drive once; the marker stays for the retry sweep. */
 async function failedCancelRefund(
-  err: unknown,
+  { error: err, stuck }: { error: unknown; stuck: boolean },
   owed: RefundOwedMarker,
   quote: BookingRefundQuote,
   refundPct: number,
@@ -369,7 +369,8 @@ async function failedCancelRefund(
       refundablePaise: ctx.refundablePaise,
     },
   });
-  if (await refundLeftPending(err)) {
+  // The marker stays owed for the retry sweep until its attempts are spent.
+  if (!stuck || (await refundLeftPending(err))) {
     return { amountRefundedPaise: 0, refundPct, status: "PENDING" };
   }
   return {

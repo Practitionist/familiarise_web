@@ -682,8 +682,9 @@ describe("#1161 — a credit-funded booking refunds as a credit restoration", ()
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.refund.status).toBe("FAILED");
-    expect(body.refund.requiresManualReview).toBe(true);
+    // Still owed and queued for the retry sweep, so never reported as refunded.
+    expect(body.refund.status).toBe("PENDING");
+    expect(body.refund.amountRefundedPaise).toBe(0);
   });
 });
 
@@ -821,12 +822,12 @@ describe("failure modes leave the cancellation standing", () => {
 
     expect(res.status).toBe(200);
     expect(body.success).toBe(true);
-    // "0 refunded at a 100% tier" is not self-explanatory — the client was
-    // left inferring failure from it. The route says so instead.
+    // The owed marker keeps the refund queued for the retry sweep, so the
+    // route says it is pending rather than inferring failure from a zero.
     expect(body.refund).toEqual({
       amountRefundedPaise: 0,
       refundPct: 100,
-      status: "FAILED",
+      status: "PENDING",
     });
     // A failed refund on an already-cancelled booking is money owed, so it
     // lands on the durable ops surface, not only in Sentry.

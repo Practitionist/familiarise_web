@@ -1036,6 +1036,40 @@ describe("refundPayment — M1 gateway wiring", () => {
     });
   });
 
+  it("fails a definitive refusal at once, so the same key retries without over-refunding", async () => {
+    seedSinglePartyWalletPayment({});
+    mockCreateGatewayRefund.mockRejectedValueOnce(
+      new RefundError(
+        "No payment found for this order",
+        "NO_PAYMENT_FOUND",
+        "RAZORPAY",
+      ),
+    );
+    const owed = {
+      paymentId: "pay-1",
+      reason: "owed",
+      dedupeKey: "cancel:a:pay-1",
+    };
+
+    await expect(refundPayment(owed)).rejects.toThrow(RefundGatewayError);
+    // No gateway refund exists, so the reservation is FAILED, not PENDING.
+    expect(state.refunds[0]).toMatchObject({
+      status: "FAILED",
+      failureReason: "No payment found for this order",
+    });
+
+    const retried = await refundPayment(owed);
+    const replayed = await refundPayment(owed);
+    expect(replayed.refundId).toBe(retried.refundId);
+    const moved = state.refunds
+      .filter((r) => r.status === "SUCCEEDED")
+      .reduce((sum, r) => sum + Number(r.amountPaise), 0);
+    expect(moved).toBe(retried.amountRefundedPaise);
+    expect(state.refunds.filter((r) => r.status === "SUCCEEDED")).toHaveLength(
+      1,
+    );
+  });
+
   it("gateway-PENDING refund defers the cascade to the webhook path (no double-post)", async () => {
     seedSinglePartyWalletPayment({});
     mockCreateGatewayRefund.mockResolvedValueOnce({
