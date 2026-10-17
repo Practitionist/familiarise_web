@@ -10,7 +10,7 @@
  * follow-up, with prisma / reversal-engine / refund mocked.
  */
 
-// #2091 — the reversal tx reads live disputes on the internal seats.
+// The reversal tx reads live disputes on the internal seats.
 const mockTxDisputeFindMany = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -381,9 +381,7 @@ describe("refundWholeEventPayments — funding partition", () => {
   });
 });
 
-// #2091 — the internal CLASS_MULTI batch honours the live-dispute freeze that
-// `refundPayment` applies to one payment (#1008). A disputed seat is held back
-// and reported; the rest of the class still refunds.
+// A disputed internal seat is held back and reported; the rest still refunds.
 describe("refundWholeEventPayments — live-dispute freeze on internal seats", () => {
   it("holds back a seat with a live dispute and refunds the others", async () => {
     findMany.mockResolvedValue([

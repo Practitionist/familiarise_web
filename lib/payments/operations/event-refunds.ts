@@ -298,12 +298,9 @@ export async function refundWholeEventPayments(
               tx,
               internal.map((p) => p.id),
             );
-            // #2091 — the live-dispute freeze `refundPayment` applies to one
-            // payment (#1008), applied per seat. A seat with a live dispute
-            // stays out of the reversal and is reported as a failure, as a
-            // gateway seat's REFUND_BLOCKED_BY_DISPUTE is above; the rest of
-            // the class still refunds. Read inside the Serializable tx so a
-            // dispute opened between the read and the reversal aborts it.
+            // A seat with a live dispute stays out of the reversal and is
+            // reported as a failure; read in this Serializable tx so a racing
+            // dispute aborts it.
             const live = await tx.dispute.findMany({
               where: {
                 paymentId: { in: internal.map((p) => p.id) },
@@ -361,16 +358,9 @@ export async function refundWholeEventPayments(
       );
       summary.skippedAlreadyRefunded += settledSeats;
       for (const seat of disputedSeats) {
-        const err = new RefundValidationError(
-          `Payment ${seat.id} has an open dispute (${seat.status}); resolve it before refunding`,
-          "REFUND_BLOCKED_BY_DISPUTE",
-        );
-        summary.failures.push({ paymentId: seat.id, error: err.message });
-        reportSentryError(err, {
-          subsystem: "payments",
-          tags: { feature: "whole-event-refund" },
-          extra: { paymentId: seat.id, eventId, kind },
-          expected: true,
+        summary.failures.push({
+          paymentId: seat.id,
+          error: `Payment ${seat.id} has an open dispute (${seat.status}); resolve it before refunding`,
         });
       }
       if (result !== null) {
