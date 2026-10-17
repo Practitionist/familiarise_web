@@ -22,6 +22,7 @@ import {
   DAY_BY_INDEX,
   createWeeklyCoverage,
   isInstantWithinWeeklyRow,
+  sameTimeZone,
   weeklyRowIntervalsInRange,
   type WeeklyRowLocalColumns,
 } from "../../utils/schedule/weekly-projection";
@@ -200,6 +201,11 @@ describe("client/server parity", () => {
     expect(project()).toEqual(utc);
     expect(browserLike).toEqual(utc);
   });
+});
+
+it("treats a legacy zone alias as the same zone", () => {
+  expect(sameTimeZone("Asia/Calcutta", "Asia/Kolkata")).toBe(true);
+  expect(sameTimeZone("America/New_York", "Europe/London")).toBe(false);
 });
 
 describe("rows without local columns", () => {

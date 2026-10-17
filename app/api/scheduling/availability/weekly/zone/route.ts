@@ -18,6 +18,7 @@ import {
 import {
   isKnownTimeZone,
   partitionWeeklyRows,
+  sameTimeZone,
   weeklySaveProbeOffsetMinutes,
   weeklyWriterColumnsFromLocal,
 } from "@/utils/schedule/weekly-projection";
@@ -107,7 +108,9 @@ export async function POST(req: NextRequest) {
             op: "convert-weekly-zone",
             consultantProfileId: profile.id,
           });
-          const toConvert = usable.filter((row) => row.timezone !== zone);
+          const toConvert = usable.filter(
+            (row) => !sameTimeZone(row.timezone, zone),
+          );
           for (const row of toConvert) {
             await tx.availabilityWindowWeekly.update({
               where: { id: row.id },

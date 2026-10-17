@@ -34,6 +34,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
 import { actionFailureMessage, parseJsonResponse } from "@/lib/fetch-helpers";
+import { sameTimeZone } from "@/utils/schedule/weekly-projection";
 import { z } from "zod";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
@@ -337,7 +338,7 @@ export function AccountDetailsSection() {
       );
       const { data } = await parseJsonResponse(res, weeklyRowZonesSchema);
       const from = data.find(
-        (row) => row.timezone && row.timezone !== to,
+        (row) => row.timezone && !sameTimeZone(row.timezone, to),
       )?.timezone;
       if (from) setZonePrompt({ from, to });
     } catch {

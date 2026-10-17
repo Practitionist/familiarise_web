@@ -15,6 +15,7 @@ import {
 } from "@/utils/dateTimeUtils";
 import { DAYS_OF_WEEK, getMonthYearString } from "../settings";
 import { AvailabilityGrid } from "./AvailabilityGrid";
+import { sameTimeZone } from "@/utils/schedule/weekly-projection";
 
 interface AvailabilitySectionProps {
   scheduleType: ScheduleType;
@@ -62,7 +63,7 @@ function WeeklyZoneNotice({
         <Globe className="w-4 h-4 mr-1 shrink-0" aria-hidden="true" />
         Times are in {weeklyTimezone} and follow daylight saving automatically.
       </p>
-      {profileTimezone && profileTimezone !== weeklyTimezone && (
+      {profileTimezone && !sameTimeZone(profileTimezone, weeklyTimezone) && (
         <Alert>
           <AlertTitle>Weekly hours kept in {weeklyTimezone}</AlertTitle>
           <AlertDescription>
@@ -72,7 +73,7 @@ function WeeklyZoneNotice({
           </AlertDescription>
         </Alert>
       )}
-      {browserTimezone && browserTimezone !== weeklyTimezone && (
+      {browserTimezone && !sameTimeZone(browserTimezone, weeklyTimezone) && (
         <Alert>
           <AlertDescription>
             You&apos;re viewing in {browserTimezone}; your schedule is in{" "}

@@ -67,21 +67,38 @@ export interface Interval {
   end: Date;
 }
 
-const knownZones = new Map<string, boolean>();
+const knownZones = new Set<string>();
 
-/** Whether the runtime can resolve `zone` as an IANA time zone. */
+/** Whether the runtime can resolve `zone` as an IANA time zone; only valid zones are cached. */
 export function isKnownTimeZone(zone: string): boolean {
-  const cached = knownZones.get(zone);
-  if (cached !== undefined) return cached;
-  let known = false;
+  if (knownZones.has(zone)) return true;
+  if (zone.length === 0) return false;
   try {
     formatInTimeZone(0, zone, "xxx");
-    known = zone.length > 0;
   } catch {
-    known = false;
+    return false;
   }
-  knownZones.set(zone, known);
-  return known;
+  knownZones.add(zone);
+  return true;
+}
+
+const canonicalZones = new Map<string, string>();
+
+/** Whether two zone names are the same IANA zone, aliases included (Asia/Calcutta = Asia/Kolkata). */
+export function sameTimeZone(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (!isKnownTimeZone(a) || !isKnownTimeZone(b)) return false;
+  const canonical = (zone: string) => {
+    let name = canonicalZones.get(zone);
+    if (name === undefined) {
+      name = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+      }).resolvedOptions().timeZone;
+      canonicalZones.set(zone, name);
+    }
+    return name;
+  };
+  return canonical(a) === canonical(b);
 }
 
 const OFFSET_TOKEN = /^([+-])(\d{2}):(\d{2})$/;
