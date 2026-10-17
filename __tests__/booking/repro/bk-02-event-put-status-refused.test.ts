@@ -57,10 +57,7 @@ describe("event PUT refuses a status write", () => {
     const res = await webinarPut(put({ status: "CANCELLED" }), {
       params: Promise.resolve({ webinarId: "w1" }),
     });
-    const statusWrites = webinarUpdate.mock.calls.filter(
-      ([arg]) => (arg as { data: { status?: string } }).data.status,
-    );
-    expect(statusWrites).toHaveLength(0);
+    expect(webinarUpdate).not.toHaveBeenCalled();
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: "USE_CANCEL_ROUTE" });
   });
@@ -69,10 +66,7 @@ describe("event PUT refuses a status write", () => {
     const res = await classPut(put({ status: "CANCELLED" }), {
       params: Promise.resolve({ classId: "c1" }),
     });
-    const statusWrites = classUpdate.mock.calls.filter(
-      ([arg]) => (arg as { data: { status?: string } }).data.status,
-    );
-    expect(statusWrites).toHaveLength(0);
+    expect(classUpdate).not.toHaveBeenCalled();
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: "USE_CANCEL_ROUTE" });
   });

@@ -9,6 +9,7 @@ import {
   setSentryOrgContext,
 } from "@/lib/observability/identity";
 import type { Session } from "@/lib/auth";
+import type { EventType } from "@/utils/scheduling-engine/types";
 import prisma from "@/lib/prisma";
 import { renderMemo } from "@/lib/render-memo";
 import { Prisma } from "@prisma/client";
@@ -314,7 +315,7 @@ async function authorizeGroupEvent(
  */
 export async function authorizeEventAccess(
   session: Session,
-  eventType: "consultation" | "subscription" | "webinar" | "class",
+  eventType: EventType,
   eventId: string,
   method: string,
 ): Promise<NextResponse | null> {
@@ -577,7 +578,7 @@ type EventPlanOwner = {
 };
 
 async function findEventPlanOwner(
-  eventType: "consultation" | "subscription" | "webinar" | "class",
+  eventType: EventType,
   eventId: string,
 ): Promise<EventPlanOwner | null> {
   const planSelect = {
@@ -623,7 +624,7 @@ export async function isEventHost(
   session: {
     user: Pick<Session["user"], "id" | "role" | "consultantProfileId">;
   },
-  eventType: "consultation" | "subscription" | "webinar" | "class",
+  eventType: EventType,
   eventId: string,
 ): Promise<boolean> {
   if (isPrivileged(session.user.role)) return true;
