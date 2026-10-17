@@ -216,33 +216,64 @@ async function reportTerminalCaptureRace(params: {
   );
 }
 
+/** A pre-mint row a capture may adopt, named by the order Razorpay holds, never by client notes. */
+type PreMintAdoption = {
+  orderId: string;
+  paymentId: string;
+  amount: number;
+  currency: string;
+};
+
 /**
- * A capture on an order that never reached its row: adopt the row the order notes name, by CAS,
- * only while that row still carries its pre-mint marker. Returns whether the order now has a row.
+ * Reads the order server-side before the confirmation tx; a gateway failure throws so the
+ * capture is retried, and an order whose notes name no row yields null.
  */
-async function adoptPreMintRowByNotes(
-  tx: Tx,
+async function verifiedPreMintAdoption(
   orderId: string,
-  notes: Record<string, string>,
+): Promise<PreMintAdoption | null> {
+  if (!orderId.startsWith("order_")) return null;
+  const { fetchRazorpayOrder } = await import("@/lib/payments/core/razorpay");
+  const order = await fetchRazorpayOrder(orderId);
+  if (!order || order.id !== orderId) return null;
+  const notes = orderNotesPaymentIdSchema.safeParse(order.notes);
+  const paymentId = notes.success ? notes.data.familiarisePaymentId : undefined;
+  if (!paymentId) return null;
+  return { orderId, paymentId, amount: order.amount, currency: order.currency };
+}
+
+/** Adopts by CAS only a row still carrying its pre-mint marker, at the order's amount and currency. */
+async function adoptPreMintRow(
+  tx: Tx,
+  adoption: PreMintAdoption,
 ): Promise<boolean> {
-  const parsed = orderNotesPaymentIdSchema.safeParse(notes);
-  const paymentId = parsed.success
-    ? parsed.data.familiarisePaymentId
-    : undefined;
-  if (!paymentId) return false;
   const row = await tx.payment.findUnique({
-    where: { id: paymentId },
-    select: { paymentIntent: true },
+    where: { id: adoption.paymentId },
+    select: { paymentIntent: true, amount: true, currency: true },
   });
-  if (!row || !isPreMintIntent(row.paymentIntent)) return false;
+  if (
+    !row ||
+    !isPreMintIntent(row.paymentIntent) ||
+    row.amount !== adoption.amount ||
+    row.currency !== adoption.currency.toUpperCase()
+  ) {
+    return false;
+  }
   const adopted = await tx.payment.updateMany({
-    where: { id: paymentId, paymentIntent: row.paymentIntent },
-    data: { paymentIntent: orderId },
+    where: {
+      id: adoption.paymentId,
+      paymentIntent: row.paymentIntent,
+      amount: adoption.amount,
+    },
+    data: { paymentIntent: adoption.orderId },
   });
   if (adopted.count !== 1) return false;
   await tx.paymentLeg.updateMany({
-    where: { paymentId, source: "CARD", sourceRef: row.paymentIntent },
-    data: { sourceRef: orderId },
+    where: {
+      paymentId: adoption.paymentId,
+      source: "CARD",
+      sourceRef: row.paymentIntent,
+    },
+    data: { sourceRef: adoption.orderId },
   });
   return true;
 }
@@ -258,6 +289,7 @@ export async function handlePaymentSuccess(
   const metadata = { ...normalizeLegacySlotKeys(rawMetadata) };
   const capturedGatewayId = gatewayPaymentId ? { gatewayPaymentId } : {};
 
+  let preMintAdoption: PreMintAdoption | null = null;
   if (!recovering && prisma.payment?.findUnique) {
     const existing = await prisma.payment.findUnique({
       where: { paymentIntent: paymentIntentId },
@@ -268,6 +300,9 @@ export async function handlePaymentSuccess(
         gatewayPaymentId: true,
       },
     });
+    if (existing === null) {
+      preMintAdoption = await verifiedPreMintAdoption(paymentIntentId);
+    }
     if (
       existing?.paymentStatus === PaymentStatus.SUCCEEDED &&
       (gatewayAmountPaise === undefined ||
@@ -345,7 +380,7 @@ export async function handlePaymentSuccess(
             });
           const payment =
             (await readPayment()) ??
-            ((await adoptPreMintRowByNotes(tx, paymentIntentId, rawMetadata))
+            (preMintAdoption && (await adoptPreMintRow(tx, preMintAdoption))
               ? await readPayment()
               : null);
 
