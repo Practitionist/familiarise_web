@@ -1,9 +1,10 @@
 ---
 title: Roles and permissions
+type: reference
 band: 00-foundations
 audience: sde1
 status: live
-last-reviewed: 2026-09-28
+last-reviewed: 2026-10-17
 ---
 
 # Roles and permissions

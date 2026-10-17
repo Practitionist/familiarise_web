@@ -1,10 +1,15 @@
+---
+title: The three authorization matrices
+type: reference
+---
+
 # The three authorization matrices
 
 | Field         | Value                                                                                         |
 | ------------- | --------------------------------------------------------------------------------------------- |
 | Status        | Stable                                                                                        |
 | Audience      | All engineers                                                                                 |
-| Last reviewed | 2026-10-01                                                                                    |
+| Last reviewed | 2026-10-17                                                                                    |
 | Source files  | `lib/auth/backoffice-permissions.ts`, `lib/auth/org-permissions.ts`, `lib/auth/role-ranks.ts` |
 
 ## 1. Background

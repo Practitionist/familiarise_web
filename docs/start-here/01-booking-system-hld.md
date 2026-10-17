@@ -1,5 +1,6 @@
 ---
 title: Booking System — High-Level Design
+type: explanation
 band: index
 audience: sde2
 status: live

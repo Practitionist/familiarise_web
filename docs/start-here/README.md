@@ -1,5 +1,6 @@
 ---
 title: Start Here — Platform Architecture & End-to-End Explainers
+type: index
 band: index
 audience: sde1
 status: live

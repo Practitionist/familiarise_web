@@ -1,5 +1,6 @@
 ---
 title: The Booking & Money Machinery — Visual Guide, Organizational Scoping & Worked Permutations
+type: tutorial
 band: index
 audience: sde2
 status: live

@@ -1,9 +1,10 @@
 ---
 title: Ledger & postings
+type: reference
 band: 10-money-and-ledger
 audience: sde3
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-17
 ---
 
 # Ledger & postings

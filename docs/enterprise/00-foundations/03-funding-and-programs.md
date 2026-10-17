@@ -1,9 +1,10 @@
 ---
 title: Funding sources and programs
+type: reference
 band: 00-foundations
 audience: sde1
 status: live
-last-reviewed: 2026-06-05
+last-reviewed: 2026-10-17
 ---
 
 # Funding sources and programs
