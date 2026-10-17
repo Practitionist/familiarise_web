@@ -42,6 +42,7 @@ import type {
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
+import type { ShownCancelQuote } from "@/lib/appointments/cancel-requote";
 import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
 import {
   DM_ELIGIBLE_STATUSES,
@@ -593,16 +594,13 @@ export function useConsulteeAppointmentsAdapter(options?: {
     });
   };
 
-  const confirmDestructive = async (quote?: {
-    estimatedRefundPaise: number;
-  }) => {
+  const confirmDestructive = async (quote?: ShownCancelQuote) => {
     if (!activeVm) return;
     const id = sourceId(activeVm);
     const destructive = consulteeDestructiveAction(activeVm.kind);
 
     if (destructive === "cancel-booking") {
-      await actions.handleCancelConfirm();
-      closeDialog();
+      if (await actions.handleCancelConfirm(quote)) closeDialog();
       return;
     }
 

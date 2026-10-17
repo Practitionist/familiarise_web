@@ -37,6 +37,9 @@ const refundPayment = jest.fn();
 jest.mock("../../lib/payments/operations/refund", () => ({
   __esModule: true,
   refundPayment: (...a: unknown[]) => refundPayment(...(a as [never])),
+  findDedupedRefund: async () => null,
+  RefundGatewayError: class extends Error {},
+  RefundValidationError: class extends Error {},
 }));
 
 // `clearMocks: true` wipes implementations before every test, so the
@@ -86,6 +89,9 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn().mockResolvedValue({}),
     },
     maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },
+    // The claim stamps the owed refund; the drive clears it by CAS.
+    payment: { updateMany: async () => ({ count: 1 }) },
+    refund: { findUnique: async () => null },
     $disconnect: jest.fn(),
   };
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));

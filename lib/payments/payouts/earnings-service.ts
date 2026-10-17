@@ -104,12 +104,14 @@ type PaymentRow = Omit<
   | "taxAmount"
   | "exchangeRateAtCheckout"
   | "welcomeDiscountPaise"
+  | "refundOwedPaise"
 > & {
   amount: number;
   originalAmount: number;
   taxAmount: number;
   exchangeRateAtCheckout: number | null;
   welcomeDiscountPaise: number | null;
+  refundOwedPaise: number | null;
 };
 
 export interface CreateEarningsParams {

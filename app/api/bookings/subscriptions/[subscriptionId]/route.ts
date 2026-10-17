@@ -32,7 +32,10 @@ import {
   PARTY_USER_SELECT,
 } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
+import {
+  refundRejectedRequest,
+  stampRejectionRefundOwed,
+} from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
@@ -487,6 +490,15 @@ export async function PATCH(
                     session.user.id,
                   )
                 : null;
+            // The refund a paid rejection owes commits with the rejection.
+            const rejectionPlan =
+              status === AppointmentStatus.REJECTED
+                ? await stampRejectionRefundOwed(tx, {
+                    kind: "subscription",
+                    requestId: subscriptionId,
+                    actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+                  })
+                : null;
             const subscription = await tx.subscription.findUniqueOrThrow({
               where: { id: subscriptionId },
               include: {
@@ -540,10 +552,20 @@ export async function PATCH(
                   data: { isTentative: false },
                 });
               }
-              return { data: subscription, duplicate: false, holdNotices };
+              return {
+                data: subscription,
+                duplicate: false,
+                holdNotices,
+                rejectionPlan,
+              };
             }
 
-            return { data: subscription, duplicate: false, holdNotices };
+            return {
+              data: subscription,
+              duplicate: false,
+              holdNotices,
+              rejectionPlan,
+            };
           },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
@@ -649,6 +671,7 @@ export async function PATCH(
           requestId: subscriptionId,
           initiatedByUserId: session.user.id,
           actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+          plan: ("rejectionPlan" in result && result.rejectionPlan) || null,
         });
       }
 

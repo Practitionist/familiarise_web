@@ -123,8 +123,14 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
-    payment: { findMany: jest.fn().mockResolvedValue([]) },
-    refund: { findMany: jest.fn().mockResolvedValue([]) },
+    payment: {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: async () => ({ count: 1 }),
+    },
+    refund: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findUnique: async () => null,
+    },
     failedEmail: { findMany: jest.fn().mockResolvedValue([]) },
     supportTicket: { findFirst: jest.fn().mockResolvedValue(null) },
     maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },

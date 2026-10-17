@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
 import type { AppointmentStatus, AppointmentsType } from "@prisma/client";
 
@@ -19,6 +19,17 @@ import { errorMessageFromBody } from "@/lib/fetch-helpers";
 import { appointmentStatusBadge } from "@/lib/labels/session-labels";
 import { humanizeEnum } from "@/lib/ui/tone";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import {
+  CancelRefundPreviewSchema,
+  type CancelRefundPreview,
+} from "@/schemas/appointments";
+import {
+  applyRefundRequote,
+  cancelPreviewQueryKey,
+  cancelPreviewUrl,
+  readRefundQuoteChanged,
+  shownQuoteBody,
+} from "@/lib/appointments/cancel-requote";
 import { AllocateOrgBookingDialog } from "../AllocateOrgBookingDialog";
 
 export interface OrgActorDetailProps {
@@ -62,21 +73,15 @@ async function postJson(url: string, body: unknown) {
 }
 
 function RefundQuote({ appointmentId }: Readonly<{ appointmentId: string }>) {
-  const quote = useQuery({
-    queryKey: ["cancel-refund-preview", appointmentId],
+  const url = cancelPreviewUrl(appointmentId);
+  const quote = useQuery<CancelRefundPreview>({
+    queryKey: cancelPreviewQueryKey(url),
     queryFn: async () => {
-      const res = await fetch(
-        `/api/appointments/${appointmentId}/cancel/preview`,
-        {
-          signal: AbortSignal.timeout(8_000),
-        },
-      );
+      const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
       if (!res.ok) throw new Error("Could not estimate the refund");
-      return (await res.json()) as {
-        estimatedRefundPaise: number;
-        currency: string;
-        refundPct: number;
-      };
+      const parsed = CancelRefundPreviewSchema.safeParse(await res.json());
+      if (!parsed.success) throw new Error("Could not estimate the refund");
+      return parsed.data;
     },
     staleTime: 0,
     gcTime: 0,
@@ -92,6 +97,13 @@ function RefundQuote({ appointmentId }: Readonly<{ appointmentId: string }>) {
       <p className="text-sm text-muted-foreground">
         We couldn&apos;t estimate the refund; the cancellation policy still
         applies.
+      </p>
+    );
+  }
+  if (quote.data.paid === false) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Nothing was paid for this booking, so there is nothing to refund.
       </p>
     );
   }
@@ -131,10 +143,40 @@ export function OrgActorDetail({
   const acting = canCancel || canReschedule || showAllocate;
   const status = meta.status ? appointmentStatusBadge(meta.status) : null;
 
+  const queryClient = useQueryClient();
   const cancel = async () => {
-    await postJson(`/api/appointments/${appointmentId}/cancel`, {
-      notes: `Cancelled on behalf of ${orgName}`,
+    // The click carries the quote the dialog showed; a different server quote
+    // answers 409 with the new figure, which re-renders the dialog.
+    const previewUrl = cancelPreviewUrl(appointmentId);
+    const shown = queryClient.getQueryData<CancelRefundPreview>(
+      cancelPreviewQueryKey(previewUrl),
+    );
+    const res = await fetch(`/api/appointments/${appointmentId}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        notes: `Cancelled on behalf of ${orgName}`,
+        ...shownQuoteBody(
+          shown && shown.paid !== false
+            ? {
+                estimatedRefundPaise: shown.estimatedRefundPaise,
+                creditRestoresInFull: shown.creditRestoresInFull,
+              }
+            : undefined,
+        ),
+      }),
     });
+    const json: unknown = await res.json().catch(() => null);
+    if (!res.ok) {
+      const requote = res.status === 409 ? readRefundQuoteChanged(json) : null;
+      if (requote) {
+        applyRefundRequote(queryClient, previewUrl, requote);
+        throw new Error(
+          "The refund has changed. Check the new amount and confirm again.",
+        );
+      }
+      throw new Error(errorMessageFromBody(json, "That didn't go through."));
+    }
     toast({
       title: "Booking cancelled",
       description: `Cancelled for ${orgName}.`,

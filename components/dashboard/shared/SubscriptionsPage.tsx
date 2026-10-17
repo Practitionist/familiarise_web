@@ -48,6 +48,18 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useBackofficeCapability } from "@/components/dashboard/backoffice/BackofficeCapabilityProvider";
 import { BookingOpsPanel } from "@/components/dashboard/backoffice/money/BookingOpsPanel";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { errorMessageFromBody } from "@/lib/fetch-helpers";
+import {
+  CancelRefundPreviewSchema,
+  type CancelRefundPreview,
+} from "@/schemas/appointments";
+import {
+  applyRefundRequote,
+  cancelPreviewQueryKey,
+  cancelPreviewUrl,
+  readRefundQuoteChanged,
+  shownQuoteBody,
+} from "@/lib/appointments/cancel-requote";
 import type {
   SubscriptionListItem,
   SubscriptionListResponse,
@@ -161,6 +173,30 @@ function SubscriptionDetailSheet({
   const [opsError, setOpsError] = useState<string | null>(null);
   const [opsSuccess, setOpsSuccess] = useState<string | null>(null);
 
+  // The cancel quotes the refund before the click, and the click carries it back.
+  const previewUrl = subscription?.appointmentId
+    ? cancelPreviewUrl(encodeURIComponent(subscription.appointmentId))
+    : null;
+  const quote = useQuery<CancelRefundPreview>({
+    queryKey: cancelPreviewQueryKey(previewUrl ?? ""),
+    queryFn: async () => {
+      if (!previewUrl) throw new Error("No booking to quote");
+      const res = await fetch(previewUrl, {
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!res.ok) throw new Error("Could not estimate the refund");
+      const parsed = CancelRefundPreviewSchema.safeParse(await res.json());
+      if (!parsed.success) throw new Error("Could not estimate the refund");
+      return parsed.data;
+    },
+    enabled: open && canMutate && !!previewUrl,
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
+  const shownQuote =
+    quote.data && quote.data.paid !== false ? quote.data : undefined;
+
   const mutateSubscription = useMutation({
     mutationFn: async (payload: {
       subscriptionId: string;
@@ -177,6 +213,7 @@ function SubscriptionDetailSheet({
               body: JSON.stringify({
                 reason: "OTHER",
                 notes: payload.reason,
+                ...shownQuoteBody(shownQuote),
               }),
             },
           )
@@ -189,10 +226,20 @@ function SubscriptionDetailSheet({
               reason: payload.reason,
             }),
           });
-      const json = await res.json().catch(() => ({}));
+      const json: unknown = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const requote =
+          res.status === 409 && previewUrl
+            ? readRefundQuoteChanged(json)
+            : null;
+        if (requote && previewUrl) {
+          applyRefundRequote(queryClient, previewUrl, requote);
+          throw new Error(
+            "The refund has changed. Check the new amount and confirm again.",
+          );
+        }
         throw new Error(
-          (json as { error?: string }).error ?? "Failed to cancel subscription",
+          errorMessageFromBody(json, "Failed to cancel subscription"),
         );
       }
       return json;
@@ -322,6 +369,18 @@ function SubscriptionDetailSheet({
                     placeholder="Reason for subscription cancellation"
                   />
                 </div>
+                {shownQuote && (
+                  <p className="text-xs text-muted-foreground">
+                    Cancelling now refunds{" "}
+                    <span className="font-medium text-foreground">
+                      {formatCurrencyAmount(
+                        shownQuote.estimatedRefundPaise,
+                        shownQuote.currency,
+                      )}
+                    </span>{" "}
+                    ({shownQuote.refundPct}%).
+                  </p>
+                )}
                 {opsError && <p className="text-xs text-red-600">{opsError}</p>}
                 {opsSuccess && (
                   <p className="text-xs text-emerald-600">{opsSuccess}</p>

@@ -17,6 +17,7 @@ import {
 import prisma from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
+import type { z } from "zod";
 import { CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
@@ -33,7 +34,11 @@ import {
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  driveRefundOwed,
+  stampRefundOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
@@ -55,10 +60,14 @@ import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
   classSeriesLedgers,
   refundWholeEventPayments,
+  stampWholeEventRefundsOwed,
   type WholeEventRefundSummary,
 } from "@/lib/payments/operations/event-refunds";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
-import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
+import {
+  quoteBookingRefund,
+  type BookingRefundQuote,
+} from "@/lib/payments/operations/cancellation-policy";
 import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
@@ -121,6 +130,255 @@ async function refundLeftPending(err: unknown): Promise<boolean> {
     .findUnique({ where: { id: err.refundRowId }, select: { status: true } })
     .catch(() => null);
   return row?.status === "PENDING";
+}
+
+type CancelBody = z.infer<typeof CancelAppointmentSchema>;
+
+const NOT_CANCELLABLE = "NOT_CANCELLABLE";
+
+/** The key a cancel refunds under: one per booking and payment. */
+const cancelRefundKey = (appointmentId: string, paymentId: string) =>
+  `cancel:${appointmentId}:${paymentId}`;
+
+/** What the cancel route reports about the money; the client branches on `status`. */
+type CancelRefund = {
+  amountRefundedPaise: number;
+  refundPct: number;
+  status:
+    "REFUNDED" | "PENDING" | "FAILED" | "NOTHING_REFUNDABLE" | "POLICY_ZERO";
+  /** Set when the refund needs a human, not a formula. */
+  requiresManualReview?: boolean;
+  /** Which rail returned the money; the client words each rail differently. */
+  rail?: FundingRail;
+};
+
+/** The click carried a quote the server no longer agrees with; nothing was committed. */
+class RefundQuoteChangedError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly code = "REFUND_QUOTE_CHANGED" as const;
+  constructor(readonly quote: BookingRefundQuote) {
+    super(
+      "The refund for this booking has changed since you saw it. Check the new amount and confirm again.",
+    );
+    this.name = "RefundQuoteChangedError";
+  }
+}
+
+/** The refund charged is the refund the dialog showed; an absent figure is an N-1 client. */
+function assertQuoteMatchesClick(quote: BookingRefundQuote, body: CancelBody) {
+  if (body.expectedRefundPaise === undefined) {
+    console.info("[cancel] no expectedRefundPaise on the click; quote unbound");
+    return;
+  }
+  const creditMismatch =
+    body.expectedCreditRestoresInFull !== undefined &&
+    body.expectedCreditRestoresInFull !== quote.creditRestoresInFull;
+  if (body.expectedRefundPaise !== quote.refundPaise || creditMismatch) {
+    throw new RefundQuoteChangedError(quote);
+  }
+}
+
+function isNotCancellable(err: unknown): boolean {
+  return err instanceof Error && "code" in err && err.code === NOT_CANCELLABLE;
+}
+
+/**
+ * The committed result of a cancel this caller already made, or null when the
+ * booking was ended by someone else. The refund status is read from what the
+ * first click persisted (the keyed Refund row or the owed marker), never requoted.
+ */
+async function replayCommittedCancel(
+  appointment: {
+    id: string;
+    consultation: { id: string } | null;
+    subscription: { id: string } | null;
+  },
+  userId: string,
+) {
+  const select = {
+    status: true,
+    cancelledBy: true,
+    cancelledAt: true,
+    cancellationReason: true,
+  } as const;
+  let request: {
+    status: string;
+    cancelledBy: string | null;
+    cancelledAt: Date | null;
+    cancellationReason: CancellationReason | null;
+  } | null = null;
+  if (appointment.consultation) {
+    request = await prisma.consultation.findUnique({
+      where: { id: appointment.consultation.id },
+      select,
+    });
+  } else if (appointment.subscription) {
+    request = await prisma.subscription.findUnique({
+      where: { id: appointment.subscription.id },
+      select,
+    });
+  }
+  if (request?.status !== "CANCELLED" || request.cancelledBy !== userId) {
+    return null;
+  }
+  const payments = await prisma.payment.findMany({
+    where: {
+      appointmentId: appointment.id,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      refundOwedKey: true,
+      refunds: {
+        select: { dedupeKey: true, status: true, amountPaise: true },
+      },
+    },
+  });
+  let refund: Pick<CancelRefund, "amountRefundedPaise" | "status"> | null =
+    null;
+  for (const p of payments) {
+    const key = cancelRefundKey(appointment.id, p.id);
+    const row = p.refunds.find((r) => r.dedupeKey === key);
+    if (row?.status === "SUCCEEDED") {
+      refund = { amountRefundedPaise: row.amountPaise, status: "REFUNDED" };
+    } else if (row?.status === "PENDING" || p.refundOwedKey === key) {
+      refund = { amountRefundedPaise: 0, status: "PENDING" };
+    }
+  }
+  return {
+    success: true,
+    replayed: true,
+    cancellationReason: request.cancellationReason,
+    cancelledAt: request.cancelledAt,
+    refund:
+      refund ??
+      (payments.length > 0
+        ? { amountRefundedPaise: 0, status: "POLICY_ZERO" }
+        : null),
+    eventRefund: null,
+  };
+}
+
+/** A failed replay read answers the original 409, which the client handles. */
+async function safeReplayCommittedCancel(
+  ...args: Parameters<typeof replayCommittedCancel>
+) {
+  try {
+    return await replayCommittedCancel(...args);
+  } catch (readErr) {
+    console.warn("[cancel] replay read failed:", readErr);
+    return null;
+  }
+}
+
+/** The refund a 1:1 cancel owes under its quote, or null when it pays nothing. */
+function cancelRefundOwed(
+  appointmentId: string,
+  paymentId: string,
+  quote: BookingRefundQuote,
+  isConsultantInitiated: boolean,
+): RefundOwedMarker | null {
+  if (quote.creditRestoresInFull) {
+    return {
+      paymentId,
+      amountPaise: null,
+      key: cancelRefundKey(appointmentId, paymentId),
+      reason: `cancellation (credit-funded booking, credit restored in full from the ${quote.tierRefundPct}% tier)`,
+    };
+  }
+  if (quote.refundPaise <= 0) return null;
+  const side = isConsultantInitiated ? "consultant" : "consultee";
+  return {
+    paymentId,
+    amountPaise: quote.refundPaise,
+    key: cancelRefundKey(appointmentId, paymentId),
+    reason: `cancellation (${quote.refundPct}% per booking-time policy, ${side}-initiated)`,
+  };
+}
+
+/**
+ * Drives the stamped marker and words the outcome for the client. A failure is
+ * reported once here and left on the marker for the retry sweep.
+ */
+async function settleCancelRefund(
+  owed: RefundOwedMarker,
+  quote: BookingRefundQuote,
+  ctx: {
+    appointmentId: string;
+    organizationId: string | null;
+    initiatedByUserId: string;
+    refundablePaise: number;
+    grossPaise: number;
+  },
+): Promise<CancelRefund> {
+  const credit = quote.creditRestoresInFull;
+  const refundPct = credit ? 100 : quote.refundPct;
+  const outcome = await driveRefundOwed(owed, {
+    initiatedByUserId: ctx.initiatedByUserId,
+  });
+  switch (outcome.kind) {
+    case "refunded":
+    case "replayed":
+      return {
+        amountRefundedPaise: outcome.refund.amountRefundedPaise,
+        refundPct,
+        status: outcome.refund.status === "PENDING" ? "PENDING" : "REFUNDED",
+        ...(credit ? { requiresManualReview: false } : {}),
+        ...(outcome.refund.rail ? { rail: outcome.refund.rail } : {}),
+      };
+    case "settled":
+      return {
+        amountRefundedPaise: 0,
+        refundPct,
+        status: "NOTHING_REFUNDABLE",
+      };
+    case "blocked":
+      return { amountRefundedPaise: 0, refundPct, status: "PENDING" };
+    case "failed":
+      return failedCancelRefund(outcome, owed, quote, refundPct, ctx);
+  }
+}
+
+/** Reports a failed drive once; the marker stays for the retry sweep. */
+async function failedCancelRefund(
+  { error: err, stuck }: { error: unknown; stuck: boolean },
+  owed: RefundOwedMarker,
+  quote: BookingRefundQuote,
+  refundPct: number,
+  ctx: Parameters<typeof settleCancelRefund>[2],
+): Promise<CancelRefund> {
+  const credit = quote.creditRestoresInFull;
+  reportRefundFailure(err, credit ? "bookings" : "appointments");
+  // Sentry is an alert channel rather than a queue anyone works; money owed
+  // on a cancelled booking also lands on the durable ops surface.
+  await recordSystemErrorSafe({
+    organizationId: ctx.organizationId,
+    category: "PAYMENT",
+    summary: credit
+      ? "Credit-funded booking cancelled but the credit restoration failed"
+      : `Cancellation refund failed for payment ${owed.paymentId}; ` +
+        `${refundPct}% of ${ctx.grossPaise} paise is still owed`,
+    err,
+    context: {
+      appointmentId: ctx.appointmentId,
+      paymentId: owed.paymentId,
+      refundPct,
+      tierRefundPct: quote.tierRefundPct,
+      attemptedPaise: owed.amountPaise,
+      refundablePaise: ctx.refundablePaise,
+    },
+  });
+  // The marker stays owed for the retry sweep until its attempts are spent.
+  if (!stuck || (await refundLeftPending(err))) {
+    return { amountRefundedPaise: 0, refundPct, status: "PENDING" };
+  }
+  return {
+    amountRefundedPaise: 0,
+    refundPct,
+    status: "FAILED",
+    ...(credit ? { requiresManualReview: true } : {}),
+  };
 }
 
 type AttendeesByRail = {
@@ -250,7 +508,7 @@ export async function POST(
     const { appointmentId } = await params;
 
     // Parse optional request body for cancellation reason
-    let validatedData: { reason?: string; notes?: string } = {};
+    let validatedData: CancelBody = {};
     try {
       const text = await request.text();
       if (text) {
@@ -542,10 +800,25 @@ export async function POST(
       ? await classSeriesLedgers(appointment.class.id)
       : null;
 
+    // "Not the buyer's choice" is the real question the tier asks, and a
+    // platform-initiated cancellation is not the buyer's choice either, so an
+    // admin or host-org operator settles at the consultant-initiated tier.
+    const isConsultantInitiated =
+      (!!session.user.consultantProfileId &&
+        consultantUserId === session.user.id) ||
+      (isPrivilegedUser && session.user.id !== consulteeUserId) ||
+      (isHostOrgOperator && session.user.id !== consulteeUserId);
+
+    let eventKind: "class" | "webinar" | null = null;
+    if (appointment.class) eventKind = "class";
+    else if (appointment.webinar) eventKind = "webinar";
+    const eventId = appointment.class?.id ?? appointment.webinar?.id ?? null;
+    const eventRefundReason = `whole-event ${eventKind ?? "event"} cancellation (${validatedData.reason ?? "cancelled"})`;
+
     // Transaction for critical database operations only (with increased timeout)
     // #1319 — serialize lifecycle mutations per appointment (lock order:
     // appointment first, before any consultee/slot key a future change adds).
-    const result = await withAppointmentLock(appointmentId, () =>
+    const committed = await withAppointmentLock(appointmentId, () =>
       prisma.$transaction(
         async (tx) => {
           // #1695 — the quote's inputs (the next live session, the SUCCEEDED
@@ -555,6 +828,31 @@ export async function POST(
           const bookingCtx = isExclusiveType
             ? await resolveBookingRefundContext(bookingRef, undefined, tx)
             : null;
+          const paidPayment = bookingCtx?.paidPayment ?? null;
+          // The quote is pure and runs before the CAS, so a click bound to a
+          // stale figure is refused with nothing committed.
+          const quote =
+            bookingCtx && paidPayment
+              ? quoteBookingRefund({
+                  policy: bookingCtx.policy,
+                  hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
+                  slotsTotal: bookingCtx.slotsTotal,
+                  sessionsRemaining: bookingCtx.sessionsRemaining,
+                  sessionsTotal: bookingCtx.sessionsTotal,
+                  sessionsCompleted: bookingCtx.sessionsCompleted,
+                  scheduledStarts: bookingCtx.scheduledStarts,
+                  isSubscription: !!appointment.subscription,
+                  isConsultantInitiated,
+                  // Both halves are load-bearing: `free_` with a
+                  // non-zero amount is a mixed payment on the money arm.
+                  isFreeCreditFunded:
+                    paidPayment.amountPaise === 0 &&
+                    paidPayment.paymentIntent.startsWith("free_"),
+                  grossPaise: paidPayment.amountPaise,
+                  refundablePaise: paidPayment.refundablePaise,
+                })
+              : null;
+          if (quote) assertQuoteMatchesClick(quote, validatedData);
 
           // Update appointment status based on type — through the CAS helpers,
           // which bake the same allowed-from set into the WHERE and append the
@@ -612,7 +910,7 @@ export async function POST(
               new Error(
                 "This appointment can no longer be cancelled (already cancelled, completed, or expired).",
               ),
-              { httpStatus: 409, code: "NOT_CANCELLABLE" },
+              { httpStatus: 409, code: NOT_CANCELLABLE },
             );
           }
           // #1851 decision 2 — the org's own trail, beside the booking's.
@@ -622,6 +920,27 @@ export async function POST(
               action: "cancel",
               appointmentId,
               reason: validatedData.reason,
+            });
+          }
+
+          // The refund this cancel owes commits with the cancel, so a death
+          // before the refund leaves a marker the retry sweep drives.
+          const owed =
+            quote && paidPayment
+              ? cancelRefundOwed(
+                  appointmentId,
+                  paidPayment.id,
+                  quote,
+                  isConsultantInitiated,
+                )
+              : null;
+          if (owed) await stampRefundOwed(tx, owed);
+          if (eventKind && eventId) {
+            await stampWholeEventRefundsOwed(tx, {
+              kind: eventKind,
+              eventId,
+              reason: eventRefundReason,
+              ledgers: seriesLedgers ?? undefined,
             });
           }
 
@@ -666,10 +985,6 @@ export async function POST(
 
           await declineOpenReschedules(tx, appointmentId, auditMeta);
 
-          if (appointment.subscription && !bookingCtx?.paidPayment) {
-            // No payment to refund, stamp any unstamped rows inside the tx.
-          }
-
           return {
             success: true,
             cancellationReason: validatedData.reason,
@@ -678,7 +993,9 @@ export async function POST(
             slotsCancelled,
             webinarId: appointment.webinar?.id,
             classId: appointment.class?.id,
-            bookingCtx,
+            paidPayment,
+            quote,
+            owed,
             holdNotices,
           };
         },
@@ -687,246 +1004,81 @@ export async function POST(
           timeout: 30000, // 30 second transaction timeout (was 5s default)
         },
       ),
-    );
-    await flushBackupInterestNotices(result.holdNotices);
-    const bookingCtx = result.bookingCtx;
+    ).catch(async (err: unknown) => {
+      // A retry after a 504 finds the booking already cancelled by this
+      // caller (its requote differs once the first click refunded): answer
+      // with what that click committed. Otherwise the original 409 stands.
+      const replay =
+        isNotCancellable(err) || err instanceof RefundQuoteChangedError
+          ? await safeReplayCommittedCancel(appointment, session.user.id)
+          : null;
+      if (replay) return { replay };
+      throw err;
+    });
+    if ("replay" in committed) return NextResponse.json(committed.replay);
+    const { holdNotices, paidPayment, quote, owed, ...result } = committed;
+    await flushBackupInterestNotices(holdNotices);
 
-    // B1 — policy-driven refund, AFTER the cancel tx commits (the refund runs
-    // its own Serializable tx; the CAS above guarantees this block runs at most
-    // once per appointment — a second cancel 409s before reaching it).
-    // Scope here: consultation/subscription (single-payment, policy-tiered).
-    // Whole-event class/webinar refunds are handled just below via the
-    // reversal engine (#776 §C).
-    let refund: {
-      amountRefundedPaise: number;
-      refundPct: number;
-      /**
-       * What actually happened to the money. `amountRefundedPaise: 0` alone is
-       * ambiguous — it is equally "the policy owes nothing", "the balance was
-       * already exhausted" and "the gateway refused" — and the client was left
-       * inferring failure from a positive `refundPct`, which is a guess.
-       */
-      status:
-        | "REFUNDED"
-        | "PENDING"
-        | "FAILED"
-        | "NOTHING_REFUNDABLE"
-        | "POLICY_ZERO";
-      /** #1006 — set when the refund needs a human, not a formula. */
-      requiresManualReview?: boolean;
-      /**
-       * Which rail returned the money. The client renders a different sentence
-       * per rail — an org-funded cancellation credits the org's balance, not
-       * the learner's card — and `refundBookingPayment` already answers this;
-       * dropping it left the UI guessing "card, 5–7 working days" for all three.
-       */
-      rail?: FundingRail;
-    } | null = null;
-    if (bookingCtx) {
-      const paidPayment = bookingCtx.paidPayment;
-      if (paidPayment) {
-        // "Not the buyer's choice" is the real question the tier asks, and a
-        // platform-initiated cancellation is not the buyer's choice either.
-        // Requiring the actor to BE the consultant meant an admin cancelling
-        // in the final hours settled a buyer who never asked at 0%, while
-        // `cancel-user-engagements.ts` settles the same platform act at 100%.
-        const isConsultantInitiated =
-          (session.user.consultantProfileId !== null &&
-            session.user.consultantProfileId !== undefined &&
-            session.user.id !== undefined &&
-            consultantUserId === session.user.id) ||
-          (isPrivilegedUser && session.user.id !== consulteeUserId) ||
-          (isHostOrgOperator && session.user.id !== consulteeUserId);
-        // #1161 — a fully-credit-funded booking: its refund IS the credit
-        // restoration, all-or-nothing, because the credits rail refuses a partial
-        // amount. #1500 settled what a partial TIER means for such a booking: the
-        // quote rounds it up to a full restoration, and only a 0% tier returns
-        // nothing.
-        const isFreeCreditFunded =
-          paidPayment.amountPaise === 0 &&
-          paidPayment.paymentIntent.startsWith("free_");
-        // #1319 — the notice tier, the #1006 per-session proration and the
-        // clamp to the remaining refundable balance all live in
-        // `quoteBookingRefund`, which the cancel preview calls too. The two
-        // used to compute the same four steps inline in two files; the preview
-        // exists to tell the buyer what this click pays, so they must be one
-        // function or the quote eventually stops matching the charge.
-        const quote = quoteBookingRefund({
-          policy: bookingCtx.policy,
-          hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
-          slotsTotal: bookingCtx.slotsTotal,
-          sessionsRemaining: bookingCtx.sessionsRemaining,
-          sessionsTotal: bookingCtx.sessionsTotal,
-          sessionsCompleted: bookingCtx.sessionsCompleted,
-          scheduledStarts: bookingCtx.scheduledStarts,
-          isSubscription: !!appointment.subscription,
-          isConsultantInitiated,
-          isFreeCreditFunded,
-          grossPaise: paidPayment.amountPaise,
-          refundablePaise: paidPayment.refundablePaise,
-        });
-        const refundPct = quote.refundPct;
-        const refundAmount = quote.refundPaise;
-
-        // Credit-funded first: its refund is a credit restoration, which is
-        // all-or-nothing, so the tiered amount above does not apply to it.
-        // #1500 — every tier above 0% restores the credit IN FULL; the escalation
-        // to a human that used to sit on the partial branch is gone, because the
-        // product rule it was waiting for now exists. A 0% tier falls through to
-        // POLICY_ZERO below, so a late cancel bites a credit buyer exactly as it
-        // bites a card buyer.
-        if (quote.creditRestoresInFull) {
-          try {
-            const restored = await refundBookingPayment({
-              paymentId: paidPayment.id,
-              reason: `cancellation (credit-funded booking, credit restored in full from the ${quote.tierRefundPct}% tier)`,
-              initiatedByUserId: session.user.id,
-            });
-            refund = {
-              // Report what the restoration actually returned. Hardcoding 0
-              // reintroduced the ambiguity this field exists to remove — the
-              // status says REFUNDED while the amount reads like the policy
-              // owed nothing.
-              amountRefundedPaise: restored.amountRefundedPaise,
-              refundPct: 100,
-              status: "REFUNDED",
-              requiresManualReview: false,
-              rail: restored.rail,
-            };
-          } catch (freeErr) {
-            reportRefundFailure(freeErr, "bookings");
-            // #1513 review — the monetary branch below lands a failed refund on
-            // the durable ops surface, and this branch owes the same: a credit
-            // the buyer is owed but did not get back is money, and Sentry is an
-            // alert channel rather than a queue anyone works.
-            await recordSystemErrorSafe({
-              organizationId: appointment.organizationId ?? null,
-              category: "PAYMENT",
-              summary:
-                "Credit-funded booking cancelled but the credit restoration failed",
-              err: freeErr,
-              context: {
-                appointmentId,
-                paymentId: paidPayment.id,
-                tierRefundPct: quote.tierRefundPct,
-              },
-            });
-            refund = (await refundLeftPending(freeErr))
-              ? { amountRefundedPaise: 0, refundPct: 100, status: "PENDING" }
-              : {
-                  amountRefundedPaise: 0,
-                  refundPct: 100,
-                  status: "FAILED",
-                  requiresManualReview: true,
-                };
-          }
-        } else if (refundAmount > 0) {
-          try {
-            const r = await refundBookingPayment({
-              paymentId: paidPayment.id,
-              amountPaise: refundAmount,
-              reason: `cancellation (${refundPct}% per booking-time policy, ${
-                isConsultantInitiated ? "consultant" : "consultee"
-              }-initiated)`,
-              initiatedByUserId: session.user.id,
-            });
-            refund = {
-              amountRefundedPaise: r.amountRefundedPaise,
-              refundPct,
-              status: r.status === "PENDING" ? "PENDING" : "REFUNDED",
-              rail: r.rail,
-            };
-          } catch (refundErr) {
-            // The cancellation itself stands; a failed refund must be visible,
-            // not silently swallowed. Sentry alone is not a queue — this is
-            // money owed on a booking that is already cancelled, so it lands on
-            // the same durable ops surface as the proration escalation.
-            reportRefundFailure(refundErr, "appointments");
-            console.error(
-              `[cancel] refund failed for payment ${paidPayment.id}:`,
-              refundErr,
-            );
-            await recordSystemErrorSafe({
-              organizationId: appointment.organizationId ?? null,
-              category: "PAYMENT",
-              summary:
-                `Cancellation refund failed for payment ${paidPayment.id}; ` +
-                `${refundPct}% of ${paidPayment.amountPaise} paise is still owed`,
-              err: refundErr,
-              context: {
-                appointmentId,
-                paymentId: paidPayment.id,
-                refundPct,
-                attemptedPaise: refundAmount,
-                refundablePaise: paidPayment.refundablePaise,
-              },
-            });
-            refund = {
-              amountRefundedPaise: 0,
-              refundPct,
-              status: (await refundLeftPending(refundErr))
-                ? "PENDING"
-                : "FAILED",
-            };
-          }
-        } else {
-          // Two different facts, and the buyer is owed different words for
-          // each: the policy tier is genuinely zero, or the tier is positive
-          // but nothing is left to give back.
-          refund = {
+    // B1 — policy-driven refund, AFTER the cancel tx commits, under the key the
+    // owed marker carries; the CAS above runs this block at most once per click.
+    let refund: CancelRefund | null = null;
+    if (paidPayment && quote) {
+      refund = owed
+        ? await settleCancelRefund(owed, quote, {
+            appointmentId,
+            organizationId: appointment.organizationId ?? null,
+            initiatedByUserId: session.user.id,
+            refundablePaise: paidPayment.refundablePaise,
+            grossPaise: paidPayment.amountPaise,
+          })
+        : {
+            // Two different facts, and the buyer is owed different words for
+            // each: the policy tier is genuinely zero, or the tier is positive
+            // but nothing is left to give back.
             amountRefundedPaise: 0,
-            refundPct,
+            refundPct: quote.refundPct,
             status:
-              refundPct > 0 && paidPayment.refundablePaise <= 0
+              quote.refundPct > 0 && paidPayment.refundablePaise <= 0
                 ? "NOTHING_REFUNDABLE"
                 : "POLICY_ZERO",
           };
-        }
 
-        // #1766 / F-4.13 — stamp remaining subscription tranches AFTER
-        // refundBookingPayment runs so allocateCycleClawback sees holdUntil: null
-        // (rank 0) on undelivered cycles and claws back newest undelivered
-        // tranches before delivered ones, and so a failed/pending refund does not
-        // prematurely release undelivered tranches for payout.
-        if (
-          appointment.subscription &&
-          refund &&
-          (refund.status === "REFUNDED" ||
-            refund.status === "POLICY_ZERO" ||
-            refund.status === "NOTHING_REFUNDABLE")
-        ) {
-          try {
-            await stampTranchesOnCancel(prisma, {
-              paymentId: paidPayment.id,
-              now: result.cancelledAt,
-            });
-          } catch (stampErr) {
-            reportRefundFailure(stampErr, "appointments");
-            await recordSystemErrorSafe({
-              organizationId: appointment.organizationId ?? null,
-              category: "PAYMENT",
-              summary: `Failed to stamp subscription tranches after cancel for payment ${paidPayment.id}`,
-              err: stampErr,
-              context: { appointmentId, paymentId: paidPayment.id },
-            });
-          }
+      // Stamp remaining subscription tranches AFTER the refund
+      // so allocateCycleClawback sees holdUntil: null (rank 0) on undelivered
+      // cycles, and a failed/pending refund does not release them for payout.
+      if (
+        appointment.subscription &&
+        (refund.status === "REFUNDED" ||
+          refund.status === "POLICY_ZERO" ||
+          refund.status === "NOTHING_REFUNDABLE")
+      ) {
+        try {
+          await stampTranchesOnCancel(prisma, {
+            paymentId: paidPayment.id,
+            now: result.cancelledAt,
+          });
+        } catch (stampErr) {
+          reportRefundFailure(stampErr, "appointments");
+          await recordSystemErrorSafe({
+            organizationId: appointment.organizationId ?? null,
+            category: "PAYMENT",
+            summary: `Failed to stamp subscription tranches after cancel for payment ${paidPayment.id}`,
+            err: stampErr,
+            context: { appointmentId, paymentId: paidPayment.id },
+          });
         }
       }
     }
 
-    // #776 §C — whole-event (class/webinar) cancellation refunds every attendee
-    // in full through the reversal engine: org-funded seats reverse in-ledger
-    // (CLASS_MULTI), card/mock seats credit the gateway. Same at-most-once CAS
-    // guarantee as the block above. Attendees didn't leave voluntarily (the
-    // event was cancelled on them), so this is a full refund, not policy-tiered.
+    // A whole-event cancel refunds every attendee in full; the seats
+    // were stamped owed in the cancel commit, and this drives a bounded bite of
+    // them now, leaving the rest to the retry sweep.
     let eventRefund: WholeEventRefundSummary | null = null;
-    if (appointment.class || appointment.webinar) {
-      const eventKind = appointment.class ? "class" : "webinar";
-      const eventId = appointment.class?.id ?? appointment.webinar!.id;
+    if (eventKind && eventId) {
       eventRefund = await refundWholeEventPayments(
         eventKind,
         eventId,
-        `whole-event ${eventKind} cancellation (${validatedData.reason ?? "cancelled"})`,
+        eventRefundReason,
         session.user.id,
         { ledgers: seriesLedgers ?? undefined },
       );
@@ -1122,6 +1274,18 @@ export async function POST(
 
     return NextResponse.json({ ...result, refund, eventRefund });
   } catch (error) {
+    if (error instanceof RefundQuoteChangedError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: error.code,
+          refundPaise: error.quote.refundPaise,
+          refundPct: error.quote.refundPct,
+          creditRestoresInFull: error.quote.creditRestoresInFull,
+        },
+        { status: error.httpStatus },
+      );
+    }
     // #1319 — lock outcomes are structured, never a 500.
     if (error instanceof BookingLockUnavailableError) {
       return NextResponse.json(

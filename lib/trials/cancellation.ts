@@ -19,7 +19,7 @@ import { transitionParticipant } from "@/lib/booking/participants";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
-import prisma, { type Tx } from "@/lib/prisma";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -29,7 +29,10 @@ import {
   POLICY_TERMS_INCLUDE,
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  driveRefundOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
 import {
   fundingRailForIntent,
   type FundingRail,
@@ -122,9 +125,8 @@ export async function stampTrialEarningsOnCancel(
 ): Promise<number> {
   const now = args.now ?? new Date();
   let whereScope:
-    | { paymentId: string }
-    | { payment: { appointmentId: string } }
-    | null = null;
+    { paymentId: string } | { payment: { appointmentId: string } } | null =
+    null;
   if (args.paymentId) {
     whereScope = { paymentId: args.paymentId };
   } else if (args.appointmentId) {
@@ -194,17 +196,20 @@ export interface TrialRefundQuote {
  * trial, an unpaid AWAITING_PAYMENT trial, or a payment that never captured.
  * Uses the same booking-time policy snapshot the appointment cancel applies.
  */
-export async function quoteTrialRefund(args: {
-  appointmentId: string | null;
-  paymentId: string | null;
-  isConsultantInitiated: boolean;
-}): Promise<TrialRefundQuote | null> {
+export async function quoteTrialRefund(
+  args: {
+    appointmentId: string | null;
+    paymentId: string | null;
+    isConsultantInitiated: boolean;
+  },
+  db: PrismaLike = prisma,
+): Promise<TrialRefundQuote | null> {
   const { appointmentId, paymentId } = args;
 
   // Trial.paymentId is ledger truth once a paid trial settles, but the
   // webhook writes it after capture — fall back to the appointment's payment so
   // a cancellation racing that write still refunds.
-  const payment = await prisma.payment.findFirst({
+  const payment = await db.payment.findFirst({
     where: {
       deletedAt: null,
       paymentStatus: PaymentStatus.SUCCEEDED,
@@ -233,7 +238,7 @@ export async function quoteTrialRefund(args: {
   if (!payment) return null;
 
   const appointment = appointmentId
-    ? await prisma.appointment.findUnique({
+    ? await db.appointment.findUnique({
         where: { id: appointmentId },
         select: {
           cancellationPolicy: POLICY_TERMS_INCLUDE,
@@ -344,93 +349,88 @@ export function assertTrialQuoteConfirmed(
 }
 
 /**
- * Refund a paid trial on cancellation. A caller that already quoted (trial
- * DELETE, after the confirmation check) passes that quote so the charge is the
- * confirmed number; everyone else gets a fresh quote.
+ * The refund a cancelled or declined trial owes under its quote, or null when
+ * the quote pays nothing. The caller stamps it in the commit that ends the trial.
+ */
+export function trialRefundOwed(args: {
+  trialId: string;
+  quote: TrialRefundQuote | null;
+  isConsultantInitiated: boolean;
+}): RefundOwedMarker | null {
+  const { quote } = args;
+  if (!quote) return null;
+  const side = args.isConsultantInitiated ? "consultant" : "consultee";
+  // The credits rail restores in full or not at all, so a credit
+  // restore carries no amount; a 0% tier owes nothing on any rail.
+  if (quote.creditRestoresInFull) {
+    return {
+      paymentId: quote.paymentId,
+      amountPaise: null,
+      key: `trial-cancel:${args.trialId}:${quote.paymentId}`,
+      reason: `trial cancellation (credit-funded trial, credit restored in full from the ${quote.tierRefundPct}% tier, ${side}-initiated)`,
+    };
+  }
+  if (quote.estimatedRefundPaise <= 0) return null;
+  return {
+    paymentId: quote.paymentId,
+    amountPaise: quote.estimatedRefundPaise,
+    key: `trial-cancel:${args.trialId}:${quote.paymentId}`,
+    reason: `trial cancellation (${quote.tierRefundPct}% per booking-time policy, ${side}-initiated)`,
+  };
+}
+
+/**
+ * Settle a paid trial's cancellation after the commit that stamped `owed`:
+ * drive the marker through the booking front door, then start the retained
+ * earnings' hold once the money has settled.
  *
- * Returns null when there is nothing to refund.
- *
- * Deliberately never throws: the cancellation has already committed by the time
- * this runs, and a gateway failure must not roll it back. A failed refund is
- * reported to Sentry and surfaced to the caller as `failed`, matching how
- * `app/api/appointments/[appointmentId]/cancel/route.ts` handles the same case.
+ * Never throws: a failed refund is reported and left on the marker for the
+ * retry sweep, and surfaces to the caller as `failed`.
  */
 export async function refundCancelledTrial(args: {
   trialId: string;
-  appointmentId: string | null;
-  paymentId: string | null;
   initiatedByUserId: string;
-  isConsultantInitiated: boolean;
-  quote?: TrialRefundQuote | null;
+  quote: TrialRefundQuote | null;
+  owed: RefundOwedMarker | null;
 }): Promise<TrialRefundOutcome | null> {
-  const { trialId, initiatedByUserId } = args;
-  const quote =
-    args.quote === undefined ? await quoteTrialRefund(args) : args.quote;
+  const { trialId, quote, owed } = args;
   if (!quote) return null;
+  const { refundPct } = quote;
+  const stampHold = () =>
+    stampTrialEarningsOnCancel(prisma, { paymentId: quote.paymentId });
 
-  const { refundPct, estimatedRefundPaise: amountPaise } = quote;
+  if (!owed) {
+    await stampHold();
+    return { refundPct, amountRefundedPaise: 0, rail: null };
+  }
 
-  try {
-    // Audit B-P1-07 — route through the booking front door so org-funded and
-    // free_ trials hit the correct rail (in-ledger reversal / credit restore)
-    // instead of throwing UNKNOWN_GATEWAY on the raw gateway path.
-    //
-    // #1500 — a credit restore is the one shape that must arrive here: the
-    // credits rail refuses a partial `amountPaise` with INVALID_AMOUNT, so
-    // passing this quote's ₹0 would be refused and the credits the buyer spent
-    // would be consumed for good. Omitting the amount is the front door's
-    // documented "restore in full" call. A 0% tier never reaches it — a late
-    // cancel bites a credit buyer exactly as it bites a card buyer.
-    if (quote.creditRestoresInFull) {
-      const restored = await refundBookingPayment({
-        paymentId: quote.paymentId,
-        reason: `trial cancellation (credit-funded trial, credit restored in full from the ${quote.tierRefundPct}% tier, ${
-          args.isConsultantInitiated ? "consultant" : "consultee"
-        }-initiated)`,
-        initiatedByUserId,
-      });
-      await stampTrialEarningsOnCancel(prisma, { paymentId: quote.paymentId });
-      return {
-        refundPct,
-        // The Refund row is ₹0 by construction; the value that came back is the
-        // restored credit, which is why `rail` rides alongside the amount.
-        amountRefundedPaise: restored.amountRefundedPaise,
-        rail: restored.rail,
-      };
-    }
-    if (amountPaise <= 0) {
-      await stampTrialEarningsOnCancel(prisma, { paymentId: quote.paymentId });
-      return { refundPct, amountRefundedPaise: 0, rail: null };
-    }
-
-    const result = await refundBookingPayment({
-      paymentId: quote.paymentId,
-      amountPaise,
-      reason: `trial cancellation (${quote.tierRefundPct}% per booking-time policy, ${
-        args.isConsultantInitiated ? "consultant" : "consultee"
-      }-initiated)`,
-      initiatedByUserId,
-    });
-    if (result.status !== "PENDING") {
-      await stampTrialEarningsOnCancel(prisma, { paymentId: quote.paymentId });
-    }
+  const outcome = await driveRefundOwed(owed, {
+    initiatedByUserId: args.initiatedByUserId,
+  });
+  if (outcome.kind === "refunded" || outcome.kind === "replayed") {
+    if (outcome.refund.status !== "PENDING") await stampHold();
     return {
       refundPct,
-      amountRefundedPaise: result.amountRefundedPaise,
-      rail: result.rail,
+      // A credit restore's Refund row is ₹0 by construction; `rail` says why.
+      amountRefundedPaise: outcome.refund.amountRefundedPaise,
+      rail: outcome.refund.rail ?? quote.fundingRail,
     };
-  } catch (error) {
+  }
+  if (outcome.kind === "settled") {
+    await stampHold();
+    return { refundPct, amountRefundedPaise: 0, rail: null };
+  }
+  if (outcome.kind === "failed") {
     Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
+      outcome.error instanceof Error
+        ? outcome.error
+        : new Error(String(outcome.error)),
       {
         tags: { subsystem: "trials" },
         extra: { trialId, paymentId: quote.paymentId },
       },
     );
-    console.error(
-      `[Trials] refund failed for payment ${quote.paymentId}:`,
-      error,
-    );
-    return { refundPct, amountRefundedPaise: 0, rail: null, failed: true };
   }
+  // A live dispute (blocked) or a failed drive leaves the marker for the sweep.
+  return { refundPct, amountRefundedPaise: 0, rail: null, failed: true };
 }

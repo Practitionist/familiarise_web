@@ -27,13 +27,18 @@ import { EMAIL_BUDGET_MS, sendAppointmentCancelledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  driveRefundOwed,
+  stampRefundOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
 import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
 import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
 import {
   classSeriesLedgers,
   refundWholeEventPayments,
+  stampWholeEventRefundsOwed,
 } from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
@@ -417,8 +422,9 @@ async function casCancelExclusiveEngagement(
   kind: "consultation" | "subscription",
   engagementId: string,
   appointmentId: string | null,
+  owed: RefundOwedMarker[],
   ctx: { initiatedByUserId: string; notes?: string },
-): Promise<number> {
+): Promise<RefundOwedMarker[] | null> {
   const now = new Date();
   const cancellationData = {
     cancellationReason: "MODERATION" as const,
@@ -454,9 +460,11 @@ async function casCancelExclusiveEngagement(
           });
         }
       } catch (err) {
-        if (err instanceof IllegalTransitionError) return 0;
+        if (err instanceof IllegalTransitionError) return null;
         throw err;
       }
+      // Every refund the ban owes commits with the cancel.
+      for (const marker of owed) await stampRefundOwed(tx, marker);
       await releaseEngagementOccurrences(
         tx,
         kind === "consultation"
@@ -470,13 +478,15 @@ async function casCancelExclusiveEngagement(
       if (appointmentId) {
         await declineOpenReschedules(tx, appointmentId, audit);
       }
-      return 1;
+      return owed;
     });
   // A request that never got a wrapper has no atom to lock; its CAS decides.
   return appointmentId ? withAppointmentLock(appointmentId, cancel) : cancel();
 }
 
 const MODERATION_REASON = "moderation";
+const GROUP_EVENT_REFUND_REASON =
+  "moderation (100% — platform-initiated cancellation)";
 
 /**
  * Tombstone the engagement's live slots. Since #1694 the overlap constraint
@@ -514,12 +524,27 @@ async function releaseEngagementOccurrences(
  * #781 §B — retired (soft-deleted) rows are NOT: refundBookingPayment refuses
  * them, so queueing one only mints a false failure and a Sentry event.
  */
-function refundableEngagementPayments(engagement: NormalizedEngagement) {
+function refundableEngagementPayments(
+  engagement: NormalizedEngagement,
+): RefundOwedMarker[] {
   return engagement.appointments.flatMap((appt) =>
-    appt.payment.filter(
-      (p) => p.paymentStatus === "SUCCEEDED" && p.deletedAt === null,
-    ),
+    appt.payment
+      .filter((p) => p.paymentStatus === "SUCCEEDED" && p.deletedAt === null)
+      .map((p) => moderationRefundOwed(appt.id, p.id)),
   );
+}
+
+/** A ban refunds the full remaining balance, under the door's own key. */
+function moderationRefundOwed(
+  appointmentId: string,
+  paymentId: string,
+): RefundOwedMarker {
+  return {
+    paymentId,
+    amountPaise: null,
+    key: `moderation:${appointmentId}:${paymentId}`,
+    reason: "moderation (100% — platform-initiated cancellation)",
+  };
 }
 
 async function notifyExclusiveCancellation(
@@ -576,18 +601,19 @@ async function cancelExclusiveEngagement(
   const engagement = await loadExclusiveEngagement(kind, engagementId);
   if (!engagement) return;
 
-  const moved = await casCancelExclusiveEngagement(
+  const owed = await casCancelExclusiveEngagement(
     kind,
     engagementId,
     engagement.appointments[0]?.id ?? null,
+    refundableEngagementPayments(engagement),
     ctx,
   );
-  if (moved === 0) return; // lost the CAS — already terminal, no refund
+  if (!owed) return; // lost the CAS — already terminal, no refund
 
   ctx.summary.engagementsCancelled += 1;
 
-  for (const p of refundableEngagementPayments(engagement)) {
-    await issueFullRefund(p.id, ctx.initiatedByUserId, ctx.summary);
+  for (const marker of owed) {
+    await issueFullRefund(marker, ctx.initiatedByUserId, ctx.summary);
   }
 
   await notifyExclusiveCancellation(kind, engagement);
@@ -602,6 +628,7 @@ async function casCancelGroupEvent(
   isWebinar: boolean,
   eventId: string,
   initiatedByUserId: string,
+  ledgers: Awaited<ReturnType<typeof classSeriesLedgers>> | null,
 ): Promise<number> {
   const audit = { actorUserId: initiatedByUserId, reason: MODERATION_REASON };
   const eventScope = isWebinar ? { webinarId: eventId } : { classId: eventId };
@@ -632,6 +659,13 @@ async function casCancelGroupEvent(
         if (err instanceof IllegalTransitionError) return 0;
         throw err;
       }
+      // Every seat the ban refunds is stamped owed in the cancel commit.
+      await stampWholeEventRefundsOwed(tx, {
+        kind: isWebinar ? "webinar" : "class",
+        eventId,
+        reason: GROUP_EVENT_REFUND_REASON,
+        ledgers: ledgers ?? undefined,
+      });
       await releaseEngagementOccurrences(
         tx,
         { appointment: eventScope },
@@ -742,6 +776,7 @@ async function cancelGroupEvent(
     isWebinar,
     eventId,
     ctx.initiatedByUserId,
+    seriesLedgers,
   );
   if (moved === 0) return;
 
@@ -760,7 +795,7 @@ async function cancelGroupEvent(
   const eventRefund = await refundWholeEventPayments(
     isWebinar ? "webinar" : "class",
     eventId,
-    "moderation (100% — platform-initiated cancellation)",
+    GROUP_EVENT_REFUND_REASON,
     ctx.initiatedByUserId,
     { ledgers: seriesLedgers ?? undefined },
   );
@@ -859,64 +894,68 @@ async function removeAttendee(
     select: { id: true },
   });
   if (!eventWrapper) return;
-  // #1846 SM-B14 — the seat release serialises with the event's own cancel.
-  const released = await withAppointmentLock(eventWrapper.id, () =>
-    releaseParticipant(prisma, {
-      appointmentId: eventWrapper.id,
-      userId: targetUserId,
+  // The seat release serialises with the event's own cancel,
+  // and the seat's refund is stamped owed in the same commit as the release.
+  const removal = await withAppointmentLock(eventWrapper.id, () =>
+    prisma.$transaction(async (tx) => {
+      const released = await releaseParticipant(tx, {
+        appointmentId: eventWrapper.id,
+        userId: targetUserId,
+      });
+      if (released === 0) return null;
+      const paid = await tx.payment.findFirst({
+        where: {
+          userId: targetUserId,
+          appointment: eventFilter,
+          paymentStatus: "SUCCEEDED",
+          amount: { gt: 0 },
+          // A retired row is refused by the front door.
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      const owed = paid ? moderationRefundOwed(eventWrapper.id, paid.id) : null;
+      if (owed) await stampRefundOwed(tx, owed);
+      return { owed };
     }),
   );
-  if (released === 0) return;
+  if (!removal) return;
   ctx.summary.attendeeRemovals += 1;
-
-  const paid = await prisma.payment.findFirst({
-    where: {
-      userId: targetUserId,
-      appointment: eventFilter,
-      paymentStatus: "SUCCEEDED",
-      amount: { gt: 0 },
-      // #781 §B — a retired row is refused by the front door; picking one here
-      // would only mint a false refund failure.
-      deletedAt: null,
-    },
-    select: { id: true },
-  });
-  if (paid) {
-    await issueFullRefund(paid.id, ctx.initiatedByUserId, ctx.summary);
+  if (removal.owed) {
+    await issueFullRefund(removal.owed, ctx.initiatedByUserId, ctx.summary);
   }
 }
 
 async function issueFullRefund(
-  paymentId: string,
+  owed: RefundOwedMarker,
   initiatedByUserId: string,
   summary: BulkCancelSummary,
 ) {
-  try {
-    // #1003 — via the rail-aware front door, not refundPayment directly: an
-    // org-funded seat carries a synthetic intent that died on UNKNOWN_GATEWAY,
-    // so moderation silently reversed nothing for org-sponsored bookings.
-    const r = await refundBookingPayment({
-      paymentId,
-      // amountPaise omitted → the full refundable balance
-      reason: "moderation (100% — platform-initiated cancellation)",
-      initiatedByUserId,
-    });
+  // The rail-aware front door, under the marker's key: a failure stays on the
+  // marker for the retry sweep instead of being lost with this run.
+  const outcome = await driveRefundOwed(owed, { initiatedByUserId });
+  if (outcome.kind === "refunded" || outcome.kind === "replayed") {
     summary.refundsIssued += 1;
-    summary.refundedPaise += r.amountRefundedPaise;
-  } catch (error) {
-    summary.failures.push({
-      kind: "refund",
-      id: paymentId,
-      error: errMsg(error),
-    });
-    // A modelled refusal (already made whole, nothing refundable) is recorded
-    // on the summary for staff and reported `expected` (FAMILIARISE_WEB-3D).
-    const modelled = isModelledRefundRefusal(error);
-    reportSentryError(error, {
-      subsystem: "moderation",
-      op: "cancel-user-engagements.refund",
-      expected: modelled,
-      ...(modelled ? { level: "warning" as const } : {}),
-    });
+    summary.refundedPaise += outcome.refund.amountRefundedPaise;
+    return;
   }
+  if (outcome.kind === "settled") return;
+  const error =
+    outcome.kind === "failed"
+      ? outcome.error
+      : new Error(`Payment ${owed.paymentId} has an open dispute`);
+  summary.failures.push({
+    kind: "refund",
+    id: owed.paymentId,
+    error: errMsg(error),
+  });
+  // A modelled refusal is recorded on the summary for staff and reported
+  // `expected` (FAMILIARISE_WEB-3D).
+  const modelled = outcome.kind === "blocked" || isModelledRefundRefusal(error);
+  reportSentryError(error, {
+    subsystem: "moderation",
+    op: "cancel-user-engagements.refund",
+    expected: modelled,
+    ...(modelled ? { level: "warning" as const } : {}),
+  });
 }
