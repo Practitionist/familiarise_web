@@ -32,10 +32,13 @@ import { stageTrialLifecycleEmail } from "@/lib/email/senders/booking";
 import { notifyTrialCancelled } from "@/lib/novu/service";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { goHref } from "@/lib/dashboard/go";
-import { reportSentryError } from "@/lib/observability/report";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
 import prisma from "../../lib/prisma";
+
+// Per-trial failures collapse to one event per op when the run ends.
+const runFailures = createRunFailureReporter("trials");
 
 export interface ExpireUnpaidTrialsResult {
   success: boolean;
@@ -195,12 +198,12 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
       "expire-unpaid-trials.lapsed",
     );
   } catch (error) {
-    reportSentryError(error, {
-      subsystem: "trials",
-      op: "expire-unpaid-trials-notify",
-      expected: true,
-      extra: { trialId: trial.id },
-    });
+    runFailures.add(
+      "expire-unpaid-trials-notify",
+      error,
+      { trialId: trial.id },
+      { expected: true },
+    );
   }
   return true;
 }
@@ -213,10 +216,9 @@ async function tombstoneHeldCall(
     await softCancelTrialAppointment(appointmentId);
     return true;
   } catch (error) {
-    reportSentryError(error, {
-      subsystem: "trials",
-      op: "expire-unpaid-trials-tombstone",
-      extra: { trialId, appointmentId },
+    runFailures.add("expire-unpaid-trials-tombstone", error, {
+      trialId,
+      appointmentId,
     });
     return false;
   }
@@ -337,10 +339,9 @@ async function refundUnansweredTrial(trial: {
     );
     return true;
   } catch (error) {
-    reportSentryError(error, {
-      subsystem: "trials",
-      op: "expire-unanswered-paid-trials-refund",
-      extra: { trialId: trial.id, paymentId: trial.paymentId },
+    runFailures.add("expire-unanswered-paid-trials-refund", error, {
+      trialId: trial.id,
+      paymentId: trial.paymentId,
     });
     return false;
   }
@@ -500,6 +501,8 @@ async function expireUnpaidTrialsUnlocked(
     const message = error instanceof Error ? error.message : String(error);
     errors.push(message);
     console.error("❌ Failed to expire unpaid trials:", message);
+  } finally {
+    runFailures.flush();
   }
 
   return {

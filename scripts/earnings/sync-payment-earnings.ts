@@ -27,7 +27,7 @@ import {
 } from "../../lib/payments/payouts/earnings-service";
 import { notSettledElsewhereWhere } from "@/lib/payments/webhooks/auto-refund-marker";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 // Batch size for processing payments to prevent memory issues
@@ -147,6 +147,7 @@ async function pageUnaccruablePayments(
   }
 
   let paged = 0;
+  const newlyPagedIds: string[] = [];
   for (const payment of candidates) {
     const key = unaccruedAlertKey(payment.id, now);
     if (seen.has(key)) continue;
@@ -154,14 +155,15 @@ async function pageUnaccruablePayments(
     const ageHours = Math.floor(
       (now.getTime() - payment.createdAt.getTime()) / 3_600_000,
     );
-    await recordSystemError({
+    // The durable per-payment row is the dedupe key; Sentry hears once per run.
+    await recordSystemEvent({
       organizationId: payment.organizationId,
       category: "PAYMENT",
-      summary:
+      severity: "ERROR",
+      message:
         `Payment ${payment.id} has been SUCCEEDED for ${ageHours}h with no ` +
         `consultant earnings and no consultant to accrue them to; the sync ` +
-        `sweep cannot heal it`,
-      err: new Error("EARNINGS_UNACCRUABLE_NO_CONSULTANT"),
+        `sweep cannot heal it: EARNINGS_UNACCRUABLE_NO_CONSULTANT`,
       context: {
         paymentId: payment.id,
         appointmentId: payment.appointmentId,
@@ -170,16 +172,24 @@ async function pageUnaccruablePayments(
         ageHours,
       },
       correlationId: key,
-    })
-      .then(() => {
-        paged++;
-      })
-      .catch((err) => {
-        console.error(
-          `[sync-payment-earnings] failed to page for ${payment.id}:`,
-          err,
-        );
-      });
+    });
+    paged++;
+    newlyPagedIds.push(payment.id);
+  }
+
+  if (newlyPagedIds.length > 0) {
+    reportSentryMessage(
+      "EARNINGS_UNACCRUABLE_NO_CONSULTANT: SUCCEEDED payment(s) with no consultant to accrue earnings to",
+      {
+        subsystem: "payments",
+        op: "sync-payment-earnings.unaccruable",
+        level: "error",
+        extra: {
+          count: newlyPagedIds.length,
+          paymentIds: newlyPagedIds.slice(0, 20),
+        },
+      },
+    );
   }
   return paged;
 }

@@ -42,6 +42,13 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   LONG_JOB_TTL_MS: 35 * 60 * 1000,
 }));
 
+jest.mock("../../lib/observability/standing-finding", () => ({
+  reportStandingFinding: async (_args: unknown, report: () => void) => {
+    report();
+    return true;
+  },
+}));
+
 jest.mock("../../lib/observability/report", () => ({
   reportSentryMessage: jest.fn(),
 }));

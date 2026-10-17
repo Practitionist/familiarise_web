@@ -28,8 +28,8 @@ import type {
   ModerationActionType,
   ModerationReportType,
 } from "@prisma/client";
-import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
@@ -68,6 +68,9 @@ export interface ModerationRetryOptions {
   giveUpAfterHours?: number;
   limit?: number;
 }
+
+// Per-row give-ups and write failures collapse to one event per op per run.
+const runFailures = createRunFailureReporter("moderation");
 
 const MAX_ATTEMPTS = 6;
 
@@ -151,11 +154,15 @@ async function stillApplicable(row: ActionRow): Promise<boolean> {
 export async function retryModerationEnforcement(
   opts: ModerationRetryOptions = {},
 ): Promise<ModerationRetryResult> {
-  return withCronLock(
-    "retry-moderation-enforcement",
-    { failMode: "closed" },
-    () => retryModerationEnforcementUnlocked(opts),
-  );
+  try {
+    return await withCronLock(
+      "retry-moderation-enforcement",
+      { failMode: "closed" },
+      () => retryModerationEnforcementUnlocked(opts),
+    );
+  } finally {
+    runFailures.flush();
+  }
 }
 
 async function retryModerationEnforcementUnlocked(
@@ -308,13 +315,11 @@ async function recordErasureOutboxOutcome(params: {
   if (error) {
     if (gaveUp) {
       result.gaveUp++;
-      Sentry.captureMessage(
-        `${errorLabel} retry gave up after ${attempts} attempts`,
-        {
-          level: "error",
-          tags: { subsystem: "moderation-retry" },
-          extra: { rowId: row.id, lastError: error },
-        },
+      runFailures.add(
+        "erasure-retry-gave-up",
+        new Error(`${errorLabel} retry gave up`),
+        { rowId: row.id, attempts, lastError: error },
+        { level: "error" },
       );
     } else {
       result.stillFailing++;
@@ -566,9 +571,11 @@ async function retryCollaboratorRevocation(
     await writeSummary(row.id, summary).catch(captureRetryError);
     result.gaveUp++;
     result.errors.push(`${row.id}: collaborator-revoke gave up`);
-    Sentry.captureMessage(
-      `Collaborator revocation gave up for action ${row.id} (${row.actionType})`,
-      { level: "error", tags: { subsystem: "moderation" } },
+    runFailures.add(
+      "collaborator-revocation-gave-up",
+      new Error("Collaborator revocation gave up"),
+      { actionId: row.id, actionType: row.actionType },
+      { level: "error" },
     );
     return;
   }
@@ -625,9 +632,11 @@ async function cap(
   result.errors.push(`${row.id}: gave up — ${reason}`);
   // A capped row means an account is enforced in the database and unenforced on
   // Stream, indefinitely. That needs a human, so it pages.
-  Sentry.captureMessage(
-    `Moderation enforcement gave up for action ${row.id} (${row.actionType})`,
-    { level: "error", tags: { subsystem: "moderation" } },
+  runFailures.add(
+    "enforcement-gave-up",
+    new Error("Moderation enforcement gave up"),
+    { actionId: row.id, actionType: row.actionType },
+    { level: "error" },
   );
 }
 
@@ -639,10 +648,7 @@ function appendNote(errors: string[] | undefined, note: string): string[] {
 }
 
 function captureRetryError(error: unknown): void {
-  Sentry.captureException(
-    error instanceof Error ? error : new Error(String(error)),
-    { tags: { subsystem: "moderation" } },
-  );
+  runFailures.add("write-summary", error);
 }
 
 export async function disconnectDatabase(): Promise<void> {

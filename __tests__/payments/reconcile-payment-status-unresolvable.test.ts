@@ -34,7 +34,7 @@ jest.mock("../../lib/prisma", () => ({
     // #1822 Q-4 — the unresolvable-row report is now deduped via a
     // SystemEvent correlationId lookup before it fires.
     systemEvent: {
-      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
       create: jest.fn().mockResolvedValue({ id: "event-1" }),
     },
     $disconnect: jest.fn(),
@@ -185,11 +185,9 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
     // singleton shared across every test in this file, and a persistent
     // stub here would leak into later describe blocks that expect the
     // default "nothing reported yet" behaviour.
-    (
-      prisma.systemEvent.findFirst as unknown as jest.Mock
-    ).mockResolvedValueOnce({
-      id: "already-reported",
-    });
+    (prisma.systemEvent.findMany as unknown as jest.Mock).mockResolvedValueOnce(
+      [{ context: { ids: ["pay-1"] } }],
+    );
 
     const res = await POST(request());
     const body = await res.json();
@@ -198,16 +196,29 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
     expect(body.unresolvableCount).toBe(1);
     expect(recordSystemEvent).not.toHaveBeenCalled();
     expect(mockCaptureMessage).not.toHaveBeenCalled();
-    expect(prisma.systemEvent.findFirst).toHaveBeenCalledWith(
+    expect(prisma.systemEvent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          correlationId: expect.stringMatching(
-            /^reconcile-payment-status:unresolvable:[0-9a-f]{16}$/,
-          ),
+          category: "STANDING_FINDING",
+          correlationId: {
+            startsWith: "standing:reconcile-payment-status:unresolvable:",
+          },
           createdAt: { gte: expect.any(Date) },
         },
       }),
     );
+  });
+
+  it("reports again when the id set gains an id not reported before", async () => {
+    razorpayUnknownId();
+    (prisma.systemEvent.findMany as unknown as jest.Mock).mockResolvedValueOnce(
+      [{ context: { ids: ["pay-other"] } }],
+    );
+
+    await POST(request());
+
+    expect(recordSystemEvent).toHaveBeenCalledTimes(1);
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
   });
 
   // #1822 — replay: run 1's lookup fails (still reports, still 207); run 2
@@ -215,17 +226,16 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
   it("reports despite a failed lookup, then suppresses the replay", async () => {
     razorpayUnknownId();
     const recorded = new Set<string>();
-    recordSystemEvent.mockImplementation(
-      async (e: { correlationId: string }) => {
-        recorded.add(e.correlationId);
+    recordSystemEvent.mockImplementationOnce(
+      async (e: { context: { ids: string[] } }) => {
+        e.context.ids.forEach((id) => recorded.add(id));
       },
     );
-    (prisma.systemEvent.findFirst as unknown as jest.Mock)
+    (prisma.systemEvent.findMany as unknown as jest.Mock)
       .mockRejectedValueOnce(new Error("system_events unavailable"))
-      .mockImplementationOnce(
-        async (q: { where: { correlationId: string } }) =>
-          recorded.has(q.where.correlationId) ? { id: "e1" } : null,
-      );
+      .mockImplementationOnce(async () => [
+        { context: { ids: [...recorded] } },
+      ]);
 
     expect((await POST(request())).status).toBe(207);
     (prisma.payment.findMany as jest.Mock)
@@ -314,9 +324,9 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
         ],
         [
           expect.objectContaining({
-            category: "CRON",
+            category: "STANDING_FINDING",
             correlationId: expect.stringContaining(
-              "reconcile-payment-status:unresolvable:",
+              "standing:reconcile-payment-status:unresolvable:",
             ),
           }),
         ],

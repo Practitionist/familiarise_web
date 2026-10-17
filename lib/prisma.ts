@@ -146,7 +146,10 @@ function makeClient() {
   // comment used to cite (lib/redis.ts, lib/maintenance-cron.ts) was console.warn
   // that production silently deleted anyway. See #1122.
   base.$on("query", (e) => {
-    if (e.duration > SLOW_QUERY_MS) {
+    if (
+      e.duration > SLOW_QUERY_MS &&
+      process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT !== "preview"
+    ) {
       const { operation, table } = summarizeSlowSql(e.query ?? "");
       Sentry.logger.warn(
         Sentry.logger

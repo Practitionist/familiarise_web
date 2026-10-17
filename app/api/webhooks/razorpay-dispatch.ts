@@ -48,7 +48,7 @@ import {
 } from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
 import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
-import { reportSentryError } from "@/lib/observability/report";
+import { errorMessageOf, reportSentryError } from "@/lib/observability/report";
 import { z, ZodError } from "zod";
 
 const refundEntitySchema = z.object({
@@ -597,10 +597,7 @@ export async function processRazorpayWebhookEvent(
         },
       );
     } else {
-      processingError =
-        handlerError instanceof Error
-          ? handlerError.message
-          : String(handlerError);
+      processingError = errorMessageOf(handlerError);
       console.error(
         `Razorpay webhook processing error for ${eventId}:`,
         handlerError,

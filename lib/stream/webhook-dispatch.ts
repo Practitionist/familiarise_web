@@ -38,6 +38,7 @@ import {
 // so the type and the guard below could not see it. #1141 moved the list into
 // its own module so ensure-webhook-subscription.ts can read it too.
 import { HANDLED_EVENT_TYPES } from "@/lib/stream/webhook-events";
+import { errorMessageOf } from "@/lib/observability/report";
 import { STREAM_CALL_TYPE, callTypeFromCid } from "@/lib/stream/call-cid";
 export { HANDLED_EVENT_TYPES };
 
@@ -318,10 +319,7 @@ async function executeValidatedStreamHandler(
   try {
     await handle(parsed.data);
   } catch (handlerError) {
-    processingError =
-      handlerError instanceof Error
-        ? handlerError.message
-        : String(handlerError);
+    processingError = errorMessageOf(handlerError);
     streamLogger.error(`Error processing ${eventType}`, handlerError);
     Sentry.captureException(
       handlerError instanceof Error

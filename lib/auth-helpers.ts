@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { sessionLookupFailedResponse } from "@/lib/auth/session-lookup-error";
 import { EXPECTED_USER_HEADER } from "@/lib/auth/identity-header";
 import { reportSentryError } from "@/lib/observability/report";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 import {
   setSentryIdentityFromSession,
   setSentryOrgContext,
@@ -27,6 +28,8 @@ import {
   hasAnyOrgPermission,
   type OrgSurface,
 } from "@/lib/auth/org-permissions";
+
+const SESSION_LOOKUP_REPORT_WINDOW_MS = 60 * 60 * 1000;
 
 type ApiAuthResult =
   | { session: Session; error?: never }
@@ -82,12 +85,18 @@ async function identityChanged(
 export async function requireApiSession(): Promise<ApiAuthResult> {
   const lookup = await lookupSession();
   if (lookup.kind === "failed") {
-    reportSentryError(lookup.cause, {
-      subsystem: "auth",
-      op: "requireApiAuth",
-      expected: true,
-      level: "warning",
-    });
+    // A database outage fails every authenticated request: one report per window.
+    captureThrottled(
+      "auth:session-lookup-failed",
+      lookup.cause,
+      {
+        subsystem: "auth",
+        op: "requireApiAuth",
+        expected: true,
+        level: "warning",
+      },
+      SESSION_LOOKUP_REPORT_WINDOW_MS,
+    );
     return { error: sessionLookupFailedResponse() };
   }
   if (lookup.kind === "none") {

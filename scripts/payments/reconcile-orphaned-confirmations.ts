@@ -43,6 +43,7 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { claimAndNotifyOnce } from "@/lib/cron/cas-notice";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 
 export interface OrphanedConfirmationResult {
   success: boolean;
@@ -496,28 +497,45 @@ async function reconcileOrphanedPaymentsUnlocked(
     }
   }
 
-  // One event per run, never per row.
-  if (
-    result.linked + result.refunded + result.escrowed + result.stillFailing >
-    0
-  ) {
+  // One event per run, never per row. Heal counts are one-off facts; only the
+  // still-failing ids are a standing finding, reported once per new id set.
+  const healed = result.linked + result.refunded + result.escrowed;
+  const orphanExtra = {
+    scanned: result.scanned,
+    linked: result.linked,
+    refunded: result.refunded,
+    escrowed: result.escrowed,
+    nonGatewaySkipped: result.nonGatewaySkipped,
+    topupSkipped: result.topupSkipped,
+    stillFailing: result.stillFailing,
+    sample: failedIds.slice(0, 10),
+  };
+  if (healed > 0) {
     reportSentryMessage(
       `orphaned-payments: healed ${result.linked} linked, ${result.refunded} refunded, ${result.escrowed} escrowed`,
       {
         subsystem: "payments",
         op: "reconcile-orphaned-payments",
-        fingerprint: ["orphaned-payments"],
-        extra: {
-          scanned: result.scanned,
-          linked: result.linked,
-          refunded: result.refunded,
-          escrowed: result.escrowed,
-          nonGatewaySkipped: result.nonGatewaySkipped,
-          topupSkipped: result.topupSkipped,
-          stillFailing: result.stillFailing,
-          sample: failedIds.slice(0, 10),
-        },
+        fingerprint: ["orphaned-payments-healed"],
+        extra: orphanExtra,
       },
+    );
+  }
+  if (result.stillFailing > 0) {
+    const message = `orphaned-payments: ${result.stillFailing} still failing to heal`;
+    await reportStandingFinding(
+      {
+        key: "reconcile-orphaned-confirmations:still-failing",
+        ids: failedIds,
+        message,
+      },
+      () =>
+        reportSentryMessage(message, {
+          subsystem: "payments",
+          op: "reconcile-orphaned-payments",
+          fingerprint: ["orphaned-payments-still-failing"],
+          extra: orphanExtra,
+        }),
     );
   }
 

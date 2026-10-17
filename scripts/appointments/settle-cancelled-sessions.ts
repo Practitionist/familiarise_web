@@ -44,6 +44,7 @@ import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { goHref } from "@/lib/dashboard/go";
 import { reportSentryError } from "@/lib/observability/report";
+import { createRunFailureReporter } from "@/lib/observability/run-failures";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { formatNotificationMoney } from "@/lib/novu/humanize";
@@ -61,6 +62,8 @@ export interface SettleCancelledSessionsResult {
   timestamp: string;
 }
 
+// Per-seat refund failures collapse to one event per run.
+const runFailures = createRunFailureReporter("bookings");
 const DEFAULT_LIMIT = 10;
 const DAY_MS = 86_400_000;
 const LIVE_SIBLING: OccurrenceCompletionStatus[] = [
@@ -134,6 +137,7 @@ async function settleUnlocked(
       extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
     });
   }
+  runFailures.flush();
   result.success = result.errors === 0;
   return result;
 }
@@ -644,10 +648,9 @@ async function refundAndTell(
     // Nothing left to give back is settled; anything else retries next tick.
     const code = (error as { code?: string }).code;
     if (code === "ALREADY_FULLY_REFUNDED") return false;
-    reportSentryError(error, {
-      subsystem: "bookings",
-      op: "settle-cancelled-sessions-refund",
-      extra: { occurrenceId: session.id, paymentId: payment.id },
+    runFailures.add("settle-cancelled-sessions-refund", error, {
+      occurrenceId: session.id,
+      paymentId: payment.id,
     });
     return null;
   }

@@ -15,9 +15,19 @@ const stageBell = jest.fn();
 jest.mock("../../lib/novu/stage-bell", () => ({
   stageBell: (...a: unknown[]) => stageBell(...a),
 }));
-const captureThrottled = jest.fn();
-jest.mock("../../lib/observability/throttled-capture", () => ({
-  captureThrottled: (...a: unknown[]) => captureThrottled(...a),
+const reportStandingFinding = jest.fn(
+  async (_args: unknown, report: () => void) => {
+    report();
+    return true;
+  },
+);
+jest.mock("../../lib/observability/standing-finding", () => ({
+  reportStandingFinding: (a: unknown, r: () => void) =>
+    reportStandingFinding(a, r),
+}));
+const reportSentryError = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: (...a: unknown[]) => reportSentryError(...a),
 }));
 const recording = { current: null as { id: string } | null };
 const seatUpdate = jest.fn().mockResolvedValue({ count: 1 });
@@ -154,13 +164,20 @@ it.each([
   },
 );
 
-it("owner decision — a needs-human item older than 72 h raises one throttled warning", async () => {
-  const db = { appointmentOccurrence: { count: jest.fn(async () => 2) } };
+it("a needs-human item older than 72 h raises one warning keyed on the queued ids", async () => {
+  const db = {
+    appointmentOccurrence: {
+      count: jest.fn(async () => 2),
+      findMany: jest.fn(async () => [{ id: "o1" }, { id: "o2" }]),
+    },
+  };
   await alertStaleNeedsHuman(db as never, at(0));
-  expect(captureThrottled).toHaveBeenCalledWith(
-    "needs-human-age",
+  expect(reportStandingFinding).toHaveBeenCalledWith(
+    expect.objectContaining({ ids: ["o1", "o2"] }),
+    expect.any(Function),
+  );
+  expect(reportSentryError).toHaveBeenCalledWith(
     expect.any(Error),
     expect.objectContaining({ level: "warning", extra: { stale: 2 } }),
-    15 * 60_000,
   );
 });

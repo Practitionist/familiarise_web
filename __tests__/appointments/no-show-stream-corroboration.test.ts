@@ -39,6 +39,13 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+jest.mock("../../lib/observability/standing-finding", () => ({
+  reportStandingFinding: async (_args: unknown, report: () => void) => {
+    report();
+    return true;
+  },
+}));
+
 const mockCapture = jest.fn();
 jest.mock("@sentry/nextjs", () => ({
   captureMessage: (...a: unknown[]) => mockCapture(...a),

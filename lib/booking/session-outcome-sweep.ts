@@ -38,7 +38,8 @@ import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant, transitionParticipant } from "./participants";
 import { NEEDS_HUMAN } from "./misses";
-import { captureThrottled } from "@/lib/observability/throttled-capture";
+import { reportSentryError } from "@/lib/observability/report";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { onClassSessionVoided } from "./class-sessions";
 
@@ -568,39 +569,47 @@ async function stageNoShowBells(
 export const NEEDS_HUMAN_ALERT_HOURS = 72;
 
 /**
- * Warn once per 15 minutes while any session has waited in the ops
- * needs-human queue for more than 72 hours; the hold on its money stays.
+ * Warn when a session newly passes 72 hours in the ops needs-human queue; the
+ * same queue is not re-reported inside the window. The hold on its money stays.
  */
 export async function alertStaleNeedsHuman(
   db: Pick<Tx, "appointmentOccurrence">,
   now: Date,
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - NEEDS_HUMAN_ALERT_HOURS * 3_600_000);
-  const stale = await db.appointmentOccurrence.count({
-    where: {
-      AND: [
-        NEEDS_HUMAN,
-        // Queued since the verdict, or since the call ended when none was written.
-        {
-          OR: [
-            { outcomeAt: { lt: cutoff } },
-            { outcomeAt: null, endsAt: { lt: cutoff } },
-          ],
-        },
-      ],
-    },
-  });
-  if (stale > 0) {
-    captureThrottled(
-      "needs-human-age",
-      new Error(`${stale} session(s) waited over 72 h for an ops decision`),
+  const where: Prisma.AppointmentOccurrenceWhereInput = {
+    AND: [
+      NEEDS_HUMAN,
+      // Queued since the verdict, or since the call ended when none was written.
       {
-        subsystem: "bookings",
-        op: "needs-human-age",
-        level: "warning",
-        extra: { stale },
+        OR: [
+          { outcomeAt: { lt: cutoff } },
+          { outcomeAt: null, endsAt: { lt: cutoff } },
+        ],
       },
-      15 * 60_000,
+    ],
+  };
+  const stale = await db.appointmentOccurrence.count({ where });
+  if (stale > 0) {
+    const rows = await db.appointmentOccurrence.findMany({
+      where,
+      select: { id: true },
+      take: 200,
+    });
+    const message = `${stale} session(s) waited over 72 h for an ops decision`;
+    await reportStandingFinding(
+      {
+        key: "session-outcome-sweep:needs-human-age",
+        ids: rows.map((r) => r.id),
+        message,
+      },
+      () =>
+        reportSentryError(new Error(message), {
+          subsystem: "bookings",
+          op: "needs-human-age",
+          level: "warning",
+          extra: { stale },
+        }),
     );
   }
   return stale;
