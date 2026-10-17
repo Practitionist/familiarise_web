@@ -16,7 +16,11 @@
  * feedback and support, and every org money rail.
  */
 
-import { isWriteBlockedInDegraded } from "../../lib/maintenance-edge";
+import {
+  getMaintenanceState,
+  isFailClosedWhenUnreadable,
+  isWriteBlockedInDegraded,
+} from "../../lib/maintenance-edge";
 
 const WRITE_METHODS = ["POST", "PATCH", "PUT", "DELETE"];
 
@@ -89,6 +93,13 @@ const BLOCKED = [
   "/api/admin/refunds",
   "/api/admin/tds",
   "/api/admin/billing-accounts/ba_1/unfreeze",
+
+  // Booking doors that moved slots or money in DEGRADED.
+  "/api/bookings/booking_1/abandon",
+  "/api/organizations/org_1/appointments/appt_1/allocate",
+  "/api/meetings/mtg_1/extend",
+  "/api/appointments/appt_1/occurrences",
+  "/api/appointments/appt_1/occurrences/occ_1",
 ];
 
 const NOT_BLOCKED = [
@@ -161,5 +172,32 @@ describe("isWriteBlockedInDegraded", () => {
     expect(
       isWriteBlockedInDegraded("/api/organizations/org_1/appointments", "GET"),
     ).toBe(false);
+  });
+});
+
+describe("unreadable maintenance state", () => {
+  it("reports a failed Redis read as unreadable, not as OFF", async () => {
+    const env = { ...process.env };
+    process.env.UPSTASH_REDIS_REST_URL = "https://redis.example";
+    process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+    const fetchSpy = jest
+      .spyOn(global, "fetch")
+      .mockRejectedValue(new Error("redis down"));
+    try {
+      const state = await getMaintenanceState();
+      expect(state).toMatchObject({ phase: "OFF", unreadable: true });
+    } finally {
+      fetchSpy.mockRestore();
+      process.env = env;
+    }
+  });
+
+  it("fails closed for booking and money writes only, never for reads", () => {
+    expect(
+      isFailClosedWhenUnreadable("/api/bookings/booking_1/abandon", "POST"),
+    ).toBe(true);
+    expect(isFailClosedWhenUnreadable("/api/checkout", "POST")).toBe(true);
+    expect(isFailClosedWhenUnreadable("/api/checkout", "GET")).toBe(false);
+    expect(isFailClosedWhenUnreadable("/api/waitlist", "POST")).toBe(false);
   });
 });
