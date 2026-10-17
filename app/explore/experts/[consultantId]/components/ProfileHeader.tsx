@@ -35,11 +35,11 @@ export function ProfileHeader({
   const headlineCount = displayedScoreCount(consultantDetails, "ONE_TO_ONE");
   return (
     <div className="bg-card rounded-2xl border border-border p-6 md:p-8">
-      <div className="flex flex-col sm:flex-row gap-6">
+      <div className="flex flex-col md:flex-row gap-6 md:items-start">
         {/* Profile Display Image - Square format */}
-        <div className="relative flex-shrink-0">
+        <div className="relative flex-shrink-0 md:order-last md:ml-auto">
           {userDetails.profileDisplayImage ? (
-            <div className="w-32 h-32 md:w-48 md:h-48 rounded-xl overflow-hidden ring-4 ring-muted relative">
+            <div className="w-32 h-32 md:w-40 md:h-48 rounded-xl overflow-hidden ring-4 ring-muted relative">
               <Image
                 src={userDetails.profileDisplayImage}
                 alt={userDetails.name || "Expert"}

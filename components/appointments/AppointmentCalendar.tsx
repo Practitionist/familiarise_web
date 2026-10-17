@@ -48,6 +48,7 @@ export function AppointmentCalendar({
   vms,
   onSelect,
 }: AppointmentCalendarProps) {
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const [month, setMonth] = useState(() => startOfMonth(new Date()));
 
   const events = useMemo<CalendarEvent[]>(() => {
@@ -99,8 +100,8 @@ export function AppointmentCalendar({
     eventsByDay.get(format(date, "yyyy-MM-dd")) ?? [];
 
   return (
-    <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+    <div className="calendar-surface overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 border-b border-border">
         <h3 className="font-semibold text-foreground">
           {format(month, "MMMM yyyy")}
         </h3>
@@ -134,94 +135,112 @@ export function AppointmentCalendar({
         </div>
       </div>
 
-      <div className="grid grid-cols-7 border-b border-border">
-        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-          <div
-            key={d}
-            className="py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
-          >
-            {d}
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-7">
-        {cells.map((date) => {
-          const dayEvents = eventsOf(date);
-          const inMonth = isSameMonth(date, month);
-          return (
+      <div className="overflow-x-auto">
+        <div className="grid min-w-[560px] grid-cols-7 border-b border-border">
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
             <div
-              key={date.toISOString()}
-              className={cn(
-                "min-h-[86px] border-b border-r border-border p-1 last:border-r-0",
-                !inMonth && "bg-muted/40",
-              )}
+              key={d}
+              className="py-1.5 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
             >
+              {d}
+            </div>
+          ))}
+        </div>
+
+        <div className="grid min-w-[560px] grid-cols-7">
+          {cells.map((date) => {
+            const dayEvents = eventsOf(date);
+            const inMonth = isSameMonth(date, month);
+            return (
               <div
+                key={date.toISOString()}
                 className={cn(
-                  "text-[11px] font-medium mb-1 h-5 w-5 flex items-center justify-center rounded-full",
-                  isToday(date)
-                    ? "bg-foreground text-background"
-                    : inMonth
-                      ? "text-foreground"
-                      : "text-muted-foreground/60",
+                  "min-h-[100px] border-b border-r border-border p-2 last:border-r-0",
+                  !inMonth && "bg-muted/40",
                 )}
               >
-                {date.getDate()}
+                <div
+                  className={cn(
+                    "text-[11px] font-medium mb-1 h-5 w-5 flex items-center justify-center rounded-full",
+                    isToday(date)
+                      ? "bg-foreground text-background"
+                      : inMonth
+                        ? "text-foreground"
+                        : "text-muted-foreground/60",
+                  )}
+                >
+                  {date.getDate()}
+                </div>
+                <div className="space-y-0.5">
+                  {dayEvents
+                    .slice(
+                      0,
+                      expandedDay === format(date, "yyyy-MM-dd")
+                        ? dayEvents.length
+                        : 3,
+                    )
+                    .map((event, i) => (
+                      <button
+                        key={`${event.vm.id}-${event.start.getTime()}-${i}`}
+                        type="button"
+                        onClick={() => onSelect(event.vm)}
+                        title={`${format(event.start, "h:mm a")} · ${event.vm.title}${event.isTentative ? " (awaiting confirmation)" : ""}`}
+                        className={cn(
+                          "w-full flex items-center gap-1 min-h-8 rounded-lg px-1.5 py-1 text-left text-xs leading-tight transition-colors",
+                          "bg-muted hover:bg-muted/70 text-foreground",
+                          event.isPast && "opacity-50",
+                          event.isTentative &&
+                            "border border-dashed border-border",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "h-1.5 w-1.5 rounded-full shrink-0",
+                            KIND_DOT[event.vm.kind],
+                          )}
+                        />
+                        <span className="truncate">
+                          {format(event.start, "h:mma").toLowerCase()}{" "}
+                          {event.vm.title}
+                        </span>
+                      </button>
+                    ))}
+                  {dayEvents.length > 3 && (
+                    <button
+                      type="button"
+                      aria-expanded={expandedDay === format(date, "yyyy-MM-dd")}
+                      onClick={() =>
+                        setExpandedDay((current) =>
+                          current === format(date, "yyyy-MM-dd")
+                            ? null
+                            : format(date, "yyyy-MM-dd"),
+                        )
+                      }
+                      className="w-full text-left px-1 text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      {expandedDay === format(date, "yyyy-MM-dd")
+                        ? "Show fewer"
+                        : `+${dayEvents.length - 3} more`}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="space-y-0.5">
-                {dayEvents.slice(0, 3).map((event, i) => (
-                  <button
-                    key={`${event.vm.id}-${event.start.getTime()}-${i}`}
-                    type="button"
-                    onClick={() => onSelect(event.vm)}
-                    title={`${format(event.start, "h:mm a")} · ${event.vm.title}${event.isTentative ? " (awaiting confirmation)" : ""}`}
-                    className={cn(
-                      "w-full flex items-center gap-1 rounded px-1 py-0.5 text-left text-[10px] leading-tight transition-colors",
-                      "bg-muted hover:bg-muted/70 text-foreground",
-                      event.isPast && "opacity-50",
-                      event.isTentative && "border border-dashed border-border",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "h-1.5 w-1.5 rounded-full shrink-0",
-                        KIND_DOT[event.vm.kind],
-                      )}
-                    />
-                    <span className="truncate">
-                      {format(event.start, "h:mma").toLowerCase()}{" "}
-                      {event.vm.title}
-                    </span>
-                  </button>
-                ))}
-                {dayEvents.length > 3 && (
-                  <button
-                    type="button"
-                    onClick={() => onSelect(dayEvents[3].vm)}
-                    className="w-full text-left px-1 text-[10px] text-muted-foreground hover:text-foreground"
-                  >
-                    +{dayEvents.length - 3} more
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
-
-      <div className="flex flex-wrap items-center gap-3 px-4 py-2 border-t border-border">
-        {(
-          Object.entries(KIND_DOT) as Array<[AppointmentKind, string]>
-        ).map(([kind, dot]) => (
-          <span
-            key={kind}
-            className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
-          >
-            <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
-            {kind.charAt(0) + kind.slice(1).toLowerCase()}
-          </span>
-        ))}
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-t border-border">
+        {(Object.entries(KIND_DOT) as Array<[AppointmentKind, string]>).map(
+          ([kind, dot]) => (
+            <span
+              key={kind}
+              className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
+            >
+              <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
+              {kind.charAt(0) + kind.slice(1).toLowerCase()}
+            </span>
+          ),
+        )}
         <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           <span className="h-2.5 w-4 rounded border border-dashed border-border" />
           Awaiting confirmation

@@ -1,19 +1,19 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
-/** Explore programs list: dark hero + tabs/filters + carousel rows. */
+/** Explore programs list: light editorial hero + tabs/filters + carousel rows. */
 export function ProgramsExploreSkeleton() {
   return (
-    <main className="min-h-screen bg-background">
-      <section className="relative bg-zinc-950 px-4 pb-20 pt-32 md:px-8 lg:px-12">
+    <main className="explore-page min-h-screen">
+      <section className="relative bg-[#faf9f6] px-4 pb-12 pt-12 md:px-8 lg:px-12">
         <div className="mx-auto max-w-[1600px] space-y-6">
-          <Skeleton className="h-6 w-28 rounded-full bg-zinc-800" />
-          <Skeleton className="h-12 w-full max-w-xl bg-zinc-800" />
-          <Skeleton className="h-5 w-full max-w-lg bg-zinc-800" />
+          <Skeleton className="h-6 w-28 rounded-full bg-muted" />
+          <Skeleton className="h-12 w-full max-w-xl bg-muted" />
+          <Skeleton className="h-5 w-full max-w-lg bg-muted" />
           <div className="grid max-w-xl grid-cols-2 gap-4 pt-4 sm:grid-cols-4">
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="space-y-2">
-                <Skeleton className="h-8 w-14 bg-zinc-800" />
-                <Skeleton className="h-3 w-20 bg-zinc-800" />
+                <Skeleton className="h-8 w-14 bg-muted" />
+                <Skeleton className="h-3 w-20 bg-muted" />
               </div>
             ))}
           </div>

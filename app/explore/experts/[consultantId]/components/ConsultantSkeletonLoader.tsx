@@ -3,23 +3,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export const ConsultantSkeletonLoader: React.FC = () => {
   return (
-    <div className="bg-muted min-h-screen">
-      {/* Back Navigation Skeleton */}
-      <div className="bg-card border-b border-border">
-        <div className="w-full px-4 md:px-8 lg:px-12 py-4">
-          <Skeleton className="h-5 w-32" />
-        </div>
-      </div>
-
+    <div
+      className="explore-page min-h-screen"
+      aria-busy="true"
+      aria-label="Loading expert profile"
+    >
       {/* Main Content Area */}
-      <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
+      <div className="explore-profile w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
+        <Skeleton className="mb-6 h-5 w-40" />
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
           {/* Left Column (Main) */}
           <div className="flex-1 min-w-0 space-y-8">
             {/* Profile Header Skeleton */}
-            <div className="space-y-6">
+            <div className="rounded-2xl border border-border bg-card p-6 md:p-8 space-y-6">
               <div className="flex flex-col md:flex-row gap-6 items-start">
-                <Skeleton className="w-32 h-32 rounded-full flex-shrink-0" />
+                <Skeleton className="w-32 h-32 md:w-40 md:h-48 rounded-xl flex-shrink-0 md:order-last" />
                 <div className="flex-1 space-y-4 w-full">
                   <div className="space-y-2">
                     <Skeleton className="h-8 w-1/2 md:w-1/3" />
@@ -34,8 +32,8 @@ export const ConsultantSkeletonLoader: React.FC = () => {
               </div>
             </div>
 
-            {/* About Section Skeleton */}
-            <div className="space-y-4">
+            {/* Offering preview */}
+            <div className="rounded-2xl border border-border bg-card p-6 md:p-8 space-y-4">
               <Skeleton className="h-7 w-40" />
               <div className="space-y-2">
                 <Skeleton className="h-4 w-full" />
@@ -44,8 +42,8 @@ export const ConsultantSkeletonLoader: React.FC = () => {
               </div>
             </div>
 
-            {/* Availability Skeleton */}
-            <div className="space-y-4">
+            {/* About */}
+            <div className="rounded-2xl border border-border bg-card p-6 md:p-8 space-y-4">
               <Skeleton className="h-7 w-48" />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Skeleton className="h-24 rounded-xl" />
@@ -63,26 +61,14 @@ export const ConsultantSkeletonLoader: React.FC = () => {
                 <Skeleton className="h-10 w-1/2 rounded-lg bg-transparent" />
               </div>
 
-              {/* Calendar */}
+              {/* Plan choices and price */}
               <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <Skeleton className="h-6 w-32" />
-                  <div className="flex gap-2">
-                    <Skeleton className="h-8 w-8 rounded-full" />
-                    <Skeleton className="h-8 w-8 rounded-full" />
-                  </div>
-                </div>
-                <div className="grid grid-cols-7 gap-2">
-                  {Array.from({ length: 35 }).map((_, i) => (
-                    <Skeleton
-                      key={i}
-                      className="h-10 w-10 rounded-full mx-auto"
-                    />
-                  ))}
-                </div>
+                <Skeleton className="h-16 w-full rounded-xl" />
+                <Skeleton className="h-16 w-full rounded-xl" />
+                <Skeleton className="h-10 w-32" />
               </div>
 
-              {/* Time Slots */}
+              {/* Inclusions and purchase actions */}
               <div className="space-y-2">
                 <Skeleton className="h-12 w-full rounded-xl" />
                 <Skeleton className="h-12 w-full rounded-xl" />

@@ -44,7 +44,7 @@ export function loadScript(src: string): Promise<boolean> {
 }
 
 // Common error handling logic for checkout pages
-interface CheckoutApiError {
+export interface CheckoutApiError {
   error?: string;
   errorType?: string;
   message?: string;
@@ -54,6 +54,7 @@ interface CheckoutApiError {
    * #1583 E-P1-03). Both are resolved ahead of `errorType`.
    */
   code?: string;
+  yourCardWasNotCharged?: boolean;
 }
 
 function isCheckoutApiError(value: unknown): value is CheckoutApiError {

@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 /** Explore plan detail: image hero + 2/1 content + sticky sidebar. */
 export function PlanDetailSkeleton() {
   return (
-    <main className="min-h-screen bg-muted">
+    <main className="explore-page min-h-screen">
       <div className="relative h-[350px] w-full overflow-hidden bg-zinc-900 md:h-[400px]">
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
         <div className="absolute bottom-0 left-0 right-0 space-y-3 p-6 md:p-10">

@@ -14,6 +14,7 @@ import { oneOnOnePlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { deriveDirectoryRating } from "@/lib/data/public-stats";
 import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
+import type { HomeExpert } from "@/lib/home/landing-content";
 
 /**
  * Server-side data access for the landing page.
@@ -33,7 +34,7 @@ import { fetchImagesFromSupabaseStorage } from "@/lib/supabase";
  */
 
 export const getHomeExperts = unstable_cache(
-  async () => {
+  async (): Promise<HomeExpert[]> => {
     const consultants = await prisma.consultantProfile.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
       where: { verificationStatus: "VERIFIED", deletedAt: null },
@@ -75,7 +76,14 @@ export const getHomeExperts = unstable_cache(
             // IConsultantCardData, so both must carry the trial fields.
             trialEnabled: true,
             trialPriceInPaise: true,
+            // Public preview only: never select learner resources or contentUrl.
+            subscriptionContents: {
+              select: { id: true, title: true, order: true },
+              orderBy: { order: "asc" },
+              take: 3,
+            },
           },
+          orderBy: { createdAt: "desc" },
           take: 5,
         },
       },
@@ -97,7 +105,7 @@ export const getHomeExperts = unstable_cache(
       }),
     );
   },
-  ["home-experts"],
+  ["home-experts-v2"],
   { revalidate: 3600, tags: ["experts", "home"] },
 );
 
@@ -109,7 +117,7 @@ export const getHomeReviews = unstable_cache(
       where: {
         rating: { gte: 4 },
         deletedAt: null,
-        consultantProfile: { deletedAt: null },
+        consultantProfile: { deletedAt: null, verificationStatus: "VERIFIED" },
       },
       take: 20,
       // #1300 — the allowlist, not a bare `include`: these rows are cached for an
@@ -120,7 +128,7 @@ export const getHomeReviews = unstable_cache(
     });
     return toPlain(sanitisePublicReviews(reviews));
   },
-  ["home-reviews"],
+  ["home-reviews-v2"],
   { revalidate: 3600, tags: ["reviews", "home"] },
 );
 
@@ -169,6 +177,7 @@ export const getHomeStats = unstable_cache(
         }),
         prisma.domain.findMany({
           select: {
+            id: true,
             name: true,
             _count: {
               select: {
@@ -190,6 +199,15 @@ export const getHomeStats = unstable_cache(
         })),
       ),
       completedSessions,
+      // Actual, populated domains instead of a hardcoded landing taxonomy.
+      domains: byDomain
+        .filter((domain) => domain._count.consultantProfiles > 0)
+        .map((domain) => ({
+          id: domain.id,
+          name: domain.name,
+          count: domain._count.consultantProfiles,
+        }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
       // Keyed lowercase so the hardcoded category labels can look themselves up
       // without depending on how a domain happens to be capitalised.
       consultantsByDomain: Object.fromEntries(
@@ -200,7 +218,7 @@ export const getHomeStats = unstable_cache(
       ) as Record<string, number>,
     };
   },
-  ["home-stats"],
+  ["home-stats-v2"],
   { revalidate: 3600, tags: ["experts", "home"] },
 );
 

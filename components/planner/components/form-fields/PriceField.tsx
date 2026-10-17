@@ -7,6 +7,7 @@ import {
   FieldValues,
   useController,
 } from "react-hook-form";
+import { useId } from "react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -75,12 +76,13 @@ export function PriceField<T extends FieldValues = FieldValues>({
   });
 
   const error = priceError || currencyError;
+  const priceId = useId();
   const numericPrice = Number(priceField.value);
   const currencyCode = String(currencyField.value || "INR");
 
   return (
     <FormItem className={className}>
-      <FormLabel>
+      <FormLabel htmlFor={priceId}>
         {label}
         {required && <RequiredMark />}
       </FormLabel>
@@ -90,7 +92,7 @@ export function PriceField<T extends FieldValues = FieldValues>({
           value={currencyField.value}
           onValueChange={currencyField.onChange}
         >
-          <SelectTrigger className="w-[90px]">
+          <SelectTrigger className="w-[90px]" aria-label="Price currency">
             <SelectValue placeholder="Currency" />
           </SelectTrigger>
           <SelectContent>
@@ -103,6 +105,12 @@ export function PriceField<T extends FieldValues = FieldValues>({
         </Select>
 
         <Input
+          id={priceId}
+          name={priceField.name}
+          ref={priceField.ref}
+          onBlur={priceField.onBlur}
+          aria-invalid={!!priceError}
+          aria-describedby={error ? `${priceId}-error` : undefined}
           type="number"
           min="0"
           max={99999999}
@@ -124,7 +132,9 @@ export function PriceField<T extends FieldValues = FieldValues>({
         </p>
       )}
 
-      {error && <FormMessage>{error.message}</FormMessage>}
+      {error && (
+        <FormMessage id={`${priceId}-error`}>{error.message}</FormMessage>
+      )}
     </FormItem>
   );
 }

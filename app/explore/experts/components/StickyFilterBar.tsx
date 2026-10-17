@@ -133,6 +133,11 @@ export default function StickyFilterBar({
             <SheetContent
               side="left"
               className="w-[88%] max-w-sm overflow-y-auto"
+              style={{
+                top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem))",
+                height:
+                  "calc(100dvh - var(--maintenance-banner-height, 0px) - var(--header-height, 5rem))",
+              }}
             >
               <SheetHeader>
                 <SheetTitle>Filters</SheetTitle>
@@ -156,7 +161,7 @@ export default function StickyFilterBar({
           <div
             role="group"
             aria-label="Affiliation"
-            className="inline-flex items-center gap-1 rounded-xl border border-border bg-muted p-1"
+            className="inline-flex max-w-full flex-wrap items-center gap-1 rounded-xl border border-border bg-muted p-1"
           >
             {AFFILIATION_TABS.map(({ value, label, icon: Icon, countKey }) => {
               const isActive = filters.affiliationType === value;

@@ -387,6 +387,14 @@ const nextConfig = {
   // pdfkit@0.20.1 loads font metrics via `createRequire()('#standard-fonts/*')`,
   // a package `imports` subpath the tracer cannot follow; ship those files.
   outputFileTracingIncludes: {
+    "/api/plans/classes/[classPlanId]/brochure": [
+      "./public/fonts/**",
+      "./node_modules/react/**",
+    ],
+    "/api/plans/subscriptions/[subscriptionPlanId]/brochure": [
+      "./public/fonts/**",
+      "./node_modules/react/**",
+    ],
     "/api/payments/[paymentId]/invoice/pdf": [
       "./public/fonts/**",
       "./node_modules/react/**",

@@ -22,10 +22,10 @@ import { PAGE_META, PRICING_DATA } from "../constants";
 
 export default function PricingPage() {
   return (
-    <section className="w-full">
+    <section className="pricing-page w-full">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Hero Section */}
-        <div className="text-center mb-12">
+        <div className="explore-plan-header text-center mb-12">
           <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold tracking-tight mb-4">
             {PAGE_META.pricing.title}
           </h1>
@@ -36,7 +36,7 @@ export default function PricingPage() {
 
         <div className="max-w-4xl mx-auto space-y-8">
           {/* Pricing Model Overview */}
-          <Card className="shadow-elevation-1">
+          <Card className="rounded-2xl border-border shadow-sm">
             <CardHeader>
               <div className="flex items-center gap-2">
                 <DollarSign className="h-6 w-6 text-foreground" />
@@ -67,7 +67,7 @@ export default function PricingPage() {
           </Card>
 
           {/* Platform Commission */}
-          <Card className="shadow-elevation-1">
+          <Card className="rounded-2xl border-border shadow-sm">
             <CardHeader>
               <CardTitle className="text-fluid-2xl">
                 Platform Commission
@@ -98,9 +98,11 @@ export default function PricingPage() {
           </Card>
 
           {/* Service Categories */}
-          <Card className="shadow-elevation-1">
+          <Card className="rounded-2xl border-border shadow-sm">
             <CardHeader>
-              <CardTitle className="text-fluid-2xl">Service Categories</CardTitle>
+              <CardTitle className="text-fluid-2xl">
+                Service Categories
+              </CardTitle>
               <CardDescription>
                 Explore the different types of services available on our
                 platform
@@ -202,7 +204,7 @@ export default function PricingPage() {
           </Card>
 
           {/* Payment Information */}
-          <Card className="shadow-elevation-1">
+          <Card className="rounded-2xl border-border shadow-sm">
             <CardHeader>
               <CardTitle className="text-fluid-2xl">
                 Payment Information
@@ -245,7 +247,7 @@ export default function PricingPage() {
           </Card>
 
           {/* FAQ Section */}
-          <Card className="shadow-elevation-1">
+          <Card className="rounded-2xl border-border shadow-sm">
             <CardHeader>
               <CardTitle className="text-fluid-2xl">
                 Frequently Asked Questions

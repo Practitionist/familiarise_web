@@ -7,11 +7,11 @@ import { useRef, type MutableRefObject } from "react";
 import type { TIntervalTiming } from "@/types/slots";
 
 /**
-  * One day of the availability-with-allocation grid answer.
-  *
-  * The endpoint keys days `yyyy-MM-dd` in the requested timezone and returns
-  * the slot timings plus the allocation overlay the pricing panel needs.
-  */
+ * One day of the availability-with-allocation grid answer.
+ *
+ * The endpoint keys days `yyyy-MM-dd` in the requested timezone and returns
+ * the slot timings plus the allocation overlay the pricing panel needs.
+ */
 export type AvailabilityDaySlots = (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
@@ -178,7 +178,7 @@ export function useAvailabilityWindow({
     // can only return the same bytes, so don't. One retry: the endpoint runs
     // the allocation compute, and a cold-start 500 followed by a warm retry
     // is the normal shape on this host.
-    staleTime: 30_000,
+    staleTime: bypassRef?.current ? 0 : 30_000,
     retry: 1,
   });
 }
@@ -203,12 +203,14 @@ export function useAvailabilityMonth({
   timezone,
   consulteeUserId,
   enabled = true,
+  bypassRef,
 }: {
   consultantId: string | undefined;
   monthStart: Date;
   timezone: string | null;
   consulteeUserId?: string;
   enabled?: boolean;
+  bypassRef?: MutableRefObject<boolean>;
 }) {
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
   const ready = enabled && !!consultantId && !!timezone;
@@ -219,18 +221,21 @@ export function useAvailabilityMonth({
   const activeQueryKey = ready ? queryKey : ["availability-month", "disabled"];
   return useQuery({
     queryKey: activeQueryKey,
-    queryFn: () =>
-      fetchWindow(
+    queryFn: () => {
+      const noStore = bypassRef?.current ?? false;
+      if (bypassRef) bypassRef.current = false;
+      return fetchWindow(
         consultantId as string,
         startOfMonth(monthStart),
         endOfMonth(monthStart),
         timezone as string,
-        false,
+        noStore,
         consulteeUserId,
         etagCacheRef,
-      ),
+      );
+    },
     enabled: ready,
-    staleTime: 60_000,
+    staleTime: bypassRef?.current ? 0 : 60_000,
     retry: 1,
   });
 }

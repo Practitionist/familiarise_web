@@ -29,12 +29,18 @@ const tabs: { value: ProgramType; label: string; icon: React.ReactNode }[] = [
 
 function ProgramTabsImpl({ activeTab, onTabChange }: ProgramTabsProps) {
   return (
-    <div className="flex items-center gap-2 p-1.5 bg-muted rounded-xl w-fit">
+    <div
+      role="group"
+      aria-label="Program type"
+      className="flex max-w-full flex-wrap items-center gap-1 p-1.5 bg-muted rounded-2xl w-fit border border-border"
+    >
       {tabs.map((tab) => {
         const isActive = activeTab === tab.value;
         return (
           <button
             key={tab.value}
+            type="button"
+            aria-pressed={isActive}
             onClick={() => onTabChange(tab.value)}
             className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
               isActive

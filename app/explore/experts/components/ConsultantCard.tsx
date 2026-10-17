@@ -112,7 +112,7 @@ const SubscriptionPlanCard = ({
   };
 
   return (
-    <div className="bg-card rounded-xl p-5 border border-border">
+    <div className="explore-card bg-card rounded-xl p-5 border border-border">
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
         <div className="text-2xl sm:text-3xl font-bold text-foreground">
           {formatPrice(plan.price)}
@@ -206,7 +206,7 @@ export const ConsultantCard = memo(function ConsultantCard({
   });
 
   return (
-    <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
+    <div className="explore-card bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
         {/* Left Section: Consultant Info. Clicking anywhere here (except
             nested links/buttons) opens the quick-view drawer; the primary

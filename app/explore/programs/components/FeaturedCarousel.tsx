@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ArrowRight, Sparkles } from "lucide-react";
 import Image from "next/image";
@@ -34,36 +34,18 @@ function SkeletonSlide() {
 function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
   const { formatPrice } = useCurrency();
   const [currentIndex, setCurrentIndex] = useState(0);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const startAutoScroll = useCallback(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    if (programs.length <= 1) return;
-    intervalRef.current = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % programs.length);
-    }, 5000);
-  }, [programs.length]);
-
-  useEffect(() => {
-    startAutoScroll();
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [startAutoScroll]);
-
-  const goTo = (index: number) => {
-    setCurrentIndex(index);
-    startAutoScroll();
-  };
+  // Manual browsing keeps content still while someone reads it.
+  const visibleIndex = Math.min(currentIndex, Math.max(0, programs.length - 1));
+  const goTo = (index: number) => setCurrentIndex(index);
 
   const prev = () =>
-    goTo((currentIndex - 1 + programs.length) % programs.length);
-  const next = () => goTo((currentIndex + 1) % programs.length);
+    goTo((visibleIndex - 1 + programs.length) % programs.length);
+  const next = () => goTo((visibleIndex + 1) % programs.length);
 
   if (isLoading) return <SkeletonSlide />;
   if (programs.length === 0) return null;
 
-  const program = programs[currentIndex];
+  const program = programs[visibleIndex];
 
   // Extract instructor work experiences for company logos
   const workExperiences =
@@ -78,7 +60,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
     <div className="relative">
       <Link
         href={programHref}
-        className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer block"
+        className="group explore-card bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer block"
         aria-label={`View details for ${program.title}`}
       >
         <div className="flex flex-col md:flex-row h-auto md:h-[280px]">
@@ -102,7 +84,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
               >
                 {program.type === "class" ? "Class" : "Webinar"}
               </span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500 text-white">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-[#f5e5d5] text-zinc-900">
                 <Sparkles className="w-3 h-3" />
                 Featured
               </span>
@@ -168,7 +150,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
                 key={i}
                 onClick={() => goTo(i)}
                 className={`w-2 h-2 rounded-full transition-all duration-200 ${
-                  i === currentIndex
+                  i === visibleIndex
                     ? "bg-primary w-6"
                     : "bg-muted-foreground/30 hover:bg-muted-foreground/50"
                 }`}

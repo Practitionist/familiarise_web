@@ -15,9 +15,9 @@ const INITIAL_DISPLAY = 9;
 function SkeletonCard() {
   return (
     <div className="rounded-xl border border-border p-5 animate-pulse">
-      <div className="w-10 h-10 bg-muted rounded-lg mb-3" />
-      <div className="h-5 bg-muted rounded w-3/4 mb-2" />
-      <div className="h-4 bg-muted rounded w-1/2" />
+      <div className="w-10 h-10 bg-[#eee6f7] rounded-lg mb-3" />
+      <div className="h-5 bg-[#eee6f7] rounded w-3/4 mb-2" />
+      <div className="h-4 bg-[#eee6f7] rounded w-1/2" />
     </div>
   );
 }
@@ -53,7 +53,7 @@ function CategoryGridImpl({
             onClick={() => onTopicSelect(topic.id)}
             className="group text-left rounded-xl border border-border bg-card p-5 hover:border-border hover:shadow-md transition-all duration-200"
           >
-            <div className="w-10 h-10 rounded-lg bg-muted group-hover:bg-primary flex items-center justify-center mb-3 transition-colors">
+            <div className="w-10 h-10 rounded-lg bg-[#eee6f7] group-hover:bg-primary flex items-center justify-center mb-3 transition-colors">
               <Hash className="w-5 h-5 text-muted-foreground group-hover:text-primary-foreground transition-colors" />
             </div>
             <h3 className="font-semibold text-foreground text-sm mb-1 line-clamp-1">
@@ -71,7 +71,7 @@ function CategoryGridImpl({
         <div className="flex justify-center mt-6">
           <button
             onClick={() => setExpanded(!expanded)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-muted-foreground bg-muted rounded-lg hover:bg-muted/80 transition-colors"
+            className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-muted-foreground bg-[#eee6f7] rounded-lg hover:bg-[#eee6f7]/80 transition-colors"
           >
             {expanded ? (
               <>

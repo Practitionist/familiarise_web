@@ -595,6 +595,10 @@ export default function SubscriptionCheckoutPage({
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
+          <p className="text-sm text-muted-foreground">
+            Your plan includes {planData?.data?.totalSessions ?? "—"} sessions.
+            Session dates are arranged with your expert after purchase.
+          </p>
           {effectiveSearchParams?.renewsSubscriptionId && (
             <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
               Renewing your existing subscription — your new period will start

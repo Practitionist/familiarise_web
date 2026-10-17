@@ -31,6 +31,7 @@ interface RazorpayPaymentError {
   code?: string;
   reason?: string;
   message?: string;
+  yourCardWasNotCharged?: boolean;
 }
 
 interface RazorpayFailedResponse {
@@ -200,12 +201,8 @@ export default function RazorpayCheckout({
       const errorData = await response.json();
       onPaymentError({
         description: errorData.error || "Payment request failed",
-        // #1583 E-P1-03 — the route's TYPED refusal when it sent one
-        // (SLOT_TOO_SOON / SLOT_NOT_ON_GRID), else the coarse errorType. The
-        // typed one has to win or the lead-time refusal is titled with the
-        // availability bucket, and a buyer who dawdled on the pay page is told
-        // the listing went away when only their chosen minute did.
         code: errorData.code || errorData.errorType,
+        yourCardWasNotCharged: errorData.yourCardWasNotCharged === true,
       });
       return null;
     }
