@@ -1224,9 +1224,10 @@ async function runConsultantPayoutClaimGate(
     return { kind: "shortfall", owedPaise, shortfallReason };
   }
 
+  // A retried payout re-enters the live catch-up index unstamped; staging restamps it.
   const claimed = await db.consultantPayout.updateMany({
     where: { id: payoutId, status: PayoutStatus.APPROVED },
-    data: { status: PayoutStatus.PROCESSING },
+    data: { status: PayoutStatus.PROCESSING, tdsCatchUpFy: null },
   });
   if (claimed.count === 0) {
     return { kind: "already_claimed" };
