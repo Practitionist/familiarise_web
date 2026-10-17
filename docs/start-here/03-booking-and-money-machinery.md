@@ -918,15 +918,15 @@ sequenceDiagram
 
 #### Worked Payout & TDS Numbers (Section 194-O)
 
-Suppose **Arjun Anderson** (an individual with a PAN on file) has already passed the ₹5,00,000 financial-year gross exemption of section 194-O (`lib/compliance/tds-194o.ts`; companies, firms and LLPs are withheld from the first rupee, and the base is the gross sale rather than the net share) and has **₹80,000** (`8,000,000` paise) of `READY` earnings batched into `ConsultantPayout`:
+Suppose **Arjun Anderson** (an individual with a PAN on file) has already passed the ₹5,00,000 financial-year gross exemption of section 194-O (`lib/compliance/tds-194o.ts`; companies, firms and LLPs are withheld from the first rupee, and the base is the gross sale rather than the net share) and has **₹80,000** of expert share (an 80% share of a ₹1,00,000 gross sale, so TDS is computed on `10,000,000` paise) (`8,000,000` paise) of `READY` earnings batched into `ConsultantPayout`:
 
-| Tax Profile of Payee                                               | TDS Rate (Sec 194-O) | Gross Payable Debited (`Dr *_PAYABLE`) |                 TDS Withheld (`Cr TDS_PAYABLE`) |          Net Cash Sent (`Cr CASH`) |
-| :----------------------------------------------------------------- | :------------------: | -------------------------------------: | ----------------------------------------------: | ---------------------------------: |
-| **Valid Encrypted PAN on File** (`ConsultantTaxInfo.panEncrypted`) | **0.1%** (`10` bps)  |           **₹80,000.00** (`8,000,000`) |                      **₹80.00** (`8,000` paise) | **₹79,920.00** (`7,992,000` paise) |
-| **No PAN on File** (Higher rate under Sec 206AA)                   | **5.0%** (`500` bps) |           **₹80,000.00** (`8,000,000`) |                 **₹4,000.00** (`400,000` paise) | **₹76,000.00** (`7,600,000` paise) |
-| **Non-Resident Consultant** (`ResidencyStatus.NON_RESIDENT`)       | DTAA / Sec 195 rate  |           **₹80,000.00** (`8,000,000`) | Per `lib/compliance/dtaa-rates.json` + Form 10F |   `Gross - TDS` via Stripe Connect |
+| Tax Profile of Payee                                               | TDS Rate (Sec 194-O) | Gross Payable Debited (`Dr *_PAYABLE`) |                 TDS Withheld (`Cr TDS_PAYABLE`) |                      Net Cash Sent (`Cr CASH`) |
+| :----------------------------------------------------------------- | :------------------: | -------------------------------------: | ----------------------------------------------: | ---------------------------------------------: |
+| **Valid Encrypted PAN on File** (`ConsultantTaxInfo.panEncrypted`) | **0.1%** (`10` bps)  |           **₹80,000.00** (`8,000,000`) |                      **₹80.00** (`8,000` paise) |             **₹79,920.00** (`7,992,000` paise) |
+| **No PAN on File** (Higher rate under Sec 206AA)                   | **5.0%** (`500` bps) |           **₹80,000.00** (`8,000,000`) |                 **₹5,000.00** (`500,000` paise) |             **₹75,000.00** (`7,500,000` paise) |
+| **Non-Resident Consultant** (`ResidencyStatus.NON_RESIDENT`)       | DTAA / Sec 195 rate  |           **₹80,000.00** (`8,000,000`) | Per `lib/compliance/dtaa-rates.json` + Form 10F | `Gross - TDS` via the non-resident payout path |
 
-- **If `payout.reversed` fires later**: `markPayoutReversed` flips `COMPLETED → REVERSED`, returns earnings `PAID → READY`, writes a negative `TDSRecord`, and posts `payout-reversal:<payoutId>` (`Dr CASH 7,992,000` + `Dr TDS_PAYABLE 8,000` / `Cr CONSULTANT_PAYABLE 8,000,000`).
+- **If `payout.reversed` fires later**: `markPayoutReversed` flips `COMPLETED → REVERSED`, returns earnings `PAID → READY`, writes a negative `TDSRecord`, and posts `payout-reversal:<payoutId>` (`Dr CASH 7,990,000` + `Dr TDS_PAYABLE 10,000` / `Cr CONSULTANT_PAYABLE 8,000,000`).
 
 ---
 

@@ -26,7 +26,7 @@ This document is the finance counterpart of [01-booking-system-hld.md](./01-book
  cascade: legs, earnings, utilization, credit note, ledger reversal      reconcilers heal every external boundary
 ```
 
-Three rules hold the pipeline together. There is one checkout function, `handleCheckout()` in `lib/payments/operations/checkout.ts`. There is one writer of `Payment.paymentStatus = SUCCEEDED`, `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`. And there is one append-only journal, written only through `postLedgerTxn()` in `lib/payments/ledger/post.ts`. Consumer and enterprise flows differ only in which `PaymentLeg` rows fund the payment and whether an organisation claims a host share.
+Three rules hold the pipeline together. There is one checkout function, `handleCheckout()` in `lib/payments/operations/checkout.ts`. There is one writer of `SUCCEEDED` for gateway captures, `handlePaymentSuccess()` in `lib/payments/webhooks/handlers.ts`; the sponsored and free rails create their payment as `SUCCEEDED` inline inside checkout's own transaction because no gateway is involved. And there is one append-only journal, written only through `postLedgerTxn()` in `lib/payments/ledger/post.ts`. Consumer and enterprise flows differ only in which `PaymentLeg` rows fund the payment and whether an organisation claims a host share.
 
 ## 2. End-to-end architecture
 
@@ -76,7 +76,7 @@ flowchart TB
     SETTLE["Phase 2 Settlement: createEarningsFromPayment() - Resolves RateCard (10/10/80) or Marketplace (20/80) + Collaborator bps - Writes ConsultantEarnings + OrganizationEarnings - Calls postLedgerTxn(booking:paymentId)"]
     TRIG2["DB Constraint Trigger at COMMIT: ledger_txn_balanced (Sum DEBIT == Sum CREDIT)"]
     HOLD["Earnings Hold Window - 24h Consultation and Class / 48h Webinar / 168h Subscription, anchored on the later of capture and last session end - PENDING (or PENDING_TRUST) -> READY"]
-    PAYOUTS["Payout Pipeline (Weekly Batch) - ConsultantPayout (<Rs 5k auto-approve) & OrganizationPayout (2-person approval) - Computes TDS 194-O (0.1% or 5% no-PAN) -> RazorpayX / Stripe Connect -> postLedgerTxn(payout:id)"]
+    PAYOUTS["Payout Pipeline (Weekly Batch) - ConsultantPayout (<Rs 5k auto-approve) & OrganizationPayout (2-person approval) - Computes TDS 194-O (0.1% or 5% no-PAN) -> RazorpayX -> postLedgerTxn(payout:id)"]
     INVOICES["B2B Monthly Rollup (settle-invoice-accruals) - Sums INVOICE_ACCRUAL legs -> OrganizationInvoice (ISSUED, NET-60) - Dunning cron (3x 7d reminders -> suspend) -> Paid: postLedgerTxn(invoicepaid:id)"]
     REFUNDS["Refunds, Voids & Disputes - quoteBookingRefund() -> Two-Phase Gateway Refund -> applyRefundCascade() - Reverses PaymentLegs, Utilization, Earnings, Overage, issues CreditNote, posts refund:id"]
     RECON["Nightly Control Loop (reconcile-ledgers) - Re-derives the cached balances from the LedgerEntry journal - Auto-freezes drifted org wallets (freezeWalletSpend)"]
