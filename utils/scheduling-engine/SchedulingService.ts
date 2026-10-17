@@ -33,6 +33,7 @@ import {
   AllocationErrorCode,
   AllocationRequest,
   AllocationResult,
+  type AllocationTxOptions,
   EventType,
   ConsultantAllocationData,
   EventConfig,
@@ -81,12 +82,12 @@ import {
 import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   ALLOCATION_APPROVABLE_FROM,
-  EVENT_ALLOWED_FROM,
-  CLASS_EVENT_ALLOWED_FROM,
   RESCHEDULE_OPEN_STATUSES,
+  transitionClassEvent,
   transitionConsultationRequest,
   transitionRescheduleRequest,
   transitionSubscriptionRequest,
+  transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
@@ -277,6 +278,10 @@ export class SchedulingService {
   private static async dispatch(
     request: AllocationRequest,
   ): Promise<AllocationResult> {
+    const txOptions: AllocationTxOptions = {
+      approvableFrom: request.approvableFrom,
+      inTx: request.inTx,
+    };
     switch (request.mode) {
       case "auto":
         return await this.autoAllocate(
@@ -288,6 +293,7 @@ export class SchedulingService {
           request.allowPartial,
           request.topUp,
           request.excludeRescheduleRequestId,
+          txOptions,
         );
 
       case "manual":
@@ -313,6 +319,7 @@ export class SchedulingService {
           request.override,
           request.allowPartial,
           request.topUp,
+          txOptions,
         );
 
       case "requested":
@@ -323,6 +330,7 @@ export class SchedulingService {
           request.idempotencyKey,
           request.override,
           request.expectedTentativeSlotCount,
+          txOptions,
         );
 
       default:
@@ -1528,7 +1536,6 @@ export class SchedulingService {
     };
   }
 
-
   /**
    * One read on `AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx`
    * with the exclusion constraint's own predicate (confirmed, live, this
@@ -1791,6 +1798,7 @@ export class SchedulingService {
      * times.
      */
     excludeRescheduleRequestId?: string,
+    txOptions: AllocationTxOptions = {},
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     const replay = await this.findIdempotentAllocation(
@@ -2289,6 +2297,7 @@ export class SchedulingService {
             eventId,
             selectedSlots[0],
             config,
+            txOptions.approvableFrom,
           );
           await this.holdUntilPaid(tx, appointments, outcome);
 
@@ -2299,6 +2308,7 @@ export class SchedulingService {
             releasedOccurrenceIds,
             excludeRescheduleRequestId,
           );
+          await txOptions.inTx?.(tx);
 
           // #1697 item 5 — staged in THIS transaction; attempted after commit.
           const stagedNotices = await SchedulingService.stageAllocationNotices(
@@ -2397,6 +2407,7 @@ export class SchedulingService {
      * confirmed sessions and places only the remaining sessions).
      */
     topUp = false,
+    txOptions: AllocationTxOptions = {},
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
     // A same-key submit with different slots is a client bug, not a retry:
@@ -2666,7 +2677,8 @@ export class SchedulingService {
             existingConfirmedSessionCount,
             slotsPerCall,
           );
-          const cycleTarget = topUpTotalSessions - existingConfirmedSessionCount;
+          const cycleTarget =
+            topUpTotalSessions - existingConfirmedSessionCount;
           const requiredTopUpSlots = cycleTarget * slotsPerCall;
           if (slots.length > requiredTopUpSlots) {
             throw new AllocationValidationError(
@@ -2904,6 +2916,7 @@ export class SchedulingService {
             eventId,
             slots[0],
             config,
+            txOptions.approvableFrom,
           );
           await this.holdUntilPaid(tx, appointments, outcome);
 
@@ -2913,6 +2926,7 @@ export class SchedulingService {
             releasedOccurrenceIds,
             excludeRescheduleRequestId,
           );
+          await txOptions.inTx?.(tx);
 
           return {
             success: true,
@@ -2971,6 +2985,7 @@ export class SchedulingService {
     /** Consultant accepting times outside their own published availability. */
     overrideAvailabilityWindow?: boolean,
     expectedTentativeSlotCount?: number,
+    txOptions: AllocationTxOptions = {},
   ): Promise<AllocationResult> {
     // #1692 Item 7 — group events (webinar, class) never have consultee-requested
     // slots; reject upfront before touching idempotency or locks.
@@ -3279,6 +3294,7 @@ export class SchedulingService {
             eventId,
             requestedSlots[0],
             config,
+            txOptions.approvableFrom,
           );
 
           // CRITICAL FIX: Clear isTentative flag on all slots after approval
@@ -3339,6 +3355,7 @@ export class SchedulingService {
               throw err;
             }
           }
+          await txOptions.inTx?.(tx);
 
           return {
             success: true,
@@ -5598,12 +5615,13 @@ export class SchedulingService {
     settled: Omit<W, "id">,
     unpaid: Omit<W, "id"> | (() => Promise<void>),
     data?: D,
+    approvableFrom: AppointmentStatus[] = ALLOCATION_APPROVABLE_FROM,
   ): Promise<ApprovalOutcome> {
     try {
       await transition({
         where: { id: eventId, ...settled } as W,
         to: AppointmentStatus.APPROVED,
-        fromIn: ALLOCATION_APPROVABLE_FROM,
+        fromIn: approvableFrom,
         data,
       });
       return "approved";
@@ -5622,7 +5640,7 @@ export class SchedulingService {
       fromIn: [
         AppointmentStatus.PENDING,
         AppointmentStatus.APPROVED_PENDING_PAYMENT,
-      ],
+      ].filter((status) => approvableFrom.includes(status)),
       data,
     });
     return "awaiting_payment";
@@ -5637,6 +5655,7 @@ export class SchedulingService {
     eventId: string,
     firstSlot: Date,
     config: EventConfig,
+    approvableFrom?: AppointmentStatus[],
   ): Promise<ApprovalOutcome | undefined> {
     switch (eventType) {
       // #836 — allocation racing a cancel/expiry must not resurrect the
@@ -5655,6 +5674,8 @@ export class SchedulingService {
           (args) => transitionConsultationRequest(tx, args),
           SETTLED_CONSULTATION,
           UNPAID_CONSULTATION,
+          undefined,
+          approvableFrom,
         );
 
       // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
@@ -5668,7 +5689,7 @@ export class SchedulingService {
             const unpaid = await tx.subscription.count({
               where: {
                 id: eventId,
-                status: { in: ALLOCATION_APPROVABLE_FROM },
+                status: { in: approvableFrom ?? ALLOCATION_APPROVABLE_FROM },
                 ...UNPAID_SUBSCRIPTION,
               },
             });
@@ -5694,34 +5715,23 @@ export class SchedulingService {
                 }
               : {}),
           },
+          approvableFrom,
         );
 
       case "webinar": {
-        // Webinar model does NOT have startDate/endDate fields
-        // Start date is stored in the Appointment's slots.
-        //
-        // Allocation gives an event its sessions; it does NOT publish one. A
-        // DRAFT therefore keeps its status here and merely receives its slots:
-        // "add a session, then publish" is the editor's flow, and publishing is
-        // one-way (EVENT_PUBLISHABLE_FROM). Re-allocating a live event still
-        // re-stamps SCHEDULED, and CANCELLED/COMPLETED are still refused —
-        // that resurrection hazard is why the guard exists at all.
-        //
-        // This used to transition to SCHEDULED against a map that deliberately
-        // excludes DRAFT, so it matched zero rows and 409'd the entire
-        // allocation: the one affordance that gives a draft its first session
-        // always failed (#1060).
-        const restamped = await tx.webinar.updateMany({
-          where: { id: eventId, status: { in: EVENT_ALLOWED_FROM.SCHEDULED } },
-          data: { status: "SCHEDULED" },
-        });
-        if (restamped.count === 0) {
-          const current = await tx.webinar.findUnique({
+        // Allocation gives an event its sessions; it never publishes one, so a
+        // DRAFT keeps DRAFT while CANCELLED/COMPLETED are still refused.
+        try {
+          await transitionWebinarEvent(tx, {
             where: { id: eventId },
-            select: { status: true },
+            to: "SCHEDULED",
           });
-          if (current?.status !== "DRAFT") {
-            throw new IllegalTransitionError("Webinar", "SCHEDULED");
+        } catch (error) {
+          if (
+            !(error instanceof IllegalTransitionError) ||
+            error.from !== "DRAFT"
+          ) {
+            throw error;
           }
         }
         break;
@@ -5743,25 +5753,22 @@ export class SchedulingService {
               }
             : {};
 
-        // Same DRAFT-keeps-its-status rule as WEBINAR above, and the same
-        // resurrection guard.
-        const restamped = await tx.class.updateMany({
-          where: {
-            id: eventId,
-            status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
-          },
-          data: { status: "SCHEDULED", ...periodData },
-        });
-        if (restamped.count === 0) {
-          const current = await tx.class.findUnique({
+        // Same DRAFT-keeps-its-status rule as WEBINAR above.
+        try {
+          await transitionClassEvent(tx, {
             where: { id: eventId },
-            select: { status: true },
+            to: "SCHEDULED",
+            data: periodData,
           });
-          if (current?.status !== "DRAFT") {
-            throw new IllegalTransitionError("Class", "SCHEDULED");
+        } catch (error) {
+          if (
+            !(error instanceof IllegalTransitionError) ||
+            error.from !== "DRAFT"
+          ) {
+            throw error;
           }
-          // A draft keeps DRAFT but still needs its scheduling period, or the
-          // slots it just received sit outside a window that is never set.
+          // A draft still needs its scheduling period, or its new slots sit
+          // outside a window that is never set.
           if (Object.keys(periodData).length > 0) {
             await tx.class.updateMany({
               where: { id: eventId, status: "DRAFT" },

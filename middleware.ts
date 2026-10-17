@@ -7,6 +7,7 @@ import {
   isMaintenanceExempt,
   validateBypass,
   isWriteBlockedInDegraded,
+  isFailClosedWhenUnreadable,
   HAS_FILE_EXTENSION,
   type MaintenanceState,
 } from "@/lib/maintenance-edge";
@@ -93,6 +94,22 @@ function handleMaintenance(
   pathname: string,
   state: MaintenanceState,
 ): MaintenanceGate | null {
+  if (
+    state.unreadable &&
+    isFailClosedWhenUnreadable(pathname, req.method) &&
+    !validateBypass(req, null)
+  ) {
+    return {
+      kind: "respond",
+      response: NextResponse.json(
+        {
+          error: "Bookings and payments are briefly unavailable. Please retry.",
+          code: "MAINTENANCE_STATE_UNREADABLE",
+        },
+        { status: 503, headers: { "Retry-After": "30" } },
+      ),
+    };
+  }
   if (state.phase === "OFF" || isMaintenanceExempt(pathname)) return null;
   if (validateBypass(req, state.bypassSecret)) return null;
 
@@ -291,9 +308,11 @@ export async function middleware(
   const isSubNavigation =
     req.headers.get("Next-Router-Prefetch") === "1" ||
     req.headers.get("RSC") === "1";
-  const maintenanceState = isSubNavigation
-    ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
-    : await getMaintenanceState();
+  // Only a read may answer from the cache; a write always awaits the fresh state.
+  const maintenanceState =
+    isSubNavigation && req.method === "GET"
+      ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
+      : await getMaintenanceState();
   const maintenance = handleMaintenance(req, pathname, maintenanceState);
   if (maintenance?.kind === "respond") return maintenance.response;
 

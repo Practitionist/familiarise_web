@@ -322,7 +322,13 @@ beforeEach(() => {
   // stub aligned with the client. The decline's outcome is driven entirely by the
   // `updateManyAndReturn` above.
   mockOccurrenceCount.mockResolvedValue(RELEASED_IDS.length);
-  mockAllocate.mockResolvedValue({ success: true });
+  // The proposal's close runs inside the allocator's transaction.
+  mockAllocate.mockImplementation(
+    async (req: { inTx?: (tx: unknown) => Promise<void> }) => {
+      await req.inTx?.(txStub);
+      return { success: true };
+    },
+  );
   mockHasActiveDispute.mockResolvedValue(false);
   mockRequestFindUnique.mockResolvedValue(proposalRow());
   mockRequestFindFirst.mockResolvedValue(openRequestRow());
@@ -377,7 +383,29 @@ describe("accept re-validates through the allocator before anything is written",
       // #1340 — the allocator must not close this proposal as superseded by
       // its own times.
       excludeRescheduleRequestId: REQ,
+      inTx: expect.any(Function),
     });
+  });
+
+  it("rolls the move back when the proposal closed before the allocator committed", async () => {
+    txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 0 });
+    let hookError: unknown;
+    mockAllocate.mockImplementation(
+      async (req: { inTx: (tx: unknown) => Promise<void> }) => {
+        hookError = await req.inTx(txStub).catch((e: unknown) => e);
+        return { success: false, errorCode: "RESCHEDULE_NO_LONGER_OPEN" };
+      },
+    );
+
+    const out = await acceptProposal({
+      rescheduleRequestId: REQ,
+      eventType: "consultation",
+      eventId: "cons-1",
+      resolvedById: CONSULTEE_USER,
+    });
+
+    expect(hookError).toMatchObject({ errorCode: "RESCHEDULE_NO_LONGER_OPEN" });
+    expect(out).toEqual({ done: false, reason: "RESCHEDULE_NO_LONGER_OPEN" });
   });
 
   it("finalizes ACCEPTED with a from-state guard, not a blind write", async () => {
