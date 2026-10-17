@@ -46,7 +46,7 @@ jest.mock("../../../lib/payments/operations/cancellation-policy-store", () => ({
 }));
 
 import { handleCheckout } from "../../../lib/payments/operations/checkout";
-import { resetDouble } from "./checkout-harness/setup";
+import { overrides, resetDouble } from "./checkout-harness/setup";
 import type { CheckoutInput } from "../../../schemas/checkout";
 
 type Row = Record<string, unknown>;
@@ -206,7 +206,47 @@ describe("re-buying a webinar seat after an EXPIRED payment on the same appointm
     const tombstone = payments.find((p) => p.paymentIntent === OLD_INTENT);
     expect(tombstone).toMatchObject({
       paymentStatus: "EXPIRED",
-      appointmentId: undefined,
+      appointmentId: null,
+    });
+  });
+});
+
+describe("the other prior-row shapes on the same seat", () => {
+  const codeOf = (error: unknown) =>
+    error as { httpStatus?: number; code?: string } | null;
+
+  it("re-mints a FAILED row in place the same way", async () => {
+    payments[0].paymentStatus = "FAILED";
+    const { error } = await run();
+    expect(error).toBeNull();
+    expect(payments[0]).toMatchObject({
+      paymentIntent: "order_NEW",
+      paymentStatus: "PENDING",
+    });
+  });
+
+  it("refuses a fully refunded seat with a typed 409 before any gateway order", async () => {
+    Object.assign(payments[0], {
+      paymentStatus: "SUCCEEDED",
+      amount: 100_000,
+      refunds: [{ amountPaise: 100_000 }],
+    });
+    const { error } = await run();
+    expect(codeOf(error)).toMatchObject({
+      httpStatus: 409,
+      code: "SEAT_REBUY_UNSUPPORTED",
+    });
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    expect(payments).toHaveLength(1);
+  });
+
+  it("answers a raced P2002 on (userId, appointmentId) with a typed 409", async () => {
+    // A sibling checkout committed after this one's read: the insert collides.
+    overrides["payment.findFirst"] = () => null;
+    const { error } = await run();
+    expect(codeOf(error)).toMatchObject({
+      httpStatus: 409,
+      code: "PAYMENT_ALREADY_EXISTS",
     });
   });
 });

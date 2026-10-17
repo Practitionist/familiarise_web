@@ -18,6 +18,10 @@ import {
 
 import prisma from "@/lib/prisma";
 import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
+import {
+  PRE_MINT_INTENT_PREFIX,
+  isPreMintIntent,
+} from "@/lib/payments/operations/approval-payment";
 import { remintTrialPayLink } from "@/lib/trials/pay-link";
 import { goHref } from "@/lib/dashboard/go";
 
@@ -121,7 +125,8 @@ function detailHref(row: PayPageRow): string {
 function isLive(row: PayPageRow, now: Date): boolean {
   return (
     row.paymentStatus === PaymentStatus.PENDING &&
-    (!row.expiresAt || row.expiresAt > now)
+    (!row.expiresAt || row.expiresAt > now) &&
+    !isPreMintIntent(row.paymentIntent)
   );
 }
 
@@ -186,6 +191,8 @@ async function findLiveOrder(row: PayPageRow, now: Date) {
       deletedAt: null,
       paymentStatus: PaymentStatus.PENDING,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      // A row whose order is not minted yet has nothing to open.
+      NOT: { paymentIntent: { startsWith: PRE_MINT_INTENT_PREFIX } },
     },
     orderBy: { createdAt: "desc" },
     select: { id: true },

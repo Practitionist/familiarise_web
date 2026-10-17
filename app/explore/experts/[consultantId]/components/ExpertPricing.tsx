@@ -232,16 +232,18 @@ export function ExpertPricing({
             Choose your preferred option
           </p>
           {/* #1703 D1 — metadata only: how this expert takes bookings.
-              #1775 C-6 — consultations only; a plan is always paid at purchase. */}
-          {hasConsultations &&
-            (!hasSubscriptions || activeServiceTab === "consultations") && (
-              <span className="mt-3 inline-flex items-center rounded-full border border-white/[0.1] bg-white/[0.05] px-2.5 py-0.5 text-[11px] font-medium text-zinc-300">
-                {bookingModeBadge(
-                  consultantDetails.bookingMode,
-                  consultantDetails.acceptingRequests,
-                )}
-              </span>
-            )}
+              #1775 C-6 — consultations only; a plan is always paid at purchase.
+              A pause stops every new booking, so it shows on every tab. */}
+          {(consultantDetails.acceptingRequests === false ||
+            (hasConsultations &&
+              (!hasSubscriptions || activeServiceTab === "consultations"))) && (
+            <span className="mt-3 inline-flex items-center rounded-full border border-white/[0.1] bg-white/[0.05] px-2.5 py-0.5 text-[11px] font-medium text-zinc-300">
+              {bookingModeBadge(
+                consultantDetails.bookingMode,
+                consultantDetails.acceptingRequests,
+              )}
+            </span>
+          )}
         </div>
 
         {hasConsultations && hasSubscriptions ? (

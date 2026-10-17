@@ -51,6 +51,7 @@ jest.mock("../../../utils/scheduling-engine/availabilityCoverage", () => ({
 
 import { handleCheckout } from "../../../lib/payments/operations/checkout";
 import { resetDouble } from "./checkout-harness/setup";
+import { assertWindowMatchesPlanDuration } from "../../../lib/booking/slot-validation";
 import type { CheckoutInput } from "../../../schemas/checkout";
 
 const START = new Date(Date.now() + 72 * 60 * 60 * 1000);
@@ -118,5 +119,36 @@ describe("direct checkout window vs plan duration", () => {
     expect([400, 409]).toContain(
       (outcome.error as { httpStatus?: number }).httpStatus,
     );
+  });
+});
+
+describe("assertWindowMatchesPlanDuration — the one check request, checkout and trials share", () => {
+  const at = (minutes: number) => new Date(START.getTime() + minutes * 60_000);
+
+  it("accepts the plan's own length and refuses any other, typed 400", () => {
+    expect(() =>
+      assertWindowMatchesPlanDuration({ durationInHours: 1 }, START, at(60)),
+    ).not.toThrow();
+    expect(() =>
+      assertWindowMatchesPlanDuration({ durationInHours: 1 }, START, at(360)),
+    ).toThrow(
+      expect.objectContaining({
+        code: "WINDOW_DURATION_MISMATCH",
+        httpStatus: 400,
+      }),
+    );
+  });
+
+  it("reads a trial's minutes, and refuses an unreadable window", () => {
+    expect(() =>
+      assertWindowMatchesPlanDuration(
+        { trialDurationMinutes: 30 },
+        START,
+        at(30),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertWindowMatchesPlanDuration({ trialDurationMinutes: 30 }, START, ""),
+    ).toThrow(expect.objectContaining({ code: "WINDOW_DURATION_MISMATCH" }));
   });
 });

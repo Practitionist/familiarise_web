@@ -1891,14 +1891,13 @@ export async function confirmExistingAppointment(
       where: { appointmentId, isTentative: true, ...liveOccurrenceWhere },
       select: { id: true, startsAt: true, endsAt: true },
     });
+    // The payer is included: their own other live booking at this time is a double-book, refunded below.
     const participantIds = (
       await tx.appointmentParticipant.findMany({
         where: { appointmentId, ...liveParticipant() },
         select: { userId: true },
       })
-    )
-      .map((p) => p.userId)
-      .filter((id) => id !== userId);
+    ).map((p) => p.userId);
     const consultantProfileId =
       appointment.consultation?.consultationPlan?.consultantProfileId ??
       appointment.subscription?.subscriptionPlan?.consultantProfileId ??

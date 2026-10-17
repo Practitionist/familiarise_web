@@ -19,6 +19,8 @@ import { deriveCheckoutAmount } from "@/lib/payments/pricing/derive-checkout-amo
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/operations/checkout";
+import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
+import { reportSentryError } from "@/lib/observability/report";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   AppointmentStatus,
@@ -103,6 +105,13 @@ const APPROVAL_PAYMENT_LOCK_TTL = 30_000; // 30 seconds
 
 /** How long an approval pay-link stays payable once minted (#1703 D2: 24 h). */
 const APPROVAL_PAYMENT_WINDOW_MS = APPROVAL_PAYMENT_EXPIRATION_MS;
+
+/** A Payment row written before its gateway order exists carries this intent prefix. */
+export const PRE_MINT_INTENT_PREFIX = "premint_";
+
+export function isPreMintIntent(paymentIntent: string): boolean {
+  return paymentIntent.startsWith(PRE_MINT_INTENT_PREFIX);
+}
 
 /**
  * #1319 review — the request behind a dead intent is already gone, so there is
@@ -287,188 +296,93 @@ export async function createApprovalPaymentIntent(
 
     // Build metadata for webhook processing
     const metadata = buildApprovalMetadata(params, { taxAmount });
+    // #1861 L1 — one deadline for the gateway's capture window and the row.
+    const holdExpiresAt = new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS);
+    const description = `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`;
+    const preMintIntent = `${PRE_MINT_INTENT_PREFIX}${globalThis.crypto.randomUUID()}`;
+    const pricing = {
+      amount,
+      originalAmount,
+      taxAmount,
+      buyerCountry,
+      isInternational,
+      currency,
+    };
+
+    // The row is durable before the gateway is called, so a crash between the two leaves a
+    // PENDING pre-mint row the lapsed pay-link sweep retires instead of an order with no row.
+    const claim =
+      remintIntoPaymentId && existingPayment
+        ? await claimRowForRemint(existingPayment, {
+            ...pricing,
+            userId: params.userId,
+            preMintIntent,
+            holdExpiresAt,
+            description,
+            paymentGateway: params.paymentGateway,
+            appointmentType: params.appointmentType,
+          })
+        : await createPreMintRow(params, {
+            ...pricing,
+            preMintIntent,
+            holdExpiresAt,
+            description,
+          });
+    if ("settled" in claim) return claim.settled;
+    const paymentId = claim.paymentId;
 
     // Create payment intent with gateway. Imported here, not at module load:
     // the barrel evaluates the Razorpay core and its #1219 test-key guard.
     const { createPaymentIntent } = await import("../index");
-    // #1861 L1 — one deadline for the gateway's capture window and the row.
-    const holdExpiresAt = new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS);
-    const paymentResponse = await createPaymentIntent({
-      amount,
-      currency,
-      metadata,
-      paymentGateway: params.paymentGateway,
-      isMockPayment: false,
-      holdExpiresAt,
-    });
-
-    if (remintIntoPaymentId && existingPayment) {
-      // #1319 review — re-mint IN PLACE. The row keeps its id, userId and
-      // appointmentId (so the unique pair, the appointment back-link and every
-      // downstream reference survive) and takes the new order's identity,
-      // status and window. The figures are re-frozen to the ones the gateway
-      // was just asked for: leaving the old amount would make the trial
-      // checkout page quote a number the charge does not honour, which is
-      // exactly the drift that froze the amount onto this row to begin with.
-      // The CARD leg follows for the same reason — the funding legs (every
-      // source but REFERRAL_CREDIT) must still sum to amount (#1347).
-      //
-      // CAS-in-WHERE (ADR 21): the pre-read's status AND intent ride the
-      // WHERE, so a capture that landed on the old order between the read and
-      // this write matches zero rows instead of being reset to PENDING under
-      // a replaced order. The leg follows only once the CAS has won.
-      const priorStatus = existingPayment.paymentStatus;
-      const priorIntent = existingPayment.paymentIntent;
-      const claimed = await prisma.$transaction(async (tx) => {
-        const cas = await tx.payment.updateMany({
-          where: {
-            id: remintIntoPaymentId,
-            paymentStatus: priorStatus,
-            paymentIntent: priorIntent,
-          },
-          data: {
-            paymentIntent: paymentResponse.id,
-            paymentStatus: PaymentStatus.PENDING,
-            expiresAt: holdExpiresAt,
-            amount,
-            originalAmount,
-            taxAmount,
-            buyerCountry,
-            isInternational,
-            currency,
-            description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
-            paymentGateway: params.paymentGateway,
-          },
-        });
-        if (cas.count !== 1) return false;
-        await tx.paymentLeg.updateMany({
-          where: { paymentId: remintIntoPaymentId, source: "CARD" },
-          data: { amountPaise: amount, sourceRef: paymentResponse.id },
-        });
-        return true;
-      });
-
-      if (!claimed) {
-        // The row moved under us. The order just minted is payable and owned
-        // by nobody, so it gets the #1695 tombstone; then the fresh row says
-        // what actually happened.
-        await tombstoneAbortedGatewayOrder({
-          paymentIntent: paymentResponse.id,
-          userId: params.userId,
-          amount,
-          originalAmount,
-          taxAmount,
-          currency,
-          reason: "approval re-mint lost its CAS to a concurrent writer",
-        });
-        const fresh = await prisma.payment.findUnique({
-          where: { id: remintIntoPaymentId },
-          select: {
-            id: true,
-            paymentStatus: true,
-            paymentIntent: true,
-            amount: true,
-            currency: true,
-          },
-        });
-        if (fresh?.paymentStatus === PaymentStatus.SUCCEEDED) {
-          // The old order was captured; the routes answer this the same way
-          // the pre-read does. Handing back a link would email a pay-link
-          // for a paid order.
-          throw new ApprovalAlreadyPaidError();
-        }
-        if (fresh?.paymentStatus === PaymentStatus.PENDING) {
-          // Another mint replaced the order first; its link is the live one.
-          return {
-            paymentIntentId: fresh.paymentIntent,
-            paymentId: fresh.id,
-            checkoutUrl: fresh.paymentIntent,
-            amount: fresh.amount,
-            currency: fresh.currency,
-          };
-        }
-        throw new ApprovalPaymentExistsError();
-      }
-
-      return {
-        paymentIntentId: paymentResponse.id,
-        paymentId: remintIntoPaymentId,
-        checkoutUrl: paymentResponse.client_secret,
+    let paymentResponse: Awaited<ReturnType<typeof createPaymentIntent>>;
+    try {
+      paymentResponse = await createPaymentIntent({
         amount,
         currency,
-      };
+        metadata,
+        paymentGateway: params.paymentGateway,
+        isMockPayment: false,
+        holdExpiresAt,
+      });
+    } catch (mintError) {
+      await expirePreMintRow(paymentId, preMintIntent);
+      throw mintError;
     }
 
-    // Store payment record in database
-    let createdPaymentId: string;
-    try {
-      const created = await prisma.payment.create({
-        data: {
-          // #1583 C-P0-01 — `amount` carries GST like checkout; `originalAmount`
-          // stays the list price, which is what earnings read as the base.
-          amount,
-          originalAmount,
-          taxAmount,
-          buyerCountry,
-          isInternational,
-          currency,
-          description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
-          paymentMethod: "card",
-          paymentIntent: paymentResponse.id,
-          paymentGateway: params.paymentGateway,
+    const filled = await prisma.$transaction(async (tx) => {
+      const cas = await tx.payment.updateMany({
+        where: {
+          id: paymentId,
+          paymentIntent: preMintIntent,
           paymentStatus: PaymentStatus.PENDING,
-          organizationId: params.organizationId ?? null,
-          userId: params.userId,
-          expiresAt: holdExpiresAt,
-          isMockPayment: false,
-          // #1181 — the request-time appointment anchors capture to the NEW
-          // flow (confirm the existing row, never create a twin). Null only
-          // when the caller genuinely had no appointment to offer.
-          appointmentId: params.appointmentId ?? null,
-          clientIdempotencyKey: `approval:${globalThis.crypto.randomUUID()}`,
-          // Every Payment must carry at least one PaymentLeg
-          // (docs/enterprise/10-money-and-ledger/09-payment-legs.md); checkout
-          // writes it at creation so the invariant holds before capture, and
-          // this flow was the one gateway path that never did. Always CARD: the
-          // approval flow charges the buyer even when an org is tagged (the
-          // wallet-debit/skip-gateway parity is #1166). Nested so a Payment can
-          // never exist legless.
-          legs: {
-            create: {
-              source: "CARD",
-              amountPaise: amount,
-              sourceRef: paymentResponse.id,
-            },
-          },
         },
-        select: { id: true },
+        data: { paymentIntent: paymentResponse.id },
       });
-      createdPaymentId = created.id;
-    } catch (err) {
-      // Only the [userId, appointmentId] pair is the double-accept race; any
-      // other unique is a real fault and keeps its Prisma error.
-      if (isUniqueViolationOn(err, "appointmentId")) {
-        // The gateway order above is already minted and payable; give a late
-        // capture on it a row to refund against (#1695) before refusing. If
-        // that row could not be written the conflict is not safe to answer as
-        // a settled 409: the original error keeps the caller's retry alive.
-        const persisted = await tombstoneAbortedGatewayOrder({
-          paymentIntent: paymentResponse.id,
-          userId: params.userId,
-          amount,
-          originalAmount,
-          taxAmount,
-          currency,
-          reason: "approval pay-link lost a concurrent double-accept",
-        });
-        if (persisted) throw new ApprovalPaymentExistsError();
-      }
-      throw err;
+      if (cas.count !== 1) return false;
+      await tx.paymentLeg.updateMany({
+        where: { paymentId, source: "CARD" },
+        data: { sourceRef: paymentResponse.id },
+      });
+      return true;
+    });
+
+    if (!filled) {
+      // Another mint took the row while the gateway call ran; the order just minted is owned by nobody.
+      await tombstoneAbortedGatewayOrder({
+        paymentIntent: paymentResponse.id,
+        userId: params.userId,
+        amount,
+        originalAmount,
+        taxAmount,
+        currency,
+        reason: "approval mint lost its pre-mint row to a concurrent writer",
+      });
+      throw new ApprovalPaymentExistsError();
     }
 
     return {
       paymentIntentId: paymentResponse.id,
-      paymentId: createdPaymentId,
+      paymentId,
       checkoutUrl: paymentResponse.client_secret,
       amount,
       currency,
@@ -481,6 +395,185 @@ export async function createApprovalPaymentIntent(
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/** The figures a pre-mint row is written with, before its gateway order exists. */
+interface PreMintFields {
+  amount: number;
+  originalAmount: number;
+  taxAmount: number;
+  buyerCountry: string;
+  isInternational: boolean;
+  currency: Currency;
+  preMintIntent: string;
+  holdExpiresAt: Date;
+  description: string;
+}
+
+/** Either the row the order will be written onto, or an answer that needs no new order. */
+type MintClaim = { paymentId: string } | { settled: ApprovalPaymentResult };
+
+async function createPreMintRow(
+  params: CreateApprovalPaymentParams,
+  fields: PreMintFields,
+): Promise<MintClaim> {
+  try {
+    const created = await prisma.payment.create({
+      data: {
+        // #1583 C-P0-01 — `amount` carries GST like checkout; `originalAmount`
+        // stays the list price, which is what earnings read as the base.
+        amount: fields.amount,
+        originalAmount: fields.originalAmount,
+        taxAmount: fields.taxAmount,
+        buyerCountry: fields.buyerCountry,
+        isInternational: fields.isInternational,
+        currency: fields.currency,
+        description: fields.description,
+        paymentMethod: "card",
+        paymentIntent: fields.preMintIntent,
+        paymentGateway: params.paymentGateway,
+        paymentStatus: PaymentStatus.PENDING,
+        organizationId: params.organizationId ?? null,
+        userId: params.userId,
+        expiresAt: fields.holdExpiresAt,
+        isMockPayment: false,
+        // #1181 — the request-time appointment anchors capture to the NEW
+        // flow (confirm the existing row, never create a twin). Null only
+        // when the caller genuinely had no appointment to offer.
+        appointmentId: params.appointmentId ?? null,
+        clientIdempotencyKey: `approval:${globalThis.crypto.randomUUID()}`,
+        // Always CARD: the approval flow charges the buyer even when an org is
+        // tagged (#1166). Nested so a Payment can never exist legless.
+        legs: {
+          create: {
+            source: "CARD",
+            amountPaise: fields.amount,
+            sourceRef: fields.preMintIntent,
+          },
+        },
+      },
+      select: { id: true },
+    });
+    return { paymentId: created.id };
+  } catch (err) {
+    // Only the [userId, appointmentId] pair is the double-accept race; no order exists yet to tombstone.
+    if (isUniqueViolationOn(err, "appointmentId")) {
+      throw new ApprovalPaymentExistsError();
+    }
+    throw err;
+  }
+}
+
+/**
+ * Re-mint IN PLACE: the row keeps its id, userId and appointmentId and takes a pre-mint intent and
+ * the fresh figures by CAS on its prior status and intent; the prior order moves to a tombstone.
+ */
+async function claimRowForRemint(
+  existing: ExistingApprovalPayment,
+  fields: PreMintFields & {
+    userId: string;
+    paymentGateway: PaymentGateway;
+    appointmentType: CreateApprovalPaymentParams["appointmentType"];
+  },
+): Promise<MintClaim> {
+  const claimed = await prisma.$transaction(async (tx) => {
+    const cas = await tx.payment.updateMany({
+      where: {
+        id: existing.id,
+        paymentStatus: existing.paymentStatus,
+        paymentIntent: existing.paymentIntent,
+      },
+      data: {
+        paymentIntent: fields.preMintIntent,
+        paymentStatus: PaymentStatus.PENDING,
+        expiresAt: fields.holdExpiresAt,
+        amount: fields.amount,
+        originalAmount: fields.originalAmount,
+        taxAmount: fields.taxAmount,
+        buyerCountry: fields.buyerCountry,
+        isInternational: fields.isInternational,
+        currency: fields.currency,
+        description: fields.description,
+        paymentGateway: fields.paymentGateway,
+        gatewayPaymentId: null,
+        capturedAt: null,
+      },
+    });
+    if (cas.count !== 1) return false;
+    if (isPreMintIntent(existing.paymentIntent)) {
+      // A pre-mint row never reached the gateway, so there is no order to keep.
+      await tx.paymentLeg.deleteMany({ where: { paymentId: existing.id } });
+    } else {
+      await tombstonePriorIntent(
+        tx,
+        { ...existing, userId: fields.userId },
+        `${fields.appointmentType.toLowerCase()} pay-link re-minted`,
+      );
+    }
+    await tx.paymentLeg.create({
+      data: {
+        paymentId: existing.id,
+        source: "CARD",
+        amountPaise: fields.amount,
+        sourceRef: fields.preMintIntent,
+      },
+    });
+    return true;
+  });
+  if (claimed) return { paymentId: existing.id };
+
+  // The row moved before any order was minted, so nothing needs a tombstone.
+  const fresh = await prisma.payment.findUnique({
+    where: { id: existing.id },
+    select: {
+      id: true,
+      paymentStatus: true,
+      paymentIntent: true,
+      amount: true,
+      currency: true,
+    },
+  });
+  if (fresh?.paymentStatus === PaymentStatus.SUCCEEDED) {
+    throw new ApprovalAlreadyPaidError();
+  }
+  if (
+    fresh?.paymentStatus === PaymentStatus.PENDING &&
+    !isPreMintIntent(fresh.paymentIntent)
+  ) {
+    // Another mint replaced the order first; its link is the live one.
+    return {
+      settled: {
+        paymentIntentId: fresh.paymentIntent,
+        paymentId: fresh.id,
+        checkoutUrl: fresh.paymentIntent,
+        amount: fresh.amount,
+        currency: fresh.currency,
+      },
+    };
+  }
+  throw new ApprovalPaymentExistsError();
+}
+
+/** A failed gateway call leaves its pre-mint row EXPIRED, so the next mint re-mints into it. */
+async function expirePreMintRow(
+  paymentId: string,
+  preMintIntent: string,
+): Promise<void> {
+  try {
+    await prisma.payment.updateMany({
+      where: {
+        id: paymentId,
+        paymentIntent: preMintIntent,
+        paymentStatus: PaymentStatus.PENDING,
+      },
+      data: { paymentStatus: PaymentStatus.EXPIRED, expiresAt: new Date() },
+    });
+  } catch (expireError) {
+    reportSentryError(expireError, {
+      subsystem: "payments",
+      extra: { paymentId },
+    });
+  }
+}
 
 /** The taxed figure and its parts, derived exactly as checkout derives them. */
 interface ApprovalAmount {
@@ -717,6 +810,9 @@ export interface ExistingApprovalPayment {
   id: string;
   paymentStatus: PaymentStatus;
   paymentIntent: string;
+  /** Moves to the tombstone with the old order on a re-mint. */
+  gatewayPaymentId: string | null;
+  paymentGateway: PaymentGateway;
   amount: number;
   /** The frozen pricing state; a live row is reused only when all of it matches. */
   originalAmount: number;
@@ -746,6 +842,8 @@ function isDeadApprovalIntent(
   now: Date,
 ): boolean {
   if (payment.paymentStatus === PaymentStatus.EXPIRED) return true;
+  // A pre-mint row whose order never landed is never handed back as a link.
+  if (isPreMintIntent(payment.paymentIntent)) return true;
   return (
     payment.paymentStatus === PaymentStatus.PENDING &&
     !!payment.expiresAt &&
@@ -768,6 +866,8 @@ const EXISTING_PAYMENT_SELECT = {
   id: true,
   paymentStatus: true,
   paymentIntent: true,
+  gatewayPaymentId: true,
+  paymentGateway: true,
   amount: true,
   originalAmount: true,
   taxAmount: true,
@@ -862,6 +962,8 @@ export async function findExistingLivePayment(params: {
       id: payment.id,
       paymentStatus: payment.paymentStatus,
       paymentIntent: payment.paymentIntent,
+      gatewayPaymentId: payment.gatewayPaymentId,
+      paymentGateway: payment.paymentGateway,
       amount: payment.amount,
       originalAmount: payment.originalAmount,
       taxAmount: payment.taxAmount,
@@ -898,6 +1000,8 @@ export async function findExistingLivePayment(params: {
           id: payment.id,
           paymentStatus: payment.paymentStatus,
           paymentIntent: payment.paymentIntent,
+          gatewayPaymentId: payment.gatewayPaymentId,
+          paymentGateway: payment.paymentGateway,
           amount: payment.amount,
           originalAmount: payment.originalAmount,
           taxAmount: payment.taxAmount,

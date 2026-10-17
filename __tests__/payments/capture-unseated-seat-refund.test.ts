@@ -647,3 +647,38 @@ describe("a legacy capture for an event with no room left", () => {
     expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 });
+
+// A seat re-buy re-mints the row in place and leaves its old order on an EXPIRED tombstone.
+describe("a late capture on a re-mint tombstone", () => {
+  it("claims the appointment-less EXPIRED row and refunds it, seating nobody", async () => {
+    paymentFindUnique.mockResolvedValue(
+      pendingSeatPayment({
+        id: "pay-tombstone",
+        paymentIntent: "order-old",
+        paymentStatus: "EXPIRED",
+        appointmentId: null,
+      }),
+    );
+
+    const outcome = await handlePaymentSuccess(
+      "order-old",
+      WEBINAR_METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    expect(outcome).toBe("captured_after_release");
+    expect(paymentUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "pay-tombstone", paymentStatus: "EXPIRED" },
+        data: expect.objectContaining({ paymentStatus: "SUCCEEDED" }),
+      }),
+    );
+    expect(participantCreateMany).not.toHaveBeenCalled();
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay-tombstone",
+        amountPaise: 10000,
+      }),
+    );
+  });
+});

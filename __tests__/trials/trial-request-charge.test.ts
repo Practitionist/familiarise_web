@@ -38,7 +38,7 @@ jest.mock("../../lib/activity/log-activity", () => ({
 }));
 jest.mock("../../lib/novu", () => ({ notifyTrialRequested: jest.fn() }));
 
-const plan = { trialPriceInPaise: 0 };
+const plan = { trialPriceInPaise: 0, acceptingRequests: true };
 const appointmentCreate = jest.fn(async () => ({ id: "apt-1" }));
 jest.mock("../../lib/prisma", () => {
   const tx = {
@@ -66,7 +66,10 @@ jest.mock("../../lib/prisma", () => {
           consultantProfileId: "cp-e",
           trialEnabled: true,
           trialPriceInPaise: plan.trialPriceInPaise,
-          consultantProfile: { user: { id: "u-expert" } },
+          consultantProfile: {
+            acceptingRequests: plan.acceptingRequests,
+            user: { id: "u-expert" },
+          },
         })),
       },
       consulteeProfile: {
@@ -94,7 +97,19 @@ const post = () =>
     }),
   );
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  plan.acceptingRequests = true;
+});
+
+it("a paused expert takes no trial request: 409 NOT_ACCEPTING_BOOKINGS, nothing written", async () => {
+  plan.acceptingRequests = false;
+  const res = await post();
+  expect(res.status).toBe(409);
+  expect((await res.json()).code).toBe("NOT_ACCEPTING_BOOKINGS");
+  expect(appointmentCreate).not.toHaveBeenCalled();
+  expect(createIntent).not.toHaveBeenCalled();
+});
 
 it("a paid trial gets a session-less placeholder and an order minted against it", async () => {
   plan.trialPriceInPaise = 50_000;

@@ -7,6 +7,7 @@ import {
 } from "@/lib/booking/participants";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import prisma, { type Tx } from "@/lib/prisma";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
@@ -509,6 +510,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         if (slotData) {
           startTime = new Date(slotData.startsAt);
           endTime = new Date(slotData.endsAt);
+          try {
+            assertWindowMatchesPlanDuration(
+              {
+                trialDurationMinutes:
+                  existingTrial.subscriptionPlan.trialDurationMinutes,
+              },
+              startTime,
+              endTime,
+            );
+          } catch (err) {
+            if (err instanceof BookingRuleError)
+              return bookingRuleResponse(err);
+            throw err;
+          }
         } else {
           startTime = new Date(scheduledTime!);
           const durationMinutes =
