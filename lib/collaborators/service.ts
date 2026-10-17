@@ -1614,7 +1614,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
             },
           },
           invitedBy: {
-            include: { user: { select: { name: true } } },
+            select: { id: true, user: { select: { name: true } } },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -1692,7 +1692,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
             },
           },
           invitedBy: {
-            include: { user: { select: { name: true } } },
+            select: { id: true, user: { select: { name: true } } },
           },
         },
         orderBy: { createdAt: "desc" },

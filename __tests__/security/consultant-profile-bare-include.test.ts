@@ -20,10 +20,25 @@ const SCAN_ROOTS = [
   "utils",
 ];
 
+// Every relation field typed ConsultantProfile, read from the schema so a
+// renamed or new relation (`invitedBy`) cannot slip past the scan.
+const RELATIONS = [
+  ...new Set(
+    [
+      ...readFileSync(path.join(ROOT, "prisma/schema.prisma"), "utf8").matchAll(
+        /^[ \t]+(\w+)[ \t]+ConsultantProfile(?:\?|\[\])?\s/gm,
+      ),
+    ].map((m) => m[1]),
+  ),
+].join("|");
+
 const BARE_INCLUDE = [
-  /consultantProfile\s*:\s*true\b/g,
-  /consultantProfile\s*:\s*\{\s*include\s*:/g,
-  /consultantProfile\s*:\s*\{\s*(?:select|include)\s*:\s*\{[^{}]*\buser\s*:\s*true\b/g,
+  new RegExp(`\\b(?:${RELATIONS})\\s*:\\s*true\\b`, "g"),
+  new RegExp(`\\b(?:${RELATIONS})\\s*:\\s*\\{\\s*include\\s*:`, "g"),
+  new RegExp(
+    `\\b(?:${RELATIONS})\\s*:\\s*\\{\\s*(?:select|include)\\s*:\\s*\\{[^{}]*\\buser\\s*:\\s*true\\b`,
+    "g",
+  ),
 ];
 
 // Bare sites still allowed, as file path to count. None are.
@@ -41,13 +56,14 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-// Comments quote the anti-pattern, and zod `.omit({ consultantProfile: true })`
-// is a schema key rather than a query.
+// Comments quote the anti-pattern, zod `.omit({ consultantProfile: true })`
+// is a schema key rather than a query, and `_count` selects only a number.
 function queryText(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "")
-    .replace(/\.(omit|pick)\(\{[^}]*\}\)/g, "");
+    .replace(/\.(omit|pick)\(\{[^}]*\}\)/g, "")
+    .replace(/_count\s*:\s*\{\s*select\s*:\s*\{[^{}]*\},?\s*\}/g, "");
 }
 
 describe("consultant profile bare includes", () => {
