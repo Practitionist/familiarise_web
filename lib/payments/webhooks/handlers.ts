@@ -231,10 +231,10 @@ type PreMintAdoption = {
 async function verifiedPreMintAdoption(
   orderId: string,
 ): Promise<PreMintAdoption | null> {
-  if (!orderId.startsWith("order_")) return null;
+  if (!orderId.startsWith("order_") || isMockPaymentId(orderId)) return null;
   const { fetchRazorpayOrder } = await import("@/lib/payments/core/razorpay");
   const order = await fetchRazorpayOrder(orderId);
-  if (!order || order.id !== orderId) return null;
+  if (order?.id !== orderId) return null;
   const notes = orderNotesPaymentIdSchema.safeParse(order.notes);
   const paymentId = notes.success ? notes.data.familiarisePaymentId : undefined;
   if (!paymentId) return null;

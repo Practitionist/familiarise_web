@@ -760,6 +760,33 @@ describe("a capture whose order was never written onto its row", () => {
     expect(paymentUpdateMany).not.toHaveBeenCalledWith(adoptWrite);
   });
 
+  it("never adopts when the order currency differs from the row", async () => {
+    rows(PRE_MINT);
+    fetchRazorpayOrder.mockResolvedValue({
+      ...GENUINE,
+      currency: "USD",
+      notes: { familiarisePaymentId: "pay-premint" },
+    });
+
+    await expect(
+      handlePaymentSuccess(ORDER, WEBINAR_METADATA, 10000),
+    ).rejects.toThrow("Payment record not found");
+    expect(paymentUpdateMany).not.toHaveBeenCalledWith(adoptWrite);
+  });
+
+  it("does not confirm when the adoption CAS loses the race", async () => {
+    rows(PRE_MINT);
+    paymentUpdateMany.mockResolvedValue({ count: 0 });
+    fetchRazorpayOrder.mockResolvedValue({
+      ...GENUINE,
+      notes: { familiarisePaymentId: "pay-premint" },
+    });
+
+    await expect(
+      handlePaymentSuccess(ORDER, WEBINAR_METADATA, 10000),
+    ).rejects.toThrow("Payment record not found");
+  });
+
   it("never hijacks a row whose intent is a real order", async () => {
     rows("order_someone_else");
     fetchRazorpayOrder.mockResolvedValue({

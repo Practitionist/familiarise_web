@@ -11,7 +11,7 @@ import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
-import { EventEditorStatusSchema } from "@/schemas/event-instance";
+import { editorStatusOrRefusal } from "@/lib/api/plans/event-status";
 import { Prisma, WebinarStatus } from "@prisma/client";
 import {
   EVENT_PUBLISHABLE_FROM,
@@ -505,19 +505,8 @@ export async function PATCH(request: NextRequest) {
 
     const validatedData = validationResult.data;
     // The editor only saves a draft or publishes; cancellation owns refunds.
-    const statusIntent = EventEditorStatusSchema.optional().safeParse(
-      validatedData.status,
-    );
-    if (!statusIntent.success) {
-      return NextResponse.json(
-        {
-          error: "Cancel a webinar through its cancel action, not an update.",
-          code: "USE_CANCEL_ROUTE",
-        },
-        { status: 409 },
-      );
-    }
-    const status = statusIntent.data;
+    const status = editorStatusOrRefusal(validatedData.status, "webinar");
+    if (status instanceof NextResponse) return status;
     const {
       id, // Webinar plan ID (required)
       webinarId, // Webinar instance ID (optional)

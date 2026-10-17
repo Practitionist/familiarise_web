@@ -393,7 +393,7 @@ async function reconcilePaymentStatusUnlocked(
           ...notManualRecoveryWhere,
         },
         data: {
-          description: `${MANUAL_RECOVERY_PREFIX} unsupported gateway ${payment.paymentGateway}; its state cannot be read or cancelled.`,
+          description: `${MANUAL_RECOVERY_PREFIX} unsupported gateway ${payment.paymentGateway}; its state cannot be read or cancelled.${payment.description ? ` Was: ${payment.description}` : ""}`,
         },
       });
       if (stamped.count === 1) {

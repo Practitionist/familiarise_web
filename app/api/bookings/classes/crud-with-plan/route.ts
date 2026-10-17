@@ -12,7 +12,7 @@ import {
   faqReplaceNested,
 } from "@/lib/api/plans/content";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
-import { EventEditorStatusSchema } from "@/schemas/event-instance";
+import { editorStatusOrRefusal } from "@/lib/api/plans/event-status";
 import { refundWindowHoursSchema } from "@/lib/booking/refund-window";
 import { ClassStatus, Prisma } from "@prisma/client";
 import {
@@ -542,19 +542,8 @@ export async function PATCH(request: NextRequest) {
 
     const validatedData = validationResult.data;
     // The editor only saves a draft or publishes; cancellation owns refunds.
-    const statusIntent = EventEditorStatusSchema.optional().safeParse(
-      validatedData.status,
-    );
-    if (!statusIntent.success) {
-      return NextResponse.json(
-        {
-          error: "Cancel a class through its cancel action, not an update.",
-          code: "USE_CANCEL_ROUTE",
-        },
-        { status: 409 },
-      );
-    }
-    const status = statusIntent.data;
+    const status = editorStatusOrRefusal(validatedData.status, "class");
+    if (status instanceof NextResponse) return status;
     const {
       id,
       classId,
