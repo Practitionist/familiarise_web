@@ -81,7 +81,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | `allocationAlgorithms.ts`        | Client-side pre-validation + submission for manual and requested allocation modes only (no auto engine) |
 | `allocationMessages.ts`          | Single catalog of user-facing allocation messages, bucketed by the event's scheduling timezone          |
 | `availabilityPolling.ts`         | Pure poll-decision logic for the availability heatmap (60s interval; polling, not push, by design)      |
-| `calendarUtils.ts`               | Calendar display: mapWeeklySlots, mapCustomSlots, getConsultantAvailabilityForDay                       |
+| `calendarUtils.ts`               | Calendar cell status, slot selection validation and session grouping                                    |
 | `schedulingTimezone.ts`          | Resolves the scheduling timezone stamped on a Subscription/Class, from the consultant's `User.timezone` |
 | `intervalSelectionValidation.ts` | Pure client-side selection rules for the Allocate Slots calendar, unit-testable apart from the hook     |
 | `slot-status-tokens.ts`          | Single colour vocabulary for slot availability states, shared by every calendar/grid surface            |

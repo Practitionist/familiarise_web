@@ -66,8 +66,8 @@
 
 ## 5. Slot Allocation
 
-- [ ] Auto-allocate sorts weekly slots by calendar occurrence (`getNextOccurrenceWeekly()`), not raw `startTimeUtc`
-- [ ] `getNextOccurrenceWeekly()` advances to next week if the target time has already passed today
+- [ ] Auto-allocate sorts weekly rows by their next projected occurrence (`weeklyRowIntervalsInRange()`), not raw clock time
+- [ ] An occurrence that has already started today is skipped in favour of next week's
 - [ ] Consecutive block detection works for multi-slot sessions (30min x N)
 - [ ] Week counting uses `ScheduleCalculationService.countWeeks()` (single source of truth)
 - [ ] `slotsPerCall` computed correctly from `sessionDurationInHours`
