@@ -28,6 +28,7 @@ import {
 } from "../../utils/schedule/weekly-projection";
 import { loadPublishedCoverage } from "../../utils/scheduling-engine/availabilityCoverage";
 import { weeklyZoneRefusal } from "../../lib/scheduling/availability-contract";
+import { resolveWeeklyTimezone } from "../../lib/scheduling/weeklyUtcOffset";
 import { processAvailabilitySlots } from "../../utils/scheduling-engine/intervals";
 import { zonedWeekWindow } from "../../app/explore/experts/[consultantId]/utils/time";
 import type { Tx } from "../../lib/prisma";
@@ -209,6 +210,13 @@ it("refuses weekly hours in zones off the 30-minute grid", () => {
   expect(weeklyZoneRefusal("Africa/Monrovia")?.code).toBe("ZONE"); // −00:44 in 1970
   expect(weeklyZoneRefusal("America/New_York")).toBeNull();
   expect(weeklyZoneRefusal("Asia/Kolkata")).toBeNull();
+});
+
+it("keeps a zone whose offset is UTC+0 today", () => {
+  expect(resolveWeeklyTimezone("Europe/London")).toBe("Europe/London");
+  expect(resolveWeeklyTimezone("Africa/Abidjan")).toBe("Africa/Abidjan");
+  expect(resolveWeeklyTimezone("Not/AZone")).toBe("Asia/Kolkata");
+  expect(weeklyZoneRefusal("Africa/Monrovia")?.message).toContain("UTC-00:44");
 });
 
 it("treats a legacy zone alias as the same zone", () => {

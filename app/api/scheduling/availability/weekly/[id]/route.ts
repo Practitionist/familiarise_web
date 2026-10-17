@@ -43,6 +43,7 @@ async function applyWeeklySlotEdit(
   id: string,
   currentSlot: {
     consultantProfileId: string;
+    timezone: string | null;
     consultantProfile: { user: { timezone: string | null } | null };
   },
   next: {
@@ -60,10 +61,14 @@ async function applyWeeklySlotEdit(
   // was published. Resolved before the transaction so a contradiction costs no
   // write.
   const profileTimezone = currentSlot.consultantProfile.user?.timezone ?? null;
+  // An edited row stays in the zone it is kept in; the profile zone is the fallback.
+  const rowTimezone = resolveWeeklyTimezone(
+    currentSlot.timezone ?? profileTimezone,
+  );
   let utcOffsetMinutes: number;
   try {
     utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
-      profileTimezone,
+      profileTimezone: rowTimezone,
       callerSupplied: callerSuppliedOffsetMinutes,
     });
   } catch (error) {
@@ -75,7 +80,6 @@ async function applyWeeklySlotEdit(
     }
     throw error;
   }
-  const rowTimezone = resolveWeeklyTimezone(profileTimezone);
   const zoneRefusal = weeklyZoneRefusal(rowTimezone);
   if (zoneRefusal) {
     return NextResponse.json(

@@ -178,9 +178,11 @@ export function weeklyZoneRefusal(
   ) {
     return null;
   }
+  const failing =
+    offset % AVAILABILITY_GRID_MINUTES === 0 ? probeOffset : offset;
   return {
     code: "ZONE",
-    message: `Weekly hours can't be published in ${timezone} yet: its UTC${formatUtcOffset(offset)} offset puts every local hour off the ${AVAILABILITY_GRID_MINUTES}-minute booking grid. Use date-specific availability instead.`,
+    message: `Weekly hours can't be published in ${timezone} yet: its UTC${formatUtcOffset(failing)} offset puts every local hour off the ${AVAILABILITY_GRID_MINUTES}-minute booking grid. Use date-specific availability instead.`,
   };
 }
 

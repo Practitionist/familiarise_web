@@ -17,6 +17,7 @@
 
 import { getTimezoneOffsetMinutes } from "@/utils/scheduling-engine/slotTimeUtils";
 import {
+  isKnownTimeZone,
   weeklyRowLocalColumns,
   weeklySaveProbeOffsetMinutes,
   type WeeklyRowLocalColumns,
@@ -49,13 +50,6 @@ export const LAUNCH_TIMEZONE = "Asia/Kolkata";
  * their availability offset; nothing else changes.
  */
 const PIN_TO_LAUNCH_OFFSET: boolean = false;
-
-/**
- * Zones whose real offset IS zero. `getTimezoneOffsetMinutes` answers 0 both
- * for these and for anything it cannot resolve, so without this set a typo
- * would be indistinguishable from Greenwich and would be stored as UTC.
- */
-const ZERO_OFFSET_ZONES = new Set(["UTC", "Etc/UTC", "GMT", "Etc/GMT"]);
 
 export const WEEKLY_OFFSET_CONFLICT_CODE = "UTC_OFFSET_CONFLICT";
 
@@ -90,10 +84,8 @@ function normaliseZone(profileTimezone: string | null | undefined): string {
 
 /** The zone's offset, or null when the zone is unset or unresolvable. */
 function derivedOffsetMinutes(zone: string): number | null {
-  if (!zone) return null;
-  const offset = getTimezoneOffsetMinutes(zone);
-  if (offset !== 0) return offset;
-  return ZERO_OFFSET_ZONES.has(zone) ? 0 : null;
+  if (!zone || !isKnownTimeZone(zone)) return null;
+  return getTimezoneOffsetMinutes(zone);
 }
 
 /**

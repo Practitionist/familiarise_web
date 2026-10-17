@@ -52,6 +52,9 @@ const weeklyRowZonesSchema = z.object({
 
 const convertWeeklyZoneResponseSchema = z.object({
   data: z.object({ converted: z.number(), timezone: z.string() }),
+  uncoveredUpcoming: z
+    .object({ count: z.number(), appointmentIds: z.array(z.string()) })
+    .optional(),
 });
 
 interface WeeklyZonePromptState {
@@ -82,12 +85,22 @@ function WeeklyZonePrompt({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ timezone: prompt.to }),
       });
-      const { data } = await parseJsonResponse(
+      const { data, uncoveredUpcoming } = await parseJsonResponse(
         res,
         convertWeeklyZoneResponseSchema,
         "Couldn't convert your weekly hours",
       );
-      toast({ title: `Weekly hours now in ${data.timezone}` });
+      const uncovered = uncoveredUpcoming?.count ?? 0;
+      toast({
+        title:
+          data.converted > 0
+            ? `Weekly hours now in ${data.timezone}`
+            : "No weekly hours needed converting",
+        description:
+          uncovered > 0
+            ? `${uncovered} upcoming ${uncovered === 1 ? "session now falls" : "sessions now fall"} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.`
+            : undefined,
+      });
       onClose();
     } catch (error) {
       toast({
