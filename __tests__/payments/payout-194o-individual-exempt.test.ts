@@ -60,20 +60,18 @@ jest.mock("../../lib/prisma", () => ({
       aggregate: ({
         where,
       }: {
-        where: { payoutId: unknown; OR?: Array<{ paidAt?: { gte: Date } }> };
+        where: {
+          payoutId: unknown;
+          OR?: Array<{ payout?: { tdsFinancialYear?: string | null } }>;
+        };
       }) => {
         if (typeof where.payoutId === "string") {
           return Promise.resolve(
             sums({ gross: 2_000_000, share: 1_600_000, refunded: 0 }),
           );
         }
-        const fyStart = where.OR?.[0]?.paidAt?.gte;
-        const { getIndianFinancialYear } = jest.requireActual(
-          "../../lib/payments/tax/tds-service",
-        );
-        return Promise.resolve(
-          sums(fyStart && mockPriorGrossByFy[getIndianFinancialYear(fyStart)]),
-        );
+        const fy = where.OR?.[0]?.payout?.tdsFinancialYear;
+        return Promise.resolve(sums(fy ? mockPriorGrossByFy[fy] : undefined));
       },
     },
     consultantTaxInfo: {

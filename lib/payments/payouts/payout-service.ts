@@ -1360,7 +1360,8 @@ async function computeConsultantPayoutTaxableBase(
         )
       : payout.amount;
 
-  // Prior FY gross counts only payouts whose TDS is already stamped; a queued batch is taxed when it runs.
+  // Prior FY gross is attributed by the payout's TDS stamp, the same key as the withholding check below;
+  // a queued batch is taxed when it runs. Unstamped legacy payouts fall back to paidAt.
   const fyRange = getFYDateRange(financialYear);
   const priorGrossAgg = await prisma.consultantEarnings.aggregate({
     where: {
@@ -1368,15 +1369,16 @@ async function computeConsultantPayoutTaxableBase(
       payoutId: { not: payout.id },
       OR: [
         {
-          status: EarningStatus.PAID,
-          paidAt: { gte: fyRange.start, lt: fyRange.end },
-        },
-        {
-          status: EarningStatus.BATCHED,
+          status: { in: [EarningStatus.PAID, EarningStatus.BATCHED] },
           payout: {
-            status: PayoutStatus.PROCESSING,
+            status: { in: [PayoutStatus.PROCESSING, PayoutStatus.COMPLETED] },
             tdsFinancialYear: financialYear,
           },
+        },
+        {
+          status: EarningStatus.PAID,
+          paidAt: { gte: fyRange.start, lt: fyRange.end },
+          payout: { tdsFinancialYear: null },
         },
       ],
     },
