@@ -9,15 +9,15 @@
  * here, because choosing a session's times is still the delivering expert's
  * call.
  *
- * Mirrors the allocation tab's own query (`?status=PENDING&orgScope=<orgId>`)
- * so the two surfaces cannot disagree about what "waiting" means, minus the
- * `consultantProfileId` narrowing — the payer sees every expert's queue in
- * their org, which is exactly the blind spot this closes.
+ * Two kinds of row, both under the org pin: PENDING requests still awaiting the
+ * expert's approval, and APPROVED ones with no confirmed live session, which a
+ * sponsor org may allocate. The payer sees every expert's queue in their org.
  */
 
 import prisma from "@/lib/prisma";
 import { AppointmentStatus } from "@prisma/client";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 
 export interface OrgPendingRequest {
   id: string;
@@ -28,6 +28,8 @@ export interface OrgPendingRequest {
   expertName: string | null;
   /** ISO — this crosses into a Client Component. */
   requestedAt: string;
+  /** Only an APPROVED booking can be allocated by the org; anything else waits on the expert. */
+  awaitingExpertApproval: boolean;
 }
 
 /** A page of this is a queue, not a ledger; the org home links to the full view. */
@@ -37,6 +39,18 @@ export async function readOrgPendingRequests(
   orgId: string,
 ): Promise<OrgPendingRequest[]> {
   const orgPin = scopeToWhereOrgId({ kind: "org", orgId });
+  const waitingWhere = {
+    OR: [
+      { status: AppointmentStatus.PENDING, appointment: orgPin },
+      {
+        status: AppointmentStatus.APPROVED,
+        appointment: {
+          ...orgPin,
+          occurrences: { none: { ...liveOccurrenceWhere, isTentative: false } },
+        },
+      },
+    ],
+  };
   const planSelect = {
     select: {
       title: true,
@@ -49,12 +63,10 @@ export async function readOrgPendingRequests(
 
   const [consultations, subscriptions] = await Promise.all([
     prisma.consultation.findMany({
-      where: {
-        status: AppointmentStatus.PENDING,
-        appointment: orgPin,
-      },
+      where: waitingWhere,
       select: {
         id: true,
+        status: true,
         requestedAt: true,
         appointment: { select: { id: true } },
         consultationPlan: planSelect,
@@ -64,12 +76,10 @@ export async function readOrgPendingRequests(
       take: PENDING_TAKE,
     }),
     prisma.subscription.findMany({
-      where: {
-        status: AppointmentStatus.PENDING,
-        appointment: orgPin,
-      },
+      where: waitingWhere,
       select: {
         id: true,
+        status: true,
         requestedAt: true,
         appointment: { select: { id: true } },
         subscriptionPlan: planSelect,
@@ -80,28 +90,28 @@ export async function readOrgPendingRequests(
     }),
   ]);
 
-  return (
-    [
-      ...consultations.map((c) => ({
-        id: c.id,
-        appointmentId: c.appointment?.id ?? null,
-        kind: "CONSULTATION" as const,
-        planTitle: c.consultationPlan.title,
-        learnerName: c.requestedBy.user.name,
-        expertName: c.consultationPlan.consultantProfile.user.name,
-        requestedAt: c.requestedAt.toISOString(),
-      })),
-      ...subscriptions.map((s) => ({
-        id: s.id,
-        appointmentId: s.appointment?.id ?? null,
-        kind: "SUBSCRIPTION" as const,
-        planTitle: s.subscriptionPlan.title,
-        learnerName: s.requestedBy.user.name,
-        expertName: s.subscriptionPlan.consultantProfile.user.name,
-        requestedAt: s.requestedAt.toISOString(),
-      })),
-    ]
-      .sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1))
-      .slice(0, PENDING_TAKE)
-  );
+  return [
+    ...consultations.map((c) => ({
+      id: c.id,
+      appointmentId: c.appointment?.id ?? null,
+      kind: "CONSULTATION" as const,
+      planTitle: c.consultationPlan.title,
+      learnerName: c.requestedBy.user.name,
+      expertName: c.consultationPlan.consultantProfile.user.name,
+      requestedAt: c.requestedAt.toISOString(),
+      awaitingExpertApproval: c.status !== AppointmentStatus.APPROVED,
+    })),
+    ...subscriptions.map((s) => ({
+      id: s.id,
+      appointmentId: s.appointment?.id ?? null,
+      kind: "SUBSCRIPTION" as const,
+      planTitle: s.subscriptionPlan.title,
+      learnerName: s.requestedBy.user.name,
+      expertName: s.subscriptionPlan.consultantProfile.user.name,
+      requestedAt: s.requestedAt.toISOString(),
+      awaitingExpertApproval: s.status !== AppointmentStatus.APPROVED,
+    })),
+  ]
+    .sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1))
+    .slice(0, PENDING_TAKE);
 }
