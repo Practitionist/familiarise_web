@@ -283,6 +283,8 @@ function webinarRow() {
     },
     appointment: {
       id: "appt-w",
+      // The include always returns the live-seat array; nobody holds a seat here.
+      participants: [],
       occurrences: [
         {
           id: "slot-1",
@@ -365,6 +367,8 @@ beforeEach(() => {
         amount: data.amount,
       })),
       updateManyAndReturn: jest.fn(async () => []),
+      // The buyer's prior seat payment on this event; none here.
+      findFirst: jest.fn(async () => null),
     },
     paymentLeg: {
       create: jest.fn(async () => ({})),

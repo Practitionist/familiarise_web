@@ -59,6 +59,16 @@ const prismaMockRef: {
   payment: { updateMany: unknown };
   paymentLeg: { updateMany: unknown };
 } = { payment: { updateMany: null }, paymentLeg: { updateMany: null } };
+// The re-mint's tombstone and leg writes, read only inside a transaction.
+const mockTx = {
+  paymentCreate: jest.fn<
+    Promise<{ id: string }>,
+    [{ data: Record<string, unknown> }]
+  >(async () => ({ id: "pay-tombstone" })),
+  legCreate: jest.fn(async () => ({})),
+  legDeleteMany: jest.fn(async () => ({ count: 1 })),
+  usageUpdateMany: jest.fn(async () => ({ count: 0 })),
+};
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
@@ -95,11 +105,15 @@ jest.mock("../../lib/prisma", () => ({
         payment: {
           updateMany: (...a: unknown[]) =>
             (prismaMockRef.payment.updateMany as jest.Mock)(...a),
+          create: mockTx.paymentCreate,
         },
         paymentLeg: {
           updateMany: (...a: unknown[]) =>
             (prismaMockRef.paymentLeg.updateMany as jest.Mock)(...a),
+          create: mockTx.legCreate,
+          deleteMany: mockTx.legDeleteMany,
         },
+        referralCreditUsage: { updateMany: mockTx.usageUpdateMany },
       }),
     ),
     trial: {
@@ -273,6 +287,128 @@ describe("approval mint threads appointmentId (#1181)", () => {
   });
 });
 
+describe("the approval mint is durable before the gateway call", () => {
+  it("writes a PENDING pre-mint row before minting, then fills the order in by CAS", async () => {
+    await createApprovalPaymentIntent(mintParams());
+
+    const created = mockedPaymentCreate.mock.calls[0][0].data;
+    expect(created.paymentIntent).toMatch(/^premint_/);
+    expect(created.paymentStatus).toBe(PaymentStatus.PENDING);
+    expect(created.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(mockedPaymentCreate.mock.invocationCallOrder[0]).toBeLessThan(
+      mockCreatePaymentIntent.mock.invocationCallOrder[0],
+    );
+    expect(mockedPaymentUpdate.mock.calls[0][0]).toEqual({
+      where: {
+        id: "pay-new",
+        paymentIntent: created.paymentIntent,
+        paymentStatus: PaymentStatus.PENDING,
+      },
+      data: { paymentIntent: "order_new" },
+    });
+    // The order's notes name the row first, so a capture can find it if the fill never lands.
+    const notes = mockCreatePaymentIntent.mock.calls[0][0].metadata;
+    expect(Object.keys(notes)[0]).toBe("familiarisePaymentId");
+    expect(notes.familiarisePaymentId).toBe("pay-new");
+  });
+
+  it("a gateway failure after the row write expires the pre-mint row", async () => {
+    mockCreatePaymentIntent.mockRejectedValueOnce(new Error("gateway down"));
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      "gateway down",
+    );
+    const marker = mockedPaymentCreate.mock.calls[0][0].data.paymentIntent;
+    expect(mockedPaymentUpdate).toHaveBeenCalledWith({
+      where: {
+        id: "pay-new",
+        paymentIntent: marker,
+        paymentStatus: PaymentStatus.PENDING,
+      },
+      data: {
+        paymentStatus: PaymentStatus.EXPIRED,
+        expiresAt: expect.any(Date),
+      },
+    });
+  });
+
+  it("a crash's pre-mint row is never handed back; the next mint re-mints into it with no tombstone", async () => {
+    state.appointmentPayments = [
+      taxedRow({
+        id: "pay-crashed",
+        paymentIntent: "premint_crashed",
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    ];
+
+    const result = await createApprovalPaymentIntent(mintParams());
+
+    expect(result.paymentIntentId).toBe("order_new");
+    expect(mockedPaymentUpdate.mock.calls[0][0].where).toEqual({
+      id: "pay-crashed",
+      paymentStatus: PaymentStatus.PENDING,
+      paymentIntent: "premint_crashed",
+    });
+    expect(mockTx.legDeleteMany).toHaveBeenCalledWith({
+      where: { paymentId: "pay-crashed" },
+    });
+    expect(mockTx.paymentCreate).not.toHaveBeenCalled();
+  });
+
+  it("a fill that loses its CAS tombstones the order it just minted", async () => {
+    mockedPaymentUpdate.mockResolvedValueOnce({ count: 0 });
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      ApprovalPaymentExistsError,
+    );
+    expect(mockTombstone).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntent: "order_new" }),
+    );
+  });
+
+  it("a fill that throws tombstones the minted order and expires the pre-mint row", async () => {
+    const boom = new Error("db down");
+    mockedPaymentUpdate.mockRejectedValueOnce(boom);
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toBe(boom);
+    expect(mockTombstone).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntent: "order_new" }),
+    );
+    expect(mockedPaymentUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentStatus: PaymentStatus.EXPIRED }),
+      }),
+    );
+  });
+
+  it("a fill and tombstone that both fail still log both ids for recovery", async () => {
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockedPaymentUpdate.mockRejectedValueOnce(new Error("db down"));
+    mockTombstone.mockResolvedValueOnce(false);
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      "db down",
+    );
+    const logged = errorLog.mock.calls.map((call) => String(call[0]));
+    expect(logged).toContainEqual(
+      expect.stringContaining('"event":"approval_mint_order_unrecorded"'),
+    );
+    expect(logged.join("\n")).toContain('"orderId":"order_new"');
+    errorLog.mockRestore();
+  });
+
+  it("still mints for a paused expert: an approved request stays payable", async () => {
+    state.consultationPlan = {
+      ...state.consultationPlan,
+      consultantProfile: { acceptingRequests: false },
+    };
+
+    const result = await createApprovalPaymentIntent(mintParams());
+
+    expect(result.paymentIntentId).toBe("order_new");
+  });
+});
+
 describe("duplicate-payment guard sees approval payments (#1181)", () => {
   it("REUSES a PENDING payment hanging off the same appointment instead of minting a parallel order", async () => {
     state.appointmentPayments = [taxedRow()];
@@ -322,10 +458,25 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
       originalAmount: 500_000,
       taxAmount: 90_000,
     });
+    // The replaced order keeps a row: an EXPIRED, appointment-less tombstone.
+    const tombstone = mockTx.paymentCreate.mock.calls[0][0].data;
+    expect(tombstone).toMatchObject({
+      paymentIntent: "order_pretax",
+      paymentStatus: PaymentStatus.EXPIRED,
+      userId: CUID,
+    });
+    expect(tombstone.appointmentId).toBeNull();
+    expect(mockTx.legCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        paymentId: "pay-pretax",
+        source: "CARD",
+        amountPaise: TAXED_PLAN_PAISE,
+      }),
+    });
     expect(mockedLegUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { paymentId: "pay-pretax", source: "CARD" },
-        data: { amountPaise: TAXED_PLAN_PAISE, sourceRef: "order_new" },
+        data: { sourceRef: "order_new" },
       }),
     );
   });
@@ -343,7 +494,7 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     const result = await createApprovalPaymentIntent(mintParams());
 
     expect(result.paymentIntentId).toBe("order_new");
-    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(2);
     expect(mockedPaymentUpdate.mock.calls[0][0].data.buyerCountry).toBe("IN");
   });
 
@@ -363,7 +514,7 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     const result = await createApprovalPaymentIntent(mintParams());
 
     expect(result.paymentIntentId).toBe("order_new");
-    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(2);
     expect(mockedPaymentUpdate.mock.calls[0][0].data.isInternational).toBe(
       false,
     );
@@ -371,7 +522,7 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
 
   // CodeRabbit r2 — a capture landing between the pre-read and the re-mint
   // must not be reset to PENDING under a replaced order.
-  it("a re-mint that loses its CAS to a capture tombstones the new order and reports the row paid", async () => {
+  it("a re-mint that loses its CAS to a capture mints no order and reports the row paid", async () => {
     state.appointmentPayments = [
       {
         id: "pay-racing",
@@ -394,9 +545,8 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
       /already been paid/,
     );
     expect(mockedLegUpdate).not.toHaveBeenCalled();
-    expect(mockTombstone).toHaveBeenCalledWith(
-      expect.objectContaining({ paymentIntent: "order_new" }),
-    );
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockTombstone).not.toHaveBeenCalled();
   });
 
   it("a re-mint that loses its CAS to another mint hands back that mint's live link", async () => {
@@ -426,7 +576,8 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
       amount: TAXED_PLAN_PAISE,
       currency: Currency.INR,
     });
-    expect(mockTombstone).toHaveBeenCalledTimes(1);
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockTombstone).not.toHaveBeenCalled();
   });
 
   it("refuses when the appointment's payment already SUCCEEDED", async () => {
@@ -465,16 +616,28 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     expect(result.paymentIntentId).toBe("order_new");
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
     expect(mockedPaymentCreate).not.toHaveBeenCalled();
-    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(2);
     const [{ where, data }] = mockedPaymentUpdate.mock.calls[0];
     expect(where).toEqual({
       id: "pay-dead",
       paymentStatus: PaymentStatus.EXPIRED,
       paymentIntent: "order_dead",
     });
-    expect(data.paymentIntent).toBe("order_new");
+    expect(data.paymentIntent).toMatch(/^premint_/);
     expect(data.paymentStatus).toBe(PaymentStatus.PENDING);
     expect(data.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    // The order is written onto the row by a second CAS on its pre-mint marker.
+    expect(mockedPaymentUpdate.mock.calls[1][0]).toEqual({
+      where: {
+        id: "pay-dead",
+        paymentIntent: data.paymentIntent,
+        paymentStatus: PaymentStatus.PENDING,
+      },
+      data: { paymentIntent: "order_new" },
+    });
+    expect(mockTx.paymentCreate.mock.calls[0][0].data.paymentIntent).toBe(
+      "order_dead",
+    );
   });
 
   it("re-mints a PENDING intent that is past its own window", async () => {
@@ -492,7 +655,7 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     const result = await createApprovalPaymentIntent(mintParams());
 
     expect(result.paymentIntentId).toBe("order_new");
-    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(2);
     expect(mockedPaymentCreate).not.toHaveBeenCalled();
   });
 
@@ -642,7 +805,7 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
 
   // #1589 T-P0-02 — a concurrent double-accept: the loser's create dies on
   // Payment's [userId, appointmentId] unique and must surface as a 409.
-  it("maps the unique-pair P2002 on create to ApprovalPaymentExistsError and tombstones the minted order", async () => {
+  it("maps the unique-pair P2002 on the pre-mint create to ApprovalPaymentExistsError before any order exists", async () => {
     mockedPaymentCreate.mockRejectedValueOnce(
       new Prisma.PrismaClientKnownRequestError("unique", {
         code: "P2002",
@@ -654,33 +817,9 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
     await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
       ApprovalPaymentExistsError,
     );
-    // The gateway order was already minted; a late capture on it needs a
-    // row to be refunded against, so the loser leaves the #1695 tombstone.
-    expect(mockTombstone).toHaveBeenCalledTimes(1);
-    expect(mockTombstone.mock.calls[0][0]).toMatchObject({
-      paymentIntent: "order_new",
-      userId: CUID,
-      amount: 118_000,
-      originalAmount: 100_000,
-      taxAmount: 18_000,
-    });
-  });
-
-  // CodeRabbit r2 — without the tombstone row there is nothing for a late
-  // capture to land on, so the settled 409 is not honest; the original error
-  // keeps the caller's retryable 502 alive instead.
-  it("rethrows the original P2002 when the tombstone could not be persisted", async () => {
-    const collision = new Prisma.PrismaClientKnownRequestError("unique", {
-      code: "P2002",
-      clientVersion: "test",
-      meta: { target: ["userId", "appointmentId"] },
-    });
-    mockedPaymentCreate.mockRejectedValueOnce(collision);
-    mockTombstone.mockResolvedValueOnce(false);
-
-    await expect(createApprovalPaymentIntent(mintParams())).rejects.toBe(
-      collision,
-    );
+    // The row is written before the gateway call, so the loser minted nothing.
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    expect(mockTombstone).not.toHaveBeenCalled();
   });
 
   // CodeRabbit r2 — a stored price outside the safe-integer range is refused

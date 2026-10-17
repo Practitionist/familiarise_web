@@ -47,7 +47,7 @@ interface ConsultantDetailsForBooking {
   scheduleType?: string;
   /** #1703 D1 — absent on older payloads; INSTANT is the pre-#1703 behaviour. */
   bookingMode?: BookingMode;
-  /** #1703 D4 — false while the expert has paused new requests. */
+  /** False while the expert has paused new bookings of every kind. */
   acceptingRequests?: boolean;
   consultationPlans: Array<{
     id: string;
@@ -121,8 +121,7 @@ export default function ConsultationPricingToggle({
     consultantDetails.bookingMode ?? "INSTANT",
     selectedSlot?.isAllocated ?? false,
   );
-  const paused =
-    cta.action === "request" && consultantDetails.acceptingRequests === false;
+  const paused = consultantDetails.acceptingRequests === false;
 
   const availableSlots = useMemo((): SlotWithStatus[] => {
     if (
@@ -138,9 +137,7 @@ export default function ConsultationPricingToggle({
       ...slot,
       isAllocated: slot.isAllocated || false,
       bookingStatus: (slot.bookingStatus || "available") as
-        | "available"
-        | "partially-booked"
-        | "fully-booked",
+        "available" | "partially-booked" | "fully-booked",
     }));
 
     // Use breakDownSlotsPreservingStatus to create duration windows
@@ -165,6 +162,10 @@ export default function ConsultationPricingToggle({
   // pick is only applied when it still exists in the calendar (not past, not
   // fully booked), so a stale intent can never select an invalid slot.
   const purchaseIntentConsumedRef = useRef(false);
+  // One Idempotency-Key per (plan, slot) attempt; a retry of the same attempt resends it.
+  const requestAttemptRef = useRef<{ selection: string; key: string } | null>(
+    null,
+  );
   useEffect(() => {
     if (purchaseIntentConsumedRef.current) return;
     if (availableSlots.length === 0 || !session?.user?.id) return;
@@ -278,10 +279,19 @@ export default function ConsultationPricingToggle({
           selectedSlot.availabilityWindowId;
       }
 
+      const selection = `${activePlan.id}|${selectedSlot.startsAt}|${selectedSlot.endsAt}`;
+      if (requestAttemptRef.current?.selection !== selection) {
+        requestAttemptRef.current = {
+          selection,
+          key: `rq_${globalThis.crypto.randomUUID().replace(/-/g, "")}`,
+        };
+      }
+
       const response = await fetch("/api/scheduling/request-for-approval", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Idempotency-Key": requestAttemptRef.current.key,
         },
         body: JSON.stringify(requestBody),
       });
@@ -293,6 +303,7 @@ export default function ConsultationPricingToggle({
         response,
         "Failed to submit request for approval",
       );
+      requestAttemptRef.current = null;
 
       toast({
         title: "Request Submitted",

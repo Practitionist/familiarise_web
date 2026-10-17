@@ -23,6 +23,7 @@ import {
   OccurrenceCompletionStatus,
   type Prisma,
 } from "@prisma/client";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import {
   flushBackupInterestNotices,
   stageNoticesForAppointmentHolds,
@@ -84,6 +85,8 @@ export async function cancelPaymentIntent(
   paymentIntent: string,
   gateway: PaymentGateway,
 ): Promise<RazorpayOrderCancelResult> {
+  // A pre-mint row never reached the gateway, so there is nothing to cancel there.
+  if (isPreMintIntent(paymentIntent)) return "no_live_payment";
   try {
     switch (gateway) {
       // STRIPE has no client and no live orders; nothing to cancel.

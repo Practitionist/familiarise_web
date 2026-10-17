@@ -157,6 +157,8 @@ import {
   SlotTakenError,
 } from "@/lib/booking/booking-rule-error";
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
+import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
+import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 
 // Re-export for backward compatibility
 export const unifiedCheckoutSchema = checkoutSchema;
@@ -269,7 +271,103 @@ const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "ALREADY_RENEWED",
     "INVALID_RENEWAL_SOURCE",
     "WELCOME_DISCOUNT_IN_USE",
+    "PAYMENT_ALREADY_EXISTS",
+    "SEAT_REBUY_UNSUPPORTED",
+    "ALREADY_REGISTERED",
   ]);
+
+/** A confirmed seat for this buyer; a HELD one belongs to an open order the reuse step may resume. */
+function holdsSettledSeat(
+  appointment: { participants: { userId: string; status: string }[] } | null,
+  userId: string,
+): boolean {
+  return (
+    appointment?.participants.some(
+      (seat) => seat.userId === userId && seat.status !== "HELD",
+    ) ?? false
+  );
+}
+
+/** The buyer already holds a live seat: a modelled 409, never a fault. */
+function alreadyHeldSeatError(kind: "WEBINAR" | "CLASS"): BookingRuleError {
+  return new BookingRuleError(
+    "ALREADY_REGISTERED",
+    kind === "CLASS"
+      ? "You are already enrolled in this class"
+      : "You are already registered for this webinar",
+  );
+}
+
+const SEAT_CHECKOUT_OPEN_MESSAGE =
+  "You already have a checkout open for this seat. Finish it, or wait a few minutes for it to lapse and try again. You have not been charged for this attempt.";
+
+/** One Payment per buyer per event appointment: a second insert is a raced seat checkout, answered 409. */
+function asSeatPaymentConflict(err: unknown): unknown {
+  if (
+    !isUniqueViolationOn(err, "userId") ||
+    !isUniqueViolationOn(err, "appointmentId")
+  ) {
+    return err;
+  }
+  return new BookingRuleError(
+    "PAYMENT_ALREADY_EXISTS",
+    SEAT_CHECKOUT_OPEN_MESSAGE,
+  );
+}
+
+/** The buyer's earlier Payment on a shared webinar/class appointment, if any. */
+function findPriorSeatPayment(tx: Tx, userId: string, appointmentId: string) {
+  return tx.payment.findFirst({
+    where: { userId, appointmentId },
+    select: {
+      id: true,
+      userId: true,
+      paymentIntent: true,
+      gatewayPaymentId: true,
+      amount: true,
+      originalAmount: true,
+      taxAmount: true,
+      currency: true,
+      paymentGateway: true,
+      paymentStatus: true,
+      refunds: {
+        where: { status: "SUCCEEDED" },
+        select: { amountPaise: true },
+      },
+    },
+  });
+}
+
+/** Only an EXPIRED or FAILED seat payment is re-minted in place; every other prior row refuses. */
+function assertSeatRemintable(
+  prior: NonNullable<Awaited<ReturnType<typeof findPriorSeatPayment>>>,
+  kind: "WEBINAR" | "CLASS",
+): void {
+  if (
+    prior.paymentStatus === PaymentStatus.EXPIRED ||
+    prior.paymentStatus === PaymentStatus.FAILED
+  ) {
+    return;
+  }
+  if (prior.paymentStatus === PaymentStatus.PENDING) {
+    throw new BookingRuleError(
+      "PAYMENT_ALREADY_EXISTS",
+      SEAT_CHECKOUT_OPEN_MESSAGE,
+    );
+  }
+  const refundedPaise = (prior.refunds ?? []).reduce(
+    (total, refund) => total + sumPaise(refund.amountPaise),
+    0,
+  );
+  // A zero-amount seat has no refund rows, so only a priced seat can read as refunded.
+  if (prior.amount > 0 && refundedPaise >= prior.amount) {
+    throw new BookingRuleError(
+      "SEAT_REBUY_UNSUPPORTED",
+      "Your earlier seat here was refunded, and a refunded seat can't be bought again yet. Contact support if you'd like to rejoin.",
+    );
+  }
+  throw alreadyHeldSeatError(kind);
+}
 
 /**
  * Build payment metadata for both payment intents and webhook handlers
@@ -815,6 +913,16 @@ export async function tombstoneAbortedGatewayOrder(input: {
         expiresAt: new Date(),
         userId: input.userId,
         description: `Checkout aborted after the gateway order was minted (${input.reason.slice(0, 160)}). A late capture on this order is auto-refunded.`,
+        // The funding-leg trigger rejects a priced Payment with no legs at COMMIT.
+        ...(input.amount > 0 && {
+          legs: {
+            create: {
+              source: "CARD",
+              amountPaise: input.amount,
+              sourceRef: input.paymentIntent,
+            },
+          },
+        }),
       },
     });
     return true;
@@ -890,10 +998,20 @@ export async function calculateAmountAndValidate(
         visibility: string;
         organizationId?: string | null;
         status?: OfferingPlanStatus | null;
-        consultantProfile: { verificationStatus: string } | null;
+        consultantProfile: {
+          verificationStatus: string;
+          acceptingRequests: boolean;
+        } | null;
       },
       label: string,
     ) => {
+      // A paused expert takes no new booking of any kind; approved pay-links are minted elsewhere.
+      if (p.consultantProfile?.acceptingRequests === false) {
+        throw new BookingRuleError(
+          "NOT_ACCEPTING_BOOKINGS",
+          "This expert is not taking new bookings right now. Pick another expert, or try again later.",
+        );
+      }
       // #1527 Q4 — new sales only. Pay-links minted for approved requests
       // (approval-payment.ts) deliberately skip this, so unpublishing a plan
       // never strands a booking the consultant already accepted.
@@ -945,6 +1063,18 @@ export async function calculateAmountAndValidate(
         }
 
         assertPlanPurchasable(plan, "This consultation");
+        if (!validatedData.startsAt || !validatedData.endsAt) {
+          throw new BookingRuleError(
+            "WINDOW_DURATION_MISMATCH",
+            "Choose a start and end time for this consultation.",
+            400,
+          );
+        }
+        assertWindowMatchesPlanDuration(
+          plan,
+          validatedData.startsAt,
+          validatedData.endsAt,
+        );
 
         // #1463 — the buyer's User id, not their ConsulteeProfile id: the
         // duplicate-hold step compares it to `Payment.userId`.
@@ -1044,7 +1174,7 @@ export async function calculateAmountAndValidate(
                 occurrences: true,
                 participants: {
                   where: { ...liveParticipant(), role: "CONSULTEE" },
-                  select: { userId: true },
+                  select: { userId: true, status: true },
                 },
               },
             },
@@ -1080,6 +1210,17 @@ export async function calculateAmountAndValidate(
           });
         }
 
+        // A settled seat fails fast before any gateway order; a HELD one may still be resumed below.
+        const priorWebinarSeat = webinar.appointment
+          ? await findPriorSeatPayment(tx, userId, webinar.appointment.id)
+          : null;
+        if (priorWebinarSeat?.paymentStatus === PaymentStatus.SUCCEEDED) {
+          assertSeatRemintable(priorWebinarSeat, "WEBINAR");
+        }
+        if (holdsSettledSeat(webinar.appointment, userId)) {
+          throw alreadyHeldSeatError("WEBINAR");
+        }
+
         amount = plan.price;
         priceCurrency = plan.priceCurrency;
         break;
@@ -1100,7 +1241,7 @@ export async function calculateAmountAndValidate(
                 occurrences: true,
                 participants: {
                   where: { ...liveParticipant(), role: "CONSULTEE" },
-                  select: { userId: true },
+                  select: { userId: true, status: true },
                 },
               },
             },
@@ -1134,6 +1275,17 @@ export async function calculateAmountAndValidate(
             httpStatus: 409,
             code: "EVENT_FULL",
           });
+        }
+
+        // A settled seat fails fast before any gateway order; a HELD one may still be resumed below.
+        const priorClassSeat = classInstance.appointment
+          ? await findPriorSeatPayment(tx, userId, classInstance.appointment.id)
+          : null;
+        if (priorClassSeat?.paymentStatus === PaymentStatus.SUCCEEDED) {
+          assertSeatRemintable(priorClassSeat, "CLASS");
+        }
+        if (holdsSettledSeat(classInstance.appointment, userId)) {
+          throw alreadyHeldSeatError("CLASS");
         }
 
         // #1819 — a late joiner pays for the sessions left; the tx re-derives this.
@@ -3281,7 +3433,7 @@ export async function handleWebinarCheckout(
   // Check if user is already registered for this webinar
   const isAlreadyRegistered = isUserRegisteredForWebinar([webinar], userId);
   if (isAlreadyRegistered) {
-    throw new Error("You are already registered for this webinar");
+    throw alreadyHeldSeatError("WEBINAR");
   }
 
   // Create or reuse appointment
@@ -3430,7 +3582,7 @@ export async function handleClassCheckout(
 
   // Check if user is already enrolled - OPT-2: Use extracted utility
   if (isUserEnrolled(wrapper, userId)) {
-    throw new Error("You are already enrolled in this class");
+    throw alreadyHeldSeatError("CLASS");
   }
 
   // B11 — a partially-scheduled class (consultant hasn't allocated every
@@ -4277,6 +4429,16 @@ export async function handleCheckout(
       }
     }
 
+    // Every rail above sets an order or throws; the booking tx reads this narrowed value.
+    if (!paymentResponse) {
+      throw new PaymentError(
+        "Failed to create payment intent. Please try again later.",
+        "PAYMENT_INTENT_MISSING",
+        validatedData.paymentGateway,
+      );
+    }
+    const mintedOrder = paymentResponse;
+
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
     // This prevents race conditions by making validation see tentative bookings
     try {
@@ -4543,56 +4705,110 @@ export async function handleCheckout(
               }
             }
 
-            // Create payment record linked to appointment (if created)
-            // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
-            const payment = await tx.payment.create({
-              data: {
+            const paymentData = {
+              amount,
+              originalAmount,
+              // The licence invoice books the GST; a licensed booking books none.
+              taxAmount: isOrgLicensedPayment ? 0 : taxAmount,
+              currency,
+              paymentMethod: isOrgWalletPayment
+                ? "WALLET"
+                : isOrgInvoicedPayment
+                  ? "INVOICE"
+                  : isOrgLicensedPayment
+                    ? "LICENSE"
+                    : isZeroAmountPayment
+                      ? "CREDITS"
+                      : "CARD",
+              paymentIntent: mintedOrder.id,
+              clientIdempotencyKey:
+                validatedData.clientIdempotencyKey ??
+                globalThis.crypto.randomUUID(),
+              paymentGateway: validatedData.paymentGateway,
+              paymentStatus: skipPayment
+                ? PaymentStatus.SUCCEEDED
+                : PaymentStatus.PENDING,
+              isMockPayment:
+                isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
+              discountCodeId,
+              expiresAt: skipPayment ? null : holdExpiresAt,
+              buyerCountry: detectedBuyerCountry,
+              isInternational,
+              displayCurrencyAtCheckout,
+              exchangeRateAtCheckout,
+              consumerStateCode:
+                validatedData.consumerStateCode ??
+                consulteeBillingStateCode ??
+                null,
+              organizationId,
+              hostOrganizationId,
+              billingAccountId,
+              attributionSource,
+              attributionReferralId,
+              platformFeeBps,
+              welcomeDiscountPaise:
+                welcomeDiscountPaise > 0 ? welcomeDiscountPaise : null,
+            };
+
+            // Group events share one appointment, so a re-buy re-mints the buyer's dead row in place.
+            const isEventSeat =
+              validatedData.appointmentType === "WEBINAR" ||
+              validatedData.appointmentType === "CLASS";
+            const priorSeatPayment =
+              isEventSeat && createdAppointment
+                ? await findPriorSeatPayment(tx, userId, createdAppointment.id)
+                : null;
+            let payment: { id: string; amount: number; expiresAt: Date | null };
+            if (priorSeatPayment) {
+              assertSeatRemintable(
+                priorSeatPayment,
+                validatedData.appointmentType === "CLASS" ? "CLASS" : "WEBINAR",
+              );
+              // The old order's identity, kept apart from the row the CAS is about to rewrite.
+              const retiringIntent = { ...priorSeatPayment };
+              const reminted = await tx.payment.updateMany({
+                where: {
+                  id: priorSeatPayment.id,
+                  paymentStatus: {
+                    in: [PaymentStatus.EXPIRED, PaymentStatus.FAILED],
+                  },
+                },
+                data: {
+                  ...paymentData,
+                  gatewayPaymentId: null,
+                  capturedAt: null,
+                  deletedAt: null,
+                  description: null,
+                  receiptUrl: null,
+                  referralReleasedAt: null,
+                },
+              });
+              if (reminted.count !== 1) {
+                throw new BookingRuleError(
+                  "PAYMENT_ALREADY_EXISTS",
+                  SEAT_CHECKOUT_OPEN_MESSAGE,
+                );
+              }
+              await tombstonePriorIntent(
+                tx,
+                retiringIntent,
+                "seat re-bought after the earlier payment lapsed or failed",
+              );
+              payment = {
+                id: priorSeatPayment.id,
                 amount,
-                originalAmount,
-                // The licence invoice books the GST; a licensed booking books none.
-                taxAmount: isOrgLicensedPayment ? 0 : taxAmount,
-                currency,
-                paymentMethod: isOrgWalletPayment
-                  ? "WALLET"
-                  : isOrgInvoicedPayment
-                    ? "INVOICE"
-                    : isOrgLicensedPayment
-                      ? "LICENSE"
-                      : isZeroAmountPayment
-                        ? "CREDITS"
-                        : "CARD",
-                paymentIntent: paymentResponse!.id,
-                clientIdempotencyKey:
-                  validatedData.clientIdempotencyKey ??
-                  globalThis.crypto.randomUUID(),
-                paymentGateway: validatedData.paymentGateway,
-                paymentStatus: skipPayment
-                  ? PaymentStatus.SUCCEEDED
-                  : PaymentStatus.PENDING,
-                isMockPayment:
-                  isMockPayment || isZeroAmountPayment || isOrgSponsoredPayment,
-                userId: userId,
-                appointmentId: createdAppointment?.id || null,
-                discountCodeId,
-                expiresAt: skipPayment ? null : holdExpiresAt,
-                buyerCountry: detectedBuyerCountry,
-                isInternational,
-                displayCurrencyAtCheckout,
-                exchangeRateAtCheckout,
-                consumerStateCode:
-                  validatedData.consumerStateCode ??
-                  consulteeBillingStateCode ??
-                  null,
-                organizationId,
-                hostOrganizationId,
-                billingAccountId,
-                attributionSource,
-                attributionReferralId,
-                platformFeeBps,
-                welcomeDiscountPaise:
-                  welcomeDiscountPaise > 0 ? welcomeDiscountPaise : null,
-              },
-            });
+                expiresAt: paymentData.expiresAt,
+              };
+            } else {
+              payment = await tx.payment.create({
+                data: {
+                  ...paymentData,
+                  userId: userId,
+                  appointmentId: createdAppointment?.id || null,
+                },
+                select: { id: true, amount: true, expiresAt: true },
+              });
+            }
 
             if (
               validatedData.consumerStateCode &&
@@ -4824,7 +5040,7 @@ export async function handleCheckout(
                   paymentId: payment.id,
                   source: "CARD",
                   amountPaise: amount,
-                  sourceRef: paymentResponse!.id,
+                  sourceRef: mintedOrder.id,
                 },
               });
             }
@@ -5053,7 +5269,7 @@ export async function handleCheckout(
         // invoice has to be minted here too. Org-sponsored payments no-op
         // inside the minter by design; they are invoiced on the org series.
         await mintConsumerInvoiceBestEffort({
-          paymentIntent: paymentResponse!.id,
+          paymentIntent: mintedOrder.id,
         });
 
         const appointmentIdForChannels = result.appointmentId;
@@ -5105,7 +5321,7 @@ export async function handleCheckout(
         holdExpiresAt: result.holdExpiresAt?.toISOString() ?? null,
       };
     } catch (caught) {
-      const dbError = asWelcomeDiscountConflict(caught);
+      const dbError = asSeatPaymentConflict(asWelcomeDiscountConflict(caught));
       console.error("Failed to create payment record:", dbError);
       // Classification for Sentry tagging ONLY — deliberately NOT the same
       // list `preservedMessages` below uses for the rethrow decision, so

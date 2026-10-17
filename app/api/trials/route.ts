@@ -23,6 +23,8 @@ import { resolveOrgScope, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { planSaleRefusal } from "@/lib/api/plans/visibility";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { getAppUrl } from "@/lib/url";
 
 /**
@@ -297,7 +299,11 @@ export async function POST(request: NextRequest) {
       where: { id: subscriptionPlanId },
       include: {
         consultantProfile: {
-          select: { id: true, user: { select: { id: true } } },
+          select: {
+            id: true,
+            acceptingRequests: true,
+            user: { select: { id: true } },
+          },
         },
       },
     });
@@ -324,6 +330,16 @@ export async function POST(request: NextRequest) {
           code: "PLAN_NOT_PUBLISHED",
         },
         { status: 409 },
+      );
+    }
+
+    // A paused expert takes no new booking, a trial included.
+    if (subscriptionPlan.consultantProfile.acceptingRequests === false) {
+      return bookingRuleResponse(
+        new BookingRuleError(
+          "NOT_ACCEPTING_BOOKINGS",
+          "This expert is not taking new bookings right now. Pick another expert, or try again later.",
+        ),
       );
     }
 

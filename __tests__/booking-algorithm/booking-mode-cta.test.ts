@@ -30,6 +30,7 @@ describe("consultation CTA by booking mode", () => {
   it("the badge names the mode, and the pause when it applies", () => {
     expect(bookingModeBadge("INSTANT", true)).toBe("Instant booking");
     expect(bookingModeBadge("REQUEST", true)).toBe("Requests reviewed first");
-    expect(bookingModeBadge("REQUEST", false)).toBe("Not taking new requests");
+    expect(bookingModeBadge("REQUEST", false)).toBe("Not taking new bookings");
+    expect(bookingModeBadge("INSTANT", false)).toBe("Not taking new bookings");
   });
 });

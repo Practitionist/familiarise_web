@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus, type Prisma } from "@prisma/client";
 import {
   lockSlotBooking,
   unlockSlotBooking,
@@ -29,7 +29,10 @@ import {
   buildOccurrenceForWindow,
   intervalStartsOf,
 } from "@/lib/appointments/occurrences";
-import { RequestForApprovalSchema } from "@/schemas/slots";
+import {
+  RequestForApprovalSchema,
+  RequestIdempotencyKeySchema,
+} from "@/schemas/slots";
 import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
@@ -39,9 +42,60 @@ import {
   pausedRefusal,
 } from "@/lib/booking/request-caps";
 import { planSaleRefusal } from "@/lib/api/plans/visibility";
+import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
+
+const SUBMITTED_MESSAGE = "Request for approval submitted successfully";
+
+const REQUEST_RESPONSE_INCLUDE = {
+  consultationPlan: {
+    include: {
+      consultantProfile: PROFILE_WITH_USER_SELECT,
+    },
+  },
+  requestedBy: {
+    include: {
+      user: { select: { name: true } },
+    },
+  },
+  appointment: {
+    include: {
+      occurrences: true,
+    },
+  },
+} satisfies Prisma.ConsultationInclude;
+
+/** The original 201 for a retried key, or null when the key has created nothing yet. */
+async function replayRequest(
+  idempotencyKey: string | null,
+  userId: string,
+): Promise<NextResponse | null> {
+  if (!idempotencyKey) return null;
+  const original = await prisma.consultation.findUnique({
+    where: { requestIdempotencyKey: idempotencyKey },
+    include: REQUEST_RESPONSE_INCLUDE,
+  });
+  if (!original) return null;
+  if (original.requestedBy.userId !== userId) {
+    return NextResponse.json(
+      {
+        error: "This Idempotency-Key was already used for another request.",
+        code: "IDEMPOTENCY_KEY_REUSED",
+      },
+      { status: 422 },
+    );
+  }
+  return NextResponse.json(
+    { message: SUBMITTED_MESSAGE, data: original },
+    { status: 201 },
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await getSession();
@@ -56,6 +110,22 @@ export async function POST(req: NextRequest) {
     // Rate limit: 10 approval requests per hour per user
     const rl = await applyRateLimit(requestApprovalLimiter, session.user.id);
     if (rl) return rl;
+
+    const rawKey = req.headers.get("Idempotency-Key");
+    const keyResult =
+      rawKey === null ? null : RequestIdempotencyKeySchema.safeParse(rawKey);
+    if (keyResult && !keyResult.success) {
+      return NextResponse.json(
+        {
+          error: "Invalid Idempotency-Key header",
+          details: keyResult.error.issues,
+        },
+        { status: 400 },
+      );
+    }
+    const idempotencyKey = keyResult?.data ?? null;
+    const replayed = await replayRequest(idempotencyKey, session.user.id);
+    if (replayed) return replayed;
 
     const body = await req.json();
     const parseResult = RequestForApprovalSchema.safeParse(body);
@@ -190,22 +260,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (
-      typeof consultationPlan.durationInHours === "number" &&
-      consultationPlan.durationInHours > 0
-    ) {
-      const expectedDurationMs = Math.round(
-        consultationPlan.durationInHours * 60 * 60 * 1000,
-      );
-      if (endTime.getTime() - startTime.getTime() !== expectedDurationMs) {
-        return NextResponse.json(
-          {
-            error: `Requested slot duration must match the plan duration (${consultationPlan.durationInHours} hour(s)).`,
-            code: "INVALID_SLOT_DURATION",
-          },
-          { status: 400 },
-        );
-      }
+    try {
+      assertWindowMatchesPlanDuration(consultationPlan, startTime, endTime);
+    } catch (err) {
+      if (err instanceof BookingRuleError) return bookingRuleResponse(err);
+      throw err;
     }
 
     if (availabilityWindowWeeklyId && availabilityWindowCustomId) {
@@ -281,6 +340,13 @@ export async function POST(req: NextRequest) {
 
     try {
       consulteeLock = await lockConsulteeBooking(session.user.id);
+
+      // Under the consultee lock, so a concurrent same-key retry sees the first commit.
+      const replayedInLock = await replayRequest(
+        idempotencyKey,
+        session.user.id,
+      );
+      if (replayedInLock) return replayedInLock;
 
       // Anti-scalper cap (booking-journey audit B1): every PENDING request
       // holds a tentative slot that blocks the consultant's calendar. The
@@ -418,6 +484,7 @@ export async function POST(req: NextRequest) {
                 requestedById: consulteeProfile.id,
                 status: AppointmentStatus.PENDING,
                 requestNotes: requestNotes,
+                requestIdempotencyKey: idempotencyKey,
                 appointment: {
                   create: {
                     appointmentType: "CONSULTATION",
@@ -430,23 +497,7 @@ export async function POST(req: NextRequest) {
                   },
                 },
               },
-              include: {
-                consultationPlan: {
-                  include: {
-                    consultantProfile: PROFILE_WITH_USER_SELECT,
-                  },
-                },
-                requestedBy: {
-                  include: {
-                    user: { select: { name: true } },
-                  },
-                },
-                appointment: {
-                  include: {
-                    occurrences: true,
-                  },
-                },
-              },
+              include: REQUEST_RESPONSE_INCLUDE,
             });
             // #1544 / #1554 — the roster is born with the request: this was the
             // one creation path that never wrote AppointmentParticipant.
@@ -550,6 +601,14 @@ export async function POST(req: NextRequest) {
           }),
         );
 
+        if (isUniqueViolationOn(lockError, "requestIdempotencyKey")) {
+          const replayedRace = await replayRequest(
+            idempotencyKey,
+            session.user.id,
+          );
+          if (replayedRace) return replayedRace;
+        }
+
         // #1169 PR 1 — Redis-down fails closed with a structured 503; without
         // this branch the outage fell through to the generic 500 below.
         if (lockError instanceof BookingLockUnavailableError) {
@@ -613,7 +672,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       {
-        message: "Request for approval submitted successfully",
+        message: SUBMITTED_MESSAGE,
         data: createdConsultation,
       },
       { status: 201 },

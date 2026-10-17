@@ -519,6 +519,9 @@ const BUSINESS_ERROR_ENTRIES = [
       "CLASS_PRICE_CHANGED",
       // #1743 — subscription renewal already linked to an active successor.
       "ALREADY_RENEWED",
+      // A refunded seat cannot be bought again yet; a paused expert takes no new booking.
+      "SEAT_REBUY_UNSUPPORTED",
+      "NOT_ACCEPTING_BOOKINGS",
     ] as const
   ).map((code) => ({
     code,
@@ -532,6 +535,17 @@ const BUSINESS_ERROR_ENTRIES = [
   },
   {
     code: "BACKUP_WINDOW_PAST",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
+  // The buyer already holds a live seat on this webinar or class.
+  {
+    code: "ALREADY_REGISTERED",
+    errorType: ErrorTypes.DUPLICATE_REGISTRATION,
+    httpStatus: 409,
+  },
+  {
+    code: "WINDOW_DURATION_MISMATCH",
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
   },

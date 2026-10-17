@@ -18,6 +18,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
 import prisma from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
@@ -361,7 +362,13 @@ async function reconcilePaymentStatusUnlocked(
         continue;
       }
       // For Razorpay, paymentIntent might be orderId
-      lookup = await getRazorpayPaymentStatus(payment.paymentIntent);
+      // A pre-mint row never reached the gateway: terminal for this row, no call needed.
+      lookup = isPreMintIntent(payment.paymentIntent)
+        ? {
+            kind: "unknown_id",
+            detail: "pre-mint row; no gateway order exists",
+          }
+        : await getRazorpayPaymentStatus(payment.paymentIntent);
     } else if (payment.createdAt < orphanCutoff) {
       lookup = {
         kind: "unknown_id",
