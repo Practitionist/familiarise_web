@@ -273,7 +273,30 @@ const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<BusinessErrorCode> =
     "WELCOME_DISCOUNT_IN_USE",
     "PAYMENT_ALREADY_EXISTS",
     "SEAT_REBUY_UNSUPPORTED",
+    "ALREADY_REGISTERED",
   ]);
+
+/** A confirmed seat for this buyer; a HELD one belongs to an open order the reuse step may resume. */
+function holdsSettledSeat(
+  appointment: { participants: { userId: string; status: string }[] } | null,
+  userId: string,
+): boolean {
+  return (
+    appointment?.participants.some(
+      (seat) => seat.userId === userId && seat.status !== "HELD",
+    ) ?? false
+  );
+}
+
+/** The buyer already holds a live seat: a modelled 409, never a fault. */
+function alreadyHeldSeatError(kind: "WEBINAR" | "CLASS"): BookingRuleError {
+  return new BookingRuleError(
+    "ALREADY_REGISTERED",
+    kind === "CLASS"
+      ? "You are already enrolled in this class"
+      : "You are already registered for this webinar",
+  );
+}
 
 const SEAT_CHECKOUT_OPEN_MESSAGE =
   "You already have a checkout open for this seat. Finish it, or wait a few minutes for it to lapse and try again. You have not been charged for this attempt.";
@@ -318,7 +341,7 @@ function findPriorSeatPayment(tx: Tx, userId: string, appointmentId: string) {
 /** Only an EXPIRED or FAILED seat payment is re-minted in place; every other prior row refuses. */
 function assertSeatRemintable(
   prior: NonNullable<Awaited<ReturnType<typeof findPriorSeatPayment>>>,
-  alreadyHeldMessage: string,
+  kind: "WEBINAR" | "CLASS",
 ): void {
   if (
     prior.paymentStatus === PaymentStatus.EXPIRED ||
@@ -336,13 +359,14 @@ function assertSeatRemintable(
     (total, refund) => total + sumPaise(refund.amountPaise),
     0,
   );
-  if (refundedPaise >= prior.amount) {
+  // A zero-amount seat has no refund rows, so only a priced seat can read as refunded.
+  if (prior.amount > 0 && refundedPaise >= prior.amount) {
     throw new BookingRuleError(
       "SEAT_REBUY_UNSUPPORTED",
       "Your earlier seat here was refunded, and a refunded seat can't be bought again yet. Contact support if you'd like to rejoin.",
     );
   }
-  throw new Error(alreadyHeldMessage);
+  throw alreadyHeldSeatError(kind);
 }
 
 /**
@@ -1150,7 +1174,7 @@ export async function calculateAmountAndValidate(
                 occurrences: true,
                 participants: {
                   where: { ...liveParticipant(), role: "CONSULTEE" },
-                  select: { userId: true },
+                  select: { userId: true, status: true },
                 },
               },
             },
@@ -1186,15 +1210,15 @@ export async function calculateAmountAndValidate(
           });
         }
 
-        // A settled seat fails fast before any gateway order; an open one may still be resumed below.
+        // A settled seat fails fast before any gateway order; a HELD one may still be resumed below.
         const priorWebinarSeat = webinar.appointment
           ? await findPriorSeatPayment(tx, userId, webinar.appointment.id)
           : null;
         if (priorWebinarSeat?.paymentStatus === PaymentStatus.SUCCEEDED) {
-          assertSeatRemintable(
-            priorWebinarSeat,
-            "You are already registered for this webinar",
-          );
+          assertSeatRemintable(priorWebinarSeat, "WEBINAR");
+        }
+        if (holdsSettledSeat(webinar.appointment, userId)) {
+          throw alreadyHeldSeatError("WEBINAR");
         }
 
         amount = plan.price;
@@ -1217,7 +1241,7 @@ export async function calculateAmountAndValidate(
                 occurrences: true,
                 participants: {
                   where: { ...liveParticipant(), role: "CONSULTEE" },
-                  select: { userId: true },
+                  select: { userId: true, status: true },
                 },
               },
             },
@@ -1253,15 +1277,15 @@ export async function calculateAmountAndValidate(
           });
         }
 
-        // A settled seat fails fast before any gateway order; an open one may still be resumed below.
+        // A settled seat fails fast before any gateway order; a HELD one may still be resumed below.
         const priorClassSeat = classInstance.appointment
           ? await findPriorSeatPayment(tx, userId, classInstance.appointment.id)
           : null;
         if (priorClassSeat?.paymentStatus === PaymentStatus.SUCCEEDED) {
-          assertSeatRemintable(
-            priorClassSeat,
-            "You are already enrolled in this class",
-          );
+          assertSeatRemintable(priorClassSeat, "CLASS");
+        }
+        if (holdsSettledSeat(classInstance.appointment, userId)) {
+          throw alreadyHeldSeatError("CLASS");
         }
 
         // #1819 — a late joiner pays for the sessions left; the tx re-derives this.
@@ -3409,7 +3433,7 @@ export async function handleWebinarCheckout(
   // Check if user is already registered for this webinar
   const isAlreadyRegistered = isUserRegisteredForWebinar([webinar], userId);
   if (isAlreadyRegistered) {
-    throw new Error("You are already registered for this webinar");
+    throw alreadyHeldSeatError("WEBINAR");
   }
 
   // Create or reuse appointment
@@ -3558,7 +3582,7 @@ export async function handleClassCheckout(
 
   // Check if user is already enrolled - OPT-2: Use extracted utility
   if (isUserEnrolled(wrapper, userId)) {
-    throw new Error("You are already enrolled in this class");
+    throw alreadyHeldSeatError("CLASS");
   }
 
   // B11 — a partially-scheduled class (consultant hasn't allocated every
@@ -4738,9 +4762,7 @@ export async function handleCheckout(
             if (priorSeatPayment) {
               assertSeatRemintable(
                 priorSeatPayment,
-                validatedData.appointmentType === "CLASS"
-                  ? "You are already enrolled in this class"
-                  : "You are already registered for this webinar",
+                validatedData.appointmentType === "CLASS" ? "CLASS" : "WEBINAR",
               );
               // The old order's identity, kept apart from the row the CAS is about to rewrite.
               const retiringIntent = { ...priorSeatPayment };

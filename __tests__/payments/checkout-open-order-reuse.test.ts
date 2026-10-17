@@ -283,6 +283,8 @@ function webinarRow() {
     },
     appointment: {
       id: "appt-w",
+      // The include always returns the live-seat array; nobody holds a seat here.
+      participants: [],
       occurrences: [
         {
           id: "slot-1",

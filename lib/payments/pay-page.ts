@@ -21,7 +21,7 @@ import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
 import {
   PRE_MINT_INTENT_PREFIX,
   isPreMintIntent,
-} from "@/lib/payments/operations/approval-payment";
+} from "@/lib/payments/pre-mint-intent";
 import { remintTrialPayLink } from "@/lib/trials/pay-link";
 import { goHref } from "@/lib/dashboard/go";
 

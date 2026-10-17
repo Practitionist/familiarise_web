@@ -23,7 +23,8 @@ export type BookingRuleCode =
   | "SCHEDULE_CONFLICT"
   | "WINDOW_DURATION_MISMATCH"
   | "SEAT_REBUY_UNSUPPORTED"
-  | "NOT_ACCEPTING_BOOKINGS";
+  | "NOT_ACCEPTING_BOOKINGS"
+  | "ALREADY_REGISTERED";
 
 export class BookingRuleError extends Error {
   constructor(

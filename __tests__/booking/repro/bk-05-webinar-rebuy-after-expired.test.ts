@@ -133,12 +133,18 @@ beforeEach(() => {
       if (row) Object.assign(row, data);
       return row ?? { id: where.id, ...data };
     },
+    // Honours every WHERE field, `{ in: [...] }` included, so a stale CAS matches nothing.
     "payment.updateMany": (args) => {
       const { where, data } = args as { where: Row; data: Row };
-      const hit = payments.filter(
-        (p) =>
-          (!where.id || p.id === where.id) &&
-          (!where.userId || p.userId === where.userId),
+      const hit = payments.filter((p) =>
+        Object.entries(where).every(([field, expected]) =>
+          typeof expected === "object" &&
+          expected !== null &&
+          "in" in expected &&
+          Array.isArray(expected.in)
+            ? expected.in.includes(p[field])
+            : p[field] === expected,
+        ),
       );
       hit.forEach((p) => Object.assign(p, data));
       return { count: hit.length };
@@ -202,6 +208,54 @@ describe("the other prior-row shapes on the same seat", () => {
     });
     expect(createPaymentIntent).not.toHaveBeenCalled();
     expect(payments).toHaveLength(1);
+  });
+
+  it("a settled seat with no prior payment refuses ALREADY_REGISTERED before any gateway order", async () => {
+    payments = [];
+    overrides["webinar.findUnique"] = () => ({
+      ...webinar,
+      appointment: {
+        ...webinar.appointment,
+        participants: [{ userId: BUYER, status: "CONFIRMED" }],
+      },
+    });
+    const { error } = await run();
+    expect(error).toMatchObject({
+      httpStatus: 409,
+      code: "ALREADY_REGISTERED",
+    });
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+  });
+
+  it("a zero-amount settled seat is not described as refunded", async () => {
+    Object.assign(payments[0], { paymentStatus: "SUCCEEDED", amount: 0 });
+    const { error } = await run();
+    expect(error).toMatchObject({
+      httpStatus: 409,
+      code: "ALREADY_REGISTERED",
+    });
+  });
+
+  it("two re-buys that read the same EXPIRED row: only one claims it, the other answers 409", async () => {
+    // Both attempts read the row before either CAS committed.
+    const staleRead = { ...payments[0] };
+    overrides["payment.findFirst"] = () => ({ ...staleRead });
+
+    const first = await run();
+    const second = await run();
+
+    expect(first.error).toBeNull();
+    expect(second.error).toMatchObject({
+      httpStatus: 409,
+      code: "PAYMENT_ALREADY_EXISTS",
+    });
+    expect(payments[0]).toMatchObject({
+      paymentIntent: "order_NEW",
+      paymentStatus: "PENDING",
+    });
+    expect(payments.filter((p) => p.paymentIntent === OLD_INTENT)).toHaveLength(
+      1,
+    );
   });
 
   it("answers a raced P2002 on (userId, appointmentId) with a typed 409", async () => {

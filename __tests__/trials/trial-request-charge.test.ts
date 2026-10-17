@@ -102,8 +102,9 @@ beforeEach(() => {
   plan.acceptingRequests = true;
 });
 
-it("a paused expert takes no trial request: 409 NOT_ACCEPTING_BOOKINGS, nothing written", async () => {
+it("a paused expert takes no paid trial request: 409 NOT_ACCEPTING_BOOKINGS, nothing written", async () => {
   plan.acceptingRequests = false;
+  plan.trialPriceInPaise = 50_000;
   const res = await post();
   expect(res.status).toBe(409);
   expect((await res.json()).code).toBe("NOT_ACCEPTING_BOOKINGS");

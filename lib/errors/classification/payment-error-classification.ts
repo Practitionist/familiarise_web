@@ -538,6 +538,12 @@ const BUSINESS_ERROR_ENTRIES = [
     errorType: ErrorTypes.BOOKING_RULE,
     httpStatus: 400,
   },
+  // The buyer already holds a live seat on this webinar or class.
+  {
+    code: "ALREADY_REGISTERED",
+    errorType: ErrorTypes.DUPLICATE_REGISTRATION,
+    httpStatus: 409,
+  },
   {
     code: "WINDOW_DURATION_MISMATCH",
     errorType: ErrorTypes.BOOKING_RULE,

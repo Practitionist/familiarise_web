@@ -76,6 +76,7 @@ const txStub = {
   webinar: { findUnique: webinarFindUnique, updateMany: webinarUpdateMany },
   class: { findUnique: classFindUnique, updateMany: classUpdateMany },
   bookingStatusHistory: { create: historyCreate },
+  paymentLeg: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
 };
 
 jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
@@ -679,6 +680,65 @@ describe("a late capture on a re-mint tombstone", () => {
         paymentId: "pay-tombstone",
         amountPaise: 10000,
       }),
+    );
+  });
+});
+
+// The order notes name the pre-written row, so a capture survives a fill and tombstone that both failed.
+describe("a capture whose order was never written onto its row", () => {
+  const ORDER = "order-unrecorded";
+  const PRE_MINT = "premint_abc";
+  const notes = { ...WEBINAR_METADATA, familiarisePaymentId: "pay-premint" };
+  type FindArgs = { where: { id?: string; paymentIntent?: string } };
+
+  /** The row by id carries `intentById`; by order id it appears only once adopted. */
+  function rows(intentById: string) {
+    let adopted = false;
+    paymentUpdateMany.mockImplementation(
+      async (args: { data: { paymentIntent?: string } }) => {
+        if (args.data.paymentIntent === ORDER) adopted = true;
+        return { count: 1 };
+      },
+    );
+    paymentFindUnique.mockImplementation(async ({ where }: FindArgs) => {
+      if (where.id) return { paymentIntent: intentById };
+      return adopted
+        ? pendingSeatPayment({ id: "pay-premint", paymentIntent: ORDER })
+        : null;
+    });
+  }
+
+  it("adopts the pre-mint row the notes name by CAS, then confirms it", async () => {
+    rows(PRE_MINT);
+
+    const outcome = await handlePaymentSuccess(ORDER, notes, 10000);
+
+    expect(outcome).toBe("confirmed");
+    expect(paymentUpdateMany).toHaveBeenCalledWith({
+      where: { id: "pay-premint", paymentIntent: PRE_MINT },
+      data: { paymentIntent: ORDER },
+    });
+  });
+
+  it("never hijacks a row whose intent is a real order", async () => {
+    rows("order-someone-else");
+
+    await expect(handlePaymentSuccess(ORDER, notes, 10000)).rejects.toThrow(
+      "Payment record not found",
+    );
+    expect(paymentUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { paymentIntent: ORDER } }),
+    );
+  });
+
+  it("without the notes key, answers as before: no row", async () => {
+    rows(PRE_MINT);
+
+    await expect(
+      handlePaymentSuccess(ORDER, WEBINAR_METADATA, 10000),
+    ).rejects.toThrow("Payment record not found");
+    expect(paymentFindUnique).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "pay-premint" } }),
     );
   });
 });

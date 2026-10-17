@@ -21,6 +21,10 @@ import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/operations/checkout";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  PRE_MINT_INTENT_PREFIX,
+  isPreMintIntent,
+} from "@/lib/payments/pre-mint-intent";
 import { sumPaise } from "@/lib/payments/utils/money";
 import {
   AppointmentStatus,
@@ -105,13 +109,6 @@ const APPROVAL_PAYMENT_LOCK_TTL = 30_000; // 30 seconds
 
 /** How long an approval pay-link stays payable once minted (#1703 D2: 24 h). */
 const APPROVAL_PAYMENT_WINDOW_MS = APPROVAL_PAYMENT_EXPIRATION_MS;
-
-/** A Payment row written before its gateway order exists carries this intent prefix. */
-export const PRE_MINT_INTENT_PREFIX = "premint_";
-
-export function isPreMintIntent(paymentIntent: string): boolean {
-  return paymentIntent.startsWith(PRE_MINT_INTENT_PREFIX);
-}
 
 /**
  * #1319 review — the request behind a dead intent is already gone, so there is
@@ -294,8 +291,6 @@ export async function createApprovalPaymentIntent(
       }
     }
 
-    // Build metadata for webhook processing
-    const metadata = buildApprovalMetadata(params, { taxAmount });
     // #1861 L1 — one deadline for the gateway's capture window and the row.
     const holdExpiresAt = new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS);
     const description = `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`;
@@ -330,6 +325,11 @@ export async function createApprovalPaymentIntent(
           });
     if ("settled" in claim) return claim.settled;
     const paymentId = claim.paymentId;
+    // First key, so the 15-key notes cap never drops it: a capture finds this row even if the fill below fails.
+    const metadata = {
+      familiarisePaymentId: paymentId,
+      ...buildApprovalMetadata(params, { taxAmount }),
+    };
 
     // Create payment intent with gateway. Imported here, not at module load:
     // the barrel evaluates the Razorpay core and its test-key guard.
@@ -380,7 +380,20 @@ export async function createApprovalPaymentIntent(
       });
     } catch (fillError) {
       // The minted order must still land on a row, and the pre-mint row must not stay payable.
-      await tombstoneMintedOrder("approval mint could not record its order");
+      const recorded = await tombstoneMintedOrder(
+        "approval mint could not record its order",
+      );
+      if (!recorded) {
+        // Sentry may drop this; the log line keeps both ids for a by-hand refund.
+        console.error(
+          JSON.stringify({
+            event: "approval_mint_order_unrecorded",
+            paymentId,
+            preMintIntent,
+            orderId: paymentResponse.id,
+          }),
+        );
+      }
       await expirePreMintRow(paymentId, preMintIntent);
       throw fillError;
     }

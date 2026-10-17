@@ -306,6 +306,10 @@ describe("the approval mint is durable before the gateway call", () => {
       },
       data: { paymentIntent: "order_new" },
     });
+    // The order's notes name the row first, so a capture can find it if the fill never lands.
+    const notes = mockCreatePaymentIntent.mock.calls[0][0].metadata;
+    expect(Object.keys(notes)[0]).toBe("familiarisePaymentId");
+    expect(notes.familiarisePaymentId).toBe("pay-new");
   });
 
   it("a gateway failure after the row write expires the pre-mint row", async () => {
@@ -375,6 +379,22 @@ describe("the approval mint is durable before the gateway call", () => {
         data: expect.objectContaining({ paymentStatus: PaymentStatus.EXPIRED }),
       }),
     );
+  });
+
+  it("a fill and tombstone that both fail still log both ids for recovery", async () => {
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+    mockedPaymentUpdate.mockRejectedValueOnce(new Error("db down"));
+    mockTombstone.mockResolvedValueOnce(false);
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      "db down",
+    );
+    const logged = errorLog.mock.calls.map((call) => String(call[0]));
+    expect(logged).toContainEqual(
+      expect.stringContaining('"event":"approval_mint_order_unrecorded"'),
+    );
+    expect(logged.join("\n")).toContain('"orderId":"order_new"');
+    errorLog.mockRestore();
   });
 
   it("still mints for a paused expert: an approved request stays payable", async () => {
