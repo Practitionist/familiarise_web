@@ -30,8 +30,8 @@ const CSP_HEADER_KEY = CSP_ENFORCE
 
 Launch ships `Content-Security-Policy-Report-Only`. A drifted allow-list entry
 under enforcement would break Razorpay checkout or Stream calls for every
-customer at once, so violations are collected first and triaged in Sentry. Once
-the stream is quiet, set `ENABLE_CSP_ENFORCE=true` and redeploy. Leaving the
+customer at once, so violations are watched first in the browser console of a
+deploy preview. Once only noise remains, set `ENABLE_CSP_ENFORCE=true` and redeploy. Leaving the
 policy advisory indefinitely is an audit finding: a report-only header logs an
 injection, it does not stop one.
 
@@ -42,17 +42,17 @@ injection, it does not stop one.
 ```mermaid
 flowchart LR
   B["Browser renders a page"] -->|"loads a resource outside the allow-list"| EVAL{"Built with ENABLE_CSP_ENFORCE=true?"}
-  EVAL -->|"no (default)"| ALLOW["resource LOADS, violation reported"]
+  EVAL -->|"no (default)"| ALLOW["resource LOADS, violation logged in the browser console only"]
   EVAL -->|"yes"| BLOCK["resource BLOCKED, violation reported"]
-  ALLOW --> SENTRY["Sentry security endpoint"]
-  BLOCK --> SENTRY
-  SENTRY --> OP["operator triages by violated directive"]
+  ALLOW --> OP["operator watches the console on a deploy preview"]
+  BLOCK --> SENTRY["Sentry security endpoint"]
+  SENTRY --> OP2["operator triages by violated directive"]
 ```
 
 ### Where reports go
 
-Reports go straight to Sentry's security-report endpoint; the app has no report
-route of its own. `next.config.mjs` derives the URL from
+Only an enforced build sends reports. They go straight to Sentry's
+security-report endpoint; the app has no report route of its own. `next.config.mjs` derives the URL from
 `NEXT_PUBLIC_SENTRY_DSN` (`https://<key>@<host>/<project>`):
 
 ```text
@@ -62,15 +62,16 @@ https://<host>/api/<project>/security/?sentry_key=<key>[&sentry_environment=<env
 `sentry_environment` is added when `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is set. The
 URL is sent twice: as `report-uri` (deprecated, but the only mechanism some
 browsers implement) and as `report-to csp-endpoint`, with the group bound by a
-`Reporting-Endpoints` header. With no DSN (local dev) the policy carries no
-report directive and no `Reporting-Endpoints` header.
+`Reporting-Endpoints` header. In a report-only build, or with no DSN (local
+dev), the policy carries no report directive and no `Reporting-Endpoints`
+header: browser reports bypass the SDK and each one is a billable error event.
 
 ## Header inventory (production)
 
 | Header                                | Value                                                          | Notes                                                                       |
 | ------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `Content-Security-Policy-Report-Only` | see `next.config.mjs` `CSP_DIRECTIVES`                         | becomes `Content-Security-Policy` when built with `ENABLE_CSP_ENFORCE=true` |
-| `Reporting-Endpoints`                 | `csp-endpoint="<Sentry security URL>"`                         | omitted when there is no DSN                                                |
+| `Reporting-Endpoints`                 | `csp-endpoint="<Sentry security URL>"`                         | omitted in report-only builds and without a DSN                             |
 | `Strict-Transport-Security`           | `max-age=63072000; includeSubDomains; preload`                 | 2-year window + preload-list eligibility                                    |
 | `X-Frame-Options`                     | `DENY`                                                         | Anti-clickjacking                                                           |
 | `X-Content-Type-Options`              | `nosniff`                                                      | Anti-MIME-sniffing                                                          |
@@ -102,8 +103,8 @@ blocked once enforcement is on.
 | **`object-src`**  | **`'none'`**                                                                                                                                                                                                                                                |
 | **`base-uri`**    | **`'self'`**                                                                                                                                                                                                                                                |
 | **`form-action`** | **`'self'`**                                                                                                                                                                                                                                                |
-| `report-uri`      | the Sentry security URL (omitted without a DSN)                                                                                                                                                                                                             |
-| `report-to`       | `csp-endpoint` (omitted without a DSN)                                                                                                                                                                                                                      |
+| `report-uri`      | the Sentry security URL (enforced builds with a DSN only)                                                                                                                                                                                                   |
+| `report-to`       | `csp-endpoint` (enforced builds with a DSN only)                                                                                                                                                                                                            |
 
 ### The three directives that were simply absent
 
@@ -179,7 +180,7 @@ payments for every customer at once.
 
 Step-by-step in the
 [CSP runbook](../50-operations/02-runbooks.md#content-security-policy-csp).
-In short: triage the Sentry reports until only noise remains, set
+In short: watch the console on a deploy preview until only noise remains, set
 `ENABLE_CSP_ENFORCE=true` in the production build environment and redeploy. To
 roll back, remove the variable (or set it to anything but `true`) and redeploy.
 
@@ -194,11 +195,21 @@ curl -sI https://<production-host>/ | grep -iE 'content-security|reporting-endpo
 Expected at launch (report-only):
 
 ```text
-content-security-policy-report-only: default-src 'self'; ...; report-uri https://<sentry-host>/api/<project>/security/?sentry_key=<key>...; report-to csp-endpoint
-reporting-endpoints: csp-endpoint="https://<sentry-host>/api/<project>/security/?sentry_key=<key>..."
+content-security-policy-report-only: default-src 'self'; ...; form-action 'self'
 strict-transport-security: max-age=63072000; includeSubDomains; preload
 x-frame-options: DENY
 ```
 
-After enforcement the first line starts `content-security-policy:` instead. No
-`report-uri` means the build had no `NEXT_PUBLIC_SENTRY_DSN`.
+After enforcement the first line starts `content-security-policy:` instead and
+ends with `report-uri ...; report-to csp-endpoint`, and a `reporting-endpoints`
+line appears. No `report-uri` on an enforced build means it had no
+`NEXT_PUBLIC_SENTRY_DSN`, or the DSN could not be parsed or lacked its key or
+project.
+
+## Deprecated & Superseded Approaches
+
+- **Report-only reports sent to Sentry.** Report-only builds used to carry
+  `report-uri` and `Reporting-Endpoints`, so every violation was an error event
+  against the 5,000/month quota (hundreds in the first ten days, all dropped
+  because the quota was already spent). They are now sent only by an
+  enforced build. Do not re-add a report directive to the report-only policy.
