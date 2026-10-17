@@ -14,12 +14,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import {
-  addDays,
-  differenceInCalendarDays,
-  endOfDay,
-  startOfDay,
-} from "date-fns";
+import { differenceInCalendarDays, startOfDay } from "date-fns";
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
@@ -35,6 +30,7 @@ import {
   useAvailabilityWindow,
 } from "./hooks/useAvailabilityWindow";
 import { dayState, isSelectableDay } from "./day-state";
+import { zonedWeekWindow } from "./utils/time";
 import { formatInTimeZone } from "date-fns-tz";
 import { cn } from "@/utils/tailwind";
 
@@ -87,7 +83,7 @@ export function ExpertProfileClient({
   const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
 
   // Pricing-day slots share the overview's week-window query: the week
-  // containing the selected day uses the same [start, end] computation as
+  // containing the selected day uses the same `zonedWeekWindow` bounds as
   // ConsultantAvailability's weekOffset, so an overlapping reader joins the
   // single in-flight request instead of firing its own 1-day compute. Day
   // clicks inside a loaded week cost zero requests (staleTime 30s).
@@ -102,13 +98,15 @@ export function ExpertProfileClient({
         ),
       )
     : 0;
-  const pricingWeekStart = addDays(todayStart, selectedWeekOffset * 7);
-  const pricingWeekEnd = endOfDay(addDays(pricingWeekStart, 6));
+  const pricingWeek =
+    selectedDate && timezone
+      ? zonedWeekWindow(new Date(), selectedWeekOffset, timezone)
+      : null;
 
   const dayQuery = useAvailabilityWindow({
     consultantId: consultantDetails?.id,
-    startUtc: selectedDate ? pricingWeekStart : null,
-    endUtc: selectedDate ? pricingWeekEnd : null,
+    startUtc: pricingWeek?.start ?? null,
+    endUtc: pricingWeek?.end ?? null,
     timezone: !isTimezoneLoading ? (timezone ?? null) : null,
     consulteeUserId,
     bypassRef: bypassCacheOnce,

@@ -3,15 +3,9 @@
  */
 
 /**
- * One rule, pinned from every side (#1343, #1342, #1326, #1348, #1415, #1416).
- *
- * `AvailabilityWindowWeekly.startDay` is the day the CONSULTANT published, in
- * their own local calendar, and the UTC weekday is derived from it through the
- * row's own frozen `utcOffsetMinutes`. Four surfaces used to disagree about
- * that sentence — the settings save stored the UTC day, onboarding stored the
- * local day, the validator assumed local, and the grid matched the VIEWER's
- * weekday — so an IST consultant's pre-05:30 rows walked back a weekday on
- * every save and were painted on the wrong day for anyone abroad.
+ * One rule, pinned from every side: `startDay` is the day the CONSULTANT
+ * published in their own calendar, and every surface projects a weekly row
+ * from its local columns in its own zone.
  */
 
 import fs from "fs";
@@ -29,16 +23,17 @@ import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
   WeeklyOffsetConflictError,
-  weeklyRowLocalColumns,
+  weeklyLocalColumnsForSave,
 } from "../../lib/scheduling/weeklyUtcOffset";
+import { getTimezoneOffsetMinutes } from "../../utils/scheduling-engine/slotTimeUtils";
 import {
-  getTimezoneOffsetMinutes,
-  isMinuteWithinWeeklySlot,
-} from "../../utils/scheduling-engine/slotTimeUtils";
-import {
-  utcStartDayIndex,
-  weeklyRowOccurrencesInRange,
+  weeklyRowIntervalsInRange,
+  weeklyRowLocalColumns,
 } from "../../utils/schedule/weekly-projection";
+import {
+  findUncoveredAtom,
+  windowAtoms,
+} from "../../utils/scheduling-engine/availabilityCoverage";
 import {
   mergeConsecutiveSlots,
   processAvailabilitySlots,
@@ -56,11 +51,11 @@ const THIRTY_MIN_MS = 30 * 60 * 1000;
 /** IST Monday 01:00–05:00 — the row every day-shift bug was reported on. */
 const IST_EARLY_MONDAY: WeeklySlot = {
   id: "row-early-monday",
-  startDay: "MONDAY",
-  endDay: "MONDAY",
-  startTimeUtc: 1170, // 19:30 UTC (Sunday)
-  endTimeUtc: 1410, // 23:30 UTC (Sunday)
-  utcOffsetMinutes: 330,
+  timezone: IST,
+  localStartDay: "MONDAY",
+  localStartMinutes: 60,
+  localEndMinutes: 300,
+  localEndDay: "MONDAY",
 };
 
 // ─── 1. The two save paths agree on startDay (#1343) ────────────────────────
@@ -187,13 +182,12 @@ describe("resolveWeeklyUtcOffsetMinutes (#1326)", () => {
 
 // ─── 3. The grid and the validator agree (#1342) ────────────────────────────
 
-describe("the grid and the validator project a weekly row identically (#1342)", () => {
+describe("the grid and the validator project a weekly row identically", () => {
   const rangeStart = new Date("2026-09-06T00:00:00.000Z");
   const rangeEnd = new Date("2026-09-13T00:00:00.000Z");
 
   it("puts an IST Monday 01:00 row on the UTC Sunday instant that owns it", () => {
-    expect(utcStartDayIndex(IST_EARLY_MONDAY)).toBe(0); // Sunday
-    const occurrences = weeklyRowOccurrencesInRange(
+    const occurrences = weeklyRowIntervalsInRange(
       IST_EARLY_MONDAY,
       rangeStart,
       rangeEnd,
@@ -204,31 +198,20 @@ describe("the grid and the validator project a weekly row identically (#1342)", 
   });
 
   it("offers only atoms the checkout validator accepts", () => {
-    const occurrences = weeklyRowOccurrencesInRange(
+    const occurrences = weeklyRowIntervalsInRange(
       IST_EARLY_MONDAY,
       rangeStart,
       rangeEnd,
     );
     expect(occurrences.length).toBeGreaterThan(0);
     for (const occurrence of occurrences) {
-      for (
-        let atom = occurrence.start.getTime();
-        atom < occurrence.end.getTime();
-        atom += THIRTY_MIN_MS
-      ) {
-        const atomStart = new Date(atom);
-        expect(
-          isMinuteWithinWeeklySlot(
-            atomStart.getUTCDay(),
-            atomStart.getUTCHours() * 60 + atomStart.getUTCMinutes(),
-            30,
-            IST_EARLY_MONDAY.startDay,
-            IST_EARLY_MONDAY.startTimeUtc,
-            IST_EARLY_MONDAY.endTimeUtc,
-            IST_EARLY_MONDAY.utcOffsetMinutes ?? 0,
-          ),
-        ).toBe(true);
-      }
+      expect(
+        findUncoveredAtom(
+          windowAtoms(occurrence.start, occurrence.end),
+          [IST_EARLY_MONDAY],
+          [],
+        ),
+      ).toBeNull();
     }
   });
 
@@ -261,18 +244,18 @@ describe("a block ending at local midnight keeps its last atom (#1415)", () => {
   // IST Monday 22:00 → Tuesday 00:00 = UTC Monday 16:30 → 18:30.
   const lateBlock: WeeklySlot = {
     id: "row-late-monday",
-    startDay: "MONDAY",
-    endDay: "MONDAY",
-    startTimeUtc: 990,
-    endTimeUtc: 1110,
-    utcOffsetMinutes: 330,
+    timezone: IST,
+    localStartDay: "MONDAY",
+    localStartMinutes: 1320,
+    localEndMinutes: 0,
+    localEndDay: "TUESDAY",
   };
   const rangeStart = new Date("2026-09-07T00:00:00.000Z"); // Monday
   const rangeEnd = new Date("2026-09-08T00:00:00.000Z");
 
   it("splits into one segment that ends exactly at midnight", () => {
     const segments = splitSlotsByDay(
-      weeklyRowOccurrencesInRange(lateBlock, rangeStart, rangeEnd).map(
+      weeklyRowIntervalsInRange(lateBlock, rangeStart, rangeEnd).map(
         (occurrence) => ({
           start: occurrence.start,
           end: occurrence.end,
@@ -355,9 +338,20 @@ describe("the expert page merges slots exactly as booking does (#1416)", () => {
 
 // ─── 6. The dual-written DST columns (#872) ─────────────────────────────────
 
-describe("weeklyRowLocalColumns (#872 dual-write)", () => {
+describe("weeklyRowLocalColumns", () => {
   it("describes an IST pre-dawn row in the consultant's own wall clock", () => {
-    expect(weeklyRowLocalColumns(IST_EARLY_MONDAY, IST, 330)).toEqual({
+    expect(
+      weeklyRowLocalColumns(
+        {
+          startDay: "MONDAY",
+          endDay: "MONDAY",
+          startTimeUtc: 1170,
+          endTimeUtc: 1410,
+        },
+        IST,
+        330,
+      ),
+    ).toEqual({
       timezone: IST,
       localStartMinutes: 60, // 01:00
       localEndMinutes: 300, // 05:00
@@ -368,7 +362,7 @@ describe("weeklyRowLocalColumns (#872 dual-write)", () => {
 
   it("carries the local end onto the next day when the row crosses local midnight", () => {
     // IST Monday 22:00 → Tuesday 00:00 is same-day in UTC, so `endDay` says
-    // MONDAY; locally it ends on Tuesday, which is what the #872 reader wants.
+    // MONDAY; locally it ends on Tuesday.
     expect(
       weeklyRowLocalColumns(
         {
@@ -388,4 +382,24 @@ describe("weeklyRowLocalColumns (#872 dual-write)", () => {
       localEndDay: "TUESDAY",
     });
   });
+});
+
+describe("the save path's local columns are what the consultant typed", () => {
+  it.each([NEW_YORK, "Europe/London", "Australia/Sydney", IST])(
+    "%s 09:00–12:00 Monday stays 09:00–12:00 whatever the season",
+    (timezone) => {
+      const row = weeklySlotForSave(
+        { startTime: "09:00", endTime: "12:00" },
+        "monday",
+        timezone,
+      );
+      expect(weeklyLocalColumnsForSave(row, timezone)).toEqual({
+        timezone,
+        localStartMinutes: 540,
+        localEndMinutes: 720,
+        localStartDay: "MONDAY",
+        localEndDay: "MONDAY",
+      });
+    },
+  );
 });

@@ -1,10 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { formatDate, formatTime } from "@/utils/dateTimeUtils";
+import { minutesToTimeString } from "@/utils/scheduling-engine/slotTimeUtils";
 import {
-  getTimezoneOffsetMinutes,
-  minutesToTimeString,
-} from "@/utils/scheduling-engine/slotTimeUtils";
-import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
+  weeklyRowLocalColumns,
+  weeklySaveProbeOffsetMinutes,
+} from "@/utils/schedule/weekly-projection";
 import { OnboardingFormData } from "@/utils/onboarding";
 import React, { useState } from "react";
 import {
@@ -105,8 +105,11 @@ const ConsultantReviewForm: React.FC<Props> = ({
                   .filter(isValidWeeklySlot)
                   .map((slot, index) => {
                     const tz = formData.timezone || "UTC";
-                    const offset = getTimezoneOffsetMinutes(tz);
-                    const localCols = weeklyRowLocalColumns(slot, tz, offset);
+                    const localCols = weeklyRowLocalColumns(
+                      slot,
+                      tz,
+                      weeklySaveProbeOffsetMinutes(tz),
+                    );
                     const startTime = minutesToTimeString(
                       localCols.localStartMinutes,
                     );

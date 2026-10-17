@@ -70,6 +70,11 @@ function morningOn(day: DayOfWeek) {
     startTimeUtc: 9 * 60,
     endTimeUtc: 11 * 60,
     utcOffsetMinutes: 0,
+    timezone: "UTC",
+    localStartDay: day,
+    localStartMinutes: 9 * 60,
+    localEndMinutes: 11 * 60,
+    localEndDay: day,
   };
 }
 

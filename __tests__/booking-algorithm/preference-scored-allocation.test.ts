@@ -51,6 +51,8 @@ import type {
   EventConfig,
   EventType,
 } from "../../utils/scheduling-engine/types";
+import type { DayOfWeek } from "@prisma/client";
+import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 
 const IST = "Asia/Kolkata";
 const IST_OFFSET = 330;
@@ -89,18 +91,18 @@ const findAvailableSlots = (
   );
 
 function weeklyConsultant(
-  rows: Array<{ day: string; startUtc: number; endUtc: number }>,
+  rows: Array<{ day: DayOfWeek; startUtc: number; endUtc: number }>,
 ): ConsultantAllocationData {
   return {
     userId: "consultant-user",
     scheduleType: "WEEKLY",
     availabilityWindowsWeekly: rows.map((r, i) => ({
       id: `weekly-${i}`,
-      startDay: r.day,
-      startTimeUtc: r.startUtc,
-      endDay: r.day,
-      endTimeUtc: r.endUtc,
-      utcOffsetMinutes: IST_OFFSET,
+      ...weeklyRowLocalColumns(
+        { startDay: r.day, startTimeUtc: r.startUtc, endTimeUtc: r.endUtc },
+        "Asia/Kolkata",
+        IST_OFFSET,
+      ),
     })),
     availabilityWindowsCustom: [],
   };
@@ -250,7 +252,11 @@ describe("among equally-valid candidates the preferred one wins", () => {
   // Both windows are free, both are legal, and the morning one comes first —
   // so anything other than first-fit has to be the preference talking.
   const morningAndAfternoon = weeklyConsultant([
-    { day: "MONDAY", startUtc: istToUtcMinutes(9), endUtc: istToUtcMinutes(11) },
+    {
+      day: "MONDAY",
+      startUtc: istToUtcMinutes(9),
+      endUtc: istToUtcMinutes(11),
+    },
     {
       day: "MONDAY",
       startUtc: istToUtcMinutes(14),
@@ -465,7 +471,11 @@ describe("a partly satisfiable day preference tops itself up", () => {
 
 describe("a null preference leaves selection where it was", () => {
   const consultant = weeklyConsultant([
-    { day: "MONDAY", startUtc: istToUtcMinutes(9), endUtc: istToUtcMinutes(11) },
+    {
+      day: "MONDAY",
+      startUtc: istToUtcMinutes(9),
+      endUtc: istToUtcMinutes(11),
+    },
     {
       day: "MONDAY",
       startUtc: istToUtcMinutes(14),
@@ -540,7 +550,11 @@ describe("bands are read in the event's scheduling timezone", () => {
       startUtc: istToUtcMinutes(14, 30),
       endUtc: istToUtcMinutes(17),
     },
-    { day: "FRIDAY", startUtc: istToUtcMinutes(9), endUtc: istToUtcMinutes(11) },
+    {
+      day: "FRIDAY",
+      startUtc: istToUtcMinutes(9),
+      endUtc: istToUtcMinutes(11),
+    },
   ]);
 
   it("takes the chronologically first row when nothing is preferred", async () => {
@@ -654,9 +668,7 @@ describe("findAllocationPreference", () => {
 describe("scoreCandidateStart", () => {
   /** An instant at a given IST wall-clock hour on a known weekday. */
   const istAt = (utcDate: string, istHourWanted: number) =>
-    new Date(
-      `${utcDate}T00:00:00Z`,
-    ).getTime() +
+    new Date(`${utcDate}T00:00:00Z`).getTime() +
     (istHourWanted * 60 - IST_OFFSET) * MINUTE;
 
   const at = (utcDate: string, hour: number) => new Date(istAt(utcDate, hour));
@@ -710,7 +722,11 @@ describe("scoreCandidateStart", () => {
     // Both rows are legal and 02:00 comes first, so a band that scored the two
     // alike would hand out the 2 AM slot on the chronological tie-break.
     const consultant = weeklyConsultant([
-      { day: "MONDAY", startUtc: istToUtcMinutes(2), endUtc: istToUtcMinutes(4) },
+      {
+        day: "MONDAY",
+        startUtc: istToUtcMinutes(2),
+        endUtc: istToUtcMinutes(4),
+      },
       {
         day: "MONDAY",
         startUtc: istToUtcMinutes(19),

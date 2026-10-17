@@ -16,10 +16,28 @@
  */
 
 import { getTimezoneOffsetMinutes } from "@/utils/scheduling-engine/slotTimeUtils";
-import { reportSentryMessage } from "@/lib/observability/report";
+import {
+  weeklyRowLocalColumns,
+  weeklySaveProbeOffsetMinutes,
+  type WeeklyRowLocalColumns,
+  type WeeklyRowTimes,
+} from "@/utils/schedule/weekly-projection";
 
-export { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
-export type { WeeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
+/**
+ * The five local columns for a row the save path built: its UTC minutes were
+ * converted on `WEEKLY_SAVE_PROBE_DATE`, so that date's offset recovers the
+ * wall clock the consultant typed.
+ */
+export function weeklyLocalColumnsForSave(
+  row: WeeklyRowTimes,
+  timezone: string,
+): WeeklyRowLocalColumns {
+  return weeklyRowLocalColumns(
+    row,
+    timezone,
+    weeklySaveProbeOffsetMinutes(timezone),
+  );
+}
 
 /** IST. The platform's only market at launch (ADR 17). */
 export const LAUNCH_UTC_OFFSET_MINUTES = 330;
@@ -58,10 +76,8 @@ export class WeeklyOffsetConflictError extends Error {
 
 /**
  * Legacy IANA aliases some browsers still report from
- * `Intl.DateTimeFormat().resolvedOptions().timeZone`. Folded to the canonical
- * name so the "written outside Asia/Kolkata" signal below fires for a
- * genuinely different zone, not for the same zone under its old spelling
- * (FAMILIARISE_WEB-2R: six false alarms from `Asia/Calcutta`).
+ * `Intl.DateTimeFormat().resolvedOptions().timeZone`, folded to the canonical
+ * name so a row is stamped with the zone it actually lives in.
  */
 const ZONE_ALIASES: Record<string, string> = {
   "Asia/Calcutta": "Asia/Kolkata",
@@ -96,8 +112,6 @@ export interface ResolveWeeklyOffsetInput {
   profileTimezone: string | null | undefined;
   /** What the request body asked for, if anything. May only agree. */
   callerSupplied?: number | null;
-  /** For the drift warning only. */
-  consultantProfileId?: string;
 }
 
 /**
@@ -109,7 +123,6 @@ export interface ResolveWeeklyOffsetInput {
 export function resolveWeeklyUtcOffsetMinutes({
   profileTimezone,
   callerSupplied,
-  consultantProfileId,
 }: ResolveWeeklyOffsetInput): number {
   const zone = normaliseZone(profileTimezone);
   const derived = derivedOffsetMinutes(zone);
@@ -124,25 +137,6 @@ export function resolveWeeklyUtcOffsetMinutes({
     callerSupplied !== resolved
   ) {
     throw new WeeklyOffsetConflictError(callerSupplied, resolved);
-  }
-
-  // Once per write, never per row: a save rewrites the consultant's whole week
-  // and this would otherwise fan out to one event per row. #872 rule 4 — the
-  // frozen offset is only safe while everyone is on IST, so a consultant
-  // publishing from anywhere else is the signal that the DST work is now due.
-  if (zone && zone !== LAUNCH_TIMEZONE) {
-    reportSentryMessage("weekly availability written outside Asia/Kolkata", {
-      subsystem: "scheduling",
-      op: "weekly-availability-write",
-      expected: true,
-      level: "warning",
-      extra: {
-        profileTimezone: zone,
-        derivedOffsetMinutes: derived,
-        resolvedOffsetMinutes: resolved,
-        consultantProfileId,
-      },
-    });
   }
 
   return resolved;

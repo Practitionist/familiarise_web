@@ -33,6 +33,8 @@ import {
 } from "@/components/dashboard/SettingsLayout";
 import { useToast } from "@/hooks/use-toast";
 import { useSession } from "@/lib/auth-client";
+import { actionFailureMessage, parseJsonResponse } from "@/lib/fetch-helpers";
+import { z } from "zod";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
@@ -41,6 +43,90 @@ interface Details {
   phone: string;
   address: string;
   timezone: string;
+}
+
+const weeklyRowZonesSchema = z.object({
+  data: z.array(z.object({ timezone: z.string().nullable() })),
+});
+
+const convertWeeklyZoneResponseSchema = z.object({
+  data: z.object({ converted: z.number(), timezone: z.string() }),
+});
+
+interface WeeklyZonePromptState {
+  from: string;
+  to: string;
+}
+
+/**
+ * The one-time question after a profile-zone change: move the weekly hours
+ * to the new zone at the same clock times, or keep them where they are.
+ */
+function WeeklyZonePrompt({
+  prompt,
+  onClose,
+}: Readonly<{
+  prompt: WeeklyZonePromptState | null;
+  onClose: () => void;
+}>) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const convert = async () => {
+    if (!prompt) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/scheduling/availability/weekly/zone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timezone: prompt.to }),
+      });
+      const { data } = await parseJsonResponse(
+        res,
+        convertWeeklyZoneResponseSchema,
+        "Couldn't convert your weekly hours",
+      );
+      toast({ title: `Weekly hours now in ${data.timezone}` });
+      onClose();
+    } catch (error) {
+      toast({
+        title: "Couldn't convert your weekly hours",
+        description: actionFailureMessage(error, "Please try again."),
+        variant: "destructive",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={prompt !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Convert my weekly hours to {prompt?.to}?</DialogTitle>
+          <DialogDescription>
+            Your weekly hours are set in {prompt?.from}. Converting keeps the
+            same clock times in {prompt?.to}. Keeping them leaves your hours in{" "}
+            {prompt?.from}.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onClose}
+            disabled={busy}
+          >
+            Keep in {prompt?.from}
+          </Button>
+          <Button type="button" onClick={convert} disabled={busy}>
+            {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Convert
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /** Every IANA zone the browser knows, with the saved one kept if it is not. */
@@ -224,6 +310,9 @@ export function AccountDetailsSection() {
   const [form, setForm] = useState<Details>(saved);
   const [nameError, setNameError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [zonePrompt, setZonePrompt] = useState<WeeklyZonePromptState | null>(
+    null,
+  );
 
   // The session lands after first paint; adopt it until the user edits.
   useEffect(() => {
@@ -236,6 +325,25 @@ export function AccountDetailsSection() {
   );
   const set = (key: keyof Details) => (value: string) =>
     setForm((prev) => ({ ...prev, [key]: value }));
+
+  // Weekly rows keep their own zone, so a profile-zone change asks once.
+  const offerWeeklyZoneConversion = async (
+    consultantProfileId: string,
+    to: string,
+  ) => {
+    try {
+      const res = await fetch(
+        `/api/scheduling/availability/weekly?consultantProfileId=${encodeURIComponent(consultantProfileId)}&limit=100`,
+      );
+      const { data } = await parseJsonResponse(res, weeklyRowZonesSchema);
+      const from = data.find(
+        (row) => row.timezone && row.timezone !== to,
+      )?.timezone;
+      if (from) setZonePrompt({ from, to });
+    } catch {
+      // The availability page's kept-zone note still says where the hours are.
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -258,8 +366,13 @@ export function AccountDetailsSection() {
         }),
       });
       if (!res.ok) throw new Error("save failed");
+      const zoneChanged =
+        form.timezone !== "" && form.timezone !== baseline.timezone;
       setBaseline(form);
       toast({ title: "Account details saved" });
+      if (zoneChanged && user.consultantProfileId) {
+        void offerWeeklyZoneConversion(user.consultantProfileId, form.timezone);
+      }
     } catch {
       toast({
         title: "Couldn't save your details",
@@ -349,6 +462,10 @@ export function AccountDetailsSection() {
           }}
         />
       </form>
+      <WeeklyZonePrompt
+        prompt={zonePrompt}
+        onClose={() => setZonePrompt(null)}
+      />
     </Section>
   );
 }

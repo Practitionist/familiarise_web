@@ -14,12 +14,14 @@ import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
   WeeklyOffsetConflictError,
-  weeklyRowLocalColumns,
+  weeklyLocalColumnsForSave,
 } from "@/lib/scheduling/weeklyUtcOffset";
+import { hasWeeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
 import {
   validateWeeklyWindow,
+  weeklyZoneRefusal,
   AVAILABILITY_REFUSAL_STATUS,
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
@@ -63,7 +65,6 @@ async function applyWeeklySlotEdit(
     utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
       profileTimezone,
       callerSupplied: callerSuppliedOffsetMinutes,
-      consultantProfileId: currentSlot.consultantProfileId,
     });
   } catch (error) {
     if (error instanceof WeeklyOffsetConflictError) {
@@ -74,12 +75,16 @@ async function applyWeeklySlotEdit(
     }
     throw error;
   }
-  // #872 — dual-written, read by nothing until the reader flip.
-  const localColumns = weeklyRowLocalColumns(
-    next,
-    resolveWeeklyTimezone(profileTimezone),
-    utcOffsetMinutes,
-  );
+  const rowTimezone = resolveWeeklyTimezone(profileTimezone);
+  const zoneRefusal = weeklyZoneRefusal(rowTimezone);
+  if (zoneRefusal) {
+    return NextResponse.json(
+      { error: zoneRefusal.message, code: zoneRefusal.code },
+      { status: AVAILABILITY_REFUSAL_STATUS[zoneRefusal.code] },
+    );
+  }
+  // The local columns are what every reader projects from.
+  const localColumns = weeklyLocalColumnsForSave(next, rowTimezone);
 
   return withSerializableRetry(() =>
     prisma.$transaction(
@@ -108,17 +113,17 @@ async function applyWeeklySlotEdit(
               id: { not: id },
             },
             select: {
-              startDay: true,
-              endDay: true,
-              startTimeUtc: true,
-              endTimeUtc: true,
-              utcOffsetMinutes: true,
+              timezone: true,
+              localStartDay: true,
+              localStartMinutes: true,
+              localEndMinutes: true,
+              localEndDay: true,
             },
           });
           if (Array.isArray(existingRows)) {
-            hasUtcTimelineOverlap = existingRows.some((existing) =>
-              slotsOverlap({ ...next, utcOffsetMinutes }, existing),
-            );
+            hasUtcTimelineOverlap = existingRows
+              .filter(hasWeeklyRowLocalColumns)
+              .some((existing) => slotsOverlap(localColumns, existing));
           }
         }
 
@@ -141,12 +146,7 @@ async function applyWeeklySlotEdit(
         const covering = await coalesceAndResolve(
           tx,
           updatedSlot.consultantProfileId,
-          {
-            startDay: updatedSlot.startDay,
-            endDay: updatedSlot.endDay,
-            startTimeUtc: updatedSlot.startTimeUtc,
-            endTimeUtc: updatedSlot.endTimeUtc,
-          },
+          localColumns,
         );
         const { uncoveredUpcoming } = await settleAvailabilityWrite(
           tx,

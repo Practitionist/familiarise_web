@@ -2,20 +2,17 @@ import type { DayOfWeek, Prisma } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import { MAX_DURATION_MINUTES } from "@/utils/scheduling-engine/interval-validation";
 import {
-  utcStartDayIndex,
-  weeklyRowLocalColumns,
+  crossesLocalMidnight,
+  DAY_BY_INDEX,
+  dayIndexOf,
+  hasWeeklyRowLocalColumns,
+  type WeeklyRowLocalColumns,
 } from "@/utils/schedule/weekly-projection";
 
 /**
- * #1320 — availability is one row per contiguous published window.
- *
- * Consultants enter availability as free-text ranges, so "3:30–4:30" and
- * "4:30–5:30" landed as two 60-minute rows. The expert-page grid merged them
- * for display, but the booking generator and checkout validated against ONE
- * row, so a two-hour plan could never be booked inside a window the grid
- * promised. Merging on every save (and once, idempotently, for existing rows)
- * makes storage match the picture the customer sees; the generator and
- * checkout are fixed alongside so no surface depends on row boundaries.
+ * #1320 — availability is one row per contiguous published window, so two
+ * back-to-back entries ("3:30–4:30" + "4:30–5:30") are stored as one row and
+ * the generator and checkout never depend on row boundaries.
  */
 
 export interface WeeklyRowShape {
@@ -23,74 +20,78 @@ export interface WeeklyRowShape {
   endDay: DayOfWeek;
   startTimeUtc: number;
   endTimeUtc: number;
-  utcOffsetMinutes?: number | null;
-  /** #872 — the dual-written IANA zone, when the row carries one. */
   timezone?: string | null;
+  localStartDay?: DayOfWeek | null;
+  localStartMinutes?: number | null;
+  localEndMinutes?: number | null;
+  localEndDay?: DayOfWeek | null;
+}
+
+type LocalRow<T> = T & WeeklyRowLocalColumns;
+
+const compareStrings = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+function hasLocal<T extends WeeklyRowShape>(row: T): row is LocalRow<T> {
+  return hasWeeklyRowLocalColumns({
+    timezone: row.timezone ?? null,
+    localStartDay: row.localStartDay ?? null,
+    localStartMinutes: row.localStartMinutes ?? null,
+    localEndMinutes: row.localEndMinutes ?? null,
+    localEndDay: row.localEndDay ?? null,
+  });
 }
 
 /**
- * Merge exactly-adjacent same-day rows (a.endTimeUtc === b.startTimeUtc on
- * the same day, same offset). Overnight rows and rows with different offsets
- * are left untouched — the overnight day-shift math is per row, and merging
- * across offsets would change the day a minute belongs to. Pure; stable
- * ordering by day then start.
- *
- * The fold stops at MAX_DURATION_MINUTES: `isValidTimeRange` rejects anything
- * longer, and the settings loader filters its rows through that validator, so
- * a thirteen-hour merged row would vanish from the form and the next save
- * would delete it. A fold that would cross the bound starts a new row.
+ * Merge exactly-adjacent rows of one zone and one local day, compared on the
+ * local columns (`prev.localEndMinutes === row.localStartMinutes`). Overnight
+ * rows and rows without local columns are left untouched. The fold stops at
+ * MAX_DURATION_MINUTES, the longest window `isValidTimeRange` accepts. The UTC
+ * writer columns of a merged row take the later end. Pure; stable ordering.
  */
-/** Same shape the overlap validators use: a row crossing midnight is overnight. */
-function isOvernight(r: WeeklyRowShape): boolean {
-  return r.startDay !== r.endDay || r.startTimeUtc > r.endTimeUtc;
-}
-
 export function mergeAdjacentWeeklyRows<T extends WeeklyRowShape>(
   rows: T[],
 ): T[] {
-  const dayOrder: DayOfWeek[] = [
-    "SUNDAY",
-    "MONDAY",
-    "TUESDAY",
-    "WEDNESDAY",
-    "THURSDAY",
-    "FRIDAY",
-    "SATURDAY",
-  ];
-  const rowUtcDay = (r: WeeklyRowShape): number =>
-    utcStartDayIndex({
-      startDay: r.startDay,
-      startTimeUtc: r.startTimeUtc,
-      utcOffsetMinutes: r.utcOffsetMinutes ?? 0,
-    });
-  const sorted = [...rows].sort(
+  const local: LocalRow<T>[] = [];
+  const untouched: T[] = [];
+  for (const row of rows) {
+    if (hasLocal(row)) local.push(row);
+    else untouched.push({ ...row });
+  }
+  local.sort(
     (a, b) =>
-      dayOrder.indexOf(a.startDay) - dayOrder.indexOf(b.startDay) ||
-      rowUtcDay(a) - rowUtcDay(b) ||
-      a.startTimeUtc - b.startTimeUtc,
+      compareStrings(a.timezone, b.timezone) ||
+      dayIndexOf(a.localStartDay) - dayIndexOf(b.localStartDay) ||
+      a.localStartMinutes - b.localStartMinutes,
   );
-  const out: T[] = [];
-  for (const row of sorted) {
+  const out: LocalRow<T>[] = [];
+  for (const row of local) {
     const prev = out[out.length - 1];
-    const sameDay = row.startDay === row.endDay;
     const canMerge =
       prev !== undefined &&
-      sameDay &&
-      prev.startDay === prev.endDay &&
-      prev.startDay === row.startDay &&
-      rowUtcDay(prev) === rowUtcDay(row) &&
-      !isOvernight(prev) &&
-      !isOvernight(row) &&
-      (prev.utcOffsetMinutes ?? 0) === (row.utcOffsetMinutes ?? 0) &&
-      prev.endTimeUtc === row.startTimeUtc &&
-      row.endTimeUtc - prev.startTimeUtc <= MAX_DURATION_MINUTES;
+      prev.timezone === row.timezone &&
+      prev.localStartDay === row.localStartDay &&
+      !crossesLocalMidnight(prev) &&
+      !crossesLocalMidnight(row) &&
+      prev.localEndMinutes === row.localStartMinutes &&
+      row.localEndMinutes - prev.localStartMinutes <= MAX_DURATION_MINUTES;
     if (canMerge) {
-      out[out.length - 1] = { ...prev, endTimeUtc: row.endTimeUtc };
+      const startIndex = dayIndexOf(prev.startDay);
+      const crossesUtcMidnight = row.endTimeUtc <= prev.startTimeUtc;
+      out[out.length - 1] = {
+        ...prev,
+        endTimeUtc: row.endTimeUtc,
+        endDay:
+          crossesUtcMidnight && startIndex !== -1
+            ? DAY_BY_INDEX[(startIndex + 1) % 7]
+            : prev.startDay,
+        localEndMinutes: row.localEndMinutes,
+        localEndDay: row.localEndDay,
+      };
     } else {
       out.push({ ...row });
     }
   }
-  return out;
+  return [...out, ...untouched];
 }
 
 /**
@@ -112,17 +113,17 @@ export async function coalesceConsultantWeeklyRows(
       endTimeUtc: true,
       utcOffsetMinutes: true,
       timezone: true,
+      localStartDay: true,
+      localStartMinutes: true,
+      localEndMinutes: true,
+      localEndDay: true,
     },
   });
   const merged = mergeAdjacentWeeklyRows(rows);
   if (merged.length === rows.length) {
     return { before: rows.length, after: rows.length };
   }
-  // #872 — this pass deletes and recreates every row, so the dual-written DST
-  // columns have to be carried across or the next coalesce silently unwrites
-  // them. They are recomputed rather than copied because a fold moves the
-  // row's end. A row written before the dual-write has no zone to recompute
-  // from and keeps its nulls.
+  // Delete-then-recreate, so every column a reader needs is carried across.
   const data: Prisma.AvailabilityWindowWeeklyCreateManyInput[] = merged.map(
     (r) => ({
       consultantProfileId,
@@ -130,10 +131,12 @@ export async function coalesceConsultantWeeklyRows(
       endDay: r.endDay,
       startTimeUtc: r.startTimeUtc,
       endTimeUtc: r.endTimeUtc,
-      utcOffsetMinutes: r.utcOffsetMinutes ?? 0,
-      ...(r.timezone
-        ? weeklyRowLocalColumns(r, r.timezone, r.utcOffsetMinutes ?? 0)
-        : {}),
+      utcOffsetMinutes: r.utcOffsetMinutes,
+      timezone: r.timezone,
+      localStartDay: r.localStartDay,
+      localStartMinutes: r.localStartMinutes,
+      localEndMinutes: r.localEndMinutes,
+      localEndDay: r.localEndDay,
     }),
   );
   await db.availabilityWindowWeekly.deleteMany({
@@ -147,39 +150,34 @@ export async function coalesceConsultantWeeklyRows(
  * After a single-row create/update: fold adjacent rows and return the row that
  * now covers the written window (its id changes when it was merged).
  *
- * `endDay` is part of the window because the minute comparison below is only a
- * containment test WITHIN one day pair: an overnight row stores
- * endTimeUtc < startTimeUtc, so a same-day row would otherwise satisfy
- * `startTimeUtc <= 1320 AND endTimeUtc >= 120` and answer for an edit that was
- * never its own. The ordering makes the answer deterministic either way.
+ * `localEndDay` is part of the window because the minute comparison below is
+ * only a containment test within one day pair: an overnight row stores
+ * `localEndMinutes < localStartMinutes`, so a same-day row would otherwise
+ * answer for an edit that was never its own.
  *
  * A miss throws rather than returning null: the fold only ever extends the row
- * holding the written window, so nothing covering it means the rewrite dropped
- * it. The caller's only alternative is to answer with the pre-coalesce row,
- * whose id this same transaction may have just deleted.
+ * holding the written window, so nothing covering it means the rewrite dropped it.
  */
 export async function coalesceAndResolve<
   Db extends Pick<Tx, "availabilityWindowWeekly">,
 >(
   db: Db,
   consultantProfileId: string,
-  window: {
-    startDay: DayOfWeek;
-    endDay: DayOfWeek;
-    startTimeUtc: number;
-    endTimeUtc: number;
-  },
+  window: Pick<
+    WeeklyRowLocalColumns,
+    "localStartDay" | "localEndDay" | "localStartMinutes" | "localEndMinutes"
+  >,
 ) {
   await coalesceConsultantWeeklyRows(db, consultantProfileId);
   const covering = await db.availabilityWindowWeekly.findFirst({
     where: {
       consultantProfileId,
-      startDay: window.startDay,
-      endDay: window.endDay,
-      startTimeUtc: { lte: window.startTimeUtc },
-      endTimeUtc: { gte: window.endTimeUtc },
+      localStartDay: window.localStartDay,
+      localEndDay: window.localEndDay,
+      localStartMinutes: { lte: window.localStartMinutes },
+      localEndMinutes: { gte: window.localEndMinutes },
     },
-    orderBy: [{ startTimeUtc: "asc" }, { id: "asc" }],
+    orderBy: [{ localStartMinutes: "asc" }, { id: "asc" }],
     include: {
       consultantProfile: {
         select: { id: true, user: { select: { name: true, email: true } } },

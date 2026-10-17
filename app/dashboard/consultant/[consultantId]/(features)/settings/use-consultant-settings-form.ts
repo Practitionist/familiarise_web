@@ -26,6 +26,7 @@ import {
   getInitialCustomSlots,
   getInitialFormData,
   getInitialWeeklySlots,
+  weeklyScheduleZone,
   type Domain,
   type FormData,
   type SubDomain,
@@ -60,7 +61,14 @@ export function useConsultantSettingsForm(
 ) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  // Custom rows are instants shown in the browser zone; weekly rows are
+  // wall-clock hours edited in the zone they are kept in.
   const { timezone, isLoading: timezoneLoading } = useTimezone();
+  const profileTimezone = consultant.user?.timezone || null;
+  const weeklyTimezone = weeklyScheduleZone(
+    consultant,
+    profileTimezone ?? timezone ?? "UTC",
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [isContentLoading, setIsContentLoading] = useState(content);
   const [contentError, setContentError] = useState(false);
@@ -80,10 +88,9 @@ export function useConsultantSettingsForm(
   const [scheduleSwitchBlockedReason, setScheduleSwitchBlockedReason] =
     useState<string | null>(null);
 
-  // Slots are stored in UTC and edited in the consultant's zone.
   useEffect(() => {
     if (!timezoneLoading && timezone) {
-      setWeeklySlots(getInitialWeeklySlots(consultant, timezone));
+      setWeeklySlots(getInitialWeeklySlots(consultant));
       setCustomSlots(getInitialCustomSlots(consultant, timezone));
     }
   }, [consultant, timezone, timezoneLoading]);
@@ -291,7 +298,9 @@ export function useConsultantSettingsForm(
             [field]: value,
             isOvernightUTC: undefined,
           },
-          timezone || "UTC",
+          scheduleType === ScheduleType.WEEKLY
+            ? weeklyTimezone
+            : timezone || "UTC",
         );
         const validationResult = validateTimeSlot(
           editedSlot,
@@ -307,7 +316,7 @@ export function useConsultantSettingsForm(
         }));
       });
     },
-    [scheduleType, weeklySlots, customSlots, timezone],
+    [scheduleType, weeklySlots, customSlots, timezone, weeklyTimezone],
   );
 
   const handleDeleteSlot = useCallback(
@@ -364,7 +373,7 @@ export function useConsultantSettingsForm(
     React.startTransition(() => {
       setFormData(getInitialFormData(consultant));
       setScheduleType(consultant.scheduleType);
-      setWeeklySlots(getInitialWeeklySlots(consultant, timezone || "UTC"));
+      setWeeklySlots(getInitialWeeklySlots(consultant));
       setCustomSlots(getInitialCustomSlots(consultant, timezone || "UTC"));
     });
   }, [consultant, timezone]);
@@ -404,8 +413,9 @@ export function useConsultantSettingsForm(
         scheduleType,
         availabilityWindowsWeekly:
           scheduleType === ScheduleType.WEEKLY
-            ? formatSlotsForApi(weeklySlots, true, timezone || "UTC")
+            ? formatSlotsForApi(weeklySlots, true, weeklyTimezone)
             : [],
+        ...(scheduleType === ScheduleType.WEEKLY ? { weeklyTimezone } : {}),
         availabilityWindowsCustom:
           scheduleType === ScheduleType.CUSTOM
             ? formatSlotsForApi(customSlots, false, timezone || "UTC")
@@ -442,9 +452,7 @@ export function useConsultantSettingsForm(
       );
       if (updatedResponse.ok) {
         const { data: updatedConsultant } = await updatedResponse.json();
-        setWeeklySlots(
-          getInitialWeeklySlots(updatedConsultant, timezone || "UTC"),
-        );
+        setWeeklySlots(getInitialWeeklySlots(updatedConsultant));
         setCustomSlots(
           getInitialCustomSlots(updatedConsultant, timezone || "UTC"),
         );
@@ -492,6 +500,9 @@ export function useConsultantSettingsForm(
 
   return {
     timezoneLoading,
+    browserTimezone: timezone,
+    profileTimezone,
+    weeklyTimezone,
     isSaving,
     isContentLoading,
     contentError,

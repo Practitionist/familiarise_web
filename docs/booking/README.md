@@ -51,7 +51,7 @@ Every guarded status transition appends one `BookingStatusHistory` row inside th
 | `ScheduleCalculationService.ts` | Pure math: countWeeks, calculateRequiredSlots, getSlotsPerCall, groupSlotsByDay/Week, progress                                                   |
 | `ScheduleValidationService.ts`  | Unified validation: future check, conflict detection, schedule matching, event-specific rules                                                    |
 | `SchedulingService.ts`          | Allocation engine: auto/manual/requested modes, rescheduling, appointment creation                                                               |
-| `intervals.ts`                  | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowOccurrencesInRange`                  |
+| `intervals.ts`                  | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowIntervalsInRange`                    |
 | `interval-validation.ts`        | Validates a submitted interval against `MAX_DURATION_MINUTES` (12h) and the 30-minute/15-minute increment rules an availability row must satisfy |
 | `interval-meta.ts`              | Overlap and metadata helpers shared by availability rows and appointment intervals, keyed off `TimeSlotMeta`                                     |
 | `types.ts`                      | Shared types: EventType, AllocationMode, AllocationRequest, ValidationResult, etc.                                                               |

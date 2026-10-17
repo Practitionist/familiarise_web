@@ -47,12 +47,12 @@
   - Other overnight slots starting on the same day
   - Other overnight slots ending on the same endDay
   - Existing overnight carry-over into our startDay
-- [ ] `isMinuteWithinWeeklySlot()` handles: same-day, start-day with midnight overflow, next-day
-- [ ] Checkout uses `isMinuteWithinWeeklySlot()` (not a same-day-only guard)
-- [ ] `SchedulingService.isWithinAvailability()` delegates to `isMinuteWithinWeeklySlot()`
+- [ ] `weeklyRowIntervalsInRange()` handles same-day, overnight, spring-forward (skip) and fall-back (first occurrence)
+- [ ] Checkout coverage uses `createWeeklyCoverage()` (not a same-day-only guard)
+- [ ] `SchedulingService.isWithinAvailability()` delegates to `createWeeklyCoverage()`
 - [ ] `ScheduleValidationService.validateMatchesSchedule()` handles overnight in both directions
 - [ ] Unallocated weekly routes roll `slotEnd` to the next UTC day for overnight slots
-- [ ] IST is the pinned timezone for launch (ADR 17); no live code path adjusts for DST — see `docs/booking/19-dst-and-timezone-posture.md`
+- [ ] Weekly rows project from their local columns in their own zone and follow DST — see `docs/booking/19-dst-and-timezone-posture.md`
 
 ## 4. Overlap & Conflict Detection
 
@@ -98,7 +98,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 ## 7. Checkout & Payment
 
 - [ ] Availability slot ownership verified (`consultantProfile.userId === consultantUserId`)
-- [ ] Weekly guard uses `isMinuteWithinWeeklySlot()` (overnight-aware)
+- [ ] Weekly guard uses `createWeeklyCoverage()` (overnight- and DST-aware)
 - [ ] Custom guard checks `slotStart >= startsAt && slotEnd <= endsAt`
 - [ ] A booking window is validated against the UNION of every published weekly or custom availability row, not the first row that happens to match — `utils/scheduling-engine/availabilityCoverage.ts`'s `findUncoveredAtom()` walks every 30-minute atom of the window and only fails if some atom is covered by no row at all, so two adjacent availability rows correctly cover a window that spans both
 - [ ] Slot timing validation: not in the past, minimum lead time (`validateSlotTiming`)
@@ -197,7 +197,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 ## Key File Paths
 
 | Area                          | Files                                                                                                                                                                     |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Availability CRUD             | `app/api/scheduling/availability/weekly/route.ts`, `weekly/[id]/route.ts`, `custom/route.ts`, `custom/[id]/route.ts`                                                      |
 | Public availability           | `app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` (the only public grid since the bespoke `availability/[consultantId]` route was deleted)        |
 | Checkout                      | `lib/payments/operations/checkout.ts`, `schemas/checkout.ts`                                                                                                              |

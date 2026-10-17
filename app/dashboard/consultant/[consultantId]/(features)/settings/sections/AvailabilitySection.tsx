@@ -4,7 +4,7 @@ import { ScheduleType } from "@prisma/client";
 import { Alert, AlertDescription, AlertTitle } from "components/ui/alert";
 import { Label } from "components/ui/label";
 import { RadioGroup, RadioGroupItem } from "components/ui/radio-group";
-import { Calendar, CalendarDays } from "lucide-react";
+import { Calendar, CalendarDays, Globe } from "lucide-react";
 import { SlotValidationFeedback } from "@/components/schedule/SlotValidationFeedback";
 import type { SlotsType } from "@/utils/schedule/types";
 import {
@@ -35,6 +35,53 @@ interface AvailabilitySectionProps {
     value: string,
   ) => void;
   onDeleteSlot: (dayKey: string, index: number) => void;
+  /** The zone the weekly hours are kept in. */
+  weeklyTimezone: string;
+  /** `User.timezone`, when set. */
+  profileTimezone: string | null;
+  /** The zone this browser reports. */
+  browserTimezone: string | null;
+}
+
+/**
+ * What zone the weekly hours above are in, and the two ways it can differ
+ * from what the consultant expects: their profile zone, or this browser's.
+ */
+function WeeklyZoneNotice({
+  weeklyTimezone,
+  profileTimezone,
+  browserTimezone,
+}: Readonly<{
+  weeklyTimezone: string;
+  profileTimezone: string | null;
+  browserTimezone: string | null;
+}>) {
+  return (
+    <div className="space-y-2">
+      <p className="flex items-center text-sm text-zinc-600">
+        <Globe className="w-4 h-4 mr-1 shrink-0" aria-hidden="true" />
+        Times are in {weeklyTimezone} and follow daylight saving automatically.
+      </p>
+      {profileTimezone && profileTimezone !== weeklyTimezone && (
+        <Alert>
+          <AlertTitle>Weekly hours kept in {weeklyTimezone}</AlertTitle>
+          <AlertDescription>
+            Your profile timezone is {profileTimezone}, but your weekly hours
+            stay in {weeklyTimezone}. Learners are offered them at those clock
+            times in {weeklyTimezone}.
+          </AlertDescription>
+        </Alert>
+      )}
+      {browserTimezone && browserTimezone !== weeklyTimezone && (
+        <Alert>
+          <AlertDescription>
+            You&apos;re viewing in {browserTimezone}; your schedule is in{" "}
+            {weeklyTimezone}.
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -83,6 +130,9 @@ export function AvailabilitySection({
   onAddSlot,
   onUpdateSlot,
   onDeleteSlot,
+  weeklyTimezone,
+  profileTimezone,
+  browserTimezone,
 }: AvailabilitySectionProps) {
   const renderCalendarDays = () => {
     const daysInMonth = getDaysInMonth(currentDate);
@@ -173,6 +223,11 @@ export function AvailabilitySection({
               washed-out rows that read as endless empty space. */}
           {scheduleType === ScheduleType.WEEKLY ? (
             <div className="space-y-4">
+              <WeeklyZoneNotice
+                weeklyTimezone={weeklyTimezone}
+                profileTimezone={profileTimezone}
+                browserTimezone={browserTimezone}
+              />
               {DAYS_OF_WEEK.map((day) => (
                 <AvailabilityGrid
                   key={day}

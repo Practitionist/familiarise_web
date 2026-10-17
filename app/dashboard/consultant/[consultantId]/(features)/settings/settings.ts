@@ -1,10 +1,7 @@
 import { TConsultantProfile } from "@/types/consultant";
-import {
-  convertUtcToTimezone,
-  extractTimeFromUtcSlot,
-  sortSlotsByTime,
-} from "@/utils/dateTimeUtils";
-import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
+import { convertUtcToTimezone, sortSlotsByTime } from "@/utils/dateTimeUtils";
+import { minutesToTimeString } from "@/utils/scheduling-engine/slotTimeUtils";
+import { hasWeeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import type { SlotsType } from "@/utils/schedule/types";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
@@ -93,68 +90,51 @@ export const getInitialFormData = (
 });
 
 /**
- * Converts a consultant's persisted weekly availability (UTC) into local-time
- * SlotType entries grouped by lowercase day-of-week key.
+ * The zone a consultant's weekly hours are kept in: the zone their rows carry,
+ * else `fallback` (the profile zone) for a schedule with no rows yet.
+ */
+export const weeklyScheduleZone = (
+  consultant: TConsultantProfile,
+  fallback: string,
+): string =>
+  consultant?.availabilityWindowsWeekly?.find(hasWeeklyRowLocalColumns)
+    ?.timezone ?? fallback;
+
+/**
+ * A consultant's weekly rows as editable wall-clock slots, read straight from
+ * their local columns and grouped by lowercase local day. Rows without local
+ * columns are a data error and are left out.
  */
 export const getInitialWeeklySlots = (
   consultant: TConsultantProfile,
-  timezone: string = "UTC",
 ): SlotsType => {
   if (!consultant?.availabilityWindowsWeekly?.length) return {};
 
   const formattedWeeklySlots: SlotsType = {};
-  const refDate = new Date("1970-01-05T00:00:00Z");
-  try {
-    consultant.availabilityWindowsWeekly.forEach((slot) => {
-      try {
-        if (!slot || slot.startTimeUtc === null || slot.endTimeUtc === null) {
-          console.warn("Invalid weekly slot data:", slot);
-          return;
-        }
-
-        // Use the day-of-week stored in the database. This is the consultant's
-        // intended day for the recurring slot. The time will be converted,
-        // but the day grouping should remain consistent with the original setting.
-        const day = (slot.startDay as string).toLowerCase();
-
-        // Convert Int minutes to a temporary Date to leverage existing timezone
-        // conversion, then extract local time string for display.
-        const startTime = extractTimeFromUtcSlot(
-          minuteUtcToDate(slot.startTimeUtc, refDate).toISOString(),
-          timezone,
-        );
-        const endTime = extractTimeFromUtcSlot(
-          minuteUtcToDate(slot.endTimeUtc, refDate).toISOString(),
-          timezone,
-        );
-
-        // Only add valid slots with proper error handling
-        if (isValidTimeRange(startTime, endTime)) {
-          if (!formattedWeeklySlots[day]) {
-            formattedWeeklySlots[day] = [];
-          }
-          // Preserve overnight-in-UTC flag when local times don't reflect it
-          const isOvernightUTC =
-            slot.startDay !== slot.endDay && startTime < endTime;
-          formattedWeeklySlots[day].push({
-            startTime,
-            endTime,
-            isValid: true,
-            ...(isOvernightUTC ? { isOvernightUTC: true } : {}),
-          });
-        } else {
-          console.warn("Invalid time range for weekly slot:", {
-            day,
-            startTime,
-            endTime,
-          });
-        }
-      } catch (error) {
-        console.error("Error processing weekly slot:", error, slot);
-      }
+  for (const slot of consultant.availabilityWindowsWeekly) {
+    if (!slot || !hasWeeklyRowLocalColumns(slot)) {
+      console.warn("Weekly slot without local columns:", slot?.id);
+      continue;
+    }
+    const day = slot.localStartDay.toLowerCase();
+    const startTime = minutesToTimeString(slot.localStartMinutes);
+    const endTime = minutesToTimeString(slot.localEndMinutes);
+    if (!isValidTimeRange(startTime, endTime)) {
+      console.warn("Invalid time range for weekly slot:", {
+        day,
+        startTime,
+        endTime,
+      });
+      continue;
+    }
+    // Preserve the overnight-in-UTC hint when the local times don't show it.
+    const isOvernightUTC = slot.startDay !== slot.endDay && startTime < endTime;
+    (formattedWeeklySlots[day] ||= []).push({
+      startTime,
+      endTime,
+      isValid: true,
+      ...(isOvernightUTC ? { isOvernightUTC: true } : {}),
     });
-  } catch (error) {
-    console.error("Error in getInitialWeeklySlots:", error);
   }
 
   // Sort slots chronologically within each day
