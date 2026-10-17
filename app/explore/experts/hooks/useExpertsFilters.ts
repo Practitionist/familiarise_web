@@ -52,6 +52,14 @@ export function useExpertsFilters(): UseExpertsFiltersResult {
     filtersFromSearchParams(searchParams),
   );
 
+  const searchParamsString = searchParams.toString();
+  const lastSearchParamsRef = useRef(searchParamsString);
+  useEffect(() => {
+    if (lastSearchParamsRef.current === searchParamsString) return;
+    lastSearchParamsRef.current = searchParamsString;
+    setFilters(filtersFromSearchParams(searchParams));
+  }, [searchParams, searchParamsString]);
+
   const updateFilters = useCallback((partial: Partial<IExpertFilters>) => {
     setFilters((prev) => ({ ...prev, ...partial }));
   }, []);
@@ -76,8 +84,12 @@ export function useExpertsFilters(): UseExpertsFiltersResult {
       const params = new URLSearchParams(qs);
       if (expert) params.set("expert", expert);
       const qsWithExpert = params.toString();
+      lastSearchParamsRef.current = qsWithExpert;
       const target = `/explore/experts${qsWithExpert ? `?${qsWithExpert}` : ""}${hash}`;
-      const current = window.location.pathname + window.location.search;
+      const current =
+        window.location.pathname +
+        window.location.search +
+        window.location.hash;
       if (target !== current) {
         replaceUrl(target);
       }

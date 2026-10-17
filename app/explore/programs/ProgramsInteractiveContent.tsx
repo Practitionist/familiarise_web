@@ -1,7 +1,7 @@
 "use client";
 
 import { PlanLevel } from "@prisma/client";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   GraduationCap,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { useCurrency } from "@/hooks/useCurrency";
+import { useInitialFilterScroll } from "@/hooks/use-initial-filter-scroll";
 import { type Program, type TopicWithCount } from "@/lib/explore/programs";
 import {
   buildProgramHeroStats,
@@ -59,6 +60,16 @@ const PROGRAM_STAT_ICONS: Record<ProgramStatKey, LucideIcon> = {
   webinars: Video,
   learners: Users,
 };
+
+const PROGRAM_FILTER_SCROLL_KEYS = [
+  "type",
+  "search",
+  "topicIds",
+  "level",
+  "sort",
+  "minPrice",
+  "maxPrice",
+] as const;
 
 export default function ProgramsInteractiveContent({
   initialTrending,
@@ -159,6 +170,13 @@ export default function ProgramsInteractiveContent({
     [trendingPrograms],
   );
 
+  const allProgramsRef = useRef<HTMLDivElement>(null);
+  useInitialFilterScroll(
+    allProgramsRef,
+    "#all-programs",
+    PROGRAM_FILTER_SCROLL_KEYS,
+  );
+
   const handleTopicSelect = useCallback(
     (topicId: string) => {
       updateFilters({
@@ -166,9 +184,7 @@ export default function ProgramsInteractiveContent({
           ? filters.topicIds
           : [...(filters.topicIds || []), topicId],
       });
-      document
-        .getElementById("all-programs")
-        ?.scrollIntoView({ behavior: "smooth" });
+      allProgramsRef.current?.scrollIntoView({ behavior: "smooth" });
     },
     [filters.topicIds, updateFilters],
   );
@@ -268,7 +284,14 @@ export default function ProgramsInteractiveContent({
           />
 
           {/* All Programs Section */}
-          <div id="all-programs">
+          <div
+            ref={allProgramsRef}
+            id="all-programs"
+            style={{
+              scrollMarginTop:
+                "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 1.5rem)",
+            }}
+          >
             <SectionHeader title="All Programs" />
 
             {/* Advanced Filters */}

@@ -1,9 +1,9 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
-/** Checkout two-column plan layout (fills plans/layout grid). */
+/** Checkout two-column plan layout. */
 export function CheckoutPlanSkeleton() {
   return (
-    <>
+    <div className="grid min-h-[calc(100vh-3.5rem)] w-full lg:grid-cols-[58%_42%]">
       <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
         <div className="flex items-center gap-4">
           <Skeleton className="h-12 w-12 shrink-0 rounded-full" />
@@ -19,13 +19,12 @@ export function CheckoutPlanSkeleton() {
         </div>
       </div>
       <div className="flex flex-col gap-8 bg-card p-6 sm:p-8">
-        <Skeleton className="h-48 rounded-xl" />
+        <Skeleton className="h-48 rounded-2xl" />
         <div className="space-y-4">
-          <Skeleton className="h-24 rounded-xl" />
-          <Skeleton className="h-24 rounded-xl" />
+          <Skeleton className="h-36 rounded-2xl" />
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

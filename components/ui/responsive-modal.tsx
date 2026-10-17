@@ -47,7 +47,10 @@ const ResponsiveModalContent = React.forwardRef<
     <SheetContent
       ref={ref}
       side="bottom"
-      className={cn("gap-4 p-6", className)}
+      className={cn(
+        "gap-4 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]",
+        className,
+      )}
       {...props}
     >
       {children}

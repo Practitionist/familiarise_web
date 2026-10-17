@@ -51,7 +51,7 @@ export function SupportSearch() {
   }
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full max-w-2xl">
       <div className="relative">
         <Search
           className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground"
@@ -67,7 +67,7 @@ export function SupportSearch() {
       </div>
 
       {!showResults && (
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+        <div className="mt-4 flex flex-wrap items-center justify-start gap-2">
           <span className="text-sm text-muted-foreground">Popular:</span>
           {POPULAR.map((term) => (
             <button

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState, useEffect, useMemo } from "react";
 import { useSession } from "@/lib/auth-client";
@@ -20,9 +19,11 @@ import { getWebinarCapacity } from "@/lib/events/capacity";
 import { isUserRegisteredForWebinar } from "@/lib/payments/utils/participants";
 import type { TSessionStatus } from "../types";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
+import { RegistrationReview } from "@/components/booking/RegistrationReview";
 import { GroupSessionDisclosure } from "@/components/booking/GroupSessionDisclosure";
 
 type ClientWebinarRegistrationProps = {
+  title?: string;
   webinarPlanId: string; // The WebinarPlan ID (for URL path)
   webinarId?: string; // The actual Webinar instance ID (for eventId query param)
   price: number;
@@ -41,6 +42,7 @@ type ClientWebinarRegistrationProps = {
 
 export function ClientWebinarRegistration({
   webinarPlanId,
+  title = "Webinar",
   webinarId,
   price,
   currency: _currency,
@@ -83,8 +85,6 @@ export function ClientWebinarRegistration({
   // Only checkout-able when the session is upcoming, a webinar instance
   // exists, and there's still room — a sold-out webinar falls back to the
   // page so the visitor sees the sold-out state rather than a dead checkout.
-  // Hoisted so the register CTA can render as a prefetchable <Link> when
-  // truthy; the handler below stays as the router.push fallback.
   const checkoutUrl = useMemo(
     () =>
       sessionStatus === "Upcoming" && webinarId && !isFull
@@ -126,7 +126,6 @@ export function ClientWebinarRegistration({
     } else if (sessionStatus === "Upcoming") {
       sessionInfoText = `Next session: ${formattedDate}`;
     } else {
-      // "To be announced" but has a nextSessionDate (edge case) or other unhandled status
       sessionInfoText = `Scheduled: ${formattedDate}`;
     }
   } else if (sessionStatus === "Completed") {
@@ -134,11 +133,9 @@ export function ClientWebinarRegistration({
   } else if (sessionStatus === "Happening Now") {
     sessionInfoText = "This webinar is currently in progress.";
   } else {
-    // Fallback for !nextSessionDate and status is "Upcoming" or "To be announced"
     sessionInfoText = "Session time to be announced.";
   }
 
-  // Logic for buttonText and buttonDisabled
   let buttonText = `Pay ${formatPrice(price)} & Register Now`;
   let buttonDisabled = false;
 
@@ -149,14 +146,11 @@ export function ClientWebinarRegistration({
     buttonText = "Session in Progress";
     buttonDisabled = true;
   } else if (sessionStatus === "To be announced" || !webinarId) {
-    // Disable registration when no session is scheduled or no webinar instance exists
     buttonText = "Registration Opening Soon";
     buttonDisabled = true;
   }
 
   if (!isLoggedIn) {
-    // For non-logged in users, the button primarily serves to redirect to sign-in.
-    // We can still reflect the session status in the button text and disable it if not upcoming.
     let signInButtonText = "Sign in to Register";
     let signInButtonDisabled = false;
 
@@ -170,21 +164,17 @@ export function ClientWebinarRegistration({
       signInButtonText = "Registration Opening Soon";
       signInButtonDisabled = true;
     } else if (isFull) {
-      // Sending a signed-out visitor through sign-in only to meet a sold-out
-      // card is a wasted round trip; say so up front.
       signInButtonText = "Sold out";
       signInButtonDisabled = true;
     }
 
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-muted-foreground mb-4">
-            {sessionInfoText} {/* Show current session status info */}
-          </p>
+          <p className="text-muted-foreground mb-4">{sessionInfoText}</p>
           {isFull && (
             <Badge
               variant="secondary"
@@ -198,13 +188,26 @@ export function ClientWebinarRegistration({
               Please sign in to register for this webinar.
             </p>
           )}
-          <Button
-            onClick={handleRegistration} // This redirects to sign-in
-            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-            disabled={signInButtonDisabled}
-          >
-            {signInButtonText}
-          </Button>
+          {signInButtonDisabled ? (
+            <Button className="w-full" disabled>
+              {signInButtonText}
+            </Button>
+          ) : (
+            <RegistrationReview
+              title={title}
+              price={formatPrice(price)}
+              onContinue={handleRegistration}
+              label="Sign in to continue"
+            >
+              <p>{sessionInfoText}</p>
+              <p>Time zone: {userTimeZone}</p>
+              <GroupSessionDisclosure />
+              <FreeCancellationLine
+                startsAt={nextSessionDate}
+                windowHours={refundWindowHours}
+              />
+            </RegistrationReview>
+          )}
         </CardContent>
       </Card>
     );
@@ -213,7 +216,7 @@ export function ClientWebinarRegistration({
   // Show "Already Registered" state for logged-in users who are already registered
   if (isAlreadyRegistered) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
@@ -235,11 +238,10 @@ export function ClientWebinarRegistration({
     );
   }
 
-  // Sold out — registration is simply closed. The host can reopen it by
-  // raising the capacity on this webinar.
+  // Sold out — registration is simply closed.
   if (isFull && isLoggedIn && !isAlreadyRegistered) {
     return (
-      <Card>
+      <Card className="rounded-2xl border-border shadow-sm">
         <CardHeader>
           <CardTitle>Webinar Registration</CardTitle>
         </CardHeader>
@@ -268,7 +270,7 @@ export function ClientWebinarRegistration({
   }
 
   return (
-    <Card>
+    <Card className="rounded-2xl border-border shadow-sm">
       <CardHeader>
         <CardTitle>Webinar Registration</CardTitle>
       </CardHeader>
@@ -284,14 +286,19 @@ export function ClientWebinarRegistration({
       </CardContent>
       <CardFooter>
         {checkoutUrl && !buttonDisabled ? (
-          <Button
-            asChild
-            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+          <RegistrationReview
+            title={title}
+            price={formatPrice(price)}
+            onContinue={handleRegistration}
           >
-            <Link href={checkoutUrl} prefetch>
-              {buttonText}
-            </Link>
-          </Button>
+            <p>{sessionInfoText}</p>
+            <p>Time zone: {userTimeZone}</p>
+            <GroupSessionDisclosure />
+            <FreeCancellationLine
+              startsAt={nextSessionDate}
+              windowHours={refundWindowHours}
+            />
+          </RegistrationReview>
         ) : (
           <Button
             onClick={handleRegistration}

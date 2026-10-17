@@ -94,13 +94,16 @@ function CheckoutFailureContent() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
-            <div className="space-y-4">
-              {commonFailureReasons.map((reason, index) => (
-                <div key={index} className="border-l-4 border-border pl-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {commonFailureReasons.map((reason) => (
+                <div
+                  key={reason.title}
+                  className="rounded-xl border border-border bg-muted/30 p-3.5"
+                >
                   <h4 className="font-medium text-foreground">
                     {reason.title}
                   </h4>
-                  <p className="text-sm text-muted-foreground">
+                  <p className="mt-1 text-sm text-muted-foreground">
                     {reason.description}
                   </p>
                 </div>
@@ -137,25 +140,25 @@ function CheckoutFailureContent() {
           </Button>
         </div>
 
-        <div className="mt-8 bg-foreground border border-border rounded-xl p-5">
-          <h3 className="font-medium text-background mb-3">
+        <div className="mt-8 rounded-2xl border border-border bg-muted/50 p-5 text-foreground">
+          <h3 className="font-medium text-foreground mb-3">
             What happens next?
           </h3>
-          <ul className="text-sm text-background/70 space-y-2">
+          <ul className="text-sm text-muted-foreground space-y-2">
             <li className="flex items-start gap-2">
-              <span className="text-background/50">•</span>
+              <span className="text-muted-foreground/70">•</span>{" "}
               No charges were made to your payment method
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-background/50">•</span>
+              <span className="text-muted-foreground/70">•</span>{" "}
               Your booking slot is still available for a limited time
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-background/50">•</span>
+              <span className="text-muted-foreground/70">•</span>{" "}
               You can retry with the same or different payment method
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-background/50">•</span>
+              <span className="text-muted-foreground/70">•</span>{" "}
               Contact support if you continue to experience issues
             </li>
           </ul>

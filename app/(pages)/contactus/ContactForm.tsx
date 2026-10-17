@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { reportSentryError } from "@/lib/observability/report";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import { ACK_PROMISE_COPY, INQUIRY_CATEGORIES } from "../constants";
 
@@ -85,7 +86,12 @@ export function ContactForm() {
       setTrackingRef(body?.referenceNumber ?? null);
       setValues(EMPTY);
       setStatus("sent");
-    } catch {
+    } catch (error) {
+      reportSentryError(error, {
+        subsystem: "support",
+        op: "contact_form_submit",
+        expected: false,
+      });
       setFormError(
         "We could not reach the server. Check your connection and try again.",
       );
@@ -250,7 +256,7 @@ export function ContactForm() {
         <select
           id="category"
           name="category"
-          className="w-full px-3 py-2 border border-border rounded-md bg-background"
+          className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           value={values.category}
           onChange={(e) => set("category")(e.target.value)}
         >

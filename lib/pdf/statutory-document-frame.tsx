@@ -20,6 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { View, Text, StyleSheet, Font } from "@react-pdf/renderer";
 import type { Currency } from "@prisma/client";
+import { reportSentryError } from "@/lib/observability/report";
 
 // ============================================================================
 // Devanagari font registration (#1365)
@@ -57,7 +58,12 @@ function registerDevanagari(): boolean {
     if (!fonts.every((f) => fs.existsSync(f.src))) return false;
     Font.register({ family: "NotoSansDevanagari", fonts });
     return true;
-  } catch {
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "pdf",
+      op: "register_devanagari_font",
+      expected: true,
+    });
     return false;
   }
 }

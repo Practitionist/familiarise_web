@@ -103,25 +103,29 @@ export function useExpertFilterChips(
     const out: ActiveFilter[] = [];
 
     if (filters.domain) {
-      const domain = metadata?.domains.find((d) => d.id === filters.domain);
-      if (domain) {
-        out.push({
-          key: encodeChipKey({ kind: "domain" }),
-          label: "Domain",
-          value: domain.name,
-        });
-      }
+      const domain = metadata?.domains.find(
+        (d) =>
+          d.id === filters.domain ||
+          d.name.toLowerCase() === filters.domain?.toLowerCase(),
+      );
+      out.push({
+        key: encodeChipKey({ kind: "domain" }),
+        label: "Domain",
+        value: domain?.name ?? filters.domain,
+      });
     }
 
     if (filters.subdomain) {
-      const sub = metadata?.subdomains.find((s) => s.id === filters.subdomain);
-      if (sub) {
-        out.push({
-          key: encodeChipKey({ kind: "subdomain" }),
-          label: "Subdomain",
-          value: sub.name,
-        });
-      }
+      const sub = metadata?.subdomains.find(
+        (s) =>
+          s.id === filters.subdomain ||
+          s.name.toLowerCase() === filters.subdomain?.toLowerCase(),
+      );
+      out.push({
+        key: encodeChipKey({ kind: "subdomain" }),
+        label: "Subdomain",
+        value: sub?.name ?? filters.subdomain,
+      });
     }
 
     for (const tag of filters.tags) {

@@ -67,7 +67,7 @@ export function SocialLoginButtons({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {providers.map((provider) => {
         const Icon = PROVIDER_ICONS[provider.id];
         return (
@@ -79,7 +79,7 @@ export function SocialLoginButtons({
             aria-busy={pendingProvider === provider.id || undefined}
             onClick={() => void startSocialSignIn(provider.id)}
           >
-            {Icon && <Icon className="w-6 h-6 text-white mr-2" />}
+            {Icon && <Icon className="w-5 h-5 text-white mr-2.5" />}
             {pendingProvider === provider.id
               ? `Redirecting to ${provider.label}…`
               : provider.label}
@@ -89,11 +89,11 @@ export function SocialLoginButtons({
       {onSSOClick && (
         <Button
           type="button"
-          className="w-full flex items-center justify-center bg-zinc-700 hover:bg-zinc-600"
+          className="w-full flex items-center justify-center bg-zinc-900/90 hover:bg-zinc-800 border border-white/10 text-white font-medium h-11 rounded-xl transition-colors"
           disabled={isLoading || ssoChecking || pendingProvider !== null}
           onClick={onSSOClick}
         >
-          <Building2 className="w-5 h-5 text-white mr-2" />
+          <Building2 className="w-5 h-5 text-white mr-2.5" />
           {ssoChecking ? "Checking…" : "Sign in with Corporate SSO"}
         </Button>
       )}

@@ -70,12 +70,12 @@ export default function GlobalError({
 
   if (isMaintenance) {
     return (
-      <div className="container mx-auto pt-24 py-8 px-4 min-h-[calc(100vh-400px)] flex items-center justify-center">
+      <div className="container mx-auto flex min-h-[70vh] items-center justify-center px-4 py-12">
         <div
           data-testid="maintenance-error"
-          className="mx-auto max-w-md px-6 text-center"
+          className="w-full max-w-md rounded-2xl border border-border bg-card p-8 text-center shadow-elevation-2"
         >
-          <div className="mb-8">
+          <div className="mb-6">
             <Image
               src={familiariseLogo}
               alt="Familiarise"
@@ -85,23 +85,23 @@ export default function GlobalError({
               priority
             />
           </div>
-          <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight text-foreground">
+          <h1 className="mb-2 text-2xl font-semibold tracking-tight text-foreground">
             We&apos;re doing scheduled maintenance
           </h1>
-          <p className="mb-6 text-muted-foreground">
+          <p className="mb-6 text-sm text-muted-foreground">
             {maintenance.reason ||
               "Familiarise is undergoing scheduled maintenance. We'll be back shortly with a better experience."}
           </p>
           {maintenance.estimatedEnd && (
-            <div className="mb-8 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
-              <span className="font-medium">Estimated return:</span>{" "}
+            <div className="mb-6 rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">
+                Estimated return:
+              </span>{" "}
               {formatEta(maintenance.estimatedEnd)}
             </div>
           )}
-          <div className="flex justify-center gap-4">
-            <Button variant="outline" onClick={() => reset()}>
-              Try Again
-            </Button>
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+            <Button onClick={() => reset()}>Try Again</Button>
             <Button variant="outline" asChild>
               <Link href="/">Return Home</Link>
             </Button>
@@ -114,28 +114,31 @@ export default function GlobalError({
   return (
     <div
       data-testid="generic-error"
-      className="container mx-auto pt-24 py-8 px-4 min-h-[calc(100vh-400px)]"
+      className="container mx-auto flex min-h-[70vh] items-center justify-center px-4 py-12"
     >
-      <Card className="max-w-2xl mx-auto text-center">
-        <CardHeader>
-          <CardTitle>Something went wrong</CardTitle>
+      <Card className="w-full max-w-md rounded-2xl border-border p-2 text-center shadow-elevation-2">
+        <CardHeader className="pb-3">
+          <div className="mx-auto mb-3 inline-flex items-center rounded-full border border-border bg-muted px-3 py-1 font-mono text-xs font-medium text-muted-foreground">
+            Error
+          </div>
+          <CardTitle className="text-2xl font-semibold tracking-tight">
+            Something went wrong
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground">
+        <CardContent className="pb-6">
+          <p className="text-sm text-muted-foreground">
             {process.env.NODE_ENV === "development"
               ? error.message || "An unexpected error occurred."
               : "An unexpected error occurred. Please try again."}
           </p>
           {error.digest && (
-            <p className="text-xs text-muted-foreground mt-2">
+            <p className="mt-3 font-mono text-xs text-muted-foreground">
               Error ID: {error.digest}
             </p>
           )}
         </CardContent>
-        <CardFooter className="justify-center space-x-4">
-          <Button variant="outline" onClick={() => reset()}>
-            Try Again
-          </Button>
+        <CardFooter className="flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+          <Button onClick={() => reset()}>Try Again</Button>
           <Button variant="outline" asChild>
             <Link href="/">Return Home</Link>
           </Button>

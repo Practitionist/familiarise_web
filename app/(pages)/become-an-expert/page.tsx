@@ -118,12 +118,12 @@ export default function BecomeAnExpertPage() {
   return (
     <main className="min-h-screen bg-background">
       {/* Hero */}
-      <section className="relative overflow-hidden bg-zinc-950 pt-32 pb-20">
-        <div className="absolute inset-0">
-          <div className="animate-blob absolute left-1/4 top-1/4 h-[500px] w-[500px] rounded-full bg-zinc-800/30 blur-[120px]" />
-          <div className="animate-blob animation-delay-2000 absolute bottom-1/4 right-1/4 h-[400px] w-[400px] rounded-full bg-zinc-700/20 blur-[100px]" />
-        </div>
-        <div className="grid-pattern absolute inset-0 opacity-20" />
+      <section className="relative overflow-hidden bg-zinc-950 pt-32 pb-20 md:pb-28">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-0 h-[440px] w-[780px] -translate-x-1/2 bg-[radial-gradient(closest-side,rgba(255,255,255,0.08),transparent)]"
+        />
+        <div className="grid-pattern pointer-events-none absolute inset-0 opacity-20" />
 
         <div className="relative z-10 mx-auto max-w-[1100px] px-4 md:px-8">
           <div className="mx-auto max-w-3xl text-center">
@@ -133,7 +133,7 @@ export default function BecomeAnExpertPage() {
                 Share your expertise
               </span>
             </div>
-            <h1 className="text-fluid-4xl mb-6 font-bold tracking-tight text-white">
+            <h1 className="text-fluid-4xl md:text-fluid-5xl mb-6 font-bold tracking-tight text-white">
               Share what you know.{" "}
               <span className="silver-text">Get paid for it.</span>
             </h1>
@@ -145,7 +145,7 @@ export default function BecomeAnExpertPage() {
             <div className="flex flex-col justify-center gap-3 sm:flex-row">
               <Button
                 size="lg"
-                className="w-full bg-white text-zinc-900 hover:bg-zinc-200 sm:w-auto"
+                className="h-12 w-full rounded-xl bg-white px-8 text-zinc-900 hover:bg-zinc-100 sm:w-auto"
                 asChild
               >
                 <Link href="/auth/signup">
@@ -156,7 +156,7 @@ export default function BecomeAnExpertPage() {
               <Button
                 size="lg"
                 variant="outline"
-                className="w-full border-zinc-700 bg-transparent text-white hover:bg-zinc-800 hover:text-white sm:w-auto"
+                className="h-12 w-full rounded-xl border-zinc-700 bg-transparent px-8 text-white hover:bg-zinc-800 hover:text-white sm:w-auto"
                 asChild
               >
                 <Link href="/explore/experts">See who&apos;s already here</Link>
@@ -325,33 +325,44 @@ export default function BecomeAnExpertPage() {
             </h2>
           </div>
 
-          <Accordion type="single" collapsible className="w-full">
-            {FAQ.map((item) => (
-              <AccordionItem key={item.question} value={item.question}>
-                <AccordionTrigger className="text-left font-medium text-foreground">
-                  {item.question}
-                </AccordionTrigger>
-                <AccordionContent className="leading-relaxed text-muted-foreground">
-                  {item.answer}
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
+          <div className="rounded-2xl border border-border bg-card px-6 shadow-elevation-1">
+            <Accordion type="single" collapsible className="w-full">
+              {FAQ.map((item, index) => (
+                <AccordionItem
+                  key={item.question}
+                  value={item.question}
+                  className={index === FAQ.length - 1 ? "border-b-0" : ""}
+                >
+                  <AccordionTrigger className="py-5 text-left font-medium text-foreground hover:no-underline">
+                    {item.question}
+                  </AccordionTrigger>
+                  <AccordionContent className="pb-5 leading-relaxed text-muted-foreground">
+                    {item.answer}
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </div>
         </div>
       </section>
 
       {/* Closing CTA */}
-      <section className="py-20 md:py-28">
-        <div className="mx-auto max-w-[800px] px-4 text-center md:px-8">
-          <h2 className="text-fluid-3xl mb-4 font-bold tracking-tight text-foreground">
+      <section className="relative overflow-hidden bg-zinc-950 py-20 text-white md:py-28">
+        <div className="grid-pattern pointer-events-none absolute inset-0 opacity-20" />
+        <div className="relative z-10 mx-auto max-w-[800px] px-4 text-center md:px-8">
+          <h2 className="text-fluid-3xl md:text-fluid-4xl mb-4 font-bold tracking-tight text-white">
             Ready to start advising?
           </h2>
-          <p className="mx-auto mb-8 max-w-xl text-muted-foreground">
+          <p className="mx-auto mb-8 max-w-xl text-zinc-400">
             Apply in a few minutes. We&apos;ll review your details and get back
             to you about verification.
           </p>
           <div className="flex flex-col justify-center gap-3 sm:flex-row">
-            <Button size="lg" className="w-full sm:w-auto" asChild>
+            <Button
+              size="lg"
+              className="h-12 w-full rounded-xl bg-white px-8 text-zinc-900 hover:bg-zinc-100 sm:w-auto"
+              asChild
+            >
               <Link href="/auth/signup">
                 Apply to join
                 <ArrowRight className="ml-2 h-4 w-4" />
@@ -360,7 +371,7 @@ export default function BecomeAnExpertPage() {
             <Button
               size="lg"
               variant="outline"
-              className="w-full sm:w-auto"
+              className="h-12 w-full rounded-xl border-zinc-700 bg-transparent px-8 text-white hover:bg-zinc-900 hover:text-white sm:w-auto"
               asChild
             >
               <Link href="/contactus">Talk to us first</Link>

@@ -57,6 +57,8 @@ const ROUTE_PATTERNS = {
     "/api/staff/",
     "/api/organizations/",
   ],
+  // Matched before AUTHENTICATED_API_PREFIXES, so a public sub-route shadows
+  // its private parent; mutation/private sub-routes enforce auth in-handler.
   PUBLIC_API_PREFIXES: [
     "/api/auth/",
     "/api/health/",
@@ -65,6 +67,8 @@ const ROUTE_PATTERNS = {
     "/api/user/reviews",
     "/api/plans/classes",
     "/api/plans/webinars",
+    "/api/plans/consultations",
+    "/api/plans/subscriptions",
     "/api/explore/recordings",
     "/api/scheduling/availability/",
     "/api/scheduling/availability-with-allocation/",

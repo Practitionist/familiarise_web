@@ -76,9 +76,9 @@ describe("Lighthouse CWV & Anti-Runaway Billing Guardrails", () => {
     expect(readRepoFile("lib/explore/programs.ts")).not.toContain("picsum");
   });
 
-  it("caps TestimonialsSection marquee duplication to 2x per row instead of 9x", () => {
+  it("caps TestimonialsSection review grid without marquee duplication", () => {
     const src = readRepoFile("components/home/TestimonialsSection.tsx");
-    expect(src).toContain("[...reviews, ...reviews]");
+    expect(src).toContain("uniqueReviews.slice(0, 6)");
     expect(src).not.toContain(
       "[...displayReviews, ...displayReviews, ...displayReviews]",
     );

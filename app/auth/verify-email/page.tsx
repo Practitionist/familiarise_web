@@ -21,6 +21,7 @@ import {
   readPendingVerificationEmail,
 } from "../pending-verification";
 import { safeSameOriginPath } from "@/lib/navigation/safe-path";
+import { GlobeIcon } from "@/components/auth/auth-icons";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
@@ -192,111 +193,124 @@ function VerifyEmailContent() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-neutral-950 p-6">
       <div className="w-full max-w-md text-white">
-        <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight">
-          Verify your email
-        </h1>
-        <p className="text-sm md:text-base text-zinc-400 mb-6">
-          {presetEmail ? (
-            <>
-              We emailed a 6-digit code to{" "}
-              <span className="font-medium text-white">{presetEmail}</span>. It
-              expires in 10 minutes.
-            </>
-          ) : (
-            "Enter your email and the 6-digit code we sent you. Codes expire in 10 minutes."
-          )}
-        </p>
+        <div className="mb-6 flex justify-center">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 text-sm font-semibold tracking-wider text-white uppercase"
+          >
+            <GlobeIcon className="h-5 w-5" /> Familiarise
+          </Link>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-zinc-900/50 p-8">
+          <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight">
+            Verify your email
+          </h1>
+          <p className="text-sm md:text-base text-zinc-400 mb-6">
+            {presetEmail ? (
+              <>
+                We emailed a 6-digit code to{" "}
+                <span className="font-medium text-white">{presetEmail}</span>.
+                It expires in 10 minutes.
+              </>
+            ) : (
+              "Enter your email and the 6-digit code we sent you. Codes expire in 10 minutes."
+            )}
+          </p>
 
-        <form onSubmit={handleVerify} className="grid gap-4">
-          {!presetEmail && (
+          <form onSubmit={handleVerify} className="grid gap-4">
+            {!presetEmail && (
+              <div className="grid gap-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  name="email"
+                  placeholder="name@example.com"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  autoCorrect="off"
+                  autoFocus
+                  required
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setErrorCopy(null);
+                  }}
+                  disabled={verifying}
+                  {...invalidProps(emailError, "email-error")}
+                />
+                <FieldError id="email-error" message={emailError} />
+              </div>
+            )}
             <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="code">Verification code</Label>
               <Input
-                id="email"
-                type="email"
-                name="email"
-                placeholder="name@example.com"
-                autoCapitalize="none"
-                autoComplete="email"
-                autoCorrect="off"
-                autoFocus
+                id="code"
+                name="code"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]*"
+                maxLength={CODE_LENGTH}
+                autoFocus={!!presetEmail}
                 required
-                value={email}
+                placeholder="123456"
+                className="tracking-[0.5em] text-lg"
+                value={code}
                 onChange={(e) => {
-                  setEmail(e.target.value);
+                  setCode(
+                    e.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH),
+                  );
                   setErrorCopy(null);
                 }}
                 disabled={verifying}
-                {...invalidProps(emailError, "email-error")}
+                {...invalidProps(codeError, "code-error")}
               />
-              <FieldError id="email-error" message={emailError} />
+              <FieldError id="code-error" message={codeError} />
             </div>
-          )}
-          <div className="grid gap-2">
-            <Label htmlFor="code">Verification code</Label>
-            <Input
-              id="code"
-              name="code"
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              pattern="[0-9]*"
-              maxLength={CODE_LENGTH}
-              autoFocus={!!presetEmail}
-              required
-              placeholder="123456"
-              className="tracking-[0.5em] text-lg"
-              value={code}
-              onChange={(e) => {
-                setCode(
-                  e.target.value.replace(/\D/g, "").slice(0, CODE_LENGTH),
-                );
-                setErrorCopy(null);
-              }}
-              disabled={verifying}
-              {...invalidProps(codeError, "code-error")}
-            />
-            <FieldError id="code-error" message={codeError} />
-          </div>
-          {formError && (
-            <div role="alert" className="text-sm text-red-400">
-              <p className="font-medium">{formError.title}</p>
-              <p>{formError.description}</p>
-            </div>
-          )}
+            {formError && (
+              <div role="alert" className="text-sm text-red-400">
+                <p className="font-medium">{formError.title}</p>
+                <p>{formError.description}</p>
+              </div>
+            )}
+            <Button
+              type="submit"
+              className="w-full bg-white text-black hover:bg-white/90"
+              disabled={verifying || code.length !== CODE_LENGTH}
+            >
+              {verifying ? "Verifying…" : "Verify email"}
+            </Button>
+          </form>
+
           <Button
-            type="submit"
-            className="w-full bg-white text-black hover:bg-white/90"
-            disabled={verifying || code.length !== CODE_LENGTH}
+            type="button"
+            className="w-full mt-4 bg-zinc-800 hover:bg-zinc-700"
+            onClick={() => void handleResend()}
+            disabled={resending || cooldown > 0}
           >
-            {verifying ? "Verifying…" : "Verify email"}
+            {resending
+              ? "Sending…"
+              : cooldown > 0
+                ? `Resend code in ${cooldown}s`
+                : "Resend code"}
           </Button>
-        </form>
 
-        <Button
-          type="button"
-          className="w-full mt-4 bg-zinc-800 hover:bg-zinc-700"
-          onClick={() => void handleResend()}
-          disabled={resending || cooldown > 0}
-        >
-          {resending
-            ? "Sending…"
-            : cooldown > 0
-              ? `Resend code in ${cooldown}s`
-              : "Resend code"}
-        </Button>
+          <AuthErrorAffordance
+            action={errorCopy?.action}
+            target={errorTarget}
+          />
 
-        <AuthErrorAffordance action={errorCopy?.action} target={errorTarget} />
-
-        <p className="mt-6 text-xs text-zinc-400">
-          Already verified?{" "}
-          <Link
-            href={signInUrl}
-            className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
-          >
-            Sign in
-          </Link>
-        </p>
+          <p className="mt-6 text-xs text-zinc-400">
+            Already verified?{" "}
+            <Link
+              href={signInUrl}
+              className="font-medium text-zinc-300 underline-offset-4 hover:text-white hover:underline"
+            >
+              Sign in
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );

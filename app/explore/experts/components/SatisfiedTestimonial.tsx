@@ -1,9 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { motion } from "framer-motion";
 import { Quote, Star } from "lucide-react";
-import Image from "next/image";
 
 const TESTIMONIALS = [
   {
@@ -37,6 +37,8 @@ const TESTIMONIALS = [
       "The quality of experts on this platform is outstanding. I've had multiple sessions and each one has been incredibly valuable for my professional development.",
   },
 ];
+
+const STAR_NUMBERS = [1, 2, 3, 4, 5] as const;
 
 export function SatisfiedTestimonial() {
   return (
@@ -91,9 +93,9 @@ export function SatisfiedTestimonial() {
 
                 {/* Rating */}
                 <div className="flex gap-1 mb-4">
-                  {[...Array(testimonial.rating)].map((_, i) => (
+                  {STAR_NUMBERS.slice(0, testimonial.rating).map((starNum) => (
                     <Star
-                      key={i}
+                      key={`${testimonial.id}-star-${starNum}`}
                       className="w-4 h-4 fill-amber-400 text-amber-400"
                     />
                   ))}
@@ -124,7 +126,6 @@ export function SatisfiedTestimonial() {
                     </p>
                   </div>
                 </div>
-
                 {/* Reviewed on Familiarise */}
                 <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-zinc-800">
                   <Image

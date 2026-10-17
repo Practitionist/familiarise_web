@@ -6,7 +6,6 @@ import { useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
-  Briefcase,
   Building2,
   CalendarDays,
   Check,
@@ -196,15 +195,6 @@ export default function ExpertDetailsSheet({
                     </dd>
                   </div>
                 )}
-                {consultant.headline && (
-                  <div className="flex items-center gap-2">
-                    <Briefcase className="h-4 w-4 text-muted-foreground/70" />
-                    <dt className="text-muted-foreground">Headline:</dt>
-                    <dd className="font-medium text-foreground">
-                      {consultant.headline}
-                    </dd>
-                  </div>
-                )}
                 <div className="flex items-center gap-2">
                   <CalendarDays className="h-4 w-4 text-muted-foreground/70" />
                   <dt className="text-muted-foreground">Member since:</dt>
@@ -342,43 +332,57 @@ export default function ExpertDetailsSheet({
                 </div>
               )}
 
-              <div className="mt-6 space-y-2 rounded-xl border border-border bg-muted p-4">
-                <p className="text-sm text-muted-foreground">
-                  Consultation plans start from{" "}
-                  {cheapestOneOnOne ? (
-                    <>
-                      <span className="font-semibold text-foreground">
-                        {formatPrice(cheapestOneOnOne.price)}
-                      </span>{" "}
-                      / {cheapestOneOnOne.durationInHours}h
-                    </>
-                  ) : (
-                    <span className="font-medium text-foreground">
-                      — none listed
-                    </span>
-                  )}
+              <div className="mt-6 space-y-2.5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Starting prices
                 </p>
-                <p className="text-sm text-muted-foreground">
-                  Subscription plans start from{" "}
-                  {cheapest ? (
-                    <>
-                      <span className="font-semibold text-foreground">
-                        {formatPrice(cheapest.price)}
-                      </span>{" "}
-                      / {cheapest.durationInMonths} mo
-                    </>
-                  ) : (
-                    <span className="font-medium text-foreground">
-                      — none listed
-                    </span>
-                  )}
-                </p>
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <div className="rounded-xl border border-border bg-muted/40 p-3.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      1:1 Consultation
+                    </p>
+                    {cheapestOneOnOne ? (
+                      <p className="mt-1 text-base font-semibold text-foreground">
+                        {formatPrice(cheapestOneOnOne.price)}{" "}
+                        <span className="text-xs font-normal text-muted-foreground">
+                          / {cheapestOneOnOne.durationInHours}h
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-sm font-medium text-muted-foreground">
+                        None listed
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-xl border border-border bg-muted/40 p-3.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Subscription
+                    </p>
+                    {cheapest ? (
+                      <p className="mt-1 text-base font-semibold text-foreground">
+                        {formatPrice(cheapest.price)}{" "}
+                        <span className="text-xs font-normal text-muted-foreground">
+                          / {cheapest.durationInMonths} mo
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-sm font-medium text-muted-foreground">
+                        None listed
+                      </p>
+                    )}
+                  </div>
+                </div>
                 {trialPlan && (
-                  <p className="border-t border-border pt-2 text-sm text-muted-foreground">
-                    {trialPlan.trialPriceInPaise > 0
-                      ? `Trial available · ${formatPrice(trialPlan.trialPriceInPaise)}`
-                      : "Free intro call available"}
-                  </p>
+                  <div className="rounded-xl border border-border bg-muted/40 p-3.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Introductory session
+                    </p>
+                    <p className="mt-0.5 text-sm font-semibold text-foreground">
+                      {trialPlan.trialPriceInPaise > 0
+                        ? `Trial available · ${formatPrice(trialPlan.trialPriceInPaise)}`
+                        : "Free intro call available"}
+                    </p>
+                  </div>
                 )}
               </div>
             </div>
@@ -386,7 +390,7 @@ export default function ExpertDetailsSheet({
             <div className="space-y-2 border-t border-border bg-card p-4">
               <Button asChild className="h-12 w-full rounded-xl font-medium">
                 <Link href={profileHref}>
-                  <span>View full profile</span>
+                  <span>View Profile & Book</span>
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>

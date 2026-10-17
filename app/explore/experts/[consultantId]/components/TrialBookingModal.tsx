@@ -172,14 +172,14 @@ export function TrialBookingModal({
   if (!session?.user?.id) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[425px] z-[1002]">
+        <DialogContent className="sm:max-w-[425px] rounded-2xl border-border bg-background z-[1002]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Gift className="h-5 w-5 text-emerald-500" />
               Book Trial
             </DialogTitle>
             <DialogDescription>
-              Sign in to request a trial session
+              {planTitle} · {trialDurationMinutes}-minute trial
             </DialogDescription>
           </DialogHeader>
           <div className="py-6 text-center">
@@ -200,7 +200,7 @@ export function TrialBookingModal({
   if (isSuccess) {
     return (
       <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="sm:max-w-[425px] z-[1002]">
+        <DialogContent className="sm:max-w-[425px] rounded-2xl border-border bg-background z-[1002]">
           <div className="py-8 text-center">
             <div className="mx-auto w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
               <CheckCircle className="h-8 w-8 text-emerald-600" />
@@ -220,31 +220,36 @@ export function TrialBookingModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[500px] z-[1002]">
+      <DialogContent className="sm:max-w-[500px] rounded-2xl border-border bg-background z-[1002]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Gift className="h-5 w-5 text-emerald-500" />
             Book Trial Session
           </DialogTitle>
           <DialogDescription>
-            Request a {trialDurationMinutes}-minute trial with {consultantName}
+            {planTitle} · {trialDurationMinutes}-minute trial with{" "}
+            {consultantName}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Plan Info — the price is the first thing shown. Requesting a
-              trial used to name no number anywhere, so a paid trial read as
-              free right up until the payment link arrived. */}
-          <div className="bg-muted rounded-lg p-4">
-            <p className="text-sm font-medium text-foreground">{planTitle}</p>
-            <div className="flex items-center justify-between gap-3 mt-2">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Clock className="h-4 w-4" />
-                <span>{trialDurationMinutes} minute trial</span>
+          {/* Compact Summary Header */}
+          <div className="rounded-xl border border-border bg-muted/50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">
+                  {planTitle}
+                </p>
+                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Clock className="h-3.5 w-3.5" />
+                  <span>{trialDurationMinutes} minute trial session</span>
+                </div>
               </div>
               <span
-                className={`text-sm font-semibold ${
-                  isPaidTrial ? "text-foreground" : "text-emerald-600"
+                className={`rounded-full px-3 py-1 text-sm font-semibold ${
+                  isPaidTrial
+                    ? "bg-card border border-border text-foreground"
+                    : "bg-emerald-500/10 text-emerald-600"
                 }`}
               >
                 {priceLabel}

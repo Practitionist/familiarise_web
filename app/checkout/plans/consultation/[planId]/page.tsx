@@ -1,8 +1,6 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
@@ -26,8 +24,12 @@ import {
 } from "@/lib/payments/constants";
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
-import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
-import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
+import {
+  CheckoutConsultantHeader,
+  CheckoutErrorState,
+  CheckoutPaymentMethodsCard,
+  CheckoutPricingBreakdown,
+} from "@/app/checkout/components/CheckoutSharedSections";
 import {
   BillingStateSelect,
   useBillingState,
@@ -35,14 +37,11 @@ import {
 import { useSession } from "@/lib/auth-client";
 import { Refusal } from "@/lib/errors/refusal";
 import { ConsultantProfile, ConsultationPlan } from "@prisma/client";
-import { CreditCard as CreditCardIcon } from "lucide-react";
-import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import RazorpayCheckout from "../../../components/RazorpayCheckout";
-import { createHandleApiError, paymentGateways } from "../../utils";
-import { calculatePricing, formatPercentage } from "../../math";
+import { createHandleApiError } from "../../utils";
+import { calculatePricing } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import { useReferralPricing } from "../../useReferralPricing";
@@ -249,7 +248,8 @@ export default function ConsultationCheckoutPage({
             const slotJson = await slotRes.json();
             slot = slotJson.data;
           }
-        } catch {
+        } catch (slotErr) {
+          reportPaymentsError(slotErr);
           slotFailed = true;
         }
       } else if (slotUrl) {
@@ -334,7 +334,8 @@ export default function ConsultationCheckoutPage({
       } else {
         setDiscountError(data.message || "Invalid discount code");
       }
-    } catch (_error) {
+    } catch (discountErr) {
+      reportPaymentsError(discountErr);
       setDiscountError("Failed to validate discount code");
     } finally {
       setIsApplyingDiscount(false);
@@ -345,6 +346,7 @@ export default function ConsultationCheckoutPage({
   // so a slot taken mid-checkout shows a clear "pick another time" toast.
   // Matches subscription/class/webinar pages (de-dupes the old inline map).
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
+  const razorpayHandlers = createRazorpayCheckoutHandlers(toast);
 
   // Common API request logic
   const makeCheckoutRequest = useCallback(
@@ -594,87 +596,23 @@ export default function ConsultationCheckoutPage({
   }
 
   if (error) {
-    return (
-      <div className="col-span-full flex items-center justify-center min-h-screen bg-muted">
-        <div
-          className="bg-foreground border border-border text-background p-8 max-w-md w-full mx-4 text-center rounded-xl shadow-xl"
-          role="alert"
-        >
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-background/10">
-            <svg
-              className="h-6 w-6 text-background/70"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"
-              />
-            </svg>
-          </div>
-          <p className="font-semibold text-lg mb-2">Unable to load checkout</p>
-          <p className="text-background/70 text-sm">{error}</p>
-          <button
-            onClick={() => window.history.back()}
-            className="mt-5 inline-flex items-center rounded-lg bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted transition-colors"
-          >
-            Go back
-          </button>
-        </div>
-      </div>
-    );
+    return <CheckoutErrorState error={error} />;
   }
 
   const consultantDetails = eventData?.data.consultantProfile;
   const userDetails = eventData?.data.consultantProfile.user;
 
   return (
-    <>
+    <div className="grid min-h-[calc(100vh-3.5rem)] w-full lg:grid-cols-[58%_42%]">
       <div className="flex flex-col gap-6 border-r border-border bg-gradient-to-br from-muted via-background to-muted p-6 sm:p-8">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 min-w-0">
-            <Avatar className="w-12 h-12 border shrink-0">
-              <AvatarImage
-                src={userDetails?.image || "/placeholder-user.jpg"}
-                alt={userDetails?.name || "Consultant"}
-              />
-              <AvatarFallback>
-                {userDetails?.name ? userDetails.name.charAt(0) : "C"}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <div className="font-semibold truncate">
-                {userDetails?.name || "Consultant Name"}
-              </div>
-              <div className="text-sm text-muted-foreground truncate">
-                {consultantDetails?.headline || "Consultant"}
-              </div>
-              {userDetails?.workExperiences &&
-                userDetails.workExperiences.length > 0 && (
-                  <div className="flex items-center gap-1.5 mt-1">
-                    {userDetails.workExperiences.slice(0, 3).map((exp, i) => (
-                      <CompanyLogo
-                        key={`checkout-consult-company-${i}`}
-                        companyName={exp.company}
-                        companyDomain={exp.companyDomain ?? undefined}
-                        size={20}
-                        className="border-border"
-                      />
-                    ))}
-                  </div>
-                )}
-            </div>
-          </div>
-          <div className="text-right min-w-0">
-            <div className="font-semibold">Consultation</div>
-            <div className="text-sm text-muted-foreground truncate">
-              {eventData?.data?.title || "One-on-One Session"}
-            </div>
-          </div>
-        </div>
+        <CheckoutConsultantHeader
+          name={userDetails?.name}
+          image={userDetails?.image}
+          headline={consultantDetails?.headline}
+          workExperiences={userDetails?.workExperiences}
+          planTypeLabel="Consultation"
+          planTitle={eventData?.data?.title || "One-on-One Session"}
+        />
         <Separator className="bg-border" />
         <div className="grid gap-2">
           <div className="font-semibold">Consultation Details</div>
@@ -810,211 +748,76 @@ export default function ConsultationCheckoutPage({
           formatPrice={formatPrice}
         />
       </div>
-      <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
-        <Card className="border-border shadow-sm">
-          <CardHeader>
-            <CardTitle className="text-foreground">
-              Consultation Pricing
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Session Fee</div>
-                <div>{formatPrice(eventData?.data?.price || 0)}</div>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <span className="font-semibold">Includes</span>
-                </div>
-                <div className="font-semibold">
-                  <ul className="list-disc">
-                    <li>One-on-one session</li>
-                    <li>Personalized guidance</li>
-                    <li>Session notes</li>
-                    <li>Follow-up resources</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-            <Separator className="bg-border" />
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between">
-                <div>Subtotal</div>
-                <div>{formatPrice(pricing.subtotal)}</div>
-              </div>
-              {pricing.discountAmount > 0 && (
-                <div className="flex items-center justify-between text-green-600">
-                  <div>
-                    Discount{" "}
-                    {pricing.discountPercent > 0 &&
-                      `(${formatPercentage(pricing.discountPercent)})`}
-                  </div>
-                  <div>-{formatPrice(pricing.discountAmount)}</div>
-                </div>
-              )}
-              <div className="flex items-center justify-between">
-                <div>Tax ({formatPercentage(pricing.taxRate)})</div>
-                <div>{formatPrice(pricing.taxAmount)}</div>
-              </div>
-              {pricing.creditsApplied > 0 && (
-                <div className="flex items-center justify-between text-foreground">
-                  <div>Referral Credits</div>
-                  <div>-{formatPrice(pricing.creditsApplied)}</div>
-                </div>
-              )}
-              <Separator className="bg-border" />
-              <div className="flex items-center justify-between font-semibold">
-                <div>Total</div>
-                <div>{formatPrice(pricing.total)}</div>
-              </div>
-              <FxEstimateNote
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
-              <EmiHint
-                totalPaise={pricing.total}
-                organizationId={selectedOrganizationId}
-              />
+      <div className="flex flex-col gap-6 p-6 sm:p-8 bg-card lg:sticky lg:top-6 lg:self-start">
+        <CheckoutPricingBreakdown
+          title="Consultation Pricing"
+          feeLabel="Session Fee"
+          feeAmountPaise={eventData?.data?.price || 0}
+          includes={[
+            "One-on-one session",
+            "Personalized guidance",
+            "Session notes",
+            "Follow-up resources",
+          ]}
+          pricing={pricing}
+          formatPrice={formatPrice}
+          selectedOrganizationId={selectedOrganizationId}
+          afterTotalNotice={
+            <>
               {selectedOrgFundingSource === "LICENSE" && (
                 <p className="text-xs text-emerald-600">
                   Programme license coverage (if entitled) is verified and
                   applied at checkout
                 </p>
               )}
-              {/* #1863 — the notice ladder, in the buyer's own terms, at the
-                  one moment they can still act on it. A consultation buy showed
-                  no cancellation terms at all: the ladder only surfaced in the
-                  cancel dialog, i.e. after the money had already gone. */}
               <CancellationPolicyNote
                 eventKind="individual"
-                // A consultation checkout can already carry a chosen slot, and
-                // when it does the ladder has a live rung: the note then says
-                // what cancelling THIS booking returns and how much earlier
-                // notice would be worth more, instead of only printing the
-                // table.
                 eventStartsAt={validatedSearchParams?.startsAt ?? null}
                 funding={purchaseFunding}
                 viewerZone={viewer}
                 className="border-t border-border pt-3 text-xs text-muted-foreground"
               />
-            </div>
-          </CardContent>
-        </Card>
-        <div className="grid gap-4">
-          <div className="grid gap-2">
-            <div className="font-semibold">Payment</div>
-            <div className="text-muted-foreground">
-              Select your preferred payment method
-            </div>
-          </div>
-          {paymentGateways.map((gateway) => (
-            <Card key={gateway.name} className="border-border">
-              <CardHeader>
-                <CardTitle className="text-foreground">
-                  {gateway.name}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div className="flex items-center gap-4 min-w-0">
-                    <CreditCardIcon className="w-8 h-8 text-muted-foreground shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-semibold text-foreground">
-                        Credit/Debit Card
-                      </div>
-                      <div className="text-sm text-muted-foreground/70">
-                        {gateway.description}
-                      </div>
-                    </div>
-                  </div>
-                  {gateway.isActive ? (
-                    <div className="flex gap-2">
-                      {validatedSearchParams &&
-                      gateway.gateway === "RAZORPAY" ? (
-                        <RazorpayCheckout
-                          checkoutData={createCheckoutData({
-                            appointmentType: "CONSULTATION",
-                            planId: resolvedParams.planId,
-                            paymentGateway: "RAZORPAY",
-                            startsAt: validatedSearchParams.startsAt,
-                            endsAt: validatedSearchParams.endsAt,
-                            availabilityWindowWeeklyId:
-                              validatedSearchParams.availabilityWindowWeeklyId,
-                            availabilityWindowCustomId:
-                              validatedSearchParams.availabilityWindowCustomId,
-                            discountCode: appliedDiscount?.code,
-                            displayCurrency: currency,
-                            notes: validatedSearchParams.notes,
-                            useReferralCredits: selectedOrganizationId
-                              ? false
-                              : useReferralCredits,
-                            organizationId: selectedOrganizationId ?? undefined,
-                            ...billingState.bodyField,
-                          })}
-                          // #1591 J1-P0-01 — checkout-success polls verify;
-                          // /dashboard read as "I paid and got nothing".
-                          onPaymentSuccess={
-                            createRazorpayCheckoutHandlers(toast)
-                              .onPaymentSuccess
-                          }
-                          disabled={isMaintenanceBlocked}
-                          onPaymentError={(error: {
-                            description?: string;
-                            code?: string;
-                            reason?: string;
-                            message?: string;
-                          }) =>
-                            handleApiError({
-                              error:
-                                error.description ??
-                                error.message ??
-                                error.reason,
-                              errorType: error.code,
-                              // #1583 E-P1-03 — the same string arrives as
-                              // `code` on the body and is what titles a
-                              // lead-time refusal correctly; without it
-                              // `errorType` above is the coarse
-                              // AVAILABILITY bucket and the buyer is told the
-                              // listing is gone.
-                              code: error.code,
-                            })
-                          }
-                        />
-                      ) : null}
-                      {/* Mock Payment Button - development only */}
-                      {process.env.NODE_ENV === "development" && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => handleCheckout(gateway.gateway, true)}
-                          disabled={
-                            isCheckoutProcessing || isMaintenanceBlocked
-                          }
-                        >
-                          {isCheckoutProcessing &&
-                          processingGateway === `${gateway.gateway}-mock` ? (
-                            <>
-                              <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-current mr-2"></div>
-                              Processing...
-                            </>
-                          ) : (
-                            `Mock Pay (${gateway.name})`
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <Button variant="outline" disabled>
-                      {/* TODO: Implement {gateway.name} integration */}
-                      Coming Soon
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+            </>
+          }
+        />
+        <CheckoutPaymentMethodsCard
+          buildCheckoutData={(gateway) =>
+            validatedSearchParams
+              ? createCheckoutData({
+                  appointmentType: "CONSULTATION",
+                  planId: resolvedParams.planId,
+                  paymentGateway: gateway,
+                  startsAt: validatedSearchParams.startsAt,
+                  endsAt: validatedSearchParams.endsAt,
+                  availabilityWindowWeeklyId:
+                    validatedSearchParams.availabilityWindowWeeklyId,
+                  availabilityWindowCustomId:
+                    validatedSearchParams.availabilityWindowCustomId,
+                  discountCode: appliedDiscount?.code,
+                  displayCurrency: currency,
+                  notes: validatedSearchParams.notes,
+                  useReferralCredits: selectedOrganizationId
+                    ? false
+                    : useReferralCredits,
+                  organizationId: selectedOrganizationId ?? undefined,
+                  ...billingState.bodyField,
+                })
+              : null
+          }
+          onRazorpaySuccess={razorpayHandlers.onPaymentSuccess}
+          onRazorpayError={(error) =>
+            handleApiError({
+              error: error.description ?? error.message ?? error.reason,
+              errorType: error.code,
+              code: error.code,
+            })
+          }
+          onMockPay={(gateway) => handleCheckout(gateway, true)}
+          isCheckoutProcessing={isCheckoutProcessing}
+          processingGateway={processingGateway}
+          isMaintenanceBlocked={isMaintenanceBlocked}
+        />
       </div>
-    </>
+    </div>
   );
 }

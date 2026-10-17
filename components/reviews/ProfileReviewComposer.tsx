@@ -52,7 +52,7 @@ export function ProfileReviewComposer({
   // state.
   if (isError) {
     return (
-      <div className="mb-6 rounded-xl border border-dashed border-border p-4">
+      <div className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-elevation-1">
         <p className="text-sm text-muted-foreground">
           Couldn&apos;t check whether you can review this expert.
         </p>
@@ -72,19 +72,16 @@ export function ProfileReviewComposer({
   // Most recent qualifying session — the provenance the write records.
   const session = data[0];
 
-  // A dashed, muted surface with a rule under it: a form the viewer fills in,
-  // sitting beside the review cards rather than above them in any hierarchy.
+  // A clean elevated card sitting above the public review list.
   return (
-    <div className="mb-6 border-b border-border pb-6">
-      <div className="rounded-xl border border-dashed border-border bg-muted/30 p-4">
-        <ReviewComposer
-          appointmentId={session.appointmentId}
-          consultantName={consultantName ?? session.consultantName}
-          contextLine={session.title}
-          existing={session.existingReview}
-          invalidateKeys={[queryKey]}
-        />
-      </div>
+    <div className="mb-6 rounded-2xl border border-border bg-card p-5 shadow-elevation-1">
+      <ReviewComposer
+        appointmentId={session.appointmentId}
+        consultantName={consultantName ?? session.consultantName}
+        contextLine={session.title}
+        existing={session.existingReview}
+        invalidateKeys={[queryKey]}
+      />
     </div>
   );
 }

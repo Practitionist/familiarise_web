@@ -41,7 +41,7 @@ const badgeConfig: Record<
   },
 };
 
-function TypeBadge({ type }: { type: "class" | "webinar" }) {
+function TypeBadge({ type }: Readonly<{ type: "class" | "webinar" }>) {
   return (
     <span
       className={`px-3 py-1 rounded-full text-xs font-medium ${
@@ -55,7 +55,7 @@ function TypeBadge({ type }: { type: "class" | "webinar" }) {
   );
 }
 
-function ExtraBadge({ badge }: { badge: ProgramBadge }) {
+function ExtraBadge({ badge }: Readonly<{ badge: ProgramBadge }>) {
   const config = badgeConfig[badge];
   return (
     <span
@@ -139,10 +139,10 @@ function planHref(program: Program): string {
 function GridCard({
   program,
   badge,
-}: {
+}: Readonly<{
   program: Program;
   badge?: ProgramBadge;
-}) {
+}>) {
   const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
   const ratingCount = getProgramRatingCount(program);
@@ -190,9 +190,9 @@ function GridCard({
         {/* Instructor info + company logos */}
         {(instructor || workExperiences.length > 0) && (
           <div className="flex items-center gap-2 mb-3">
-            {workExperiences.slice(0, 2).map((exp, i) => (
+            {workExperiences.slice(0, 2).map((exp) => (
               <CompanyLogo
-                key={`grid-company-${program.id}-${i}`}
+                key={`grid-company-${program.id}-${exp.company}`}
                 companyName={exp.company}
                 companyDomain={exp.companyDomain ?? undefined}
                 size={20}
@@ -226,18 +226,6 @@ function GridCard({
             <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
           </div>
         </div>
-
-        <div className="flex items-center gap-1 mt-2">
-          <Image
-            src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-            alt="Familiarise"
-            width={12}
-            height={12}
-          />
-          <span className="text-[10px] text-muted-foreground/70">
-            on Familiarise
-          </span>
-        </div>
       </div>
     </Link>
   );
@@ -246,10 +234,10 @@ function GridCard({
 function ListCard({
   program,
   badge,
-}: {
+}: Readonly<{
   program: Program;
   badge?: ProgramBadge;
-}) {
+}>) {
   const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
   const ratingCount = getProgramRatingCount(program);
@@ -295,9 +283,9 @@ function ListCard({
           {/* Instructor info + company logos */}
           {(instructor || workExperiences.length > 0) && (
             <div className="flex items-center gap-2 mt-2">
-              {workExperiences.slice(0, 3).map((exp, i) => (
+              {workExperiences.slice(0, 3).map((exp) => (
                 <CompanyLogo
-                  key={`list-company-${program.id}-${i}`}
+                  key={`list-company-${program.id}-${exp.company}`}
                   companyName={exp.company}
                   companyDomain={exp.companyDomain ?? undefined}
                   size={22}
@@ -335,17 +323,6 @@ function ListCard({
               <ArrowRight className="w-4 h-4 ml-2" />
             </span>
           </div>
-          <div className="flex items-center gap-1 mt-2">
-            <Image
-              src="/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif"
-              alt="Familiarise"
-              width={12}
-              height={12}
-            />
-            <span className="text-[10px] text-muted-foreground/70">
-              on Familiarise
-            </span>
-          </div>
         </div>
       </div>
     </Link>
@@ -355,10 +332,10 @@ function ListCard({
 function CarouselCard({
   program,
   badge,
-}: {
+}: Readonly<{
   program: Program;
   badge?: ProgramBadge;
-}) {
+}>) {
   const { formatPrice } = useCurrency();
   const workExperiences = getInstructorWorkExperiences(program);
 
@@ -400,9 +377,9 @@ function CarouselCard({
             </div>
             {workExperiences.length > 0 && (
               <div className="flex items-center gap-1">
-                {workExperiences.slice(0, 2).map((exp, i) => (
+                {workExperiences.slice(0, 2).map((exp) => (
                   <CompanyLogo
-                    key={`carousel-company-${program.id}-${i}`}
+                    key={`carousel-company-${program.id}-${exp.company}`}
                     companyName={exp.company}
                     companyDomain={exp.companyDomain ?? undefined}
                     size={18}
@@ -427,7 +404,7 @@ function ProgramCardImpl({
   variant = "grid",
   badge,
   viewerOrgs,
-}: ProgramCardProps) {
+}: Readonly<ProgramCardProps>) {
   const card = (() => {
     switch (variant) {
       case "list":

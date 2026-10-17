@@ -1,8 +1,7 @@
-import { ArrowRight, Sparkles } from "lucide-react";
-import Link from "next/link";
+import { Sparkles } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import type { ExpertStatKey, IPublicStat } from "@/lib/data/public-stats";
+import { HeroPreviewCard, HeroSearchControls } from "./HeroInteractiveControls";
 
 function AnimatedNumber({
   value,
@@ -12,7 +11,7 @@ function AnimatedNumber({
   suffix?: string;
 }) {
   return (
-    <span className="text-4xl md:text-5xl font-bold text-white tabular-nums">
+    <span className="text-3xl md:text-4xl font-bold text-white tabular-nums tracking-tight">
       {value % 1 !== 0 ? value.toFixed(1) : value.toLocaleString()}
       {suffix}
     </span>
@@ -25,96 +24,58 @@ export function HeroSection({
   stats: IPublicStat<ExpertStatKey>[];
 }) {
   return (
-    <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
-      {/* Static radial gradient accents (avoids heavy blurred keyframe orbs on mobile GPUs) */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.45)_0%,_transparent_70%)]" />
-        <div className="absolute top-1/3 right-1/4 w-[500px] h-[500px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(63,63,70,0.3)_0%,_transparent_70%)]" />
-        <div className="absolute bottom-1/4 left-1/2 w-[700px] h-[700px] rounded-full bg-[radial-gradient(circle_at_center,_rgba(39,39,42,0.35)_0%,_transparent_70%)]" />
-      </div>
+    <section className="relative bg-zinc-950 text-white pt-32 pb-20 md:pb-28 overflow-hidden">
+      {/* Subtle radial spotlight + grid pattern */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(255,255,255,0.08),transparent)]" />
+      <div className="pointer-events-none absolute inset-0 grid-pattern opacity-20" />
 
-      {/* Grid pattern overlay */}
-      <div className="absolute inset-0 grid-pattern opacity-30" />
-
-      {/* Spotlight effect */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-[radial-gradient(ellipse_at_top,_rgba(39,39,42,0.25)_0%,_transparent_70%)] pointer-events-none" />
-
-      <div className="container mx-auto px-4 md:px-6 relative z-10 py-20 md:py-32">
-        <div className="max-w-4xl mx-auto text-center">
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 backdrop-blur-sm border border-white/10 text-zinc-400 text-sm mb-8">
-            <Sparkles className="w-4 h-4 text-zinc-300" />
-            {/* #1490 — was "Trusted by 10,000+ professionals worldwide", a
-                number nothing produced. What replaces it is enforced by the
-                directory reads themselves: only VERIFIED profiles are public. */}
-            <span>Every expert is verified before they are listed</span>
-          </div>
-
-          {/* Main headline */}
-          <h1 className="text-fluid-5xl font-bold text-white mb-6 leading-tight tracking-tight">
-            Learn from the{" "}
-            <span className="relative inline-block">
-              <span className="silver-text">best minds</span>
-            </span>
-            <br />
-            <span className="text-zinc-400">in your industry</span>
-          </h1>
-
-          {/* Subheadline */}
-          <p className="text-lg md:text-xl text-zinc-400 mb-10 max-w-2xl mx-auto leading-relaxed">
-            Connect with world-class experts for personalized 1-on-1 sessions,
-            interactive classes, and live webinars. Your career transformation
-            starts here.
-          </p>
-
-          {/* CTAs */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-            <Button
-              size="lg"
-              className="bg-white text-black hover:bg-zinc-200 px-8 h-14 text-base rounded-xl shadow-lg shadow-white/10 group font-medium"
-              asChild
-            >
-              <Link href="/explore/experts">
-                Find Your Expert
-                <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Link>
-            </Button>
-            {/* The supply-side CTA lives here now that the navbar carries no
-                CTAs. (It replaces a "Watch Demo" button that had no href and
-                no handler — it did nothing when clicked.) */}
-            <Button
-              size="lg"
-              variant="outline"
-              className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group"
-              asChild
-            >
-              <Link href="/become-an-expert">
-                Become an Expert
-                <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-              </Link>
-            </Button>
-          </div>
-
-          {/* Stats with animated counters. #1490 — every counter here is read
-              from the database now, and a figure that is still zero produces no
-              tile at all rather than a placeholder. With no data yet the whole
-              row is absent, which is why it is rendered conditionally: an empty
-              grid would leave a stray divider under the CTAs. */}
-          {stats.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-8 md:gap-12 pt-8 border-t border-zinc-800">
-              {stats.map((stat) => (
-                <div key={stat.key} className="text-center">
-                  <AnimatedNumber value={stat.value} />
-                  <div className="text-zinc-400 text-sm mt-1">{stat.label}</div>
-                </div>
-              ))}
+      <div className="max-w-[1400px] mx-auto px-4 sm:px-8 xl:px-12 relative z-10">
+        <div className="grid lg:grid-cols-12 gap-12 lg:gap-10 items-center">
+          {/* Left column: Headline, Inline Search, Domain Pills & Verified Stats */}
+          <div className="lg:col-span-7">
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white/[0.06] border border-white/10 text-zinc-300 text-xs font-medium mb-6">
+              <Sparkles className="w-3.5 h-3.5 text-zinc-300" />
+              {/* #1490 — enforced by the directory reads themselves: only VERIFIED profiles are public. */}
+              <span>Every expert is verified before they are listed</span>
             </div>
-          )}
+
+            <h1 className="text-fluid-4xl md:text-fluid-5xl font-bold text-white mb-6 leading-[1.08] tracking-tight">
+              Learn directly from the{" "}
+              <span className="silver-text">best minds</span>{" "}
+              <span className="text-zinc-400">in your industry</span>
+            </h1>
+
+            <p className="text-base md:text-lg text-zinc-400 mb-8 max-w-2xl leading-relaxed">
+              Book 1-on-1 consultations, ongoing mentorship subscriptions,
+              cohort classes, and live webinars with verified practitioners —
+              backed by built-in HD video and escrow payment protection.
+            </p>
+
+            <HeroSearchControls />
+
+            {/* Real Database Stats (#1490) */}
+            {stats.length > 0 && (
+              <dl className="grid grid-cols-2 sm:grid-cols-3 gap-6 pt-8 border-t border-white/[0.08] max-w-xl">
+                {stats.map((stat) => (
+                  <div key={stat.key}>
+                    <dd>
+                      <AnimatedNumber value={stat.value} />
+                    </dd>
+                    <dt className="text-xs text-zinc-400 mt-1 font-medium">
+                      {stat.label}
+                    </dt>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </div>
+
+          {/* Right column: Interactive Session & Booking Architecture Preview */}
+          <div className="lg:col-span-5">
+            <HeroPreviewCard />
+          </div>
         </div>
       </div>
-
-      {/* Bottom gradient fade */}
-      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-zinc-950 to-transparent" />
     </section>
   );
 }

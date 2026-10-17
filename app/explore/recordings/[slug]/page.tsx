@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { notFound } from "next/navigation";
-import { CheckCircle2, Clock, PlayCircle } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, CheckCircle2, Clock, PlayCircle } from "lucide-react";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getPublicRecordingBySlug } from "@/lib/data/recordings-explore";
@@ -120,73 +121,97 @@ export default async function RecordingDetailPage({
     alreadyAccess && rawRecording ? getBestRecordingUrl(rawRecording) : null;
 
   return (
-    <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
-      <div className="space-y-6">
-        <div className="relative aspect-video rounded-xl bg-muted flex items-center justify-center overflow-hidden">
-          {renderMedia(listing, fullPlaybackUrl)}
-          {alreadyAccess && (
-            <div className="absolute top-3 left-3">
-              <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
-                <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                Full Recording Unlocked
-              </Badge>
+    <div className="min-h-screen bg-background">
+      {/* Dark Editorial Hero Header */}
+      <header className="bg-zinc-950 text-white border-b border-zinc-800">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-10 md:py-12 space-y-4">
+          <Link
+            href="/explore/recordings"
+            className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Recordings
+          </Link>
+          <div className="space-y-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-xs font-medium uppercase tracking-wider text-zinc-300">
+              {listing.planType} replay ·{" "}
+              <Clock className="inline h-3.5 w-3.5" />{" "}
+              {listing.durationInMinutes} min
+            </span>
+            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white">
+              {listing.listingTitle}
+            </h1>
+            <p className="text-sm text-zinc-400">
+              From &ldquo;{listing.planTitle}&rdquo; · recorded{" "}
+              {new Date(listing.recordedAt).toLocaleDateString("en-IN", {
+                dateStyle: "medium",
+              })}
+              {listing.consultant.name
+                ? ` · by ${listing.consultant.name}`
+                : ""}
+            </p>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
+        <div className="space-y-6">
+          <div className="relative aspect-video rounded-2xl border border-border bg-muted flex items-center justify-center overflow-hidden shadow-sm">
+            {renderMedia(listing, fullPlaybackUrl)}
+            {alreadyAccess && (
+              <div className="absolute top-3 left-3">
+                <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                  Full Recording Unlocked
+                </Badge>
+              </div>
+            )}
+          </div>
+
+          {(listing.previewClipUrl || alreadyAccess) &&
+            listing.previewTranscript && (
+              <details className="rounded-xl border border-border bg-card p-4">
+                <summary className="cursor-pointer text-sm font-medium text-foreground">
+                  {alreadyAccess ? "Session transcript" : "Preview transcript"}
+                </summary>
+                <p
+                  id="preview-transcript"
+                  className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground"
+                >
+                  {listing.previewTranscript}
+                </p>
+              </details>
+            )}
+
+          {listing.listingDescription && (
+            <div className="rounded-2xl border border-border bg-card p-6 space-y-2">
+              <h2 className="text-lg font-semibold text-foreground">
+                About this recording
+              </h2>
+              <p className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+                {listing.listingDescription}
+              </p>
             </div>
           )}
         </div>
 
-        {(listing.previewClipUrl || alreadyAccess) &&
-          listing.previewTranscript && (
-            <details className="rounded-lg border bg-card/50 p-4">
-              <summary className="cursor-pointer text-sm font-medium">
-                {alreadyAccess ? "Session transcript" : "Preview transcript"}
-              </summary>
-              <p
-                id="preview-transcript"
-                className="mt-3 whitespace-pre-line text-sm leading-relaxed text-muted-foreground"
-              >
-                {listing.previewTranscript}
+        <aside className="space-y-4 h-fit rounded-2xl border border-border bg-card p-6 shadow-sm lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1.5rem)]">
+          {alreadyAccess ? (
+            <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+              <span>You can watch the full recording.</span>
+            </div>
+          ) : (
+            <div className="space-y-1 rounded-lg border bg-muted/40 p-3">
+              <p className="text-sm font-semibold">Coming soon</p>
+              <p className="text-xs text-muted-foreground">
+                Replays can&apos;t be bought yet. Attendees of the session can
+                watch it from their dashboard.
               </p>
-            </details>
+            </div>
           )}
-
-        <div className="space-y-3">
-          <span className="text-xs uppercase tracking-wide text-muted-foreground">
-            {listing.planType} replay · <Clock className="inline h-3 w-3" />{" "}
-            {listing.durationInMinutes} min
-          </span>
-          <h1 className="text-2xl font-bold tracking-tight">
-            {listing.listingTitle}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            From “{listing.planTitle}” · recorded{" "}
-            {new Date(listing.recordedAt).toLocaleDateString("en-IN", {
-              dateStyle: "medium",
-            })}
-          </p>
-          {listing.listingDescription && (
-            <p className="whitespace-pre-line text-sm leading-relaxed">
-              {listing.listingDescription}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <aside className="space-y-4 h-fit rounded-xl border bg-card p-6 lg:sticky lg:top-24">
-        {alreadyAccess ? (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300">
-            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
-            <span>You can watch the full recording.</span>
-          </div>
-        ) : (
-          <div className="space-y-1 rounded-lg border bg-muted/40 p-3">
-            <p className="text-sm font-semibold">Coming soon</p>
-            <p className="text-xs text-muted-foreground">
-              Replays can&apos;t be bought yet. Attendees of the session can
-              watch it from their dashboard.
-            </p>
-          </div>
-        )}
-      </aside>
+        </aside>
+      </main>
     </div>
   );
 }

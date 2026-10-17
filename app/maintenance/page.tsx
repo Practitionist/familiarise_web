@@ -36,16 +36,16 @@ export default function MaintenancePage() {
   }, []);
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-gradient-to-br from-gray-50 via-white to-gray-100">
-      {/* Animated background shapes */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -left-40 -top-40 h-80 w-80 animate-pulse rounded-full bg-gray-200/40 blur-3xl" />
-        <div className="absolute -bottom-40 -right-40 h-80 w-80 animate-pulse rounded-full bg-gray-200/40 blur-3xl [animation-delay:1s]" />
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-muted/40 p-4">
+      {/* Subtle ambient background shapes */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -left-40 -top-40 h-80 w-80 animate-pulse rounded-full bg-primary/5 blur-3xl" />
+        <div className="absolute -bottom-40 -right-40 h-80 w-80 animate-pulse rounded-full bg-primary/5 blur-3xl [animation-delay:1s]" />
       </div>
 
-      <div className="relative z-10 mx-auto max-w-md px-6 text-center">
+      <div className="relative z-10 mx-auto w-full max-w-md rounded-2xl border border-border bg-card p-8 text-center shadow-elevation-2">
         {/* Logo */}
-        <div className="mb-8">
+        <div className="mb-6">
           <Image
             src={familiariseLogo}
             alt="Familiarise"
@@ -57,10 +57,10 @@ export default function MaintenancePage() {
         </div>
 
         {/* Icon */}
-        <div className="mb-6 flex justify-center">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted">
+        <div className="mb-5 flex justify-center">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-muted">
             <svg
-              className="h-8 w-8 text-muted-foreground"
+              className="h-7 w-7 text-muted-foreground"
               fill="none"
               viewBox="0 0 24 24"
               strokeWidth={1.5}
@@ -76,30 +76,32 @@ export default function MaintenancePage() {
         </div>
 
         {/* Messaging */}
-        <h1 className="mb-3 text-fluid-3xl font-semibold tracking-tight text-foreground">
+        <h1 className="mb-2 text-2xl font-semibold tracking-tight text-foreground">
           We&apos;re improving things
         </h1>
-        <p className="mb-6 text-muted-foreground">
+        <p className="mb-6 text-sm text-muted-foreground">
           {reason ||
             "Familiarise is undergoing scheduled maintenance. We'll be back shortly with a better experience."}
         </p>
 
         {/* ETA */}
         {eta && (
-          <div className="mb-8 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground shadow-sm">
-            <span className="font-medium">Estimated return:</span>{" "}
+          <div className="mb-6 rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">
+              Estimated return:
+            </span>{" "}
             {formatEta(eta)}
           </div>
         )}
 
         {/* Progress indicator */}
-        <div className="mb-8 flex justify-center gap-1.5">
+        <div className="mb-4 flex justify-center gap-1.5">
           <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:0ms]" />
           <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:150ms]" />
           <div className="h-2 w-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:300ms]" />
         </div>
 
-        <p className="text-xs text-muted-foreground/70">
+        <p className="text-xs text-muted-foreground">
           This page auto-refreshes every 30 seconds
         </p>
       </div>

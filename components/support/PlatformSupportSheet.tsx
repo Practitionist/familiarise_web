@@ -15,7 +15,13 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LifeBuoy, Send, CheckCircle2, Ticket } from "lucide-react";
+import {
+  ChevronRight,
+  LifeBuoy,
+  Send,
+  CheckCircle2,
+  Ticket,
+} from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -32,6 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { isBareHumanRequest } from "@/lib/support/escalation";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { cn } from "@/utils/tailwind";
 import { describeWait } from "./useSupportThread";
 
 type Sender = "USER" | "BOT" | "AGENT" | "SYSTEM";
@@ -113,7 +120,19 @@ function PlatformCatalogPicker({
   onSelect: (flow: PlatformFlow) => void;
 }>) {
   if (isLoading) {
-    return <p className="text-sm text-muted-foreground">Loading…</p>;
+    return (
+      <output
+        className="flex flex-col gap-2"
+        aria-label="Loading support topics"
+      >
+        {[0, 1, 2, 3].map((row) => (
+          <div
+            key={row}
+            className="h-14 w-full animate-pulse rounded-xl border border-border bg-muted/60"
+          />
+        ))}
+      </output>
+    );
   }
   if (isError) {
     const message =
@@ -134,15 +153,16 @@ function PlatformCatalogPicker({
           key={f.id}
           variant="outline"
           disabled={disabled}
-          className="h-auto justify-start py-2 text-left"
+          className="h-auto justify-between py-2.5 text-left"
           onClick={() => onSelect(f)}
         >
-          <span>
+          <span className="min-w-0">
             <span className="block text-sm font-medium">{f.title}</span>
             <span className="block text-xs text-muted-foreground">
               {f.description}
             </span>
           </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
         </Button>
       ))}
     </div>
@@ -699,112 +719,125 @@ export function PlatformSupportSheet({
         )}
       </SheetTrigger>
       <SheetContent className="flex w-full flex-col gap-0 sm:max-w-md">
-        <SheetHeader className="px-5 pb-3 pt-5">
+        <SheetHeader className="px-6 pb-3 pt-5">
           <SheetTitle>How can we help?</SheetTitle>
           <SheetDescription>
-            {flowId
-              ? "Pick an option, or type a message."
-              : "Pick a topic, or browse the Help Center for quick answers."}
+            {flowId ? (
+              "Pick an option, or type a message."
+            ) : (
+              <>
+                Pick a topic, or browse the{" "}
+                <Link
+                  href="/support"
+                  onClick={() => setOpen(false)}
+                  className="underline underline-offset-4 hover:text-foreground"
+                >
+                  Help Center
+                </Link>{" "}
+                for quick answers.
+              </>
+            )}
           </SheetDescription>
         </SheetHeader>
 
-        {/* Bottom-aligned like the per-appointment drawer: a short transcript
-            sits against the composer rather than at the top of an empty panel. */}
-        <div className="flex-1 overflow-y-auto px-5 pb-2">
-          <div className="flex min-h-full flex-col justify-end space-y-3">
-            {!flowId && (
-              <PlatformCatalogPicker
-                flows={catalog.data ?? []}
-                isLoading={catalog.isLoading}
-                isError={catalog.isError}
-                error={catalog.error}
-                disabled={turn.isPending}
-                onRetry={() => void catalog.refetch()}
-                onSelect={startFlow}
-              />
-            )}
+        {/* Top-aligned when picking a topic (!flowId); bottom-aligned once a
+            conversation starts so a short transcript sits near the composer. */}
+        <div
+          className={cn(
+            "flex flex-1 flex-col gap-3 overflow-y-auto px-6 py-4",
+            flowId ? "justify-end" : "justify-start",
+          )}
+        >
+          {!flowId && (
+            <PlatformCatalogPicker
+              flows={catalog.data ?? []}
+              isLoading={catalog.isLoading}
+              isError={catalog.isError}
+              error={catalog.error}
+              disabled={turn.isPending}
+              onRetry={() => void catalog.refetch()}
+              onSelect={startFlow}
+            />
+          )}
 
-            {messages.map((m) => (
+          {messages.map((m) => (
+            <div
+              key={m.id}
+              className={
+                m.sender === "USER" ? "flex justify-end" : "flex justify-start"
+              }
+            >
               <div
-                key={m.id}
                 className={
-                  m.sender === "USER"
-                    ? "flex justify-end"
-                    : "flex justify-start"
+                  "max-w-[85%] rounded-2xl px-3 py-2 text-sm transition-opacity " +
+                  (m.sender === "USER"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-foreground") +
+                  (m.pending ? " opacity-70" : "")
                 }
               >
-                <div
-                  className={
-                    "max-w-[85%] rounded-2xl px-3 py-2 text-sm transition-opacity " +
-                    (m.sender === "USER"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-foreground") +
-                    (m.pending ? " opacity-70" : "")
-                  }
-                >
-                  <span className="sr-only">
-                    {m.sender === "USER" ? "You said" : "Assistant said"}:{" "}
-                  </span>
-                  {m.body}
-                </div>
+                <span className="sr-only">
+                  {m.sender === "USER" ? "You said" : "Assistant said"}:{" "}
+                </span>
+                {m.body}
               </div>
-            ))}
-
-            {turn.isPending && (
-              <div className="flex justify-start">
-                <div
-                  className="flex items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
-                  role="status"
-                  aria-label="Support is typing"
-                >
-                  {[0, 150, 300].map((delay) => (
-                    <span
-                      key={delay}
-                      className="h-1.5 w-1.5 rounded-full bg-foreground/40 motion-safe:animate-bounce"
-                      style={{ animationDelay: `${delay}ms` }}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {done && (
-              <PlatformDoneView
-                done={done}
-                flowRating={flowRating}
-                feedback={feedback}
-                feedbackPending={sendFeedback.isPending}
-                requestHref={requestHref}
-                onRate={(star) => void rateOutcome(star)}
-                onEscalateAfterRating={() => {
-                  setDone(null);
-                  setBareHumanLabel(HUMAN_EXIT_LABEL);
-                }}
-                onFeedbackChange={setFeedback}
-                onSubmitFeedback={() => sendFeedback.mutate(feedback.trim())}
-              />
-            )}
-            <div aria-live="polite" className="sr-only">
-              {platformLiveStatus(turn.isPending, done, offline)}
             </div>
-            {offline && (
+          ))}
+
+          {turn.isPending && (
+            <div className="flex justify-start">
               <div
-                role="alert"
-                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+                className="flex items-center gap-1 rounded-2xl bg-muted px-3 py-2.5"
+                role="status"
+                aria-label="Support is typing"
               >
-                You appear to be offline — your message draft is preserved here.
-                If your connection does not come back, you can reach us at{" "}
-                <Link
-                  href="/contactus"
-                  className="font-medium underline underline-offset-4"
-                >
-                  /contactus
-                </Link>
-                .
+                {[0, 150, 300].map((delay) => (
+                  <span
+                    key={delay}
+                    className="h-1.5 w-1.5 rounded-full bg-foreground/40 motion-safe:animate-bounce"
+                    style={{ animationDelay: `${delay}ms` }}
+                  />
+                ))}
               </div>
-            )}
-            <div ref={endRef} />
+            </div>
+          )}
+
+          {done && (
+            <PlatformDoneView
+              done={done}
+              flowRating={flowRating}
+              feedback={feedback}
+              feedbackPending={sendFeedback.isPending}
+              requestHref={requestHref}
+              onRate={(star) => void rateOutcome(star)}
+              onEscalateAfterRating={() => {
+                setDone(null);
+                setBareHumanLabel(HUMAN_EXIT_LABEL);
+              }}
+              onFeedbackChange={setFeedback}
+              onSubmitFeedback={() => sendFeedback.mutate(feedback.trim())}
+            />
+          )}
+          <div aria-live="polite" className="sr-only">
+            {platformLiveStatus(turn.isPending, done, offline)}
           </div>
+          {offline && (
+            <div
+              role="alert"
+              className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+            >
+              You appear to be offline — your message draft is preserved here.
+              If your connection does not come back, you can reach us at{" "}
+              <Link
+                href="/contactus"
+                className="font-medium underline underline-offset-4"
+              >
+                /contactus
+              </Link>
+              .
+            </div>
+          )}
+          <div ref={endRef} />
         </div>
 
         {flowId && !done && (
