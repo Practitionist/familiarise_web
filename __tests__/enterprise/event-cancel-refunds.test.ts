@@ -10,13 +10,17 @@
  * follow-up, with prisma / reversal-engine / refund mocked.
  */
 
+// The reversal tx reads live disputes on the internal seats.
+const mockTxDisputeFindMany = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     payment: { findMany: jest.fn() },
     refund: { findFirst: jest.fn() },
     referralCreditUsage: { findMany: jest.fn() },
-    $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn({})),
+    $transaction: jest.fn((fn: (tx: unknown) => unknown) =>
+      fn({ dispute: { findMany: mockTxDisputeFindMany } }),
+    ),
   },
 }));
 jest.mock("../../lib/db/serializable-retry", () => ({
@@ -75,6 +79,8 @@ const usageFindMany = creditsPrisma.referralCreditUsage.findMany;
 
 beforeEach(() => {
   balances = {};
+  mockTxDisputeFindMany.mockReset();
+  mockTxDisputeFindMany.mockResolvedValue([]);
   findMany.mockReset();
   applyReversalMock.mockReset();
   refundBookingPayment_.mockReset();
@@ -372,5 +378,109 @@ describe("refundWholeEventPayments — funding partition", () => {
     expect(refundPayment_).not.toHaveBeenCalled();
     expect(applyReversalMock).not.toHaveBeenCalled();
     expect(summary.refundsIssued).toBe(0);
+  });
+});
+
+// A disputed internal seat is held back and reported; the rest still refunds.
+describe("refundWholeEventPayments — live-dispute freeze on internal seats", () => {
+  it("holds back a seat with a live dispute and refunds the others", async () => {
+    findMany.mockResolvedValue([
+      { id: "p_org1", amount: 3000, paymentIntent: "org_wallet_1" },
+      { id: "p_org2", amount: 4000, paymentIntent: "org_wallet_2" },
+    ]);
+    balances = { p_org1: 3000, p_org2: 4000 };
+    mockTxDisputeFindMany.mockResolvedValue([
+      { paymentId: "p_org1", status: "UNDER_REVIEW" },
+    ]);
+    applyReversalMock.mockResolvedValue({
+      kind: "CLASS_MULTI",
+      cascades: [],
+      childRefundIds: ["child2"],
+      clawbackPosted: false,
+    });
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "admin1",
+    );
+
+    const arg = applyReversalMock.mock.calls[0][1];
+    expect(arg.source.paymentIds).toEqual(["p_org2"]);
+    expect(arg.amountPaise).toBe(4000);
+    expect(summary.refundedPaise).toBe(4000);
+    expect(summary.failures).toEqual([
+      {
+        paymentId: "p_org1",
+        error: expect.stringContaining("has an open dispute (UNDER_REVIEW)"),
+      },
+    ]);
+    expect(summary.alreadyRefunded).toBe(false);
+  });
+
+  it("reverses nothing when every internal seat is disputed", async () => {
+    findMany.mockResolvedValue([
+      { id: "p_org1", amount: 3000, paymentIntent: "org_license_1" },
+    ]);
+    balances = { p_org1: 3000 };
+    mockTxDisputeFindMany.mockResolvedValue([
+      { paymentId: "p_org1", status: "NEEDS_RESPONSE" },
+    ]);
+
+    const summary = await refundWholeEventPayments(
+      "webinar",
+      "web1",
+      "cancel",
+      null,
+    );
+
+    expect(applyReversalMock).not.toHaveBeenCalled();
+    expect(summary.refundsIssued).toBe(0);
+    expect(summary.failures.map((f) => f.paymentId)).toEqual(["p_org1"]);
+    expect(summary.alreadyRefunded).toBe(false);
+  });
+
+  it("counts a disputed seat with nothing left to refund as a skip", async () => {
+    findMany.mockResolvedValue([
+      { id: "p_org1", amount: 3000, paymentIntent: "org_invoice_1" },
+    ]);
+    balances = { p_org1: 0 };
+    mockTxDisputeFindMany.mockResolvedValue([
+      { paymentId: "p_org1", status: "UNDER_REVIEW" },
+    ]);
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
+
+    expect(summary.failures).toEqual([]);
+    expect(summary.skippedAlreadyRefunded).toBe(1);
+    expect(summary.alreadyRefunded).toBe(true);
+  });
+
+  it("asks only for live disputes, so a resolved one does not block", async () => {
+    findMany.mockResolvedValue([
+      { id: "p_org1", amount: 3000, paymentIntent: "org_wallet_1" },
+    ]);
+    balances = { p_org1: 3000 };
+
+    await refundWholeEventPayments("class", "cls1", "cancel", "a");
+
+    const { where } = mockTxDisputeFindMany.mock.calls[0][0];
+    expect(where.paymentId).toEqual({ in: ["p_org1"] });
+    expect(where.status.notIn).toEqual(
+      expect.arrayContaining([
+        "WON",
+        "LOST",
+        "CHARGE_REFUNDED",
+        "CLOSED",
+        "WARNING_CLOSED",
+      ]),
+    );
+    expect(applyReversalMock).toHaveBeenCalledTimes(1);
   });
 });
