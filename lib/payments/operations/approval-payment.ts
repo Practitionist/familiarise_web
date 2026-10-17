@@ -349,34 +349,47 @@ export async function createApprovalPaymentIntent(
       throw mintError;
     }
 
-    const filled = await prisma.$transaction(async (tx) => {
-      const cas = await tx.payment.updateMany({
-        where: {
-          id: paymentId,
-          paymentIntent: preMintIntent,
-          paymentStatus: PaymentStatus.PENDING,
-        },
-        data: { paymentIntent: paymentResponse.id },
-      });
-      if (cas.count !== 1) return false;
-      await tx.paymentLeg.updateMany({
-        where: { paymentId, source: "CARD" },
-        data: { sourceRef: paymentResponse.id },
-      });
-      return true;
-    });
-
-    if (!filled) {
-      // Another mint took the row while the gateway call ran; the order just minted is owned by nobody.
-      await tombstoneAbortedGatewayOrder({
+    const tombstoneMintedOrder = (reason: string) =>
+      tombstoneAbortedGatewayOrder({
         paymentIntent: paymentResponse.id,
         userId: params.userId,
         amount,
         originalAmount,
         taxAmount,
         currency,
-        reason: "approval mint lost its pre-mint row to a concurrent writer",
+        reason,
       });
+
+    let filled: boolean;
+    try {
+      filled = await prisma.$transaction(async (tx) => {
+        const cas = await tx.payment.updateMany({
+          where: {
+            id: paymentId,
+            paymentIntent: preMintIntent,
+            paymentStatus: PaymentStatus.PENDING,
+          },
+          data: { paymentIntent: paymentResponse.id },
+        });
+        if (cas.count !== 1) return false;
+        await tx.paymentLeg.updateMany({
+          where: { paymentId, source: "CARD" },
+          data: { sourceRef: paymentResponse.id },
+        });
+        return true;
+      });
+    } catch (fillError) {
+      // The minted order must still land on a row, and the pre-mint row must not stay payable.
+      await tombstoneMintedOrder("approval mint could not record its order");
+      await expirePreMintRow(paymentId, preMintIntent);
+      throw fillError;
+    }
+
+    if (!filled) {
+      // Another mint took the row while the gateway call ran; the order just minted is owned by nobody.
+      await tombstoneMintedOrder(
+        "approval mint lost its pre-mint row to a concurrent writer",
+      );
       throw new ApprovalPaymentExistsError();
     }
 

@@ -362,6 +362,21 @@ describe("the approval mint is durable before the gateway call", () => {
     );
   });
 
+  it("a fill that throws tombstones the minted order and expires the pre-mint row", async () => {
+    const boom = new Error("db down");
+    mockedPaymentUpdate.mockRejectedValueOnce(boom);
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toBe(boom);
+    expect(mockTombstone).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentIntent: "order_new" }),
+    );
+    expect(mockedPaymentUpdate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentStatus: PaymentStatus.EXPIRED }),
+      }),
+    );
+  });
+
   it("still mints for a paused expert: an approved request stays payable", async () => {
     state.consultationPlan = {
       ...state.consultationPlan,
