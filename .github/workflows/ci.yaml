@@ -19,15 +19,27 @@
 
 name: CI
 
+# A newer dev tip contains the older one, so superseded runs on PRs and on dev are
+# cancelled; staging/prod pushes deploy and always finish. A label other than
+# `db-reset` gets its own group and skips every job, so it never cancels a run in flight.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ ((github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'db-reset' && github.run_id) || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/dev' }}
 
 on:
   # A direct push to a release branch deploys without a PR, so the same checks
   # run on push too.
   push:
     branches: [dev, staging, prod]
+    # Docs-only changes skip CI; the secrets manifest is re-included because the
+    # workflow hygiene guard reads it.
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!.claude/**"
+      - "!prompts/**"
+      - "docs/enterprise/50-operations/07-required-secrets.md"
   pull_request:
     # `feat/**` is here because a stacked train is the normal shape for large
     # work in this repo and, without it, a sub-PR whose base is a feature branch
@@ -37,12 +49,22 @@ on:
     # labeled/unlabeled: the `db-reset` label decides which database the guards
     # and the build run against (#1554), so toggling it must re-run the job.
     types: [opened, synchronize, reopened, labeled, unlabeled]
+    # Docs-only changes skip CI; the secrets manifest is re-included because the
+    # workflow hygiene guard reads it.
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!.claude/**"
+      - "!prompts/**"
+      - "docs/enterprise/50-operations/07-required-secrets.md"
   workflow_dispatch:
 
 jobs:
   lint:
     name: Lint
-    if: github.actor != 'dependabot[bot]'
+    timeout-minutes: 15
+    if: github.actor != 'dependabot[bot]' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
 
     steps:
@@ -108,7 +130,7 @@ jobs:
 
   typecheck:
     name: TypeScript & guards
-    if: github.actor != 'dependabot[bot]'
+    if: github.actor != 'dependabot[bot]' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -181,7 +203,7 @@ jobs:
 
   unit-tests:
     name: Unit tests (${{ matrix.shard }})
-    if: github.actor != 'dependabot[bot]'
+    if: github.actor != 'dependabot[bot]' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -217,7 +239,7 @@ jobs:
 
   build:
     name: Build
-    if: github.actor != 'dependabot[bot]'
+    if: github.actor != 'dependabot[bot]' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # No redis service — see the note on unit-tests.
@@ -241,6 +263,14 @@ jobs:
       - name: Runner resources
         run: nproc && free -m
 
+      - name: Restore Next.js build cache
+        uses: actions/cache@v6
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('**/*.ts', '**/*.tsx', '**/*.js', '**/*.mjs', '!node_modules/**', '!.next/**') }}
+          restore-keys: |
+            next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+
       - name: Build
         # Raise the V8 heap so `next build` does not flaky-OOM on the runner. It
         # was 6144, which on a ~7 GB VM left the OS nothing: the runner itself
@@ -256,7 +286,7 @@ jobs:
   test-and-build:
     name: TypeScript, Tests & Build
     needs: [typecheck, unit-tests, build]
-    if: always()
+    if: always() && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -270,6 +300,7 @@ jobs:
   # and asserts them, so red means the branch is broken, never the shared DB.
   db-guards:
     name: Database sidecar guard
+    if: ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

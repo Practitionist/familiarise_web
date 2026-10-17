@@ -20,13 +20,21 @@ permissions:
 on:
   pull_request:
     branches: [dev, staging, prod, "feat/**"]
-    types: [opened, synchronize, reopened]
+    # Report-only: one report per PR open, not one per push. Docs-only PRs skip it.
+    types: [opened, reopened]
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!.claude/**"
+      - "!prompts/**"
   workflow_dispatch:
 
 jobs:
   knip:
     name: Knip drift report
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v7
