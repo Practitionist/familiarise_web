@@ -70,3 +70,30 @@ export async function notifyCreditsAppliedBestEffort(args: {
     console.error("[credits-applied-bell] failed:", err);
   }
 }
+
+/** The credits-applied bell for a captured gateway payment, from what checkout
+ * recorded in ReferralCreditUsage. Never throws. */
+export async function notifyCreditsAppliedForPaymentBestEffort(args: {
+  paymentId: string;
+  userId: string;
+  appointmentType: string;
+}): Promise<void> {
+  try {
+    const usages = await prisma.referralCreditUsage.findMany({
+      where: { paymentId: args.paymentId },
+      select: { originalAmount: true },
+    });
+    const creditsUsedPaise = usages.reduce(
+      (sum, u) => sum + Number(u.originalAmount),
+      0,
+    );
+    if (creditsUsedPaise <= 0) return;
+    await notifyCreditsAppliedBestEffort({
+      userId: args.userId,
+      creditsUsedPaise,
+      appointmentType: args.appointmentType,
+    });
+  } catch (err) {
+    console.error("[credits-applied-bell] failed:", err);
+  }
+}

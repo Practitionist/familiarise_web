@@ -88,6 +88,12 @@ import { goHref } from "@/lib/dashboard/go";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { recordReferralCaptureInSavepoint } from "@/lib/referrals/capture";
+import { notifyCreditsAppliedForPaymentBestEffort } from "@/lib/referrals/referral-notify";
+import { isMockPaymentId } from "@/lib/payments/operations/mock";
+import {
+  isFreeCreditIntent,
+  isInternalFundedIntent,
+} from "@/lib/payments/funding-rail";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
@@ -1157,6 +1163,24 @@ export async function handlePaymentSuccess(
   }
 
   await mintConsumerInvoiceBestEffort({ paymentId });
+
+  // Checkout already belled mock, free_ and org_ payments; a recovery re-runs
+  // Phase 2 for a payment whose first confirmation already belled.
+  if (
+    !recovering &&
+    !isMockPaymentId(paymentIntentId) &&
+    !isFreeCreditIntent(paymentIntentId) &&
+    !isInternalFundedIntent(paymentIntentId)
+  ) {
+    await withPhase2Deadline(
+      notifyCreditsAppliedForPaymentBestEffort({
+        paymentId,
+        userId,
+        appointmentType: metadata.appointmentType,
+      }),
+      `credits-applied-bell ${paymentId}`,
+    );
+  }
 
   if (!txResult.stageBellsRan) {
     try {
