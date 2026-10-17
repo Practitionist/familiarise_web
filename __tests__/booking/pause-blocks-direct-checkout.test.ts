@@ -62,21 +62,20 @@ const plan = {
 const event = { id: "event-1", status: "SCHEDULED", appointment: null };
 const START = new Date(Date.now() + 72 * 3600_000);
 
-const cases: Array<
-  [CheckoutInput["appointmentType"], Record<string, unknown>]
-> = [
+const cases: Array<[CheckoutInput["appointmentType"], Partial<CheckoutInput>]> =
   [
-    "CONSULTATION",
-    {
-      availabilityWindowWeeklyId: "win-1",
-      startsAt: START.toISOString(),
-      endsAt: new Date(START.getTime() + 3600_000).toISOString(),
-    },
-  ],
-  ["SUBSCRIPTION", {}],
-  ["WEBINAR", { eventId: "event-1" }],
-  ["CLASS", { eventId: "event-1" }],
-];
+    [
+      "CONSULTATION",
+      {
+        availabilityWindowWeeklyId: "win-1",
+        startsAt: START.toISOString(),
+        endsAt: new Date(START.getTime() + 3600_000).toISOString(),
+      },
+    ],
+    ["SUBSCRIPTION", {}],
+    ["WEBINAR", { eventId: "event-1" }],
+    ["CLASS", { eventId: "event-1" }],
+  ];
 
 beforeEach(() => {
   createPaymentIntent.mockReset();
@@ -98,16 +97,16 @@ afterEach(() => jest.restoreAllMocks());
 it.each(cases)(
   "%s checkout refuses with 409 NOT_ACCEPTING_BOOKINGS before any gateway call",
   async (appointmentType, extra) => {
-    const input = {
+    const input: CheckoutInput = {
       appointmentType,
       planId: "plan-1",
       paymentGateway: "RAZORPAY",
       ...extra,
-    } as unknown as CheckoutInput;
+    };
 
     const error = await handleCheckout(input, "buyer").then(
       () => null,
-      (caught: unknown) => caught as { httpStatus?: number; code?: string },
+      (caught: unknown) => caught,
     );
 
     expect(error).toMatchObject({

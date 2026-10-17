@@ -100,25 +100,26 @@ afterEach(() => jest.restoreAllMocks());
 
 describe("direct checkout window vs plan duration", () => {
   it("refuses a 6 h window on a 1 h plan with a 400/409 before any gateway call", async () => {
-    const input = {
+    const input: CheckoutInput = {
       appointmentType: "CONSULTATION",
       planId: "plan-1",
       paymentGateway: "RAZORPAY",
       availabilityWindowWeeklyId: "win-1",
       startsAt: START.toISOString(),
       endsAt: SIX_HOURS_LATER.toISOString(),
-    } as unknown as CheckoutInput;
+    };
 
-    const outcome = await handleCheckout(input, "buyer").then(
-      (value) => ({ value, error: null as unknown }),
-      (error: unknown) => ({ value: null, error }),
+    const error = await handleCheckout(input, "buyer").then(
+      () => null,
+      (caught: unknown) => caught,
     );
 
     expect(createPaymentIntent).not.toHaveBeenCalled();
-    expect(outcome.error).not.toBeNull();
-    expect([400, 409]).toContain(
-      (outcome.error as { httpStatus?: number }).httpStatus,
-    );
+    const httpStatus =
+      error instanceof Error && "httpStatus" in error
+        ? error.httpStatus
+        : undefined;
+    expect([400, 409]).toContain(httpStatus);
   });
 });
 

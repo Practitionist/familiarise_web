@@ -231,9 +231,8 @@ export function ExpertPricing({
           <p className="text-xs text-zinc-500 tracking-wide uppercase font-medium">
             Choose your preferred option
           </p>
-          {/* #1703 D1 — metadata only: how this expert takes bookings.
-              #1775 C-6 — consultations only; a plan is always paid at purchase.
-              A pause stops every new booking, so it shows on every tab. */}
+          {/* Metadata only: how this expert takes bookings, shown for consultations
+              (a plan is always paid at purchase). A pause stops every new booking, so it shows on every tab. */}
           {(consultantDetails.acceptingRequests === false ||
             (hasConsultations &&
               (!hasSubscriptions || activeServiceTab === "consultations"))) && (

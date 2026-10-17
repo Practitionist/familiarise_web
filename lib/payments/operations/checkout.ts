@@ -980,7 +980,7 @@ export async function calculateAmountAndValidate(
         status?: OfferingPlanStatus | null;
         consultantProfile: {
           verificationStatus: string;
-          acceptingRequests?: boolean;
+          acceptingRequests: boolean;
         } | null;
       },
       label: string,
@@ -1043,10 +1043,17 @@ export async function calculateAmountAndValidate(
         }
 
         assertPlanPurchasable(plan, "This consultation");
+        if (!validatedData.startsAt || !validatedData.endsAt) {
+          throw new BookingRuleError(
+            "WINDOW_DURATION_MISMATCH",
+            "Choose a start and end time for this consultation.",
+            400,
+          );
+        }
         assertWindowMatchesPlanDuration(
           plan,
-          validatedData.startsAt ?? "",
-          validatedData.endsAt ?? "",
+          validatedData.startsAt,
+          validatedData.endsAt,
         );
 
         // #1463 — the buyer's User id, not their ConsulteeProfile id: the
@@ -4402,6 +4409,16 @@ export async function handleCheckout(
       }
     }
 
+    // Every rail above sets an order or throws; the booking tx reads this narrowed value.
+    if (!paymentResponse) {
+      throw new PaymentError(
+        "Failed to create payment intent. Please try again later.",
+        "PAYMENT_INTENT_MISSING",
+        validatedData.paymentGateway,
+      );
+    }
+    const mintedOrder = paymentResponse;
+
     // STEP 5: Create tentative appointment + payment record (INSIDE LOCK)
     // This prevents race conditions by making validation see tentative bookings
     try {
@@ -4668,7 +4685,6 @@ export async function handleCheckout(
               }
             }
 
-            // paymentResponse is guaranteed to be set at this point (we'd have thrown in the try-catch above)
             const paymentData = {
               amount,
               originalAmount,
@@ -4684,7 +4700,7 @@ export async function handleCheckout(
                     : isZeroAmountPayment
                       ? "CREDITS"
                       : "CARD",
-              paymentIntent: paymentResponse!.id,
+              paymentIntent: mintedOrder.id,
               clientIdempotencyKey:
                 validatedData.clientIdempotencyKey ??
                 globalThis.crypto.randomUUID(),
@@ -5006,7 +5022,7 @@ export async function handleCheckout(
                   paymentId: payment.id,
                   source: "CARD",
                   amountPaise: amount,
-                  sourceRef: paymentResponse!.id,
+                  sourceRef: mintedOrder.id,
                 },
               });
             }
@@ -5235,7 +5251,7 @@ export async function handleCheckout(
         // invoice has to be minted here too. Org-sponsored payments no-op
         // inside the minter by design; they are invoiced on the org series.
         await mintConsumerInvoiceBestEffort({
-          paymentIntent: paymentResponse!.id,
+          paymentIntent: mintedOrder.id,
         });
 
         const appointmentIdForChannels = result.appointmentId;

@@ -662,7 +662,7 @@ describe("a late capture on a re-mint tombstone", () => {
 
     const outcome = await handlePaymentSuccess(
       "order-old",
-      WEBINAR_METADATA as unknown as Record<string, string>,
+      WEBINAR_METADATA,
       10000,
     );
 

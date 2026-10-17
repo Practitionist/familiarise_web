@@ -99,12 +99,17 @@ const p2002 = () =>
     meta: { target: ["userId", "appointmentId"] },
   });
 
-const input = {
+const input: CheckoutInput = {
   appointmentType: "WEBINAR",
   planId: "wplan-1",
   eventId: "web-1",
   paymentGateway: "RAZORPAY",
-} as unknown as CheckoutInput;
+};
+
+type Outcome = {
+  value: Awaited<ReturnType<typeof handleCheckout>> | null;
+  error: unknown;
+};
 
 beforeEach(() => {
   payments = [
@@ -181,17 +186,15 @@ afterEach(() => jest.restoreAllMocks());
 
 const run = () =>
   handleCheckout(input, BUYER).then(
-    (value) => ({ value, error: null as unknown }),
-    (error: unknown) => ({ value: null, error }),
+    (value): Outcome => ({ value, error: null }),
+    (error: unknown): Outcome => ({ value: null, error }),
   );
 
 describe("re-buying a webinar seat after an EXPIRED payment on the same appointment", () => {
   it("never surfaces an unmapped error: success, or a typed 409", async () => {
     const { error } = await run();
     if (error === null) return;
-    const typed = error as { httpStatus?: number; code?: string };
-    expect(typed.httpStatus).toBe(409);
-    expect(typeof typed.code).toBe("string");
+    expect(error).toMatchObject({ httpStatus: 409, code: expect.any(String) });
   });
 
   it("re-mints the dead row in place and tombstones the old order with appointmentId null", async () => {
@@ -212,9 +215,6 @@ describe("re-buying a webinar seat after an EXPIRED payment on the same appointm
 });
 
 describe("the other prior-row shapes on the same seat", () => {
-  const codeOf = (error: unknown) =>
-    error as { httpStatus?: number; code?: string } | null;
-
   it("re-mints a FAILED row in place the same way", async () => {
     payments[0].paymentStatus = "FAILED";
     const { error } = await run();
@@ -232,7 +232,7 @@ describe("the other prior-row shapes on the same seat", () => {
       refunds: [{ amountPaise: 100_000 }],
     });
     const { error } = await run();
-    expect(codeOf(error)).toMatchObject({
+    expect(error).toMatchObject({
       httpStatus: 409,
       code: "SEAT_REBUY_UNSUPPORTED",
     });
@@ -244,7 +244,7 @@ describe("the other prior-row shapes on the same seat", () => {
     // A sibling checkout committed after this one's read: the insert collides.
     overrides["payment.findFirst"] = () => null;
     const { error } = await run();
-    expect(codeOf(error)).toMatchObject({
+    expect(error).toMatchObject({
       httpStatus: 409,
       code: "PAYMENT_ALREADY_EXISTS",
     });

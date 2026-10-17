@@ -332,7 +332,7 @@ export async function createApprovalPaymentIntent(
     const paymentId = claim.paymentId;
 
     // Create payment intent with gateway. Imported here, not at module load:
-    // the barrel evaluates the Razorpay core and its #1219 test-key guard.
+    // the barrel evaluates the Razorpay core and its test-key guard.
     const { createPaymentIntent } = await import("../index");
     let paymentResponse: Awaited<ReturnType<typeof createPaymentIntent>>;
     try {
@@ -432,8 +432,8 @@ async function createPreMintRow(
   try {
     const created = await prisma.payment.create({
       data: {
-        // #1583 C-P0-01 — `amount` carries GST like checkout; `originalAmount`
-        // stays the list price, which is what earnings read as the base.
+        // `amount` carries GST like checkout; `originalAmount` stays the list
+        // price, which is what earnings read as the base.
         amount: fields.amount,
         originalAmount: fields.originalAmount,
         taxAmount: fields.taxAmount,
@@ -449,13 +449,13 @@ async function createPreMintRow(
         userId: params.userId,
         expiresAt: fields.holdExpiresAt,
         isMockPayment: false,
-        // #1181 — the request-time appointment anchors capture to the NEW
-        // flow (confirm the existing row, never create a twin). Null only
+        // The request-time appointment anchors capture to the new flow
+        // (confirm the existing row, never create a twin). Null only
         // when the caller genuinely had no appointment to offer.
         appointmentId: params.appointmentId ?? null,
         clientIdempotencyKey: `approval:${globalThis.crypto.randomUUID()}`,
         // Always CARD: the approval flow charges the buyer even when an org is
-        // tagged (#1166). Nested so a Payment can never exist legless.
+        // tagged. Nested so a Payment can never exist legless.
         legs: {
           create: {
             source: "CARD",
