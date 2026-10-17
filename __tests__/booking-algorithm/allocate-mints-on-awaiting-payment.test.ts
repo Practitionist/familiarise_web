@@ -19,7 +19,7 @@ jest.mock("../../lib/auth-helpers", () => ({
     session: { user: { id: "u-consultant", role: "CONSULTANT" } },
   }),
   authorizeEventAccess: async () => null,
-  isEventConsultant: async () => true,
+  isEventHost: async () => true,
 }));
 jest.mock("../../lib/rate-limit", () => ({
   applyRateLimit: async () => null,

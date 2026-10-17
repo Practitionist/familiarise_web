@@ -571,52 +571,67 @@ export async function requireOrgAccess(
   return { session: auth.session, member: member!, org };
 }
 
+type EventPlanOwner = {
+  consultantProfileId: string | null;
+  organizationId: string | null;
+};
+
+async function findEventPlanOwner(
+  eventType: "consultation" | "subscription" | "webinar" | "class",
+  eventId: string,
+): Promise<EventPlanOwner | null> {
+  const planSelect = {
+    select: { consultantProfileId: true, organizationId: true },
+  } as const;
+  switch (eventType) {
+    case "consultation": {
+      const row = await prisma.consultation.findUnique({
+        where: { id: eventId },
+        select: { consultationPlan: planSelect },
+      });
+      return row?.consultationPlan ?? null;
+    }
+    case "subscription": {
+      const row = await prisma.subscription.findUnique({
+        where: { id: eventId },
+        select: { subscriptionPlan: planSelect },
+      });
+      return row?.subscriptionPlan ?? null;
+    }
+    case "webinar": {
+      const row = await prisma.webinar.findUnique({
+        where: { id: eventId },
+        select: { webinarPlan: planSelect },
+      });
+      return row?.webinarPlan ?? null;
+    }
+    case "class": {
+      const row = await prisma.class.findUnique({
+        where: { id: eventId },
+        select: { classPlan: planSelect },
+      });
+      return row?.classPlan ?? null;
+    }
+  }
+}
+
 /**
- * Whether this caller may waive the consultant's own published availability
- * when allocating.
+ * Host-side actor for an event: ADMIN/STAFF, the plan's own consultant, or an
+ * operator of the plan's host org. A consultee of the booking never qualifies.
  */
-export async function isEventConsultant(
+export async function isEventHost(
   session: Session,
   eventType: "consultation" | "subscription" | "webinar" | "class",
   eventId: string,
 ): Promise<boolean> {
   if (isPrivileged(session.user.role)) return true;
 
-  const consultantProfileId = session.user.consultantProfileId;
-  if (!consultantProfileId) return false;
+  const plan = await findEventPlanOwner(eventType, eventId);
+  if (!plan) return false;
 
-  switch (eventType) {
-    case "consultation": {
-      const event = await prisma.consultation.findUnique({
-        where: { id: eventId },
-        select: { consultationPlan: { select: { consultantProfileId: true } } },
-      });
-      return (
-        event?.consultationPlan.consultantProfileId === consultantProfileId
-      );
-    }
-    case "subscription": {
-      const event = await prisma.subscription.findUnique({
-        where: { id: eventId },
-        select: { subscriptionPlan: { select: { consultantProfileId: true } } },
-      });
-      return (
-        event?.subscriptionPlan.consultantProfileId === consultantProfileId
-      );
-    }
-    case "webinar": {
-      const event = await prisma.webinar.findUnique({
-        where: { id: eventId },
-        select: { webinarPlan: { select: { consultantProfileId: true } } },
-      });
-      return event?.webinarPlan.consultantProfileId === consultantProfileId;
-    }
-    case "class": {
-      const event = await prisma.class.findUnique({
-        where: { id: eventId },
-        select: { classPlan: { select: { consultantProfileId: true } } },
-      });
-      return event?.classPlan.consultantProfileId === consultantProfileId;
-    }
+  const consultantProfileId = session.user.consultantProfileId;
+  if (consultantProfileId && consultantProfileId === plan.consultantProfileId) {
+    return true;
   }
+  return hasOrgEventAccess(session.user.id, plan.organizationId);
 }

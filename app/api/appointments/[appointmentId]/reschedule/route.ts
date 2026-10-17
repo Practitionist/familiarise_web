@@ -880,24 +880,14 @@ export async function POST(
           autoConfirmed = outcome.confirmed;
           autoConfirmReason = outcome.confirmed ? null : outcome.reason;
         } catch (err) {
-          // A lost CAS race on the final AUTO_ACCEPTED write (proposal answered
-          // or expired concurrently) is an ordinary outcome, not an error —
-          // reschedule-auto-confirm.ts already reports anything else itself.
-          // The reason names what the CAS told us — the row was not in the
-          // expected state — not why; a race is the common cause, not the only
-          // one, so the label does not claim it.
-          autoConfirmReason =
-            err instanceof IllegalTransitionError
-              ? "TRANSITION_REFUSED"
-              : "ERROR";
-          if (!(err instanceof IllegalTransitionError)) {
-            Sentry.captureException(
-              err instanceof Error ? err : new Error(String(err)),
-              {
-                tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
-              },
-            );
-          }
+          // A lost AUTO_ACCEPTED race comes back as a reason, never a throw.
+          autoConfirmReason = "ERROR";
+          Sentry.captureException(
+            err instanceof Error ? err : new Error(String(err)),
+            {
+              tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+            },
+          );
         }
         console.info(
           JSON.stringify({

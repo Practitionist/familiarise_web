@@ -14,6 +14,8 @@
  * - Verifies `isActForOrgBooking` and `isOrgFundedByOrg` so PERSONAL-rail
  *   bookings merely tagged with the organization cannot be mutated by org
  *   admins.
+ * - Allocates only a booking the expert already APPROVED; PENDING and
+ *   APPROVED_PENDING_PAYMENT answer 409 `EXPERT_APPROVAL_REQUIRED`.
  * - Delegates slot validation and conflict checks to `SchedulingService.allocate`
  *   with `override: false` (never bypassing the delivering expert's published
  *   availability).
@@ -23,6 +25,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { AppointmentStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { isActForOrgBooking, isOrgFundedByOrg } from "@/lib/booking/org-actor";
@@ -97,6 +100,8 @@ export async function POST(
         organizationId: true,
         consultationId: true,
         subscriptionId: true,
+        consultation: { select: { status: true } },
+        subscription: { select: { status: true } },
       },
     });
 
@@ -123,6 +128,21 @@ export async function POST(
       );
     }
 
+    // A sponsor org schedules only what the expert already approved; the
+    // narrowed CAS from-set below holds the same line at write time.
+    const requestStatus =
+      appointment.consultation?.status ?? appointment.subscription?.status;
+    if (requestStatus !== AppointmentStatus.APPROVED) {
+      return NextResponse.json(
+        {
+          error:
+            "The expert has to approve this booking before the organisation can set its times.",
+          code: "EXPERT_APPROVAL_REQUIRED",
+        },
+        { status: 409 },
+      );
+    }
+
     const eventType = appointment.consultationId
       ? ("consultation" as const)
       : ("subscription" as const);
@@ -141,6 +161,7 @@ export async function POST(
           override: false,
           allowPartial: false,
           topUp: false,
+          approvableFrom: [AppointmentStatus.APPROVED],
         }),
     );
 

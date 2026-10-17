@@ -26,7 +26,7 @@ import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import {
   requireApiAuth,
   authorizeEventAccess,
-  isEventConsultant,
+  isEventHost,
 } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
@@ -75,6 +75,19 @@ export async function handleAllocate(
     );
     if (authzError) return authzError;
 
+    // Allocation is a host-side act; the consultee answers through reschedule.
+    const isHost = await isEventHost(authResult.session, eventType, eventId);
+    if (!isHost) {
+      return NextResponse.json(
+        {
+          error:
+            "Only the expert or their organisation can set times for this booking.",
+          errorCode: "ALLOCATE_FORBIDDEN",
+        },
+        { status: 403 },
+      );
+    }
+
     // #831 — event mutations previously had no limiter
     const rl = await applyRateLimit(
       eventMutationLimiter,
@@ -91,12 +104,6 @@ export async function handleAllocate(
       const mode = resolveMode(body);
       console.log(
         `${label} Mode: ${mode}, Slots: ${body.slots ? body.slots.length : "auto"}`,
-      );
-
-      const canOverride = await isEventConsultant(
-        authResult.session,
-        eventType,
-        eventId,
       );
 
       // LAYER 2: Business Logic Validation & Allocation
@@ -128,16 +135,11 @@ export async function handleAllocate(
             idempotencyKey: request.headers.get("Idempotency-Key") ?? undefined,
             initialAllocation: body.initialAllocation,
             expectedTentativeSlotCount: resolvedExpectedTentativeSlotCount,
-            // Honoured only for the consultant (or ADMIN/STAFF): accepting a
-            // time outside the published availability is the consultant's call,
-            // not something a consultee may assert about someone else's schedule.
-            override: body.override === true && canOverride,
-            // #1206 — only the consultant (or a privileged caller) may decide to
-            // schedule fewer sessions than the plan sold.
-            allowPartial: body.allowPartial === true && canOverride,
-            // #1206 — top up the sessions an earlier partial allocation left
-            // unplaced instead of deleting the confirmed ones and re-planning.
-            topUp: body.topUp === true && canOverride,
+            // The host-side gate above already holds, so these consultant
+            // decisions pass through as sent.
+            override: body.override === true,
+            allowPartial: body.allowPartial === true,
+            topUp: body.topUp === true,
           }),
       );
 

@@ -8,14 +8,13 @@ const allocate = jest.fn();
 jest.mock("../../../utils/scheduling-engine/SchedulingService", () => ({
   SchedulingService: { allocate: (...a: unknown[]) => allocate(...a) },
 }));
-const isEventConsultant = jest.fn();
+const isEventHost = jest.fn();
 jest.mock("../../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({
     session: { user: { id: "u-consultee", role: "CONSULTEE" } },
   }),
   authorizeEventAccess: async () => null,
-  isEventConsultant: (...a: unknown[]) => isEventConsultant(...a),
-  hasOrgEventAccess: async () => false,
+  isEventHost: (...a: unknown[]) => isEventHost(...a),
 }));
 jest.mock("../../../lib/rate-limit", () => ({
   applyRateLimit: async () => null,
@@ -55,7 +54,7 @@ beforeEach(() => {
 
 describe("handleAllocate actor check", () => {
   it("consultee approving their own request is refused with 403 ALLOCATE_FORBIDDEN", async () => {
-    isEventConsultant.mockResolvedValue(false);
+    isEventHost.mockResolvedValue(false);
     const res = await patch();
     expect(allocate).not.toHaveBeenCalled();
     expect(res.status).toBe(403);
@@ -63,7 +62,7 @@ describe("handleAllocate actor check", () => {
   });
 
   it("the plan's consultant may allocate", async () => {
-    isEventConsultant.mockResolvedValue(true);
+    isEventHost.mockResolvedValue(true);
     const res = await patch();
     expect(res.status).toBe(200);
     expect(allocate).toHaveBeenCalledTimes(1);

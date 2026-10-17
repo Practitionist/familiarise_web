@@ -5,6 +5,8 @@
  * consistency and reduce duplication.
  */
 
+import type { AppointmentStatus } from "@prisma/client";
+import type { Tx } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
 
 /**
@@ -134,7 +136,17 @@ export interface AllocationRequest {
    * no MOVED notification. Set only by the two confirmation callers.
    */
   excludeRescheduleRequestId?: string;
+  /** Narrows the request statuses the approval CAS accepts (1:1 events only). */
+  approvableFrom?: AppointmentStatus[];
+  /** Runs inside the allocator's transaction after the status CAS; a throw rolls the move back. */
+  inTx?: (tx: Tx) => Promise<void>;
 }
+
+/** The per-call extras every allocation mode threads into its transaction. */
+export type AllocationTxOptions = Pick<
+  AllocationRequest,
+  "approvableFrom" | "inTx"
+>;
 
 /**
  * Result of validation check
@@ -205,6 +217,7 @@ export type AllocationErrorCode =
   | "SLOT_SHORTAGE" // not enough free slots in the window — 400
   | "COLLABORATOR_UNAVAILABLE" // AE-2 (#784) — a co-host is already committed — 409
   | "SUBSCRIPTION_UNPAID" // #1775 C-1 — a plan with no settled payment is never approved — 409
+  | "RESCHEDULE_NO_LONGER_OPEN" // the confirmed proposal was answered or expired mid-move — 409
   | "UNKNOWN_ERROR"; // infra / unexpected — 500
 
 /**
