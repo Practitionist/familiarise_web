@@ -203,7 +203,8 @@ x-frame-options: DENY
 After enforcement the first line starts `content-security-policy:` instead and
 ends with `report-uri ...; report-to csp-endpoint`, and a `reporting-endpoints`
 line appears. No `report-uri` on an enforced build means it had no
-`NEXT_PUBLIC_SENTRY_DSN`.
+`NEXT_PUBLIC_SENTRY_DSN`, or the DSN could not be parsed or lacked its key or
+project.
 
 ## Deprecated & Superseded Approaches
 
