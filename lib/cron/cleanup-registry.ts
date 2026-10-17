@@ -782,6 +782,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedCount: r.failedCount,
           unresolvableCount: r.unresolvableCount,
           retiredCount: r.retiredCount,
+          deadLettered: r.deadLettered,
           errors: r.errors.slice(0, 5),
         }),
         status: (r) =>

@@ -18,15 +18,18 @@
  */
 
 import { createHash } from "node:crypto";
-import { isPreMintIntent } from "@/lib/payments/pre-mint-intent";
+import { PRE_MINT_INTENT_PREFIX } from "@/lib/payments/pre-mint-intent";
 import prisma from "../../lib/prisma";
-import { PaymentStatus, PaymentGateway } from "@prisma/client";
+import { PaymentStatus, PaymentGateway, Prisma } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
-import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import {
+  recordSystemErrorSafe,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 // #1822 — Q-4: the same stuck ids re-fire this warning every tick until the
@@ -54,6 +57,25 @@ const MAX_AGE_DAYS = 7;
 // not re-reported every tick; younger ones may still be gateway lag.
 const DEFAULT_ORPHAN_PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+// A row no sweep can read or cancel is stamped with the marker the orphan sweeps
+// already exclude, so it leaves every cohort once instead of failing each run.
+const MANUAL_RECOVERY_PREFIX = "REQUIRES_MANUAL_RECOVERY:";
+const notManualRecoveryWhere = {
+  OR: [
+    { description: null },
+    { NOT: { description: { startsWith: MANUAL_RECOVERY_PREFIX } } },
+  ],
+} satisfies Prisma.PaymentWhereInput;
+
+// Pre-mint rows belong to the approval pay-link sweep until their hold lapses,
+// and blank intents have nothing to look up.
+const reconcilableIntentWhere = {
+  NOT: [
+    { paymentIntent: "" },
+    { paymentIntent: { startsWith: PRE_MINT_INTENT_PREFIX } },
+  ],
+} satisfies Prisma.PaymentWhereInput;
+
 function orphanPendingMaxAgeMs(): number {
   const raw = Number(process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS);
   return Number.isFinite(raw) && raw > 0
@@ -75,6 +97,8 @@ export interface PaymentReconciliationResult {
   /** #1757 — unknown-id rows past the orphan age, retired PENDING → EXPIRED. */
   retiredCount: number;
   retired: string[];
+  /** Rows on a gateway no sweep can read, stamped for manual recovery; not a run failure. */
+  deadLettered: number;
   errors: string[];
   timestamp: string;
 }
@@ -265,6 +289,7 @@ async function reconcilePaymentStatusUnlocked(
   const unresolvable: string[] = [];
   let retiredCount = 0;
   const retired: string[] = [];
+  const deadLetteredIds: string[] = [];
 
   const minAge = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000);
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
@@ -279,10 +304,7 @@ async function reconcilePaymentStatusUnlocked(
         lt: minAge,
         gte: maxAge,
       },
-      // Only payments with gateway reference - not an empty string
-      NOT: {
-        paymentIntent: "",
-      },
+      AND: [reconcilableIntentWhere, notManualRecoveryWhere],
     },
     include: {
       user: { select: { email: true, name: true } },
@@ -298,7 +320,7 @@ async function reconcilePaymentStatusUnlocked(
     where: {
       paymentStatus: PaymentStatus.PENDING,
       createdAt: { lt: orphanCutoff },
-      NOT: { paymentIntent: "" },
+      AND: [reconcilableIntentWhere, notManualRecoveryWhere],
     },
     include: {
       user: { select: { email: true, name: true } },
@@ -361,14 +383,25 @@ async function reconcilePaymentStatusUnlocked(
         skippedCount++;
         continue;
       }
-      // For Razorpay, paymentIntent might be orderId
-      // A pre-mint row never reached the gateway: terminal for this row, no call needed.
-      lookup = isPreMintIntent(payment.paymentIntent)
-        ? {
-            kind: "unknown_id",
-            detail: "pre-mint row; no gateway order exists",
-          }
-        : await getRazorpayPaymentStatus(payment.paymentIntent);
+      lookup = await getRazorpayPaymentStatus(payment.paymentIntent);
+    } else if (payment.paymentGateway !== PaymentGateway.STRIPE) {
+      // Permanent: neither this sweep nor the retire path can read this gateway.
+      const stamped = await prisma.payment.updateMany({
+        where: {
+          id: payment.id,
+          paymentStatus: PaymentStatus.PENDING,
+          ...notManualRecoveryWhere,
+        },
+        data: {
+          description: `${MANUAL_RECOVERY_PREFIX} unsupported gateway ${payment.paymentGateway}; its state cannot be read or cancelled.`,
+        },
+      });
+      if (stamped.count === 1) {
+        deadLetteredIds.push(payment.id);
+      } else {
+        skippedCount++;
+      }
+      continue;
     } else if (payment.createdAt < orphanCutoff) {
       lookup = {
         kind: "unknown_id",
@@ -602,6 +635,18 @@ async function reconcilePaymentStatusUnlocked(
     `   Unresolvable (gateway does not know the id): ${unresolvableCount}`,
   );
   console.log(`   Retired (orphan past the age cutoff): ${retiredCount}`);
+  console.log(
+    `   Dead-lettered (unsupported gateway): ${deadLetteredIds.length}`,
+  );
+
+  if (deadLetteredIds.length > 0) {
+    await recordSystemErrorSafe({
+      category: "PAYMENT",
+      summary: `reconcile-payment-status: ${deadLetteredIds.length} PENDING payment(s) on an unsupported gateway stamped for manual recovery`,
+      err: new Error("UNSUPPORTED_GATEWAY_DEAD_LETTERED"),
+      context: { paymentIds: deadLetteredIds },
+    });
+  }
 
   // One expected warning per run listing the ids, never one per row (#1757).
   if (retiredCount > 0) {
@@ -684,6 +729,7 @@ async function reconcilePaymentStatusUnlocked(
     unresolvable,
     retiredCount,
     retired,
+    deadLettered: deadLetteredIds.length,
     errors,
     timestamp: new Date().toISOString(),
   };
