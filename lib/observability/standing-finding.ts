@@ -5,7 +5,6 @@ import { recordSystemEvent } from "@/lib/enterprise/system-events";
 
 export const STANDING_FINDING_WINDOW_MS = 24 * 60 * 60 * 1000;
 const STANDING_FINDING_CATEGORY = "STANDING_FINDING";
-const MAX_STORED_IDS = 500;
 const MAX_PRIOR_ROWS = 50;
 
 const storedContext = z.object({ ids: z.array(z.string()) });
@@ -66,7 +65,7 @@ export async function reportStandingFinding(
     category: STANDING_FINDING_CATEGORY,
     severity: "WARN",
     message: args.message,
-    context: { ids: ids.slice(0, MAX_STORED_IDS) },
+    context: { ids },
     correlationId: `${prefix}${hash}`,
   });
   report();

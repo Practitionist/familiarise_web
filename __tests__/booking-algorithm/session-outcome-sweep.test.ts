@@ -173,7 +173,7 @@ it("a needs-human item older than 72 h raises one warning keyed on the queued id
   };
   await alertStaleNeedsHuman(db as never, at(0));
   expect(reportStandingFinding).toHaveBeenCalledWith(
-    expect.objectContaining({ ids: ["o1", "o2"] }),
+    expect.objectContaining({ ids: ["o1", "o2", "count:2"] }),
     expect.any(Function),
   );
   expect(reportSentryError).toHaveBeenCalledWith(

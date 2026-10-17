@@ -154,15 +154,19 @@ async function stillApplicable(row: ActionRow): Promise<boolean> {
 export async function retryModerationEnforcement(
   opts: ModerationRetryOptions = {},
 ): Promise<ModerationRetryResult> {
-  try {
-    return await withCronLock(
-      "retry-moderation-enforcement",
-      { failMode: "closed" },
-      () => retryModerationEnforcementUnlocked(opts),
-    );
-  } finally {
-    runFailures.flush();
-  }
+  // Flush inside the lock: a call refused by the lock never flushes the
+  // running sweep's failures.
+  return withCronLock(
+    "retry-moderation-enforcement",
+    { failMode: "closed" },
+    async () => {
+      try {
+        return await retryModerationEnforcementUnlocked(opts);
+      } finally {
+        runFailures.flush();
+      }
+    },
+  );
 }
 
 async function retryModerationEnforcementUnlocked(

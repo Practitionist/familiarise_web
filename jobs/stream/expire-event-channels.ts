@@ -798,15 +798,19 @@ async function writeDmLedger(
 const streamFailures = createRunFailureReporter("stream");
 
 export async function expireEventChannels(): Promise<ExpireEventChannelsResult> {
-  try {
-    return await withCronLock(
-      "expire-event-channels",
-      { failMode: "open" },
-      () => expireEventChannelsUnlocked(),
-    );
-  } finally {
-    streamFailures.flush();
-  }
+  // Flush inside the lock: a call refused by the lock never flushes the
+  // running sweep's failures.
+  return withCronLock(
+    "expire-event-channels",
+    { failMode: "open" },
+    async () => {
+      try {
+        return await expireEventChannelsUnlocked();
+      } finally {
+        streamFailures.flush();
+      }
+    },
+  );
 }
 
 async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult> {

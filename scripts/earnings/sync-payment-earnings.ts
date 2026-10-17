@@ -156,23 +156,32 @@ async function pageUnaccruablePayments(
       (now.getTime() - payment.createdAt.getTime()) / 3_600_000,
     );
     // The durable per-payment row is the dedupe key; Sentry hears once per run.
-    await recordSystemEvent({
-      organizationId: payment.organizationId,
-      category: "PAYMENT",
-      severity: "ERROR",
-      message:
-        `Payment ${payment.id} has been SUCCEEDED for ${ageHours}h with no ` +
-        `consultant earnings and no consultant to accrue them to; the sync ` +
-        `sweep cannot heal it: EARNINGS_UNACCRUABLE_NO_CONSULTANT`,
-      context: {
-        paymentId: payment.id,
-        appointmentId: payment.appointmentId,
-        amountPaise: payment.amountPaise,
-        paymentCreatedAt: payment.createdAt.toISOString(),
-        ageHours,
-      },
-      correlationId: key,
-    });
+    try {
+      await recordSystemEvent({
+        organizationId: payment.organizationId,
+        category: "PAYMENT",
+        severity: "ERROR",
+        message:
+          `Payment ${payment.id} has been SUCCEEDED for ${ageHours}h with no ` +
+          `consultant earnings and no consultant to accrue them to; the sync ` +
+          `sweep cannot heal it: EARNINGS_UNACCRUABLE_NO_CONSULTANT`,
+        context: {
+          paymentId: payment.id,
+          appointmentId: payment.appointmentId,
+          amountPaise: payment.amountPaise,
+          paymentCreatedAt: payment.createdAt.toISOString(),
+          ageHours,
+        },
+        correlationId: key,
+        strict: true,
+      });
+    } catch (err) {
+      console.error(
+        `[sync-payment-earnings] failed to page for ${payment.id}:`,
+        err,
+      );
+      continue;
+    }
     paged++;
     newlyPagedIds.push(payment.id);
   }

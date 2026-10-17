@@ -601,7 +601,8 @@ export async function alertStaleNeedsHuman(
     await reportStandingFinding(
       {
         key: "session-outcome-sweep:needs-human-age",
-        ids: rows.map((r) => r.id),
+        // The count joins the ids so growth past the sampled rows still re-reports.
+        ids: [...rows.map((r) => r.id), `count:${stale}`],
         message,
       },
       () =>
