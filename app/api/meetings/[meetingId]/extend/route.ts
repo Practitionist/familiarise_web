@@ -326,6 +326,93 @@ async function planStreamCallExtension(
 }
 
 /**
+ * Writes `endsAt` first so the exclusion constraint can refuse a clash before
+ * Stream grants the time; a Stream failure reverts only our own write by CAS.
+ */
+async function commitExtension(
+  occurrence: { id: string; endsAt: Date },
+  plan: StreamExtensionPlan,
+  meetingId: string,
+): Promise<
+  { ok: true; persistedEndsAt: Date } | { ok: false; response: NextResponse }
+> {
+  const { targetEndsAt } = plan;
+  let wroteEndsAt = false;
+  if (occurrence.endsAt.getTime() < targetEndsAt.getTime()) {
+    try {
+      const updated = await prisma.$transaction((tx) =>
+        tx.appointmentOccurrence.updateMany({
+          where: { id: occurrence.id, endsAt: { lt: targetEndsAt } },
+          data: { endsAt: targetEndsAt },
+        }),
+      );
+      wroteEndsAt = updated.count > 0;
+    } catch (err) {
+      if (!isExclusionViolation(err)) throw err;
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            extended: false,
+            hasConflictingNextBooking: true,
+            code: "EXTEND_CONFLICT",
+            error:
+              "Cannot extend because another confirmed session starts within 15 minutes.",
+          },
+          { status: 409 },
+        ),
+      };
+    }
+  }
+
+  if (!plan.alreadyExtended) {
+    try {
+      await plan.apply();
+    } catch (streamErr) {
+      const { reverted, revertError } = wroteEndsAt
+        ? await revertEndsAt(occurrence, targetEndsAt)
+        : { reverted: false, revertError: undefined };
+      reportSentryError(streamErr, {
+        subsystem: "stream",
+        op: "meetings.extend.stream-failed",
+        extra: { meetingId, wroteEndsAt, reverted, revertError },
+      });
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { error: "Video is temporarily unavailable. Please try again." },
+          { status: 503 },
+        ),
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    persistedEndsAt: wroteEndsAt ? targetEndsAt : occurrence.endsAt,
+  };
+}
+
+/** CAS on our own value, so a concurrent `endsAt` change is never clobbered. */
+async function revertEndsAt(
+  occurrence: { id: string; endsAt: Date },
+  targetEndsAt: Date,
+): Promise<{ reverted: boolean; revertError?: string }> {
+  try {
+    const res = await prisma.appointmentOccurrence.updateMany({
+      where: { id: occurrence.id, endsAt: targetEndsAt },
+      data: { endsAt: occurrence.endsAt },
+    });
+    return { reverted: res.count > 0 };
+  } catch (err) {
+    return {
+      reverted: false,
+      revertError: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
  * POST /api/meetings/[meetingId]/extend
  * Grants a free 15-minute duration cap extension for the host when no conflicting booking starts within 15 minutes.
  */
@@ -457,65 +544,13 @@ export async function POST(
       slotEndsAt,
     );
 
-    // The DB holds the slot first, so the exclusion constraint can refuse a
-    // clash before Stream grants the time.
-    const { targetEndsAt } = extendResult;
-    let persistedEndsAt = occurrence.endsAt;
-    let wroteEndsAt = false;
-    if (occurrence.endsAt.getTime() < targetEndsAt.getTime()) {
-      try {
-        const updated = await prisma.$transaction((tx) =>
-          tx.appointmentOccurrence.updateMany({
-            where: { id: occurrence.id, endsAt: { lt: targetEndsAt } },
-            data: { endsAt: targetEndsAt },
-          }),
-        );
-        wroteEndsAt = updated.count > 0;
-      } catch (err) {
-        if (!isExclusionViolation(err)) throw err;
-        return NextResponse.json(
-          {
-            extended: false,
-            hasConflictingNextBooking: true,
-            code: "EXTEND_CONFLICT",
-            error:
-              "Cannot extend because another confirmed session starts within 15 minutes.",
-          },
-          { status: 409 },
-        );
-      }
-      if (wroteEndsAt) persistedEndsAt = targetEndsAt;
-    }
-
-    if (!extendResult.alreadyExtended) {
-      try {
-        await extendResult.apply();
-      } catch (streamErr) {
-        // Undo only our own write: a concurrent endsAt change is never clobbered.
-        let reverted = false;
-        let revertError: string | undefined;
-        if (wroteEndsAt) {
-          try {
-            const res = await prisma.appointmentOccurrence.updateMany({
-              where: { id: occurrence.id, endsAt: targetEndsAt },
-              data: { endsAt: occurrence.endsAt },
-            });
-            reverted = res.count > 0;
-          } catch (err) {
-            revertError = err instanceof Error ? err.message : String(err);
-          }
-        }
-        reportSentryError(streamErr, {
-          subsystem: "stream",
-          op: "meetings.extend.stream-failed",
-          extra: { meetingId, wroteEndsAt, reverted, revertError },
-        });
-        return NextResponse.json(
-          { error: "Video is temporarily unavailable. Please try again." },
-          { status: 503 },
-        );
-      }
-    }
+    const committed = await commitExtension(
+      occurrence,
+      extendResult,
+      meetingId,
+    );
+    if (!committed.ok) return committed.response;
+    const { persistedEndsAt } = committed;
 
     if (extendResult.alreadyExtended) {
       return NextResponse.json(
