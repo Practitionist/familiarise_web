@@ -81,12 +81,12 @@ import {
 import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   ALLOCATION_APPROVABLE_FROM,
-  EVENT_ALLOWED_FROM,
-  CLASS_EVENT_ALLOWED_FROM,
   RESCHEDULE_OPEN_STATUSES,
+  transitionClassEvent,
   transitionConsultationRequest,
   transitionRescheduleRequest,
   transitionSubscriptionRequest,
+  transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
@@ -1528,7 +1528,6 @@ export class SchedulingService {
     };
   }
 
-
   /**
    * One read on `AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx`
    * with the exclusion constraint's own predicate (confirmed, live, this
@@ -2666,7 +2665,8 @@ export class SchedulingService {
             existingConfirmedSessionCount,
             slotsPerCall,
           );
-          const cycleTarget = topUpTotalSessions - existingConfirmedSessionCount;
+          const cycleTarget =
+            topUpTotalSessions - existingConfirmedSessionCount;
           const requiredTopUpSlots = cycleTarget * slotsPerCall;
           if (slots.length > requiredTopUpSlots) {
             throw new AllocationValidationError(
@@ -5697,31 +5697,19 @@ export class SchedulingService {
         );
 
       case "webinar": {
-        // Webinar model does NOT have startDate/endDate fields
-        // Start date is stored in the Appointment's slots.
-        //
-        // Allocation gives an event its sessions; it does NOT publish one. A
-        // DRAFT therefore keeps its status here and merely receives its slots:
-        // "add a session, then publish" is the editor's flow, and publishing is
-        // one-way (EVENT_PUBLISHABLE_FROM). Re-allocating a live event still
-        // re-stamps SCHEDULED, and CANCELLED/COMPLETED are still refused —
-        // that resurrection hazard is why the guard exists at all.
-        //
-        // This used to transition to SCHEDULED against a map that deliberately
-        // excludes DRAFT, so it matched zero rows and 409'd the entire
-        // allocation: the one affordance that gives a draft its first session
-        // always failed (#1060).
-        const restamped = await tx.webinar.updateMany({
-          where: { id: eventId, status: { in: EVENT_ALLOWED_FROM.SCHEDULED } },
-          data: { status: "SCHEDULED" },
-        });
-        if (restamped.count === 0) {
-          const current = await tx.webinar.findUnique({
+        // Allocation gives an event its sessions; it never publishes one, so a
+        // DRAFT keeps DRAFT while CANCELLED/COMPLETED are still refused.
+        try {
+          await transitionWebinarEvent(tx, {
             where: { id: eventId },
-            select: { status: true },
+            to: "SCHEDULED",
           });
-          if (current?.status !== "DRAFT") {
-            throw new IllegalTransitionError("Webinar", "SCHEDULED");
+        } catch (error) {
+          if (
+            !(error instanceof IllegalTransitionError) ||
+            error.from !== "DRAFT"
+          ) {
+            throw error;
           }
         }
         break;
@@ -5743,25 +5731,22 @@ export class SchedulingService {
               }
             : {};
 
-        // Same DRAFT-keeps-its-status rule as WEBINAR above, and the same
-        // resurrection guard.
-        const restamped = await tx.class.updateMany({
-          where: {
-            id: eventId,
-            status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
-          },
-          data: { status: "SCHEDULED", ...periodData },
-        });
-        if (restamped.count === 0) {
-          const current = await tx.class.findUnique({
+        // Same DRAFT-keeps-its-status rule as WEBINAR above.
+        try {
+          await transitionClassEvent(tx, {
             where: { id: eventId },
-            select: { status: true },
+            to: "SCHEDULED",
+            data: periodData,
           });
-          if (current?.status !== "DRAFT") {
-            throw new IllegalTransitionError("Class", "SCHEDULED");
+        } catch (error) {
+          if (
+            !(error instanceof IllegalTransitionError) ||
+            error.from !== "DRAFT"
+          ) {
+            throw error;
           }
-          // A draft keeps DRAFT but still needs its scheduling period, or the
-          // slots it just received sit outside a window that is never set.
+          // A draft still needs its scheduling period, or its new slots sit
+          // outside a window that is never set.
           if (Object.keys(periodData).length > 0) {
             await tx.class.updateMany({
               where: { id: eventId, status: "DRAFT" },

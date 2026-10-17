@@ -76,4 +76,16 @@ describe("event PUT refuses a status write", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ code: "USE_CANCEL_ROUTE" });
   });
+
+  it("class: an inverted scheduling period is a 400, never written", async () => {
+    const res = await classPut(
+      put({
+        schedulingPeriodStartsAt: "2026-11-02T00:00:00.000Z",
+        schedulingPeriodEndsAt: "2026-11-01T00:00:00.000Z",
+      }),
+      { params: Promise.resolve({ classId: "c1" }) },
+    );
+    expect(res.status).toBe(400);
+    expect(classUpdate).not.toHaveBeenCalled();
+  });
 });
