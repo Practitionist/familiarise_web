@@ -67,3 +67,11 @@ export const RequestForApprovalSchema = z
       });
     }
   });
+
+/** The `Idempotency-Key` header a request-for-approval retry resends; absent means no replay. */
+export const RequestIdempotencyKeySchema = z
+  .string()
+  .trim()
+  .min(8)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/, "Idempotency-Key has invalid characters");

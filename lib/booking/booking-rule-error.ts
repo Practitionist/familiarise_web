@@ -20,7 +20,11 @@ export type BookingRuleCode =
   | "ENROLMENT_CLOSED"
   | "CLASS_PRICE_CHANGED"
   | "PLAN_NOT_PUBLISHED"
-  | "SCHEDULE_CONFLICT";
+  | "SCHEDULE_CONFLICT"
+  | "WINDOW_DURATION_MISMATCH"
+  | "SEAT_REBUY_UNSUPPORTED"
+  | "NOT_ACCEPTING_BOOKINGS"
+  | "ALREADY_REGISTERED";
 
 export class BookingRuleError extends Error {
   constructor(

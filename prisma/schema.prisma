@@ -3882,21 +3882,23 @@ model Consultation {
   consultationPlan   ConsultationPlan @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   consultationPlanId String
 
-  status             AppointmentStatus   @default(PENDING) @map("requestStatus")
-  requestedBy        ConsulteeProfile    @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  requestedById      String
-  requestedAt        DateTime            @default(now()) @db.Timestamptz
-  requestNotes       String?
-  pendingPaymentUrl  String? // Payment link while awaiting payment (cleared after payment)
-  bookingSource      BookingSource       @default(REQUEST_SUBMITTED)
+  status                AppointmentStatus   @default(PENDING) @map("requestStatus")
+  requestedBy           ConsulteeProfile    @relation(fields: [requestedById], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  requestedById         String
+  requestedAt           DateTime            @default(now()) @db.Timestamptz
+  requestNotes          String?
+  pendingPaymentUrl     String? // Payment link while awaiting payment (cleared after payment)
+  /// Client-minted `Idempotency-Key` of the request that created this row; a retry with it replays this row.
+  requestIdempotencyKey String?             @unique
+  bookingSource         BookingSource       @default(REQUEST_SUBMITTED)
   // Cancellation tracking
-  cancellationReason CancellationReason?
-  cancellationNotes  String?             @db.Text
-  cancelledAt        DateTime?           @db.Timestamptz
+  cancellationReason    CancellationReason?
+  cancellationNotes     String?             @db.Text
+  cancelledAt           DateTime?           @db.Timestamptz
   // #1319 — was a bare userId string; the FK makes the actor queryable and
   // survives user deletion as NULL. Column name kept so no writer changes.
-  cancelledByUser    User?               @relation("ConsultationCancelledBy", fields: [cancelledBy], references: [id], onDelete: SetNull)
-  cancelledBy        String?
+  cancelledByUser       User?               @relation("ConsultationCancelledBy", fields: [cancelledBy], references: [id], onDelete: SetNull)
+  cancelledBy           String?
 
   /// Freeze ledger for this pair's DIRECT MESSAGE channel, not for a channel of
   /// this booking's own — see `Webinar.chatFrozenAt` for the group-chat twin.

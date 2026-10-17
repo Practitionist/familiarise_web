@@ -39,17 +39,15 @@ export function consultationCtaFor(
   return { action: "checkout", label: "Continue to Checkout", hint: null };
 }
 
-/** The consultee's recourse while the expert is paused (#1703 D4). */
+/** The consultee's recourse while the expert is paused; a pause stops every new booking. */
 export const CONSULTANT_PAUSED_HINT =
-  "This expert is not taking new requests right now — pick another expert or try again later.";
+  "This expert is not taking new bookings right now — pick another expert or try again later.";
 
 /** The metadata badge next to the price. */
 export function bookingModeBadge(
   mode: BookingMode,
   acceptingRequests: boolean,
 ): string {
-  if (mode === "REQUEST" && !acceptingRequests) {
-    return "Not taking new requests";
-  }
+  if (!acceptingRequests) return "Not taking new bookings";
   return mode === "REQUEST" ? "Requests reviewed first" : "Instant booking";
 }
