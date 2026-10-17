@@ -60,7 +60,12 @@ export async function getVerificationQueue(
       where,
       include: {
         consultantProfile: {
-          include: {
+          select: {
+            id: true,
+            userId: true,
+            description: true,
+            experience: true,
+            headline: true,
             user: {
               select: {
                 id: true,

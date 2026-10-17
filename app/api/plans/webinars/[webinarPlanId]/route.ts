@@ -1,3 +1,4 @@
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { fetchWebinarPlanDetail } from "@/lib/data/plan-details";
@@ -96,7 +97,7 @@ export async function PATCH(
 
     const existingPlan = await prisma.webinarPlan.findUnique({
       where: { id: webinarPlanId },
-      include: { consultantProfile: true },
+      include: { consultantProfile: PROFILE_OWNER_SELECT },
     });
 
     if (!existingPlan) {

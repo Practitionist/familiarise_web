@@ -8,6 +8,7 @@ import {
   authorizeEventAccess,
 } from "@/lib/auth-helpers";
 import { CLASS_EVENT_ALLOWED_FROM } from "@/lib/booking/transitions";
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import {
   deleteUntouchedOffering,
   offeringDeleteRefusal,
@@ -39,11 +40,7 @@ export async function GET(
       include: {
         classPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: true,
-              },
-            },
+            consultantProfile: PROFILE_WITH_USER_SELECT,
             topics: true,
             classContents: {
               orderBy: {
@@ -161,11 +158,7 @@ export async function PUT(
       include: {
         classPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: true,
-              },
-            },
+            consultantProfile: PROFILE_WITH_USER_SELECT,
             topics: true,
             classContents: {
               orderBy: {
@@ -268,7 +261,7 @@ export async function DELETE(
           include: {
             classPlan: {
               include: {
-                consultantProfile: { include: { user: true } },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
                 topics: true,
                 classContents: { orderBy: { order: "asc" } },
               },

@@ -1,3 +1,4 @@
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   liveParticipant,
@@ -326,13 +327,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       include: {
         consulteeProfile: {
           include: {
-            user: true,
+            user: { select: { id: true, name: true, image: true } },
           },
         },
         consultantProfile: {
-          include: {
-            user: true,
-          },
+          select: { id: true, user: { select: { id: true, name: true } } },
         },
         subscriptionPlan: true,
         appointment: true,
@@ -1269,9 +1268,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
             }),
       },
       include: {
-        consultantProfile: {
-          include: { user: { select: { id: true, name: true } } },
-        },
+        consultantProfile: PROFILE_WITH_USER_SELECT,
         consulteeProfile: {
           include: { user: { select: { id: true, name: true } } },
         },

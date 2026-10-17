@@ -1,3 +1,4 @@
+import { PARTY_PROFILE_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
@@ -127,13 +128,7 @@ export async function GET(req: NextRequest) {
                   include: {
                     subscriptionPlan: {
                       include: {
-                        consultantProfile: {
-                          include: {
-                            user: {
-                              select: { id: true, name: true, email: true },
-                            },
-                          },
-                        },
+                        consultantProfile: PARTY_PROFILE_SELECT,
                       },
                     },
                   },

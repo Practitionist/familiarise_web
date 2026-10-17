@@ -1,3 +1,4 @@
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
@@ -117,11 +118,7 @@ export async function GET(
         include: {
           consultationPlan: {
             include: {
-              consultantProfile: {
-                include: {
-                  user: { select: { name: true } },
-                },
-              },
+              consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
           // Cancel affordance keys on the Appointment record id
@@ -142,11 +139,7 @@ export async function GET(
         include: {
           subscriptionPlan: {
             include: {
-              consultantProfile: {
-                include: {
-                  user: { select: { name: true } },
-                },
-              },
+              consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
           // Any one appointment id suffices — the cancel route resolves
@@ -212,9 +205,7 @@ export async function GET(
         include: {
           subscriptionPlan: {
             include: {
-              consultantProfile: {
-                include: { user: { select: { name: true } } },
-              },
+              consultantProfile: PROFILE_WITH_USER_SELECT,
             },
           },
           appointment: { select: { id: true } },

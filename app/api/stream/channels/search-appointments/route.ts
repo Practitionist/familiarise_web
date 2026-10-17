@@ -1,3 +1,4 @@
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "lib/prisma";
@@ -164,17 +165,7 @@ export async function GET(request: NextRequest) {
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PROFILE_WITH_USER_SELECT,
           },
         },
         requestedBy: {
@@ -260,17 +251,7 @@ export async function GET(request: NextRequest) {
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PROFILE_WITH_USER_SELECT,
           },
         },
         requestedBy: {
@@ -345,16 +326,7 @@ export async function GET(request: NextRequest) {
       include: {
         webinarPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PROFILE_WITH_USER_SELECT,
           },
         },
       },
@@ -416,16 +388,7 @@ export async function GET(request: NextRequest) {
       include: {
         classPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    name: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PROFILE_WITH_USER_SELECT,
           },
         },
       },

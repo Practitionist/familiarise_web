@@ -1,3 +1,4 @@
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import {
   flushBackupInterestNotices,
   stageNoticesForAppointmentHolds,
@@ -275,9 +276,7 @@ export async function POST(
           include: {
             consultationPlan: {
               include: {
-                consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
             requestedBy: {
@@ -289,9 +288,7 @@ export async function POST(
           include: {
             subscriptionPlan: {
               include: {
-                consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
             requestedBy: {
@@ -303,9 +300,7 @@ export async function POST(
           include: {
             webinarPlan: {
               include: {
-                consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
           },
@@ -314,9 +309,7 @@ export async function POST(
           include: {
             classPlan: {
               include: {
-                consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
           },

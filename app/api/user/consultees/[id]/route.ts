@@ -7,6 +7,7 @@ import {
   checkOwnership,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
 
 export async function GET(
   req: NextRequest,
@@ -120,7 +121,7 @@ export async function POST(
       },
       include: {
         consultantReviews: { where: { deletedAt: null } },
-        user: true,
+        user: PARTY_USER_SELECT,
       },
     });
 
@@ -191,7 +192,7 @@ export async function PATCH(
       },
       include: {
         consultantReviews: { where: { deletedAt: null } },
-        user: true,
+        user: PARTY_USER_SELECT,
       },
     });
 
@@ -252,7 +253,7 @@ export async function DELETE(
       where: { id: id },
       include: {
         consultantReviews: { where: { deletedAt: null } },
-        user: true,
+        user: PARTY_USER_SELECT,
       },
     });
 

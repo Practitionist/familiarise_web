@@ -44,6 +44,17 @@ const PDFKIT_FONT_FILES = [
 const STRICT_BUILD = process.env.STRICT_BUILD === "true";
 
 /**
+ * Set only by ci.yaml's Build job. Its separate `TypeScript & guards` and `Lint`
+ * jobs already type-check and lint the same commit, and a PR build has no
+ * business uploading source maps or cutting a Sentry release. Re-doing all of
+ * that inside `next build` was what tipped the private-repo runner (~7 GB RAM)
+ * over: the VM was killed at "Linting and checking validity of types".
+ */
+const CI_LEAN_BUILD = process.env.CI_LEAN_BUILD === "true";
+const SKIP_BUILD_CHECKS =
+  (process.env.NETLIFY === "true" || CI_LEAN_BUILD) && !STRICT_BUILD;
+
+/**
  * CSP violations go straight to Sentry's security-report endpoint, derived
  * from the DSN (`https://<key>@<host>/<project>` →
  * `https://<host>/api/<project>/security/?sentry_key=<key>`). Without a DSN
@@ -68,16 +79,21 @@ function sentryCspReportUrl() {
     return undefined;
   }
 }
-const CSP_REPORT_URL = sentryCspReportUrl();
+const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE === "true";
+
+// Browsers post violations straight to Sentry, bypassing every SDK hook, and
+// each report is a billable event on a 5,000/month error quota. A report-only
+// policy would spend it on noise, so reports are sent only once enforced.
+const CSP_REPORT_URL = CSP_ENFORCE ? sentryCspReportUrl() : undefined;
 const CSP_REPORT_GROUP = "csp-endpoint";
 
 /**
  * Content Security Policy.
  *
  * Report-only at launch: a drifted allow-list entry would otherwise break
- * Razorpay checkout or Stream calls for everyone at once. Violations land in
- * Sentry; once they are triaged, set `ENABLE_CSP_ENFORCE=true` and redeploy
- * (the value is read at build time).
+ * Razorpay checkout or Stream calls for everyone at once. Report-only builds
+ * send no reports (see CSP_REPORT_URL); watch the browser console on a deploy
+ * preview, then set `ENABLE_CSP_ENFORCE=true` and redeploy (read at build time).
  *
  * Allow-list rationale
  * --------------------
@@ -174,8 +190,6 @@ const CSP_DIRECTIVES = [
     : []),
 ].join("; ");
 
-const CSP_ENFORCE = process.env.ENABLE_CSP_ENFORCE === "true";
-
 const CSP_HEADER_KEY = CSP_ENFORCE
   ? "Content-Security-Policy"
   : "Content-Security-Policy-Report-Only";
@@ -250,12 +264,13 @@ const nextConfig = {
   // Skipped on Netlify by default: with them on, the deploy preview was killed
   // (exit 137) at "Linting and checking validity of types" on the 6144 MB
   // heap. CI type-checks and lints every PR and every push to dev/staging/prod
-  // instead. STRICT_BUILD=true turns them back on for a Netlify build.
+  // instead. STRICT_BUILD=true turns them back on for a Netlify build. CI's own
+  // Build job skips them too (CI_LEAN_BUILD) — the dedicated jobs cover them.
   eslint: {
-    ignoreDuringBuilds: process.env.NETLIFY === "true" && !STRICT_BUILD,
+    ignoreDuringBuilds: SKIP_BUILD_CHECKS,
   },
   typescript: {
-    ignoreBuildErrors: process.env.NETLIFY === "true" && !STRICT_BUILD,
+    ignoreBuildErrors: SKIP_BUILD_CHECKS,
   },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
@@ -567,9 +582,13 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // Skip generating hidden-source-map buffers on non-production Netlify previews to stay under the 8 GB container RSS cap.
   sourcemaps: {
     disable:
-      process.env.NETLIFY === "true" && process.env.CONTEXT !== "production",
+      CI_LEAN_BUILD ||
+      (process.env.NETLIFY === "true" && process.env.CONTEXT !== "production"),
   },
-  widenClientFileUpload: process.env.NETLIFY !== "true",
+  widenClientFileUpload: process.env.NETLIFY !== "true" && !CI_LEAN_BUILD,
+  // A CI PR build is never deployed, so it must not create or finalize a
+  // Sentry release (it was doing so — and failing — on every PR run).
+  ...(CI_LEAN_BUILD ? { release: { create: false, finalize: false } } : {}),
 
   webpack: {
     treeshake: {
