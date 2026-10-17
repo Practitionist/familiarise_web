@@ -1,7 +1,5 @@
 import { reportSentryError } from "@/lib/observability/report";
-import { Prisma } from "@prisma/client";
-import prisma from "@/lib/prisma";
-import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import prisma, { type PrismaLike, type Tx } from "@/lib/prisma";
 import {
   recordSystemEvent,
   recordSystemErrorSafe,
@@ -15,17 +13,18 @@ import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { goHref } from "@/lib/dashboard/go";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
-import { applyReversal, readRefundableBalances } from "./reversal-engine";
-import {
-  findDedupedRefund,
-  refundPayment,
-  RefundValidationError,
-} from "./refund";
 import { refundBookingPayment } from "./booking-refund";
+import { RefundValidationError } from "./refund";
+import {
+  driveRefundOwed,
+  markerFromRow,
+  REFUND_OWED_SELECT,
+  stampRefundsOwed,
+  type RefundOwedMarker,
+} from "./refund-owed";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import {
   isFreeCreditIntent,
-  isInternalFundedIntent,
   type FundingRail,
 } from "@/lib/payments/funding-rail";
 import { computeRefundPct } from "./cancellation-policy";
@@ -42,29 +41,15 @@ import {
 } from "@/lib/booking/class-series";
 
 /**
- * Whole-event refund (#776 §C) — the production front door for the reversal
- * engine's CLASS_MULTI path.
+ * Whole-event refund: every attendee of a cancelled class or
+ * webinar is refunded through the booking front door, one keyed refund per
+ * seat, so each rail (gateway, in-ledger org funding, credits) settles exactly
+ * as a single booking would.
  *
- * A cancelled class/webinar must refund EVERY attendee. Those attendees paid
- * through two very different rails, and each needs its own reversal:
- *
- *   - GATEWAY / MOCK seats (paymentIntent pi_/cs_/order_/pay_/…_mock_) — real
- *     card money. They must credit the card, so they go through `refundPayment`
- *     (which owns the gateway phases + its own overage credit-back). Routing
- *     them through the engine would strand the customer's money — the engine
- *     never calls the gateway.
- *   - INTERNAL org-funded seats (paymentIntent org_wallet/org_license/
- *     org_invoice) — no card ever charged; the money lives in the wallet /
- *     invoice accrual / license ledger. `refundPayment` can't refund these
- *     (createRefund throws UNKNOWN_GATEWAY on a synthetic id), so they reverse
- *     purely in-ledger via one CLASS_MULTI transaction.
- *
- * Idempotency: callers still gate on the appointment-cancel CAS / moderation
- * `moved === 0` guard, but a second call is now structurally harmless too —
- * every rail re-derives the refundable balance under Serializable isolation,
- * so an already-refunded seat surfaces as a skip, not a second payout
- * (#1169 PR 3; the old "a second call would double-refund" note predated the
- * balance clamps).
+ * The seats are stamped owed in the cancelling commit
+ * ({@link stampWholeEventRefundsOwed}), and this drives a bounded bite of them
+ * inline; the retry-auto-refunds sweep drains the rest, so a large roster never
+ * outlives the request.
  */
 
 export type WholeEventRefundSummary = {
@@ -74,15 +59,142 @@ export type WholeEventRefundSummary = {
   failures: { paymentId: string; error: string }[];
   /** Seats whose balance was already fully refunded — a re-run, not an error. */
   skippedAlreadyRefunded: number;
-  /**
-   * #1583 C-P0-03 — the internal batch had no refundable balance left, so the
-   * CLASS_MULTI reversal was skipped rather than thrown. A re-run, not an error.
-   */
+  /** Seats stamped owed but left for the retry sweep once the inline bite was spent. */
+  deferred: number;
+  /** Every seat was a skip: nothing issued, deferred or failed. */
   alreadyRefunded: boolean;
 };
 
+/** Seats refunded inline before the rest is left to the retry sweep. */
+const INLINE_SEAT_LIMIT = 10;
+const INLINE_BUDGET_MS = 10_000;
+
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+type EventSeatPlan =
+  | { kind: "owe"; marker: RefundOwedMarker }
+  | { kind: "settled" }
+  | { kind: "escalate"; delivered: number; partlyReturned: boolean };
+
+type EventRefundArgs = {
+  kind: "class" | "webinar";
+  eventId: string;
+  reason: string;
+  /**
+   * #1780 D-5 — per-seat class ledgers read BEFORE the cancel tombstoned the
+   * sessions (classSeriesLedgers); each seat then refunds only what was not
+   * delivered. Absent (a webinar, a moderation sweep) → every seat in full.
+   */
+  ledgers?: ReadonlyMap<string, SeriesSeat>;
+  /** Scopes the seat keys to the calling door, so two doors never share one refund. */
+  dedupeKeyPrefix?: string;
+};
+
+/**
+ * What each SUCCEEDED seat of the event is owed, read on `db`: the undelivered
+ * share clamped to the remaining balance, a whole credit restoration, a skip
+ * when nothing is left, or an escalation the credits rail cannot pay.
+ */
+async function planEventSeats(
+  db: PrismaLike,
+  args: EventRefundArgs,
+): Promise<{ paymentIds: string[]; plans: Map<string, EventSeatPlan> }> {
+  const prefix = args.dedupeKeyPrefix ?? "event-cancel";
+  const payments = await db.payment.findMany({
+    where: {
+      appointment:
+        args.kind === "webinar"
+          ? { webinarId: args.eventId }
+          : { classId: args.eventId },
+      paymentStatus: "SUCCEEDED",
+      // Retired rows stay out: the front door refuses them.
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      amount: true,
+      paymentIntent: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
+  });
+  const creditStates = await creditSeatStates(
+    db,
+    payments
+      .filter((p) => isFreeCreditIntent(p.paymentIntent))
+      .map((p) => p.id),
+  );
+  const plans = new Map<string, EventSeatPlan>();
+  for (const p of payments) {
+    const ledger = args.ledgers?.get(p.id);
+    const key = `${prefix}:${args.eventId}:pay:${p.id}`;
+    const credit = creditStates.get(p.id);
+    if (credit) {
+      // The credits rail restores whole or not at all, so a seat delivered part
+      // of the series, or already partly returned, is escalated to a human.
+      if (credit.claimed && credit.stillUsedPaise <= 0) {
+        plans.set(p.id, { kind: "settled" });
+      } else if ((ledger && ledger.deliveredHeld > 0) || credit.claimed) {
+        plans.set(p.id, {
+          kind: "escalate",
+          delivered: ledger?.deliveredHeld ?? 0,
+          partlyReturned: credit.claimed,
+        });
+      } else {
+        plans.set(p.id, {
+          kind: "owe",
+          marker: {
+            paymentId: p.id,
+            amountPaise: null,
+            key,
+            reason: args.reason,
+          },
+        });
+      }
+      continue;
+    }
+    const balance = refundableBalancePaise(Number(p.amount), p);
+    // Sessions already refunded one by one (occ:*) are not owed again.
+    const undelivered = ledger
+      ? Number(seriesCancelRefundPaise(ledger, p.amount)) -
+        (ledger.occRefundedPaise ?? 0)
+      : balance;
+    const owed = Math.min(undelivered, balance);
+    plans.set(
+      p.id,
+      owed > 0
+        ? {
+            kind: "owe",
+            marker: {
+              paymentId: p.id,
+              amountPaise: owed,
+              key,
+              reason: args.reason,
+            },
+          }
+        : { kind: "settled" },
+    );
+  }
+  return { paymentIds: payments.map((p) => p.id), plans };
+}
+
+/**
+ * Stamps every owed seat of the event on the caller's transaction, in one
+ * statement, so the commit that cancels the event also records what it owes.
+ */
+export async function stampWholeEventRefundsOwed(
+  tx: Tx,
+  args: EventRefundArgs,
+): Promise<Map<string, EventSeatPlan>> {
+  const { plans } = await planEventSeats(tx, args);
+  await stampRefundsOwed(
+    tx,
+    [...plans.values()].flatMap((plan) =>
+      plan.kind === "owe" ? [plan.marker] : [],
+    ),
+  );
+  return plans;
 }
 
 export async function refundWholeEventPayments(
@@ -90,354 +202,129 @@ export async function refundWholeEventPayments(
   eventId: string,
   reason: string,
   initiatedByUserId: string | null,
-  /**
-   * #1780 D-5 — per-seat class ledgers read BEFORE the cancel tombstoned the
-   * sessions (classSeriesLedgers); each seat then refunds only what was not
-   * delivered. Absent (a webinar, a moderation sweep) → every seat in full.
-   *
-   * #1854 — `dedupeKeyPrefix` scopes the gateway rail's idempotency key to the
-   * CALLER. The key is `${prefix}:${paymentId}`, and it used to be a single
-   * hardcoded `series-cancel` shared by every door, which was a latent
-   * collision rather than a safe default: `refundPayment` answers a known
-   * `dedupeKey` from the prior Refund row BEFORE any balance check
-   * (`findDedupedRefund`), so a second door refunding the same seat was handed
-   * the first door's refund and — worse — counted it, reporting money this call
-   * never moved. A door that is genuinely a different operation needs its own
-   * key, and a retry of THAT operation reuses it, so at-most-once still holds
-   * per operation. Defaults to the historical prefix, so every existing caller
-   * is byte-for-byte unchanged.
-   */
   opts: {
     ledgers?: ReadonlyMap<string, SeriesSeat>;
     dedupeKeyPrefix?: string;
   } = {},
 ): Promise<WholeEventRefundSummary> {
-  const dedupeKeyPrefix = opts.dedupeKeyPrefix ?? "series-cancel";
   const summary: WholeEventRefundSummary = {
     refundsIssued: 0,
     refundedPaise: 0,
     childRefundIds: [],
     failures: [],
     skippedAlreadyRefunded: 0,
+    deferred: 0,
     alreadyRefunded: false,
   };
+  const args: EventRefundArgs = { kind, eventId, reason, ...opts };
 
-  const payments = await prisma.payment.findMany({
-    where: {
-      appointment:
-        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
-      paymentStatus: "SUCCEEDED",
-      // #1161 — no amount filter: free_ (credit-funded) seats refund too, via
-      // credit restoration.
-      // #781 §B — retired rows stay out: the front door refuses them, so a
-      // soft-deleted seat would only surface as a false failure.
-      deletedAt: null,
-    },
-    select: {
-      id: true,
-      amount: true,
-      paymentIntent: true,
-      userId: true,
-      createdAt: true,
-      appointmentId: true,
-    },
-  });
-  if (payments.length === 0) return summary;
-
-  // #1780 D-5 — a class series refunds only what was not delivered: each seat
-  // gets amount − unit × delivered (its own ledger); a webinar refunds in full.
-  const ledgers = opts.ledgers ?? null;
-  const seriesAmount = (p: (typeof payments)[number]) => {
-    const ledger = ledgers?.get(p.id);
-    // Sessions already refunded one by one (occ:*) are not owed again.
-    return ledger
-      ? Number(seriesCancelRefundPaise(ledger, p.amount)) -
-          (ledger.occRefundedPaise ?? 0)
-      : undefined;
-  };
-
-  const internal = payments.filter((p) =>
-    isInternalFundedIntent(p.paymentIntent),
+  // A door that stamped in its own commit makes this a no-op: the CAS keeps
+  // the first marker on every seat.
+  const plans = await prisma.$transaction((tx) =>
+    stampWholeEventRefundsOwed(tx, args),
   );
-  const credits = payments.filter((p) => isFreeCreditIntent(p.paymentIntent));
-  const gateway = payments.filter(
-    (p) =>
-      !isInternalFundedIntent(p.paymentIntent) &&
-      !isFreeCreditIntent(p.paymentIntent),
-  );
+  if (plans.size === 0) return summary;
 
-  // Credit-funded seats — restoration through the front door (#1161).
-  for (const p of credits) {
-    // #1780 — the credits rail restores whole or not at all, so a seat that was
-    // delivered part of the series is escalated rather than over-restored.
-    const ledger = ledgers?.get(p.id);
-    // The credits rail refuses once any restoration row exists (an ops
-    // partial return), so read the facts it reads, not a key prefix.
-    const state = await creditSeatState(p.id);
-    if (state.claimed && state.stillUsedPaise <= 0) {
+  const owing: string[] = [];
+  for (const [paymentId, plan] of plans) {
+    if (plan.kind === "settled") {
       summary.skippedAlreadyRefunded += 1;
-      continue;
-    }
-    if ((ledger && ledger.deliveredHeld > 0) || state.claimed) {
+    } else if (plan.kind === "escalate") {
       summary.failures.push({
-        paymentId: p.id,
+        paymentId,
         error:
           "partial credit restoration after delivered sessions needs a human",
       });
-      await escalatePartialCredit(p.id, {
+      await escalatePartialCredit(paymentId, {
         eventId,
         kind,
-        delivered: ledger?.deliveredHeld ?? 0,
-        partlyReturned: state.claimed,
+        delivered: plan.delivered,
+        partlyReturned: plan.partlyReturned,
+      });
+    } else {
+      owing.push(paymentId);
+    }
+  }
+
+  const [rows, disputes] = await Promise.all([
+    prisma.payment.findMany({
+      where: { id: { in: owing }, refundOwedKey: { not: null } },
+      orderBy: { refundOwedAt: "asc" },
+      select: REFUND_OWED_SELECT,
+    }),
+    prisma.dispute.findMany({
+      where: {
+        paymentId: { in: owing },
+        status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+      },
+      select: { paymentId: true, status: true },
+    }),
+  ]);
+  const disputed = new Map(disputes.map((d) => [d.paymentId, d.status]));
+  const markers = rows.flatMap((row) => markerFromRow(row) ?? []);
+  // A seat planned owed whose marker is already gone was settled by a racing drive.
+  summary.skippedAlreadyRefunded += owing.length - markers.length;
+
+  const deadline = Date.now() + INLINE_BUDGET_MS;
+  let driven = 0;
+  let firstError: unknown;
+  for (const marker of markers) {
+    const dispute = disputed.get(marker.paymentId);
+    if (dispute) {
+      // The marker waits for the dispute; the sweep skips it until it resolves.
+      summary.failures.push({
+        paymentId: marker.paymentId,
+        error: `Payment ${marker.paymentId} has an open dispute (${dispute}); resolve it before refunding`,
       });
       continue;
     }
-    try {
-      const r = await refundBookingPayment({
-        paymentId: p.id,
-        reason,
-        initiatedByUserId,
-        dedupeKey: `event-cancel:${eventId}:pay:${p.id}`,
-      });
-      summary.refundsIssued += 1;
-      summary.childRefundIds.push(r.refundId);
-    } catch (err) {
-      if (
-        err instanceof RefundValidationError &&
-        err.code === "ALREADY_FULLY_REFUNDED"
-      ) {
-        summary.skippedAlreadyRefunded += 1;
-        continue;
-      }
-      summary.failures.push({ paymentId: p.id, error: errMsg(err) });
-      reportSentryError(err, {
-        subsystem: "payments",
-        tags: { feature: "whole-event-refund" },
-        extra: { paymentId: p.id, eventId, kind },
-      });
+    if (driven >= INLINE_SEAT_LIMIT || Date.now() >= deadline) {
+      summary.deferred += 1;
+      continue;
     }
-  }
-
-  // Gateway / mock seats — one gateway-aware refund each (refundPayment also
-  // handles any CHARGE_MEMBER overage credit-back internally).
-  for (const p of gateway) {
-    try {
-      const owed = seriesAmount(p);
-      if (owed !== undefined && owed <= 0) {
+    driven += 1;
+    const outcome = await driveRefundOwed(marker, { initiatedByUserId });
+    switch (outcome.kind) {
+      case "refunded":
+        summary.refundsIssued += 1;
+        summary.refundedPaise += outcome.refund.amountRefundedPaise;
+        summary.childRefundIds.push(outcome.refund.refundId);
+        break;
+      case "replayed":
+      case "settled":
         summary.skippedAlreadyRefunded += 1;
-        continue;
-      }
-      // Only a pro-rata seat carries a dedupe key; a full-balance one has no
-      // amount to pin and relies on the balance clamp alone, exactly as before.
-      const dedupeKey =
-        owed === undefined ? undefined : `${dedupeKeyPrefix}:${p.id}`;
-      // A seat whose key already carries a refund was returned by an earlier
-      // call — a previous run of THIS door, or (under a shared prefix) a
-      // different door entirely. `refundPayment` would answer from that row
-      // before it ever looked at the balance, and this loop would add the prior
-      // refund to `refundsIssued` and its amount to `refundedPaise`: a report of
-      // money that did not move, on the one number an operator reads to decide
-      // whether a class is settled. Nothing was issued, so it is a skip.
-      if (dedupeKey && (await findDedupedRefund(dedupeKey))) {
-        summary.skippedAlreadyRefunded += 1;
-        continue;
-      }
-      // The complementary case: no key on this rail, or a key with no row, but
-      // the money is already gone. `Math.min` would hand `refundPayment` an
-      // amount of 0, which is not a refundable amount — the seat is settled.
-      const amountPaise =
-        owed === undefined
-          ? undefined
-          : Math.min(owed, await gatewayBalance(p.id, Number(p.amount)));
-      if (amountPaise !== undefined && amountPaise <= 0) {
-        summary.skippedAlreadyRefunded += 1;
-        continue;
-      }
-      const r = await refundPayment({
-        paymentId: p.id,
-        reason,
-        initiatedByUserId,
-        ...(amountPaise === undefined ? {} : { amountPaise, dedupeKey }),
-      });
-      summary.refundsIssued += 1;
-      summary.refundedPaise += r.amountRefundedPaise;
-      summary.childRefundIds.push(r.refundId);
-    } catch (err) {
-      if (
-        err instanceof RefundValidationError &&
-        err.code === "ALREADY_FULLY_REFUNDED"
-      ) {
-        // A re-run over an already-settled seat (e.g. maintenance freeze
-        // followed by a manual cancel) — the clamp held; not a failure.
-        summary.skippedAlreadyRefunded += 1;
-        continue;
-      }
-      summary.failures.push({ paymentId: p.id, error: errMsg(err) });
-      reportSentryError(err, {
-        subsystem: "payments",
-        tags: { feature: "whole-event-refund" },
-        extra: { paymentId: p.id, eventId, kind },
-      });
-    }
-  }
-
-  // Internal org-funded seats — one CLASS_MULTI reversal (ledger-only). Full
-  // reversal of what is LEFT: amountPaise == Σ child refundable balances, read
-  // in the same tx as the reversal, so a partly-refunded seat no longer makes
-  // the whole batch throw and a fully-refunded batch is a no-op (#1583 C-P0-03).
-  const memberOverageFollowUps: string[] = [];
-  if (internal.length > 0) {
-    let internalTotal = 0;
-    let settledSeats = 0;
-    let disputedSeats: { id: string; status: string }[] = [];
-    try {
-      const result = await withSerializableRetry(() =>
-        prisma.$transaction(
-          async (tx) => {
-            const allBalances = await readRefundableBalances(
-              tx,
-              internal.map((p) => p.id),
-            );
-            // A seat with a live dispute stays out of the reversal and is
-            // reported as a failure; read in this Serializable tx so a racing
-            // dispute aborts it.
-            const live = await tx.dispute.findMany({
-              where: {
-                paymentId: { in: internal.map((p) => p.id) },
-                status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
-              },
-              select: { paymentId: true, status: true },
-            });
-            const liveStatus = new Map(
-              live.map((d) => [d.paymentId, d.status] as const),
-            );
-            // A disputed seat with nothing left to refund is a skip, not a block.
-            disputedSeats = allBalances.flatMap((b) => {
-              const status = liveStatus.get(b.id);
-              return status && b.refundablePaise > 0
-                ? [{ id: b.id, status }]
-                : [];
-            });
-            const balances = allBalances.filter((b) => !liveStatus.has(b.id));
-            // #1780 D-5 — Σ per-seat undelivered amounts, each clamped to its balance.
-            internalTotal = balances.reduce((s, b) => {
-              const seat = internal.find((p) => p.id === b.id);
-              const owed = seat ? seriesAmount(seat) : undefined;
-              return (
-                s +
-                (owed === undefined
-                  ? b.refundablePaise
-                  : Math.max(0, Math.min(owed, b.refundablePaise)))
-              );
-            }, 0);
-            // Seats with nothing left are skips, whether or not the rest of
-            // the batch still has a balance.
-            settledSeats = allBalances.filter(
-              (p) => p.refundablePaise <= 0,
-            ).length;
-            if (internalTotal === 0) return null;
-            return applyReversal(tx, {
-              source: {
-                kind: "CLASS_MULTI",
-                paymentIds: balances.map((b) => b.id),
-              },
-              amountPaise: internalTotal,
-              reason,
-              // Correlation tag only — reverseClassMulti mints its own child
-              // Refund rows and keys idempotency off those, not this string.
-              refundId: `event:${kind}:${eventId}`,
-              initiatedByUserId,
-            });
-          },
-          {
-            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-            maxWait: 10_000,
-            timeout: 15_000,
-          },
-        ),
-      );
-      summary.skippedAlreadyRefunded += settledSeats;
-      for (const seat of disputedSeats) {
+        break;
+      case "blocked":
         summary.failures.push({
-          paymentId: seat.id,
-          error: `Payment ${seat.id} has an open dispute (${seat.status}); resolve it before refunding`,
+          paymentId: marker.paymentId,
+          error: `Payment ${marker.paymentId} has an open dispute; resolve it before refunding`,
         });
-      }
-      if (result !== null) {
-        summary.refundsIssued += result.childRefundIds.length;
-        summary.refundedPaise += internalTotal;
-        summary.childRefundIds.push(...result.childRefundIds);
-        for (const c of result.cascades) {
-          if (c.memberOverageRefundDue) {
-            memberOverageFollowUps.push(
-              c.memberOverageRefundDue.overagePaymentId,
-            );
-          }
-        }
-      }
-    } catch (err) {
-      // The whole internal batch rolled back atomically — surface each seat.
-      for (const p of internal) {
-        summary.failures.push({ paymentId: p.id, error: errMsg(err) });
-      }
-      reportSentryError(err, {
-        subsystem: "payments",
-        tags: { feature: "whole-event-refund" },
-        extra: { eventId, kind, internalCount: internal.length },
-      });
-    }
-  }
-
-  // #715/#716 — CHARGE_MEMBER overages on the internal seats were collected on
-  // separate gateway side-payments the CLASS_MULTI tx can't touch. Credit them
-  // back now (best-effort; ops-paged on non-benign failure).
-  for (const overagePaymentId of memberOverageFollowUps) {
-    try {
-      const r = await refundPayment({
-        paymentId: overagePaymentId,
-        reason: `overage credit-back — ${kind} ${eventId} cancelled`,
-        initiatedByUserId,
-      });
-      summary.childRefundIds.push(r.refundId);
-    } catch (err) {
-      const benign =
-        err instanceof RefundValidationError &&
-        (err.code === "ALREADY_FULLY_REFUNDED" ||
-          err.code === "PAYMENT_NOT_SUCCEEDED");
-      if (!benign) {
+        break;
+      case "failed":
+        firstError ??= outcome.error;
         summary.failures.push({
-          paymentId: overagePaymentId,
-          error: errMsg(err),
+          paymentId: marker.paymentId,
+          error: errMsg(outcome.error),
         });
-        void recordSystemErrorSafe({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Overage credit-back failed for side-payment ${overagePaymentId}`,
-          err,
-          context: { overagePaymentId, eventId, kind },
-        });
-      }
+        break;
     }
   }
+  // One Sentry event per call, never per seat.
+  if (firstError !== undefined) {
+    reportSentryError(firstError, {
+      subsystem: "payments",
+      tags: { feature: "whole-event-refund" },
+      extra: { eventId, kind, failed: summary.failures.length },
+    });
+  }
 
-  // Derived after every rail: the event is "already refunded" only when each
-  // seat was a skip, nothing was issued and nothing failed — an internal no-op
-  // beside a failed gateway seat is a failure, not idempotent success.
   summary.alreadyRefunded =
     summary.refundsIssued === 0 &&
     summary.failures.length === 0 &&
-    summary.skippedAlreadyRefunded === payments.length;
+    summary.deferred === 0 &&
+    summary.skippedAlreadyRefunded === plans.size;
 
   return summary;
-}
-
-/** A gateway seat's refundable balance (gross less what already came back). */
-async function gatewayBalance(paymentId: string, grossPaise: number) {
-  const row = await prisma.payment.findUnique({
-    where: { id: paymentId },
-    select: REFUNDABLE_BALANCE_SELECT,
-  });
-  return row ? refundableBalancePaise(grossPaise, row) : 0;
 }
 
 /**
@@ -770,21 +657,42 @@ function seatRefundPct(
  * and a per-session answer is escalated to ops rather than over-restored.
  */
 /** What the credits rail keys on: a restoration row, and credit still consumed. */
-async function creditSeatState(paymentId: string) {
-  const [claim, usages] = await Promise.all([
-    prisma.refund.findFirst({
-      where: { paymentId, status: { in: ["SUCCEEDED", "PENDING"] } },
-      select: { id: true },
+/** Whether each credit seat already has a restoration row, and how much credit it still holds. */
+async function creditSeatStates(
+  db: PrismaLike,
+  paymentIds: string[],
+): Promise<Map<string, { claimed: boolean; stillUsedPaise: number }>> {
+  if (paymentIds.length === 0) return new Map();
+  const [claims, usages] = await Promise.all([
+    db.refund.findMany({
+      where: {
+        paymentId: { in: paymentIds },
+        status: { in: ["SUCCEEDED", "PENDING"] },
+      },
+      select: { paymentId: true },
     }),
-    prisma.referralCreditUsage.findMany({
-      where: { paymentId },
-      select: { amount: true },
+    db.referralCreditUsage.findMany({
+      where: { paymentId: { in: paymentIds } },
+      select: { paymentId: true, amount: true },
     }),
   ]);
-  return {
-    claimed: !!claim,
-    stillUsedPaise: usages.reduce((sum, u) => sum + Number(u.amount), 0),
-  };
+  const claimed = new Set(claims.map((c) => c.paymentId));
+  return new Map(
+    paymentIds.map((id) => [
+      id,
+      {
+        claimed: claimed.has(id),
+        stillUsedPaise: usages
+          .filter((u) => u.paymentId === id)
+          .reduce((sum, u) => sum + Number(u.amount), 0),
+      },
+    ]),
+  );
+}
+
+async function creditSeatState(paymentId: string) {
+  const states = await creditSeatStates(prisma, [paymentId]);
+  return states.get(paymentId) ?? { claimed: false, stillUsedPaise: 0 };
 }
 
 /** #1771 K-5 — a durable row the Refunds tab lists for the credit door. */

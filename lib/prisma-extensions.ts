@@ -118,6 +118,7 @@ export const moneyResultExtensions = {
     originalAmount: f("originalAmount"),
     taxAmount: f("taxAmount"),
     welcomeDiscountPaise: fn("welcomeDiscountPaise"),
+    refundOwedPaise: fn("refundOwedPaise"),
     exchangeRateAtCheckout: dn("exchangeRateAtCheckout"),
   },
   paymentLeg: { amountPaise: f("amountPaise") },

@@ -21,6 +21,11 @@ import {
   CancelRefundPreviewSchema,
   type CancelRefundPreview,
 } from "@/schemas/appointments";
+import {
+  cancelPreviewQueryKey,
+  cancelPreviewUrl,
+  type ShownCancelQuote,
+} from "@/lib/appointments/cancel-requote";
 
 /** #1780 — `GET …/cancel/preview?scope=seat`: leaving the viewer's own seat. */
 type SeatLeavePreview =
@@ -37,10 +42,10 @@ type SeatLeavePreview =
 interface CancelConfirmationDialogProps {
   isOpen: boolean;
   /**
-   * Receives the quote the viewer saw, so a caller whose cancel refunds only a
-   * confirmed amount (trial DELETE, #1846) can send it back with the click.
+   * Receives the quote the viewer saw, so the cancel can refund exactly the
+   * amount shown and answer 409 when its own quote differs.
    */
-  onConfirm: (quote?: { estimatedRefundPaise: number }) => void;
+  onConfirm: (quote?: ShownCancelQuote) => void;
   onCancel: () => void;
   title: string;
   consultant: string;
@@ -86,17 +91,14 @@ export function CancelConfirmationDialog({
   // Only the cancel path: an unpaid request has nothing to quote, and leaving a
   // group event refunds through the roster route rather than this one.
   const quoteUrl =
-    previewUrl ??
-    (appointmentId
-      ? `/api/appointments/${appointmentId}/cancel/preview`
-      : null);
+    previewUrl ?? (appointmentId ? cancelPreviewUrl(appointmentId) : null);
   const previewEnabled = isOpen && !!quoteUrl && !isLeave && !isPendingPayment;
   const {
     data: preview,
     isLoading: isPreviewLoading,
     isError: isPreviewError,
   } = useQuery<CancelRefundPreview>({
-    queryKey: ["cancel-refund-preview", quoteUrl],
+    queryKey: cancelPreviewQueryKey(quoteUrl ?? ""),
     queryFn: async () => {
       const response = await fetch(
         quoteUrl as string,
@@ -324,7 +326,10 @@ export function CancelConfirmationDialog({
             onClick={() =>
               onConfirm(
                 preview && preview.paid !== false
-                  ? { estimatedRefundPaise: preview.estimatedRefundPaise }
+                  ? {
+                      estimatedRefundPaise: preview.estimatedRefundPaise,
+                      creditRestoresInFull: preview.creditRestoresInFull,
+                    }
                   : undefined,
               )
             }

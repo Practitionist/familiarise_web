@@ -28,6 +28,8 @@ const mockRecordSystemError = jest.fn();
 const mockGetSession = jest.fn();
 const mockMembershipFindUnique = jest.fn();
 
+/** The committed request a retried click reads back. */
+const mockConsultationFindUnique = jest.fn();
 const globalAppointmentFindFirst = jest.fn(
   async (...a: unknown[]) => (await mockAppointmentFindMany(...a))[0] ?? null,
 );
@@ -55,6 +57,8 @@ const txStub = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
+  // The refund the cancel owes is stamped on the payment in the same commit.
+  payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   // #1766 — a subscription cancel stamps the undelivered earnings tranches in
   // the same transaction.
   consultantEarnings: {
@@ -110,12 +114,20 @@ jest.mock("../../lib/prisma", () => ({
       // OWN payment row, keyed on the org. Distinct from the refund-quote read
       // above, which is why it is a separate mock rather than a shared one.
       findFirst: (...a: unknown[]) => mockOrgFundingPayment(...a),
+      // The drive clears or counts the owed marker by CAS.
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    // #1775 P-3 — the reserved row a gateway throw leaves behind.
+    // The reserved row a gateway throw leaves behind; no earlier
+    // refund carries the cancel's key.
     refund: {
-      findUnique: jest.fn(async () => ({ status: "PENDING" })),
+      findUnique: jest.fn(async (args: { where: { dedupeKey?: string } }) =>
+        args.where.dedupeKey ? null : { status: "PENDING" },
+      ),
     },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
+    consultation: {
+      findUnique: (...a: unknown[]) => mockConsultationFindUnique(...a),
+    },
     // #1166 — what `isOrgAdminOfAppointment` reads.
     membership: {
       findUnique: (...a: unknown[]) => mockMembershipFindUnique(...a),
@@ -145,6 +157,7 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  stampWholeEventRefundsOwed: jest.fn().mockResolvedValue(new Map()),
   refundWholeEventPayments: jest.fn().mockResolvedValue({
     refundsIssued: 0,
     refundedPaise: 0,
@@ -350,6 +363,7 @@ beforeEach(() => {
   ]);
   txStub.rescheduleRequest.findMany.mockResolvedValue([]);
   mockPaymentFindMany.mockResolvedValue([]);
+  mockConsultationFindUnique.mockResolvedValue(null);
   // No org funding proof by default: the participant paths never ask.
   mockOrgFundingPayment.mockResolvedValue(null);
   mockMembershipFindUnique.mockResolvedValue(null);
@@ -900,6 +914,85 @@ describe("failure modes leave the cancellation standing", () => {
     const res = await cancelHandler(makeRequest(), makeParams(APPT));
 
     expect(res.status).toBe(409);
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("the refund is bound to the click", () => {
+  beforeEach(() => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+  });
+
+  it("refuses a stale quote with 409 and the new figure, committing nothing", async () => {
+    const res = await cancelHandler(
+      makeRequest({ expectedRefundPaise: GROSS / 2 }),
+      makeParams(APPT),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "REFUND_QUOTE_CHANGED",
+      refundPaise: GROSS,
+      refundPct: 100,
+    });
+    expect(txStub.consultation.updateMany).not.toHaveBeenCalled();
+    expect(txStub.payment.updateMany).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("stamps the confirmed quote owed in the cancel commit, under the cancel's key", async () => {
+    const res = await cancelHandler(
+      makeRequest({ expectedRefundPaise: GROSS }),
+      makeParams(APPT),
+    );
+
+    expect(res.status).toBe(200);
+    expect(txStub.payment.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          refundOwedKey: `cancel:${APPT}:pay-1`,
+          refundOwedPaise: GROSS,
+        }),
+      }),
+    );
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ dedupeKey: `cancel:${APPT}:pay-1` }),
+    );
+  });
+
+  it("answers a retried click with what the first one committed", async () => {
+    txStub.consultation.updateMany.mockResolvedValue({ count: 0 });
+    mockConsultationFindUnique.mockResolvedValue({
+      status: "CANCELLED",
+      cancelledBy: CONSULTEE_USER,
+      cancelledAt: new Date(),
+      cancellationReason: null,
+    });
+    mockPaymentFindMany.mockResolvedValue([
+      {
+        id: "pay-1",
+        refundOwedKey: null,
+        refunds: [
+          {
+            dedupeKey: `cancel:${APPT}:pay-1`,
+            status: "SUCCEEDED",
+            amountPaise: GROSS,
+          },
+        ],
+      },
+    ]);
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      replayed: true,
+      refund: { status: "REFUNDED", amountRefundedPaise: GROSS },
+    });
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
   });
 });

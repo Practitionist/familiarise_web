@@ -18,6 +18,13 @@ import {
   getJoinableOccurrence as getJoinableOccurrenceShared,
 } from "@/lib/appointments/occurrences";
 import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
+import {
+  applyRefundRequote,
+  cancelPreviewUrl,
+  readRefundQuoteChanged,
+  shownQuoteBody,
+  type ShownCancelQuote,
+} from "@/lib/appointments/cancel-requote";
 
 interface UseEventActionsOptions {
   appointmentId?: string;
@@ -93,11 +100,7 @@ type CancelRefund = {
   amountRefundedPaise: number;
   refundPct: number;
   status?:
-    | "REFUNDED"
-    | "PENDING"
-    | "FAILED"
-    | "NOTHING_REFUNDABLE"
-    | "POLICY_ZERO";
+    "REFUNDED" | "PENDING" | "FAILED" | "NOTHING_REFUNDABLE" | "POLICY_ZERO";
   requiresManualReview?: boolean;
   /**
    * Which rail returned the money. The cancel route has answered this since
@@ -283,8 +286,7 @@ export function useEventActions({
       if (!isExpectedRefusal(error)) {
         console.error("Error requesting reschedule:", error);
       }
-      const code =
-        error instanceof ApiResponseError ? error.code : undefined;
+      const code = error instanceof ApiResponseError ? error.code : undefined;
       // #1863 — RESCHEDULE_ALREADY_OPEN is the one refusal here that is not a
       // dead end: the request they just made DID land, the first click won, and
       // the proposal is sitting on the appointment detail page waiting for an
@@ -303,9 +305,7 @@ export function useEventActions({
         // NOT destructive when one is already open: nothing failed. Their first
         // click is sitting there waiting for an answer, and a red toast saying
         // "couldn't" is the wrong story about their own booking.
-        ...(alreadyOpen
-          ? {}
-          : { variant: "destructive" as const }),
+        ...(alreadyOpen ? {} : { variant: "destructive" as const }),
         // The proposal card is rendered by the appointment detail client, so
         // that is where "open it" goes — and only where the id is known, since
         // the org detail route resolves it differently and has no such card.
@@ -344,12 +344,19 @@ export function useEventActions({
     setShowCancelDialog(true);
   };
 
-  const handleCancelConfirm = async () => {
+  /** Resolves false when the dialog must stay open on a re-quoted refund. */
+  const handleCancelConfirm = async (
+    quote?: ShownCancelQuote,
+  ): Promise<boolean> => {
     setIsLoading(true);
     try {
       const response = await fetch(
         `/api/appointments/${appointmentId}/cancel`,
-        { method: "POST", headers: { "Content-Type": "application/json" } },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(shownQuoteBody(quote)),
+        },
       );
       const data = (await requireJsonResponse(
         response,
@@ -369,7 +376,26 @@ export function useEventActions({
       });
       setShowCancelDialog(false);
       invalidateBookingData();
+      return true;
     } catch (error) {
+      // The refund moved since the dialog quoted it: show the new figure and
+      // ask again, with nothing committed.
+      const requote =
+        error instanceof ApiResponseError && error.status === 409
+          ? readRefundQuoteChanged(error.body)
+          : null;
+      if (requote && appointmentId) {
+        applyRefundRequote(
+          queryClient,
+          cancelPreviewUrl(appointmentId),
+          requote,
+        );
+        toast({
+          title: "The refund has changed",
+          description: "Check the new amount in the dialog and confirm again.",
+        });
+        return false;
+      }
       // 409 = the CAS transition guard matched zero rows: the booking already
       // changed state (double-cancel, consultant approved a stale tab, …).
       // The list refresh IS the answer — not an error.
@@ -381,7 +407,7 @@ export function useEventActions({
         });
         setShowCancelDialog(false);
         invalidateBookingData();
-        return;
+        return true;
       }
       reportActionFailure(error, "appointment.cancel");
       console.error("Error cancelling appointment:", error);
@@ -393,6 +419,7 @@ export function useEventActions({
         ),
         variant: "destructive",
       });
+      return true;
     } finally {
       setIsLoading(false);
     }

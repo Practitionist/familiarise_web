@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 
-// Invariant: cancel stamps a durable refund-owed marker inside its tx and refunds post-commit under dedupeKey `cancel:<appointmentId>`.
+// Invariant: cancel stamps a durable refund-owed marker inside its tx and refunds post-commit under dedupeKey `cancel:<appointmentId>:<paymentId>`.
 
 import "../../booking-algorithm/setup";
 
@@ -55,6 +55,7 @@ jest.mock("../../../lib/prisma", () => ({
   default: {
     appointment: { findUnique: async () => appointmentRow },
     membership: { findUnique: async () => null },
+    payment: { updateMany: async () => ({ count: 1 }) },
     refund: { findUnique: async () => null },
     $transaction: async (cb: (tx: unknown) => Promise<unknown>) => cb(makeTx()),
   },
@@ -145,13 +146,16 @@ jest.mock("../../../lib/payments/operations/booking-refund", () => ({
 }));
 jest.mock("../../../lib/payments/operations/refund", () => ({
   __esModule: true,
+  findDedupedRefund: async () => null,
   isModelledRefundRefusal: () => false,
   RefundGatewayError: class extends Error {},
+  RefundValidationError: class extends Error {},
 }));
 jest.mock("../../../lib/payments/operations/event-refunds", () => ({
   __esModule: true,
   classSeriesLedgers: async () => null,
   refundWholeEventPayments: async () => null,
+  stampWholeEventRefundsOwed: async () => new Map(),
 }));
 jest.mock("../../../lib/payments/dispute-guard", () => ({
   __esModule: true,
@@ -207,13 +211,11 @@ import { POST } from "../../../app/api/appointments/[appointmentId]/cancel/route
 
 type Write = { data?: Record<string, unknown> };
 
-// Implementation-agnostic: an Appointment refundOwed* column or a Payment `Auto-refund pending:` description.
+// Implementation-agnostic: a refundOwed* column on either row, or a Payment `Auto-refund pending:` description.
 function owedMarkerWrites() {
   return txCalls.filter(({ model, arg }) => {
     const data = (arg as Write).data ?? {};
-    if (model === "appointment") {
-      return "refundOwedPaise" in data || "refundOwedKey" in data;
-    }
+    if ("refundOwedPaise" in data || "refundOwedKey" in data) return true;
     return (
       model === "payment" &&
       typeof data.description === "string" &&
@@ -251,7 +253,7 @@ describe("cancel route: refund owed durability", () => {
     expect(refundBookingPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         amountPaise: QUOTED_PAISE,
-        dedupeKey: `cancel:${APPT}`,
+        dedupeKey: `cancel:${APPT}:pay-1`,
       }),
     );
   });

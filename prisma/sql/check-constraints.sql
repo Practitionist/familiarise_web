@@ -1205,3 +1205,9 @@ CREATE INDEX IF NOT EXISTS "NotificationOutbox_active_outbox_idx"
   ON "NotificationOutbox" ("nextRetryAt" ASC NULLS FIRST, "notBefore")
   WHERE "status" IN ('PENDING', 'RETRY');
 
+-- SPLIT
+-- A stamped refund-owed amount is positive; NULL means the full remaining balance.
+ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_refund_owed_paise_positive";
+-- SPLIT
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_refund_owed_paise_positive"
+  CHECK ("refundOwedPaise" IS NULL OR "refundOwedPaise" > 0);

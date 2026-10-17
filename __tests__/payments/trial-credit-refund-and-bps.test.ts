@@ -86,6 +86,7 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: (fn: (tx: unknown) => unknown) => fn({}),
     payment: {
       findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
+      updateMany: async () => ({ count: 1 }),
     },
     appointment: {
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
@@ -104,6 +105,12 @@ jest.mock("../../lib/payments/operations/cancellation-policy-store", () => ({
   termsFromPolicyRow: (...a: unknown[]) => mockTermsFromPolicyRow(...a),
 }));
 
+jest.mock("../../lib/payments/operations/refund", () => ({
+  findDedupedRefund: async () => null,
+  RefundGatewayError: class extends Error {},
+  RefundValidationError: class extends Error {},
+}));
+
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
 }));
@@ -111,7 +118,30 @@ jest.mock("@sentry/nextjs", () => ({
 import {
   quoteTrialRefund,
   refundCancelledTrial,
+  trialRefundOwed,
 } from "../../lib/trials/cancellation";
+
+/** The door's halves: quote and stamp in the cancel commit, then drive. */
+async function settleTrial(args: {
+  trialId: string;
+  appointmentId: string | null;
+  paymentId: string | null;
+  initiatedByUserId: string;
+  isConsultantInitiated: boolean;
+}) {
+  const quote = await quoteTrialRefund(args);
+  const owed = trialRefundOwed({
+    trialId: args.trialId,
+    quote,
+    isConsultantInitiated: args.isConsultantInitiated,
+  });
+  return refundCancelledTrial({
+    trialId: args.trialId,
+    initiatedByUserId: args.initiatedByUserId,
+    quote,
+    owed,
+  });
+}
 
 const APPOINTMENT_ID = "appt-1";
 const PAYMENT_ID = "pay-credits";
@@ -250,7 +280,7 @@ describe("refundCancelledTrial — the credits actually come back", () => {
     givenPayment(creditFundedTrial);
     mockAppointmentFindUnique.mockResolvedValue(startingInHours(72));
 
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -284,7 +314,7 @@ describe("refundCancelledTrial — the credits actually come back", () => {
     givenPayment(creditFundedTrial);
     mockAppointmentFindUnique.mockResolvedValue(startingInHours(72));
 
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -307,7 +337,7 @@ describe("refundCancelledTrial — the credits actually come back", () => {
     givenPayment(creditFundedTrial);
     mockAppointmentFindUnique.mockResolvedValue(startingInHours(1));
 
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -400,7 +430,7 @@ describe("quoteTrialRefund — basis points, not floats (#1396)", () => {
     // rail sends no amount" — pinning a half refund the policy never promised.
     mockAppointmentFindUnique.mockResolvedValue(startingInHours(72));
 
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
