@@ -164,8 +164,7 @@ jobs:
       - name: Workflow hygiene guard
         # A `${{ secrets.X }}` that doesn't exist interpolates an empty string
         # and the job still reports success — that is how #677 PM-1 came back
-        # after being fixed in code. Also catches recurring cron start
-        # collisions. Static only: no network, no database.
+        # after being fixed in code. Static only: no network, no database.
         #
         # tsx is pinned at the call site (`tsx@4.23.1`). It used to be a bare
         # `npx tsx`, which resolves whatever the registry currently serves —
@@ -173,6 +172,12 @@ jobs:
         # Adding it as a devDependency would be better still, but it pulls in
         # esbuild and that broke the Netlify build; see the PR discussion.
         run: npx --yes tsx@4.23.1 scripts/ci/check-workflow-hygiene.ts
+
+      - name: Docs drift guard (warn-only)
+        # Cited repo paths, relative links and start-here line numbers in docs/
+        # and .claude/skills/. Warn-only until the existing docs are clean.
+        continue-on-error: true
+        run: node_modules/.bin/tsx scripts/ci/check-docs-drift.ts
 
   unit-tests:
     name: Unit tests (${{ matrix.shard }})

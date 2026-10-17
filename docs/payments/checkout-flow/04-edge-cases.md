@@ -14,10 +14,11 @@
 4. [Capacity Edge Cases](#4-capacity-edge-cases)
 5. [Validation Edge Cases](#5-validation-edge-cases)
 6. [Mock Payment Mode](#6-mock-payment-mode)
-7. [Multi-Session Handling](#8-multi-session-handling)
-8. [Code Locations Reference](#9-code-locations-reference)
-9. [Integration Points](#10-integration-points)
-10. [Critical Issues & Improvements](#11-critical-issues--improvements)
+7. [Multi-Session Handling](#7-multi-session-handling)
+8. [Code Locations Reference](#8-code-locations-reference)
+9. [Integration Points](#9-integration-points)
+10. [Critical Issues & Improvements](#10-critical-issues--improvements)
+11. [Checkout Guards](#11-checkout-guards)
 
 ---
 
@@ -768,9 +769,9 @@ sequenceDiagram
 
 ---
 
-## 8. Multi-Session Handling
+## 7. Multi-Session Handling
 
-### 8.1 Subscription Multi-Session Creation
+### 7.1 Subscription Multi-Session Creation
 
 **Current Implementation:**
 
@@ -826,7 +827,7 @@ const totalSessions = 13 * 2 = 26 sessions
 // Week 13: Session 24 (index 24/2 = 12), Session 25 (index 25/2 = 12)
 ```
 
-### 8.2 Class Multi-Session Creation
+### 7.2 Class Multi-Session Creation
 
 **Current Implementation:**
 
@@ -857,7 +858,7 @@ Array.from({
 });
 ```
 
-### 8.3 Edge Cases in Multi-Session
+### 7.3 Edge Cases in Multi-Session
 
 **1. Session Overlap:**
 
@@ -905,9 +906,9 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 
 ---
 
-## 9. Code Locations Reference
+## 8. Code Locations Reference
 
-### 9.1 Core Files
+### 8.1 Core Files
 
 **Checkout Operations:**
 
@@ -949,7 +950,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 - `/scripts/cleanup-abandoned-payments.ts` - Local cleanup script
 - `/jobs/cleanup-abandoned-payments.ts` - CI/CD cleanup job
 
-### 9.2 Key Line References
+### 8.2 Key Line References
 
 **Race Condition Protection:**
 
@@ -973,7 +974,7 @@ const zonedDate = utcToZonedTime(sessionStart, subscription.timezone);
 - Stripe errors: `/lib/payments/core/stripe.ts`
 - Razorpay errors: `/lib/payments/core/razorpay.ts`
 
-### 9.3 Database Schema Locations
+### 8.3 Database Schema Locations
 
 **Prisma Schema:** `/prisma/schema.prisma`
 
@@ -988,9 +989,9 @@ Key models:
 
 ---
 
-## 10. Integration Points
+## 9. Integration Points
 
-### 10.1 Frontend Integration
+### 9.1 Frontend Integration
 
 **Checkout Pages:**
 
@@ -1031,7 +1032,7 @@ window.location.href = checkoutUrl;
 // Failure: /app/checkout/checkout-failure/page.tsx
 ```
 
-### 10.2 External Integrations
+### 9.2 External Integrations
 
 **Payment Gateways:**
 
@@ -1069,7 +1070,7 @@ NODE_ENV="development" # or "production"
 ENABLE_MOCK_PAYMENTS="true" # Optional: Force mock payments
 ```
 
-### 10.3 Monitoring & Logging
+### 9.3 Monitoring & Logging
 
 **Recommended Monitoring:**
 
@@ -1133,9 +1134,9 @@ console.error(
 
 ---
 
-## 11. Critical Issues & Improvements
+## 10. Critical Issues & Improvements
 
-### 11.1 Critical Issues
+### 10.1 Critical Issues
 
 **🔴 HIGH PRIORITY:**
 
@@ -1197,7 +1198,7 @@ console.error(
    - **Fix:** Create admin analytics page
    - **Location:** New page `/app/admin/analytics/page.tsx`
 
-### 11.2 Recommended Improvements
+### 10.2 Recommended Improvements
 
 **Architecture:**
 
@@ -1269,7 +1270,7 @@ console.error(
     - Effort: High
     - Priority: Low
 
-### 11.3 Technical Debt
+### 10.3 Technical Debt
 
 **Code Quality:**
 
@@ -1301,6 +1302,40 @@ console.error(
    - Document assumptions
 
 ---
+
+## 11. Checkout Guards
+
+These guards are current on `dev`, and unlike the older sections above they describe today's code.
+
+### Window length must match the plan
+
+`assertWindowMatchesPlanDuration(plan, startsAt, endsAt)` in `lib/booking/slot-validation.ts` throws the typed refusal `WINDOW_DURATION_MISMATCH`, answered as 400, and an unreadable window never matches. Request-for-approval, direct consultation checkout (before any gateway call) and trial scheduling (`PATCH /api/trials/[trialId]` with `slotData`) all call it.
+
+### A pause blocks every new booking
+
+When the expert's `acceptingRequests` is false, direct checkout refuses consultations, subscriptions, webinars and classes with 409 `NOT_ACCEPTING_BOOKINGS` in the shared purchasability gate, and `POST /api/trials` refuses the same way. Request-for-approval keeps its existing `CONSULTANT_PAUSED`. Existing bookings, reschedules and already-approved pay-links are unaffected, because the approval mint never reads the toggle.
+
+### Re-buying a webinar or class seat
+
+Checkout looks up the buyer's existing payment on the shared event appointment twice, once as a fast-fail before the gateway call and once inside the Serializable booking transaction.
+
+| Existing payment                                          | Result                                                                                                                                                                                                                                                                                                                                                            |
+| :-------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EXPIRED` or `FAILED`                                     | The row is re-minted in place by compare-and-swap (`WHERE id AND paymentStatus IN (EXPIRED, FAILED)`) with the new intent, amount and expiry. In the same transaction an `EXPIRED` tombstone takes the old intent with `appointmentId: null` and the old legs and credit usages, so a late capture on the old order is auto-refunded as `captured_after_release`. |
+| `SUCCEEDED` and fully refunded                            | 409 `SEAT_REBUY_UNSUPPORTED` until the Wave 3 partial unique index makes a refunded seat re-buyable.                                                                                                                                                                                                                                                              |
+| `SUCCEEDED` and live, or a confirmed seat with no payment | 409 `ALREADY_REGISTERED`, before the gateway call, reported as an expected refusal.                                                                                                                                                                                                                                                                               |
+| `PENDING` in the same scope                               | Resumed or superseded, as before. A `HELD` seat reaches the reuse step so a remounted checkout resumes its open order.                                                                                                                                                                                                                                            |
+| `PENDING` in another scope                                | 409 `PAYMENT_ALREADY_EXISTS`.                                                                                                                                                                                                                                                                                                                                     |
+
+A `P2002` on `(userId, appointmentId)` maps to 409 `PAYMENT_ALREADY_EXISTS` through `isUniqueViolationOn` and is never a 500.
+
+### A late capture cannot double-book the payer
+
+`confirmExistingAppointment` in `lib/payments/webhooks/handlers.ts` no longer filters the payer out of its overlap recheck. If the payer holds another live booking at the same time, the capture takes the existing conflict path (`doubleBookingBlocked`) and is auto-refunded, and every read in the recheck goes through `tx`.
+
+### Request-for-approval idempotency
+
+The route accepts an `Idempotency-Key` header validated in `schemas/slots.ts` and persisted on the nullable unique column `Consultation.requestIdempotencyKey`. A retry by the same user returns the original 201, checked before the plan gates, under the consultee lock and on the unique violation. A key owned by another user answers 422 `IDEMPOTENCY_KEY_REUSED`. The key lives on the request row because the generic `IdempotencyRecord` claim commits separately from the request, so a function killed after the request commits would leave that claim in flight for 24 hours.
 
 ## Key Takeaways
 
@@ -1431,3 +1466,9 @@ curl -X POST http://localhost:3000/api/checkout \
 2. Compare with database records
 3. Use recovery scripts to fix inconsistencies
 4. Update monitoring to prevent recurrence
+
+## Deprecated & Superseded Approaches
+
+1. **Re-buying a seat by inserting a second payment row.** The `(userId, appointmentId)` unique makes that impossible, so the old behaviour was a 500 on the `P2002`. A re-buy now re-mints the existing row and tombstones the old order.
+2. **An inline duration check only in request-for-approval, with the code `INVALID_SLOT_DURATION`.** No client read that code. The shared helper and `WINDOW_DURATION_MISMATCH` replace it.
+3. **A late-capture overlap recheck that excluded the payer.** The payer's own other bookings now count.

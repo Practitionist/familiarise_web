@@ -701,7 +701,7 @@ thread that walks you between them.
 
 | File                                                                                                 | Purpose                                                                                                                                                                           |
 | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`start-here/01-booking-and-money-machinery.md`](../../start-here/01-booking-and-money-machinery.md) | The single end-to-end narrative. Read the banded folders (`00-foundations/` through `60-scenarios-and-verdicts/`) as the story, and read the guide as the connective walkthrough. |
+| [`start-here/03-booking-and-money-machinery.md`](../../start-here/03-booking-and-money-machinery.md) | The single end-to-end narrative. Read the banded folders (`00-foundations/` through `60-scenarios-and-verdicts/`) as the story, and read the guide as the connective walkthrough. |
 
 The former `playbooks/` and `reference/` directories were folded into this band.
 The SSO testing recipes and the typed error codes moved into
