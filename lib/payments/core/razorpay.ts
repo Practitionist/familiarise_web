@@ -14,6 +14,10 @@ import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
 import { normalizeRazorpayContact } from "@/lib/payments/razorpay-prefill";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
+import {
+  razorpayOrderEntitySchema,
+  type RazorpayOrderEntity,
+} from "@/schemas/webhooks/razorpay";
 
 // ============================================================================
 // Razorpay Client Initialization
@@ -611,6 +615,18 @@ export async function cancelRazorpayOrder(
     });
     return "unknown";
   }
+}
+
+/** The gateway's own order record; null without a client, throws when Razorpay cannot answer. */
+export async function fetchRazorpayOrder(
+  orderId: string,
+): Promise<RazorpayOrderEntity | null> {
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) return null;
+  const order = await withRazorpaySdkTimeout("orders.fetch", () =>
+    razorpayClient.orders.fetch(orderId),
+  );
+  return razorpayOrderEntitySchema.parse(order);
 }
 
 // ============================================================================

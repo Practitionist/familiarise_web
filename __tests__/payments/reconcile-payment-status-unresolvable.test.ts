@@ -420,3 +420,97 @@ describe("reconcile-payment-status — SUCCEEDED routes through routeCapturedPay
   });
 });
 
+// A gateway no sweep can read is stamped out of the cohort once; pre-mint rows are never reconciled.
+describe("reconcile-payment-status — permanent rows and pre-mint rows", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const cardRow = {
+    ...pendingRow,
+    id: "pay-card",
+    paymentGateway: "CARD",
+    createdAt: new Date(Date.now() - 30 * DAY),
+  };
+  const findMany = prisma.payment.findMany as jest.Mock;
+  const updateMany = prisma.payment.updateMany as jest.Mock;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.CRON_SECRET = SECRET;
+    setRazorpayEnv();
+    delete process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS;
+    updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("dead-letters an unsupported gateway by CAS, reports once, and keeps success with a young unknown id", async () => {
+    razorpayUnknownId();
+    findMany
+      .mockResolvedValueOnce([pendingRow])
+      .mockResolvedValueOnce([cardRow]);
+
+    const res = await POST(request());
+    const body = await res.json();
+
+    expect(body.success).toBe(true);
+    expect(body.deadLettered).toBe(1);
+    expect(body.unresolvableCount).toBe(1);
+    expect(retireOrphanPendingPayment).not.toHaveBeenCalled();
+    expect(updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: "pay-card",
+        paymentStatus: "PENDING",
+      }),
+      data: {
+        description: expect.stringMatching(/^REQUIRES_MANUAL_RECOVERY: /),
+      },
+    });
+    const reports = recordSystemEvent.mock.calls.filter(([e]) =>
+      String(e.summary ?? "").includes("unsupported gateway"),
+    );
+    expect(reports).toEqual([
+      [expect.objectContaining({ context: { paymentIds: ["pay-card"] } })],
+    ]);
+  });
+
+  it("still fails the run on a transient gateway error beside a dead-lettered row", async () => {
+    mockFetch.mockRejectedValue(new Error("ECONNRESET"));
+    findMany
+      .mockResolvedValueOnce([pendingRow])
+      .mockResolvedValueOnce([cardRow]);
+
+    const res = await POST(request());
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body.deadLettered).toBe(1);
+    expect(body.errors).toEqual([expect.stringContaining("pay-1")]);
+  });
+
+  it("excludes stamped and pre-mint rows from both cohorts, so neither is touched again", async () => {
+    findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    await POST(request());
+
+    for (const [query] of findMany.mock.calls) {
+      expect(query.where.AND).toEqual(
+        expect.arrayContaining([
+          {
+            NOT: expect.arrayContaining([
+              { paymentIntent: { startsWith: "premint_" } },
+            ]),
+          },
+          {
+            OR: [
+              { description: null },
+              {
+                NOT: {
+                  description: { startsWith: "REQUIRES_MANUAL_RECOVERY:" },
+                },
+              },
+            ],
+          },
+        ]),
+      );
+    }
+    expect(findMany).toHaveBeenCalledTimes(2);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+});

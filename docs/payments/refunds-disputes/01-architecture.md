@@ -61,10 +61,10 @@
 
 ### Core Payment Libraries
 
-| File                            | Functions                                                                                             |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `lib/payments/index.ts`         | Gateway abstraction: `createRefund()`, `listRefunds()`, `listDisputes()`, `submitDisputeEvidence()`   |
-| `lib/payments/core/razorpay.ts` | Razorpay implementation: `createRazorpayRefund()`, `listRazorpayRefunds()`                            |
+| File                            | Functions                                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `lib/payments/index.ts`         | Gateway abstraction: `createRefund()`, `listRefunds()`, `listDisputes()`, `submitDisputeEvidence()` |
+| `lib/payments/core/razorpay.ts` | Razorpay implementation: `createRazorpayRefund()`, `listRazorpayRefunds()`                          |
 
 ---
 
@@ -234,6 +234,22 @@ Admin Request
 
 ---
 
+## Refund Front Doors and Durability
+
+No code calls the gateway refund directly. Three front doors split the funding rails by payment-intent prefix (`org_*` reverses in-ledger, `free_*` restores credits, everything else is the two-phase gateway refund):
+
+| Door                        | File                                        | Used for                                                                                      |
+| :-------------------------- | :------------------------------------------ | :-------------------------------------------------------------------------------------------- |
+| `refundBookingPayment`      | `lib/payments/operations/booking-refund.ts` | One booking: cancel, trial cancel, rejection, no-show, moderation, maintenance freeze, expiry |
+| `refundWholeEventPayments`  | `lib/payments/operations/event-refunds.ts`  | Every seat of a cancelled webinar or class                                                    |
+| `refundRemovedAttendeeSeat` | `lib/payments/operations/event-refunds.ts`  | One removed or departing seat                                                                 |
+
+Each call may carry a `dedupeKey` (`Refund.dedupeKey` is unique), so a repeat returns the first refund. Existing keys include `consultant-no-show:<paymentId>`, `seat-leave:<participantId>` and `occ:<occurrence>:pay:<payment>`.
+
+**Today** the cancel route computes the quote after the booking transaction commits and calls the door unkeyed, and a failed refund is written as a system error for ops. A process death between the commit and the refund leaves a cancelled booking with a captured payment and nothing re-driving it. The same gap exists in the trial cancel, rejection refund, moderation and maintenance-freeze doors, and in the whole-event refund, which is a sequential in-request loop.
+
+**Landing in Wave 0 (W0-3):** the quote is computed inside the cancel transaction and checked against the amount the dialog displayed (409 `REFUND_QUOTE_CHANGED`). The same transaction stamps a per-payment refund-owed marker (`refundOwedPaise`, `refundOwedKey` unique, `refundOwedReason`, `refundOwedAt`), the door is called with `dedupeKey: "cancel:<appointmentId>"`, and `retry-auto-refunds` re-drives any marker with no refund under that key and clears it. The marker is separate from the existing `Auto-refund pending:` family, which means "the booking was never confirmed, refund the whole capture", and it is not a pre-created `Refund` row. Whole-event refunds become a bounded keyed sweep (`event-cancel:<eventId>:pay:<paymentId>`), and one alert per run reads the persisted owed amount. The policy decisions behind these changes are in [the money HLD](../../start-here/02-money-system-hld.md#11-refund-and-cancellation-policy-decisions).
+
 ## Related Files
 
 ```
@@ -257,3 +273,8 @@ lib/payments/
 prisma/
 └── schema.prisma         # Refund, Dispute models
 ```
+
+## Deprecated & Superseded Approaches
+
+1. **Computing the cancel refund after the commit with no durable marker.** Replaced in Wave 0 by the in-transaction quote and the refund-owed marker.
+2. **Calling `refundPayment` directly for org-funded bookings.** It died on `UNKNOWN_GATEWAY` and reversed nothing; the front doors now split the rails.

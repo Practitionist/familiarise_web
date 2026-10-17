@@ -79,6 +79,12 @@ const txStub = {
   paymentLeg: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
 };
 
+const fetchRazorpayOrder = jest.fn();
+jest.mock("../../lib/payments/core/razorpay", () => ({
+  __esModule: true,
+  fetchRazorpayOrder: (...a: unknown[]) => fetchRazorpayOrder(...a),
+}));
+
 jest.mock("../../lib/payments/ledger/unapplied-receipts", () => ({
   postUnappliedReceipt: jest.fn(),
 }));
@@ -684,11 +690,11 @@ describe("a late capture on a re-mint tombstone", () => {
   });
 });
 
-// The order notes name the pre-written row, so a capture survives a fill and tombstone that both failed.
+// Adoption trusts only the order Razorpay holds: its notes name the row, its amount and currency must match.
 describe("a capture whose order was never written onto its row", () => {
-  const ORDER = "order-unrecorded";
+  const ORDER = "order_unrecorded";
   const PRE_MINT = "premint_abc";
-  const notes = { ...WEBINAR_METADATA, familiarisePaymentId: "pay-premint" };
+  const GENUINE = { id: ORDER, amount: 10000, currency: "INR", status: "paid" };
   type FindArgs = { where: { id?: string; paymentIntent?: string } };
 
   /** The row by id carries `intentById`; by order id it appears only once adopted. */
@@ -701,44 +707,106 @@ describe("a capture whose order was never written onto its row", () => {
       },
     );
     paymentFindUnique.mockImplementation(async ({ where }: FindArgs) => {
-      if (where.id) return { paymentIntent: intentById };
+      if (where.id)
+        return { paymentIntent: intentById, amount: 10000, currency: "INR" };
       return adopted
         ? pendingSeatPayment({ id: "pay-premint", paymentIntent: ORDER })
         : null;
     });
   }
+  const adoptWrite = expect.objectContaining({
+    data: { paymentIntent: ORDER },
+  });
 
-  it("adopts the pre-mint row the notes name by CAS, then confirms it", async () => {
+  it("adopts the row the fetched order names by CAS, then confirms it", async () => {
     rows(PRE_MINT);
+    fetchRazorpayOrder.mockResolvedValue({
+      ...GENUINE,
+      notes: { familiarisePaymentId: "pay-premint" },
+    });
 
-    const outcome = await handlePaymentSuccess(ORDER, notes, 10000);
+    const outcome = await handlePaymentSuccess(ORDER, WEBINAR_METADATA, 10000);
 
     expect(outcome).toBe("confirmed");
+    expect(fetchRazorpayOrder).toHaveBeenCalledWith(ORDER);
     expect(paymentUpdateMany).toHaveBeenCalledWith({
-      where: { id: "pay-premint", paymentIntent: PRE_MINT },
+      where: { id: "pay-premint", paymentIntent: PRE_MINT, amount: 10000 },
       data: { paymentIntent: ORDER },
     });
   });
 
-  it("never hijacks a row whose intent is a real order", async () => {
-    rows("order-someone-else");
+  it("ignores client-forged payment notes naming another user's pre-mint row", async () => {
+    rows(PRE_MINT);
+    fetchRazorpayOrder.mockResolvedValue({ ...GENUINE, notes: {} });
+    const forged = { ...WEBINAR_METADATA, familiarisePaymentId: "pay-premint" };
 
-    await expect(handlePaymentSuccess(ORDER, notes, 10000)).rejects.toThrow(
+    await expect(handlePaymentSuccess(ORDER, forged, 10000)).rejects.toThrow(
       "Payment record not found",
     );
-    expect(paymentUpdateMany).not.toHaveBeenCalledWith(
-      expect.objectContaining({ data: { paymentIntent: ORDER } }),
-    );
+    expect(paymentUpdateMany).not.toHaveBeenCalledWith(adoptWrite);
   });
 
-  it("without the notes key, answers as before: no row", async () => {
+  it("never adopts when the order amount differs from the row", async () => {
     rows(PRE_MINT);
+    fetchRazorpayOrder.mockResolvedValue({
+      ...GENUINE,
+      amount: 100,
+      notes: { familiarisePaymentId: "pay-premint" },
+    });
+
+    await expect(
+      handlePaymentSuccess(ORDER, WEBINAR_METADATA, 100),
+    ).rejects.toThrow("Payment record not found");
+    expect(paymentUpdateMany).not.toHaveBeenCalledWith(adoptWrite);
+  });
+
+  it("never adopts when the order currency differs from the row", async () => {
+    rows(PRE_MINT);
+    fetchRazorpayOrder.mockResolvedValue({
+      ...GENUINE,
+      currency: "USD",
+      notes: { familiarisePaymentId: "pay-premint" },
+    });
 
     await expect(
       handlePaymentSuccess(ORDER, WEBINAR_METADATA, 10000),
     ).rejects.toThrow("Payment record not found");
-    expect(paymentFindUnique).not.toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "pay-premint" } }),
-    );
+    expect(paymentUpdateMany).not.toHaveBeenCalledWith(adoptWrite);
+  });
+
+  it("does not confirm when the adoption CAS loses the race", async () => {
+    rows(PRE_MINT);
+    paymentUpdateMany.mockResolvedValue({ count: 0 });
+    fetchRazorpayOrder.mockResolvedValue({
+      ...GENUINE,
+      notes: { familiarisePaymentId: "pay-premint" },
+    });
+
+    await expect(
+      handlePaymentSuccess(ORDER, WEBINAR_METADATA, 10000),
+    ).rejects.toThrow("Payment record not found");
+  });
+
+  it("never hijacks a row whose intent is a real order", async () => {
+    rows("order_someone_else");
+    fetchRazorpayOrder.mockResolvedValue({
+      ...GENUINE,
+      notes: { familiarisePaymentId: "pay-premint" },
+    });
+
+    await expect(
+      handlePaymentSuccess(ORDER, WEBINAR_METADATA, 10000),
+    ).rejects.toThrow("Payment record not found");
+    expect(paymentUpdateMany).not.toHaveBeenCalledWith(adoptWrite);
+  });
+
+  it("throws before the transaction when the order cannot be fetched, so the capture is retried", async () => {
+    rows(PRE_MINT);
+    fetchRazorpayOrder.mockRejectedValue(new Error("gateway timeout"));
+
+    await expect(
+      handlePaymentSuccess(ORDER, WEBINAR_METADATA, 10000),
+    ).rejects.toThrow("gateway timeout");
+    expect(paymentFindUnique).not.toHaveBeenCalled();
   });
 });

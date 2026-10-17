@@ -9,6 +9,10 @@ const isoDate = z
   .datetime({ offset: true })
   .transform((value) => new Date(value));
 
+// The plan editor's only status intents: save a draft or publish it. Every
+// other status belongs to the cancel route or server lifecycle code.
+export const EventEditorStatusSchema = z.enum(["DRAFT", "SCHEDULED"]);
+
 export const WebinarInstanceUpdateSchema = z.object({
   status: statusProbe,
   feedbackSummary,
