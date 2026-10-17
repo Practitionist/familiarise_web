@@ -30,7 +30,7 @@ The repository is `Practitionist/familiarise_web`, a private repository owned by
 ## 5. Monitor
 
 ```bash
-gh api /organizations/Practitionist/settings/billing/usage --jq '.usageItems[] | select(.product=="actions") | {sku, quantity, netAmount}'
+gh api /organizations/Practitionist/settings/billing/usage --jq '.usageItems[] | select((.product|ascii_downcase)=="actions") | {sku, quantity, netAmount}'
 gh run list --limit 50 --json workflowName,conclusion,createdAt,updatedAt
 ```
 

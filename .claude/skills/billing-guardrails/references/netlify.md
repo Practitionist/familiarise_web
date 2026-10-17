@@ -7,7 +7,7 @@ The site `familiarise` is on the legacy Pro plan: the account API reports `type_
 ## 2. What causes surprise bills or outages
 
 - A cold-start stall bills as wall-clock duration: a 28 s stall at about 1.2 GB bills about 33.6 GB-seconds (28 s x 1.2 GB) per request. Measured and fixed in PR #1972.
-- Keep-warm pingers bill like user traffic (about 32,400 invocations a month at a five-minute ping) and race the reclaim window anyway.
+- Keep-warm pingers bill like user traffic: one route pinged every five minutes is 8,640 invocations in a 30-day month, multiplied by every route the pinger hits and race the reclaim window anyway.
 - Pages marked `force-dynamic` invoke the server handler on every visitor instead of being served by the CDN.
 - Scheduled functions: a 5xx answer makes Netlify retry up to three times, tripling invocations.
 - Bandwidth from uncached large assets; build minutes on every deploy preview, including those nobody looks at.
