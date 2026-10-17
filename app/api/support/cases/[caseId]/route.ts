@@ -6,12 +6,14 @@ import {
   requirePrivilegedAuth,
 } from "@/lib/auth-helpers";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
+import prisma from "@/lib/prisma";
 import { notifySupportTicketUpdate } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
 import { caseKeyOf } from "@/lib/support/case-key";
-import { EMAIL_BUDGET_MS, sendSupportTicketUpdateEmail } from "@/lib/email";
+import { stageSupportTicketUpdateEmail } from "@/lib/email/senders/people";
 import {
   PatchSupportCaseSchema,
   patchSupportCaseLifecycle,
@@ -129,14 +131,14 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         : [];
 
     if (statusTargets.length > 0) {
-      await Promise.all(
-        statusTargets.flatMap((t) => {
+      const stagedResults = await Promise.all(
+        statusTargets.map(async (t) => {
           const statusLabel = supportTicketStatusLabel(t.status);
           const dashboardUrl = supportRequestHref(
             caseKeyOf({ kind: "case", id: t.id }),
             t.organizationId,
           );
-          return [
+          const [bellResult, emailRows] = await Promise.all([
             notifySupportTicketUpdate(
               t.submitterUserId,
               {
@@ -149,21 +151,35 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
                 ...notificationScope(t.organizationId),
               },
               `case-status:${t.id}:${t.status}:${t.updatedAtMs}`,
-            ).catch(() => undefined),
-            sendSupportTicketUpdateEmail(
-              {
-                ticketId: t.id,
-                ownerUserId: t.submitterUserId,
-                reference: t.referenceNumber,
-                title: t.title,
-                statusCode: t.status === "ESCALATED" ? "IN_PROGRESS" : t.status,
-                statusLabel,
-                ticketUrl: dashboardUrl,
-              },
-              EMAIL_BUDGET_MS.REQUEST,
-            ).catch(() => undefined),
-          ];
+              { deferAttempt: true },
+            ).catch(() => null),
+            stageSupportTicketUpdateEmail(prisma, {
+              ticketId: t.id,
+              ownerUserId: t.submitterUserId,
+              reference: t.referenceNumber,
+              title: t.title,
+              statusCode: t.status === "ESCALATED" ? "IN_PROGRESS" : t.status,
+              statusLabel,
+              ticketUrl: dashboardUrl,
+            }).catch(() => []),
+          ]);
+          return {
+            stagedBell: bellResult?.staged ?? null,
+            emailRows,
+          };
         }),
+      );
+      await flushNotificationsAfter(
+        {
+          bells: stagedResults.flatMap((r) =>
+            r.stagedBell ? [r.stagedBell] : [],
+          ),
+          emails: stagedResults.map((r) => ({
+            rows: r.emailRows,
+            emailType: "SUPPORT_TICKET_UPDATE",
+          })),
+        },
+        "support.case.patch",
       );
     }
 

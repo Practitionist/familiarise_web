@@ -22,7 +22,8 @@ import {
   notifySupportTicketResponse,
 } from "@/lib/novu";
 import { sendSupportTicketReceivedEmail } from "@/lib/email/senders/people";
-import { stageTrigger, type StagedTrigger } from "@/lib/novu/outbox";
+import type { StagedTrigger } from "@/lib/novu/outbox";
+import { stageBell } from "@/lib/novu/stage-bell";
 import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { supportRequestHref } from "@/lib/novu/resolve-href";
@@ -249,9 +250,8 @@ export async function notifyRequesterOfTicket(
     ticket.organizationId,
   );
 
-  const novuOutbox: StagedTrigger | null = await stageTrigger({
+  const novuOutbox: StagedTrigger | null = await stageBell(prisma, {
     workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_RECEIVED,
-    kind: "SINGLE",
     recipients: [ticket.userId],
     payload: {
       ticketId: ticket.id,

@@ -1,3 +1,4 @@
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import prisma from "@/lib/prisma";
 import { planConsultantSelect } from "@/lib/api/plans/consultant-projection";
 import { NextRequest, NextResponse } from "next/server";
@@ -241,7 +242,7 @@ export async function POST(request: NextRequest) {
             : undefined,
       },
       include: {
-        consultantProfile: true,
+        consultantProfile: PROFILE_OWNER_SELECT,
         topics: true,
         faqs: { orderBy: { order: "asc" } },
         subscriptionContents: {

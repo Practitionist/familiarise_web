@@ -37,6 +37,7 @@ import {
   SLOT_TRANSITION_TX_OPTIONS,
   transitionSlotsInChunks,
 } from "@/lib/booking/slot-release";
+import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
   notifyConsulteeRequestExpired,
@@ -49,6 +50,8 @@ import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { expireBackupInterest } from "@/lib/booking/backup-interest";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import type { Tx } from "@/lib/prisma";
@@ -242,9 +245,7 @@ export interface ExpireStaleRequestsResult {
  * arm with the wrong relation.
  */
 type ExpiredRefundArm =
-  | "pending-consultation"
-  | "pending-subscription"
-  | "approved-unallocated";
+  "pending-consultation" | "pending-subscription" | "approved-unallocated";
 
 const ARM_WRAPPER: Record<ExpiredRefundArm, "consultation" | "subscription"> = {
   "pending-consultation": "consultation",
@@ -834,32 +835,46 @@ async function expireApprovedUnallocatedSubscriptions(
 
 /** #1775 C-6 — both parties hear that the unscheduled plan is refunded in full. */
 async function stageUnallocatedRefundBell(
-  tx: Pick<Tx, "notificationOutbox">,
+  tx: Tx,
   row: {
     id: string;
     requestedBy: { user: { id: string; name: string | null } } | null;
     subscriptionPlan: {
-      title: string;
+      title: true extends boolean ? string : string;
       consultantProfile: { user: { id: string } };
     };
     appointment: { organizationId: string | null } | null;
   },
-): Promise<void> {
+) {
   const consulteeId = row.requestedBy?.user.id;
-  if (!consulteeId) return;
-  await stageBell(tx, {
+  if (!consulteeId) return { bell: null, emailArgs: null };
+  const dashboardUrl = notificationHref(
+    row.appointment?.organizationId,
+    "appointments",
+  );
+  const bell = await stageBell(tx, {
     workflowId: NOVU_WORKFLOWS.SUBSCRIPTION_UNALLOCATED_REFUNDED,
     recipients: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
     payload: {
       planTitle: row.subscriptionPlan.title,
       consulteeName: row.requestedBy?.user.name ?? "The buyer",
-      dashboardUrl: notificationHref(
-        row.appointment?.organizationId,
-        "appointments",
-      ),
+      dashboardUrl,
     },
     dedupeKey: `sub-unalloc:${row.id}`,
   });
+  return {
+    bell,
+    emailArgs: {
+      appointmentId: row.id,
+      userIds: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
+      cancelledBy: "Familiarise",
+      reason:
+        "Subscription was not scheduled within 48 hours of payment and is being refunded in full.",
+      refundText: "A full refund is being processed.",
+      refundUserIds: [consulteeId],
+      dashboardUrl,
+    },
+  };
 }
 
 const unallocatedRefundKey = (paymentId: string) => `sub-unalloc:${paymentId}`;
@@ -964,7 +979,7 @@ async function expireOneUnallocated(
   cohort: ReturnType<typeof unallocatedCohort>,
 ): Promise<boolean> {
   try {
-    await prisma.$transaction(async (tx) => {
+    const staged = await prisma.$transaction(async (tx) => {
       await transitionSubscriptionRequest(tx, {
         where: { id: subscription.id, ...cohort },
         to: AppointmentStatus.EXPIRED,
@@ -973,8 +988,31 @@ async function expireOneUnallocated(
         reason: "UNALLOCATED_48H",
       });
       // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
-      await stageUnallocatedRefundBell(tx, subscription);
+      return stageUnallocatedRefundBell(tx, subscription);
     });
+    const emailRows = staged?.emailArgs
+      ? await stageAppointmentCancelledEmail(prisma, staged.emailArgs).catch(
+          (err) => {
+            console.error(
+              "[expire-stale-requests] unallocated cancellation email stage failed:",
+              err,
+            );
+            return [];
+          },
+        )
+      : [];
+    await flushNotificationsAfter(
+      {
+        bells: [staged?.bell],
+        emails: [
+          {
+            rows: emailRows,
+            emailType: "APPOINTMENT_CANCELLED",
+          },
+        ],
+      },
+      "expire-stale-requests.unallocated",
+    );
     return true;
   } catch (error) {
     if (!(error instanceof IllegalTransitionError)) throw error;
@@ -1375,7 +1413,7 @@ async function expirePaymentPendingRequests(
     for (const consultation of staleConsultations) {
       // #1775 — the per-row lapse is the shared core the consultant's
       // Withdraw also calls; a lost CAS is `moved: 0`, never a throw.
-      const { moved } = await prisma.$transaction(
+      const { moved, holdNotices } = await prisma.$transaction(
         (tx) =>
           lapseApprovedRequest(tx, {
             kind: "consultation",
@@ -1393,6 +1431,7 @@ async function expirePaymentPendingRequests(
         continue;
       }
       consultationsExpired += 1;
+      await flushBackupInterestNotices(holdNotices);
       // #1589 N-P0-03 — the fallback lapse notifies like the 24 h sweep.
       const notice = expiryNoticeFor(
         "consultation",
@@ -1428,7 +1467,7 @@ async function expirePaymentPendingRequests(
     let subscriptionsExpired = 0;
     let subscriptionsSkipped = 0;
     for (const subscription of staleSubscriptions) {
-      const { moved } = await prisma.$transaction(
+      const { moved, holdNotices } = await prisma.$transaction(
         (tx) =>
           lapseApprovedRequest(tx, {
             kind: "subscription",
@@ -1446,6 +1485,7 @@ async function expirePaymentPendingRequests(
         continue;
       }
       subscriptionsExpired += 1;
+      await flushBackupInterestNotices(holdNotices);
       const notice = expiryNoticeFor(
         "subscription",
         subscription,

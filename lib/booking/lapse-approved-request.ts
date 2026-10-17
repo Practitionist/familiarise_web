@@ -1,4 +1,8 @@
-import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
+import {
+  flushBackupInterestNotices,
+  stageNoticesForAppointmentHolds,
+  type StagedBackupInterestNotices,
+} from "@/lib/booking/backup-interest";
 import prisma, { type Tx } from "@/lib/prisma";
 import {
   AppointmentStatus,
@@ -61,8 +65,12 @@ export interface LapseApprovedRequestArgs {
 }
 
 export type LapseOutcome =
-  | { moved: 0; appointmentId: null }
-  | { moved: 1; appointmentId: string | null };
+  | { moved: 0; appointmentId: null; holdNotices?: undefined }
+  | {
+      moved: 1;
+      appointmentId: string | null;
+      holdNotices?: StagedBackupInterestNotices;
+    };
 
 // The unpaid arm of the approval decision (#1775 B-9), one copy for every
 // writer: the CAS WHERE below carries it, never a read ahead of it.
@@ -114,7 +122,7 @@ export async function lapseApprovedRequest(
   if (!appointment) return { moved: 1, appointmentId: null };
 
   // #1778 — the held times free: tell anyone waiting on them (same tx).
-  await stageNoticesForAppointmentHolds(tx, appointment.id);
+  const holdNotices = await stageNoticesForAppointmentHolds(tx, appointment.id);
   await transitionOccurrenceCompletion(tx, {
     actorUserId: args.actorUserId,
     reason: args.reason,
@@ -136,7 +144,14 @@ export async function lapseApprovedRequest(
     },
     data: { paymentStatus: PaymentStatus.EXPIRED },
   });
-  return { moved: 1, appointmentId: appointment.id };
+  const hasHoldNotices =
+    (holdNotices?.bells?.length ?? 0) > 0 ||
+    (holdNotices?.emails?.length ?? 0) > 0;
+  return {
+    moved: 1,
+    appointmentId: appointment.id,
+    ...(hasHoldNotices && holdNotices ? { holdNotices } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -304,8 +319,9 @@ export async function withdrawApproval(args: {
   // contend for. The attempt still runs — one CAS, and it needs no renewal,
   // which the production helper answers as "no grant" for a null lock.
   let moved: 0 | 1;
+  let holdNotices: StagedBackupInterestNotices | undefined;
   try {
-    ({ moved } = row.appointment
+    ({ moved, holdNotices } = row.appointment
       ? await args.lock(row.appointment.id, run)
       : await run(null));
   } catch (error) {
@@ -324,6 +340,7 @@ export async function withdrawApproval(args: {
       userMessage: "This request changed elsewhere — it may already be paid.",
       devMessage: `${args.kind} ${args.id} was not APPROVED_PENDING_PAYMENT at write time`,
     });
+  await flushBackupInterestNotices(holdNotices);
 
   // After the commit, like the sweeps: the bell and email ride their outboxes,
   // so a replay of this route cannot ring twice.

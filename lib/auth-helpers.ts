@@ -9,6 +9,7 @@ import {
   setSentryOrgContext,
 } from "@/lib/observability/identity";
 import type { Session } from "@/lib/auth";
+import type { EventType } from "@/utils/scheduling-engine/types";
 import prisma from "@/lib/prisma";
 import { renderMemo } from "@/lib/render-memo";
 import { Prisma } from "@prisma/client";
@@ -314,7 +315,7 @@ async function authorizeGroupEvent(
  */
 export async function authorizeEventAccess(
   session: Session,
-  eventType: "consultation" | "subscription" | "webinar" | "class",
+  eventType: EventType,
   eventId: string,
   method: string,
 ): Promise<NextResponse | null> {
@@ -571,52 +572,71 @@ export async function requireOrgAccess(
   return { session: auth.session, member: member!, org };
 }
 
-/**
- * Whether this caller may waive the consultant's own published availability
- * when allocating.
- */
-export async function isEventConsultant(
-  session: Session,
-  eventType: "consultation" | "subscription" | "webinar" | "class",
+type EventPlanOwner = {
+  consultantProfileId: string | null;
+  organizationId: string | null;
+};
+
+async function findEventPlanOwner(
+  eventType: EventType,
   eventId: string,
-): Promise<boolean> {
-  if (isPrivileged(session.user.role)) return true;
-
-  const consultantProfileId = session.user.consultantProfileId;
-  if (!consultantProfileId) return false;
-
+): Promise<EventPlanOwner | null> {
+  const planSelect = {
+    select: { consultantProfileId: true, organizationId: true },
+  } as const;
   switch (eventType) {
     case "consultation": {
-      const event = await prisma.consultation.findUnique({
+      const row = await prisma.consultation.findUnique({
         where: { id: eventId },
-        select: { consultationPlan: { select: { consultantProfileId: true } } },
+        select: { consultationPlan: planSelect },
       });
-      return (
-        event?.consultationPlan.consultantProfileId === consultantProfileId
-      );
+      return row?.consultationPlan ?? null;
     }
     case "subscription": {
-      const event = await prisma.subscription.findUnique({
+      const row = await prisma.subscription.findUnique({
         where: { id: eventId },
-        select: { subscriptionPlan: { select: { consultantProfileId: true } } },
+        select: { subscriptionPlan: planSelect },
       });
-      return (
-        event?.subscriptionPlan.consultantProfileId === consultantProfileId
-      );
+      return row?.subscriptionPlan ?? null;
     }
     case "webinar": {
-      const event = await prisma.webinar.findUnique({
+      const row = await prisma.webinar.findUnique({
         where: { id: eventId },
-        select: { webinarPlan: { select: { consultantProfileId: true } } },
+        select: { webinarPlan: planSelect },
       });
-      return event?.webinarPlan.consultantProfileId === consultantProfileId;
+      return row?.webinarPlan ?? null;
     }
     case "class": {
-      const event = await prisma.class.findUnique({
+      const row = await prisma.class.findUnique({
         where: { id: eventId },
-        select: { classPlan: { select: { consultantProfileId: true } } },
+        select: { classPlan: planSelect },
       });
-      return event?.classPlan.consultantProfileId === consultantProfileId;
+      return row?.classPlan ?? null;
     }
   }
+}
+
+/**
+ * Host-side actor for an event: ADMIN/STAFF, the plan's own consultant, or an
+ * operator of the plan's host org; `null` for anyone else, the consultee included.
+ */
+export async function resolveEventHostActor(
+  session: {
+    user: Pick<Session["user"], "id" | "role" | "consultantProfileId">;
+  },
+  eventType: EventType,
+  eventId: string,
+): Promise<"staff" | "consultant" | "host-org" | null> {
+  if (isPrivileged(session.user.role)) return "staff";
+
+  const plan = await findEventPlanOwner(eventType, eventId);
+  if (!plan) return null;
+
+  const consultantProfileId = session.user.consultantProfileId;
+  if (consultantProfileId && consultantProfileId === plan.consultantProfileId) {
+    return "consultant";
+  }
+  return (await hasOrgEventAccess(session.user.id, plan.organizationId))
+    ? "host-org"
+    : null;
 }

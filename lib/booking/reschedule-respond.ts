@@ -37,6 +37,7 @@ import {
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
+import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import {
   isRestoreMiss,
   parkParentForUnrestoredEnding,
@@ -68,8 +69,7 @@ export type RespondOutcome = { done: true } | { done: false; reason: string };
  * `restoredFully` to report and callers branch on `done` first.
  */
 export type DeclineOutcome =
-  | { done: true; restoredFully: boolean }
-  | { done: false; reason: string };
+  { done: true; restoredFully: boolean } | { done: false; reason: string };
 
 export async function acceptProposal(args: {
   rescheduleRequestId: string;
@@ -123,35 +123,19 @@ export async function acceptProposal(args: {
     wideLock: true,
     // #1340 — same exclusion as auto-confirm: the allocator declines every open
     // proposal these released slots carry, and this one is being ACCEPTED, not
-    // superseded. Without it the ACCEPTED CAS below lost against a row the
-    // allocator had just declined, so the consultee saw a 409 (and no MOVED
-    // notification) on a booking that had moved.
+    // superseded.
     excludeRescheduleRequestId: request.id,
-  });
-  if (!result.success) {
-    // Nothing was written; the proposal stays open.
-    return { done: false, reason: result.errorCode ?? "VALIDATION_FAILED" };
-  }
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      await transitionRescheduleRequest(tx, {
+    // ACCEPTED commits with the move or not at all.
+    inTx: (tx) =>
+      closeConfirmedProposal(tx, {
         where: { id: request.id },
         to: "ACCEPTED",
         data: { resolvedById: args.resolvedById },
-      });
-    });
-  } catch (err) {
-    const isLostRace = err instanceof IllegalTransitionError;
-    // Same shape as auto-confirm's finalize: the booking moved, the paperwork
-    // must not silently fail to catch up.
-    reportSentryError(err, {
-      subsystem: "bookings",
-      op: "reschedule-accept",
-      expected: isLostRace,
-      extra: { rescheduleRequestId: args.rescheduleRequestId },
-    });
-    throw err;
+      }),
+  });
+  if (!result.success) {
+    // Nothing was written; the proposal stays open unless it was closed under us.
+    return { done: false, reason: result.errorCode ?? "VALIDATION_FAILED" };
   }
 
   // PR 2c (audit G2) — the answer finally travels back to the initiator:

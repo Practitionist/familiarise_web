@@ -4,7 +4,8 @@ import prisma, {
 } from "@/lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { stageBell } from "@/lib/novu/stage-bell";
-import { deriveTransactionId } from "@/lib/novu/outbox";
+import { deriveTransactionId, type StagedTrigger } from "@/lib/novu/outbox";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { getAppUrl } from "@/lib/url";
 import { DEFAULT_FROM_ADDRESS, deliver, EMAIL_BUDGET_MS } from "@/lib/email";
@@ -371,6 +372,7 @@ async function processSingleSlaNotice(
   effectiveOps: OperatorRow[],
   stagedKeys: Set<string>,
   errors: string[],
+  stagedBells: StagedTrigger[],
 ): Promise<{ staged: number; orgEmails: number }> {
   const dedupeKey = `sla:${row.id}:${notice.kind}:${notice.level}`;
   if (stagedKeys.has(dedupeKey)) {
@@ -404,28 +406,32 @@ async function processSingleSlaNotice(
         return { staged: 0, orgEmails: 0 };
       }
 
-      newlyStaged = await prisma.$transaction(
+      const txResult = await prisma.$transaction(
         async (tx) => {
           const existing = await tx.notificationOutbox.findUnique({
             where: { transactionId },
             select: { id: true },
           });
-          await stageBell(tx, {
+          const rowOutbox = await stageBell(tx, {
             workflowId: NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY,
             recipients,
             payload,
             dedupeKey,
             entityRef: dedupeKey,
           });
-          return !existing;
+          return { newlyStaged: !existing, rowOutbox };
         },
         {
           maxWait: ALLOCATION_TX_MAX_WAIT_MS,
           timeout: ALLOCATION_TX_TIMEOUT_MS,
         },
       );
+      newlyStaged = txResult.newlyStaged;
       if (newlyStaged) {
         countedStaged = 1;
+        if (txResult.rowOutbox) {
+          stagedBells.push(txResult.rowOutbox);
+        }
       }
     }
 
@@ -471,6 +477,7 @@ async function processCandidateSlaNotices(
   operators: OperatorRow[],
   stagedKeys: Set<string>,
   errors: string[],
+  stagedBells: StagedTrigger[],
 ): Promise<{ staged: number; orgEmails: number }> {
   const notices = slaNoticeTransitions(row, now);
   if (notices.length === 0) return { staged: 0, orgEmails: 0 };
@@ -481,7 +488,14 @@ async function processCandidateSlaNotices(
   const effectiveOps = targetOps.length > 0 ? targetOps : operators;
 
   const outcomes = await runSequential(notices, (notice) =>
-    processSingleSlaNotice(row, notice, effectiveOps, stagedKeys, errors),
+    processSingleSlaNotice(
+      row,
+      notice,
+      effectiveOps,
+      stagedKeys,
+      errors,
+      stagedBells,
+    ),
   );
 
   return outcomes.reduce(
@@ -613,6 +627,7 @@ async function processDisputeDeadlineAlerts(
   limit: number,
   admins: OperatorRow[],
   errors: string[],
+  stagedBells: StagedTrigger[],
 ): Promise<number> {
   const disputeHorizon = new Date(now.getTime() + 72 * HOUR_MS);
   const actionableDisputes = await prisma.dispute.findMany({
@@ -640,13 +655,14 @@ async function processDisputeDeadlineAlerts(
 
       try {
         const payload = {
-          title: `Dispute response due within ${window}h`,
+          title: `Dispute ${d.disputeId} response due within ${window}h (by ${dueByIso})`,
           disputeId: d.disputeId,
           amount: d.amountPaise,
           currency: d.currency,
           reason: d.reason,
           dueBy: dueByIso,
           windowHours: Number(window),
+          dashboardUrl: "/dashboard/staff/moderation",
         };
         const transactionId = deriveTransactionId(
           NOVU_WORKFLOWS.DISPUTE_UPDATED,
@@ -655,19 +671,19 @@ async function processDisputeDeadlineAlerts(
           dedupeKey,
         );
 
-        const newlyStaged = await prisma.$transaction(
+        const txResult = await prisma.$transaction(
           async (tx) => {
             const existing = await tx.notificationOutbox.findUnique({
               where: { transactionId },
               select: { id: true },
             });
-            await stageBell(tx, {
+            const rowOutbox = await stageBell(tx, {
               workflowId: NOVU_WORKFLOWS.DISPUTE_UPDATED,
               recipients,
               payload,
               dedupeKey,
             });
-            return !existing;
+            return { newlyStaged: !existing, rowOutbox };
           },
           {
             maxWait: ALLOCATION_TX_MAX_WAIT_MS,
@@ -675,7 +691,10 @@ async function processDisputeDeadlineAlerts(
           },
         );
 
-        if (!newlyStaged) return 0;
+        if (!txResult.newlyStaged) return 0;
+        if (txResult.rowOutbox) {
+          stagedBells.push(txResult.rowOutbox);
+        }
 
         const settled = await Promise.allSettled(
           admins
@@ -727,6 +746,7 @@ export async function runSupportSlaSweep(opts?: {
     const now = opts?.now ?? new Date();
     const limit = opts?.limit ?? 50;
     const errors: string[] = [];
+    const stagedBells: StagedTrigger[] = [];
 
     const recentOutboxCutoff = new Date(now.getTime() - 35 * DAY_MS);
     const [operators, outboxRows] = await Promise.all([
@@ -761,7 +781,14 @@ export async function runSupportSlaSweep(opts?: {
     );
 
     const noticeOutcomes = await runSequential(candidates, (row) =>
-      processCandidateSlaNotices(row, now, operators, stagedKeys, errors),
+      processCandidateSlaNotices(
+        row,
+        now,
+        operators,
+        stagedKeys,
+        errors,
+        stagedBells,
+      ),
     );
 
     const slaNoticesStaged = noticeOutcomes.reduce(
@@ -780,7 +807,10 @@ export async function runSupportSlaSweep(opts?: {
       limit,
       admins,
       errors,
+      stagedBells,
     );
+
+    await flushNotificationsAfter({ bells: stagedBells }, "support.sla-sweep");
 
     if (errors.length > 0) {
       reportSentryError(

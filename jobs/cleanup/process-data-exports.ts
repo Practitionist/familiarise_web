@@ -39,7 +39,11 @@ if (require.main === module) {
       console.log(JSON.stringify(result, null, 2));
       outputToGitHubActions(result);
       if (result.success) {
-        Sentry.logger.info("job:process-data-exports finished", { picked: result.picked, succeeded: result.succeeded, failed: result.failed });
+        Sentry.logger.info("job:process-data-exports finished", {
+          picked: result.picked,
+          succeeded: result.succeeded,
+          failed: result.failed,
+        });
       }
       if (!result.success) process.exitCode = 1;
     } finally {

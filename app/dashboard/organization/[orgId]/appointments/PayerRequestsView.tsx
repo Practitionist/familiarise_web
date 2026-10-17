@@ -9,8 +9,8 @@ import { AllocateOrgBookingDialog } from "./AllocateOrgBookingDialog";
 
 /**
  * The payer's view of unallocated org-funded requests — Appointments ›
- * Unscheduled. Authorized operators (OWNER, MAINTAINER, MANAGER) can also
- * allocate slots on behalf of the organization with an explicit audit reason.
+ * Unscheduled. Authorized operators may allocate only a booking the expert has
+ * already approved; a request still awaiting the expert carries no Allocate.
  */
 export function PayerRequestsView({
   orgId: orgIdProp,
@@ -32,8 +32,9 @@ export function PayerRequestsView({
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         These sessions are funded by your organization and are waiting for
-        calendar times. Authorized operators can allocate available slots on
-        behalf of the organization with an audit justification.
+        calendar times. Once the expert approves a request, authorized operators
+        can allocate available slots on behalf of the organization with an audit
+        justification.
       </p>
       <ResponsiveTable<OrgPendingRequest>
         rows={requests}
@@ -41,15 +42,16 @@ export function PayerRequestsView({
         empty="Nothing is waiting to be scheduled."
         rowActions={
           canAllocate && orgId
-            ? (row) => (
-                <AllocateOrgBookingDialog
-                  orgId={orgId}
-                  appointmentId={row.appointmentId ?? row.id}
-                  planTitle={row.planTitle}
-                  expertName={row.expertName}
-                  learnerName={row.learnerName}
-                />
-              )
+            ? (row) =>
+                row.awaitingExpertApproval ? null : (
+                  <AllocateOrgBookingDialog
+                    orgId={orgId}
+                    appointmentId={row.appointmentId ?? row.id}
+                    planTitle={row.planTitle}
+                    expertName={row.expertName}
+                    learnerName={row.learnerName}
+                  />
+                )
             : undefined
         }
         columns={[
@@ -77,6 +79,21 @@ export function PayerRequestsView({
                 {row.kind === "CONSULTATION" ? "Consultation" : "Subscription"}
               </Badge>
             ),
+          },
+          {
+            key: "status",
+            header: "Status",
+            cell: (row) =>
+              row.awaitingExpertApproval ? (
+                <div className="space-y-0.5">
+                  <Badge variant="outline">Awaiting expert approval</Badge>
+                  <p className="text-xs text-muted-foreground">
+                    The expert must accept this request before times can be set.
+                  </p>
+                </div>
+              ) : (
+                <Badge variant="secondary">Approved — ready to schedule</Badge>
+              ),
           },
           {
             key: "requestedAt",

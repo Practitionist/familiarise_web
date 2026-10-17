@@ -374,7 +374,7 @@ curl -sS -D - -o /dev/null -X POST \
 
 Look at the status code, and at `x-sentry-rate-limits`. A `429` naming
 `error_usage_exceeded` is the smoking gun; a `200` is the healthy case. This is
-the same probe `lib/observability/ingest-canary.ts` runs every 30 minutes.
+the same probe `lib/observability/ingest-canary.ts` runs every six hours.
 
 ### Fixing it does not mean waiting for the month to end
 
@@ -411,7 +411,7 @@ Three design points, each of which exists because of how the failure presented:
   derive the fix. Recipient is `OBSERVABILITY_ALERT_EMAIL`, defaulting to the
   platform support mailbox.
 
-The canary event carries a fixed fingerprint, so half-hourly runs collapse into
+The canary event carries a fixed fingerprint, so repeated runs collapse into
 one issue with a count rather than hundreds of near-identical ones, and it
 carries no user, org, IP or URL — it is an infrastructure probe and should never
 become a record about a person.

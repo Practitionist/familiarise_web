@@ -2,7 +2,7 @@
 
 > Canonical architecture reference for outbound email delivery (`lib/email/`), pre-launch recipient gating (`EMAIL_DELIVERY_MODE`), outbox lease protection, row-scoped idempotency, stateless RFC 8058 one-click unsubscribes, Svix-signed Resend webhook ingestion (`POST /api/webhooks/resend`), ops alert routing, and DNS authentication records.
 
-**Last Updated**: 2026-10-11
+**Last Updated**: 2026-10-13
 
 ---
 
@@ -16,14 +16,115 @@ Resend sends every transactional, operational, and newsletter email on the platf
 
 ```mermaid
 flowchart LR
-    App["App Routes / Cron Jobs"] -->|"stage() inside tx or deliver()"| Guard["Pre-Launch Guard (EMAIL_DELIVERY_MODE)"]
-    Guard -->|"Allowlisted / Live"| Outbox["FailedEmail Outbox (nextRetryAt = now + 60s)"]
+    App["App Routes / Cron Jobs"] -->|"1. prepareRecipientEmails() outside tx"| Render["Pre-Render HTML + PlainText + RFC 8058 Headers"]
+    Render -->|"2. stage() / stagePreparedEmails(tx)"| Guard["Pre-Launch Guard (EMAIL_DELIVERY_MODE)"]
+    Guard -->|"Allowlisted / Live"| Outbox["FailedEmail / FailedEmailBatch (nextRetryAt = NOW() + 60s)"]
     Guard -->|"Outside Allowlist"| Held["Held in Outbox (DEAD_LETTER: held:pre-launch)"]
-    Outbox -->|"Fast-Path (flushNotificationsAfter / attempt)"| Resend["Resend API (Idempotency-Key: <TYPE>/failed-email/<id>)"]
-    Outbox -->|"Relay (retry-failed-emails: every 15m at :00)"| Resend
-    Resend -->|"Svix Signed Webhook (whsec_)"| Webhook["POST /api/webhooks/resend"]
-    Webhook -->|"Single Atomic $transaction(tx)"| Tables["EmailEvent + EmailSuppression + Waitlist"]
-    Webhook -->|"Post-Commit Domain Health Check"| SystemEvent["SystemEvent (recordSystemErrorSafe)"]
+    Outbox -->|"3a. Fast-Path (flushNotificationsAfter / attempt)"| Resend["Resend API (Idempotency-Key: <TYPE>/failed-email/<id>)"]
+    Outbox -->|"3b. Relay (retry-failed-emails: every 15m at :00)"| Resend
+    Resend -->|"4. Svix Signed Webhook (whsec_)"| Webhook["POST /api/webhooks/resend"]
+    Webhook -->|"5. Single Atomic $transaction(tx)"| Tables["EmailEvent + EmailSuppression + Waitlist"]
+    Webhook -->|"6. Post-Commit Domain Health Check"| SystemEvent["SystemEvent (recordSystemErrorSafe)"]
+```
+
+### ASCII High-Level & Low-Level Email Outbox Pipeline
+
+```text
++===================================================================================================+
+|                      PRODUCERS (API Routes, Webhooks, Server Actions, Cron)                       |
++===================================================================================================+
+   |
+   | [Phase 0 — Pre-Render Outside Serializable $transaction(tx)]
+   |  prepareRecipientEmails() / preparePaymentSuccessEmail() / prepareOrgBillingEmail()
+   |  - Batch-loads User preference rows (`allNotifications`, `emailEnabled`, `notificationRouting`,
+   |    category column) + `EmailSuppression` (`HARD_BOUNCE`, `COMPLAINT`, `MANUAL`)
+   |  - Renders React Email JSX -> HTML + `toPlainText(html)` + HMAC-SHA256 RFC 8058 `List-Unsubscribe`
+   v
++---------------------------------------------------------------------------------------------------+
+| [Phase 1 — Atomic Outbox Staging (`stage()` / `stagePreparedEmails(tx)`)]                         |
+|  - `EMAIL_DELIVERY_MODE` Guard: non-allowlisted recipients -> `DEAD_LETTER ("held:pre-launch")`   |
+|  - Credential Emails (`EMAIL_VERIFICATION`, `PASSWORD_RESET`): `htmlBody = "[REDACTED]"`          |
+|  - Standard Lifecycle Emails: `status = "PENDING"`, `nextRetryAt = NOW() + 60s` (60s lease)       |
+|  - Waitlist Broadcasts: chunked `FailedEmailBatch` (`<= 100` recipients, `nextRetryAt = +60s`)    |
++---------------------------------------------------------------------------------------------------+
+   |                                                          |
+   | [Phase 2a — Fast-Path (`flushNotificationsAfter`)]       | [Phase 2b — Relay (`retry-failed-emails`)]
+   |  `scheduleAfter` -> `attemptStaged()`                    |  Every 15m at `:00` (`limit=20`, `125ms` gap)
+   |  Sends `<EMAIL_TYPE>/failed-email/<row.id>`              |  Reconstructs RFC 8058 headers statelessly via
+   |  Updates `status = "SENT"`, `sentAt = NOW()`             |  `reconstructUnsubscribeHeaders(row)`
+   v                                                          v
++===================================================================================================+
+|            RESEND API (`mail.familiarisenow.com` & `news.familiarisenow.com`)                     |
+|  - Single-row idempotency (`Idempotency-Key: <TYPE>/failed-email/<row.id>`)                       |
+|  - Batch sends with `batchValidation: "permissive"` (`partial` vs `sent` tracking)                |
++===================================================================================================+
+   |
+   | Svix Signed Webhook (`svix-id`, `svix-timestamp`, `svix-signature`, 300s replay window)
+   v
++---------------------------------------------------------------------------------------------------+
+| [Phase 3 — Inbound Webhook (`POST /api/webhooks/resend`)]                                         |
+|  - Single atomic `prisma.$transaction(async (tx) => ...)` (`PG_POOL_MAX=1` safe):                 |
+|    1. Insert `EmailEvent` (`@unique svixId`)                                                      |
+|    2. Upsert `EmailSuppression` + transition `Waitlist` on bounce/complaint/suppressed/unsub      |
+|  - Post-commit: `prune-system-job-executions` scrubs `SENT` bodies at 7d & prunes rows at 30d/90d |
++---------------------------------------------------------------------------------------------------+
+```
+
+### Low-Level End-to-End Sequence Diagram (`prepare` → `stage` → `flush` → `Resend` → `Svix Webhook`)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Caller as Domain Route / Webhook
+    participant Prep as prepareRecipientEmails()
+    participant DB as Postgres (PG_POOL_MAX=1)
+    participant After as flushNotificationsAfter (after())
+    participant Cron as retry-failed-emails (:00/15m)
+    participant Resend as Resend REST API
+    participant Hook as POST /api/webhooks/resend
+
+    Caller->>Prep: Pre-render React Email outside Serializable tx
+    Prep->>DB: Batch SELECT User prefs + EmailSuppression
+    Prep-->>Caller: Prepared HTML, textBody, RFC 8058 List-Unsubscribe headers
+    Caller->>DB: BEGIN $transaction(tx)
+    Caller->>DB: Domain CAS updateMany + stagePreparedEmails(tx) (PENDING, nextRetryAt = +60s)
+    Caller->>DB: COMMIT
+    Caller->>After: Register post-response flush (returns HTTP 200 immediately)
+    par Fast-Path Inline Attempt (within 60s lease)
+        After->>Resend: POST /emails (Idempotency-Key: <TYPE>/failed-email/<row.id>)
+        Resend-->>After: 200 OK (providerMessageId)
+        After->>DB: UPDATE FailedEmail SET status = 'SENT', sentAt = NOW()
+    and Scheduled Relay Sweep (only rows with nextRetryAt <= NOW())
+        Cron->>DB: SELECT PENDING/RETRY WHERE nextRetryAt <= NOW() LIMIT 20
+        Cron->>Cron: reconstructUnsubscribeHeaders(row)
+        Cron->>Resend: POST /emails (same <TYPE>/failed-email/<row.id> key)
+        Cron->>DB: UPDATE status = 'SENT' | 'RETRY' (backoff) | 'DEAD_LETTER'
+    end
+    Resend->>Hook: POST Svix event (email.delivered / email.bounced / email.complained)
+    Hook->>DB: Atomic $transaction(tx): INSERT EmailEvent + UPSERT EmailSuppression
+```
+
+### `FailedEmail` & `FailedEmailBatch` Outbox State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> GuardCheck: stage() / stagePreparedEmails(tx)
+    GuardCheck --> DEAD_LETTER_HELD: Disallowed by EMAIL_DELIVERY_MODE != live ("held:pre-launch")
+    GuardCheck --> PENDING: Allowed (nextRetryAt = NOW() + 60s inline lease)
+
+    PENDING --> SENT: Fast-path attemptStaged() succeeds (providerMessageId recorded)
+    PENDING --> RETRY: Fast-path transient 5xx / 429 / network timeout
+    PENDING --> DEAD_LETTER: Fast-path terminal 4xx or credential email ("not replayed")
+    PENDING --> RelayClaim: 60s inline lease expires (nextRetryAt <= NOW())
+
+    RelayClaim --> SENT: retry-failed-emails succeeds (with reconstructed RFC 8058 headers)
+    RelayClaim --> RETRY: Transient failure & attempts < 5 (exponential backoff 5m..4h)
+    RETRY --> RelayClaim: nextRetryAt <= NOW()
+    RelayClaim --> DEAD_LETTER: Terminal Resend error or attempts >= 5 (1 aggregated Sentry + Ops alert)
+
+    SENT --> SENT_SCRUBBED: 7 days after sentAt (htmlBody/textBody/batch payload scrubbed)
+    SENT_SCRUBBED --> [*]: Pruned 30 days after sentAt
+    DEAD_LETTER --> [*]: Pruned 90 days after updatedAt
 ```
 
 ---
@@ -32,24 +133,25 @@ flowchart LR
 
 ### Transactional & Lifecycle Emails (`@mail.familiarisenow.com`)
 
-| Type                                                                                                                       | Trigger                                                                                        | Sender           | Recipient                               | Channel                                                       | Source Path                                                                                     |
-| -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `WELCOME`, `EMAIL_VERIFICATION`                                                                                            | Verified signup, 6-digit verification code                                                     | `onboarding@`    | Customer                                | Outbox via `deliver()`                                        | `emails/auth/`, `lib/email/index.ts`                                                            |
-| `PASSWORD_RESET`, `PASSWORD_CHANGED`, `ACCOUNT_LINKED`, `EXISTING_ACCOUNT_SIGN_UP`                                         | Reset link, password changed, social account linked, sign-up attempt on an existing address    | `security@`      | Customer                                | Outbox via `deliver()`                                        | `emails/auth/`, `lib/email/index.ts`                                                            |
-| `ACCOUNT_SUSPENDED`, `ACCOUNT_BANNED`                                                                                      | Back-office moderation (mandatory account notice, `category: null`)                            | `security@`      | Customer                                | Outbox via `senders/people.ts`                                | `emails/account/`, `lib/email/senders/people.ts`                                                |
-| `SSO_PROVIDER_SUBMITTED`, `SSO_PROVIDER_APPROVED`, `SSO_PROVIDER_REVOKED`                                                  | SSO provider registered (to ADMINs), approved or revoked (to OWNERs)                           | `security@`      | Platform ADMINs, org OWNERs             | Outbox via `senders/sso.ts`                                   | `emails/organizations/SsoProviderEmail.tsx`, `lib/email/senders/sso.ts`                         |
-| `SECURITY_EVENT`                                                                                                           | Authenticator or passkey added, backup codes regenerated or used, admin 2FA reset, 2FA lockout | `security@`      | Operator / User                         | Outbox via `deliver()`                                        | `emails/auth/SecurityEventEmail.tsx`, `lib/email/senders/security.ts`                           |
-| `APPOINTMENT_BOOKED`, `APPOINTMENT_CANCELLED`, `APPOINTMENT_RESCHEDULED`, `TRIAL_SESSION_SCHEDULED`, `NEW_BOOKING_REQUEST` | Booking lifecycle                                                                              | `notifications@` | Customer or consultant                  | Staged in booking `$transaction`, flushed post-response       | `emails/booking/`, `lib/email/senders/booking.ts`                                               |
-| `APPOINTMENT_REMINDER`, `WINDOW_OPENED`, subscription unscheduled nudge                                                    | Reminder and nudge sweeps                                                                      | `notifications@` | Customer or consultant                  | Outbox, sent by cron sweep                                    | `emails/booking/`, `lib/email/senders/booking.ts`                                               |
-| `PAYMENT_LINK`, `PAYMENT_LINK_REMINDER`, `PAYMENT_LINK_MANUAL_REMINDER`                                                    | Approved request awaiting payment, reminders                                                   | `payments@`      | Customer                                | Outbox via `deliver()`                                        | `emails/payments/PaymentLinkEmail.tsx`, `lib/email/index.ts`, `lib/booking/remind-payment.ts`   |
-| `PAYMENT_SUCCESS`, `PAYMENT_FAILED`                                                                                        | Payment webhook pipeline                                                                       | `payments@`      | Customer                                | Staged in webhook `$transaction`, flushed post-commit         | `emails/payments/`, `lib/payments/webhooks/staged-emails.ts`                                    |
-| `REFUND_PROCESSED`, `REFUND_FAILED`, `PAYOUT_STATUS`, `DISPUTE_NOTICE`                                                     | Refund settles/fails, consultant payout status, dispute alerts                                 | `payments@`      | Customer or consultant                  | Outbox via `senders/money.ts`                                 | `emails/payments/`, `lib/email/senders/money.ts`                                                |
-| `VERIFICATION_DECIDED`, `ORG_CREATED`, `ORG_WELCOME`                                                                       | Verification decision, organisation created                                                    | `onboarding@`    | Applicant or org admin                  | Outbox via `senders/onboarding.ts`                            | `emails/verification/`, `emails/organizations/`, `lib/email/senders/onboarding.ts`              |
-| `ORG_MEMBERSHIP_ROLE_CHANGED`, `ORG_MEMBERSHIP_REMOVED`, organisation invitation                                           | Membership change, invitation                                                                  | `notifications@` | Member                                  | Outbox via `senders/onboarding.ts` & `lib/email/index.ts`     | `emails/organizations/`, `emails/org/`, `lib/email/senders/onboarding.ts`, `lib/email/index.ts` |
-| `ORG_BILLING_RECEIPT`, `ORG_PAYOUT_FAILED`, `ORG_INVOICE_OVERDUE`, `ORG_WALLET_LOW`, `ORG_PROGRAM_OVERAGE_DUE`             | Organisation billing receipts, invoices, low wallet, payouts, member overages                  | `finance@`       | Org admin roster                        | Outbox via `senders/money.ts`                                 | `emails/orgs/`, `lib/email/senders/money.ts`                                                    |
-| `SUPPORT_TICKET_RECEIVED`, `SUPPORT_TICKET_RESPONSE`, `SUPPORT_TICKET_UPDATE`, `NEW_REVIEW_RECEIVED`                       | Ticket created/escalated, reply, status change, new review                                     | `notifications@` | Customer or consultant                  | Outbox via `senders/people.ts`                                | `emails/support/`, `emails/reviews/`, `lib/email/senders/people.ts`                             |
-| `MODERATION_REPORT_OUTCOME`                                                                                                | Moderation action concludes a report                                                           | `security@`      | Reporter                                | Outbox via `senders/people.ts`                                | `app/api/staff/moderation/reports/[reportId]/action/route.ts`, `lib/email/senders/people.ts`    |
-| Contact inquiry                                                                                                            | `/contactus` form                                                                              | `notifications@` | Support inbox (`contactInboxAddress()`) | Outbox via `deliver()` (`emails/contact/ContactInquiryEmail`) | `emails/contact/ContactInquiryEmail.tsx`, `lib/email/index.ts`                                  |
+| Type                                                                                                                                                                                                                                                     | Trigger                                                                                         | Sender           | Recipient                               | Channel                                                            | Source Path                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `WELCOME`, `EMAIL_VERIFICATION`                                                                                                                                                                                                                          | Verified signup, 6-digit verification code                                                      | `onboarding@`    | Customer                                | Outbox via `deliver()` + `ACCOUNT_SECURITY_NOTICE` bell            | `emails/auth/`, `lib/auth/account-lifecycle.ts`                                              |
+| `PASSWORD_RESET`, `PASSWORD_CHANGED`, `ACCOUNT_LINKED`, `EXISTING_ACCOUNT_SIGN_UP`                                                                                                                                                                       | Reset link, password changed, social account linked, sign-up attempt on an existing address     | `security@`      | Customer                                | Outbox via `deliver()` + `ACCOUNT_SECURITY_NOTICE` bell            | `emails/auth/`, `lib/auth/account-lifecycle.ts`                                              |
+| `ACCOUNT_SUSPENDED`, `ACCOUNT_BANNED`, `ACCOUNT_REINSTATED`, `MODERATION_WARNING`, `CONTENT_REMOVED`, `REVIEW_EXCLUDED`                                                                                                                                  | Back-office moderation, reinstatement, content takedown, excluded review (`category: null`)     | `security@`      | Customer / Consultant                   | Staged in moderation `$transaction`, flushed post-commit           | `emails/auth/AccountRestrictedEmail.tsx`, `lib/moderation/side-effects.ts`                   |
+| `SSO_PROVIDER_SUBMITTED`, `SSO_PROVIDER_APPROVED`, `SSO_PROVIDER_REJECTED`, `SSO_PROVIDER_REVOKED`, `SSO_PROVIDER_DELETED`                                                                                                                               | SSO provider registered, approved, rejected, revoked, or removed                                | `security@`      | Platform ADMINs, org OWNERs             | Staged via `senders/sso.ts`, flushed via `flushNotificationsAfter` | `emails/organizations/SsoProviderEmail.tsx`, `lib/email/senders/sso.ts`                      |
+| `SECURITY_EVENT`                                                                                                                                                                                                                                         | Authenticator or passkey added/removed, backup codes regenerated/used, admin 2FA reset, lockout | `security@`      | Operator / User                         | Outbox via `deliver()` + `ACCOUNT_SECURITY_NOTICE` bell            | `emails/auth/SecurityEventEmail.tsx`, `lib/auth/security-email.ts`                           |
+| `APPOINTMENT_BOOKED`, `APPOINTMENT_CANCELLED`, `APPOINTMENT_RESCHEDULED`, `APPOINTMENT_COMPLETED`, `CLASS_EXIT_AVAILABLE`, `SESSION_NO_SHOW`, `SESSION_MISSED_RECORDING`                                                                                 | Booking lifecycle, class sessions, make-ups, no-shows, missed recordings, completion            | `notifications@` | Customer or consultant                  | Staged in booking `$transaction`, flushed post-response            | `emails/booking/`, `lib/email/senders/booking.ts`                                            |
+| `DOCUMENT_UPLOADED`, `DOCUMENT_REVIEWED`, `RECORDING_READY`, `RECORDING_FAILED`, `RECORDING_REMOVED`                                                                                                                                                     | Shared session documents uploaded/reviewed and session recordings ready/failed/removed          | `notifications@` | Customer or consultant                  | Staged in `$transaction` / outbox, flushed post-commit             | `emails/booking/DocumentAndRecordingEmail.tsx`, `lib/email/senders/booking.ts`               |
+| `TRIAL_REQUESTED`, `TRIAL_SESSION_SCHEDULED`, `TRIAL_COMPLETED`, `TRIAL_CANCELLED`, `TRIAL_REJECTED`, `SUBSCRIPTION_STARTED`, `SUBSCRIPTION_RENEWED`, `APPOINTMENT_REMINDER`, `WINDOW_OPENED`, `SUBSCRIPTION_UNSCHEDULED_NUDGE`                          | Trial lifecycle, subscription starts/renewals, reminders, and nudge sweeps                      | `notifications@` | Customer or consultant                  | Staged in `$transaction` / outbox, flushed post-commit             | `emails/booking/`, `lib/email/senders/booking.ts`                                            |
+| `PAYMENT_LINK`, `PAYMENT_LINK_REMINDER`, `PAYMENT_LINK_MANUAL_REMINDER`, `REFERRAL_BONUS_EARNED`, `REFERRAL_WELCOME_BONUS`, `REFERRAL_CREDITS_APPLIED`                                                                                                   | Approved request awaiting payment, reminders, referral bonuses & applied credits                | `payments@`      | Customer                                | Outbox via `deliver()` / `senders/money.ts`                        | `emails/payments/`, `lib/email/senders/money.ts`, `lib/booking/remind-payment.ts`            |
+| `PAYMENT_SUCCESS`, `PAYMENT_FAILED`                                                                                                                                                                                                                      | Payment webhook pipeline                                                                        | `payments@`      | Customer                                | Staged in webhook `$transaction`, flushed post-commit              | `emails/payments/`, `lib/payments/webhooks/staged-emails.ts`                                 |
+| `REFUND_PROCESSED`, `REFUND_FAILED`, `PAYOUT_STATUS`, `DISPUTE_NOTICE`                                                                                                                                                                                   | Refund settles/fails, consultant payout status, dispute alerts                                  | `payments@`      | Customer or consultant                  | Outbox via `senders/money.ts`                                      | `emails/payments/`, `lib/email/senders/money.ts`                                             |
+| `VERIFICATION_DECIDED`, `ORG_CREATED`, `ORG_WELCOME`                                                                                                                                                                                                     | Verification decision (`UNDER_REVIEW`, `VERIFIED`, `NEEDS_INFO`, `REJECTED`), org created       | `onboarding@`    | Applicant or org admin                  | Staged in `$transaction`, flushed post-commit                      | `emails/verification/`, `emails/organizations/`, `lib/email/senders/onboarding.ts`           |
+| `ORG_MEMBERSHIP_ROLE_CHANGED`, `ORG_MEMBERSHIP_REMOVED`, `ORG_CONTRACT_AND_SEAT`, `ORG_INVITATION`                                                                                                                                                       | Membership role/removal, seat assignments/revocations, contract lifecycle, organization invites | `notifications@` | Member / Org admin                      | Staged via `senders/onboarding.ts` & `lib/email/index.ts`          | `emails/organizations/`, `lib/email/senders/onboarding.ts`                                   |
+| `ORG_BILLING_RECEIPT`, `ORG_PAYOUT_FAILED`, `ORG_INVOICE_OVERDUE`, `ORG_WALLET_LOW`, `ORG_PROGRAM_OVERAGE_DUE`, `ORG_MEMBER_OVERAGE_TIMED_OUT`, `ORG_LICENSE_RENEWAL_UPCOMING`, `ORG_PROGRAM_CAP_NEAR`, `ORG_PROGRAM_EXHAUSTED`, `ORG_DATA_EXPORT_READY` | Organization billing receipts, invoices, dunning, overages, license renewals, cap & exports     | `finance@`       | Org admin roster / Member               | Staged via `senders/money.ts`, flushed post-commit                 | `emails/payments/OrgDunningEmail.tsx`, `emails/orgs/`, `lib/email/senders/money.ts`          |
+| `SUPPORT_TICKET_RECEIVED`, `SUPPORT_TICKET_RESPONSE`, `SUPPORT_TICKET_UPDATE`, `PLATFORM_FEEDBACK_UPDATE`, `NEW_REVIEW_RECEIVED`                                                                                                                         | Ticket created/escalated, reply, status change, product feedback update, new review             | `notifications@` | Customer or consultant                  | Staged in `$transaction`, flushed via `flushNotificationsAfter`    | `emails/support/`, `emails/reviews/`, `lib/email/senders/people.ts`                          |
+| `MODERATION_REPORT_OUTCOME`                                                                                                                                                                                                                              | Moderation action concludes a report                                                            | `security@`      | Reporter                                | Staged in moderation `$transaction`, flushed post-commit           | `app/api/staff/moderation/reports/[reportId]/action/route.ts`, `lib/email/senders/people.ts` |
+| Contact inquiry                                                                                                                                                                                                                                          | `/contactus` form                                                                               | `notifications@` | Support inbox (`contactInboxAddress()`) | Outbox via `deliver()` (`emails/contact/ContactInquiryEmail`)      | `emails/contact/ContactInquiryEmail.tsx`, `lib/email/index.ts`                               |
 
 ### Single-Use Credentials Are Never Stored or Replayed
 
@@ -141,7 +243,23 @@ Enforced in `lib/email/delivery-guard.ts` across `stage()`, `attempt()`, `retry-
 
 ## Deprecated & Superseded Approaches
 
+```text
+Legacy Asymmetric Dual-Path (Superseded):
+  Mutation ─▶ stageBell(tx) ─▶ NotificationOutbox ─▶ sequential for..await attemptTrigger()
+           └─ inline send*Email() in request body or fire-and-forget post-tx (unpaired channels, blocking 502s)
+              ├─ FailedEmail created with nextRetryAt = NOW() (cron raced in-flight inline sends)
+              ├─ Resend Idempotency-Key = SHA256(to + subject + html) (dropped repeat emails for 24h)
+              └─ Retry relay stripped RFC 8058 List-Unsubscribe headers & fired per-row Sentry alerts
+```
+
+```mermaid
+flowchart LR
+    Mut["Legacy Route / Webhook"] -->|"Inline await render() + deliver()"| Block["Blocked HTTP Response & Redis Slot Locks"]
+    Block -->|"nextRetryAt = NOW()"| Race["Cron Relay Raced Inline Attempt"]
+    Race -->|"Content-Hash Key"| Drop["Dropped Repeat Emails Within 24h & Stripped RFC 8058 Headers"]
+```
+
+- **Asymmetric Bell-Only or Email-Only Producers & Inline Request-Blocking Sends**: Superseded by atomic dual-channel staging (`stageBell` / `notify*({ tx | deferAttempt: true })` + `defineLifecycleStager` / `stage*Email(tx, ...)`) paired with unified post-commit concurrent flushing via `flushNotificationsAfter` (`lib/novu/stage-then-attempt.ts`).
 - **Immediate `nextRetryAt: NOW()` on Outbox Insert & Content-Hashed Retry Keys**: Superseded by `nextRetryAt: NOW() + 60s` inline lease grace windows and `<EMAIL_TYPE>/failed-email/<row.id>` keys (`idempotencyKeyFor(..., row.id)`), eliminating concurrent inline-vs-relay races and preventing Resend's 24-hour payload hash cache from silently dropping legitimate repeat emails.
 - **Dropping RFC 8058 Unsubscribe Headers on Relay Retries & Mutating DB on `GET /api/waitlist/unsubscribe`**: Superseded by stateless `reconstructUnsubscribeHeaders(row)` header extraction on retry and read-only HTML confirmation on `GET /api/waitlist/unsubscribe` so link scanners cannot trigger false unsubscribes.
-- **Per-Row Loop Sentry Captures in Outbox Sweepers**: Superseded by per-tick alert deduplication in `runEmailRetryTick` (`alerts` map + `email.outbox.dead_letter` gauge + `postOpsChat` fallback) to protect Sentry's 5,000/month error budget.
-- **Non-Transactional `EmailEvent.create` Followed by Separate `suppressRecipient` Writes**: Superseded by a single atomic Prisma `$transaction(tx)` in `app/api/webhooks/resend/route.ts` with daily 30-day batched `EmailEvent` pruning in `prune-system-job-executions`.
+- **Per-Row Loop Sentry Captures in Outbox Sweepers & Non-Transactional Webhook Suppression**: Superseded by per-tick alert aggregation in `runEmailRetryTick` (`email.outbox.dead_letter` gauge + `postOpsChat`) and single-`$transaction(tx)` `EmailEvent` + `EmailSuppression` writes with 30-day batched pruning.

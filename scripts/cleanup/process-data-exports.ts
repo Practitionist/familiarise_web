@@ -40,7 +40,7 @@ import { checkConsentBatch } from "../../lib/compliance/dpdp";
 import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
 import { getAppUrl } from "../../lib/url";
-import { deliver, SENDERS } from "../../lib/email";
+import { sendOrgOperationalEmail } from "../../lib/email/senders/money";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import type { OrgDataExportKind } from "@prisma/client";
 import {
@@ -285,52 +285,6 @@ async function uploadBundle(
   };
 }
 
-async function emailRequester(params: {
-  jobId: string;
-  organizationId: string;
-  requestedByMembershipId: string;
-  downloadUrl: string;
-  expiresAt: Date;
-}): Promise<void> {
-  // #1298 — no key guard here: a missing key dead-letters inside deliver().
-  const membership = await prisma.membership.findUnique({
-    where: { id: params.requestedByMembershipId },
-    include: { user: { select: { name: true, email: true } } },
-  });
-  if (!membership?.user?.email) return;
-
-  const lines = [
-    `Hi ${membership.user.name ?? ""},`,
-    "",
-    `Your data export bundle is ready. Download it within 7 days:`,
-    params.downloadUrl,
-    "",
-    `Expires: ${params.expiresAt.toISOString()}`,
-    "",
-    "If you didn't request this, contact your org admin.",
-  ];
-  const esc = (v: string) =>
-    v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  // #1298 — through deliver() so a failed send dead-letters and replays.
-  await deliver(
-    {
-      from: SENDERS.noreply,
-      to: membership.user.email,
-      subject: "Your organization data export is ready",
-      text: lines.join("\n"),
-      html: lines
-        .filter((line) => line !== "")
-        .map((line) =>
-          line === params.downloadUrl
-            ? `<p><a href="${esc(line)}">${esc(line)}</a></p>`
-            : `<p>${esc(line)}</p>`,
-        )
-        .join(""),
-    },
-    "DATA_EXPORT_READY",
-  );
-}
-
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function processDataExports(): Promise<DataExportResult> {
@@ -406,27 +360,47 @@ async function processDataExportsUnlocked(): Promise<DataExportResult> {
       });
     });
 
-    // Fire-and-forget email. Failures don't unwind the export.
-    await emailRequester({
-      jobId: job.id,
-      organizationId: job.organizationId,
-      requestedByMembershipId: job.requestedByMembershipId,
-      downloadUrl: uploaded.url,
-      expiresAt: uploaded.expiresAt,
-    }).catch((err) => {
-      console.error(
-        `[process-data-exports] email send failed for job ${job.id}:`,
-        err,
-      );
-    });
+    const [orgRow, requesterMembership, ownerRows] = await Promise.all([
+      prisma.organization.findUnique({
+        where: { id: job.organizationId },
+        select: { name: true },
+      }),
+      prisma.membership.findUnique({
+        where: { id: job.requestedByMembershipId },
+        select: { userId: true },
+      }),
+      prisma.membership.findMany({
+        where: {
+          organizationId: job.organizationId,
+          role: "OWNER",
+          status: "ACTIVE",
+        },
+        select: { userId: true },
+      }),
+    ]);
 
-    // Novu fan-out to the OWNER roster so the requester's teammates
-    // see the bundle even if the requester is OOO.
-    const orgRow = await prisma.organization.findUnique({
-      where: { id: job.organizationId },
-      select: { name: true },
-    });
+    const recipientUserIds = Array.from(
+      new Set([
+        ...ownerRows.map((o) => o.userId),
+        ...(requesterMembership?.userId ? [requesterMembership.userId] : []),
+      ]),
+    );
+
     if (orgRow) {
+      await sendOrgOperationalEmail({
+        recipientUserIds,
+        organizationId: job.organizationId,
+        orgName: orgRow.name,
+        kind: "DATA_EXPORT_READY",
+        expiresAt: uploaded.expiresAt,
+        actionUrl: uploaded.url,
+      }).catch((err) => {
+        console.error(
+          `[process-data-exports] email send failed for job ${job.id}:`,
+          err,
+        );
+      });
+
       await notifyOrgDataExportReady(job.organizationId, {
         orgName: orgRow.name,
         exportId: job.id,

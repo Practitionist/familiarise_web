@@ -1,5 +1,10 @@
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { goHref } from "@/lib/dashboard/go";
+import { stageReferralBonusEmail } from "@/lib/email/senders/money";
+import { notifyRefereeWelcomeBonus } from "@/lib/novu/service";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 import { Prisma as PrismaNamespace } from "@prisma/client";
 import type { ReferralCode, Referral, ReferralCredit } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -180,7 +185,10 @@ export async function applyReferralCode(
   newUserId: string,
   code: string,
 ): Promise<ReferralRow | null> {
-  return withSerializableRetry(() =>
+  let referrerUserId: string | null = null;
+  let welcomeBonusPaise = 0;
+
+  const ref = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         const referralCode = await validateReferralCode(code, tx);
@@ -215,7 +223,11 @@ export async function applyReferralCode(
         });
         if (existingReferral) return null;
 
-        const ref = await tx.referral.create({
+        referrerUserId = referralCode.userId;
+        welcomeBonusPaise =
+          referralCode.refereeReward ?? DEFAULT_REFEREE_REWARD;
+
+        const created = await tx.referral.create({
           data: {
             referralCodeId: referralCode.id,
             referredUserId: newUserId,
@@ -229,7 +241,7 @@ export async function applyReferralCode(
           where: { id: referralCode.id },
           data: { totalReferrals: { increment: 1 } },
         });
-        return ref;
+        return created;
       },
       {
         isolationLevel: "Serializable",
@@ -237,6 +249,70 @@ export async function applyReferralCode(
       },
     ),
   );
+
+  if (ref && referrerUserId && welcomeBonusPaise > 0) {
+    try {
+      const referrerUser = prisma.user?.findUnique
+        ? await prisma.user
+            .findUnique({
+              where: { id: referrerUserId },
+              select: { name: true },
+            })
+            .catch(() => null)
+        : null;
+      const referrerName = referrerUser?.name || "Your friend";
+      const dashboardUrl = `${getAppUrl()}${goHref("client", "payments")}`;
+      const [welcomeBell, welcomeEmails] = await Promise.all([
+        notifyRefereeWelcomeBonus(
+          newUserId,
+          {
+            referrerName,
+            bonusAmountPaise: welcomeBonusPaise,
+            currency: "INR",
+            dashboardUrl,
+          },
+          { deferAttempt: true },
+        ).catch((err) => {
+          console.error(
+            "[referrals] Failed to stage referee welcome bonus bell:",
+            err,
+          );
+          return null;
+        }),
+        stageReferralBonusEmail(prisma, {
+          userId: newUserId,
+          referralId: ref.id,
+          kind: "WELCOME_BONUS",
+          counterpartyName: referrerName,
+          amountPaise: welcomeBonusPaise,
+          currency: "INR",
+          dashboardUrl,
+        }).catch((err) => {
+          console.error(
+            "[referrals] Failed to stage referee welcome bonus email:",
+            err,
+          );
+          return [];
+        }),
+      ]);
+      await flushNotificationsAfter(
+        {
+          bells: [welcomeBell?.staged],
+          emails: [
+            {
+              list: welcomeEmails,
+              emailType: "REFERRAL_WELCOME_BONUS",
+            },
+          ],
+        },
+        "referral.welcome_bonus",
+      );
+    } catch {
+      // Best-effort post-commit notification staging; never blocks signup referral application.
+    }
+  }
+
+  return ref;
 }
 
 /** Credits the user can spend now: VESTED, INR, with balance, not past expiry. */

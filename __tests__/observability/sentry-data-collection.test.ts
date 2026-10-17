@@ -102,8 +102,8 @@ describe("the identity disclosure, which dataCollection cannot enforce", () => {
 });
 
 describe("the quota throttle is still intact", () => {
-  it("keeps a ten-minute window", () => {
-    expect(INFRA_THROTTLE_MS).toBe(10 * 60 * 1000);
+  it("keeps a one-hour window", () => {
+    expect(INFRA_THROTTLE_MS).toBe(60 * 60 * 1000);
   });
 
   it("still keys a repeated SystemEvent-write failure to its own class", () => {

@@ -256,13 +256,13 @@ export type RescheduleProposeCode =
  *
  * Closed by absence-of-row (`PROPOSAL_NOT_FOUND`), a status that is no longer
  * open (`PROPOSAL_NOT_OPEN` — a lapsed row can still answer `PENDING_REVIEW` for
- * up to an hour), and the finalize CAS losing its race (`TRANSITION_REFUSED`,
- * set by the route).
+ * up to an hour), and the in-transaction close losing its race
+ * (`RESCHEDULE_NO_LONGER_OPEN`, which rolls the move back).
  */
 const CLOSED_AUTO_CONFIRM_REFUSALS = new Set([
   "PROPOSAL_NOT_FOUND",
   "PROPOSAL_NOT_OPEN",
-  "TRANSITION_REFUSED",
+  "RESCHEDULE_NO_LONGER_OPEN",
 ]);
 
 /**

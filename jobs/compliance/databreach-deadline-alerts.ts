@@ -39,6 +39,8 @@ import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
 import { OPS_EMAIL } from "@/lib/email/config";
+import { sendComplianceAlertEmail } from "@/lib/email/senders/onboarding";
+import { notifyComplianceAlert } from "@/lib/novu/service";
 import { postOpsChat } from "@/lib/observability/ops-chat";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -115,77 +117,97 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
     },
   );
 
-  // #1298 — gate on the recipient only; a missing key dead-letters in deliver().
   const to = process.env.DATABREACH_ALERT_EMAIL;
+  const appUrl = getAppUrl();
+  const dashboardUrl = `${appUrl}/dashboard/admin/compliance?tab=breaches`;
+  const earliestDeadline = new Date(
+    candidates[0].detectedAt.getTime() +
+      REPORTING_DEADLINE_HOURS * 60 * 60 * 1000,
+  );
+  const overdueSuffix = overdue > 0 ? ` — ${overdue} OVERDUE` : "";
+  const title = `[DPDP] ${atRisk} breach(es) approaching 72h deadline${overdueSuffix}`;
+  const summaryReason = `${atRisk} unreported breach(es) approaching or past the 72-hour DPB reporting deadline under Section 8(6) of the DPDP Act (${overdue} overdue).`;
+
+  const adminUsers = await prisma.user.findMany({
+    where: {
+      OR: [{ role: "ADMIN" }, ...(to ? [{ email: to }] : [])],
+    },
+    select: { id: true, email: true },
+  });
+  const recipientUserIds = adminUsers.map((u) => u.id);
+
   let emailSent = false;
-  if (to) {
+  try {
+    await notifyComplianceAlert(recipientUserIds, {
+      title,
+      obligationType: "DPDP_DATA_BREACH",
+      dueDate: earliestDeadline.toISOString(),
+      dashboardUrl,
+    });
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
+    });
+    console.error("[DataBreach] Novu compliance alert failed:", err);
+  }
+
+  try {
+    const sendRes = await sendComplianceAlertEmail({
+      recipientUserIds,
+      alertId: candidates[0].id,
+      title,
+      dueDate: earliestDeadline,
+      reason: summaryReason,
+      dashboardUrl,
+    });
+    emailSent = sendRes.sent > 0;
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
+    });
+    console.error("[DataBreach] user compliance alert email failed:", err);
+  }
+
+  if (
+    to &&
+    !adminUsers.some((u) => u.email?.toLowerCase() === to.toLowerCase())
+  ) {
     try {
-      const rowsToShow = candidates.slice(0, MAX_ROWS_IN_EMAIL);
-      const truncated = candidates.length > MAX_ROWS_IN_EMAIL;
-      const appUrl = getAppUrl();
-      const tableHtml = rowsToShow
-        .map((r) => {
-          const ageHours = Math.round(
-            (now.getTime() - r.detectedAt.getTime()) / (60 * 60 * 1000),
-          );
-          const isOverdue = ageHours >= REPORTING_DEADLINE_HOURS;
-          const cell = (v: string) =>
-            `<td${isOverdue ? ' style="color:#c00;font-weight:bold"' : ""}>${v}</td>`;
-          return (
-            `<tr>${cell(r.detectedAt.toISOString())}` +
-            `${cell(`${ageHours}h`)}` +
-            `${cell(String(r.affectedUserIds.length))}` +
-            `${cell(r.rootCause.slice(0, 80))}` +
-            `${cell(r.dpbReference ?? "—")}` +
-            `${cell(`<a href="${appUrl}/dashboard/admin/compliance?tab=breaches&id=${r.id}">open</a>`)}` +
-            `</tr>`
-          );
-        })
-        .join("");
-      // #1298 — through deliver() so a failed alert dead-letters and replays.
       const outcome = await deliver(
         {
           from: SENDERS.ops,
           to,
           replyTo: OPS_EMAIL,
-          subject: `[DPDP] ${atRisk} breach(es) approaching 72h deadline${overdue > 0 ? ` — ${overdue} OVERDUE` : ""}`,
-          html:
-            `<p>The DPDP DataBreach cron found <strong>${atRisk}</strong> ` +
-            `unreported breaches approaching or past the 72-hour DPB ` +
-            `reporting deadline (Section 8(6), DPDP Act). Overdue rows ` +
-            `are highlighted in red.</p>` +
-            `<table border="1" cellpadding="6" cellspacing="0">` +
-            `<thead><tr><th>Detected</th><th>Age</th><th>Affected users</th>` +
-            `<th>Root cause</th><th>DPB ref</th><th></th></tr></thead>` +
-            `<tbody>${tableHtml}</tbody></table>` +
-            (truncated
-              ? `<p>…and ${atRisk - MAX_ROWS_IN_EMAIL} more. Open the ` +
-                `admin dashboard for the full list.</p>`
-              : ""),
+          subject: title,
+          html: `<p>${summaryReason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
         },
         "DATABREACH_DEADLINE_ALERT",
         { budgetMs: EMAIL_BUDGET_MS.JOB },
       );
-      if (!outcome.success) throw outcome.error;
-      emailSent = true;
-      console.log(`[DataBreach] alert email sent to ${to}`);
-      const overdueClause = overdue > 0 ? `, ${overdue} of them OVERDUE` : "";
-      await postOpsChat(
-        `[DPDP] ${atRisk} unreported data breach(es) are approaching or past the 72-hour DPB reporting deadline` +
-          `${overdueClause}. ` +
-          `Report each one to the Data Protection Board under Section 8(6) of the DPDP Act and record its DPB reference: ` +
-          `${appUrl}/dashboard/admin/compliance?tab=breaches`,
-      );
+      if (outcome.success) {
+        emailSent = true;
+      }
     } catch (err) {
       Sentry.captureException(err, {
         tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
       });
-      console.error("[DataBreach] alert email failed:", err);
+      console.error("[DataBreach] direct alert email failed:", err);
     }
-  } else {
-    console.log(
-      "[DataBreach] DATABREACH_ALERT_EMAIL not configured; email skipped",
+  }
+
+  try {
+    const overdueClause = overdue > 0 ? `, ${overdue} of them OVERDUE` : "";
+    await postOpsChat(
+      `[DPDP] ${atRisk} unreported data breach(es) are approaching or past the 72-hour DPB reporting deadline` +
+        `${overdueClause}. ` +
+        `Report each one to the Data Protection Board under Section 8(6) of the DPDP Act and record its DPB reference: ` +
+        dashboardUrl,
     );
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "databreach-deadline-alerts" },
+    });
+    console.error("[DataBreach] Ops Chat alert failed:", err);
   }
 
   Sentry.logger.info("job:databreach-deadline-alerts finished", {

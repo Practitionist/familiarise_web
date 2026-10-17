@@ -200,6 +200,21 @@ describe("nobody joined — ticket, never an automatic refund", () => {
     );
   });
 
+  it("reports lost deliveries once per run, not once per session", async () => {
+    mockEvidence.mockResolvedValue({ unique: 1, maxConcurrent: 1 });
+    const sessions = Array.from({ length: 12 }, (_, i) => ({
+      ...candidate([`slot-${i}`]),
+      id: `consult-${i}`,
+    }));
+
+    await detectBothAbsent(sessions as never, [], lookup);
+
+    expect(mockCapture).toHaveBeenCalledTimes(1);
+    const { extra } = mockCapture.mock.calls[0][1];
+    expect(extra.count).toBe(12);
+    expect(extra.sample).toHaveLength(10);
+  });
+
   it("stays silent when Stream cannot speak for the session either", async () => {
     mockFindMany.mockResolvedValue([candidate(["slot-1"])]);
     mockEvidence.mockResolvedValue(null);

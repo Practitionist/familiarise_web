@@ -32,6 +32,8 @@ import { isValidPan } from "@/lib/compliance/tds";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { isHostOrgsEnabled } from "@/lib/enterprise/feature-flag";
 import { attemptOnboardingEmail, stageOrgCreatedEmail } from "@/lib/email";
+import { notifyOrgCreated } from "@/lib/novu/org-workflows";
+import { attemptTrigger } from "@/lib/novu";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { OrgOnboardingSchema } from "@/utils/onboarding";
 import {
@@ -390,6 +392,17 @@ export async function POST(req: NextRequest) {
       // P3 email twin: confirmation to the creator, staged inside this
       // transaction so the row exists iff the organisation does; the vendor
       // attempt runs in after() below.
+      const stagedBells =
+        (await notifyOrgCreated(
+          org.id,
+          {
+            orgName: org.name,
+            orgSlug: org.slug,
+            dashboardUrl: `/dashboard/organization/${org.id}/home`,
+          },
+          { tx },
+        )) ?? [];
+
       const stagedCreated = await stageOrgCreatedEmail(
         {
           userId: auth.session.user.id,
@@ -406,14 +419,15 @@ export async function POST(req: NextRequest) {
         membership,
         orgWorkspaceProfileId: orgWorkspace.id,
         stagedCreated,
+        stagedBells,
       };
     });
 
-    const { stagedCreated, ...responseBody } = result;
-    scheduleAfter(
-      () => attemptOnboardingEmail(stagedCreated),
-      "org.create.onboarding-email",
-    );
+    const { stagedCreated, stagedBells, ...responseBody } = result;
+    await scheduleAfter(async () => {
+      for (const row of stagedBells) await attemptTrigger(row);
+      await attemptOnboardingEmail(stagedCreated);
+    }, "org.create.onboarding-email");
 
     return NextResponse.json(responseBody, { status: 201 });
   } catch (err) {

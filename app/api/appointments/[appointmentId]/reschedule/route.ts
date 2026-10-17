@@ -1,3 +1,4 @@
+import { PROFILE_OWNER_SELECT } from "@/lib/booking/list-selects";
 import * as Sentry from "@sentry/nextjs";
 import {
   applyRateLimit,
@@ -257,7 +258,7 @@ export async function POST(
                 include: {
                   consultationPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: PROFILE_OWNER_SELECT,
                     },
                   },
                   requestedBy: true,
@@ -267,7 +268,7 @@ export async function POST(
                 include: {
                   subscriptionPlan: {
                     include: {
-                      consultantProfile: true,
+                      consultantProfile: PROFILE_OWNER_SELECT,
                     },
                   },
                   requestedBy: true,
@@ -879,24 +880,14 @@ export async function POST(
           autoConfirmed = outcome.confirmed;
           autoConfirmReason = outcome.confirmed ? null : outcome.reason;
         } catch (err) {
-          // A lost CAS race on the final AUTO_ACCEPTED write (proposal answered
-          // or expired concurrently) is an ordinary outcome, not an error —
-          // reschedule-auto-confirm.ts already reports anything else itself.
-          // The reason names what the CAS told us — the row was not in the
-          // expected state — not why; a race is the common cause, not the only
-          // one, so the label does not claim it.
-          autoConfirmReason =
-            err instanceof IllegalTransitionError
-              ? "TRANSITION_REFUSED"
-              : "ERROR";
-          if (!(err instanceof IllegalTransitionError)) {
-            Sentry.captureException(
-              err instanceof Error ? err : new Error(String(err)),
-              {
-                tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
-              },
-            );
-          }
+          // A lost AUTO_ACCEPTED race comes back as a reason, never a throw.
+          autoConfirmReason = "ERROR";
+          Sentry.captureException(
+            err instanceof Error ? err : new Error(String(err)),
+            {
+              tags: { subsystem: "bookings", op: "reschedule-auto-confirm" },
+            },
+          );
         }
         console.info(
           JSON.stringify({
@@ -1071,19 +1062,27 @@ export async function POST(
             appointment.organizationId,
             "appointments",
           );
-          const [, emailRows] = await Promise.all([
-            notifyAppointmentRescheduled(uniqueUserIds, {
-              ...notificationScope(appointment.organizationId),
-              ...variant,
-              appointmentType,
-              consultantName:
-                plan?.consultantProfile?.user?.name ?? "Consultant",
-              consulteeName: requestedBy?.user?.name ?? "Participant",
-              planTitle: planTitleOrSessionLabel(plan?.title, appointmentType),
-              dashboardUrl,
-            }).catch((err) =>
-              console.error("[reschedule] Failed to send notification:", err),
-            ),
+          const [bellResults, emailRows] = await Promise.all([
+            notifyAppointmentRescheduled(
+              uniqueUserIds,
+              {
+                ...notificationScope(appointment.organizationId),
+                ...variant,
+                appointmentType,
+                consultantName:
+                  plan?.consultantProfile?.user?.name ?? "Consultant",
+                consulteeName: requestedBy?.user?.name ?? "Participant",
+                planTitle: planTitleOrSessionLabel(
+                  plan?.title,
+                  appointmentType,
+                ),
+                dashboardUrl,
+              },
+              { deferAttempt: true },
+            ).catch((err) => {
+              console.error("[reschedule] Failed to send notification:", err);
+              return [];
+            }),
             stageAppointmentRescheduledEmail(prisma, {
               appointmentId,
               userIds: uniqueUserIds,
@@ -1098,6 +1097,7 @@ export async function POST(
           ]);
           await flushNotificationsAfter(
             {
+              bells: (bellResults ?? []).map((r) => r?.staged),
               emails: [
                 { rows: emailRows, emailType: "APPOINTMENT_RESCHEDULED" },
               ],

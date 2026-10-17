@@ -289,7 +289,10 @@ const consultantDeliveryArms = (
 const planOwnerSelect = {
   consultantProfileId: true,
   consultantProfile: {
-    select: { id: true, user: { select: userSelectFields } },
+    select: {
+      id: true,
+      user: { select: { id: true, name: true, image: true } },
+    },
   },
 } as const;
 

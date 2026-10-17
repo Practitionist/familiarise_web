@@ -198,9 +198,7 @@ export async function orgInvoiceGstFindings(
         const contract = ev.programAssignment.program.contract;
         const tax = surchargeTaxPaise(
           sumPaise(ev.surchargePaise),
-          contract.organization
-            ? orgBuyerCountry(contract.organization)
-            : "IN",
+          contract.organization ? orgBuyerCountry(contract.organization) : "IN",
         );
         if (tax <= 0) continue;
         const prev = expectedByPayment.get(ev.paymentId);
@@ -249,7 +247,10 @@ export async function orgInvoiceGstFindings(
           const posted = gstByPayment.get(paymentId) ?? 0;
           const paymentTax = taxAmountByPayment.get(paymentId) ?? 0;
           const expected = Math.max(meta.surchargeTaxPaise, paymentTax);
-          if (posted < meta.surchargeTaxPaise || Math.abs(expected - posted) > 1) {
+          if (
+            posted < meta.surchargeTaxPaise ||
+            Math.abs(expected - posted) > 1
+          ) {
             findings.push({
               kind: "ORG_INVOICE_GST_MISMATCH",
               organizationId: meta.organizationId,

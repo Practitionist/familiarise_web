@@ -350,3 +350,8 @@ export const razorpayWebhookEnvelopeSchema = z
 export type RazorpayWebhookEnvelope = z.infer<
   typeof razorpayWebhookEnvelopeSchema
 >;
+
+/** The pre-written Payment id an approval order's notes carry, so a capture can find a row whose order was never recorded. */
+export const orderNotesPaymentIdSchema = z.object({
+  familiarisePaymentId: z.string().min(1).max(64).optional(),
+});

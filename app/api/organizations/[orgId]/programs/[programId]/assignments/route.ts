@@ -24,6 +24,16 @@ import { adjustActiveSeatCount } from "@/lib/api/organizations/seat-count";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import type { StagedTrigger } from "@/lib/novu";
+import { notifyOrgSeatAssigned } from "@/lib/novu/org-workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 
 const CreateBodySchema = z
   .object({
@@ -110,13 +120,16 @@ async function assignSingleMembershipInTx(
   tx: TxClient,
   args: {
     orgId: string;
+    orgName: string;
     programId: string;
+    programName: string;
     actorMembershipId: string;
     singleMembershipId: string;
     body: CreateAssignmentBody;
   },
 ) {
-  const { orgId, programId, singleMembershipId, body } = args;
+  const { orgId, orgName, programId, programName, singleMembershipId, body } =
+    args;
   const membership = await tx.membership.findFirst({
     where: { id: singleMembershipId, organizationId: orgId },
     select: { id: true, status: true, userId: true },
@@ -143,7 +156,10 @@ async function assignSingleMembershipInTx(
     periodStart: body.periodStart,
     periodEnd: body.periodEnd,
   });
+  let stagedBells: StagedTrigger[] = [];
+  let stagedEmails: StagedEmail[] = [];
   if (created) {
+    const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}`;
     await adjustActiveSeatCount(tx, { programId, delta: 1 });
     await tx.program.updateMany({
       where: { id: programId, configLockedAt: null },
@@ -161,6 +177,25 @@ async function assignSingleMembershipInTx(
         periodStart: body.periodStart.toISOString(),
         periodEnd: body.periodEnd.toISOString(),
       },
+    });
+    stagedBells =
+      (await notifyOrgSeatAssigned(
+        membership.userId,
+        {
+          organizationId: orgId,
+          orgName,
+          programName,
+          dashboardUrl,
+        },
+        { tx },
+      )) ?? [];
+    stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+      recipientUserIds: [membership.userId],
+      entityId: assignment.id,
+      kind: "SEAT_ASSIGNED",
+      orgName,
+      programName,
+      dashboardUrl,
     });
   }
   await tx.orgAuditLog.create({
@@ -183,6 +218,9 @@ async function assignSingleMembershipInTx(
     ok: true as const,
     assignment,
     assignments: [assignment],
+    stagedBells,
+    stagedEmails,
+    newlyAssignedTargets: [] as Array<{ assignmentId: string; userId: string }>,
   };
 }
 
@@ -291,7 +329,10 @@ async function assignBulkMembershipsInTx(
   const newlyCreatedAssignments = createdAssignments.filter(
     (a) => !existingExactSet.has(a.membershipId),
   );
+  const newlyAssignedTargets: Array<{ assignmentId: string; userId: string }> =
+    [];
   for (const created of newlyCreatedAssignments) {
+    const targetUserId = membershipById.get(created.membershipId)?.userId;
     await dispatchWebhookEvent({
       prisma: tx,
       organizationId: orgId,
@@ -300,11 +341,17 @@ async function assignBulkMembershipsInTx(
         assignmentId: created.id,
         programId,
         membershipId: created.membershipId,
-        userId: membershipById.get(created.membershipId)?.userId,
+        userId: targetUserId,
         periodStart: body.periodStart.toISOString(),
         periodEnd: body.periodEnd.toISOString(),
       },
     });
+    if (targetUserId) {
+      newlyAssignedTargets.push({
+        assignmentId: created.id,
+        userId: targetUserId,
+      });
+    }
   }
 
   if (createdCount > 0) {
@@ -322,7 +369,61 @@ async function assignBulkMembershipsInTx(
     ok: true as const,
     assignment: createdAssignments[0],
     assignments: createdAssignments,
+    stagedBells: [] as StagedTrigger[],
+    stagedEmails: [] as StagedEmail[],
+    newlyAssignedTargets,
   };
+}
+
+function buildAssignmentErrorResponse(
+  outcome:
+    | { ok: false; code: "FOREIGN"; membershipId: string }
+    | { ok: false; code: "INACTIVE"; status: string; membershipId: string },
+  includeMembershipId: boolean,
+): NextResponse {
+  const extraMember = includeMembershipId
+    ? { membershipId: outcome.membershipId }
+    : {};
+  if (outcome.code === "FOREIGN") {
+    return NextResponse.json(
+      {
+        error: "Membership does not belong to this organization",
+        code: "MEMBERSHIP_FOREIGN",
+        ...extraMember,
+      },
+      { status: 400 },
+    );
+  }
+  return NextResponse.json(
+    {
+      error: `Cannot assign a ${outcome.status} membership to a program`,
+      code: "MEMBERSHIP_NOT_ACTIVE",
+      ...extraMember,
+    },
+    { status: 409 },
+  );
+}
+
+async function flushSeatAssignedNotifications(
+  stagedBells: StagedTrigger[],
+  stagedEmails: StagedEmail[],
+): Promise<void> {
+  await flushNotificationsAfter(
+    {
+      bells: stagedBells,
+      emails:
+        stagedEmails.length > 0
+          ? [
+              {
+                rows: stagedEmails,
+                emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                budgetMs: EMAIL_BUDGET_MS.REQUEST,
+              },
+            ]
+          : [],
+    },
+    "org.program.seat-assigned",
+  );
 }
 
 export async function POST(
@@ -365,7 +466,7 @@ export async function POST(
 
   const program = await prisma.program.findFirst({
     where: { id: programId, contract: { organizationId: orgId } },
-    select: { id: true, status: true },
+    select: { id: true, name: true, status: true },
   });
   if (!program) {
     return NextResponse.json({ error: "Program not found" }, { status: 404 });
@@ -376,6 +477,7 @@ export async function POST(
       { status: 409 },
     );
   }
+  const programName = program.name ?? "Program";
 
   try {
     const outcome = await withSerializableRetry(() =>
@@ -384,7 +486,9 @@ export async function POST(
           targetMembershipIds.length === 1
             ? assignSingleMembershipInTx(tx, {
                 orgId,
+                orgName: access.org.name,
                 programId,
+                programName,
                 actorMembershipId: access.member.id,
                 singleMembershipId: targetMembershipIds[0],
                 body,
@@ -396,33 +500,52 @@ export async function POST(
                 targetMembershipIds,
                 body,
               }),
-        { isolationLevel: "Serializable" },
+        { isolationLevel: "Serializable", timeout: 15_000 },
       ),
     );
 
     if (!outcome.ok) {
-      const extraMember = body.membershipIds
-        ? { membershipId: outcome.membershipId }
-        : {};
-      if (outcome.code === "FOREIGN") {
-        return NextResponse.json(
-          {
-            error: "Membership does not belong to this organization",
-            code: "MEMBERSHIP_FOREIGN",
-            ...extraMember,
-          },
-          { status: 400 },
-        );
-      }
-      return NextResponse.json(
-        {
-          error: `Cannot assign a ${outcome.status} membership to a program`,
-          code: "MEMBERSHIP_NOT_ACTIVE",
-          ...extraMember,
-        },
-        { status: 409 },
-      );
+      return buildAssignmentErrorResponse(outcome, Boolean(body.membershipIds));
     }
+
+    const stagedBells = [...outcome.stagedBells];
+    const stagedEmails = [...outcome.stagedEmails];
+    if (outcome.newlyAssignedTargets.length > 0) {
+      const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}`;
+      for (const target of outcome.newlyAssignedTargets) {
+        try {
+          const bells =
+            (await notifyOrgSeatAssigned(
+              target.userId,
+              {
+                organizationId: orgId,
+                orgName: access.org.name,
+                programName,
+                dashboardUrl,
+              },
+              { deferAttempt: true },
+            )) ?? [];
+          const emails = await stageOrgContractAndSeatEmail(prisma, {
+            recipientUserIds: [target.userId],
+            entityId: target.assignmentId,
+            kind: "SEAT_ASSIGNED",
+            orgName: access.org.name,
+            programName,
+            dashboardUrl,
+          });
+          stagedBells.push(...bells);
+          stagedEmails.push(...emails);
+        } catch (err) {
+          console.error(
+            "[assignments] seat-assigned staging failed",
+            target.assignmentId,
+            err,
+          );
+        }
+      }
+    }
+
+    await flushSeatAssignedNotifications(stagedBells, stagedEmails);
 
     return NextResponse.json(
       { assignment: outcome.assignment, assignments: outcome.assignments },

@@ -206,9 +206,8 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
     const m = mockTx({ conflict: true });
     await confirmExistingAppointment(m.tx, "appt-1", "booker");
     expect(m.slotUpdateMany).not.toHaveBeenCalled();
-    // The guard keys on the OTHER party's seat (the consultant), read from
-    // AppointmentParticipant and never from a per-occurrence join; the booker
-    // is excluded so a user's own hold is not their own conflict.
+    // The guard keys on every live seat on the booking, read from
+    // AppointmentParticipant: the payer's own other booking at this time is a conflict too.
     expect(m.conflictFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -216,7 +215,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
           appointment: expect.objectContaining({
             participants: {
               some: expect.objectContaining({
-                userId: { in: ["consultant"] },
+                userId: { in: ["booker", "consultant"] },
                 status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
               }),
             },
@@ -232,6 +231,28 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
         }),
       }),
     );
+  });
+
+  it("blocks a capture when the payer booked another consultant for the same time during the hold", async () => {
+    const m = mockTx({ conflict: false });
+    // Only the payer's own seat matches: their other booking at this time.
+    m.conflictFindFirst.mockImplementation(
+      async (args: {
+        where: {
+          appointment: { participants: { some: { userId: { in: string[] } } } };
+        };
+      }) =>
+        args.where.appointment.participants.some.userId.in.includes("booker")
+          ? { id: "slot-elsewhere", appointmentId: "appt-other-consultant" }
+          : null,
+    );
+    await expect(
+      confirmExistingAppointment(m.tx, "appt-1", "booker"),
+    ).resolves.toEqual({
+      capturedAfterTerminal: false,
+      doubleBookingBlocked: true,
+    });
+    expect(m.slotUpdateMany).not.toHaveBeenCalled();
   });
 
   it("confirms normally when no overlap exists", async () => {

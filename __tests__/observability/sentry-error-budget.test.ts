@@ -58,13 +58,13 @@ describe("applyErrorBudget", () => {
     ).toBeNull();
   });
 
-  it("caps a process at 30 events per hour, then resumes", () => {
+  it("caps a process at 10 events per hour, then resumes", () => {
     let passed = 0;
     for (let i = 0; i < 40; i++) {
       if (applyErrorBudget(thrown(`distinct failure ${"x".repeat(i)}`)))
         passed += 1;
     }
-    expect(passed).toBe(30);
+    expect(passed).toBe(10);
     expect(console.warn).toHaveBeenCalledTimes(1);
     // A fatal skips the open breaker but keeps its per-key throttle.
     const fatal = {

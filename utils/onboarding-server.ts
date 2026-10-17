@@ -394,7 +394,7 @@ export async function addConsultantIdentity(
     );
     return {
       success: true,
-      user: updatedUser,
+      user: onboardingResultUser(updatedUser),
       verificationWarning: verification?.warning,
       verificationDeferred: verification?.deferred,
     };
@@ -591,15 +591,7 @@ async function submitVerificationRequest(
 // ============================================================================
 
 const onboardingUserInclude = {
-  consultantProfile: {
-    include: {
-      availabilityWindowsWeekly: true,
-      availabilityWindowsCustom: true,
-      domain: true,
-      subDomains: true,
-      tags: true,
-    },
-  },
+  consultantProfile: { select: { id: true } },
   consulteeProfile: true,
   workExperiences: true,
   education: true,
@@ -617,11 +609,12 @@ type OnboardingResult = {
   /** The payload field the refusal is about; the wizard opens its step. */
   field?: string;
   index?: number;
-  // `user` is a Prisma User with deeply-included relations (consultantProfile,
-  // consulteeProfile, slots, domain, etc.). Typing it precisely would require a
-  // shared Prisma payload type across server/action/client layers — not worth
-  // the coupling. Callers only read a few string IDs from it.
-  user?: Record<string, unknown>;
+  // Only the user id and profile ids cross to the client; never the full row.
+  user?: {
+    id: string;
+    consultantProfileId: string | null;
+    consulteeProfileId: string | null;
+  };
   error?: string;
   verificationWarning?: string;
   /// True when the consultant finished onboarding without completing the
@@ -630,6 +623,16 @@ type OnboardingResult = {
   /// "finish from Settings" message instead of "under review".
   verificationDeferred?: boolean;
 };
+
+function onboardingResultUser(
+  user: OnboardingUser,
+): NonNullable<OnboardingResult["user"]> {
+  return {
+    id: user.id,
+    consultantProfileId: user.consultantProfileId,
+    consulteeProfileId: user.consulteeProfileId,
+  };
+}
 
 /** Lost the claim: another request completed onboarding first. */
 class OnboardingClaimLostError extends Error {
@@ -706,7 +709,7 @@ async function recoverIdempotentOnboarding(
   });
   if (!existing?.onboardingCompleted) return null;
   if (existing.role === submittedRole && isFullyOnboarded(existing)) {
-    return { success: true, user: existing };
+    return { success: true, user: onboardingResultUser(existing) };
   }
   return {
     success: false,
@@ -836,7 +839,7 @@ export async function processOnboardingData(
 
     return {
       success: true,
-      user: updatedUser,
+      user: onboardingResultUser(updatedUser),
       verificationWarning: verification?.warning,
       verificationDeferred: verification?.deferred,
     };

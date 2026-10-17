@@ -6,8 +6,9 @@ import { lutNumberForSupply } from "@/lib/compliance/lut";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
+import { sendOrgBillingEmail } from "@/lib/email/senders/money";
 import { reportSentryError } from "@/lib/observability/report";
-import type { Tx } from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   supplierStateCode,
   SupplierStateMismatchError,
@@ -297,14 +298,49 @@ export async function notifyCreatedOrgInvoice(
   input: CreateOrgInvoiceInput,
 ): Promise<void> {
   if (!input.issueImmediately) return;
-  const { invoice, orgName } = created;
-  await notifyOrgInvoiceIssued(orgId, {
-    invoiceNumber: invoice.invoiceNumber,
-    orgName,
-    totalPaise: invoice.totalPaise,
-    currency: input.displayCurrency,
-    dueDate: input.dueDate.toISOString(),
-    dashboardUrl: `${origin}/dashboard/organization/${orgId}/billing`,
-    pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoice.id}/pdf`,
-  });
+  try {
+    const { invoice, orgName } = created;
+    const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
+    const ownerRows = prisma.membership?.findMany
+      ? await prisma.membership.findMany({
+          where: { organizationId: orgId, status: "ACTIVE", role: "OWNER" },
+          select: { userId: true },
+        })
+      : [];
+    const ownerUserIds = ownerRows.map((r) => r.userId);
+    await Promise.all([
+      Promise.resolve(
+        notifyOrgInvoiceIssued(orgId, {
+          invoiceNumber: invoice.invoiceNumber,
+          orgName,
+          totalPaise: invoice.totalPaise,
+          currency: input.displayCurrency,
+          dueDate: input.dueDate.toISOString(),
+          dashboardUrl,
+          pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoice.id}/pdf`,
+        }),
+      ).catch((err) => {
+        console.error("[createOrgInvoice] notifyOrgInvoiceIssued failed:", err);
+        return [];
+      }),
+      Promise.resolve(
+        sendOrgBillingEmail({
+          recipientUserIds: ownerUserIds,
+          organizationId: orgId,
+          orgName,
+          kind: "INVOICE_ISSUED",
+          amountPaise: invoice.totalPaise,
+          currency: input.displayCurrency,
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          dueDate: input.dueDate,
+          dashboardUrl,
+        }),
+      ).catch((err) => {
+        console.error("[createOrgInvoice] sendOrgBillingEmail failed:", err);
+      }),
+    ]);
+  } catch (notifyErr) {
+    console.error("[createOrgInvoice] post-commit notify failed:", notifyErr);
+  }
 }

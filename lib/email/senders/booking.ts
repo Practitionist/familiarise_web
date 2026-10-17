@@ -12,7 +12,19 @@ import AppointmentRescheduledEmail, {
   type RescheduleEmailOutcome,
 } from "@/emails/booking/AppointmentRescheduledEmail";
 import AppointmentReminderEmail from "@/emails/booking/AppointmentReminderEmail";
+import ClassSessionEmail, {
+  classSessionSubject,
+  type ClassSessionEmailKind,
+} from "@/emails/booking/ClassSessionEmail";
+import DocumentAndRecordingEmail, {
+  documentAndRecordingSubject,
+  type DocumentAndRecordingEmailKind,
+} from "@/emails/booking/DocumentAndRecordingEmail";
 import NewBookingRequestEmail from "@/emails/booking/NewBookingRequestEmail";
+import TrialAndSubscriptionEmail, {
+  trialAndSubscriptionSubject,
+  type TrialAndSubscriptionEmailKind,
+} from "@/emails/booking/TrialAndSubscriptionEmail";
 import TrialScheduledEmail from "@/emails/booking/TrialScheduledEmail";
 import WindowOpenedEmail from "@/emails/booking/WindowOpenedEmail";
 import { EmailLayout } from "@/emails/components/EmailLayout";
@@ -34,8 +46,10 @@ import {
   defineLifecycleStager,
   greet,
   money,
+  prepareSpecEmails,
   stageSpecGuarded,
   whenText,
+  type PreparedRecipientEmails,
   type RecipientEmailSpec,
 } from "./shared";
 
@@ -487,44 +501,47 @@ export interface TrialScheduledEmailArgs {
   paymentUrl?: string | null;
 }
 
-export const sendTrialScheduledEmail =
-  defineBudgetedEmailSender<TrialScheduledEmailArgs>((args) => {
-    const role = (r: EmailRecipient) =>
-      r.userId === args.consulteeUserId ? "consultee" : "consultant";
-    const state = args.awaitingPayment
-      ? "held until payment completes"
-      : "confirmed";
-    return {
-      userIds: [args.consulteeUserId, args.consultantUserId],
-      spec: {
-        emailType: "TRIAL_SESSION_SCHEDULED",
-        category: "trials",
-        entityRef: `trial:${args.trialId}`,
-        subject: (r) =>
-          role(r) === "consultee"
-            ? `Your free trial with ${args.consultantName} is ${state}`
-            : `Trial with ${args.consulteeName} is ${state}`,
-        render: (r) =>
-          React.createElement(TrialScheduledEmail, {
-            role: role(r),
-            recipientName: greet(r),
-            otherPartyName:
-              role(r) === "consultee"
-                ? args.consultantName
-                : args.consulteeName,
-            planTitle: args.planTitle,
-            startsAtText: whenText(args.startsAt, r.zone),
-            awaitingPayment: args.awaitingPayment,
-            dashboardUrl: absolute(
-              role(r) === "consultee" && args.paymentUrl
-                ? args.paymentUrl
-                : args.dashboardUrl,
-            ),
-            unsubscribeUrl: r.unsubscribeUrl,
-          }),
-      },
-    };
-  });
+function buildTrialScheduledEmail(args: TrialScheduledEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const role = (r: EmailRecipient) =>
+    r.userId === args.consulteeUserId ? "consultee" : "consultant";
+  const state = args.awaitingPayment
+    ? "held until payment completes"
+    : "confirmed";
+  return {
+    userIds: [args.consulteeUserId, args.consultantUserId],
+    spec: {
+      emailType: "TRIAL_SESSION_SCHEDULED",
+      category: "trials",
+      entityRef: `trial:${args.trialId}`,
+      subject: (r) =>
+        role(r) === "consultee"
+          ? `Your free trial with ${args.consultantName} is ${state}`
+          : `Trial with ${args.consulteeName} is ${state}`,
+      render: (r) =>
+        React.createElement(TrialScheduledEmail, {
+          role: role(r),
+          recipientName: greet(r),
+          otherPartyName:
+            role(r) === "consultee" ? args.consultantName : args.consulteeName,
+          planTitle: args.planTitle,
+          startsAtText: whenText(args.startsAt, r.zone),
+          awaitingPayment: args.awaitingPayment,
+          dashboardUrl: absolute(
+            role(r) === "consultee" && args.paymentUrl
+              ? args.paymentUrl
+              : args.dashboardUrl,
+          ),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const stageTrialScheduledEmail =
+  defineLifecycleStager<TrialScheduledEmailArgs>(buildTrialScheduledEmail);
 
 // ── Window opened ───────────────────────────────────────────────────────────
 
@@ -559,3 +576,328 @@ export async function stageWindowOpenedEmail(
     tx,
   );
 }
+
+// ── Class session & outcome notices ─────────────────────────────────────────
+
+export type EmailTimestampInput = Date | string | null;
+
+export interface ClassSessionLifecycleEmailArgs {
+  appointmentId: string;
+  userIds: string[];
+  kind: ClassSessionEmailKind;
+  planTitle: string;
+  consultantName?: string;
+  appointmentType?: string;
+  startsAt?: EmailTimestampInput;
+  makeUpBy?: EmailTimestampInput;
+  amountPaise?: number;
+  currency?: string;
+  missedCount?: number;
+  voided?: boolean;
+  recordingUrl?: string | null;
+  supportUrl?: string | null;
+  dashboardUrl: string;
+}
+
+function buildClassSessionEmail(args: ClassSessionLifecycleEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const amountText =
+    typeof args.amountPaise === "number"
+      ? money(args.amountPaise, args.currency ?? "INR")
+      : undefined;
+  return {
+    userIds: args.userIds,
+    spec: {
+      emailType: `CLASS_SESSION_${args.kind}`,
+      category: "appointments",
+      entityRef: `appointment:${args.appointmentId}`,
+      subject: () =>
+        classSessionSubject({
+          kind: args.kind,
+          planTitle: args.planTitle,
+          voided: args.voided,
+          appointmentType: args.appointmentType,
+        }),
+      render: (r) =>
+        React.createElement(ClassSessionEmail, {
+          kind: args.kind,
+          recipientName: greet(r),
+          planTitle: args.planTitle,
+          consultantName: args.consultantName,
+          appointmentType: args.appointmentType,
+          startsAtText: args.startsAt
+            ? whenText(args.startsAt, r.zone)
+            : undefined,
+          makeUpByText: args.makeUpBy
+            ? whenText(args.makeUpBy, r.zone)
+            : undefined,
+          amountText,
+          missedCount: args.missedCount,
+          voided: args.voided,
+          recordingUrl: args.recordingUrl
+            ? absolute(args.recordingUrl)
+            : undefined,
+          supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
+          dashboardUrl: absolute(args.dashboardUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export interface ClassExitAvailableEmailArgs {
+  appointmentId: string;
+  userIds: string[];
+  planTitle: string;
+  missedCount?: number;
+  dashboardUrl: string;
+}
+
+function buildClassExitAvailableEmail(args: ClassExitAvailableEmailArgs) {
+  return buildClassSessionEmail({
+    ...args,
+    kind: "EXIT_AVAILABLE",
+  });
+}
+
+export const stageClassExitAvailableEmails =
+  defineLifecycleStager<ClassExitAvailableEmailArgs>(
+    buildClassExitAvailableEmail,
+  );
+
+export interface SessionOutcomeEmailArgs {
+  appointmentId: string;
+  userIds: string[];
+  outcome: "NO_SHOW" | "MISSED_RECORDING";
+  planTitle: string;
+  startsAt?: EmailTimestampInput;
+  recordingUrl?: string | null;
+  supportUrl?: string | null;
+  dashboardUrl: string;
+}
+
+function buildSessionOutcomeEmail(args: SessionOutcomeEmailArgs) {
+  return buildClassSessionEmail({
+    appointmentId: args.appointmentId,
+    userIds: args.userIds,
+    kind: args.outcome,
+    planTitle: args.planTitle,
+    startsAt: args.startsAt,
+    recordingUrl: args.recordingUrl ? absolute(args.recordingUrl) : undefined,
+    supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+}
+
+export function prepareSessionOutcomeEmails(
+  args: SessionOutcomeEmailArgs,
+): Promise<PreparedRecipientEmails> {
+  const { userIds, spec } = buildSessionOutcomeEmail({
+    ...args,
+    recordingUrl: args.recordingUrl ? absolute(args.recordingUrl) : undefined,
+    supportUrl: args.supportUrl ? absolute(args.supportUrl) : undefined,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+  return prepareSpecEmails(spec, userIds);
+}
+
+export const stageSessionOutcomeEmails =
+  defineLifecycleStager<SessionOutcomeEmailArgs>(buildSessionOutcomeEmail);
+
+export interface AppointmentCompletedEmailArgs {
+  appointmentId: string;
+  userIds: string[];
+  planTitle: string;
+  appointmentType?: string;
+  dashboardUrl: string;
+}
+
+function buildAppointmentCompletedEmail(args: AppointmentCompletedEmailArgs) {
+  return buildClassSessionEmail({
+    appointmentId: args.appointmentId,
+    userIds: args.userIds,
+    kind: "COMPLETED",
+    planTitle: args.planTitle,
+    appointmentType: args.appointmentType,
+    dashboardUrl: absolute(args.dashboardUrl),
+  });
+}
+
+export const stageAppointmentCompletedEmails =
+  defineLifecycleStager<AppointmentCompletedEmailArgs>(
+    buildAppointmentCompletedEmail,
+  );
+
+// ── Trial & Subscription lifecycle ──────────────────────────────────────────
+
+export interface TrialLifecycleEmailArgs {
+  trialId: string;
+  userIds: string[];
+  kind: Extract<
+    TrialAndSubscriptionEmailKind,
+    "TRIAL_REQUESTED" | "TRIAL_COMPLETED" | "TRIAL_CANCELLED" | "TRIAL_REJECTED"
+  >;
+  planTitle: string;
+  consultantUserId?: string;
+  consulteeUserId?: string;
+  consultantName?: string;
+  consulteeName?: string;
+  startsAt?: EmailTimestampInput;
+  dashboardUrl: string;
+}
+
+function buildTrialLifecycleEmail(args: TrialLifecycleEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  return {
+    userIds: args.userIds,
+    spec: {
+      emailType: args.kind,
+      category: "trials",
+      entityRef: `trial:${args.trialId}`,
+      subject: () =>
+        trialAndSubscriptionSubject({
+          kind: args.kind,
+          planTitle: args.planTitle,
+          consulteeName: args.consulteeName,
+          consultantName: args.consultantName,
+        }),
+      render: (r) => {
+        const isConsultant =
+          (args.consultantUserId && r.userId === args.consultantUserId) ||
+          (!args.consultantUserId &&
+            Boolean(
+              args.consultantName && r.name?.trim() === args.consultantName,
+            ));
+        return React.createElement(TrialAndSubscriptionEmail, {
+          kind: args.kind,
+          recipientName: greet(r),
+          recipientRole: isConsultant ? "consultant" : "consultee",
+          planTitle: args.planTitle,
+          consultantName: args.consultantName,
+          consulteeName: args.consulteeName,
+          startsAtText: args.startsAt
+            ? whenText(args.startsAt, r.zone)
+            : undefined,
+          dashboardUrl: absolute(args.dashboardUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        });
+      },
+    },
+  };
+}
+
+export const stageTrialLifecycleEmail =
+  defineLifecycleStager<TrialLifecycleEmailArgs>(buildTrialLifecycleEmail);
+
+export interface SubscriptionLifecycleEmailArgs {
+  subscriptionId: string;
+  userIds: string[];
+  kind: Extract<
+    TrialAndSubscriptionEmailKind,
+    "SUBSCRIPTION_STARTED" | "SUBSCRIPTION_RENEWED"
+  >;
+  planTitle: string;
+  consultantName?: string;
+  cycleOrdinal?: number;
+  nextBatch?: number;
+  remainingSessions?: number;
+  dashboardUrl: string;
+}
+
+function buildSubscriptionLifecycleEmail(
+  args: SubscriptionLifecycleEmailArgs,
+): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  return {
+    userIds: args.userIds,
+    spec: {
+      emailType: args.kind,
+      category: "subscriptions",
+      entityRef: `subscription:${args.subscriptionId}`,
+      subject: () =>
+        trialAndSubscriptionSubject({
+          kind: args.kind,
+          planTitle: args.planTitle,
+          consultantName: args.consultantName,
+        }),
+      render: (r) =>
+        React.createElement(TrialAndSubscriptionEmail, {
+          kind: args.kind,
+          recipientName: greet(r),
+          planTitle: args.planTitle,
+          consultantName: args.consultantName,
+          cycleOrdinal: args.cycleOrdinal,
+          nextBatch: args.nextBatch,
+          remainingSessions: args.remainingSessions,
+          dashboardUrl: absolute(args.dashboardUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const stageSubscriptionLifecycleEmail =
+  defineLifecycleStager<SubscriptionLifecycleEmailArgs>(
+    buildSubscriptionLifecycleEmail,
+  );
+
+// ── Shared documents & session recordings ───────────────────────────────────
+
+export interface DocumentAndRecordingEmailArgs {
+  entityId: string;
+  userIds: string[];
+  kind: DocumentAndRecordingEmailKind;
+  actorName?: string;
+  fileName?: string;
+  versionNo?: number;
+  reviewStatus?: string;
+  reviewNotes?: string | null;
+  appointmentType?: string;
+  actionUrl?: string;
+  dashboardUrl: string;
+}
+
+function buildDocumentAndRecordingEmail(args: DocumentAndRecordingEmailArgs): {
+  userIds: string[];
+  spec: RecipientEmailSpec;
+} {
+  const resolvedActionUrl = absolute(args.actionUrl ?? args.dashboardUrl);
+  return {
+    userIds: args.userIds,
+    spec: {
+      emailType: args.kind,
+      category: "appointments",
+      entityRef: `session-media:${args.entityId}`,
+      subject: () =>
+        documentAndRecordingSubject({
+          kind: args.kind,
+          fileName: args.fileName,
+          appointmentType: args.appointmentType,
+        }),
+      render: (r) =>
+        React.createElement(DocumentAndRecordingEmail, {
+          kind: args.kind,
+          recipientName: greet(r),
+          actorName: args.actorName,
+          fileName: args.fileName,
+          versionNo: args.versionNo,
+          reviewStatus: args.reviewStatus,
+          reviewNotes: args.reviewNotes,
+          appointmentType: args.appointmentType,
+          dashboardUrl: resolvedActionUrl,
+          unsubscribeUrl: r.unsubscribeUrl,
+        }),
+    },
+  };
+}
+
+export const stageDocumentAndRecordingEmail =
+  defineLifecycleStager<DocumentAndRecordingEmailArgs>(
+    buildDocumentAndRecordingEmail,
+  );

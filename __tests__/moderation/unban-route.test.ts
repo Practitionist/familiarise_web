@@ -20,12 +20,18 @@ type ActionCreateArgs = {
 };
 
 const tx = {
-  user: { updateMany: jest.fn(async () => ({ count: 1 })) },
+  user: {
+    updateMany: jest.fn(async () => ({ count: 1 })),
+    findMany: jest.fn(async () => []),
+  },
   moderationAction: {
     create: jest.fn(async ({ data }: ActionCreateArgs) => ({
       id: "action-1",
       ...data,
     })),
+  },
+  notificationOutbox: {
+    upsert: jest.fn(async () => null),
   },
 };
 

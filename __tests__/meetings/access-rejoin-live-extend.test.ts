@@ -139,6 +139,8 @@ import { POST as joinPOST } from "../../app/api/meetings/[meetingId]/join/route"
 import { POST as endPOST } from "../../app/api/meetings/[meetingId]/end/route";
 import { POST as livePOST } from "../../app/api/meetings/[meetingId]/live/route";
 import { POST as extendPOST } from "../../app/api/meetings/[meetingId]/extend/route";
+import prisma from "../../lib/prisma";
+import { reportSentryError } from "../../lib/observability/report";
 
 const MINUTE = 60 * 1000;
 
@@ -480,6 +482,32 @@ describe("POST /api/meetings/[meetingId]/join, /end, /live, /extend", () => {
     expect(conflictRes.status).toBe(409);
     const conflictBody = await conflictRes.json();
     expect(conflictBody.hasConflictingNextBooking).toBe(true);
+  });
+
+  it("answers 409 EXTEND_CONFLICT and never touches Stream when the DB refuses the overlap", async () => {
+    const updateMany = jest.mocked(prisma.appointmentOccurrence.updateMany);
+    updateMany.mockRejectedValueOnce({ meta: { code: "23P01" } });
+
+    const res = await extendPOST(req, { params });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "EXTEND_CONFLICT" });
+    expect(mockCallUpdate).not.toHaveBeenCalled();
+  });
+
+  it("reverts its own endsAt by CAS and reports once when the Stream extend fails", async () => {
+    const updateMany = jest.mocked(prisma.appointmentOccurrence.updateMany);
+    mockCallUpdate.mockRejectedValueOnce(new Error("stream write failed"));
+
+    const res = await extendPOST(req, { params });
+
+    expect(res.status).toBe(503);
+    const [[write], [revert]] = updateMany.mock.calls;
+    expect(revert.where).toEqual({
+      id: write.where?.id,
+      endsAt: write.data.endsAt,
+    });
+    expect(jest.mocked(reportSentryError)).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed with 503 and does not call call.update when call.get fails on /extend", async () => {

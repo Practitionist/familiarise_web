@@ -45,20 +45,14 @@ export async function recordFlowOutcome(
     userId: input.userId,
     organizationId: input.organizationId ?? null,
   };
-  if (tx) {
-    const row = await tx.supportFlowOutcome.create({
-      data,
-      select: { id: true },
-    });
-    return row.id;
-  }
   try {
-    const row = await prisma.supportFlowOutcome.create({
+    const row = await (tx ?? prisma).supportFlowOutcome.create({
       data,
       select: { id: true },
     });
     return row.id;
   } catch (error) {
+    if (tx) throw error;
     console.error("support: failed to record flow outcome", { data, error });
     return null;
   }

@@ -229,28 +229,24 @@ const emailAppointmentTypeSchema = z
   .enum(["consultation", "subscription", "webinar", "class"])
   .catch("consultation");
 
-export async function stagePaymentSuccessEmail(
-  tx: Tx,
+export async function preparePaymentSuccessEmail(
   payment: PaymentWithUser,
   appointment: AppointmentForEmails,
   appointmentType: string,
-): Promise<StagedOutboxEmail | null> {
+): Promise<RenderedEmail | null> {
   const consultantName =
     planForEmails(appointment)?.consultantProfile?.user?.name || "Consultant";
-  const amount = payment.amount;
-  const currency = payment.currency;
 
-  let message: RenderedEmail;
   try {
-    message = await renderPaymentSuccessEmail({
+    return await renderPaymentSuccessEmail({
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
       appointmentType: emailAppointmentTypeSchema.parse(
         appointmentType.toLowerCase(),
       ),
-      amount,
-      currency,
+      amount: payment.amount,
+      currency: payment.currency,
       dashboardUrl: `${getAppUrl()}${goHref("client", "appointments")}`,
       paymentReference: payment.id,
     });
@@ -259,6 +255,20 @@ export async function stagePaymentSuccessEmail(
     console.error("Failed to render payment success email:", error);
     return null;
   }
+}
+
+export async function stagePaymentSuccessEmail(
+  tx: Tx,
+  payment: PaymentWithUser,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+  preRendered?: RenderedEmail | null,
+): Promise<StagedOutboxEmail | null> {
+  const message =
+    preRendered !== undefined
+      ? preRendered
+      : await preparePaymentSuccessEmail(payment, appointment, appointmentType);
+  if (!message) return null;
 
   const staged = await stageEmail(message, "PAYMENT_SUCCESS", {
     tx,
@@ -301,17 +311,19 @@ export async function stageBookedEmails(
   });
 }
 
-export async function stagePaymentFailedEmail(
-  tx: Tx,
-  payment: {
-    id: string;
-    appointmentId: string | null;
-    amount: number;
-    currency: string;
-    description: string | null;
-    user: { email: string | null; name: string | null };
-  },
-): Promise<StagedOutboxEmail | null> {
+export interface PaymentFailedInput {
+  id: string;
+  appointmentId: string | null;
+  amount: number;
+  currency: string;
+  description: string | null;
+  user: { email: string | null; name: string | null };
+}
+
+export async function preparePaymentFailedEmail(
+  payment: PaymentFailedInput,
+  db: Pick<Tx, "appointment"> = prisma,
+): Promise<RenderedEmail | null> {
   const consultantUserSelect = {
     select: {
       consultantProfile: {
@@ -319,7 +331,7 @@ export async function stagePaymentFailedEmail(
       },
     },
   } as const;
-  const appointment = await tx.appointment.findUnique({
+  const appointment = await db.appointment.findUnique({
     where: { id: payment.appointmentId || "" },
     select: {
       consultation: {
@@ -364,9 +376,8 @@ export async function stagePaymentFailedEmail(
     retryUrl = `${getAppUrl()}/checkout/pay/${payment.id}`;
   }
 
-  let message: RenderedEmail;
   try {
-    message = await renderPaymentFailedEmail({
+    return await renderPaymentFailedEmail({
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
@@ -382,6 +393,18 @@ export async function stagePaymentFailedEmail(
     console.error("Failed to render payment failure email:", error);
     return null;
   }
+}
+
+export async function stagePaymentFailedEmail(
+  tx: Tx,
+  payment: PaymentFailedInput,
+  preRendered?: RenderedEmail | null,
+): Promise<StagedOutboxEmail | null> {
+  const message =
+    preRendered !== undefined
+      ? preRendered
+      : await preparePaymentFailedEmail(payment, tx);
+  if (!message) return null;
 
   const staged = await stageEmail(message, "PAYMENT_FAILED", {
     tx,

@@ -748,27 +748,30 @@ last log line for a stack trace.
 
 Launch ships `Content-Security-Policy-Report-Only`. `next.config.mjs` reads
 `ENABLE_CSP_ENFORCE` **at build time**; only `true` switches the header to
-`Content-Security-Policy`. Violations go straight to Sentry's security endpoint
-(derived from `NEXT_PUBLIC_SENTRY_DSN`) via `report-uri` and
-`report-to csp-endpoint`; there is no app-side report route. A build without a
-DSN sends no reports.
+`Content-Security-Policy`. Only an enforced build sends violations, straight to Sentry's security
+endpoint (derived from `NEXT_PUBLIC_SENTRY_DSN`) via `report-uri` and
+`report-to csp-endpoint`; there is no app-side report route. A report-only build,
+or a build without a DSN, sends no reports.
 
 > ⚠️ **Every change here is a redeploy, not a config push.** The value is baked
 > into the `headers()` output when the config is evaluated.
 
 **Switching enforcement on:**
 
-1. **Observe.** In Sentry, filter to CSP reports for production. Group by
-   violated directive and blocked URI. A blocked URI that is a real dependency
-   (new SDK, new Stream region, a payment origin) is a candidate; browser
-   extensions and crawlers are noise.
+1. **Observe.** Report-only builds send nothing to Sentry, so open a deploy
+   preview with the browser console open and walk `/`, `/auth/signin`, an org
+   billing page, a Razorpay checkout and a Stream call. Each `[Report Only]`
+   console line names the violated directive and blocked URI. A blocked URI that
+   is a real dependency (new SDK, new Stream region, a payment origin) is a
+   candidate; browser extensions are noise.
 2. **Fix.** Add legitimate origins to the matching directive in
    `CSP_DIRECTIVES` (`next.config.mjs`), deploy, and keep observing until only
    noise remains. A cluster on one suspicious `blocked-uri` (for example a
    `data:` payload) is an attack the window surfaced: leave it out.
 3. **Enforce.** Set `ENABLE_CSP_ENFORCE=true` in the production build
    environment and redeploy. `curl -sI` the site and confirm the header key is
-   `content-security-policy`.
+   `content-security-policy`. Violation reports to Sentry start with this build,
+   so watch the error quota for the first day.
 4. **Smoke.** Load `/`, `/auth/signin`, an org billing page and a Razorpay
    checkout end to end. Checkout is the highest-risk path: a missing
    `frame-src` or `script-src` entry breaks payments for everyone.

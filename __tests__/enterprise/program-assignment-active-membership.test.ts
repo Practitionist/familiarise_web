@@ -35,6 +35,12 @@ jest.mock("../../lib/prisma", () => ({
         webhookEndpoint: { findMany: jest.fn().mockResolvedValue([]) },
         outboundWebhookDelivery: { createMany: jest.fn() },
         orgAuditLog: { create: (...a: unknown[]) => mockAuditCreate(...a) },
+        notificationOutbox: {
+          upsert: jest.fn().mockResolvedValue({ id: "outbox-1" }),
+        },
+        user: { findMany: jest.fn().mockResolvedValue([]) },
+        failedEmail: { create: jest.fn().mockResolvedValue({ id: "fe-1" }) },
+        emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
       }),
   },
 }));

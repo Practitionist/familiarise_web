@@ -22,6 +22,7 @@ import {
   RefundValidationError,
 } from "./refund";
 import { refundBookingPayment } from "./booking-refund";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import {
   isFreeCreditIntent,
   isInternalFundedIntent,
@@ -288,14 +289,36 @@ export async function refundWholeEventPayments(
   if (internal.length > 0) {
     let internalTotal = 0;
     let settledSeats = 0;
+    let disputedSeats: { id: string; status: string }[] = [];
     try {
       const result = await withSerializableRetry(() =>
         prisma.$transaction(
           async (tx) => {
-            const balances = await readRefundableBalances(
+            const allBalances = await readRefundableBalances(
               tx,
               internal.map((p) => p.id),
             );
+            // A seat with a live dispute stays out of the reversal and is
+            // reported as a failure; read in this Serializable tx so a racing
+            // dispute aborts it.
+            const live = await tx.dispute.findMany({
+              where: {
+                paymentId: { in: internal.map((p) => p.id) },
+                status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+              },
+              select: { paymentId: true, status: true },
+            });
+            const liveStatus = new Map(
+              live.map((d) => [d.paymentId, d.status] as const),
+            );
+            // A disputed seat with nothing left to refund is a skip, not a block.
+            disputedSeats = allBalances.flatMap((b) => {
+              const status = liveStatus.get(b.id);
+              return status && b.refundablePaise > 0
+                ? [{ id: b.id, status }]
+                : [];
+            });
+            const balances = allBalances.filter((b) => !liveStatus.has(b.id));
             // #1780 D-5 — Σ per-seat undelivered amounts, each clamped to its balance.
             internalTotal = balances.reduce((s, b) => {
               const seat = internal.find((p) => p.id === b.id);
@@ -309,14 +332,14 @@ export async function refundWholeEventPayments(
             }, 0);
             // Seats with nothing left are skips, whether or not the rest of
             // the batch still has a balance.
-            settledSeats = balances.filter(
+            settledSeats = allBalances.filter(
               (p) => p.refundablePaise <= 0,
             ).length;
             if (internalTotal === 0) return null;
             return applyReversal(tx, {
               source: {
                 kind: "CLASS_MULTI",
-                paymentIds: internal.map((p) => p.id),
+                paymentIds: balances.map((b) => b.id),
               },
               amountPaise: internalTotal,
               reason,
@@ -334,6 +357,12 @@ export async function refundWholeEventPayments(
         ),
       );
       summary.skippedAlreadyRefunded += settledSeats;
+      for (const seat of disputedSeats) {
+        summary.failures.push({
+          paymentId: seat.id,
+          error: `Payment ${seat.id} has an open dispute (${seat.status}); resolve it before refunding`,
+        });
+      }
       if (result !== null) {
         summary.refundsIssued += result.childRefundIds.length;
         summary.refundedPaise += internalTotal;

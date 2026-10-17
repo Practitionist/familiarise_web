@@ -1,8 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
-  PROFILE_WITH_USER_SELECT,
   APPOINTMENT_LIST_SELECT,
+  PARTY_PROFILE_SELECT,
+  PROFILE_WITH_USER_SELECT,
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
@@ -14,6 +15,7 @@ import {
 } from "@/lib/auth-helpers";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import { requestListOrderBy } from "@/lib/booking/list-query";
+import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   parseRequestListQueryOrRespond,
   releaseDeclinedRequestHold,
@@ -248,20 +250,7 @@ export async function PATCH(request: NextRequest) {
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                    role: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -326,14 +315,19 @@ export async function PATCH(request: NextRequest) {
     try {
       // #836 — allowed-from guard rides the WHERE; updateMany returns no
       // row, so re-read for the heavy include.
-      await prisma.$transaction(async (tx) => {
+      const holdNotices = await prisma.$transaction(async (tx) => {
         await transitionSubscriptionRequest(tx, {
           where: { id },
           to: status,
           data: { pendingPaymentUrl: null },
         });
-        await releaseDeclinedRequestHold(tx, { subscriptionId: id }, session.user.id);
+        return releaseDeclinedRequestHold(
+          tx,
+          { subscriptionId: id },
+          session.user.id,
+        );
       });
+      await flushBackupInterestNotices(holdNotices);
 
       // #1004 — rejection refund through the front door, after commit.
       const rejectionRefund =
@@ -351,20 +345,7 @@ export async function PATCH(request: NextRequest) {
         include: {
           subscriptionPlan: {
             include: {
-              consultantProfile: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                      role: true,
-                      phone: true,
-                    },
-                  },
-                },
-              },
+              consultantProfile: PARTY_PROFILE_SELECT,
             },
           },
           requestedBy: {

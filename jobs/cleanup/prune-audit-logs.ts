@@ -45,7 +45,11 @@ runJob("prune-audit-logs", async () => {
       process.exitCode = 1;
       return;
     }
-    Sentry.logger.info("job:prune-audit-logs finished", { scanned: result.scanned, deleted7y: result.deleted7y, deleted2y: result.deleted2y });
+    Sentry.logger.info("job:prune-audit-logs finished", {
+      scanned: result.scanned,
+      deleted7y: result.deleted7y,
+      deleted2y: result.deleted2y,
+    });
   } finally {
     await disconnectDatabase();
   }

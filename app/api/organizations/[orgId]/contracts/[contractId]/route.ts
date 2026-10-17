@@ -20,6 +20,16 @@ import { getContractLockState } from "@/lib/enterprise/config-lock";
 import { computeCycleEnd } from "@/lib/enterprise/cycle-engine";
 import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
 import { closeContractSeats } from "@/lib/api/organizations/seat-count";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import {
+  ONBOARDING_EMAIL_TYPES,
+  stageOrgContractAndSeatEmail,
+} from "@/lib/email/senders/onboarding";
+import type { StagedTrigger } from "@/lib/novu";
+import { notifyOrgContractStatusChanged } from "@/lib/novu/org-workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 
 // Term fields that lock once the contract leaves DRAFT or starts billing
 // (#777 §B). `autoRenew` is a safe forward-looking toggle — editable always.
@@ -124,7 +134,11 @@ export async function PATCH(
   const body = parsed.data;
 
   try {
+    let stagedBells: StagedTrigger[] = [];
+    let stagedEmails: StagedEmail[] = [];
     const updated = await prisma.$transaction(async (tx) => {
+      stagedBells = [];
+      stagedEmails = [];
       const current = await tx.contract.findFirst({
         where: { id: contractId, organizationId: orgId },
       });
@@ -289,6 +303,19 @@ export async function PATCH(
           },
         });
 
+        const dashboardUrl = `${getAppUrl()}/dashboard/organization/${orgId}/billing`;
+        const operatorRows = tx.membership?.findMany
+          ? await tx.membership.findMany({
+              where: {
+                organizationId: orgId,
+                status: "ACTIVE",
+                role: { in: ["OWNER", "MAINTAINER"] },
+              },
+              select: { userId: true },
+            })
+          : [];
+        const operatorUserIds = operatorRows.map((r) => r.userId);
+
         if (body.status === "ACTIVE" && current.status !== "ACTIVE") {
           const existingSub = await tx.billingSubscription.findUnique({
             where: { contractId },
@@ -336,6 +363,26 @@ export async function PATCH(
               reason: null,
             },
           });
+
+          stagedBells =
+            (await notifyOrgContractStatusChanged(
+              orgId,
+              {
+                orgName: access.org.name,
+                status: "ACTIVE",
+                effectiveDate: effectiveFromVal.toISOString(),
+                dashboardUrl,
+              },
+              { tx },
+            )) ?? [];
+          stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+            recipientUserIds: operatorUserIds,
+            entityId: contractId,
+            kind: "CONTRACT_ACTIVATED",
+            orgName: access.org.name,
+            effectiveDate: effectiveFromVal,
+            dashboardUrl,
+          });
         }
 
         // #779 §A / #1846 SM-C14 — a dead contract takes its programs and
@@ -360,6 +407,25 @@ export async function PATCH(
               data: { endsAt: closedAt, activeSeatCount: 0 },
             });
           }
+          stagedBells =
+            (await notifyOrgContractStatusChanged(
+              orgId,
+              {
+                orgName: access.org.name,
+                status: body.status,
+                effectiveDate: closedAt.toISOString(),
+                dashboardUrl,
+              },
+              { tx },
+            )) ?? [];
+          stagedEmails = await stageOrgContractAndSeatEmail(tx, {
+            recipientUserIds: operatorUserIds,
+            entityId: contractId,
+            kind: "CONTRACT_ENDED",
+            orgName: access.org.name,
+            effectiveDate: closedAt,
+            dashboardUrl,
+          });
         }
       } else if (Object.keys(scalarData).length > 0) {
         await tx.contract.update({
@@ -371,6 +437,23 @@ export async function PATCH(
       // updateMany returns no row — re-read in-tx for the response body.
       return tx.contract.findUniqueOrThrow({ where: { id: contractId } });
     });
+
+    await flushNotificationsAfter(
+      {
+        bells: stagedBells,
+        emails:
+          stagedEmails.length > 0
+            ? [
+                {
+                  rows: stagedEmails,
+                  emailType: ONBOARDING_EMAIL_TYPES.ORG_CONTRACT_AND_SEAT,
+                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                },
+              ]
+            : [],
+      },
+      "org.contract.status-changed",
+    );
 
     return NextResponse.json({ contract: updated });
   } catch (err) {

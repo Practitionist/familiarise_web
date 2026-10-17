@@ -1,3 +1,4 @@
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   liveParticipant,
@@ -6,6 +7,7 @@ import {
 } from "@/lib/booking/participants";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import prisma, { type Tx } from "@/lib/prisma";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
@@ -60,7 +62,11 @@ import {
   windowAtoms,
 } from "@/utils/scheduling-engine/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
-import { EMAIL_BUDGET_MS, sendTrialScheduledEmail } from "@/lib/email";
+import {
+  stageTrialLifecycleEmail,
+  stageTrialScheduledEmail,
+} from "@/lib/email/senders/booking";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
 import { goHref } from "@/lib/dashboard/go";
@@ -322,13 +328,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       include: {
         consulteeProfile: {
           include: {
-            user: true,
+            user: { select: { id: true, name: true, image: true } },
           },
         },
         consultantProfile: {
-          include: {
-            user: true,
-          },
+          select: { id: true, user: { select: { id: true, name: true } } },
         },
         subscriptionPlan: true,
         appointment: true,
@@ -506,6 +510,20 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         if (slotData) {
           startTime = new Date(slotData.startsAt);
           endTime = new Date(slotData.endsAt);
+          try {
+            assertWindowMatchesPlanDuration(
+              {
+                trialDurationMinutes:
+                  existingTrial.subscriptionPlan.trialDurationMinutes,
+              },
+              startTime,
+              endTime,
+            );
+          } catch (err) {
+            if (err instanceof BookingRuleError)
+              return bookingRuleResponse(err);
+            throw err;
+          }
         } else {
           startTime = new Date(scheduledTime!);
           const durationMinutes =
@@ -692,36 +710,67 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             startTime,
           );
 
-          // #1775 C-10 — accepting never mints: a paid trial was paid at request.
-          await notifyTrialScheduled(existingTrial.consulteeProfile.user.id, {
-            consultantName:
-              existingTrial.consultantProfile.user.name || "Consultant",
-            consulteeName: existingTrial.consulteeProfile.user.name || "User",
-            planTitle: existingTrial.subscriptionPlan.title,
-            dateTime: startTime.toISOString(),
-            status: TrialStatus.SCHEDULED,
-            // #1527 — single known recipient, the consultee.
-            dashboardUrl: goHref("client", "appointments"),
-          });
+          const [consulteeBell, consultantBell, scheduledEmails] =
+            await Promise.all([
+              Promise.resolve(
+                notifyTrialScheduled(
+                  existingTrial.consulteeProfile.user.id,
+                  {
+                    consultantName:
+                      existingTrial.consultantProfile.user.name || "Consultant",
+                    consulteeName:
+                      existingTrial.consulteeProfile.user.name || "User",
+                    planTitle: existingTrial.subscriptionPlan.title,
+                    dateTime: startTime.toISOString(),
+                    status: TrialStatus.SCHEDULED,
+                    dashboardUrl: goHref("client", "appointments"),
+                  },
+                  { deferAttempt: true },
+                ),
+              ).catch(() => null),
+              Promise.resolve(
+                notifyTrialScheduled(
+                  existingTrial.consultantProfile.user.id,
+                  {
+                    consultantName:
+                      existingTrial.consultantProfile.user.name || "Consultant",
+                    consulteeName:
+                      existingTrial.consulteeProfile.user.name || "User",
+                    planTitle: existingTrial.subscriptionPlan.title,
+                    dateTime: startTime.toISOString(),
+                    status: TrialStatus.SCHEDULED,
+                    dashboardUrl: goHref("expert", "appointments"),
+                  },
+                  { deferAttempt: true },
+                ),
+              ).catch(() => null),
+              stageTrialScheduledEmail(prisma, {
+                trialId,
+                consulteeUserId: existingTrial.consulteeProfile.user.id,
+                consultantUserId: existingTrial.consultantProfile.user.id,
+                consulteeName:
+                  existingTrial.consulteeProfile.user.name || "User",
+                consultantName:
+                  existingTrial.consultantProfile.user.name || "Consultant",
+                planTitle: existingTrial.subscriptionPlan.title,
+                startsAt: startTime,
+                awaitingPayment: false,
+                dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
+                paymentUrl: null,
+              }).catch(() => []),
+            ]);
 
-          // #1653 — the email twin, to both parties: the consultee's CTA is
-          // the pay link while the trial awaits payment. The sender never throws.
-          await sendTrialScheduledEmail(
+          await flushNotificationsAfter(
             {
-              trialId,
-              consulteeUserId: existingTrial.consulteeProfile.user.id,
-              consultantUserId: existingTrial.consultantProfile.user.id,
-              consulteeName: existingTrial.consulteeProfile.user.name || "User",
-              consultantName:
-                existingTrial.consultantProfile.user.name || "Consultant",
-              planTitle: existingTrial.subscriptionPlan.title,
-              startsAt: startTime,
-              awaitingPayment: false,
-              // #1527 — sendTrialScheduledEmail fans this to both parties.
-              dashboardUrl: `${getAppUrl()}${goHref("auto", "appointments")}`,
-              paymentUrl: null,
+              bells: [consulteeBell?.staged, consultantBell?.staged],
+              emails: [
+                {
+                  list: scheduledEmails,
+                  emailType: "TRIAL_SESSION_SCHEDULED",
+                },
+              ],
             },
-            EMAIL_BUDGET_MS.REQUEST,
+            "trial.scheduled",
           );
 
           return NextResponse.json({ data: result });
@@ -788,44 +837,132 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         );
 
         // Notify both parties that the trial is completed
-        afterCommit.push(() =>
-          notifyTrialCompleted(
-            [
-              existingTrial.consultantProfile.user.id,
-              existingTrial.consulteeProfile.user.id,
-            ],
-            {
-              consultantName:
-                existingTrial.consultantProfile.user.name || "Consultant",
-              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+        afterCommit.push(async () => {
+          const userIds = [
+            existingTrial.consultantProfile.user.id,
+            existingTrial.consulteeProfile.user.id,
+          ];
+          const consultantName =
+            existingTrial.consultantProfile.user.name || "Consultant";
+          const consulteeName =
+            existingTrial.consulteeProfile.user.name || "User";
+          const dashboardUrl = goHref("auto", "appointments");
+          const [bells, completedEmails] = await Promise.all([
+            Promise.resolve(
+              notifyTrialCompleted(
+                userIds,
+                {
+                  consultantName,
+                  consulteeName,
+                  planTitle: existingTrial.subscriptionPlan.title,
+                  status: TrialStatus.COMPLETED,
+                  dashboardUrl,
+                },
+                { deferAttempt: true },
+              ),
+            ).catch((err) => {
+              console.error(
+                "[trials] Failed to stage trial completion bell:",
+                err,
+              );
+              return [];
+            }),
+            stageTrialLifecycleEmail(prisma, {
+              trialId,
+              userIds: [existingTrial.consulteeProfile.user.id],
+              kind: "TRIAL_COMPLETED",
               planTitle: existingTrial.subscriptionPlan.title,
-              status: TrialStatus.COMPLETED,
-              // #1527 — both consultant and consultee are recipients here.
-              dashboardUrl: goHref("auto", "appointments"),
+              consultantName,
+              consulteeName,
+              dashboardUrl,
+            }).catch((err) => {
+              console.error(
+                "[trials] Failed to stage trial completion email:",
+                err,
+              );
+              return [];
+            }),
+          ]);
+          await flushNotificationsAfter(
+            {
+              bells: (bells ?? []).map((b) => b?.staged),
+              emails: [
+                {
+                  list: completedEmails,
+                  emailType: "TRIAL_COMPLETED",
+                },
+              ],
             },
-          ),
-        );
+            "trial.completed",
+          );
+        });
       }
 
       // Handle cancellation / rejection
       if (status === TrialStatus.CANCELLED || status === TrialStatus.REJECTED) {
-        afterCommit.push(() =>
-          notifyTrialCancelled(
-            [
-              existingTrial.consultantProfile.user.id,
-              existingTrial.consulteeProfile.user.id,
-            ],
-            {
-              consultantName:
-                existingTrial.consultantProfile.user.name || "Consultant",
-              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+        afterCommit.push(async () => {
+          const isRejected = status === TrialStatus.REJECTED;
+          const userIds = isRejected
+            ? [existingTrial.consulteeProfile.user.id]
+            : [
+                existingTrial.consultantProfile.user.id,
+                existingTrial.consulteeProfile.user.id,
+              ].filter((id) => id !== session.user.id);
+          const emailKind = isRejected ? "TRIAL_REJECTED" : "TRIAL_CANCELLED";
+          const consultantName =
+            existingTrial.consultantProfile.user.name || "Consultant";
+          const consulteeName =
+            existingTrial.consulteeProfile.user.name || "User";
+          const dashboardUrl = goHref("auto", "appointments");
+          const [bells, cancelledEmails] = await Promise.all([
+            Promise.resolve(
+              notifyTrialCancelled(
+                userIds,
+                {
+                  consultantName,
+                  consulteeName,
+                  planTitle: existingTrial.subscriptionPlan.title,
+                  status,
+                  dashboardUrl,
+                },
+                { deferAttempt: true },
+              ),
+            ).catch((err) => {
+              console.error(
+                "[trials] Failed to stage trial cancellation bell:",
+                err,
+              );
+              return [];
+            }),
+            stageTrialLifecycleEmail(prisma, {
+              trialId,
+              userIds,
+              kind: emailKind,
               planTitle: existingTrial.subscriptionPlan.title,
-              status,
-              // #1527 — both consultant and consultee are recipients here.
-              dashboardUrl: goHref("auto", "appointments"),
+              consultantName,
+              consulteeName,
+              dashboardUrl,
+            }).catch((err) => {
+              console.error(
+                "[trials] Failed to stage trial cancellation email:",
+                err,
+              );
+              return [];
+            }),
+          ]);
+          await flushNotificationsAfter(
+            {
+              bells: (bells ?? []).map((b) => b?.staged),
+              emails: [
+                {
+                  list: cancelledEmails,
+                  emailType: emailKind,
+                },
+              ],
             },
-          ),
-        );
+            isRejected ? "trial.rejected" : "trial.cancelled",
+          );
+        });
 
         // #1009 — soft-cancel, never delete. This used to hard-delete the
         // appointment to free availability (FIX #579), which cascade-deleted the
@@ -956,9 +1093,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           !currentSub ||
           currentSub.deletedAt ||
           (currentSub.status &&
-            !["APPROVED", "SCHEDULED", "COMPLETED"].includes(
-              currentSub.status,
-            ))
+            !["APPROVED", "SCHEDULED", "COMPLETED"].includes(currentSub.status))
         ) {
           subscriptionBecameInactive = true;
           return null;
@@ -1073,12 +1208,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         !refund.failed &&
         refund.amountRefundedPaise > 0
       ) {
-        await stageTrialRefundedBell(prisma, {
+        const refundedBell = await stageTrialRefundedBell(prisma, {
           id: trialId,
           consulteeUserId: existingTrial.consulteeProfile.user.id,
           planTitle: existingTrial.subscriptionPlan.title,
           consultantName: existingTrial.consultantProfile.user.name,
         }).catch(() => undefined);
+        await flushNotificationsAfter(
+          { bells: [refundedBell] },
+          "trial.refunded",
+        );
       }
     }
 
@@ -1144,9 +1283,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
             }),
       },
       include: {
-        consultantProfile: {
-          include: { user: { select: { id: true, name: true } } },
-        },
+        consultantProfile: PROFILE_WITH_USER_SELECT,
         consulteeProfile: {
           include: { user: { select: { id: true, name: true } } },
         },
@@ -1240,21 +1377,61 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       quote,
     });
 
-    // FIX #554: Send cancellation notification (DELETE path was missing this)
-    await notifyTrialCancelled(
-      [
-        existingTrial.consultantProfile.user.id,
-        existingTrial.consulteeProfile.user.id,
-      ],
-      {
-        consultantName:
-          existingTrial.consultantProfile.user.name || "Consultant",
-        consulteeName: existingTrial.consulteeProfile.user.name || "User",
+    const userIds = [
+      existingTrial.consultantProfile.user.id,
+      existingTrial.consulteeProfile.user.id,
+    ].filter((id) => id !== session.user.id);
+    const consultantName =
+      existingTrial.consultantProfile.user.name || "Consultant";
+    const consulteeName = existingTrial.consulteeProfile.user.name || "User";
+    const dashboardUrl = goHref("auto", "appointments");
+    const [cancelledBells, cancelledEmails] = await Promise.all([
+      Promise.resolve(
+        notifyTrialCancelled(
+          userIds,
+          {
+            consultantName,
+            consulteeName,
+            planTitle: existingTrial.subscriptionPlan.title,
+            status: TrialStatus.CANCELLED,
+            dashboardUrl,
+          },
+          { deferAttempt: true },
+        ),
+      ).catch((err) => {
+        console.error(
+          "[trials] Failed to stage trial delete cancellation bell:",
+          err,
+        );
+        return [];
+      }),
+      stageTrialLifecycleEmail(prisma, {
+        trialId,
+        userIds,
+        kind: "TRIAL_CANCELLED",
         planTitle: existingTrial.subscriptionPlan.title,
-        status: TrialStatus.CANCELLED,
-        // #1527 — both consultant and consultee are recipients here.
-        dashboardUrl: goHref("auto", "appointments"),
+        consultantName,
+        consulteeName,
+        dashboardUrl,
+      }).catch((err) => {
+        console.error(
+          "[trials] Failed to stage trial delete cancellation email:",
+          err,
+        );
+        return [];
+      }),
+    ]);
+    await flushNotificationsAfter(
+      {
+        bells: (cancelledBells ?? []).map((b) => b?.staged),
+        emails: [
+          {
+            list: cancelledEmails,
+            emailType: "TRIAL_CANCELLED",
+          },
+        ],
       },
+      "trial.delete.cancelled",
     );
 
     return NextResponse.json({

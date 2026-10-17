@@ -1,14 +1,16 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
-  PROFILE_WITH_USER_SELECT,
   APPOINTMENT_LIST_SELECT,
+  PARTY_PROFILE_SELECT,
+  PROFILE_WITH_USER_SELECT,
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import { requestListOrderBy } from "@/lib/booking/list-query";
+import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   parseRequestListQueryOrRespond,
   releaseDeclinedRequestHold,
@@ -246,7 +248,7 @@ export async function PATCH(request: NextRequest) {
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: true,
+            consultantProfile: { select: { id: true } },
           },
         },
       },
@@ -284,14 +286,19 @@ export async function PATCH(request: NextRequest) {
 
     // #836 — allowed-from guard rides the WHERE; updateMany returns no row,
     // so re-read for the heavy include.
-    await prisma.$transaction(async (tx) => {
+    const holdNotices = await prisma.$transaction(async (tx) => {
       await transitionConsultationRequest(tx, {
         where: { id },
         to: status,
         data: { pendingPaymentUrl: null },
       });
-      await releaseDeclinedRequestHold(tx, { consultationId: id }, session.user.id);
+      return releaseDeclinedRequestHold(
+        tx,
+        { consultationId: id },
+        session.user.id,
+      );
     });
+    await flushBackupInterestNotices(holdNotices);
 
     // #1004 — a rejected request that was already paid has to give the money
     // back. Direct checkout captures BEFORE the request exists, so a
@@ -313,20 +320,7 @@ export async function PATCH(request: NextRequest) {
       include: {
         consultationPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                    role: true,
-                    phone: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {

@@ -107,6 +107,7 @@ function wireTxShim() {
     const tx = {
       membership: mockedPrisma.membership,
       orgAuditLog: mockedPrisma.orgAuditLog,
+      notificationOutbox: { upsert: jest.fn().mockResolvedValue(null) },
       user: {
         ...mockedPrisma.user,
         // #1700 — the membership-changed email is staged inside this

@@ -12,6 +12,7 @@
 import { notifySubscriptionRenewed } from "@/lib/novu/service";
 import type { StagedTrigger, TriggerOptions } from "@/lib/novu";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import type { SubscriptionLifecycleEmailArgs } from "@/lib/email/senders/booking";
 import {
   computeHoldUntil,
   holdHoursFor,
@@ -71,12 +72,15 @@ export async function stampTranchesOnCancel(
   return res?.count ?? 0;
 }
 
-export async function settleSubscriptionCycle(
+export async function settleSubscriptionCycleWithNotice(
   tx: SettleTx & {
     organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
   },
   args: { appointmentId: string; now: Date },
-): Promise<StagedTrigger[]> {
+): Promise<{
+  bells: StagedTrigger[];
+  emailArgs: SubscriptionLifecycleEmailArgs | null;
+}> {
   // One read, sequential by construction (PG_POOL_MAX=1): the wrapper, its
   // subscription with plan and both parties, and every occurrence row.
   const wrapper = await tx.appointment.findUnique({
@@ -121,7 +125,7 @@ export async function settleSubscriptionCycle(
   });
   const sub = wrapper?.subscription;
   if (!sub || (sub.status !== "APPROVED" && sub.status !== "SCHEDULED")) {
-    return [];
+    return { bells: [], emailArgs: null };
   }
 
   const entitlement = subscriptionEntitlement({
@@ -177,30 +181,57 @@ export async function settleSubscriptionCycle(
   }
 
   // Nothing live and something owed: the cycle just closed.
-  if (entitlement.scheduled !== 0 || entitlement.remaining === 0) return [];
+  if (entitlement.scheduled !== 0 || entitlement.remaining === 0) {
+    return { bells: [], emailArgs: null };
+  }
 
   const consulteeUserId = sub.requestedBy?.userId;
-  if (!consulteeUserId) return [];
+  if (!consulteeUserId) return { bells: [], emailArgs: null };
   // 1-based number of the cycle the delivered sessions belong to: at a
   // boundary the zero-based ordinal has already advanced, so it IS that
   // number; mid-cycle (a cancelled row) the current cycle is ordinal + 1.
   // The same key across a second pass over the same state dedupes.
   const { ordinal, filled } = entitlement.cycle;
   const cycleOrdinal = Math.max(1, ordinal + (filled > 0 ? 1 : 0));
+  const dashboardUrl = notificationHref(wrapper.organizationId, "appointments");
+  const consultantName =
+    sub.subscriptionPlan.consultantProfile?.user?.name ?? "Your consultant";
   const result = await notifySubscriptionRenewed(
     consulteeUserId,
     {
       subscriptionId: sub.id,
       planTitle: sub.subscriptionPlan.title,
-      consultantName:
-        sub.subscriptionPlan.consultantProfile?.user?.name ?? "Your consultant",
+      consultantName,
       cycleOrdinal,
       remainingSessions: entitlement.remaining,
       nextBatch: entitlement.cycle.nextBatch,
-      dashboardUrl: notificationHref(wrapper.organizationId, "appointments"),
+      dashboardUrl,
     },
     `sub:${sub.id}:cycle:${cycleOrdinal}`,
     { tx },
   );
-  return result.staged ? [result.staged] : [];
+  return {
+    bells: result.staged ? [result.staged] : [],
+    emailArgs: {
+      subscriptionId: sub.id,
+      userIds: [consulteeUserId],
+      kind: "SUBSCRIPTION_RENEWED",
+      planTitle: sub.subscriptionPlan.title,
+      consultantName,
+      cycleOrdinal,
+      nextBatch: entitlement.cycle.nextBatch,
+      remainingSessions: entitlement.remaining,
+      dashboardUrl,
+    },
+  };
+}
+
+export async function settleSubscriptionCycle(
+  tx: SettleTx & {
+    organizationEarnings?: Pick<Tx["organizationEarnings"], "updateMany">;
+  },
+  args: { appointmentId: string; now: Date },
+): Promise<StagedTrigger[]> {
+  const { bells } = await settleSubscriptionCycleWithNotice(tx, args);
+  return bells;
 }

@@ -22,11 +22,11 @@ An issue caused by the pass is resolved with a one-line comment naming the QA re
 
 ## A trickled issue's event count is a lower bound, and that is not a bug
 
-Some issue classes are throttled: `INFRA_TRANSIENT_PATTERNS` in `sentry.shared.config.ts` keeps one event per class per ten minutes and drops the rest before they reach the transport, because a repeat carries no information the first one did not. The affected issues are the infrastructure-transient ones named in that list, plus `[system-events] write failed`.
+Some issue classes are throttled: `INFRA_TRANSIENT_PATTERNS` in `sentry.shared.config.ts` keeps one event per class per hour and drops the rest before they reach the transport, because a repeat carries no information the first one did not. The affected issues are the infrastructure-transient ones named in that list, plus `[system-events] write failed`.
 
-So `Events: 1` on one of those does **not** mean it happened once. It means "at least once per ten-minute window while the window was live", and the true figure during a sustained outage is roughly 6 per hour, so ~144 per day. Read the issue's `last seen` span and the tag, not the event count, to judge whether something is ongoing.
+So `Events: 1` on one of those does **not** mean it happened once. It means "at least once per one-hour window while the window was live", and the true figure during a sustained outage is roughly 1 per hour, so ~24 per day. Read the issue's `last seen` span and the tag, not the event count, to judge whether something is ongoing.
 
-Read the issue's `last seen` span and the tag rather than the event count. The throttle admits one event per class per ten minutes **per warm instance** — roughly 6/hour, so ~144/day — and that is the _admitted_ count, not the number of occurrences: the other 143 may or may not have happened, and the throttle deliberately does not claim otherwise.
+Read the issue's `last seen` span and the tag rather than the event count. The throttle admits one event per class per hour **per warm instance** — roughly 1/hour, so ~24/day — and that is the _admitted_ count, not the number of occurrences: the other 23 may or may not have happened, and the throttle deliberately does not claim otherwise.
 
 The failure this prevents is triaging a live dependency outage as a rarity because its counter reads 1. The 2026-09-22 quota incident was the same trap one level up: the dashboard looked healthy because sessions and transactions kept flowing while the `error` category alone was rate limited.
 

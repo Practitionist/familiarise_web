@@ -1,4 +1,8 @@
-import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
+import { PROFILE_WITH_USER_SELECT } from "@/lib/booking/list-selects";
+import {
+  flushBackupInterestNotices,
+  stageNoticesForAppointmentHolds,
+} from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
@@ -272,9 +276,7 @@ export async function POST(
           include: {
             consultationPlan: {
               include: {
-                consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
             requestedBy: {
@@ -286,9 +288,7 @@ export async function POST(
           include: {
             subscriptionPlan: {
               include: {
-                consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
             requestedBy: {
@@ -300,9 +300,7 @@ export async function POST(
           include: {
             webinarPlan: {
               include: {
-                consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
           },
@@ -311,9 +309,7 @@ export async function POST(
           include: {
             classPlan: {
               include: {
-                consultantProfile: {
-                  include: { user: { select: { id: true, name: true } } },
-                },
+                consultantProfile: PROFILE_WITH_USER_SELECT,
               },
             },
           },
@@ -642,11 +638,12 @@ export async function POST(
           // overwrites `completionStatus` in the caller's WHERE with its own
           // from-set, so a status left there is silently discarded.
           // #1778 — a cancelled 1:1 frees its times: tell anyone waiting.
-          if (appointment.consultation || appointment.subscription) {
-            await stageNoticesForAppointmentHolds(tx, appointmentId, {
-              includeConfirmed: true,
-            });
-          }
+          const holdNotices =
+            appointment.consultation || appointment.subscription
+              ? await stageNoticesForAppointmentHolds(tx, appointmentId, {
+                  includeConfirmed: true,
+                })
+              : null;
           const slotsCancelled = await transitionOccurrenceCompletion(tx, {
             ...auditMeta,
             where: sweepScope,
@@ -682,6 +679,7 @@ export async function POST(
             webinarId: appointment.webinar?.id,
             classId: appointment.class?.id,
             bookingCtx,
+            holdNotices,
           };
         },
         {
@@ -690,6 +688,7 @@ export async function POST(
         },
       ),
     );
+    await flushBackupInterestNotices(result.holdNotices);
     const bookingCtx = result.bookingCtx;
 
     // B1 — policy-driven refund, AFTER the cancel tx commits (the refund runs
@@ -1003,7 +1002,7 @@ export async function POST(
               eventRefund.failures.map((f) => f.paymentId),
             )
           : [];
-      const [, ...stagedEmailBatches] = await Promise.all([
+      const [bellResults, ...stagedEmailBatches] = await Promise.all([
         notifyAppointmentCancelled(userIds, {
           ...notificationScope(appointment.organizationId),
           appointmentId,
@@ -1066,6 +1065,7 @@ export async function POST(
       ]);
       await flushNotificationsAfter(
         {
+          bells: (bellResults ?? []).map((r) => r?.staged),
           emails: [
             {
               rows: stagedEmailBatches.flat(),

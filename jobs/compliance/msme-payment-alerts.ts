@@ -28,6 +28,8 @@ import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
 import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
 import { OPS_EMAIL } from "@/lib/email/config";
+import { sendComplianceAlertEmail } from "@/lib/email/senders/onboarding";
+import { notifyComplianceAlert } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -130,59 +132,78 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
     },
   );
 
-  // Email dispatch — opt-in per environment so we don't spam finance
-  // during staging/preview deploys. The log above is always emitted.
-  // #1298 — gate on the recipient only; a missing key dead-letters in deliver().
   const to = process.env.MSME_ALERT_EMAIL;
+  const appUrl = getAppUrl();
+  const dashboardUrl = `${appUrl}/dashboard/admin/compliance?tab=msme`;
+  const earliestDeadline = atRiskRows[0].mustPayByDate ?? windowEnd;
+  const title = `[MSME 43B(h)] ${atRisk} payouts approaching deadline`;
+  const summaryReason = `${atRisk} payout(s) within ${ALERT_WINDOW_DAYS} days of their Section 43B(h) deadline are not yet COMPLETED.`;
+
+  const adminUsers = await prisma.user.findMany({
+    where: {
+      OR: [{ role: "ADMIN" }, ...(to ? [{ email: to }] : [])],
+    },
+    select: { id: true, email: true },
+  });
+  const recipientUserIds = adminUsers.map((u) => u.id);
+
   let emailSent = false;
-  if (to) {
+  try {
+    await notifyComplianceAlert(recipientUserIds, {
+      title,
+      obligationType: "MSME_SECTION_43BH",
+      dueDate: earliestDeadline.toISOString(),
+      dashboardUrl,
+    });
+  } catch (err) {
+    console.error("[MSME] Novu compliance alert failed:", err);
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "msme-payment-alerts" },
+    });
+  }
+
+  try {
+    const sendRes = await sendComplianceAlertEmail({
+      recipientUserIds,
+      alertId: atRiskRows[0].id,
+      title,
+      dueDate: earliestDeadline,
+      reason: summaryReason,
+      dashboardUrl,
+    });
+    emailSent = sendRes.sent > 0;
+  } catch (err) {
+    console.error("[MSME] user compliance alert email failed:", err);
+    Sentry.captureException(err, {
+      tags: { subsystem: "jobs", job: "msme-payment-alerts" },
+    });
+  }
+
+  if (
+    to &&
+    !adminUsers.some((u) => u.email?.toLowerCase() === to.toLowerCase())
+  ) {
     try {
-      const rowsToShow = atRiskRows.slice(0, MAX_ROWS_IN_EMAIL);
-      const truncated = atRiskRows.length > MAX_ROWS_IN_EMAIL;
-      const appUrl = getAppUrl();
-      const tableHtml = rowsToShow
-        .map(
-          (r) =>
-            `<tr><td>${new Date(r.mustPayByDate ?? 0).toISOString().slice(0, 10)}</td>` +
-            `<td>${r.id}</td>` +
-            `<td>${r.ownerId}</td>` +
-            `<td>₹${((r.amountPaise ?? 0) / 100).toLocaleString("en-IN")}</td>` +
-            `<td>${r.status}</td>` +
-            `<td><a href="${appUrl}/admin/payouts/${r.id}">open</a></td></tr>`,
-        )
-        .join("");
-      // #1298 — through deliver() so a failed alert dead-letters and replays.
       const outcome = await deliver(
         {
           from: SENDERS.ops,
           to,
           replyTo: OPS_EMAIL,
-          subject: `[MSME 43B(h)] ${atRisk} payouts approaching deadline`,
-          html:
-            `<p>The MSME alert cron found <strong>${atRisk}</strong> payouts ` +
-            `within ${ALERT_WINDOW_DAYS} days of their Section 43B(h) deadline ` +
-            `and still not in COMPLETED status.</p>` +
-            `<table border="1" cellpadding="6" cellspacing="0">` +
-            `<thead><tr><th>Deadline</th><th>Payout id</th><th>Owner id</th><th>Amount</th><th>Status</th><th></th></tr></thead>` +
-            `<tbody>${tableHtml}</tbody></table>` +
-            (truncated
-              ? `<p>…and ${atRisk - MAX_ROWS_IN_EMAIL} more. Open the finance dashboard for the full list.</p>`
-              : ""),
+          subject: title,
+          html: `<p>${summaryReason}</p><p><a href="${dashboardUrl}">Open compliance dashboard</a></p>`,
         },
         "MSME_PAYMENT_ALERT",
         { budgetMs: EMAIL_BUDGET_MS.JOB },
       );
-      if (!outcome.success) throw outcome.error;
-      emailSent = true;
-      console.log(`[MSME] alert email sent to ${to}`);
+      if (outcome.success) {
+        emailSent = true;
+      }
     } catch (err) {
-      console.error("[MSME] alert email failed:", err);
+      console.error("[MSME] direct alert email failed:", err);
       Sentry.captureException(err, {
         tags: { subsystem: "jobs", job: "msme-payment-alerts" },
       });
     }
-  } else {
-    console.log("[MSME] MSME_ALERT_EMAIL not configured; email skipped");
   }
 
   const result = { alerted: emailSent ? atRisk : 0, atRisk, emailSent };

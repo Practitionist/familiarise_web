@@ -27,6 +27,16 @@ import {
   postInvoiceIssuedJournal,
   postInvoiceVoidedJournal,
 } from "@/lib/payments/billing/org-invoice-journal";
+import { EMAIL_BUDGET_MS } from "@/lib/email/config";
+import type { StagedRecipientEmail as StagedEmail } from "@/lib/email/send-to-recipients";
+import {
+  MONEY_EMAIL_TYPES,
+  stageOrgBillingEmail,
+} from "@/lib/email/senders/money";
+import type { StagedTrigger } from "@/lib/novu";
+import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
+import { getAppUrl } from "@/lib/url";
 
 const PatchStatusSchema = z.enum(["ISSUED", "CANCELLED", "VOID"]);
 
@@ -123,7 +133,11 @@ export async function PATCH(
   const body = parsed.data;
 
   try {
+    let stagedBells: StagedTrigger[] = [];
+    let stagedEmails: StagedEmail[] = [];
     const updated = await prisma.$transaction(async (tx) => {
+      stagedBells = [];
+      stagedEmails = [];
       const current = await tx.organizationInvoice.findFirst({
         where: { id: invoiceId, organizationId: orgId },
       });
@@ -213,7 +227,47 @@ export async function PATCH(
         });
 
         if (body.status === "ISSUED") {
+          const effectiveDueDate = body.dueDate ?? current.dueDate;
+          const origin = getAppUrl();
+          const dashboardUrl = `${origin}/dashboard/organization/${orgId}/billing`;
+          const orgName = access.org.name;
+          const ownerRows = tx.membership?.findMany
+            ? await tx.membership.findMany({
+                where: {
+                  organizationId: orgId,
+                  status: "ACTIVE",
+                  role: "OWNER",
+                },
+                select: { userId: true },
+              })
+            : [];
           await postInvoiceIssuedJournal(tx, invoiceId);
+          stagedBells =
+            (await notifyOrgInvoiceIssued(
+              orgId,
+              {
+                invoiceNumber: current.invoiceNumber,
+                orgName,
+                totalPaise: Number(current.totalPaise),
+                currency: current.displayCurrency,
+                dueDate: effectiveDueDate.toISOString(),
+                dashboardUrl,
+                pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoiceId}/pdf`,
+              },
+              { tx, entityRef: `orgInvoice:${invoiceId}` },
+            )) ?? [];
+          stagedEmails = await stageOrgBillingEmail(tx, {
+            recipientUserIds: ownerRows.map((r) => r.userId),
+            organizationId: orgId,
+            orgName,
+            kind: "INVOICE_ISSUED",
+            amountPaise: Number(current.totalPaise),
+            currency: current.displayCurrency,
+            invoiceId,
+            invoiceNumber: current.invoiceNumber,
+            dueDate: effectiveDueDate,
+            dashboardUrl,
+          });
           if (typeof tx.webhookEndpoint?.findMany === "function") {
             await dispatchWebhookEvent({
               prisma: tx,
@@ -224,7 +278,7 @@ export async function PATCH(
                 invoiceNumber: current.invoiceNumber,
                 totalPaise: Number(current.totalPaise),
                 displayCurrency: current.displayCurrency,
-                dueDate: (body.dueDate ?? current.dueDate).toISOString(),
+                dueDate: effectiveDueDate.toISOString(),
                 purchaseOrderId: current.purchaseOrderId,
                 contractId: current.contractId,
               },
@@ -293,6 +347,23 @@ export async function PATCH(
         where: { id: invoiceId },
       });
     });
+
+    await flushNotificationsAfter(
+      {
+        bells: stagedBells,
+        emails:
+          stagedEmails.length > 0
+            ? [
+                {
+                  rows: stagedEmails,
+                  emailType: MONEY_EMAIL_TYPES.ORG_BILLING_RECEIPT,
+                  budgetMs: EMAIL_BUDGET_MS.REQUEST,
+                },
+              ]
+            : [],
+      },
+      "org.invoice.issued",
+    );
 
     return NextResponse.json({ invoice: updated });
   } catch (err) {

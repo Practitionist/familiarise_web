@@ -18,6 +18,7 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import { flushBackupInterestNotices } from "@/lib/booking/backup-interest";
 import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   refuseMalformedEventId,
@@ -25,13 +26,19 @@ import {
   releaseDeclinedRequestHold,
   validateDetailRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
-import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import {
+  HOST_PROFILE_SELECT,
+  PARTY_PROFILE_SELECT,
+  PARTY_USER_SELECT,
+} from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
+import { stageSubscriptionLifecycleEmail } from "@/lib/email/senders/booking";
 import { notifySubscriptionStarted } from "@/lib/novu";
+import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { goHref } from "@/lib/dashboard/go";
 import {
   UpdateSubscriptionSchema,
@@ -64,18 +71,7 @@ export async function GET(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: HOST_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -164,7 +160,7 @@ export async function PUT(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: true,
+            consultantProfile: { select: { id: true } },
           },
         },
         // bookingOrgId's fallback when the plan carries no org.
@@ -225,18 +221,7 @@ export async function PUT(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -334,11 +319,7 @@ export async function PATCH(
       include: {
         subscriptionPlan: {
           include: {
-            consultantProfile: {
-              include: {
-                user: PARTY_USER_SELECT,
-              },
-            },
+            consultantProfile: PARTY_PROFILE_SELECT,
           },
         },
         requestedBy: {
@@ -443,11 +424,7 @@ export async function PATCH(
               include: {
                 subscriptionPlan: {
                   include: {
-                    consultantProfile: {
-                      include: {
-                        user: PARTY_USER_SELECT,
-                      },
-                    },
+                    consultantProfile: PARTY_PROFILE_SELECT,
                   },
                 },
                 requestedBy: {
@@ -502,23 +479,20 @@ export async function PATCH(
                   : undefined,
             });
             // #1778 — a decline frees the held times: tell anyone waiting and release holds.
-            if (status === AppointmentStatus.REJECTED) {
-              await releaseDeclinedRequestHold(
-                tx,
-                { subscriptionId },
-                session.user.id,
-              );
-            }
+            const holdNotices =
+              status === AppointmentStatus.REJECTED
+                ? await releaseDeclinedRequestHold(
+                    tx,
+                    { subscriptionId },
+                    session.user.id,
+                  )
+                : null;
             const subscription = await tx.subscription.findUniqueOrThrow({
               where: { id: subscriptionId },
               include: {
                 subscriptionPlan: {
                   include: {
-                    consultantProfile: {
-                      include: {
-                        user: PARTY_USER_SELECT,
-                      },
-                    },
+                    consultantProfile: PARTY_PROFILE_SELECT,
                   },
                 },
                 requestedBy: {
@@ -566,10 +540,10 @@ export async function PATCH(
                   data: { isTentative: false },
                 });
               }
-              return { data: subscription, duplicate: false };
+              return { data: subscription, duplicate: false, holdNotices };
             }
 
-            return { data: subscription, duplicate: false };
+            return { data: subscription, duplicate: false, holdNotices };
           },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
@@ -578,6 +552,9 @@ export async function PATCH(
           },
         );
       });
+      await flushBackupInterestNotices(
+        "holdNotices" in result ? result.holdNotices : null,
+      );
 
       // If duplicate, return early — EXCEPT an APPROVED_PENDING_PAYMENT whose
       // pay-link mint previously failed (#1169 PR 2): fall through so a
@@ -681,16 +658,40 @@ export async function PATCH(
         const consulteeUserId = subData.requestedBy?.user?.id;
 
         if (status === AppointmentStatus.APPROVED && consulteeUserId) {
-          await notifySubscriptionStarted(consulteeUserId, {
-            subscriptionId: subData.id,
-            planTitle: subData.subscriptionPlan?.title || "Subscription",
-            consultantName:
-              subData.subscriptionPlan?.consultantProfile?.user?.name ||
-              "Consultant",
-            consulteeName: subData.requestedBy?.user?.name || undefined,
-            // #1527 — single known recipient, the consultee.
-            dashboardUrl: goHref("client", "appointments"),
-          });
+          const planTitle = subData.subscriptionPlan?.title || "Subscription";
+          const consultantName =
+            subData.subscriptionPlan?.consultantProfile?.user?.name ||
+            "Consultant";
+          const dashboardUrl = goHref("client", "appointments");
+          const [bellResult, emailRows] = await Promise.all([
+            notifySubscriptionStarted(
+              consulteeUserId,
+              {
+                subscriptionId: subData.id,
+                planTitle,
+                consultantName,
+                consulteeName: subData.requestedBy?.user?.name || undefined,
+                dashboardUrl,
+              },
+              undefined,
+              { deferAttempt: true },
+            ).catch(() => null),
+            stageSubscriptionLifecycleEmail(prisma, {
+              subscriptionId: subData.id,
+              userIds: [consulteeUserId],
+              kind: "SUBSCRIPTION_STARTED",
+              planTitle,
+              consultantName,
+              dashboardUrl,
+            }).catch(() => []),
+          ]);
+          await flushNotificationsAfter(
+            {
+              bells: [bellResult?.staged],
+              emails: [{ rows: emailRows, emailType: "SUBSCRIPTION_STARTED" }],
+            },
+            "subscriptions.started",
+          );
         }
       }
 

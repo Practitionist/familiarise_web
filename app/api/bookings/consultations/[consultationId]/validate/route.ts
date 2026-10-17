@@ -32,7 +32,7 @@ const consultationInclude = {
     include: {
       consultantProfile: {
         select: {
-          user: true,
+          user: { select: { id: true, timezone: true } },
           scheduleType: true,
           availabilityWindowsWeekly: true,
           availabilityWindowsCustom: true,
@@ -42,7 +42,7 @@ const consultationInclude = {
   },
   requestedBy: {
     include: {
-      user: true,
+      user: { select: { id: true } },
     },
   },
 } as const;

@@ -98,6 +98,7 @@ jest.mock("../../lib/prisma", () => {
     consultation: {
       count: (...a: unknown[]) => mockConsultationCount(...(a as [])),
       create: jest.fn(async () => created()),
+      findUnique: jest.fn(async () => null),
     },
     subscription: {
       count: (...a: unknown[]) => mockSubscriptionCount(...(a as [])),
@@ -108,12 +109,25 @@ jest.mock("../../lib/prisma", () => {
 });
 
 import { NextRequest } from "next/server";
+import prisma from "../../lib/prisma";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
+import { PROFILE_WITH_USER_SELECT } from "../../lib/booking/list-selects";
+import {
+  expectNoBareProfile,
+  valuesAtKey,
+} from "../fixtures/consultant-projection";
 
-function request(startsAt = "2030-01-01T10:00:00.000Z") {
+const mockedPrisma = prisma as unknown as {
+  consultation: { create: jest.Mock; findUnique: jest.Mock };
+};
+
+function request(
+  startsAt = "2030-01-01T10:00:00.000Z",
+  headers: Record<string, string> = {},
+) {
   return new NextRequest("https://x.test/api/scheduling/request-for-approval", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify({
       consultantProfileId: "cp_1",
       consultationPlanId: "plan_1",
@@ -207,5 +221,52 @@ describe("request-for-approval slot edge (#1583)", () => {
       "cp_1",
       "user_consultee",
     );
+  });
+});
+
+// The created consultation is echoed to the learner, so the consultant is the public projection.
+describe("request-for-approval consultant projection", () => {
+  it("creates the consultation with PROFILE_WITH_USER_SELECT and no bare profile", async () => {
+    const res = await POST(request());
+    expect(res.status).toBe(201);
+    const args = mockedPrisma.consultation.create.mock.calls[0][0];
+    expectNoBareProfile(args);
+    expect(valuesAtKey(args, "consultantProfile")).toEqual([
+      PROFILE_WITH_USER_SELECT,
+    ]);
+  });
+});
+
+describe("request-for-approval Idempotency-Key", () => {
+  const SLOT = "2030-01-01T10:00:00.000Z";
+
+  it("a replay with the same key returns the original request and creates nothing", async () => {
+    mockedPrisma.consultation.findUnique.mockResolvedValueOnce({
+      id: "req_original",
+      requestedBy: { userId: "user_consultee", user: { name: "Sam" } },
+    });
+    const res = await POST(
+      request(SLOT, { "Idempotency-Key": "rq_attempt_1" }),
+    );
+    expect(res.status).toBe(201);
+    expect((await res.json()).data.id).toBe("req_original");
+    expect(mockedPrisma.consultation.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { requestIdempotencyKey: "rq_attempt_1" },
+      }),
+    );
+    expect(mockedPrisma.consultation.create).not.toHaveBeenCalled();
+    expect(mockLockSlotBooking).not.toHaveBeenCalled();
+  });
+
+  it("a different key creates a new request that carries its key", async () => {
+    const res = await POST(
+      request(SLOT, { "Idempotency-Key": "rq_attempt_2" }),
+    );
+    expect(res.status).toBe(201);
+    expect(
+      mockedPrisma.consultation.create.mock.calls[0][0].data
+        .requestIdempotencyKey,
+    ).toBe("rq_attempt_2");
   });
 });

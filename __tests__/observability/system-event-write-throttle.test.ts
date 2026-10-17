@@ -83,8 +83,8 @@ describe("the throttle stays narrow", () => {
   });
 
   it("the window is long enough to bound a systemic outage", () => {
-    // 10 minutes. The 2026-09-21 flood was ~3,000 events in 24 hours from one
-    // dependency; at this window the same shape costs 144/day.
-    expect(INFRA_THROTTLE_MS).toBe(10 * 60 * 1000);
+    // One hour. The 2026-09-21 flood was ~3,000 events in 24 hours from one
+    // dependency; at this window the same shape costs 24/day.
+    expect(INFRA_THROTTLE_MS).toBe(60 * 60 * 1000);
   });
 });

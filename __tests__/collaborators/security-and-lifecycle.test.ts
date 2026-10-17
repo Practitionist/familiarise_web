@@ -46,6 +46,7 @@ jest.mock("../../lib/novu/service", () => ({
   notifyCollaboratorDeclined: jest.fn(async () => undefined),
   notifyCollaboratorRemoved: jest.fn(async () => undefined),
   notifyCollaboratorWithdrawn: jest.fn(async () => undefined),
+  notifyCollaboratorInviteExpired: jest.fn(async () => undefined),
 }));
 
 const mockSendCollaboratorInviteExpiredEmail = jest.fn(

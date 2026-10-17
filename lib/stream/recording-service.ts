@@ -422,7 +422,6 @@ export class RecordingService {
       await stageAndSendRecordingReadyNotifications(
         appointment,
         existingRecording.id,
-        streamCallId,
       ).catch((err) =>
         streamLogger.error(
           "Failed to retry recording ready notifications during sync",
@@ -464,7 +463,6 @@ export class RecordingService {
     await stageAndSendRecordingReadyNotifications(
       appointment,
       recording.id,
-      streamCallId,
     ).catch((err) =>
       streamLogger.error(
         "Failed to stage recording ready notifications during sync",

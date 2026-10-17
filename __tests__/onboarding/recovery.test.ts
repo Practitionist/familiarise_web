@@ -214,3 +214,30 @@ describe("processOnboardingData claim-first CAS", () => {
     });
   });
 });
+
+// The result goes straight to the browser; only the ids the wizard routes on may leave.
+describe("processOnboardingData result handed to the browser", () => {
+  it("carries only the user id and the two profile ids", async () => {
+    tx.user.update.mockResolvedValue(
+      storedUser({
+        email: "ada@example.com",
+        phone: "+910000000000",
+        consultantProfileId: "cp_1",
+      }),
+    );
+    const result = await processOnboardingData(USER_ID, consulteeBody());
+    expect(result.success).toBe(true);
+    expect(result.user).toEqual({
+      id: USER_ID,
+      consultantProfileId: "cp_1",
+      consulteeProfileId: "cee_1",
+    });
+  });
+
+  it("reads the consultant profile through an id-only select", async () => {
+    await processOnboardingData(USER_ID, consulteeBody());
+    expect(tx.user.update.mock.calls[0][0].include.consultantProfile).toEqual({
+      select: { id: true },
+    });
+  });
+});
