@@ -951,7 +951,12 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
       },
       include: {
         payment: {
-          select: { userId: true, organizationId: true, refundOwedKey: true },
+          select: {
+            userId: true,
+            organizationId: true,
+            refundOwedKey: true,
+            refundOwedAt: true,
+          },
         },
       },
       orderBy: { createdAt: "asc" },
@@ -959,9 +964,10 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
 
   let notified = 0;
   for (const refund of failed) {
-    // A payment that still owes this refund is retried by the owed sweep, so
-    // the attempt is claimed silently; a spent marker pages ops instead.
-    if (refund.payment.refundOwedKey) {
+    // An attempt of the refund the payment still owes is retried by the owed
+    // sweep, so it is claimed silently; a spent marker pages ops instead.
+    const owedAt = refund.payment.refundOwedAt;
+    if (refund.payment.refundOwedKey && owedAt && refund.createdAt >= owedAt) {
       await prisma.refund.updateMany({
         where: { id: refund.id, failedNotifiedAt: null },
         data: { failedNotifiedAt: now, failedAt: refund.failedAt ?? now },

@@ -25,6 +25,7 @@ type RefundRow = {
   amountPaise: number;
   status: "SUCCEEDED" | "PENDING" | "FAILED";
   failedNotifiedAt?: Date | null;
+  createdAt?: Date;
 };
 
 const mockRows = new Map<string, Row>();
@@ -135,6 +136,7 @@ const mockDb = {
         ? mockRefunds
             .filter((r) => r.status === "FAILED" && !r.failedNotifiedAt)
             .map((r) => ({
+              createdAt: new Date(),
               ...r,
               currency: "INR",
               metadata: null,
@@ -144,6 +146,7 @@ const mockDb = {
                 userId: "payer",
                 organizationId: null,
                 refundOwedKey: mockRows.get(r.paymentId)?.refundOwedKey ?? null,
+                refundOwedAt: mockRows.get(r.paymentId)?.refundOwedAt ?? null,
               },
             }))
         : [],
@@ -467,17 +470,31 @@ describe("a failed gateway attempt", () => {
   it("does not tell the payer a refund failed while the payment still owes it", async () => {
     seat("p1", 10_000);
     marker("p1", 5_000);
-    mockRefunds.push({
-      id: "rf_old",
-      paymentId: "p1",
-      dedupeKey: null,
-      amountPaise: 5_000,
-      status: "FAILED",
-    });
+    mockRefunds.push(
+      {
+        id: "rf_attempt",
+        paymentId: "p1",
+        dedupeKey: null,
+        amountPaise: 5_000,
+        status: "FAILED",
+      },
+      // A failure from before the door stamped the marker is not its attempt.
+      {
+        id: "rf_earlier",
+        paymentId: "p1",
+        dedupeKey: null,
+        amountPaise: 1_000,
+        status: "FAILED",
+        createdAt: new Date(Date.now() - 24 * 60 * 60_000),
+      },
+    );
 
     const result = await notifyFailedRefunds();
-    expect(result.notified).toBe(0);
-    expect(mockSendRefundFailedEmail).not.toHaveBeenCalled();
+    expect(result.notified).toBe(1);
+    expect(mockSendRefundFailedEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendRefundFailedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: 1_000 }),
+    );
     // Claimed silently, so a later success never sends a stale failure email.
     expect(mockRefunds[0].failedNotifiedAt).toBeInstanceOf(Date);
   });
