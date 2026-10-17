@@ -107,7 +107,7 @@ async function main(): Promise<void> {
                 f.programAssignmentId ??
                 f.billingSubscriptionId ??
                 f.organizationId ??
-                "platform"
+                `platform:${f.expectedPaise}:${f.actualPaise}`
               }`,
           ),
           message,

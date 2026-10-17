@@ -394,7 +394,6 @@ async function processOneStuckEvent(
       });
       counts.stillFailing++;
       counts.stillFailingIds.push(ev.eventId);
-      counts.stillFailingIds.push(ev.eventId);
       counts.errors.push(`${ev.eventId}: ${invalidReason}`);
       return true;
     }

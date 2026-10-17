@@ -594,6 +594,7 @@ export async function alertStaleNeedsHuman(
     const rows = await db.appointmentOccurrence.findMany({
       where,
       select: { id: true },
+      orderBy: [{ endsAt: "asc" }, { id: "asc" }],
       take: 200,
     });
     const message = `${stale} session(s) waited over 72 h for an ops decision`;

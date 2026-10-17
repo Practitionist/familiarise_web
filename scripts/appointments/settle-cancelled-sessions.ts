@@ -261,7 +261,11 @@ export async function settleCancelledSessionForOne(
       });
       if (!session) return result;
       result.scanned = 1;
-      await settleAndStamp(session, result);
+      try {
+        await settleAndStamp(session, result);
+      } finally {
+        runFailures.flush();
+      }
       return result;
     },
   );

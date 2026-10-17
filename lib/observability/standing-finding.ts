@@ -40,6 +40,7 @@ export async function reportStandingFinding(
         createdAt: { gte: since },
       },
       select: { context: true },
+      orderBy: { createdAt: "desc" },
       take: MAX_PRIOR_ROWS,
     })
     .catch((err: unknown) => {
