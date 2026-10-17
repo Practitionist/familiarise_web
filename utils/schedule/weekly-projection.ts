@@ -222,8 +222,8 @@ function isValidRange(rangeStart: Date, rangeEnd: Date): boolean {
   return (
     rangeStart instanceof Date &&
     rangeEnd instanceof Date &&
-    !isNaN(rangeStart.getTime()) &&
-    !isNaN(rangeEnd.getTime()) &&
+    !Number.isNaN(rangeStart.getTime()) &&
+    !Number.isNaN(rangeEnd.getTime()) &&
     rangeEnd.getTime() > rangeStart.getTime()
   );
 }
@@ -319,7 +319,8 @@ export function createWeeklyCoverage(
   };
   return {
     covers(startMs, endMs) {
-      if (rows.length === 0 || !(endMs > startMs)) return false;
+      if (rows.length === 0 || Number.isNaN(endMs - startMs)) return false;
+      if (endMs <= startMs) return false;
       return intervalsForWeek(Math.floor(startMs / MS_PER_WEEK)).some(
         ([start, end]) => start <= startMs && end >= endMs,
       );
@@ -366,18 +367,17 @@ export function weeklyRowLocalColumns(
   const localStartMinutes = toMinuteOfDay(row.startTimeUtc + offsetMinutes);
   const localEndMinutes = toMinuteOfDay(row.endTimeUtc + offsetMinutes);
   const startIndex = dayIndexOf(row.startDay);
-  const endIndex =
-    startIndex === -1
-      ? -1
-      : localEndMinutes <= localStartMinutes
-        ? (startIndex + 1) % 7
-        : startIndex;
+  const crosses = localEndMinutes <= localStartMinutes;
+  const endDay =
+    crosses && startIndex !== -1
+      ? DAY_BY_INDEX[(startIndex + 1) % 7]
+      : row.startDay;
   return {
     timezone,
     localStartMinutes,
     localEndMinutes,
     localStartDay: row.startDay,
-    localEndDay: DAY_BY_INDEX[endIndex] ?? row.startDay,
+    localEndDay: endDay,
   };
 }
 

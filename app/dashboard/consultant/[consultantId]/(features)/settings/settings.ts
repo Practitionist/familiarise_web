@@ -129,12 +129,14 @@ export const getInitialWeeklySlots = (
     }
     // Preserve the overnight-in-UTC hint when the local times don't show it.
     const isOvernightUTC = slot.startDay !== slot.endDay && startTime < endTime;
-    (formattedWeeklySlots[day] ||= []).push({
+    const daySlots = formattedWeeklySlots[day] ?? [];
+    daySlots.push({
       startTime,
       endTime,
       isValid: true,
       ...(isOvernightUTC ? { isOvernightUTC: true } : {}),
     });
+    formattedWeeklySlots[day] = daySlots;
   }
 
   // Sort slots chronologically within each day

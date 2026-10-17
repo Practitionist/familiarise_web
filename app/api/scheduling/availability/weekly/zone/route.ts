@@ -111,6 +111,7 @@ export async function POST(req: NextRequest) {
           const toConvert = usable.filter(
             (row) => !sameTimeZone(row.timezone, zone),
           );
+          // Sequential: every update shares this transaction's one connection.
           for (const row of toConvert) {
             await tx.availabilityWindowWeekly.update({
               where: { id: row.id },

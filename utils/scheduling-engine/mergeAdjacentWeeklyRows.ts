@@ -29,7 +29,10 @@ export interface WeeklyRowShape {
 
 type LocalRow<T> = T & WeeklyRowLocalColumns;
 
-const compareStrings = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+function compareStrings(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
 
 function hasLocal<T extends WeeklyRowShape>(row: T): row is LocalRow<T> {
   return hasWeeklyRowLocalColumns({
@@ -67,8 +70,7 @@ export function mergeAdjacentWeeklyRows<T extends WeeklyRowShape>(
   for (const row of local) {
     const prev = out[out.length - 1];
     const canMerge =
-      prev !== undefined &&
-      prev.timezone === row.timezone &&
+      prev?.timezone === row.timezone &&
       prev.localStartDay === row.localStartDay &&
       !crossesLocalMidnight(prev) &&
       !crossesLocalMidnight(row) &&
