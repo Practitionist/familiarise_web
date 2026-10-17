@@ -158,6 +158,8 @@ export async function POST(
           mode,
           slots: body.slots,
           idempotencyKey: req.headers.get("Idempotency-Key") ?? undefined,
+          // Never re-plan an already-scheduled booking (409 ALREADY_ALLOCATED).
+          initialAllocation: true,
           override: false,
           allowPartial: false,
           topUp: false,

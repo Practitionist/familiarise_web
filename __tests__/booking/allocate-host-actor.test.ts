@@ -125,7 +125,10 @@ describe("sponsor-org allocate", () => {
     const res = await post("APPROVED");
     expect(res.status).toBe(200);
     expect(allocate).toHaveBeenCalledWith(
-      expect.objectContaining({ approvableFrom: ["APPROVED"] }),
+      expect.objectContaining({
+        approvableFrom: ["APPROVED"],
+        initialAllocation: true,
+      }),
     );
   });
 });
