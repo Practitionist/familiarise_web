@@ -492,16 +492,23 @@ export async function POST(
         await extendResult.apply();
       } catch (streamErr) {
         // Undo only our own write: a concurrent endsAt change is never clobbered.
-        const reverted = wroteEndsAt
-          ? await prisma.appointmentOccurrence.updateMany({
+        let reverted = false;
+        let revertError: string | undefined;
+        if (wroteEndsAt) {
+          try {
+            const res = await prisma.appointmentOccurrence.updateMany({
               where: { id: occurrence.id, endsAt: targetEndsAt },
               data: { endsAt: occurrence.endsAt },
-            })
-          : { count: 0 };
+            });
+            reverted = res.count > 0;
+          } catch (err) {
+            revertError = err instanceof Error ? err.message : String(err);
+          }
+        }
         reportSentryError(streamErr, {
           subsystem: "stream",
           op: "meetings.extend.stream-failed",
-          extra: { meetingId, reverted: reverted.count > 0 },
+          extra: { meetingId, wroteEndsAt, reverted, revertError },
         });
         return NextResponse.json(
           { error: "Video is temporarily unavailable. Please try again." },
