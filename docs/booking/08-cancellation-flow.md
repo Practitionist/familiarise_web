@@ -21,7 +21,8 @@ This document is the definitive reference for how appointment cancellation works
 9. [Post-Cancellation Cascade](#post-cancellation-cascade)
 10. [Error Handling](#error-handling)
 11. [Cancellation vs Reschedule Comparison](#cancellation-vs-reschedule-comparison)
-12. [Related Documents](#related-documents)
+12. [Refund Quote Binding and Durability](#refund-quote-binding-and-durability)
+13. [Related Documents](#related-documents)
 
 ---
 
@@ -1366,6 +1367,24 @@ The route's own observability is deliberately thin, because the interesting fail
 
 Consultation and subscription cancellations write a consultant-dashboard activity row (`logConsultationCancelled` / `logSubscriptionCancelled`). Unlike the notification, this write is **awaited**: it is a database write, and a floating promise in a serverless function can be killed when the response returns. The actor label is the same three-way consultant/consultee/system distinction the notification uses, so a platform or organization actor is never recorded as the consultee.
 
+## Refund Quote Binding and Durability
+
+This section separates what the cancel route does today from the design landing in Wave 0 (W0-3).
+
+**Current.** The refund percentage comes from `quoteBookingRefund` in `lib/payments/operations/cancellation-policy.ts`, the same function the cancel preview calls. The ladder is 100% at 24 hours or more of notice, 50% from 2 to under 24 hours, and 0% under 2 hours; an expert, admin or platform cancel and an expert no-show are 100%. A subscription is tiered per undelivered session. The route computes the quote after the booking transaction has committed and then calls `refundBookingPayment`. The request carries no refund amount, so the number the dialog displayed is not bound to the click, and a retry after a gateway timeout can answer `NOT_CANCELLABLE` instead of returning the committed result. A refund that fails after the commit is recorded as a system error for ops, not as a retryable obligation. Trial cancellation already enforces a quote check through `REFUND_QUOTE_CHANGED` in `lib/trials/cancellation.ts`.
+
+**Landing in Wave 0 (W0-3).**
+
+- The quote moves inside the cancel transaction. The request gains an optional `expectedRefundPaise` (plus `creditRestoresInFull` for the credits rail), checked before the status compare-and-swap, so a different server quote answers 409 `REFUND_QUOTE_CHANGED` with the current quote. The field is optional for one release for old clients.
+- The same transaction stamps the per-payment refund-owed marker, the door is called with `dedupeKey: "cancel:<appointmentId>"`, and `retry-auto-refunds` re-drives and clears it.
+- A replay after a 504 returns the committed result.
+- The four cancel callers send the displayed quote: `useEventActions.tsx`, `SubscriptionsPage.tsx`, `OrgActorDetail.tsx` and `useConsultantEventActions.ts`.
+- The gateway fee on any refund is absorbed by the platform, so the buyer receives exactly the quoted percentage.
+
+See [the money HLD](../start-here/02-money-system-hld.md#10-refunds) and worked example 6 in [the machinery guide](../start-here/03-booking-and-money-machinery.md#example-6--cancelling-at-23-hours-while-the-dialog-showed-100-current-behaviour-then-the-d3-fix-landing-in-wave-0-w0-3).
+
+---
+
 ## Related Documents
 
 - [Architecture](./01-architecture.md) -- Booking system overview and data model
@@ -1374,3 +1393,8 @@ Consultation and subscription cancellations write a consultant-dashboard activit
 - [Rescheduling Flow](./07-rescheduling-flow.md) -- How rescheduling works (contrast with this doc)
 - [Cancellation Payment Flow](../payments/cancellations-rescheduling/01-cancellation-payment-flow.md) -- Refund processing and earnings reversal
 - [Rescheduling Payment Flow](../payments/cancellations-rescheduling/02-rescheduling-payment-flow.md) -- How payment is handled during reschedule
+
+## Deprecated & Superseded Approaches
+
+1. **Computing the quote after the commit with no durable marker.** Replaced in Wave 0 by the in-transaction quote and the refund-owed marker.
+2. **Cancelling an event by `PUT` with `status: "CANCELLED"`.** That path wrote no refunds or history and is refused with `USE_CANCEL_ROUTE`; cancel through this route.
