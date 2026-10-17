@@ -1,15 +1,6 @@
 import { TCustomSlot, TWeeklySlot } from "@/types/slots";
-import {
-  AvailabilityWindowCustom,
-  AvailabilityWindowWeekly,
-  DayOfWeek,
-  ScheduleType,
-  AppointmentsType,
-} from "@prisma/client";
-import { startOfWeek } from "date-fns";
+import { AppointmentsType } from "@prisma/client";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
-import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
-import { utcStartDayIndex } from "@/utils/schedule/weekly-projection";
 import { formatDayKey, formatWeekKey } from "./allocationMessages";
 
 // Core types for the unified calendar system. CalendarInterval is the UI cell:
@@ -58,15 +49,6 @@ export interface Appointment {
   };
 }
 
-export interface ConsultantData {
-  scheduleType: ScheduleType;
-  availabilityWindowsWeekly: AvailabilityWindowWeekly[];
-  availabilityWindowsCustom: AvailabilityWindowCustom[];
-  user?: {
-    timezone?: string;
-  };
-}
-
 export interface SlotStatus {
   isAvailable: boolean;
   isBooked: boolean;
@@ -77,138 +59,6 @@ export interface SlotStatus {
   overlappingAppointments: AppointmentDetail[];
   intervalStartUTCString: string;
   intervalEndUTCString: string;
-}
-
-// Day index mapping for weekday calculations
-const DAY_INDEX: Record<DayOfWeek, number> = {
-  SUNDAY: 0,
-  MONDAY: 1,
-  TUESDAY: 2,
-  WEDNESDAY: 3,
-  THURSDAY: 4,
-  FRIDAY: 5,
-  SATURDAY: 6,
-};
-
-/**
- * Maps weekly availability slots to calendar time slots
- */
-export function mapWeeklySlots(
-  consultantData: ConsultantData,
-  currentDate: Date,
-  view: "week" | "month" = "week",
-  intervalMinutes: number = 30, // Configurable interval duration
-): CalendarInterval[] {
-  if (
-    consultantData.scheduleType !== ScheduleType.WEEKLY ||
-    !consultantData.availabilityWindowsWeekly?.length
-  ) {
-    return [];
-  }
-
-  // Get the start and end dates based on view
-  let startDate: Date, endDate: Date;
-  if (view === "week") {
-    // Sunday start, pinned — see useCalendarData.visibleDates.
-    startDate = startOfWeek(currentDate, { weekStartsOn: 0 });
-    endDate = new Date(startDate);
-    endDate.setDate(startDate.getDate() + 6);
-  } else {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    startDate = new Date(year, month, 1);
-    endDate = new Date(year, month + 1, 0);
-  }
-
-  // Create slots for each weekly pattern within the date range
-  const slots: CalendarInterval[] = [];
-  const iterDate = new Date(startDate);
-
-  while (iterDate <= endDate) {
-    const dayOfWeek = iterDate.getDay();
-    const matchingSlots = consultantData.availabilityWindowsWeekly.filter(
-      (slot) => utcStartDayIndex(slot) === dayOfWeek,
-    );
-
-    matchingSlots.forEach((slot) => {
-      // startTimeUtc/endTimeUtc are Int (minutes since midnight UTC, 0-1439)
-      const slotStartTime = minuteUtcToDate(slot.startTimeUtc, iterDate);
-      const slotEndTime = minuteUtcToDate(slot.endTimeUtc, iterDate);
-
-      // Handle slots that cross midnight
-      if (slotEndTime <= slotStartTime) {
-        slotEndTime.setDate(slotEndTime.getDate() + 1);
-      }
-
-      // Create slots with configurable intervals
-      let currentHour = new Date(slotStartTime);
-      while (currentHour < slotEndTime) {
-        const nextInterval = new Date(currentHour);
-        nextInterval.setMinutes(currentHour.getMinutes() + intervalMinutes);
-
-        const endTimeForSlot =
-          nextInterval > slotEndTime ? slotEndTime : nextInterval;
-
-        slots.push({
-          startTime: new Date(currentHour),
-          endTime: new Date(endTimeForSlot),
-          isAvailable: true,
-          isBooked: false,
-          originalSlot: slot,
-        });
-
-        currentHour = nextInterval;
-      }
-    });
-
-    // FIXED: Create new date object to avoid mutations
-    iterDate.setDate(iterDate.getDate() + 1);
-  }
-
-  return slots;
-}
-
-/**
- * Maps custom availability slots to calendar time slots
- */
-export function mapCustomSlots(
-  consultantData: ConsultantData,
-  intervalMinutes: number = 30, // Configurable interval duration
-): CalendarInterval[] {
-  if (
-    consultantData.scheduleType !== ScheduleType.CUSTOM ||
-    !consultantData.availabilityWindowsCustom?.length
-  ) {
-    return [];
-  }
-
-  const slots: CalendarInterval[] = [];
-
-  consultantData.availabilityWindowsCustom.forEach((slot) => {
-    const startTime = new Date(slot.startsAt);
-    const endTime = new Date(slot.endsAt);
-
-    // Create intervals with configurable duration for the custom slot
-    let currentInterval = new Date(startTime);
-    while (currentInterval < endTime) {
-      const nextInterval = new Date(currentInterval);
-      nextInterval.setMinutes(currentInterval.getMinutes() + intervalMinutes);
-
-      const endTimeForSlot = nextInterval > endTime ? endTime : nextInterval;
-
-      slots.push({
-        startTime: new Date(currentInterval),
-        endTime: new Date(endTimeForSlot),
-        isAvailable: true,
-        isBooked: false,
-        originalSlot: slot,
-      });
-
-      currentInterval = nextInterval;
-    }
-  });
-
-  return slots;
 }
 
 /**
@@ -390,10 +240,7 @@ export function groupSelectedIntoSessions(
       slot.endTime.getTime() > open.end.getTime() &&
       (schedulingTimezone
         ? ScheduleCalculationService.dayKey(open.start, schedulingTimezone) ===
-          ScheduleCalculationService.dayKey(
-            slot.startTime,
-            schedulingTimezone,
-          )
+          ScheduleCalculationService.dayKey(slot.startTime, schedulingTimezone)
         : open.start.toISOString().slice(0, 10) ===
           slot.startTime.toISOString().slice(0, 10))
     ) {

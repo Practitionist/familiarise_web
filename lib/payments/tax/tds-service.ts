@@ -70,15 +70,6 @@ export const TDS_RATE_WITH_PAN = 10;
 /** TDS rate without PAN (20%) — Section 206AA */
 export const TDS_RATE_WITHOUT_PAN = 20;
 
-// #1132 — the 194-O taxable-base rules live in lib/compliance/tds-194o.ts so
-// they stay unit-testable without pulling Prisma into the test. Re-exported
-// here because the payout services already import from this module.
-export {
-  resolve194OTaxablePaise,
-  TDS_194O_EXEMPTION_PAISE,
-  TDS_194O_EXEMPT_ENTITY_TYPES,
-} from "@/lib/compliance/tds-194o";
-
 // ============================================================================
 // Financial Year Utilities
 // ============================================================================
@@ -335,11 +326,32 @@ export async function recordTdsReversal(
   });
   if (!original || original.tdsDeducted <= 0) return null;
 
-  // Integer paise proportion (floor — never reverse more than the refund earns).
-  let tdsToReverse = Math.floor(
+  // A refunded earning reverses at most its own TDS (rate × refunded gross), so a
+  // year-to-date catch-up on the same payout stays withheld. Floors throughout.
+  const proportionalPaise = Math.floor(
     (original.tdsDeducted * params.refundAmountPaise) /
       params.paymentAmountPaise,
   );
+  const earning = params.earningsId
+    ? await tx.consultantEarnings.findUnique({
+        where: { id: params.earningsId },
+        select: { grossAmount: true },
+      })
+    : null;
+  let tdsToReverse =
+    earning && earning.grossAmount > 0
+      ? Math.min(
+          proportionalPaise,
+          Math.floor(
+            (Math.floor(
+              (earning.grossAmount * params.refundAmountPaise) /
+                params.paymentAmountPaise,
+            ) *
+              original.tdsRateBps) /
+              10_000,
+          ),
+        )
+      : proportionalPaise;
   if (tdsToReverse <= 0) return null;
 
   // Dedup + cap: prior reversals carry negative tdsDeducted, so their sum is the

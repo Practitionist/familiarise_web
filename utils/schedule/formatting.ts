@@ -12,6 +12,7 @@ import {
 } from "@/utils/dateTimeUtils";
 import { dateToMinuteUtc } from "@/utils/scheduling-engine/slotTimeUtils";
 import { resolveOvernightStatus } from "@/utils/schedule/overnight";
+import { WEEKLY_SAVE_PROBE_DATE } from "@/utils/schedule/weekly-projection";
 import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import { THIRTY_MIN_MS } from "@/utils/scheduling-engine/intervals";
 import { DayOfWeek } from "@prisma/client";
@@ -50,13 +51,11 @@ import type { CustomSlot, SlotsType, WeeklySlot } from "./types";
 const GRID_MS = THIRTY_MIN_MS;
 
 /**
- * Epoch dates the weekly path carries local minutes through, and the probe the
- * picker normalises against. Which calendar day carried them is irrelevant —
- * only the UTC minute-of-day survives into a weekly row — so the epoch is used
- * everywhere rather than a "today" that would make a weekly row's stored minutes
- * depend on when it was saved.
+ * Dates the weekly path carries local minutes through, and the probe the picker
+ * normalises against. The server recovers the typed wall clock from the stored
+ * UTC minutes with the zone's offset on this same date.
  */
-const PROBE_DATE = "1970-01-01";
+const PROBE_DATE = WEEKLY_SAVE_PROBE_DATE;
 const PROBE_NEXT_DATE = "1970-01-02";
 
 /**
@@ -347,9 +346,7 @@ export type WeeklySlotForSave = WeeklySlot & {
  * local day. For a consultant in IST every row starting before 05:30 local
  * therefore walked back one weekday on every save — Monday 01:00 was saved as
  * Sunday, reloaded into Sunday's form row, and saved again as Saturday. The
- * day key IS the day the consultant meant, so it is stored verbatim and the
- * UTC weekday is derived per occurrence from the row's frozen offset
- * (`utils/schedule/weekly-projection.ts`).
+ * day key IS the day the consultant meant, so it is stored verbatim.
  *
  * `endDay` still records whether the row crosses midnight IN UTC, because that
  * is what `validateWeeklySlotTimeOrder` and the overlap SQL require of the

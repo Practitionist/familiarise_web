@@ -146,8 +146,13 @@ describe("reconcile-occurrence-availability result semantics (QA #1741)", () => 
         overlap("occ-2", "apt-2"),
       ]);
     (
-      prisma as unknown as { systemEvent: { findFirst: jest.Mock } }
-    ).systemEvent = { findFirst: jest.fn().mockResolvedValue({ id: "seen" }) };
+      prisma as unknown as {
+        systemEvent: { findFirst: jest.Mock; findMany: jest.Mock };
+      }
+    ).systemEvent = {
+      findFirst: jest.fn().mockResolvedValue({ id: "seen" }),
+      findMany: jest.fn().mockResolvedValue([]),
+    };
 
     const result = await reconcileOccurrenceAvailability();
 

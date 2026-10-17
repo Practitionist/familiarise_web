@@ -37,13 +37,13 @@ The table below lists the occurrence row's indexes and sidecar constraints.
 
 A published slice of a consultant's recurring weekly availability. The table below lists its columns.
 
-| Column                                                                                                               | Why it exists                                                                                                                                                                                                                                                                                                                                                                                       |
-| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `startDay`, `endDay` (`DayOfWeek`) and `startTimeUtc`, `endTimeUtc` (`SmallInt`, minutes since midnight UTC, 0–1439) | The frozen-offset source of truth for weekly availability today, supporting overnight/cross-midnight windows.                                                                                                                                                                                                                                                                                       |
-| `utcOffsetMinutes` (default 0)                                                                                       | The UTC offset at window creation (e.g. 330 for IST, -300 for EST). IST-only at launch, so this frozen offset is what the live scheduling math reads.                                                                                                                                                                                                                                               |
-| `timezone?`, `localStartMinutes?`, `localEndMinutes?`, `localStartDay?`, `localEndDay?`                              | The DST-correct representation (RFC 5545 / Calendly-style: local wall-clock plus IANA zone, materialized to UTC per occurrence), finalized in schema by #872 but read by nothing yet. Written by every weekly save path since 2026-09-05 (`lib/scheduling/weeklyUtcOffset.ts`) so that going DST-aware later needs no backfill, but the reader flip is still pending the post-MVP algorithm and UI. |
-| `consultantProfileId` (`Cascade`)                                                                                    | The consultant this window belongs to.                                                                                                                                                                                                                                                                                                                                                              |
-| `deletedAt?`                                                                                                         | Soft-delete tombstone (#1319 A-series), mirroring `Appointment.deletedAt`.                                                                                                                                                                                                                                                                                                                          |
+| Column                                                                                                               | Why it exists                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startDay`, `endDay` (`DayOfWeek`) and `startTimeUtc`, `endTimeUtc` (`SmallInt`, minutes since midnight UTC, 0–1439) | Writer columns kept for the overlap SQL and `validateWeeklySlotTimeOrder`: the typed wall clock minus the zone's offset on the save probe date. No reader projects availability from them; readers use the local columns below.                    |
+| `utcOffsetMinutes` (default 0)                                                                                       | The UTC offset at save time. Still written, but no reader projects through it; it is dropped in the reset batch.                                                                                                                                   |
+| `timezone?`, `localStartMinutes?`, `localEndMinutes?`, `localStartDay?`, `localEndDay?`                              | The row's meaning: a local wall-clock window in an IANA zone, materialised to UTC per occurrence so it follows DST. Every reader projects from these alone and refuses a row where any is NULL; see `docs/booking/19-dst-and-timezone-posture.md`. |
+| `consultantProfileId` (`Cascade`)                                                                                    | The consultant this window belongs to.                                                                                                                                                                                                             |
+| `deletedAt?`                                                                                                         | Soft-delete tombstone (#1319 A-series), mirroring `Appointment.deletedAt`.                                                                                                                                                                         |
 
 The table below lists the window row's indexes.
 
@@ -177,12 +177,12 @@ The table below lists the row's unique and indexes.
 
 One row per time a reschedule request offers. The table below lists its columns.
 
-| Column                               | Why it exists                                               |
-| ------------------------------------ | ----------------------------------------------------------- |
-| `rescheduleRequestId` (`Cascade`)    | The request this proposed time belongs to.                  |
-| `startsAt`, `endsAt` (`Timestamptz`) | The proposed range.                                         |
-| `round` (default 1)                  | The proposal round index (currently always `1`).            |
-| `proposedById` (`Cascade`)           | The user who proposed this time.                            |
+| Column                               | Why it exists                                    |
+| ------------------------------------ | ------------------------------------------------ |
+| `rescheduleRequestId` (`Cascade`)    | The request this proposed time belongs to.       |
+| `startsAt`, `endsAt` (`Timestamptz`) | The proposed range.                              |
+| `round` (default 1)                  | The proposal round index (currently always `1`). |
+| `proposedById` (`Cascade`)           | The user who proposed this time.                 |
 
 The table below lists the row's index.
 

@@ -1205,3 +1205,25 @@ CREATE INDEX IF NOT EXISTS "NotificationOutbox_active_outbox_idx"
   ON "NotificationOutbox" ("nextRetryAt" ASC NULLS FIRST, "notBefore")
   WHERE "status" IN ('PENDING', 'RETRY');
 
+-- SPLIT
+-- A stamped refund-owed amount is positive; NULL means the full remaining balance.
+ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_refund_owed_paise_positive";
+-- SPLIT
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_refund_owed_paise_positive"
+  CHECK ("refundOwedPaise" IS NULL OR "refundOwedPaise" > 0);
+
+-- SPLIT
+-- 194-O: one threshold catch-up per expert per financial year among live payouts; a
+-- catch-up belongs to the payout's own TDS year, and a credit back is never negative.
+ALTER TABLE "ConsultantPayout" DROP CONSTRAINT IF EXISTS "consultant_payout_tds_threshold_sane";
+-- SPLIT
+ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_tds_threshold_sane"
+  CHECK (
+    "tdsCreditPaise" >= 0
+    AND ("tdsCatchUpFy" IS NULL OR "tdsCatchUpFy" = "tdsFinancialYear")
+  );
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "consultant_payout_one_tds_catch_up_per_fy"
+  ON "ConsultantPayout" ("consultantProfileId", "tdsCatchUpFy")
+  WHERE "tdsCatchUpFy" IS NOT NULL
+    AND "status" IN ('PROCESSING', 'COMPLETED');

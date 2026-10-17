@@ -9,6 +9,7 @@
  */
 
 import { ScheduleType, DayOfWeek } from "@prisma/client";
+import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 
 // ─── Time Helpers ───────────────────────────────────────────────────────────
 
@@ -224,6 +225,17 @@ export function makeConsultantData(overrides: Record<string, any> = {}): {
   };
 }
 
+/** An IANA zone with a fixed offset, so fixtures project the same all year. */
+export function fixedOffsetZone(utcOffsetMinutes: number): string {
+  if (utcOffsetMinutes === 0) return "UTC";
+  if (utcOffsetMinutes === 330) return "Asia/Kolkata";
+  if (utcOffsetMinutes % 60 !== 0) {
+    throw new Error(`No fixed-offset fixture zone for ${utcOffsetMinutes}`);
+  }
+  const hours = Math.abs(utcOffsetMinutes) / 60;
+  return `Etc/GMT${utcOffsetMinutes > 0 ? "-" : "+"}${hours}`;
+}
+
 export function makeWeeklyAvailabilitySlot(
   day: DayOfWeek,
   startHourUTC: number,
@@ -231,13 +243,21 @@ export function makeWeeklyAvailabilitySlot(
   utcOffsetMinutes: number = 0,
   endDay?: DayOfWeek,
 ) {
-  return {
+  const row = {
     id: `weekly-${day}-${startHourUTC}`,
     startDay: day,
     startTimeUtc: startHourUTC * 60, // minutes since midnight UTC
     endDay: endDay ?? day,
     endTimeUtc: endHourUTC * 60, // minutes since midnight UTC
     utcOffsetMinutes,
+  };
+  return {
+    ...row,
+    ...weeklyRowLocalColumns(
+      row,
+      fixedOffsetZone(utcOffsetMinutes),
+      utcOffsetMinutes,
+    ),
   };
 }
 

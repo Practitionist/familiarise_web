@@ -5742,6 +5742,13 @@ model Payment {
   // Set when an expert or platform cancellation returned this order's referral to SIGNED_UP:
   // the order no longer counts as the referee's first purchase or holds the welcome-discount slot.
   referralReleasedAt          DateTime?                    @db.Timestamptz
+  // A refund a door owes, stamped in its commit and cleared by the drive that settles it.
+  // Null paise = the full remaining balance; the attempt count retires the marker to a human.
+  refundOwedPaise             BigInt?
+  refundOwedKey               String?                      @unique
+  refundOwedReason            String?
+  refundOwedAt                DateTime?                    @db.Timestamptz
+  refundOwedAttempts          Int                          @default(0)
   // Referrals this payment qualified (at most one in practice).
   qualifyingReferrals         Referral[]                   @relation("ReferralQualifyingPayment")
   firstPaymentOfRelationships ExpertCustomerRelationship[]
@@ -6152,6 +6159,12 @@ model ConsultantPayout {
   netAmount         BigInt? // Amount after TDS deduction (amount - tdsDeducted), sent to gateway
   tdsRateAppliedBps Int? // #781 §C — bps; rate reserved for this payout, stamped into the final audit record
   tdsFinancialYear  String? // FY when TDS was calculated (e.g. "2026-27"). Persisted to avoid FY-boundary drift.
+  // 194-O threshold: the FY whose catch-up this payout took (one per expert per FY,
+  // `consultant_payout_one_tds_catch_up_per_fy`), TDS carried to later payouts (+) or
+  // collected from earlier ones (−), and excess TDS credited back in cash.
+  tdsCatchUpFy      String?
+  tdsCarryPaise     BigInt  @default(0)
+  tdsCreditPaise    BigInt  @default(0)
 
   // MSME 43B(h) settlement deadline; mirrors OrganizationPayout. #776 — the
   // consultant is the supplier here, so the deadline derives from the

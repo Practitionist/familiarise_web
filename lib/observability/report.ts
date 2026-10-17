@@ -95,6 +95,11 @@ function normaliseError(error: unknown): Error {
   return new Error(String(error));
 }
 
+/** Readable text for any thrown value; never "[object Object]". */
+export function errorMessageOf(error: unknown): string {
+  return normaliseError(error).message;
+}
+
 /**
  * #1696 / #1092 — Extract structured Postgres/Prisma error tags (`pool_exhaustion`,
  * `pg_code`, `pg_constraint`) and state-machine transition tags (`transition_entity`,

@@ -5,7 +5,20 @@ import { CancellationReasonEnum } from "./enums";
 export const CancelAppointmentSchema = z.object({
   reason: CancellationReasonEnum.optional(),
   notes: z.string().optional(),
+  /** The refund the dialog showed; a different server quote answers 409. Optional for N-1 clients. */
+  expectedRefundPaise: z.number().int().nonnegative().optional(),
+  /** The credits rail's all-or-nothing answer the dialog showed. */
+  expectedCreditRestoresInFull: z.boolean().optional(),
 });
+
+/** The 409 a cancel answers when its quote no longer matches the one the dialog showed. */
+export const RefundQuoteChangedSchema = z.object({
+  code: z.literal("REFUND_QUOTE_CHANGED"),
+  refundPaise: z.number(),
+  refundPct: z.number(),
+  creditRestoresInFull: z.boolean(),
+});
+export type RefundQuoteChanged = z.infer<typeof RefundQuoteChangedSchema>;
 
 /**
  * Optional proposal attached to a reschedule.
@@ -40,7 +53,9 @@ export const RescheduleProposalSchema = z
             (s) =>
               new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime() ===
               SCHEDULING_INTERVAL_MS,
-            { message: "Each proposed time must be exactly one 30-minute slot" },
+            {
+              message: "Each proposed time must be exactly one 30-minute slot",
+            },
           ),
       )
       .min(1)
@@ -73,6 +88,8 @@ const CancelRefundQuoteSchema = z.object({
   paid: z.literal(true).optional(),
   /** What was paid, for the trial breakdown line. */
   grossPaise: z.number().optional(),
+  /** The credits rail restores whole; echoed back with the click. */
+  creditRestoresInFull: z.boolean().optional(),
 });
 
 /** The cancel preview: a priced quote, or the trial's `paid: false` when nothing was charged. */

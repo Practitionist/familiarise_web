@@ -145,6 +145,8 @@ const FAMILY_FOR_PATTERN: Record<string, string> = {
 };
 const POOL_EXHAUSTION_TEXT =
   /Unable to start a transaction in the given time|Timed out fetching a new connection from the connection pool|\bP2024\b/;
+const DATABASE_UNREACHABLE_TEXT =
+  /Can't reach database server|\bP1001\b|Connection terminated due to connection timeout|timeout exceeded when trying to connect|\bEAUTHTIMEOUT\b/;
 const SCHEMA_DRIFT_TEXT = /\bP202[12]\b|does not exist in the current database/;
 
 const budgetLastSent = new Map<string, number>();
@@ -173,7 +175,8 @@ function fingerprintFamily(event: Sentry.Event): string | null {
   if (event.tags?.pool_exhaustion === "true") return "prisma-pool-exhaustion";
   const text = eventText(event);
   if (SCHEMA_DRIFT_TEXT.test(text)) return "prisma-schema-drift";
-  return POOL_EXHAUSTION_TEXT.test(text) ? "prisma-pool-exhaustion" : null;
+  if (POOL_EXHAUSTION_TEXT.test(text)) return "prisma-pool-exhaustion";
+  return DATABASE_UNREACHABLE_TEXT.test(text) ? "database-unreachable" : null;
 }
 
 function normaliseForKey(text: string): string {

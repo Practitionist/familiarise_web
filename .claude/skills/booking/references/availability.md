@@ -18,24 +18,21 @@ relations exist side by side, so rows from the dormant mode can persist from a
 previous schedule — which is why every reader must gate on the discriminator
 rather than unioning both tables.
 
-`AvailabilityWindowWeekly` holds recurring rows as `startDay`/`endDay`
-(`DayOfWeek`) plus `startTimeUtc`/`endTimeUtc` as minutes since midnight UTC
-(0–1439), with `utcOffsetMinutes` as the live source of truth. `startDay` is the
-**consultant's local** day (ADR B4): the UTC weekday is derived per row from
-that frozen offset by `utcStartDayIndex`
-(`utils/schedule/weekly-projection.ts`), and no surface may derive it from the
-viewer's clock. `endDay` answers the narrower question of whether the row
-crosses midnight **in UTC**, which is why an Asia/Kolkata 23:00–02:00 row is
-stored as a single same-day row. The offset is never accepted from a request
-body: `resolveWeeklyUtcOffsetMinutes` (`lib/scheduling/weeklyUtcOffset.ts`)
-derives it from `User.timezone`, defaults to 330 when the profile carries no
-usable zone, and answers a contradicting caller value with a 400 carrying
-`code: "UTC_OFFSET_CONFLICT"`. Its `timezone`, `localStartMinutes`,
-`localEndMinutes`, `localStartDay` and `localEndDay` columns are the DST-correct
-representation; they are dual-written from 2026-09-05 by `weeklyRowLocalColumns`
-on every write path and read by nothing until the #872 reader flip, so write
-them only through that helper and carry them through any path that recreates
-rows.
+`AvailabilityWindowWeekly` rows mean "this local wall-clock window, every week,
+in this IANA zone", and every reader projects them from their five local columns
+alone: `timezone`, `localStartDay`, `localStartMinutes`, `localEndMinutes` and
+`localEndDay`. `weeklyRowIntervalsInRange` (`utils/schedule/weekly-projection.ts`)
+resolves each local date through the zone's rules, so the instants move across
+DST while the wall clock stays put; a spring-forward local time is skipped for
+that date and a fall-back one takes its first occurrence. A row with NULL local
+columns is refused by every reader (`partitionWeeklyRows`) and reported once per
+call (`reportIncompleteWeeklyRows`). The UTC columns (`startDay`, `endDay`,
+`startTimeUtc`, `endTimeUtc`, `utcOffsetMinutes`) are still written for the
+overlap SQL, but nothing projects through them. Writers derive the local columns
+with `weeklyLocalColumnsForSave` (`lib/scheduling/weeklyUtcOffset.ts`), which
+adds back the zone's offset on the editor's 1970-01-01 probe date, and a zone
+whose offset is off the 30-minute grid (UTC+05:45) is refused with `ZONE`. See
+`docs/booking/19-dst-and-timezone-posture.md`.
 `AvailabilityWindowCustom` holds date-specific rows as `startsAt`/`endsAt` and
 has no `isAvailable`, so a custom row is purely additive and can never express a
 blackout. Both models gained a `deletedAt` tombstone in wave 5 (#1322, schema
@@ -53,13 +50,11 @@ coalescing pass inside **one** Serializable transaction under
 the response returns are the post-merge ones. Despite the file name the module
 covers both modes, and the two rules differ because the row shapes do.
 
-Weekly rows merge only on exact adjacency and only when both are single-day,
-share a `startDay`, are not overnight and carry the same `utcOffsetMinutes`;
-overnight and cross-offset rows are left alone. `coalesceConsultantWeeklyRows`
-deletes and recreates, so every weekly row id changes, and it recomputes the
-five dual-written DST columns for the merged row rather than copying them —
-a fold moves the row's end, and a row written before the dual-write has no zone
-to recompute from and keeps its nulls.
+Weekly rows merge on their local columns: only on exact adjacency, only within
+one zone and one local day, and never when either row crosses local midnight; a
+row without local columns is left alone. `coalesceConsultantWeeklyRows` deletes
+and recreates, so every weekly row id changes, and it carries every column
+across, local ones included.
 
 Custom rows merge on adjacency **or overlap**, keeping the later `endsAt`, and
 `coalesceConsultantCustomRows` preserves the surviving row's id, deleting only
@@ -80,13 +75,13 @@ at least eight names and fall into three genuinely different behaviours, plus a
 fourth category that is not an atom at all. Read the table before assuming two
 of them can be swapped.
 
-| Declaration | File | Behaviour |
-| --- | --- | --- |
-| `SLOT_GRID_MS` | `lib/payments/utils/slot-validation.ts` | **Rejects off-grid.** `slotStartRefusal` refuses a client-picked start with `SLOT_NOT_ON_GRID` when `start % 30min !== 0`. The only place 30 minutes is a constraint *on a timestamp*. |
-| `SLOT_ATOM_MS` | `utils/appointmentlock.ts` | **Floors to the grid.** `Math.floor(startsAt / SLOT_ATOM_MS) * SLOT_ATOM_MS`, then steps. Deliberately a superset: a `:15` start takes both the `:00` and `:30` atoms, so two writers can never hold disjoint keys for the same booked minute. |
-| `ATOM_MS`, `slidingIntervalMillis`, `SCHEDULING_INTERVAL_MS`, `SLOT_MS`, `thirtyMinMs` | `utils/scheduling-engine/availabilityCoverage.ts`, `utils/scheduling-engine/intervals.ts`, `lib/appointments/occurrences.ts`, `schemas/appointments.ts`, `utils/scheduling-engine/SchedulingService.ts` | **Steps from an arbitrary anchor.** Never consults the epoch — it steps from whatever start it is handed, so a window opening at `:15` yields `:15`/`:45` atoms. |
-| `THIRTY_MIN_MS` | `utils/scheduling-engine/intervals.ts` | **Not an atom.** Used only as a `Math.floor(ms / X)` *bucket divisor* for index keys in `buildAppointmentIndex` and in `lib/booking/overlap-meta.ts`. It has no window semantics, so "the atom" is the wrong name for it. |
-| `intervalDurationMs` | `utils/scheduling-engine/interval-meta.ts` | **A duration, not a grid.** The "is this 30-minute interval already full?" threshold. |
+| Declaration                                                                            | File                                                                                                                                                                                                    | Behaviour                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SLOT_GRID_MS`                                                                         | `lib/payments/utils/slot-validation.ts`                                                                                                                                                                 | **Rejects off-grid.** `slotStartRefusal` refuses a client-picked start with `SLOT_NOT_ON_GRID` when `start % 30min !== 0`. The only place 30 minutes is a constraint _on a timestamp_.                                                         |
+| `SLOT_ATOM_MS`                                                                         | `utils/appointmentlock.ts`                                                                                                                                                                              | **Floors to the grid.** `Math.floor(startsAt / SLOT_ATOM_MS) * SLOT_ATOM_MS`, then steps. Deliberately a superset: a `:15` start takes both the `:00` and `:30` atoms, so two writers can never hold disjoint keys for the same booked minute. |
+| `ATOM_MS`, `slidingIntervalMillis`, `SCHEDULING_INTERVAL_MS`, `SLOT_MS`, `thirtyMinMs` | `utils/scheduling-engine/availabilityCoverage.ts`, `utils/scheduling-engine/intervals.ts`, `lib/appointments/occurrences.ts`, `schemas/appointments.ts`, `utils/scheduling-engine/SchedulingService.ts` | **Steps from an arbitrary anchor.** Never consults the epoch — it steps from whatever start it is handed, so a window opening at `:15` yields `:15`/`:45` atoms.                                                                               |
+| `THIRTY_MIN_MS`                                                                        | `utils/scheduling-engine/intervals.ts`                                                                                                                                                                  | **Not an atom.** Used only as a `Math.floor(ms / X)` _bucket divisor_ for index keys in `buildAppointmentIndex` and in `lib/booking/overlap-meta.ts`. It has no window semantics, so "the atom" is the wrong name for it.                      |
+| `intervalDurationMs`                                                                   | `utils/scheduling-engine/interval-meta.ts`                                                                                                                                                              | **A duration, not a grid.** The "is this 30-minute interval already full?" threshold.                                                                                                                                                          |
 
 Only the exported `SCHEDULING_INTERVAL_MS` (`lib/appointments/occurrences.ts`) and
 `THIRTY_MIN_MS` (`utils/scheduling-engine/intervals.ts`) are importable, and
@@ -129,17 +124,15 @@ generator. Generation happens in two places that must agree:
 private `SchedulingService.findAvailableSlots` for the allocator.
 
 What makes them agree is that both project weekly rows through the same
-generator, `weeklyRowOccurrencesInRange` (`utils/schedule/weekly-projection.ts`),
-which walks the requested range in UTC and emits half-open `[start, end)`
-occurrences on the row's derived UTC weekday, starting one day early so an
-overnight row keeps the tail that falls inside the range. Checkout then
-re-checks each atom through `isMinuteWithinWeeklySlot`, which derives the
-weekday through the same helper — the invariant is that the grid offers only
-atoms the validator accepts, pinned in
-`__tests__/booking-algorithm/weekly-day-semantics.test.ts`. The grid used to
-bucket rows on the **viewer's** weekday instead, so an overseas customer was
-shown an IST pre-05:30 row a day away from the day checkout would accept
-(#1342); if you touch either generator, keep them on the shared helper.
+generator, `weeklyRowIntervalsInRange` (`utils/schedule/weekly-projection.ts`),
+which walks the range one local date at a time, starting a day early so an
+overnight row keeps the tail that falls inside it. Checkout, the validator and
+the allocator test atoms through `createWeeklyCoverage`, built on the same
+generator — the invariant is that the grid offers only atoms the validator
+accepts, pinned in `__tests__/booking-algorithm/weekly-day-semantics.test.ts`
+and `__tests__/scheduling/weekly-dst-projection.test.ts`. The auto-allocator may
+place a session in the post-midnight tail of an overnight row, provided that
+day's and week's caps still have room.
 
 Segmentation and merging carry two more boundary rules. `splitSlotsByDay` cuts a
 window at the next local day's midnight rather than at 23:59:59.999, because a
@@ -151,7 +144,10 @@ require exact adjacency, and differ only in which atoms are eligible; a
 tolerance on either side advertises a seam no row publishes (#1416).
 
 The grid is `GET /api/scheduling/availability-with-allocation/[consultantId]` with
-`startDateInUtc`, `endDateInUtc` and `timezone`, public in `middleware.ts`.
+`startDateInUtc`, `endDateInUtc` and `timezone`, public in `middleware.ts`. The
+expert page asks for `zonedWeekWindow` bounds — viewer-zone local midnight to the
+local midnight seven days later, end exclusive — so the week's last 23:30 atom is
+inside the window.
 There is no polling interval on it and none should be added: ADR 16
 (`docs/enterprise/70-design-decisions/16-slot-freshness-without-realtime.md`)
 records freshness here as a user-experience concern met by a precise 409 toast,

@@ -17,8 +17,9 @@ const notifyTrialCancelled = jest.fn();
 jest.mock("../../lib/novu/service", () => ({
   notifyTrialCancelled: (...a: unknown[]) => notifyTrialCancelled(...a),
 }));
+const reportSentryError = jest.fn();
 jest.mock("../../lib/observability/report", () => ({
-  reportSentryError: jest.fn(),
+  reportSentryError: (...a: unknown[]) => reportSentryError(...a),
 }));
 const refundBookingPayment = jest.fn();
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
@@ -126,6 +127,28 @@ describe("expire-unpaid-trials tombstones the held call", () => {
         where: { status: "CANCELLED", appointment: { deletedAt: null } },
       }),
     );
+  });
+
+  it("reports N failing tombstones as one event carrying the count", async () => {
+    const many = ["a", "b", "c", "d", "e"].map((id) => ({
+      ...lapsed,
+      id: `trial-${id}`,
+      appointmentId: `appt-${id}`,
+    }));
+    db.trial.findMany
+      .mockReset()
+      .mockResolvedValueOnce(many)
+      .mockResolvedValue([]);
+    db.__tx.trial.updateMany.mockResolvedValue({ count: 1 });
+    softCancelTrialAppointment.mockRejectedValue(new Error("pool busy"));
+
+    await expireUnpaidTrials();
+
+    const tombstone = reportSentryError.mock.calls.filter(
+      ([, opts]) => opts.op === "expire-unpaid-trials-tombstone",
+    );
+    expect(tombstone).toHaveLength(1);
+    expect(tombstone[0][1].extra.count).toBe(5);
   });
 
   it("touches nothing when the trial was paid or scheduled in between", async () => {

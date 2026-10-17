@@ -56,6 +56,7 @@ jest.mock("../../lib/prisma", () => ({
     },
     payment: {
       findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findUnique: jest.fn().mockResolvedValue({
         id: "pay-1",
         paymentIntent: "pi_test",
@@ -71,6 +72,12 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => mockRefundPayment(...a),
 }));
 
+jest.mock("../../lib/payments/operations/refund", () => ({
+  findDedupedRefund: async () => null,
+  RefundGatewayError: class extends Error {},
+  RefundValidationError: class extends Error {},
+}));
+
 jest.mock("@sentry/nextjs", () => ({
   captureException: (...a: unknown[]) => mockCaptureException(...a),
 }));
@@ -78,9 +85,33 @@ jest.mock("@sentry/nextjs", () => ({
 import { OccurrenceCompletionStatus } from "@prisma/client";
 
 import {
+  quoteTrialRefund,
   refundCancelledTrial,
   softCancelTrialAppointment,
+  trialRefundOwed,
 } from "../../lib/trials/cancellation";
+
+/** The door's halves: quote and stamp in the cancel commit, then drive. */
+async function settleTrial(args: {
+  trialId: string;
+  appointmentId: string | null;
+  paymentId: string | null;
+  initiatedByUserId: string;
+  isConsultantInitiated: boolean;
+}) {
+  const quote = await quoteTrialRefund(args);
+  const owed = trialRefundOwed({
+    trialId: args.trialId,
+    quote,
+    isConsultantInitiated: args.isConsultantInitiated,
+  });
+  return refundCancelledTrial({
+    trialId: args.trialId,
+    initiatedByUserId: args.initiatedByUserId,
+    quote,
+    owed,
+  });
+}
 
 const APPOINTMENT_ID = "appt-1";
 const PAYMENT_ID = "pay-1";
@@ -157,7 +188,7 @@ describe("refundCancelledTrial", () => {
     mockAppointmentFindUnique.mockResolvedValue(appointmentStartingInHours(72));
     mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 100_000 });
 
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -183,7 +214,7 @@ describe("refundCancelledTrial", () => {
     });
     mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 100_000 });
 
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -201,7 +232,7 @@ describe("refundCancelledTrial", () => {
     // No SUCCEEDED payment with amount > 0 exists for a free trial.
     mockPaymentFindFirst.mockResolvedValue(null);
 
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: null,
@@ -219,7 +250,7 @@ describe("refundCancelledTrial", () => {
     mockAppointmentFindUnique.mockResolvedValue(appointmentStartingInHours(1));
     mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 100_000 });
 
-    const consultee = await refundCancelledTrial({
+    const consultee = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -232,7 +263,7 @@ describe("refundCancelledTrial", () => {
     mockAppointmentFindUnique.mockResolvedValue(appointmentStartingInHours(1));
     mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 100_000 });
 
-    const consultant = await refundCancelledTrial({
+    const consultant = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -256,7 +287,7 @@ describe("refundCancelledTrial", () => {
     mockAppointmentFindUnique.mockResolvedValue(appointmentStartingInHours(72));
     mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 30_000 });
 
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -276,7 +307,7 @@ describe("refundCancelledTrial", () => {
     mockRefundPayment.mockRejectedValue(new Error("gateway down"));
 
     // Must not throw — the trial is already CANCELLED by the time this runs.
-    const result = await refundCancelledTrial({
+    const result = await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: PAYMENT_ID,
@@ -297,7 +328,7 @@ describe("refundCancelledTrial", () => {
     mockAppointmentFindUnique.mockResolvedValue(appointmentStartingInHours(72));
     mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 100_000 });
 
-    await refundCancelledTrial({
+    await settleTrial({
       trialId: TRIAL_ID,
       appointmentId: APPOINTMENT_ID,
       paymentId: null,

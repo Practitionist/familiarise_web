@@ -110,7 +110,7 @@ describe("getTimezoneOffsetMinutes", () => {
 });
 
 // FAMILIARISE_WEB-2R — `Asia/Calcutta` is the same zone under its legacy IANA
-// name; the "written outside Asia/Kolkata" signal must not fire for it.
+// name and resolves to it.
 jest.mock("../../lib/observability/report", () => ({
   reportSentryMessage: jest.fn(),
   reportSentryError: jest.fn(),
@@ -128,10 +128,7 @@ describe("legacy zone aliases", () => {
   it("folds Asia/Calcutta to Asia/Kolkata and stays silent", () => {
     expect(resolveWeeklyTimezone("Asia/Calcutta")).toBe("Asia/Kolkata");
     expect(
-      resolveWeeklyUtcOffsetMinutes({
-        profileTimezone: "Asia/Calcutta",
-        consultantProfileId: "cp1",
-      }),
+      resolveWeeklyUtcOffsetMinutes({ profileTimezone: "Asia/Calcutta" }),
     ).toBe(330);
     expect(reportSentryMessage).not.toHaveBeenCalled();
   });

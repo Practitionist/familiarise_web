@@ -13,6 +13,7 @@
  * 409s and the money simply stayed captured.
  *
  * Pinned here:
+ *  - the refund is stamped owed in the reject commit and driven after it
  *  - a paid rejected request refunds at the consultant-initiated percentage
  *  - the whole booking's payment is found, not just one appointment's
  *  - an unpaid request mints no refund at all
@@ -46,8 +47,16 @@ jest.mock("../../lib/novu", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    payment: { findUnique: (...a: unknown[]) => mockPaymentFindUnique(...a) },
+    payment: {
+      findUnique: (...a: unknown[]) => mockPaymentFindUnique(...a),
+      updateMany: async () => ({ count: 1 }),
+    },
   },
+}));
+jest.mock("../../lib/payments/operations/refund", () => ({
+  findDedupedRefund: async () => null,
+  RefundGatewayError: class extends Error {},
+  RefundValidationError: class extends Error {},
 }));
 
 jest.mock("@sentry/nextjs", () => ({
@@ -62,7 +71,24 @@ jest.mock("../../lib/enterprise/system-events", () => {
 });
 
 import { PLATFORM_DEFAULT_TERMS } from "@/lib/payments/operations/cancellation-policy";
-import { refundRejectedRequest } from "../../lib/booking/rejection-refund";
+import {
+  refundRejectedRequest,
+  stampRejectionRefundOwed,
+} from "../../lib/booking/rejection-refund";
+
+const mockStamp = jest.fn(async () => ({ count: 1 }));
+const tx = { payment: { updateMany: mockStamp } } as never;
+
+/** The route's two halves: stamp in the reject commit, drive after it. */
+async function rejectAndRefund(args: {
+  kind: "consultation" | "subscription";
+  requestId: string;
+  initiatedByUserId: string;
+  actor: "CONSULTANT" | "PLATFORM" | "CONSULTEE";
+}) {
+  const plan = await stampRejectionRefundOwed(tx, args);
+  return refundRejectedRequest({ ...args, plan });
+}
 
 const PAID = {
   paidPayment: {
@@ -107,7 +133,7 @@ beforeEach(() => {
  */
 describe("who is allowed to trigger a rejection refund", () => {
   it("refuses a consultee-initiated reject", async () => {
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultee-1",
@@ -123,7 +149,7 @@ describe("who is allowed to trigger a rejection refund", () => {
   });
 
   it("allows a platform-initiated reject", async () => {
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "admin-1",
@@ -136,7 +162,7 @@ describe("who is allowed to trigger a rejection refund", () => {
 
 describe("refundRejectedRequest", () => {
   it("refunds a rejected consultation in full", async () => {
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
@@ -145,28 +171,42 @@ describe("refundRejectedRequest", () => {
 
     // Platform default consultantInitiatedPct — the buyer did nothing wrong.
     expect(result).toEqual({ refundPct: 100, amountRefundedPaise: 100_000 });
+    expect(mockStamp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          refundOwedKey: "rejection:cons-1:pay-1",
+          refundOwedPaise: 100_000,
+        }),
+      }),
+    );
     expect(mockRefundBookingPayment).toHaveBeenCalledWith(
-      expect.objectContaining({ paymentId: "pay-1", amountPaise: 100_000 }),
+      expect.objectContaining({
+        paymentId: "pay-1",
+        amountPaise: 100_000,
+        dedupeKey: "rejection:cons-1:pay-1",
+      }),
     );
   });
 
   it("looks the payment up by the whole booking, not one appointment", async () => {
-    await refundRejectedRequest({
+    await rejectAndRefund({
       kind: "subscription",
       requestId: "sub-1",
       initiatedByUserId: "consultant-1",
       actor: "CONSULTANT",
     });
 
-    expect(mockResolveContext).toHaveBeenCalledWith({
-      subscriptionId: "sub-1",
-    });
+    expect(mockResolveContext).toHaveBeenCalledWith(
+      { subscriptionId: "sub-1" },
+      undefined,
+      tx,
+    );
   });
 
   it("mints nothing for a request that was never paid", async () => {
     mockResolveContext.mockResolvedValue({ ...PAID, paidPayment: null });
 
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
@@ -184,7 +224,7 @@ describe("refundRejectedRequest", () => {
       hoursUntilNextSession: 1,
     });
 
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
@@ -195,7 +235,7 @@ describe("refundRejectedRequest", () => {
   });
 
   it("tells the buyer their money is coming back", async () => {
-    await refundRejectedRequest({
+    await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
@@ -228,7 +268,7 @@ describe("refundRejectedRequest", () => {
       rail: "GATEWAY",
     });
 
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
@@ -248,7 +288,7 @@ describe("refundRejectedRequest", () => {
       rail: "GATEWAY",
     });
 
-    await refundRejectedRequest({
+    await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
@@ -283,7 +323,7 @@ describe("refundRejectedRequest", () => {
       rail: "CREDITS",
     });
 
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
@@ -303,7 +343,7 @@ describe("refundRejectedRequest", () => {
     mockRefundBookingPayment.mockRejectedValue(new Error("gateway down"));
 
     // Must not throw — the request is already REJECTED by the time this runs.
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",
@@ -322,7 +362,7 @@ describe("refundRejectedRequest", () => {
   it("does not fail a settled refund when the notification breaks", async () => {
     mockNotifyRefundProcessed.mockRejectedValue(new Error("novu down"));
 
-    const result = await refundRejectedRequest({
+    const result = await rejectAndRefund({
       kind: "consultation",
       requestId: "cons-1",
       initiatedByUserId: "consultant-1",

@@ -7,6 +7,12 @@ concurrency:
 on:
   push:
     branches: [dev] # Only run when merged to dev
+    paths:
+      - "**"
+      - "!docs/**"
+      - "!**/*.md"
+      - "!.claude/**"
+      - "!prompts/**"
   workflow_dispatch: # Allow manual trigger for testing
     inputs:
       use_real_redis:

@@ -18,7 +18,11 @@ import {
 
 type Row = Record<string, unknown>;
 
-function makeTx(original: Row | null, priorReversals: Row[] = []) {
+function makeTx(
+  original: Row | null,
+  priorReversals: Row[] = [],
+  earning: Row | null = null,
+) {
   const created: Row[] = [];
   const adjustments: Row[] = [];
   const tx = {
@@ -30,6 +34,7 @@ function makeTx(original: Row | null, priorReversals: Row[] = []) {
         return { id: "tdsr_new", ...data };
       }),
     },
+    consultantEarnings: { findUnique: jest.fn(async () => earning) },
     // #778 §D — every reversal also emits the TdsAdjustment filing artifact.
     tdsAdjustment: {
       create: jest.fn(async ({ data }: { data: Row }) => {
@@ -122,6 +127,18 @@ describe("recordTdsReversal", () => {
     // Math.round(0.3334) would have created a 0-paise record path; floor no-ops.
     expect(result).toBeNull();
     expect(created).toHaveLength(0);
+  });
+
+  it("reverses only the refunded booking's own 0.1 %, leaving a year-to-date catch-up withheld", async () => {
+    // Crossing payout withheld ₹510 on ₹5,10,000; its ₹20,000 booking is fully refunded.
+    const { tx, created } = makeTx(
+      { ...ORIGINAL, tdsDeducted: 51_000, tdsRateBps: 10, tdsSection: "194O" },
+      [],
+      { grossAmount: 2_000_000 },
+    );
+    await recordTdsReversal(tx, PARAMS);
+
+    expect(created[0].tdsDeducted).toBe(-2_000);
   });
 
   it("no-ops when there is no original withholding", async () => {

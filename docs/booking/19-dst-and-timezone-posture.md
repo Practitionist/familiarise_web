@@ -1,90 +1,112 @@
-# DST & Timezone Posture (#872 stub — read before touching availability)
+# DST & Timezone Posture (read before touching availability)
 
-> Status: **IST-first launch today; the reader flip to per-date offsets is decided and lands in Wave 1** (D4). This page is
-> the caveat sheet the audit asked for: what the stub does, what silently
-> breaks, and the rules for any code that touches availability time math.
+> Status: **weekly availability follows the expert's local clock** (#872). This
+> page states how a weekly row becomes real instants, what the save path must
+> write, and the rules for any code that touches availability time math.
 
-## What the launch model is
+## What a weekly row means
 
-- `AvailabilityWindowWeekly` stores **minutes-since-midnight UTC**
-  (`startTimeUtc`/`endTimeUtc`) plus a **frozen `utcOffsetMinutes`** captured
-  at row creation. That frozen offset — NOT an IANA zone — is the live source
-  of truth for projecting weekly rows onto concrete dates.
-- The DST-correct representation (local wall-clock + IANA `timezone` +
-  `localStartMinutes`/`localEndMinutes`/`localStartDay`/`localEndDay`) exists as
-  nullable columns and is **dual-written from 2026-09-05 and read by nothing**.
-  Every weekly write path fills the five columns from
-  `weeklyRowLocalColumns` (`utils/schedule/weekly-projection.ts`), so the reader
-  flip inherits correct values for every row written from that date onward
-  without a backfill; going DST-aware still needs no migration, only the
-  algorithm and UI work tracked in #872.
-- Custom availability (`AvailabilityWindowCustom`) stores absolute UTC instants
-  — unaffected by the stub.
-- Event bucketing (`dayKey`/`weekKey`, ADR B9) uses each event's
-  `schedulingTimezone` via date-fns-tz, which IS DST-correct for the zones it
-  evaluates. The stub only affects **weekly availability projection**.
+An `AvailabilityWindowWeekly` row means "this local wall-clock window, every
+week, in this IANA zone". Five columns carry that meaning and every reader
+projects from them alone:
 
-## The silent hazard
+| Column                                  | Meaning                                                                                |
+| --------------------------------------- | -------------------------------------------------------------------------------------- |
+| `timezone`                              | The IANA zone the hours are kept in, for example `America/New_York`.                   |
+| `localStartDay`                         | The consultant's local weekday the window starts on.                                   |
+| `localStartMinutes` / `localEndMinutes` | Minutes after local midnight (0–1439).                                                 |
+| `localEndDay`                           | The local weekday the window ends on; differs from the start day for an overnight row. |
 
-A consultant whose UTC offset changes after publishing availability (travels,
-or their zone enters DST) gets future sessions materialized at the OLD offset:
-a Mon 09:00 IST row becomes Mon 03:30 UTC forever, even after the consultant
-is at UTC+1. Both parties then see consistent-but-wrong local labels, because
-every surface renders in viewer-local time.
+`weeklyRowIntervalsInRange` (`utils/schedule/weekly-projection.ts`) turns a row
+into half-open UTC intervals. For every local date in the range whose weekday is
+`localStartDay`, it builds the local start and end wall clocks and resolves them
+through the zone's own rules, so a New York Monday 09:00–12:00 row is
+13:00Z–16:00Z in summer and 14:00Z–17:00Z in winter. Two transition nights need a
+rule, and the generator applies it in one place:
 
-## Rules until #872 lands
+- **Spring forward.** A local time that does not exist (New York 02:30 on
+  2026-03-08) is skipped for that date. It is never shifted to 03:30.
+- **Fall back.** A local time that occurs twice (New York 01:30 on 2026-11-01)
+  resolves to its first occurrence, 05:30Z.
 
-1. Never READ the local\* columns from new code, and never write them by hand.
-   They are dual-written for the #872 reader flip and nothing else consults
-   them, so a reader added now would be a second source of truth against a
-   frozen offset that is still the live one. Write them only by calling
-   `weeklyRowLocalColumns`, and if you add a write path that creates or
-   recreates weekly rows — `coalesceConsultantWeeklyRows` is the one that
-   deletes and recreates — carry the five columns across, or the next coalesce
-   silently unwrites them.
-2. Any NEW consumer of weekly availability MUST go through the shared
-   projection helpers — `utcStartDayIndex`, `weeklyRowDurationMinutes` and
-   `weeklyRowOccurrencesInRange` in `utils/schedule/weekly-projection.ts`, or
-   the `isMinuteWithinWeeklySlot` / `getNextOccurrenceWeekly` /
-   `matchWeeklySlotToDay` wrappers that call them — so the frozen-offset
-   semantics stay in one place. Deriving a weekday from the viewer's clock is
-   the specific mistake this rule exists to stop (#1342).
-3. Do not "fix" a +5:30 mismatch by editing offsets by hand — regenerate the
-   consultant's availability rows instead. `utcOffsetMinutes` is never taken
-   from a request body either: `resolveWeeklyUtcOffsetMinutes`
-   (`lib/scheduling/weeklyUtcOffset.ts`) derives it from the consultant's
-   `User.timezone`, falls back to 330 when the profile carries no usable zone,
-   and answers a caller-supplied value that contradicts the profile with a 400
-   carrying `code: "UTC_OFFSET_CONFLICT"` (#1326, #1348).
-4. The drift warning asked for here now exists. Every weekly save whose
-   consultant profile names a zone other than `Asia/Kolkata` reports one
-   Sentry warning per write (never one per row), which is the signal that a
-   consultant is publishing from outside the launch market and that the #872
-   reader work has become due. `PIN_TO_LAUNCH_OFFSET` in the same module is the
-   one-line switch that hard-pins every row to IST if that answer is ever
-   preferred to the profile's own offset.
+India has no DST, so an `Asia/Kolkata` row projects to the same instants it
+always did.
 
-## Decision and plan (D4, landing in Wave 1)
+## Who reads it
 
-The owner decided to flip the readers now rather than after launch. Wave 1 is code-only plus three small interface touches, and it needs no data migration because every weekly write path already fills the local columns.
+The grid (`processWeeklySlots`), checkout and trial coverage
+(`findUncoveredAtom` over `loadPublishedCoverage`), the shrink notice
+(`findUncoveredUpcoming`), the allocator (`SchedulingService` through
+`createWeeklyCoverage` and `weeklyRowIntervalsInRange`), the validator
+(`validateMatchesSchedule`) and the co-host filter on the grid route all share
+this one generator. The client never projects weekly rows itself: the expert page
+and the allocation calendars draw what the grid endpoint returns, and the
+settings editor reads the local columns straight into its form.
 
-- **Instant-based matcher.** `isMinuteWithinWeeklySlot(utcDay, utcMinutes, …, offset)` is replaced by a matcher that takes the row's IANA `timezone` and local minutes and converts them with `date-fns-tz` for each concrete date. A local time that does not exist on a spring-forward day is skipped, and a local time that occurs twice on a fall-back day takes its first occurrence.
-- **Readers to flip.** `utils/schedule/weekly-projection.ts`, `utils/scheduling-engine/availabilityCoverage.ts`, `ScheduleValidationService.ts`, `app/api/scheduling/availability-with-allocation/[consultantId]/route.ts`, `uncovered-upcoming.ts`, `app/api/user/consultants/[id]/route.ts`, `utils/schedule/formatting.ts`, `mergeAdjacentWeeklyRows.ts`, and the client bundle `lib/scheduling/calendarUtils.ts` used by `UnifiedCalendar.tsx`, `RequestedSlotsDialog.tsx` and `useScheduling.ts`.
-- **Also fixed in the same wave.** The last 23:30 atom of a window is no longer dropped, fetch bounds stop using the browser's local zone, the tail of an overnight row is no longer skipped, and the seed writes the local columns instead of nulls. A decision on zones with a +5:45 offset is stated in the pull request.
-- **Interface.** The availability editor labels the zone "follows daylight saving", a one-time "convert weekly hours?" prompt appears when the profile zone changes (existing rows keep their own `timezone`), and a banner appears when the browser zone differs from the profile zone.
-- **Proof.** Property tests cover New York, London and Sydney transitions, overnight rows, the last atom and a leap day.
+A row whose local columns are NULL or invalid is a data error. Every reader
+refuses it through `partitionWeeklyRows` and reports once per call through
+`reportIncompleteWeeklyRows`, throttled to one Sentry event per hour per
+instance. There is no fallback read of the UTC columns.
 
-Until the flip lands, the rules above still apply: the frozen offset is the live source of truth, and the local columns are written but never read. A worked example of the one-hour error a New York expert sees after 1 November is in [the machinery guide](../start-here/03-booking-and-money-machinery.md#example-9--daylight-saving-a-new-york-experts-monday-0900-wrong-by-one-hour-today-fixed-in-wave-1).
+## What the save path writes
 
-## Related
+The editor converts each typed slot on the probe date `WEEKLY_SAVE_PROBE_DATE`
+(1970-01-01), so the stored `startTimeUtc`/`endTimeUtc` are the typed wall clock
+minus the zone's offset on that date. `weeklyLocalColumnsForSave`
+(`lib/scheduling/weeklyUtcOffset.ts`) adds the same offset back, which recovers
+exactly what the consultant typed in every zone, including zones whose offset has
+changed since 1970. Every writer derives the five columns this way before it
+validates, merges and stores the row: the settings PUT, onboarding, the two
+per-row routes, the zone conversion route and the seed.
 
-- Schema doc-comment block on `AvailabilityWindowWeekly` (prisma/schema.prisma)
-- #1168 — draw the slot grid in `schedulingTimezone` (prerequisite for #872)
-- #1200 — the travel-hazard operational caveat this page documents; folded into
-  #872 as a single post-MVP DST issue (2026-09-02 decision, tracked under
-  #1319)
+Coalescing (`mergeAdjacentWeeklyRows`) compares the local columns: two rows fold
+only when they share a zone and a local day, neither crosses local midnight, and
+one ends exactly where the next begins. The pairwise overlap check
+(`slotsOverlap`) also compares the local week.
+
+`startTimeUtc`, `endTimeUtc`, `endDay` and `utcOffsetMinutes` are still written
+for the overlap SQL and the reset batch, but no reader projects through them. A
+guard test (`__tests__/scheduling/weekly-dst-projection.test.ts`) fails if any
+file other than the writers mentions `utcOffsetMinutes`.
+
+## Zones and the consultant's choices
+
+- The settings editor edits weekly hours in the zone the rows carry, falling back
+  to the profile zone. It labels the zone ("Times are in America/New_York and
+  follow daylight saving automatically") and shows a banner when the browser's
+  zone differs from it.
+- When a consultant changes their profile timezone, the account page asks once:
+  "Convert my weekly hours to <new zone>?". Converting calls
+  `POST /api/scheduling/availability/weekly/zone`, which rewrites each row's
+  `timezone` and keeps its local clock times. Keeping them leaves the rows in their
+  own zone, and the availability page shows a persistent note saying so.
+- **UTC+05:45 and other off-grid zones are refused for weekly hours.** The booking
+  grid is 30 minutes in UTC, so a zone whose offset is not a whole number of
+  30-minute atoms (Asia/Kathmandu, Australia/Eucla, Pacific/Chatham) puts every
+  local :00/:30 start off the grid checkout enforces. `weeklyZoneRefusal`
+  answers every weekly write with the `ZONE` refusal and points the consultant at
+  date-specific availability, which snaps to the grid.
+
+## Rules for new code
+
+1. Project a weekly row only through `weeklyRowIntervalsInRange`,
+   `isInstantWithinWeeklyRow` or `createWeeklyCoverage`. Never derive a weekday or
+   an instant from the UTC columns or the viewer's clock.
+2. Write the local columns only through `weeklyLocalColumnsForSave` (or
+   `weeklyRowLocalColumns` with the offset the UTC minutes were derived with), and
+   carry all five through any path that recreates rows.
+3. Refuse a row without local columns and report it once per call; never per row.
 
 ## Deprecated & Superseded Approaches
 
-1. **Deferring daylight saving to after launch.** The original posture accepted the frozen-offset hazard for an IST-only market. Decision D4 reverses it, and the rule "never read the local columns" ends when Wave 1 lands.
-2. **A hand-edited `utcOffsetMinutes`.** The offset is derived from the profile zone and never taken from a request body; the instant-based matcher removes the need for it.
+- **Frozen-offset projection.** Until #872 each row was projected with the
+  `utcOffsetMinutes` captured at save time (`utcStartDayIndex`,
+  `weeklyRowOccurrencesInRange`, `isMinuteWithinWeeklySlot`), so an expert in a
+  DST zone was bookable an hour off after every transition. Those helpers are
+  deleted; remove any copy that resurfaces.
+- **The non-IST drift warning.** Weekly saves outside Asia/Kolkata used to report
+  a Sentry warning as the signal that this work was due. It was removed with the
+  flip.
+- **Today's offset for the local columns.** The dual-write derived the local
+  columns from the save-time offset, while the editor converted on 1970-01-01,
+  which stored the wrong local hour for DST zones saved in summer.

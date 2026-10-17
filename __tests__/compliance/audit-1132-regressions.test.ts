@@ -18,6 +18,7 @@ import {
 
 import {
   resolve194OTaxablePaise,
+  settle194OWithholding,
   TDS_194O_EXEMPTION_PAISE,
 } from "@/lib/compliance/tds-194o";
 
@@ -231,24 +232,58 @@ describe("Section 194-O taxable base (#1132)", () => {
     expect(r.taxablePaise).toBe(0);
   });
 
-  it("taxes only the excess on the payout that crosses the exemption", () => {
-    const r = resolve194OTaxablePaise({
-      grossBeforePaise: FIVE_LAKH - 1_000_000,
-      grossThisPayoutPaise: 3_000_000,
-      entityType: "HUF",
-      panOnFile: true,
-    });
-    expect(r.taxablePaise).toBe(2_000_000);
-  });
+  // Whole-gross reading pending CA confirmation: ₹4,90,000 before + ₹20,000 now → base ₹5,10,000 (₹510 at 0.1 %).
+  it.each(["INDIVIDUAL", "HUF"])(
+    "taxes the whole year-to-date gross on the payout that crosses the exemption (%s)",
+    (entityType) => {
+      const r = resolve194OTaxablePaise({
+        grossBeforePaise: 49_000_000,
+        grossThisPayoutPaise: 2_000_000,
+        entityType,
+        panOnFile: true,
+      });
+      expect(r.taxablePaise).toBe(51_000_000);
+    },
+  );
 
-  it("taxes the whole payout once the exemption is exhausted", () => {
+  it("exempts a year-to-date gross of exactly ₹5,00,000", () => {
     const r = resolve194OTaxablePaise({
-      grossBeforePaise: FIVE_LAKH + 1,
-      grossThisPayoutPaise: 2_500_000,
+      grossBeforePaise: FIVE_LAKH - 2_000_000,
+      grossThisPayoutPaise: 2_000_000,
       entityType: "INDIVIDUAL",
       panOnFile: true,
     });
-    expect(r.taxablePaise).toBe(2_500_000);
+    expect(r.taxablePaise).toBe(0);
+  });
+
+  it("keeps a year-to-date base after the crossing, for the caller to net against TDS already assigned", () => {
+    const r = resolve194OTaxablePaise({
+      grossBeforePaise: 51_000_000,
+      grossThisPayoutPaise: 2_000_000,
+      entityType: "INDIVIDUAL",
+      panOnFile: true,
+    });
+    expect(r).toMatchObject({ taxablePaise: 53_000_000, yearToDate: true });
+  });
+
+  it.each([
+    // ₹510 due, ₹300 of room: ₹300 now and ₹210 carried.
+    [
+      { dueTdsPaise: 51_000, carryInPaise: 0, capacityPaise: 30_000 },
+      { withholdPaise: 30_000, creditPaise: 0, carryPaise: 21_000 },
+    ],
+    // The next payout owes ₹20 of its own and collects the ₹210.
+    [
+      { dueTdsPaise: 2_000, carryInPaise: 21_000, capacityPaise: 1_600_000 },
+      { withholdPaise: 23_000, creditPaise: 0, carryPaise: -21_000 },
+    ],
+    // Refunds pulled the year back under ₹5L: ₹490 already withheld comes back.
+    [
+      { dueTdsPaise: -49_000, carryInPaise: 0, capacityPaise: 1_600_000 },
+      { withholdPaise: 0, creditPaise: 49_000, carryPaise: 0 },
+    ],
+  ])("settles %o as %o", (input, expected) => {
+    expect(settle194OWithholding(input)).toEqual(expected);
   });
 
   // The three limbs are conjunctive. Companies, firms and LLPs have NO

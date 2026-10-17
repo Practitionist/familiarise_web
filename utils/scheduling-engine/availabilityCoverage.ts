@@ -1,6 +1,12 @@
 import type { Tx } from "@/lib/prisma";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
-import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
+import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
+import {
+  createWeeklyCoverage,
+  partitionWeeklyRows,
+  type WeeklyCoverage,
+  type WeeklyRowLocalColumns,
+} from "@/utils/schedule/weekly-projection";
 
 /**
  * #1320 — "is this booking window inside the consultant's published
@@ -8,12 +14,7 @@ import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
  * Pure, so checkout's validation and the tests share one implementation.
  */
 
-export interface WeeklyCoverageRow {
-  startDay: string;
-  startTimeUtc: number;
-  endTimeUtc: number;
-  utcOffsetMinutes: number;
-}
+export type WeeklyCoverageRow = WeeklyRowLocalColumns;
 
 export interface CustomCoverageRow {
   startsAt: Date;
@@ -57,21 +58,21 @@ export function findUncoveredAtom(
   weeklyRows: WeeklyCoverageRow[],
   customRows: CustomCoverageRow[],
 ): WindowAtom | null {
+  return findUncoveredAtomIn(
+    atoms,
+    createWeeklyCoverage(weeklyRows),
+    customRows,
+  );
+}
+
+/** `findUncoveredAtom` against a prebuilt weekly coverage, for callers testing many windows. */
+export function findUncoveredAtomIn(
+  atoms: WindowAtom[],
+  weekly: WeeklyCoverage,
+  customRows: CustomCoverageRow[],
+): WindowAtom | null {
   for (const atom of atoms) {
-    const atomMinutes =
-      (atom.end.getTime() - atom.start.getTime()) / (60 * 1000);
-    const inWeekly = weeklyRows.some((row) =>
-      isMinuteWithinWeeklySlot(
-        atom.day,
-        atom.minutes,
-        atomMinutes,
-        row.startDay,
-        row.startTimeUtc,
-        row.endTimeUtc,
-        row.utcOffsetMinutes,
-      ),
-    );
-    if (inWeekly) continue;
+    if (weekly.covers(atom.start.getTime(), atom.end.getTime())) continue;
     const inCustom = customRows.some(
       (row) => atom.start >= row.startsAt && atom.end <= row.endsAt,
     );
@@ -93,6 +94,16 @@ export interface PublishedCoverage {
   weeklyRows: WeeklyCoverageRow[];
   customRows: CustomCoverageRow[];
 }
+
+/** The columns a weekly row is projected from, plus its id for refusal reports. */
+export const WEEKLY_COVERAGE_SELECT = {
+  id: true,
+  timezone: true,
+  localStartDay: true,
+  localStartMinutes: true,
+  localEndMinutes: true,
+  localEndDay: true,
+} as const;
 
 export async function loadPublishedCoverage(
   db: Pick<
@@ -117,18 +128,18 @@ export async function loadPublishedCoverage(
     return { scheduleType: null, weeklyRows: [], customRows: [] };
   }
   const scheduleType = profile.scheduleType;
-  const weeklyRows =
+  const storedWeekly =
     scheduleType === "WEEKLY"
       ? await db.availabilityWindowWeekly.findMany({
           where: { consultantProfileId },
-          select: {
-            startDay: true,
-            startTimeUtc: true,
-            endTimeUtc: true,
-            utcOffsetMinutes: true,
-          },
+          select: WEEKLY_COVERAGE_SELECT,
         })
       : [];
+  const { usable: weeklyRows, refused } = partitionWeeklyRows(storedWeekly);
+  reportIncompleteWeeklyRows(refused, {
+    op: "load-published-coverage",
+    consultantProfileId,
+  });
   const customRows =
     scheduleType === "CUSTOM"
       ? await db.availabilityWindowCustom.findMany({

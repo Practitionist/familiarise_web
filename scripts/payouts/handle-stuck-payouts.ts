@@ -194,6 +194,9 @@ async function handleStuckPayoutsUnlocked(): Promise<StuckPayoutsResult> {
               netAmount: null,
               tdsRateAppliedBps: null,
               tdsFinancialYear: null,
+              tdsCatchUpFy: null,
+              tdsCarryPaise: 0,
+              tdsCreditPaise: 0,
             },
           });
           if (claimed.count === 0) return { released: 0, claimed: false };

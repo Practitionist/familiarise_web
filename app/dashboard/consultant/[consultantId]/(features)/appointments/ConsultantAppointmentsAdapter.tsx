@@ -408,9 +408,8 @@ export function useConsultantAppointmentsAdapter(
         <>
           <CancelConfirmationDialog
             isOpen={dialog === "cancel"}
-            onConfirm={async () => {
-              await actions.handleCancelConfirm();
-              closeDialog();
+            onConfirm={async (quote) => {
+              if (await actions.handleCancelConfirm(quote)) closeDialog();
             }}
             onCancel={closeDialog}
             title={activeVm.title}

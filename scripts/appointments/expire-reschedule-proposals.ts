@@ -39,9 +39,9 @@ import {
   type RestorableRequest,
 } from "@/lib/booking/reschedule-restore";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { recordSystemEventSafe } from "@/lib/enterprise/system-events";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { reportSentryError } from "@/lib/observability/report";
+import { errorMessageOf, reportSentryError } from "@/lib/observability/report";
 import { notifyRescheduleRestored } from "@/lib/booking/reschedule-outcome-notice";
 import { EMAIL_BUDGET_MS } from "@/lib/email";
 import {
@@ -193,12 +193,12 @@ async function expireOneProposal(
             });
           }
         });
-        await recordSystemErrorSafe({
+        // A durable row per proposal; Sentry hears once per run (the overlap summary).
+        await recordSystemEventSafe({
           organizationId: null,
           category: "RESCHEDULE",
-          summary:
-            "Expired reschedule proposal left sessions needing new times; the booking is parked and a person must place them",
-          err: error,
+          severity: "ERROR",
+          message: `Expired reschedule proposal left sessions needing new times; the booking is parked and a person must place them: ${errorMessageOf(error)}`,
           context: {
             rescheduleRequestId: row.id,
             appointmentId: row.appointmentId,

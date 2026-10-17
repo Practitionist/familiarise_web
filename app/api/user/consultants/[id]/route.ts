@@ -35,6 +35,7 @@ import {
   AVAILABILITY_REFUSAL_STATUS,
   validateCustomWindows,
   validateWeeklyWindows,
+  weeklyZoneRefusal,
 } from "@/lib/scheduling/availability-contract";
 import {
   NONE_UNCOVERED,
@@ -46,8 +47,9 @@ import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
   WeeklyOffsetConflictError,
-  weeklyRowLocalColumns,
+  weeklyLocalColumnsForSave,
 } from "@/lib/scheduling/weeklyUtcOffset";
+import { isKnownTimeZone } from "@/utils/schedule/weekly-projection";
 // Zod schema for UUID validation
 const uuidSchema = z.string().uuid();
 
@@ -107,6 +109,12 @@ const updateConsultantSchema = z
     // #1326 — accepted only so a caller who sends an offset is checked against
     // the profile timezone instead of silently ignored; it never wins.
     utcOffsetMinutes: z.number().int().min(-840).max(840).optional(),
+    // The zone the weekly slots were typed in; defaults to the profile zone.
+    weeklyTimezone: z
+      .string()
+      .max(64)
+      .refine(isKnownTimeZone, "Unknown time zone")
+      .optional(),
     // New fields - accept null values from frontend for optional fields
     headline: z.string().max(120).nullable().optional(),
     websiteUrl: z.string().url().nullable().optional().or(z.literal("")),
@@ -431,7 +439,9 @@ export async function PUT(
 
     // Build + validate the submitted set through the shared contract.
     const userTimezone = existingConsultant.user?.timezone ?? null;
-    const rowTimezone = resolveWeeklyTimezone(userTimezone);
+    const rowTimezone = resolveWeeklyTimezone(
+      data.weeklyTimezone ?? userTimezone,
+    );
     let mergedWeekly: (Prisma.AvailabilityWindowWeeklyCreateManyInput & {
       startDay: DayOfWeek;
       startTimeUtc: number;
@@ -449,9 +459,8 @@ export async function PUT(
       let utcOffsetMinutes: number;
       try {
         utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
-          profileTimezone: userTimezone,
+          profileTimezone: rowTimezone,
           callerSupplied: data.utcOffsetMinutes ?? null,
-          consultantProfileId: id,
         });
       } catch (error) {
         if (error instanceof WeeklyOffsetConflictError) {
@@ -464,14 +473,24 @@ export async function PUT(
       }
       // #1343 — dayOfWeekforStartTimeInUTC is the wire name the settings form
       // still sends; what it carries is the consultant's LOCAL day.
-      const weeklySlotData = (availabilityWindowsWeekly ?? []).map((slot) => ({
-        consultantProfileId: id,
-        startDay: slot.dayOfWeekforStartTimeInUTC as DayOfWeek,
-        endDay: slot.dayOfWeekforEndTimeInUTC as DayOfWeek,
-        startTimeUtc: dateToMinuteUtc(new Date(slot.startsAt)),
-        endTimeUtc: dateToMinuteUtc(new Date(slot.endsAt)),
-        utcOffsetMinutes,
-      }));
+      const zoneRefusal = weeklyZoneRefusal(rowTimezone);
+      if (zoneRefusal) {
+        return NextResponse.json(
+          { error: zoneRefusal.message, code: zoneRefusal.code },
+          { status: AVAILABILITY_REFUSAL_STATUS[zoneRefusal.code] },
+        );
+      }
+      const weeklySlotData = (availabilityWindowsWeekly ?? []).map((slot) => {
+        const row = {
+          consultantProfileId: id,
+          startDay: slot.dayOfWeekforStartTimeInUTC,
+          endDay: slot.dayOfWeekforEndTimeInUTC,
+          startTimeUtc: dateToMinuteUtc(new Date(slot.startsAt)),
+          endTimeUtc: dateToMinuteUtc(new Date(slot.endsAt)),
+          utcOffsetMinutes,
+        };
+        return { ...row, ...weeklyLocalColumnsForSave(row, rowTimezone) };
+      });
       const refusal = validateWeeklyWindows(weeklySlotData);
       if (refusal) {
         return NextResponse.json(
@@ -479,12 +498,8 @@ export async function PUT(
           { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
         );
       }
-      // #1320 — merge adjacent entries; #872 — the DST columns describe the
-      // merged row that is actually stored.
-      mergedWeekly = mergeAdjacentWeeklyRows(weeklySlotData).map((row) => ({
-        ...row,
-        ...weeklyRowLocalColumns(row, rowTimezone, utcOffsetMinutes),
-      }));
+      // #1320 — merge adjacent entries on their local columns.
+      mergedWeekly = mergeAdjacentWeeklyRows(weeklySlotData);
     } else {
       // #1780 R-2 — an unchanged window that has already ended is dropped,
       // not refused as PAST; a new past window still is.

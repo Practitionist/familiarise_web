@@ -49,6 +49,8 @@ Verified old→new mapping (sources: Finpracto / Tax2win / Jurishour concordance
 
 - A consumer pays the platform via card. Platform is the **e-commerce operator** under Sec 194O Explanation(a). Consultant is the **e-commerce participant** under Explanation(b).
 - The right section is **194O at 0.10%**. Threshold of ₹5L applies only to _resident individuals/HUF_ with valid PAN/Aadhaar. For everyone else, withhold from rupee 1.
+- **Crossing the ₹5L threshold (pending CA confirmation, #1901).** The payout that first takes the financial year's gross above ₹5,00,000 withholds 0.1% on the **whole year-to-date gross**, including the earlier exempt amounts; every later payout that year withholds on its own gross. With ₹4,90,000 already paid and a ₹20,000 payout, ₹510 is withheld (0.1% of ₹5,10,000), not the ₹10 the excess-only reading gives. `resolve194OTaxablePaise()` in `lib/compliance/tds-194o.ts` applies the rule, and reverting to the excess-only reading is a one-line change in `crossingTaxablePaise()`. `planConsultantPayoutTds()` in `lib/payments/payouts/consultant-tds.ts` keeps a running total per financial year. Each payout owes the TDS the year owes so far, less what the expert's other live payouts that year already withheld, carried or credited. The database allows one catch-up per expert per financial year (`consultant_payout_one_tds_catch_up_per_fy`).
+- **After the crossing (pending CA confirmation, #1901).** A refund reverses only the refunded booking's own 0.1% (`recordTdsReversal()`), and the catch-up stays withheld while the year remains above ₹5L. If refunds pull the year back to ₹5L or below, the next payout credits back the TDS already withheld as extra cash, filed as a negative `TDSRecord` and a `TdsAdjustment`. A payout too small for its TDS withholds what fits, never going below zero, and carries the rest to later payouts, including across 1 April. Whether a credit back and a cross-year carry are correct under s.393 is an open CA question.
 - For non-resident consultants, **194O does not apply** — pivot to **Sec 195 + DTAA**.
 
 ### B2B (org-sponsored)
@@ -88,7 +90,7 @@ Both rails now derive the financial year and the quarter from the **completion i
 
 ### `TDS_ENGINE` — which withholding math runs
 
-`TDS_ENGINE` selects the consultant-payout withholding engine and defaults to `"194O"`: pure Section 194-O semantics, matching the e-commerce-operator posture this document sets out. `TDS_ENGINE=LEGACY` reverts to the older ₹50,000-gate behaviour and is deprecated — it now takes an explicit opt-in rather than being the default (owner decision 2026-09-19, Q4). A second, independent flag, `ENABLE_TDS_194O_GROSS`, switches the 194-O base from the platform's net commission to the full gross sale amount; it only takes effect when `TDS_ENGINE` is not `LEGACY`, and it stays gated behind chartered-accountant sign-off before it is turned on in production — see the flag table in [the payout go-live runbook](../enterprise/50-operations/05-live-payout-go-live-runbook.md).
+`TDS_ENGINE` selects the consultant-payout withholding engine and defaults to `"194O"`: pure Section 194-O semantics, matching the e-commerce-operator posture this document sets out. `TDS_ENGINE=LEGACY` reverts to the older ₹50,000-gate behaviour and is deprecated — it now takes an explicit opt-in rather than being the default (owner decision 2026-09-19, Q4). A second, independent flag, `ENABLE_TDS_194O_GROSS`, makes the 194-O base the full gross sale amount rather than the expert's net share. It only takes effect when `TDS_ENGINE` is not `LEGACY`, and it is **on by default** (`lib/feature-flags.ts` reads it as on unless the variable is exactly `"false"`). Setting it to `"false"` puts the gross base into shadow mode, where the payout withholds on the net share and records a `TDS_194O_GROSS_SHADOW_DIFF` system event whenever the gross base would differ. See the flag table in [the payout go-live runbook](../enterprise/50-operations/05-live-payout-go-live-runbook.md).
 
 ## Gap
 
@@ -118,7 +120,7 @@ In commit order:
 ## Acceptance
 
 - A B2C resident-individual consultant earning ₹4L this FY: zero TDS withheld.
-- The same consultant earning ₹6L: 0.10% on the marginal ₹1L only (not the full ₹6L).
+- The same consultant earning ₹6L: the crossing payout withholds 0.10% on the whole year-to-date gross, and later payouts on their own gross, so the year's total is 0.10% of ₹6L (pending CA confirmation, #1901).
 - A resident **company** consultant earning ₹1: 0.10% withheld immediately.
 - A consultant with no PAN: 5% withheld (not 20%).
 - A non-resident consultant: pivots to Sec 195 + DTAA via `lib/compliance/tds.ts`, not the B2C 194J file.

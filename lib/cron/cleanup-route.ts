@@ -34,8 +34,8 @@ export function statusFor(
 /** Ceiling on an explicit `?limit=`; above this it is clamped, not rejected. */
 const LIMIT_CAP = 500;
 
-/** #1822 — owner decision: one lock-unavailable report per instance per 15 min. */
-const LOCK_UNAVAILABLE_REPORT_WINDOW_MS = 15 * 60 * 1000;
+/** Longer than the slowest ticker cadence, so a job failing every run reports at most hourly per instance. */
+const CRON_FAILURE_REPORT_WINDOW_MS = 60 * 60 * 1000;
 
 /**
  * Thrown by {@link parseLimitParam} for a `?limit=` that is present but not a
@@ -216,7 +216,7 @@ export function cleanupRoute<T extends object>(opts: {
             level: "warning",
             tags: { job },
           },
-          LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
+          CRON_FAILURE_REPORT_WINDOW_MS,
         );
         return { body: { error: error.message }, status: 503, ok: false };
       }
@@ -243,7 +243,7 @@ export function cleanupRoute<T extends object>(opts: {
         `cron:${job}`,
         error,
         { subsystem: "cron", tags: { job } },
-        LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
+        CRON_FAILURE_REPORT_WINDOW_MS,
       );
       console.error(`Error in ${job}:`, error);
       return {

@@ -11,7 +11,10 @@ jest.mock("@sentry/nextjs", () => ({
   captureMessage: jest.fn(),
 }));
 
-import { reportSentryError } from "../../lib/observability/report";
+import {
+  errorMessageOf,
+  reportSentryError,
+} from "../../lib/observability/report";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -166,5 +169,24 @@ describe("pool exhaustion and Postgres SQLSTATE tags (#1696, #1092)", () => {
       transition_from: "APPROVED",
       transition_to: "PENDING",
     });
+  });
+});
+
+describe("errorMessageOf (the text stored in WebhookEvent.error)", () => {
+  it("never yields [object Object] for a thrown Razorpay-shaped object", () => {
+    const text = errorMessageOf({
+      statusCode: 400,
+      error: { code: "BAD_REQUEST_ERROR", description: "Order not found" },
+    });
+    expect(text).toBe("Order not found (statusCode: 400)");
+  });
+
+  it("serialises an object with no known message field", () => {
+    expect(errorMessageOf({ foo: 1 })).toBe('{"foo":1}');
+  });
+
+  it("passes an Error message and a string through", () => {
+    expect(errorMessageOf(new Error("boom"))).toBe("boom");
+    expect(errorMessageOf("plain")).toBe("plain");
   });
 });

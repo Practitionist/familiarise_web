@@ -3,7 +3,10 @@ import { addDays, isBefore, startOfDay } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import { TIntervalTiming } from "@/types/slots";
-import { weeklyRowOccurrencesInRange } from "@/utils/schedule/weekly-projection";
+import {
+  weeklyRowIntervalsInRange,
+  type WeeklyRowLocalColumns,
+} from "@/utils/schedule/weekly-projection";
 
 // Booking status constants and types
 export const BOOKING_STATUS = {
@@ -39,20 +42,9 @@ export const dayToNumber: Record<DayOfWeek, number> = {
   SATURDAY: 6,
 };
 
-/**
- * A weekly availability row as the grid consumes it — the stored columns, not
- * a pair of synthetic 1970 dates. #1342: the old shape called `startDay`
- * "dayOfWeekforStartTimeInUTC", which is what led the grid to match it against
- * the VIEWER's weekday, and it dropped `utcOffsetMinutes` so the row's own
- * projection could not be computed at all.
- */
-export interface WeeklySlot {
+/** A weekly availability row as the grid consumes it: its id and its local columns. */
+export interface WeeklySlot extends WeeklyRowLocalColumns {
   id: string;
-  startDay: DayOfWeek;
-  endDay: DayOfWeek;
-  startTimeUtc: number;
-  endTimeUtc: number;
-  utcOffsetMinutes: number | null;
 }
 
 export interface CustomSlot {
@@ -115,7 +107,8 @@ export function buildAppointmentIndex(
     if (!slot || !slot.startsAt || !slot.endsAt) continue;
     const startMs = new Date(slot.startsAt).getTime();
     const endMs = new Date(slot.endsAt).getTime();
-    if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs) continue;
+    if (Number.isNaN(startMs) || Number.isNaN(endMs) || endMs <= startMs)
+      continue;
     const firstBucket = Math.floor(startMs / THIRTY_MIN_MS);
     const lastBucket = Math.floor((endMs - 1) / THIRTY_MIN_MS);
     for (let b = firstBucket; b <= lastBucket; b++) {
@@ -226,27 +219,10 @@ export function hasTimeOverlap(
 }
 
 /**
- * Process weekly slots for a specific date range.
- *
- * #1342 — the range is walked in UTC and each row is projected through its own
- * frozen offset by the shared generator, so the instants this returns are the
- * ones checkout's validator accepts and do not depend on who is looking. The
- * old body walked the range in the VIEWER's timezone, bucketed a row onto the
- * viewer's weekday and rebuilt the local wall-clock from the stored instant, so
- * a New York viewer was shown an IST pre-05:30 row one day away from the day it
- * publishes — and checkout rejected every booking made on it. Display zoning
- * happens downstream in `splitSlotsByDay` and `groupSlotsByDate`, which is why
- * the timezone argument is gone.
+ * Every occurrence of every weekly row inside the range, clipped to it. Each
+ * row is projected through its own zone by the shared generator, so the grid
+ * offers exactly the instants checkout's coverage check accepts.
  */
-function isValidWeeklySlotRow(slot: WeeklySlot | null | undefined): boolean {
-  return Boolean(
-    slot?.id &&
-      slot.startDay &&
-      typeof slot.startTimeUtc === "number" &&
-      typeof slot.endTimeUtc === "number",
-  );
-}
-
 export function processWeeklySlots(
   weeklySlots: WeeklySlot[],
   startDate: Date,
@@ -275,14 +251,8 @@ export function processWeeklySlots(
   }
 
   for (const slot of weeklySlots) {
-    if (!isValidWeeklySlotRow(slot)) {
-      console.warn(
-        `⚠️ processWeeklySlots: skipping slot with missing required fields`,
-      );
-      continue;
-    }
-
-    for (const occurrence of weeklyRowOccurrencesInRange(
+    if (!slot?.id) continue;
+    for (const occurrence of weeklyRowIntervalsInRange(
       slot,
       startDate,
       endDate,

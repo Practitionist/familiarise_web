@@ -59,6 +59,12 @@ jest.mock("../../lib/payments", () => ({
   listRefunds: jest.fn(),
   getRefund: jest.fn(),
 }));
+jest.mock("../../lib/observability/standing-finding", () => ({
+  reportStandingFinding: async (_args: unknown, report: () => void) => {
+    report();
+    return true;
+  },
+}));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
   reportSentryMessage: jest.fn(),

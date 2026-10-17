@@ -37,11 +37,18 @@ function refundCallSites(src: string): string[] {
 describe("every sweep refund carries a dedupeKey", () => {
   it.each([
     "scripts/appointments/expire-stale-requests.ts",
-    "scripts/appointments/detect-consultant-no-shows.ts",
     "scripts/appointments/settle-cancelled-sessions.ts",
   ])("%s", (file) => {
     const sites = refundCallSites(read(file));
     expect(sites.length).toBeGreaterThan(0);
     for (const site of sites) expect(site).toMatch(/\bdedupeKey\b/);
+  });
+
+  // The no-show refund is an owed marker; the marker's key is the dedupeKey.
+  it("scripts/appointments/detect-consultant-no-shows.ts", () => {
+    const src = read("scripts/appointments/detect-consultant-no-shows.ts");
+    expect(refundCallSites(src)).toEqual([]);
+    expect(src).toContain("key: `consultant-no-show:${paymentId}`");
+    expect(src).toContain("driveRefundOwed(noShowRefundOwed(");
   });
 });

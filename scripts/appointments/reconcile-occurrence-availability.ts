@@ -39,6 +39,7 @@ import {
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import type { EventConfig } from "@/utils/scheduling-engine/types";
+import { reportStandingFinding } from "@/lib/observability/standing-finding";
 
 export interface SlotReconciliationResult {
   success: boolean;
@@ -317,6 +318,7 @@ async function detectDoubleBookings(): Promise<{
 }> {
   const errors: string[] = [];
   const doubleBookings: DoubleBookingInfo[] = [];
+  const conflictPairKeys: string[] = [];
 
   console.log("\n🔍 Detecting double-booked slots...");
 
@@ -451,6 +453,7 @@ async function detectDoubleBookings(): Promise<{
               ? [current.slot.id, next.slot.id]
               : [next.slot.id, current.slot.id];
           const pairKey = `double-booking:${lo}:${hi}`;
+          conflictPairKeys.push(pairKey);
           const alreadyRecorded = await prisma.systemEvent.findFirst({
             where: { correlationId: pairKey },
             select: { id: true },
@@ -492,15 +495,21 @@ async function detectDoubleBookings(): Promise<{
       console.log(
         `\n⚠️ Found ${doubleBookings.length} double booking conflicts`,
       );
-      reportSentryMessage(
-        "Double bookings detected by the occurrence reconcile",
+      const message = "Double bookings detected by the occurrence reconcile";
+      await reportStandingFinding(
         {
-          subsystem: "bookings",
-          op: "reconcile-occurrence-availability",
-          expected: true,
-          level: "warning",
-          extra: { count: doubleBookings.length },
+          key: "reconcile-occurrence-availability:double-booking",
+          ids: conflictPairKeys,
+          message,
         },
+        () =>
+          reportSentryMessage(message, {
+            subsystem: "bookings",
+            op: "reconcile-occurrence-availability",
+            expected: true,
+            level: "warning",
+            extra: { count: doubleBookings.length },
+          }),
       );
     }
 

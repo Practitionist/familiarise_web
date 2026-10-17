@@ -58,6 +58,20 @@ describe("applyErrorBudget", () => {
     ).toBeNull();
   });
 
+  it("folds every database-unreachable wording into one family and one budget key", () => {
+    const first = applyErrorBudget(
+      thrown("Connection terminated due to connection timeout"),
+    );
+    expect(first?.fingerprint).toEqual(["database-unreachable"]);
+    expect(
+      applyErrorBudget(thrown("timeout exceeded when trying to connect")),
+    ).toBeNull();
+    expect(
+      applyErrorBudget(thrown("Can't reach database server at db:5432")),
+    ).toBeNull();
+    expect(applyErrorBudget(thrown("connect EAUTHTIMEOUT"))).toBeNull();
+  });
+
   it("caps a process at 10 events per hour, then resumes", () => {
     let passed = 0;
     for (let i = 0; i < 40; i++) {

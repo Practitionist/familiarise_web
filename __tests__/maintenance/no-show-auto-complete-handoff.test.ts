@@ -88,6 +88,9 @@ jest.mock("../../lib/prisma", () => {
     supportTicket: { findFirst: jest.fn() },
     maintenanceWindow: { findMany: jest.fn(async () => []) },
     bookingStatusHistory: { create: jest.fn() },
+    // The claim stamps the owed refund; the drive clears it by CAS.
+    payment: { updateMany: async () => ({ count: 1 }) },
+    refund: { findUnique: async () => null },
     $disconnect: jest.fn(),
   };
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));

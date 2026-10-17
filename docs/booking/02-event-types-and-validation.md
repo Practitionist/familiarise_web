@@ -267,11 +267,10 @@ This catches partial overlaps that exact-match would miss.
 
 **Schedule matching** (weekly availability):
 
-- Uses the `startDay`/`endDay` DayOfWeek enum as the source of truth for which day, and that day is the **consultant's local** day, not a UTC day and never the viewer's (ADR B4).
-- Derives the UTC weekday the row actually starts on with `utcStartDayIndex` (`utils/schedule/weekly-projection.ts`), which applies the row's own frozen `utcOffsetMinutes`: `utcDay = (localDay − floor((startTimeUtc + offset) / 1440)) mod 7`. `isMinuteWithinWeeklySlot` and the allocator's `getNextOccurrenceWeekly` and `matchWeeklySlotToDay` all call it, so the validator and the generator cannot disagree about which day a row belongs to.
-- Compares `startTimeUtc`/`endTimeUtc` Int fields (minutes since midnight UTC, 0-1439)
-- Handles overnight (cross-midnight) slots where `endTimeUtc <= startTimeUtc`
-- Slot must start >= availability start AND end <= availability end
+- Projects each row from its local columns (`timezone`, `localStartDay`, `localStartMinutes`, `localEndMinutes`, `localEndDay`) through `createWeeklyCoverage` (`utils/schedule/weekly-projection.ts`), the same generator the grid and the allocator use, so a row keeps its local clock across DST.
+- Handles overnight rows, whose end lands on the next local day.
+- Each 30-minute slot must sit wholly inside one occurrence of a published row.
+- Refuses a row whose local columns are NULL, reported once per validation.
 
 ### Layer 3: Database Constraints
 
