@@ -18,6 +18,7 @@ import {
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
 import {
   isKnownTimeZone,
+  weeklySaveProbeOffsetMinutes,
   zoneOffsetMinutesAt,
   type WeeklyRowLocalColumns,
 } from "@/utils/schedule/weekly-projection";
@@ -161,8 +162,8 @@ function formatUtcOffset(offsetMinutes: number): string {
 
 /**
  * The ZONE refusal: weekly rows are projected in their own zone, so a zone
- * whose offset is not a whole number of grid atoms (UTC+05:45) puts every
- * local :00/:30 start off the UTC grid that checkout enforces.
+ * whose offset (today, or on the save probe date) is not a whole number of
+ * grid atoms (UTC+05:45) puts local :00/:30 starts off the UTC grid checkout enforces.
  */
 export function weeklyZoneRefusal(
   timezone: string,
@@ -170,7 +171,13 @@ export function weeklyZoneRefusal(
 ): AvailabilityRefusal | null {
   if (!isKnownTimeZone(timezone)) return null;
   const offset = zoneOffsetMinutesAt(timezone, at.getTime());
-  if (offset % AVAILABILITY_GRID_MINUTES === 0) return null;
+  const probeOffset = weeklySaveProbeOffsetMinutes(timezone);
+  if (
+    offset % AVAILABILITY_GRID_MINUTES === 0 &&
+    probeOffset % AVAILABILITY_GRID_MINUTES === 0
+  ) {
+    return null;
+  }
   return {
     code: "ZONE",
     message: `Weekly hours can't be published in ${timezone} yet: its UTC${formatUtcOffset(offset)} offset puts every local hour off the ${AVAILABILITY_GRID_MINUTES}-minute booking grid. Use date-specific availability instead.`,

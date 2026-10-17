@@ -35,7 +35,7 @@ graph TD
 - **3 validation layers** -- Zod schemas (input format) -> ScheduleValidationService (business rules) -> Prisma (DB constraints)
 - **Sunday-to-Saturday weeks** -- `ScheduleCalculationService.countWeeks()` is the single source of truth
 - **`isTentative` flag** -- marks slots pending payment or reschedule; cleaned up by cron after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`, reduced from 7 days by #833); users can self-release via `DELETE /api/checkout/pending/[paymentId]` (#849)
-- **`startDay`/`endDay` DayOfWeek enum + `startTimeUtc`/`endTimeUtc` Int** -- source of truth for weekly availability (minutes since midnight UTC, 0-1439; supports overnight/cross-midnight slots)
+- **`timezone` + `localStartDay`/`localEndDay` + `localStartMinutes`/`localEndMinutes`** -- source of truth for weekly availability: a local wall-clock window in an IANA zone, projected per date so it follows DST (see `19-dst-and-timezone-posture.md`)
 - The canonical scheduling glossary — availability window, bookable interval, appointment occurrence, appointment, engagement, meeting, trial, auth session — lives in [`docs/enterprise/00-foundations/06-scheduling-glossary.md`](../enterprise/00-foundations/06-scheduling-glossary.md), which this document assumes rather than restates.
 
 ## Reading the audit trail
