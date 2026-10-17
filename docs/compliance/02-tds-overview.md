@@ -119,7 +119,7 @@ In commit order:
 ## Acceptance
 
 - A B2C resident-individual consultant earning ₹4L this FY: zero TDS withheld.
-- The same consultant earning ₹6L: 0.10% on the marginal ₹1L only (not the full ₹6L).
+- The same consultant earning ₹6L: the crossing payout withholds 0.10% on the whole year-to-date gross, and later payouts on their own gross, so the year's total is 0.10% of ₹6L (pending CA confirmation, #1901).
 - A resident **company** consultant earning ₹1: 0.10% withheld immediately.
 - A consultant with no PAN: 5% withheld (not 20%).
 - A non-resident consultant: pivots to Sec 195 + DTAA via `lib/compliance/tds.ts`, not the B2C 194J file.
