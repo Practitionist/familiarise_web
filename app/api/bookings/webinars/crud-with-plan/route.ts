@@ -11,6 +11,7 @@ import { faqCreateNested, faqReplaceNested } from "@/lib/api/plans/content";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { WebinarPlanSchema } from "@/schemas/plans";
+import { EventEditorStatusSchema } from "@/schemas/event-instance";
 import { Prisma, WebinarStatus } from "@prisma/client";
 import {
   EVENT_PUBLISHABLE_FROM,
@@ -104,6 +105,7 @@ const PatchWebinarWithPlanBodySchema = PostWebinarWithPlanBodySchema.omit({
     id: z.string().min(1, "Webinar Plan ID is required for update"),
     webinarId: z.string().optional().nullable(),
     topics: z.array(z.string()).optional(),
+    status: z.unknown().optional(),
   });
 
 /**
@@ -502,6 +504,20 @@ export async function PATCH(request: NextRequest) {
     }
 
     const validatedData = validationResult.data;
+    // The editor only saves a draft or publishes; cancellation owns refunds.
+    const statusIntent = EventEditorStatusSchema.optional().safeParse(
+      validatedData.status,
+    );
+    if (!statusIntent.success) {
+      return NextResponse.json(
+        {
+          error: "Cancel a webinar through its cancel action, not an update.",
+          code: "USE_CANCEL_ROUTE",
+        },
+        { status: 409 },
+      );
+    }
+    const status = statusIntent.data;
     const {
       id, // Webinar plan ID (required)
       webinarId, // Webinar instance ID (optional)
@@ -523,7 +539,6 @@ export async function PATCH(request: NextRequest) {
       faqs,
       consultantProfileId,
       topics: topicNames,
-      status,
       scheduledAt,
       priceCurrency,
       certificateProvided,
@@ -791,10 +806,8 @@ export async function PATCH(request: NextRequest) {
           if (updatedWebinar) {
             const webinarUpdateData: Prisma.WebinarUpdateInput = {};
 
-            // #1319 — status rides the CAS helper, never a bare update: a stale
-            // tab could flip a CANCELLED (already refunded) event back to
-            // SCHEDULED. Publishing is the one edge that leaves DRAFT, and it
-            // is not in EVENT_ALLOWED_FROM.SCHEDULED by design (#1060).
+            // Publishing DRAFT -> SCHEDULED is the only status edge an edit may
+            // move; any other change matches zero rows and answers 409.
             const publishing =
               status === "SCHEDULED" && updatedWebinar.status === "DRAFT";
             const effectiveWebinarStatus = status ?? updatedWebinar.status;
@@ -803,7 +816,7 @@ export async function PATCH(request: NextRequest) {
               await transitionWebinarEvent(tx, {
                 where: { id: updatedWebinar.id },
                 to: status,
-                fromIn: publishing ? EVENT_PUBLISHABLE_FROM : undefined,
+                fromIn: EVENT_PUBLISHABLE_FROM,
               });
               statusChanged = true;
             }
