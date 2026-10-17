@@ -70,7 +70,8 @@ export async function PATCH(request, { params }) {
 
   // LAYER 1: Distributed Lock
   let lock;
-  if (status === AppointmentStatus.APPROVED) {  // enum renamed from `RequestStatus`
+  if (status === AppointmentStatus.APPROVED) {
+    // enum renamed from `RequestStatus`
     lock = await lockConsultationApproval(consultationId, 30000);
   }
 
@@ -86,7 +87,7 @@ export async function PATCH(request, { params }) {
         // LAYER 3: Idempotency Check
         if (
           currentConsultation.status ===
-          AppointmentStatus.APPROVED_PENDING_PAYMENT   // field/enum renamed from `requestStatus`/AppointmentStatus
+          AppointmentStatus.APPROVED_PENDING_PAYMENT // field/enum renamed from `requestStatus`/AppointmentStatus
         ) {
           return { duplicate: true };
         }
@@ -106,7 +107,7 @@ export async function PATCH(request, { params }) {
           const updatedConsultation = await tx.consultation.update({
             where: { id: consultationId },
             data: {
-              status: AppointmentStatus.APPROVED_PENDING_PAYMENT,  // field/enum renamed
+              status: AppointmentStatus.APPROVED_PENDING_PAYMENT, // field/enum renamed
               requestNotes: `${consultation.requestNotes}\n\n[System] Payment link generated: ${paymentResult.checkoutUrl}`,
             },
           });
@@ -190,6 +191,27 @@ export async function handlePaymentSuccess(paymentIntentId, metadata) {
 }
 ```
 
+## Durable Approval Mint (Landing in Wave 0)
+
+Today `createApprovalPaymentIntent` in `lib/payments/operations/approval-payment.ts` calls the gateway first and writes the `Payment` row afterwards, so a function killed between the two leaves a live Razorpay order that no row knows about. The open pull request replaces that order with a pre-mint row:
+
+```text
+  pre-mint:  fresh mint  -> INSERT Payment PENDING, paymentIntent "premint_<uuid>", CARD leg
+             re-mint     -> CAS the existing row on its prior status and intent
+  gateway:   create the Razorpay order (notes.familiarisePaymentId is the first key)
+  fill:      CAS WHERE paymentIntent = the pre-mint marker -> real order id + leg sourceRef
+             fill loses  -> tombstone the new order (EXPIRED row, old legs)
+             gateway fails -> expire the pre-mint row
+```
+
+- **Old-intent tombstone.** A re-mint no longer overwrites `paymentIntent`. The previous order moves to an `EXPIRED` row with `appointmentId: null` (`lib/payments/operations/prior-intent-tombstone.ts`), so a payment made on the old order lands on a row, is claimed as `SUCCEEDED` and is auto-refunded instead of re-driving forever.
+- **Notes-based recovery.** If neither the fill nor the tombstone lands, the capture webhook reads `familiarisePaymentId` from the order notes and adopts that row by compare-and-swap on its pre-mint intent inside the confirmation transaction, then confirms or auto-refunds as usual. A row whose intent is already a real order is never adopted.
+- **Sweeps never send a `premint_` intent to Razorpay.** Cleanup reads it as having no live payment and `reconcile-payment-status` reports it as `unknown_id`. A crash leftover (a `PENDING` row with a `premint_` intent and `expiresAt` 24 hours out) is retired by `expireLapsedPayLink` once `expiresAt` passes for consultations and subscriptions, and by `expire-unpaid-trials` for trials.
+- **Never handed back as a link.** `isDeadApprovalIntent` treats a pre-mint intent as dead, and the pay page neither opens nor redirects to it.
+- **Pause does not block it.** The mint never reads `acceptingRequests`, so an already-approved request can still be paid when the expert pauses.
+
+The `@@unique(userId, appointmentId)` reuse semantics are unchanged.
+
 ## Database Schema
 
 ### Consultation Table
@@ -249,19 +271,22 @@ The allowed-from set is baked directly into every `UPDATE` statement's `WHERE` c
 
 ```typescript
 // lib/booking/transitions.ts
-export const REQUEST_ALLOWED_FROM: Record<AppointmentStatus, AppointmentStatus[]> = {
-  PENDING:                  ["APPROVED_PENDING_PAYMENT"],
-  APPROVED:                 ["PENDING", "APPROVED_PENDING_PAYMENT"],
+export const REQUEST_ALLOWED_FROM: Record<
+  AppointmentStatus,
+  AppointmentStatus[]
+> = {
+  PENDING: ["APPROVED_PENDING_PAYMENT"],
+  APPROVED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
   APPROVED_PENDING_PAYMENT: ["PENDING", "APPROVED"],
-  SCHEDULED:                ["APPROVED", "APPROVED_PENDING_PAYMENT"],
-  COMPLETED:                ["APPROVED", "SCHEDULED"],
-  REJECTED:                 ["PENDING", "APPROVED_PENDING_PAYMENT"],
-  CANCELLED:                ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
-  EXPIRED:                  ["PENDING", "APPROVED_PENDING_PAYMENT"],
+  SCHEDULED: ["APPROVED", "APPROVED_PENDING_PAYMENT"],
+  COMPLETED: ["APPROVED", "SCHEDULED"],
+  REJECTED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
+  CANCELLED: ["PENDING", "APPROVED", "APPROVED_PENDING_PAYMENT", "SCHEDULED"],
+  EXPIRED: ["PENDING", "APPROVED_PENDING_PAYMENT"],
 };
 ```
 
-**`APPROVED_PENDING_PAYMENT` semantics:** This state marks a consultation/subscription that a consultant has approved *before* the consultee has paid. The payment link is generated at this point. If the consultee cancels (via `DELETE /api/checkout/pending/[paymentId]`), the `fromIn` is narrowed to `["PENDING", "APPROVED_PENDING_PAYMENT"]` — an `APPROVED` parent (post-payment) blocks the cancel and the Serializable transaction rolls back. An `APPROVED` parent means payment already succeeded; the cancel-pending path is the wrong tool.
+**`APPROVED_PENDING_PAYMENT` semantics:** This state marks a consultation/subscription that a consultant has approved _before_ the consultee has paid. The payment link is generated at this point. If the consultee cancels (via `DELETE /api/checkout/pending/[paymentId]`), the `fromIn` is narrowed to `["PENDING", "APPROVED_PENDING_PAYMENT"]` — an `APPROVED` parent (post-payment) blocks the cancel and the Serializable transaction rolls back. An `APPROVED` parent means payment already succeeded; the cancel-pending path is the wrong tool.
 
 ## Concurrency Handling
 
@@ -438,3 +463,8 @@ console.error(`Failed to acquire lock for ${consultationId}`); // Error
 2. **Event sourcing**: Append-only event log for audit trail
 3. **Message queue**: Decouple email sending from approval flow
 4. **CDN caching**: Cache static payment link pages
+
+## Deprecated & Superseded Approaches
+
+1. **Gateway call before any durable row.** An approval order could exist at Razorpay with no `Payment` row. The pre-mint row replaces it (landing in Wave 0).
+2. **Overwriting `paymentIntent` on a re-mint.** A payment on the replaced order matched no row. The old order now moves to a tombstone.

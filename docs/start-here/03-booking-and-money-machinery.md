@@ -3,7 +3,7 @@ title: The Booking & Money Machinery — Visual Guide, Organizational Scoping & 
 band: index
 audience: sde2
 status: live
-last-reviewed: 2026-10-04
+last-reviewed: 2026-10-17
 ---
 
 # The Booking & Money Machinery — Visual Guide, Organizational Scoping & Worked Permutations
@@ -41,67 +41,7 @@ All examples below use the canonical seed cohort from `prisma/seedFiles/1a-creat
 
 ## 2. Master End-to-End Architecture Diagram
 
-The diagram below traces how every booking and rupee flows through the single spine from checkout to ledger reconciliation.
-
-```mermaid
-flowchart TB
-  subgraph Actors["1. Buyer & Context Selection"]
-    B2C_BUYER["Marketplace Consultee (e.g. Charlotte Brown) - organizationId = null"]
-    B2B_BUYER["Org Learner (e.g. Olivia Anderson @ Wipro or Rachel Anderson @ IIT Madras) - passes organizationId"]
-  end
-
-  subgraph Checkout["2. Unified Checkout Pipeline - POST /api/checkout - handleCheckout()"]
-    direction TB
-    ORG_GATES["Org Resolution Chain (9 Fail-Closed Gates if organizationId present) - Org ACTIVE/PENDING, canSponsor, Dunning check, ACTIVE Membership, DPDP SESSION_BOOKING consent, Domain/CreditLimit, ACTIVE ProgramAssignment"]
-    STEP1["Step 1: Pure Price Derivation - deriveCheckoutAmount() - Base Price -> DiscountCode -> +18% GST -> -ReferralCredit (B2C only, min Rs 500)"]
-    STEP2["Step 2: Distributed Redis Locks - lockConsulteeBooking(userId) -> lockSlotBooking(consultantId, 30m atoms)"]
-    STEP3["Step 3: In-Lock Revalidation - revalidateInsideLock() - Slot conflict check, self-booking guard, ADR-18 allowlist & exclusiveEngagement"]
-    STEP4["Step 4: Serializable DB Transaction - withSerializableRetry() - Appointment + AppointmentOccurrence + AppointmentParticipant + Payment + PaymentLeg[]"]
-    TRIG1["DB Constraint Trigger at COMMIT: payment_legs_sum_to_amount & occurrence_no_confirmed_overlap (GiST)"]
-
-    ORG_GATES --> STEP1 --> STEP2 --> STEP3 --> STEP4 --> TRIG1
-  end
-
-  B2C_BUYER --> STEP1
-  B2B_BUYER --> ORG_GATES
-
-  TRIG1 --> RAIL_FORK{"Funding Rail?"}
-
-  subgraph Rail_Gateway["3A. Gateway Rail (B2C / PERSONAL Org Tag / Member Overage)"]
-    GW_PEND["Payment status = PENDING (expiresAt = +30m) - Occurrence isTentative = true - Participant status = HELD - Razorpay Order minted"]
-    GW_DOORS["4 Confirmation Doors: 1. Webhook payment.captured  2. /checkout/verify-signature  3. /checkout/verify?sync=true  4. Cron reconcile-payment-status"]
-    SINGLE_WRITER["Single Writer: handlePaymentSuccess() - Phase 1 (Serializable Tx): Amount parity check -> CAS PENDING to SUCCEEDED -> isTentative = false -> Participant HELD to CONFIRMED -> Request APPROVED"]
-    GW_PEND --> GW_DOORS --> SINGLE_WRITER
-  end
-
-  subgraph Rail_Skip["3B. Instant-Confirm Rail (skipPayment = true: WALLET / INVOICE / LICENSE / 100% Free Credit)"]
-    SKIP_TX["Inside Step 4 Transaction: Payment created SUCCEEDED immediately - Synthetic intent (org_wallet_*, org_invoice_*, org_license_*, free_*) - walletDebit() CAS or recordBookingUtilization() + recordOverageAtCheckout()"]
-  end
-
-  RAIL_FORK -->|"CARD (amount > 0)"| GW_PEND
-  RAIL_FORK -->|"WALLET / INVOICE / LICENSE / Rs 0"| SKIP_TX
-
-  SINGLE_WRITER --> SETTLE
-  SKIP_TX --> SETTLE
-
-  subgraph Downstream["4. Shared Settlement, Ledger, Payout & Reversal Spine"]
-    direction TB
-    SETTLE["Phase 2 Settlement: createEarningsFromPayment() - Resolves RateCard (10/10/80) or Marketplace (20/80) + Collaborator bps - Writes ConsultantEarnings + OrganizationEarnings - Calls postLedgerTxn(booking:paymentId)"]
-    TRIG2["DB Constraint Trigger at COMMIT: ledger_txn_balanced (Sum DEBIT == Sum CREDIT)"]
-    HOLD["Earnings Hold Window - 24h Consultation / 48h Webinar / 168h Subscription & Class - PENDING (or PENDING_TRUST) -> READY"]
-    PAYOUTS["Payout Pipeline (Weekly Batch) - ConsultantPayout (<Rs 5k auto-approve) & OrganizationPayout (2-person approval) - Computes TDS 194-O (0.1% or 5% no-PAN) -> RazorpayX / Stripe Connect -> postLedgerTxn(payout:id)"]
-    INVOICES["B2B Monthly Rollup (settle-invoice-accruals) - Sums INVOICE_ACCRUAL legs -> OrganizationInvoice (ISSUED, NET-60) - Dunning cron (3x 7d reminders -> suspend) -> Paid: postLedgerTxn(invoicepaid:id)"]
-    REFUNDS["Refunds, Voids & Disputes - quoteBookingRefund() -> Two-Phase Gateway Refund -> applyRefundCascade() - Reverses PaymentLegs, Utilization, Earnings, Overage, issues CreditNote, posts refund:id"]
-    RECON["Nightly Control Loop (reconcile-ledgers) - Re-derives all 26 invariants from LedgerEntry journal - Auto-freezes drifted org wallets (freezeWalletSpend)"]
-
-    SETTLE --> TRIG2 --> HOLD --> PAYOUTS
-    TRIG2 --> INVOICES
-    TRIG2 --> REFUNDS
-    PAYOUTS --> RECON
-    INVOICES --> RECON
-    REFUNDS --> RECON
-  end
-```
+The master money-flow diagram, from checkout through settlement, payout, refund and reconciliation, now lives in [02-money-system-hld.md](./02-money-system-hld.md#2-end-to-end-architecture). The booking-side pipeline is in [01-booking-system-hld.md](./01-booking-system-hld.md#1-end-to-end-pipeline).
 
 ---
 
@@ -181,130 +121,9 @@ erDiagram
 
 ---
 
-### 4.2 Booking Modes, Allocation Engine & Contention Flow
+### 4.2 Booking Modes, State Machines and Session Outcomes
 
-```mermaid
-flowchart TD
-  subgraph Entry["1:1 Consultation Entry Modes"]
-    DC["Mode A: Direct Checkout - Consultee picks slot on profile & pays immediately"]
-    REQ["Mode B: Request-for-Approval - Consultee submits requested times or flexible window"]
-  end
-
-  DC --> LOCK["Acquire Redis Locks: lockConsulteeBooking -> lockSlotBooking (30-min atoms, 60s TTL)"]
-  LOCK --> LOCK_FAIL{"Lock Contention or Slot Taken?"}
-  LOCK_FAIL -->|"Yes (423 / 409)"| BACKUP["Consultee can register WindowBackupInterest (max 3 active WAITING windows) - Notified when any hold releases"]
-  LOCK_FAIL -->|"No"| TX_HOLD["Create Consultation(PENDING) + Occurrence(isTentative=true) + Payment(PENDING)"]
-
-  REQ --> ALLOC["Consultant Opens Requests Inbox & Runs SchedulingService"]
-  ALLOC --> ALLOC_MODE{"Allocation Mode"}
-  ALLOC_MODE -->|"useRequestedSlots"| USE_REQ["Validates consultee's requested tentative occurrences"]
-  ALLOC_MODE -->|"manualAllocate"| MAN_ALLOC["Consultant picks exact 30-min blocks in UnifiedCalendar"]
-  ALLOC_MODE -->|"autoAllocate"| AUTO_ALLOC["Server-side Earliest-Fit + preferenceScoring.ts across 8-week availability"]
-
-  USE_REQ --> MONEY_PRED{"Settled Payment or Free Plan?"}
-  MAN_ALLOC --> MONEY_PRED
-  AUTO_ALLOC --> MONEY_PRED
-
-  MONEY_PRED -->|"Yes (SETTLED_*)"| APPROVED_DIRECT["CAS -> APPROVED, isTentative = false"]
-  MONEY_PRED -->|"No (UNPAID_*)"| APP_WAIT["CAS -> APPROVED_PENDING_PAYMENT, occurrences stay isTentative = true"]
-  APP_WAIT --> MINT_LINK["mintApprovalPaymentAfterCommit() -> /checkout/pay/paymentId"]
-
-  MINT_LINK --> WAIT_OUTCOME{"What happens next?"}
-  WAIT_OUTCOME -->|"Consultee Pays"| CAPTURE["Single Writer handlePaymentSuccess() -> CAS to APPROVED, isTentative = false"]
-  WAIT_OUTCOME -->|"Consultant clicks Remind"| REMIND["POST /remind (max 1/24h) -> PAYMENT_LINK_MANUAL_REMINDER"]
-  WAIT_OUTCOME -->|"24h Sweep / 7d Fallback / Consultant Withdraw"| LAPSE["lapseApprovedRequest() -> CAS to EXPIRED, tombstones Payment(EXPIRED), releases slot holds, fires WindowBackupInterest notices"]
-  LAPSE -.->|"Late Capture Race (captured_after_release)"| AUTO_REFUND["Webhook sees EXPIRED Payment -> claims SUCCEEDED & immediately triggers 100% auto-refund"]
-```
-
----
-
-### 4.3 Booking, Participant, Reschedule & Session Outcome State Machines
-
-#### A. Request Status (`Consultation` & `Subscription`) and Group Event Status (`Webinar` & `Class`)
-
-```mermaid
-stateDiagram-v2
-  direction LR
-  state "Consultation & Subscription (AppointmentStatus)" as Req {
-    [*] --> PENDING : Checkout or Request created
-    PENDING --> APPROVED_PENDING_PAYMENT : Consultant approves unpaid Consultation
-    APPROVED_PENDING_PAYMENT --> APPROVED : Payment captured
-    PENDING --> APPROVED : Direct checkout captured (Consultation) or 1st Cycle Allocated (Subscription)
-    APPROVED --> APPROVED : Subsequent Subscription cycle allocated (self-edge)
-    APPROVED_PENDING_PAYMENT --> PENDING : Reschedule opened from awaiting-payment
-    APPROVED --> PENDING : Whole-booking reschedule opened
-    PENDING --> REJECTED : Consultant declines
-    APPROVED_PENDING_PAYMENT --> REJECTED : Consultant declines
-    PENDING --> CANCELLED : Cancelled by actor
-    APPROVED_PENDING_PAYMENT --> CANCELLED : Cancelled by actor
-    APPROVED --> CANCELLED : Cancelled by actor (triggers policy refund)
-    PENDING --> EXPIRED : 48h unpaid consultation / 48h unallocated paid subscription (100% refund) / 30d unpaid sub
-    APPROVED_PENDING_PAYMENT --> EXPIRED : 24h pay-link lapse / 7d fallback / Consultant Withdraw
-    APPROVED --> COMPLETED : Hourly auto-complete (all sessions ended > 1h ago & remaining == 0)
-  }
-
-  state "Webinar & Class (EventStatus)" as Ev {
-    [*] --> DRAFT : Created in studio (stays DRAFT across allocations)
-    DRAFT --> SCHEDULED : Published by host
-    SCHEDULED --> SCHEDULED : Re-allocation re-stamp
-    SCHEDULED --> IN_PROGRESS : Live session starts
-    IN_PROGRESS --> COMPLETED : All occurrences ended > 1h ago
-    SCHEDULED --> COMPLETED : All occurrences ended > 1h ago
-    SCHEDULED --> CANCELLED : Host cancels whole event (100% refund to undelivered seats)
-    IN_PROGRESS --> CANCELLED : Host cancels mid-series
-  }
-```
-
-#### B. Participant Seat Status, Reschedule Lifecycle & Post-Session Outcomes
-
-```mermaid
-stateDiagram-v2
-  direction LR
-  state "AppointmentParticipant" as Part {
-    [*] --> HELD : Seated at checkout
-    HELD --> CONFIRMED : Payment SUCCEEDED
-    CONFIRMED --> ATTENDED : Attendance pipeline
-    HELD --> CANCELLED : Hold abandoned / expired
-    CONFIRMED --> CANCELLED : Learner leaves / booking cancelled
-    ATTENDED --> CANCELLED : Series cancelled
-    HELD --> REFUNDED : Refund cascade
-    CONFIRMED --> REFUNDED : Refund cascade
-    CANCELLED --> REFUNDED : Refund lands after cancel
-  }
-
-  state "RescheduleRequest" as Res {
-    [*] --> PENDING_REVIEW : Actor requests reschedule (max 1 open per Appointment)
-    PENDING_REVIEW --> ACCEPTED : Counterparty approves & new slots allocated
-    PENDING_REVIEW --> AUTO_ACCEPTED : Window lapses without reply -> auto-confirmed
-    PENDING_REVIEW --> DECLINED : Counterparty declines -> restore origin slots (or park APPROVED if taken)
-    PENDING_REVIEW --> WITHDRAWN : Initiator withdraws -> restore origin status & slots
-    PENDING_REVIEW --> EXPIRED : Hourly sweep expires -> restore origin status & slots
-  }
-
-  state "AppointmentOccurrence (Session Outcome)" as Occ {
-    [*] --> SCHEDULED : Slot placed
-    SCHEDULED --> COMPLETED : Outcome HELD (both attended) or LEARNER_ABSENT (forfeited, no refund)
-    SCHEDULED --> VOIDED : Outcome CUT_SHORT, PLATFORM_OUTAGE, or HOST_ABSENT (earnings held, 14d make-up or refund)
-    SCHEDULED --> UNVERIFIED : Outcome NOBODY_JOINED, INCONCLUSIVE, or OFFLINE (parked for Ops review)
-    SCHEDULED --> CANCELLED : Host cancels class session (14d make-up or 1-unit refund) or whole booking cancelled
-    UNVERIFIED --> COMPLETED : Ops overrides via session.set-outcome
-    UNVERIFIED --> VOIDED : Ops overrides via session.set-outcome
-    VOIDED --> COMPLETED : Ops overturns before settlement
-  }
-```
-
-### 4.4 Session Outcome Classification & Class Series Protection Rules
-
-One hour after any `SCHEDULED` occurrence's `endsAt`, the hourly `auto-complete-appointments` sweep runs `classifySessionOutcome()` (`lib/booking/session-outcome.ts`) over device-level `MeetingPresence` intervals, Stream call reports, and maintenance windows ([ADR 2026-09-25](../decisions/2026-09-25-session-outcomes.md)):
-
-| Verdict (`SessionOutcome`)                       | Occurrence Status                    | Who Was Present & Rule                                                                                                                                                                         | Financial & Booking Effect                                                                                                                                                                                                                                                                                                                                      |
-| :----------------------------------------------- | :----------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`HELD`**                                       | `COMPLETED`                          | Both host side (consultant or accepted collaborator) and learner joined; host-side absence loss `< min(15 min, duration / 2)` (crediting reconnects `< 2m` and up to `30m` overtime together). | Normal completion. Earnings release after `holdUntil`.                                                                                                                                                                                                                                                                                                          |
-| **`LEARNER_ABSENT`**                             | `COMPLETED`                          | Host was present; zero learners joined.                                                                                                                                                        | **Session is forfeited by the learner.** Counts as delivered; consultant is paid in full; no refund.                                                                                                                                                                                                                                                            |
-| **`HOST_ABSENT`**                                | `VOIDED` (or Consultation cancelled) | Learner waited; no host-side person ever joined.                                                                                                                                               | • **Consultation**: Claimed by `detect-consultant-no-shows` → booking `CANCELLED` + **100% auto-refund**.<br>• **Class / Webinar**: `VOIDED` → host has **14 days** to schedule a make-up or `settle-cancelled-sessions` refunds 1 unit.<br>• **Subscription**: Returns 1 session to plan allowance (if unused at period end, refunded at `amount / sessions`). |
-| **`CUT_SHORT`**                                  | `VOIDED`                             | Host dropped while learners stayed for `>= min(15 min, duration / 2)`.                                                                                                                         | Counts as a **host-attributed miss** (raises `class-reliability` flag at ≥ 3 misses or ≥ 25% of series). Same 14-day make-up or refund remedy.                                                                                                                                                                                                                  |
-| **`PLATFORM_OUTAGE`**                            | `VOIDED`                             | All participants dropped within 2 minutes of each other, or call overlapped a `DEGRADED`/`OFFLINE` maintenance window.                                                                         | Counts toward **learner's class exit right** (≥ 3 misses or ≥ 25% of series allows 100% refund of all undelivered sessions), but **never** penalizes the host's reliability flag.                                                                                                                                                                               |
-| **`NOBODY_JOINED` / `INCONCLUSIVE` / `OFFLINE`** | `UNVERIFIED`                         | Nobody joined, open presence interval, Stream participant count mismatch, or no room created.                                                                                                  | **Doubtful verdict never moves money automatically.** Holds earnings and surfaces in Backoffice Ops Queue for `session.set-outcome`.                                                                                                                                                                                                                            |
+The booking-mode and contention flow, the request, participant, reschedule and occurrence state machines, and the session-outcome classification table moved to [01-booking-system-hld.md](./01-booking-system-hld.md) (sections 5, 6 and 7), because they describe the system rather than any one scenario. The examples in section 8 below use them.
 
 ---
 
@@ -571,99 +390,9 @@ Incoming Request: resolveOrgScope(sessionUser, queryOrgScope)
 
 ## 6. The Complete Money Machinery & Double-Entry Ledger
 
-### 6.1 Step 1 of Checkout: Price Derivation Order of Operations (`deriveCheckoutAmount()`)
+Price derivation, the chart of accounts (thirteen account kinds), the four confirmation doors and the money state machines moved to [02-money-system-hld.md](./02-money-system-hld.md) (sections 3, 5, 7 and 8). This section keeps the permutation reference.
 
-Every checkout computes the payable amount using strict integer paise arithmetic in four ordered steps (`lib/payments/pricing/derive-checkout-amount.ts`):
-
-```mermaid
-flowchart LR
-  S1["1. List Price (originalAmount) - e.g. Rs 2,000 = 200,000 paise (Earnings & RateCard base)"]
-  S2["2. Promo Discount (discountPaise) - PERCENTAGE (capped by maxDiscount) or FIXED_AMOUNT - e.g. -10% = -20,000 -> discountedAmount = 180,000"]
-  S3["3. Tax Engine (+18% GST on discountedAmount) - India: 18% (9% CGST + 9% SGST intra-state or 18% IGST inter-state) - Export (non-IN under LUT): 0% zero-rated - e.g. +32,400 -> taxedAmount = 212,400"]
-  S4["4. Referral Credits (creditsApplied) - B2C / PERSONAL only (stripped on org-sponsored rails) - Eligible iff taxedAmount >= Rs 500 (50,000 paise) - FIFO by earliest expiresAt - e.g. -20,000 -> Final amount = 192,400"]
-
-  S1 --> S2 --> S3 --> S4
-```
-
-> **Critical Invariant: Consultant & Host Org Earnings Base vs Tax & Discounts**
->
-> - **Platform Fee, Host Org Share, and Consultant Share** are **always** calculated on `Payment.originalAmount` (the pre-discount, pre-tax list price, e.g., `200,000` paise = ₹2,000).
-> - Why? Because a platform promo code (`DiscountCode`) or a `ReferralCredit` is a marketing subsidy funded by the platform (`Dr DISCOUNT` and `Dr PLATFORM_PROMO` in the ledger), **never** deducted from the consultant's earnings.
-> - **GST (18%)** is calculated on `discountedAmount` (`originalAmount - discountPaise`), because under Section 15(3)(a) of the CGST Act, a pre-supply invoice discount reduces the taxable value of supply.
-
----
-
-### 6.2 Chart of Accounts (`10 LedgerAccountKind` Buckets)
-
-Every `LedgerAccount` has a deterministic primary key `kind|organizationId-or-_|consultantProfileId-or-_|INR` ([ADR 03](../enterprise/70-design-decisions/03-deterministic-ledger-account-ids.md)). Every `LedgerEntry.amountPaise` is strictly positive; sign is determined by `DEBIT` vs `CREDIT` and the account's normal side:
-
-| Account Kind (`LedgerAccountKind`) | Scope                        | Normal Side | What Increases It                                                         | What Decreases It                                                    | Meaning                                                                                             |
-| :--------------------------------- | :--------------------------- | :---------: | :------------------------------------------------------------------------ | :------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------- |
-| **`CASH`**                         | Platform (`_\|_`)            |  **DEBIT**  | `Dr CASH` (Card capture, Wallet top-up, Invoice paid)                     | `Cr CASH` (Gateway refund, Consultant/Org payout)                    | Cash settled via Razorpay / Stripe / RazorpayX.                                                     |
-| **`ORG_RECEIVABLE`**               | Per Sponsor Org (`orgId\|_`) |  **DEBIT**  | `Dr ORG_RECEIVABLE(org)` (`INVOICE_ACCRUAL` booking)                      | `Cr ORG_RECEIVABLE(org)` (`INVOICE_PAID` or unpaid accrual `REFUND`) | Accounts receivable owed to the platform by an `INVOICE`-funded sponsor org.                        |
-| **`PLATFORM_PROMO`**               | Platform (`_\|_`)            |  **DEBIT**  | `Dr PLATFORM_PROMO` (`REFERRAL_CREDIT` consumed at checkout)              | `Cr PLATFORM_PROMO` (Credit restored on refund)                      | Marketing expense for referral/promo credits redeemed by buyers.                                    |
-| **`DISCOUNT`**                     | Platform (`_\|_`)            |  **DEBIT**  | `Dr DISCOUNT` (Coupon discount gap at booking)                            | `Cr DISCOUNT` (Pro-rata reversal on refund)                          | Contra-revenue for promo coupon discounts (`originalAmount + taxAmount - fundingDebitTotal`).       |
-| **`WALLET`**                       | Per Sponsor Org (`orgId\|_`) | **CREDIT**  | `Cr WALLET(org)` (`TOPUP` confirmed, or `WALLET` booking refunded)        | `Dr WALLET(org)` (`WALLET`-funded booking, or `TOPUP_REFUND`)        | Unearned prepaid liability we owe a `WALLET`-funded org (cached in `BillingAccount.walletBalance`). |
-| **`CONSULTANT_PAYABLE`**           | Per Consultant (`_\|cpId`)   | **CREDIT**  | `Cr CONSULTANT_PAYABLE(cp)` (`BOOKING` settlement)                        | `Dr CONSULTANT_PAYABLE(cp)` (`PAYOUT` completed, or `REFUND`)        | Liability owed to an expert (cached in `ConsultantEarnings`).                                       |
-| **`ORG_PAYABLE`**                  | Per Host Org (`orgId\|_`)    | **CREDIT**  | `Cr ORG_PAYABLE(host)` (`BOOKING` host share, or `OVERAGE_MEMBER` relief) | `Dr ORG_PAYABLE(host)` (`ORG_PAYOUT` completed, or `REFUND`)         | Liability owed to a `HOST`/`HYBRID` org (cached in `OrganizationEarnings`).                         |
-| **`GST_PAYABLE`**                  | Platform (`_\|_`)            | **CREDIT**  | `Cr GST_PAYABLE` (18% GST at `BOOKING`)                                   | `Dr GST_PAYABLE` (Credit Note issued on `REFUND` / `LOST` dispute)   | Output GST liability owed to the government.                                                        |
-| **`TDS_PAYABLE`**                  | Platform (`_\|_`)            | **CREDIT**  | `Cr TDS_PAYABLE` (Section 194-O withheld at `PAYOUT` / `ORG_PAYOUT`)      | `Dr TDS_PAYABLE` (Payout reversal)                                   | Income tax withheld at source on payouts, remitted via quarterly 26Q.                               |
-| **`PLATFORM_FEE`**                 | Platform (`_\|_`)            | **CREDIT**  | `Cr PLATFORM_FEE` (20% B2C or RateCard `platformBps` + overage surcharge) | `Dr PLATFORM_FEE` (`REFUND` reversal; absorbs ±1 paisa rounding)     | Recognized platform commission revenue.                                                             |
-
----
-
-### 6.3 The 4 Confirmation Doors, Wave-2 Atomic Phase-1 Journaling (`#1758`), & Money State Machines
-
-Whether a payment is captured via Razorpay/Stripe or confirmed synchronously on an enterprise rail, **four confirmation doors** converge on a single idempotent writer (`routeCapturedPayment()` → `handlePaymentSuccess()`). Under **Wave 2 (`#1758`)**, `planEarningsForPayment()` pre-computes the revenue split _before_ opening the `Serializable` transaction, and `createEarningsFromPayment({ tx })` writes the `ConsultantEarnings`, `OrganizationEarnings`, and `booking:<paymentId>` `LedgerTransaction` **atomically inside Phase 1** under savepoint `sp_phase1_earnings`:
-
-```text
-  Door 1: Webhook (`payment.captured` / `checkout.session.completed`)
-  Door 2: Client Signature Verify (`POST /api/checkout/verify-signature`)
-  Door 3: Client Polling Fallback (`GET /api/checkout/verify?sync=true`)
-  Door 4: Reconciler Sweep (`reconcile-payment-status` cron for PENDING > 15m)
-     |
-     +---> routeCapturedPayment() -> handlePaymentSuccess(paymentIntentId)
-             |
-             |-- Pre-Tx: planEarningsForPayment() resolves RateCard / ShareBand / Collaborator bps
-             |
-             +-- BEGIN ISOLATION LEVEL SERIALIZABLE (withSerializableRetry)
-                   |-- 1. CAS Payment: WHERE status = 'PENDING' -> 'SUCCEEDED' (0 rows = already settled)
-                   |-- 2. Confirm slots: AppointmentOccurrence.isTentative = false
-                   |-- 3. Confirm seat:  AppointmentParticipant.status = 'CONFIRMED'
-                   |-- 4. Advance request: Consultation/Subscription -> 'APPROVED'
-                   |-- 5. SAVEPOINT sp_phase1_earnings (#1758)
-                   |        |-- createEarningsFromPayment({ tx }):
-                   |        |     Writes ConsultantEarnings + OrganizationEarnings (PENDING / PENDING_TRUST)
-                   |        +-- postLedgerTxn({ tx, idempotencyKey: "booking:<paymentId>" }):
-                   |              Writes balanced DEBIT/CREDIT LedgerEntry rows (verified by ledger_txn_balanced)
-                   +-- COMMIT (Phase 2 & 6h `sync-payment-earnings` cron act as defensive fallback if savepoint rolls back)
-```
-
-#### Money State Machines (`Payment`, `ConsultantEarnings` / `OrganizationEarnings`, `Payout`, `Refund`)
-
-```text
-  PaymentStatus:
-    PENDING ──(capture)──▶ SUCCEEDED ──(partial refund)──▶ PARTIALLY_REFUNDED ──▶ REFUNDED
-       ├──(gateway fail)─▶ FAILED
-       └──(30m timeout)──▶ EXPIRED  (late capture on EXPIRED triggers 100% auto-refund)
-
-  EarningsStatus (ConsultantEarnings & OrganizationEarnings):
-    PENDING / PENDING_TRUST (<5 lifetime sessions: 7d hold)
-       ├──(holdUntil elapsed: 24h Cons / 48h Web / 168h Sub & Class)──▶ READY
-       ├──(dispute.created or session VOIDED/UNVERIFIED)──────────────▶ HELD ──(won/resolved)──▶ READY
-       └──(full refund before payout)─────────────────────────────────▶ REFUNDED
-    READY ──(claimed by weekly batch)──▶ BATCHED ──(payout.processed)──▶ PAID ──(payout.reversed)──▶ READY
-
-  PayoutStatus (ConsultantPayout & OrganizationPayout):
-    PENDING ──(<₹5k auto OR Admin / 2-Person Org approval)──▶ APPROVED ──▶ PROCESSING ──▶ COMPLETED / FAILED / REVERSED
-
-  RefundStatus:
-    PENDING (Phase-1 Serializable reservation) ──(Gateway 2xx + applyRefundCascade)──▶ SUCCEEDED (or FAILED)
-```
-
----
-
-### 6.4 Exhaustive 20-Permutation Double-Entry General Ledger Reference (`V2`)
+### 6.1 Exhaustive 20-Permutation Double-Entry General Ledger Reference (`V2`)
 
 Every financial state change in `familiarise_web` maps to one of the **20 canonical double-entry ledger permutations** below. In every permutation, `∑ Debit === ∑ Credit` is enforced at `COMMIT` by the deferred constraint trigger `ledger_txn_balanced`:
 
@@ -1158,7 +887,7 @@ If Olivia tries to book a 14th session (another ₹11,500 marginal), cumulative 
 
 ### Permutation 8: Payout Pipeline, TDS Section 194-O Withholding, & MSME 43B(h) Deadlines
 
-Once `holdUntil` passes (`24h` Consultation, `48h` Webinar, `168h` Subscription/Class) and no live dispute or unsettled session void exists, `release-earnings` flips `ConsultantEarnings` and `OrganizationEarnings` from `PENDING → READY`.
+Once `holdUntil` passes (`24h` Consultation and Class, `48h` Webinar, `168h` Subscription; anchored on the later of capture and the last live session end) and no live dispute or unsettled session void exists, `release-earnings` flips `ConsultantEarnings` and `OrganizationEarnings` from `PENDING → READY`.
 
 ```mermaid
 sequenceDiagram
@@ -1171,7 +900,7 @@ sequenceDiagram
 
   Cron->>DB: Acquire Redis lock, create placeholder Payout(PENDING)
   Cron->>DB: CLAIM FIRST: updateMany Earnings WHERE status=READY & payoutId=NULL -> BATCHED
-  Cron->>DB: computeTdsForPayout(net): Check PAN, FY cumulative > Rs 50,000 threshold, s.197 lower-rate cert
+  Cron->>DB: computeTdsForPayout(net): Check PAN, FY gross vs the Rs 5,00,000 exemption (individual or HUF with PAN), s.197 lower-rate cert
   Cron->>DB: Compute MSME 43B(h) mustPayByDate (15 days without agreement / 45 days with agreement)
 
   alt Consultant Payout < Rs 5,000 (500,000 paise)
@@ -1189,7 +918,7 @@ sequenceDiagram
 
 #### Worked Payout & TDS Numbers (Section 194-O)
 
-Suppose **Arjun Anderson** has crossed the ₹50,000 financial-year threshold and has **₹80,000** (`8,000,000` paise) of `READY` earnings batched into `ConsultantPayout`:
+Suppose **Arjun Anderson** (an individual with a PAN on file) has already passed the ₹5,00,000 financial-year gross exemption of section 194-O (`lib/compliance/tds-194o.ts`; companies, firms and LLPs are withheld from the first rupee, and the base is the gross sale rather than the net share) and has **₹80,000** (`8,000,000` paise) of `READY` earnings batched into `ConsultantPayout`:
 
 | Tax Profile of Payee                                               | TDS Rate (Sec 194-O) | Gross Payable Debited (`Dr *_PAYABLE`) |                 TDS Withheld (`Cr TDS_PAYABLE`) |          Net Cash Sent (`Cr CASH`) |
 | :----------------------------------------------------------------- | :------------------: | -------------------------------------: | ----------------------------------------------: | ---------------------------------: |
@@ -1239,141 +968,106 @@ Take **Daniel Brown's** booking of **Aarav Anderson** at **LearnPro Academy** fr
 
 ---
 
-## 8. Concurrency, Database Sidecars & Nightly Reconciliation Summary
+## 8. Worked End-to-End Examples (Seeded Cast)
 
-```mermaid
-flowchart LR
-  subgraph L0["Layer 0: Postgres Triggers & Constraints"]
-    T1["ledger_txn_balanced (DEFERRABLE INITIALLY DEFERRED): Sum DEBIT == Sum CREDIT"]
-    T2["payment_legs_sum_to_amount: Sum funding legs == Payment.amount"]
-    T3["occurrence_no_confirmed_overlap (GiST): No overlapping non-tentative slots per consultant"]
-    T4["~30 CHECK constraints: wallet_nonnegative, rate_card_bps_sum_is_whole, etc."]
-  end
+These nine examples follow one booking at a time from the first click to the last ledger line, using people from the cast in section 1. Dates are in 2026 and times are IST unless a zone is named. Plan prices are illustrative, because the seed draws plan prices at random (`prisma/seedFiles/4a-create-consultation-plans.ts`); every other number is computed with the rules in the code that the text cites. Each heading says whether the behaviour is **current** on `dev`, or lands **after Wave N** of the productionization program (see [01-booking-system-hld.md](./01-booking-system-hld.md) and [02-money-system-hld.md](./02-money-system-hld.md)). Where an example mixes both, each step says which.
 
-  subgraph L1_L2["Layer 1 & 2: CAS-in-WHERE + Serializable Retry"]
-    CAS["updateMany WHERE status IN ALLOWED_FROM (count == 0 -> lost race)"]
-    SSI["withSerializableRetry() on P2034 serialization conflicts"]
-  end
+### Example 1 — Instant consultation, booked, paid, completed and paid out (current)
 
-  subgraph L4["Layer 4: Redis Locks (Coordination Only)"]
-    RL["lockConsulteeBooking -> lockSlotBooking (30-min atoms) & withCronLock (fail-closed for money jobs)"]
-  end
+**Cast.** Charlotte Brown (independent consultee) books Grace Anderson (independent consultant, 20% platform / 80% expert). The plan is one hour at ₹2,000, so the price is `200,000` paise plus `36,000` paise GST, and the card is charged `236,000` paise.
 
-  subgraph Reconciler["Nightly Control Loop (reconcile-ledgers.ts)"]
-    R_CHK["Verifies 26 invariants across Journal, Wallet caches, Earnings caches, Program counters, Invoices, and TDS"]
-    R_FRZ["On WALLET_BALANCE_DRIFT: Calls freezeWalletSpend() & pages Sentry"]
-  end
+| Time                                        | What happens                                                                                                      | Rows and checks                                                                                                                                                                                                                                                                                                                                                                 |
+| :------------------------------------------ | :---------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Mon 19 Oct 10:00:00                         | Charlotte picks Tue 20 Oct 16:00–17:00 and checks out.                                                            | Redis locks are taken on her consultee key and then on the 16:00 and 16:30 atoms. One Serializable transaction writes the `Appointment`, a tentative `AppointmentOccurrence`, two `AppointmentParticipant` rows (the consultee seat is `HELD`), a `Payment` with status `PENDING` and `expiresAt` at 10:30:00, and one `PaymentLeg(CARD, 236,000)`. A Razorpay order is minted. |
+| Mon 19 Oct 10:02:14                         | The card is captured and the webhook arrives.                                                                     | `handlePaymentSuccess` flips the payment `PENDING` to `SUCCEEDED` by compare-and-swap, makes the occurrence non-tentative (the `occurrence_no_confirmed_overlap` constraint is checked at commit), confirms the participant, and moves the consultation to `APPROVED`.                                                                                                          |
+| Same transaction                            | Earnings and the booking journal are written.                                                                     | `ConsultantEarnings`: gross `200,000`, platform fee `40,000`, expert share `160,000`, `holdUntil` = max(capture, session end) + 24 h = Wed 21 Oct 17:00.                                                                                                                                                                                                                        |
+| Tue 20 Oct 16:00–17:00                      | The session runs and both sides join.                                                                             | Presence intervals are recorded by the Stream webhooks.                                                                                                                                                                                                                                                                                                                         |
+| First run after Tue 18:00                   | `auto-complete-appointments` (every 30 minutes, one hour after the session end) classifies the session as `HELD`. | Occurrence `COMPLETED`, consultation `COMPLETED`.                                                                                                                                                                                                                                                                                                                               |
+| Wed 21 Oct after 17:00                      | `release-earnings` (every 15 minutes) moves the earning `PENDING` to `READY`.                                     |                                                                                                                                                                                                                                                                                                                                                                                 |
+| Mon 26 Oct 20:00 UTC (Tue 27 Oct 01:30 IST) | The weekly batch claims Grace's `READY` earnings, assuming this is her only one that week.                        | The earning moves to `BATCHED`. The payout is `160,000`, below the 5,000-rupee threshold, so it is auto-approved.                                                                                                                                                                                                                                                               |
+| Mon 26 Oct 21:00 UTC                        | The batch is processed through RazorpayX and `payout.processed` arrives.                                          | Payout `COMPLETED`, earning `PAID`, journal `payout:<id>`.                                                                                                                                                                                                                                                                                                                      |
 
-  RL --> SSI --> CAS --> L0 --> Reconciler
-```
+Booking journal `booking:<paymentId>` (balanced at `236,000`):
 
-### 8.1 Serializable Retry Engine: `withSerializableRetry` (`lib/db/serializable-retry.ts`)
+| Account                     | Direction |   Paise |
+| :-------------------------- | :-------: | ------: |
+| `CASH`                      |   Debit   | 236,000 |
+| `PLATFORM_FEE`              |  Credit   |  40,000 |
+| `CONSULTANT_PAYABLE(grace)` |  Credit   | 160,000 |
+| `GST_PAYABLE`               |  Credit   |  36,000 |
 
-Under PostgreSQL `SERIALIZABLE` transaction isolation, concurrent transactions with overlapping read/write sets are aborted by PostgreSQL's Serializable Snapshot Isolation (SSI) engine (`SQLSTATE 40001`, mapped by Prisma to **`P2034`**) to prevent phantom reads and write skew:
+Payout journal `payout:<id>`: Debit `CONSULTANT_PAYABLE(grace)` `160,000` and credit `CASH` `160,000`. Grace is an individual with a PAN on file and her financial-year gross is far below 5,00,000 rupees, so the section 194-O exemption in `lib/compliance/tds-194o.ts` applies and nothing is withheld. Once her year-to-date gross passes that line, 10 basis points of the gross sale (`200,000 × 10 / 10,000 = 200` paise, ₹2) would be withheld, the payout would credit `TDS_PAYABLE` `200` and `CASH` `159,800`.
 
-```text
-Writer A (Learner 1 Checkout)             Writer B (Learner 2 Checkout)
-+---------------------------------+       +---------------------------------+
-| BEGIN (SERIALIZABLE)            |       | BEGIN (SERIALIZABLE)            |
-| Read Slot Availability (Free)   |       | Read Slot Availability (Free)   |
-| Write Occurrence Hold           |       | Write Occurrence Hold           |
-| COMMIT -> OK                    |       | COMMIT                          |
-+---------------------------------+       +----------------+----------------+
-                                                           |
-                                                           v
-                                                ERROR: P2034 (40001)
-                                                could not serialize access
-                                                           |
-                                                           v
-                                            withSerializableRetry() catches P2034
-                                            Waits 50 * 2^attempt + jitter(0..25ms)
-                                            Retries transaction from the top
-                                            (Now sees Slot Taken -> Rejects 409)
-```
+### Example 2 — Request-mode consultation, approval, pay-link and payment (current, with two steps landing in Wave 0)
 
-- **Retries ONLY `P2034`**: Never retries validation errors, foreign key violations (`P2003`), or `IllegalTransitionError` — business refusals fail fast.
-- **Jittered Exponential Backoff**: `50 * Math.pow(2, attempt) + Math.random() * 25` ms (`50–75ms`, `100–125ms`, `200–225ms`) up to `SERIALIZABLE_MAX_RETRIES = 3`.
-- **Pure Idempotent Closure**: Functions inside `withSerializableRetry` perform pure DB mutations with zero uncommitted external side effects.
+**Cast.** Daniel Brown requests a one-hour consultation from Hannah Anderson (independent) priced at ₹3,000, which is `300,000` paise plus `54,000` GST, so `354,000` paise.
 
----
+1. **Wed 21 Oct 09:00, the request.** `POST /api/scheduling/request-for-approval` creates a `Consultation` in `PENDING` with a tentative occurrence for Thu 22 Oct 16:00–17:00. No money moves. _Landing in Wave 0:_ the route refuses a window whose length does not match the plan (400 `WINDOW_DURATION_MISMATCH`) and accepts an `Idempotency-Key` so a double tap returns the original 201.
+2. **Wed 21 Oct 15:00, the approval.** Hannah uses "Use requested times". Only she, her host-organisation operators or staff may do this (a consultee gets 403 `ALLOCATE_FORBIDDEN`). Nobody has paid, so the compare-and-swap lands in `APPROVED_PENDING_PAYMENT` and the occurrence stays tentative.
+3. **Wed 21 Oct 15:00:02, the pay-link.** After the commit, `mintApprovalPaymentAfterCommit` creates a `PENDING` payment with a card leg of `354,000`, an order, and `expiresAt` at Thu 22 Oct 15:00 (24 hours). The link is `/checkout/pay/<paymentId>` and carries GST like any checkout. _Landing in Wave 0:_ the row is written first with a `premint_<uuid>` intent, and the real order id is filled in by compare-and-swap after the gateway call.
+4. **Thu 22 Oct 10:12, the payment.** The capture flows through the single writer exactly as in example 1: payment `SUCCEEDED`, consultation `APPROVED`, occurrence confirmed. The journal is `Dr CASH 354,000`, `Cr PLATFORM_FEE 60,000`, `Cr CONSULTANT_PAYABLE(hannah) 240,000`, `Cr GST_PAYABLE 54,000`.
+5. **The unhappy path.** If nothing is paid by Thu 22 Oct 15:00, `lapseApprovedRequest` moves the consultation to `EXPIRED`, tombstones the payment, and releases the hold. A capture that still arrives afterwards finds an `EXPIRED` payment and is auto-refunded in full.
 
-### 8.2 Reconciliation Architecture V2 (`scripts/reconcile/reconcile-ledgers.ts`)
+### Example 3 — Subscription: allocate, return a session, cancel the plan (allocation and cancel math current; the return is after Wave 0)
 
-The reconciliation engine inspects live database state, re-derives every cached balance from `LedgerEntry` rows, and writes a `LedgerReconciliationReport`:
+**Cast.** Daniel Brown buys a four-session plan from Hannah Anderson with two sessions per week for ₹6,000, which is `600,000` plus `108,000` GST, so `708,000` paise. The unit value of one session is `177,000` paise.
 
-```text
-Reconciliation Engine V2 (26 Set-Based Invariant Checks across 4 Groups)
-  |
-  +-- Group 1: Journal Soundness (Full-Scope Only)
-  |     |-- LEDGER_TXN_IMBALANCE: Sum(DEBIT) - Sum(CREDIT) == 0
-  |     +-- REFUND_BOOKING_COHERENCE: Refunded bookings have released capacity
-  |
-  +-- Group 2: Money Caches vs. Journal
-  |     |-- WALLET_BALANCE_DRIFT: Calls freezeWalletSpend(isWalletFrozen=true) & Pages P0
-  |     |-- EARNINGS_LEDGER_DRIFT: ConsultantEarnings == Journal payables
-  |     |-- EARNINGS_WITHOUT_BOOKING_TXN: Earnings rows with no booking journal
-  |     |-- PAYMENT_LEG_SUM_MISMATCH: Sum(Legs) == Payment.amount
-  |     |-- ORG_PAYOUT_TOTAL_MISMATCH: Batched earnings sum == netPayoutPaise
-  |     +-- LEDGER_DUAL_WRITE_GAP: Payout clawbacks match posted CASH debits
-  |
-  +-- Group 3: Usage & Program Counters
-  |     |-- PROGRAM_ASSIGNMENT_ENGAGEMENTS_DRIFT: Sum(UsageLedger) == engagementsUsed
-  |     |-- CREDIT_POOL_CONSUMED_DRIFT: Sum(UsageLedger.paise) == consumedPaise
-  |     |-- OVERAGE_COUNT_DRIFT: Active events count == overageCount
-  |     |-- OVERAGE_CHARGESTATUS_INTEGRITY: CHARGED events have side-payments
-  |     +-- ACTIVE_SEAT_COUNT_DRIFT: Active assignments == activeSeatCount
-  |
-  +-- Group 4: Tax & Filing Compliance
-        |-- INVOICE_TOTAL_MISMATCH: Total == Subtotal + CGST + SGST + IGST
-        |-- OVERAGE_RECARVE_COHERENCE: Every overage-recarve-invoice matches CreditNote
-        +-- LEDGER_ACCOUNT_NON_INR: All accounts strictly INR-denominated
-```
+- **Mon 19 Oct 11:00, payment.** A subscription is always paid upfront. The journal is `Dr CASH 708,000`, `Cr PLATFORM_FEE 120,000`, `Cr CONSULTANT_PAYABLE(hannah) 480,000`, `Cr GST_PAYABLE 108,000`. The first cycle must be allocated within 48 hours or `expireUnallocatedPaidSubscriptions` refunds 100%.
+- **Mon 19 Oct 14:00, first tranche.** The cycle capacity is `sessionsPerWeek = 2`, so `nextBatch = 2` and Hannah places session 1 on Thu 22 Oct 18:00 and session 2 on Mon 26 Oct 18:00. The subscription moves `PENDING` to `APPROVED`. Sessions 3 and 4 can only be placed once the first cycle is delivered, which is the fill-order rule in `lib/booking/entitlement.ts`.
+- **Cycle two.** After sessions 1 and 2 are delivered, Hannah places session 3 on Thu 29 Oct 18:00 and session 4 on Mon 2 Nov 18:00. The earnings `holdUntil` is re-anchored on the latest live session end plus 168 hours.
+- **Return one session (after Wave 0, W0-7).** On Wed 28 Oct 09:00 Daniel returns session 3, which is 33 hours away. Because that is at least 24 hours ahead, the occurrence is released by a status compare-and-swap, the session returns to the plan allowance with no cash (the cap is two returns per plan), and `schedulingPeriodEndsAt` is extended by up to seven days. Hannah then places a replacement, say Thu 5 Nov 18:00. Had he tried on Thu 29 Oct 10:00, eight hours ahead, the action would be refused and the session forfeited as delivered.
+- **Cancel the whole plan (current).** After sessions 1 and 2 are delivered, Daniel cancels on Thu 5 Nov 10:00 with session 3 at Thu 5 Nov 18:00 (8 hours, the 50% tier) and session 4 at Mon 9 Nov 18:00 (104 hours, the 100% tier). `quoteBookingRefund` tiers every undelivered session separately: `708,000 × 1 × 5,000 / 40,000 = 88,500` for session 3 and `708,000 × 1 × 10,000 / 40,000 = 177,000` for session 4. The refund is `265,500` paise (₹2,655), which is 75% of the `354,000` undelivered base, and delivered sessions come back at nothing. The refund runs after the commit through `refundBookingPayment`. _After Wave 0 (W0-3):_ the cancel dialog sends the quote it displayed, and the refund owed is recorded in the cancel transaction.
 
-- **No grace window**: an earnings row and its `booking:<paymentId>` journal always commit in one transaction, and the check reads earnings before journal transactions, so a fresh payment can never look unjournaled.
+### Example 4 — Webinar: two buyers race for the last seat, one hold lapses, a re-buy (race current; sweep scoping after Wave 0 W0-4; re-buy after Wave 0 W0-2)
 
----
+**Cast.** Aarav Anderson (LearnPro Academy, `SELF`) hosts a five-seat webinar on Tue 20 Oct at ₹1,000 plus `18,000` GST, so `118,000` paise a seat. Three seats are already `CONFIRMED`. Charlotte Brown, Daniel Brown and David Brown are the buyers.
 
-### 8.3 Wave-2 3-Tier Cron Architecture & `SystemJobExecution` Lease (`#1945`)
+1. **10:00:00, Charlotte takes seat 4.** Checkout takes `lockEventCheckout`, opens a Serializable transaction, and recounts participants tentative-inclusive: 3 of 5. She gets a `HELD` seat and a `PENDING` payment expiring at 10:30:00. The count is now 4.
+2. **10:20:00, Daniel and David race for seat 5.** Both requests queue on the per-event mutex. Whoever commits first wins, here Daniel: his recount sees 4 of 5, so he is `HELD` with a payment expiring at 10:50:00. David's recount sees 5 of 5 and he receives "Webinar is full". If their snapshots had overlapped, serializable snapshot isolation would abort David with `P2034`, `withSerializableRetry` would retry him, and he would see the same full event. The mutex makes the abort rare and the Serializable recount is what makes the cap correct.
+3. **10:30, Charlotte's hold lapses.** She never paid.
+4. **First `abandoned-payments` run after 10:30, say 10:45.** _Current:_ `ABANDONED_INCLUDE.payment` loads every `PENDING` payment on the appointment, so Daniel's still-live payment (expiring 10:50) is cancelled at the gateway and his seat is released together with Charlotte's. _After Wave 0 (W0-4):_ the include is scoped by the expiry predicate, so only Charlotte's payment is cancelled and expired, and only her `HELD` seat moves to `CANCELLED`, and only when the per-row flip count is 1. Daniel pays at 10:41 and keeps seat 5.
+5. **11:05, Charlotte comes back.** Her old payment row is `EXPIRED`, and `@@unique([userId, appointmentId])` forbids a second row. _Current:_ the insert hits `P2002` and she gets a 500. _After Wave 0 (W0-2):_ checkout re-mints her row in place by compare-and-swap with `WHERE paymentStatus IN (EXPIRED, FAILED)`, with a new order, amount and expiry, and in the same transaction inserts an `EXPIRED` tombstone carrying the old order with `appointmentId: null`, moving the old legs onto it. If she had in fact paid the old order from another tab at 10:31, the capture lands on the tombstone and is auto-refunded as `captured_after_release`.
 
-All 38 background sweeps are registered once in `lib/cron/cleanup-registry.ts` and dispatched across 3 operational tiers:
+### Example 5 — Class: leaving mid-series and a host-cancelled session (current, with the calendar fix after Wave 0 W0-5)
 
-```text
-========================================================================
-                      3-TIER CRON ARCHITECTURE (#1945)
-========================================================================
+**Cast.** Aarav Anderson hosts an eight-session class. David Brown's seat cost ₹8,000 plus ₹1,440 GST, so `944,000` paise, and the seat unit is `floor(944,000 / 8) = 118,000` paise (`seatLedger` in `lib/booking/class-series.ts`).
 
-  [ Tier 1: Sub-Hourly Latency Sweeps ] ──▶ Netlify Scheduled Ticker
-    - Cadence: Every 5 minutes (*/5 * * * *) via netlify/functions/cron-tick.mts
-    - Dispatches HTTP twins with CRON_SECRET:
-      • abandoned-payments, sync-payment-earnings, reconcile-refunds
-      • retry-auto-refunds, drain-notification-outbox, retry-failed-emails
-      • tentative-occurrences, expire-stale-requests
+- **Leaving.** After session 3 is delivered David leaves, and the next session starts in 10 hours. `quoteClassSeatRefund` tiers each of the five remaining units at its own notice: the next one at 50% (`118,000 × 5,000 / 10,000 = 59,000`) and the other four at 100% (`4 × 118,000 = 472,000`). The refund is `531,000` paise (₹5,310), sent through `refundRemovedAttendeeSeat` with the key `seat-leave:<participantId>`. A webinar seat or a class with no delivered session would instead be refused inside the host's refund window.
+- **A host-cancelled session.** On Mon 2 Nov at 10:00 Aarav cancels session 6. The occurrence moves `SCHEDULED` to `CANCELLED` with `hostCancelledAt` set and `deletedAt` left null, so it stays countable as a miss. Aarav has 14 days, until Mon 16 Nov 10:00. If he schedules a make-up at the same ordinal, for example Sat 14 Nov 11:00, no money moves. If he does not, `settle-cancelled-sessions` (every 30 minutes) refunds every seat one unit of `118,000` under the key `occ:<occurrence>:pay:<payment>`. One miss does not trip the exit right, which needs three misses or a quarter of the series (two sessions of eight).
+- **Calendar.** _Current:_ the cancelled session still counts as busy time for Aarav on the availability grid because its `deletedAt` stays null. _After Wave 0 (W0-5):_ the shared occupancy filter excludes host-cancelled class sessions.
 
-  [ Tier 2: Daily Maintenance Sweeps ]  ──▶ GitHub Actions (daily-sweeps.yml)
-    - Cadence: Daily at 02:00 UTC
-    - Dispatches heavy jobs:
-      • Full-scope ledger reconciliation (reconcile-ledgers)
-      • Monthly invoice rollup (settle-invoice-accruals)
-      • TDS 26Q draft report generation (tds-26q-draft-export)
-      • Stale invitation pruning & MSME 43B(h) due date evaluations
+### Example 6 — Cancelling at 23 hours while the dialog showed 100% (current behaviour, then the D3 fix landing in Wave 0 W0-3)
 
-  [ Tier 3: Weekly / System Jobs ]      ──▶ GitHub Actions (weekly-sweeps.yml)
-    - Cadence: Weekly Sunday at 00:00 UTC
-    - Pruning & Retention:
-      • Stream.io recording retention cleanup
-      • Sentry ingest canary audit & quota verification
-```
+**Cast.** Daniel Brown holds the confirmed `354,000` paise consultation from example 2, with the session on Fri 23 Oct at 16:00.
 
-Every job is guarded by `withCronLock` (`lib/cron/with-cron-lock.ts`) and the PostgreSQL partial unique index on `SystemJobExecution`:
+1. Thu 22 Oct 15:50: he opens the cancel dialog. The preview calls `quoteBookingRefund` and shows 100%, `354,000` paise, because the session is 24 hours 10 minutes away.
+2. Thu 22 Oct 17:00: he clicks Cancel. The session is now 23 hours away, in the 2-to-24-hour tier.
+3. _Current:_ the route recomputes the quote after the commit, gets 50% (`177,000` paise) and refunds that. The dialog's number was never part of the request, so he is surprised. The credit note covers the refunded part only: `150,000` base plus `27,000` GST.
+4. _After Wave 0 (W0-3):_ the dialog sends `expectedRefundPaise = 354,000`. The server quotes inside the cancel transaction, finds `177,000`, and answers 409 `REFUND_QUOTE_CHANGED` with the current quote. The dialog redraws at 50% and Daniel confirms again, now sending `177,000`. The same transaction stamps the refund owed, so a crash after the commit is re-driven by `retry-auto-refunds`. Under D14 the gateway fee is absorbed by the platform, so he receives exactly `177,000`. Trials already behave this way in `lib/trials/cancellation.ts`.
 
-```sql
-CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key"
-  ON "SystemJobExecution" ("jobName")
-  WHERE "status" = 'RUNNING';
-```
+### Example 7 — Wallet-funded subscription, expert approval, then sponsor allocation (current)
 
-- **`failMode: "closed"` (Money Sweeps)**: Aborts immediately if the DB lock cannot be verified; a skipped sweep is always safer than a duplicate dunning, invoice, or payout run.
-- **`failMode: "open"` (Idempotent Cleanup Sweeps)**: Logs a warning and proceeds if lock telemetry is unavailable during maintenance.
+**Cast.** Rachel Anderson (learner at IIT Madras, a `HYBRID` organisation with a `WALLET` and a wallet balance of `147,500,000` paise) buys a four-session plan from Benjamin Anderson (`EXPERT` at IIT Madras, `payoutRecipient = SELF`, 10 / 10 / 80 rate card) priced at ₹8,000 plus `144,000` GST, so `944,000` paise. Charlotte Anderson is the organisation `OWNER`.
+
+1. **Wed 21 Oct 11:00, checkout.** The wallet rail skips the gateway. In one transaction `walletDebit` takes `944,000` from the balance (`147,500,000` becomes `146,556,000`), the payment is written `SUCCEEDED` with an `org_wallet_*` intent and a `WALLET` leg, and the subscription stays `PENDING` with no times. The booking journal is `Dr WALLET(iit-madras) 944,000`, `Cr PLATFORM_FEE 80,000`, `Cr ORG_PAYABLE(iit-madras) 80,000`, `Cr CONSULTANT_PAYABLE(benjamin) 640,000`, `Cr GST_PAYABLE 144,000`. The 48-hour first-allocation clock now runs until Fri 23 Oct 11:00.
+2. **Wed 21 Oct 11:30, too early.** Charlotte sees the booking in the organisation's Unscheduled queue as "Awaiting expert approval" with no Allocate button. A direct call to `POST /api/organizations/<orgId>/appointments/<id>/allocate` answers 409 `EXPERT_APPROVAL_REQUIRED`. Earlier the sponsor route could approve a pending request on the expert's behalf, and a consultee could call the host allocate route on their own request.
+3. **Wed 21 Oct 15:00, expert approval.** Benjamin approves. The booking is already paid, so the compare-and-swap lands in `APPROVED` rather than `APPROVED_PENDING_PAYMENT`.
+4. **Thu 22 Oct 09:00, sponsor allocation.** Charlotte opens the queue, which now offers Allocate, and places the first tranche. The route calls `SchedulingService.allocate` with `initialAllocation`, `override`, `allowPartial` and `topUp` all fixed to false and the status compare-and-swap narrowed to `APPROVED`, writes an `APPOINTMENT_ALLOCATED_FOR_ORG` audit row, and answers 409 `ALREADY_ALLOCATED` on a repeat. The program engagement meter is debited lazily per tranche, so a `BLOCK` cap can still refuse the allocation.
+
+### Example 8 — Reschedule: propose, then accept in the same transaction (current)
+
+**Cast.** Hannah Anderson proposes moving Daniel Brown's Thu 22 Oct 16:00 session to Fri 23 Oct 16:00.
+
+1. **Tue 20 Oct 10:00, the proposal.** The reschedule is 54 hours ahead, so the 24-hour policy gate passes. A consultant-initiated proposal never auto-confirms, because a consultee being free is not consent to be moved. The proposal expires at the earlier of the session minus 24 hours (Wed 21 Oct 16:00) and 72 hours from now (Fri 23 Oct 10:00), so Wed 21 Oct 16:00, per `computeProposalExpiry`.
+2. **Tue 20 Oct 18:30, Daniel accepts.** `acceptProposal` passes the proposed times to `SchedulingService.allocate` in manual mode under the wide lock. Inside the allocator's transaction, after the status compare-and-swap, an `inTx` hook moves the proposal `PENDING_REVIEW` to `ACCEPTED`. The new occurrence, the proposal state and the earnings re-anchor (`holdUntil` = Fri 23 Oct 17:00 + 24 h) all commit together.
+3. **The race.** Suppose Daniel taps accept at 15:59:58 on Wed 21 Oct and the expiry sweep gets there first at 16:00. The sweep moves the proposal to `EXPIRED` and restores the booking. The accept's hook then finds a proposal that is no longer `PENDING_REVIEW`, throws 409 `RESCHEDULE_NO_LONGER_OPEN`, and the whole move rolls back, so the booking stays on Thursday. Earlier the move committed first and the `ACCEPTED` write happened in a second transaction, so a booking could move while its audit trail said the opposite.
+
+### Example 9 — Daylight saving: a New York expert's Monday 09:00 (wrong by one hour today; fixed in Wave 1)
+
+**Cast.** No seeded profile uses a daylight-saving zone, because the QA accounts all use `Asia/Kolkata`. This example therefore changes James Anderson's profile zone to `America/New_York`.
+
+- **Today.** James publishes a weekly Monday 09:00–10:00 row on Mon 26 Oct (Eastern Daylight Time, UTC−4). `AvailabilityWindowWeekly` stores `startTimeUtc = 780` minutes (13:00 UTC) and a frozen `utcOffsetMinutes = −240`. The five local columns are written too, but nothing reads them. On Sun 1 Nov at 02:00 local time the clocks fall back to Eastern Standard Time (UTC−5). Monday 2 Nov is projected from the same row at 13:00 UTC, which is 08:00 in New York, so the grid offers 08:00–09:00 where James meant 09:00–10:00. An Indian consultee keeps seeing 18:30 IST, while the correct time, 14:00 UTC, would be 19:30 IST. Sessions already booked keep their absolute instants and do not move.
+- **After Wave 1.** The readers match with an instant-based matcher: the IANA `timezone` plus local minutes, converted by `date-fns-tz` for each date. Mon 26 Oct resolves to 13:00 UTC and Mon 2 Nov to 14:00 UTC. A local time that does not exist (02:30 on Sun 14 Mar 2027) is skipped, and a local time that occurs twice (01:30 on Sun 1 Nov 2026) takes its first occurrence. The editor labels the zone "follows daylight saving", and a banner appears when the browser zone differs from the profile zone.
 
 ---
 

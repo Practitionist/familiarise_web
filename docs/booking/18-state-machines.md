@@ -41,6 +41,7 @@ Special sets:
 
 - `ALLOCATION_APPROVABLE_FROM = [PENDING, APPROVED_PENDING_PAYMENT, APPROVED]`
   — allocation re-stamps APPROVED with the self-edge legal there only.
+- The sponsoring-organisation allocate route passes `approvableFrom: [APPROVED]` to the allocator, which narrows the approval compare-and-swap for that call only. `ALLOCATION_APPROVABLE_FROM` itself is unchanged, so a sponsor can place times on a booking the expert has already approved but can never move a `PENDING` or `APPROVED_PENDING_PAYMENT` request to `APPROVED`. The host allocate route (`lib/scheduling/allocate-route.ts`) refuses a caller who is not the expert, a host-organisation operator or staff with 403 `ALLOCATE_FORBIDDEN`, so a consultee can no longer approve their own request.
 - `RESCHEDULABLE_FROM = [PENDING, APPROVED, APPROVED_PENDING_PAYMENT,
 SCHEDULED]` — which bookings may open a reschedule.
 - `CANCELLABLE_FROM = REQUEST_ALLOWED_FROM.CANCELLED`.
@@ -58,6 +59,8 @@ SCHEDULED]` — which bookings may open a reschedule.
 
 DRAFT keeps its status through allocation (B2/#1060): "add a session, then
 publish" is the editor flow.
+
+No route other than the transition helpers writes an event status. The webinar and class `PUT` bodies are parsed by a Zod schema (`schemas/event-instance.ts`), and a body carrying `status` is refused with 409 `USE_CANCEL_ROUTE`, so cancelling always goes through the cancel route, which refunds and writes history. The allocator's own status writes go through `transitionWebinarEvent` and `transitionClassEvent`, which write history rows.
 
 ## Class batch enrolment (#1819)
 
@@ -77,7 +80,7 @@ The reliability flag is not a once-ever write. Since #1569 only a host-attribute
 
 ## Session outcomes (#1569)
 
-Every past session that the outcome pass decides receives exactly one automatic verdict, written by one job, and ops may later override it through `session.set-outcome`. A consultation deferred as `HOST_ABSENT` before the no-show handoff is the exception: at the handoff `detect-consultant-no-shows` can still claim it, cancel it and refund it before the pass persists `UNVERIFIED`, so that booking ends through the no-show path instead of a stored verdict. The hourly `auto-complete-appointments` slot pass reads each `SCHEDULED` session whose booked end is more than an hour old, passes its `MeetingPresence` intervals, its host side (the plan's consultant plus every accepted collaborator), the Stream call report and any maintenance window to `classifySessionOutcome` (`lib/booking/session-outcome.ts`), and writes the result through `transitionOccurrenceCompletion` with `fromIn: [SCHEDULED]` and `voidedAt: null` in the WHERE. The Stream end webhooks and the orphan reconciler only stamp `Meeting.endedAt` and `endedReason`; neither completes a session any more.
+Every past session that the outcome pass decides receives exactly one automatic verdict, written by one job, and ops may later override it through `session.set-outcome`. A consultation deferred as `HOST_ABSENT` before the no-show handoff is the exception: at the handoff `detect-consultant-no-shows` can still claim it, cancel it and refund it before the pass persists `UNVERIFIED`, so that booking ends through the no-show path instead of a stored verdict. The `auto-complete-appointments` slot pass (every 30 minutes) reads each `SCHEDULED` session whose booked end is more than an hour old, passes its `MeetingPresence` intervals, its host side (the plan's consultant plus every accepted collaborator), the Stream call report and any maintenance window to `classifySessionOutcome` (`lib/booking/session-outcome.ts`), and writes the result through `transitionOccurrenceCompletion` with `fromIn: [SCHEDULED]` and `voidedAt: null` in the WHERE. The Stream end webhooks and the orphan reconciler only stamp `Meeting.endedAt` and `endedReason`; neither completes a session any more.
 
 The verdict decides the completion status. The table below lists every outcome and the status it writes.
 
@@ -140,7 +143,7 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
   carries no allowed-from entry in the map because that helper is the one
   caller.
 - `ACCEPTED ← [PENDING_REVIEW]`; `DECLINED ←` open state; `WITHDRAWN ←` open
-  state (initiator only); `EXPIRED ← [PENDING_REVIEW]` (hourly sweep).
+  state (initiator only); `EXPIRED ← [PENDING_REVIEW]` (reschedule-proposals sweep, every 15 minutes).
   `openForAppointmentId @unique` enforces at most one live reschedule per
   appointment.
 - Decline, withdrawal, and expiry all restore the released slots and the
@@ -154,14 +157,7 @@ export const PARTICIPANT_ALLOWED_FROM: Record<
   parked in `APPROVED` (never left in `PENDING` where the 48-hour unpaid-request
   sweeper could expire a paid booking) and surfaces in the consultant's
   **Requests** inbox under `answer-today` until new occurrences are placed.
-- A confirmation is two ordered steps: the allocator commits the new times,
-  and only then does the caller compare-and-swap the proposal to
-  `AUTO_ACCEPTED` or `ACCEPTED`. Because the allocator's supersede sweep
-  closes every OTHER open proposal on the same released slots as `DECLINED`,
-  a confirming caller passes `excludeRescheduleRequestId` to keep its own row
-  out of that set; without it the sweep declined the very row the caller was
-  about to accept, the compare-and-swap matched nothing, and the booking moved
-  with a refusal in its audit trail (#1340).
+- A confirmation is one transaction. The allocator commits the new times and, through its `inTx(tx)` hook, which runs after the allocator's status compare-and-swap, flips the proposal to `ACCEPTED` or `AUTO_ACCEPTED` in the same commit (`closeConfirmedProposal` in `lib/booking/reschedule-confirm.ts`). If the proposal is no longer `PENDING_REVIEW`, the hook throws 409 `RESCHEDULE_NO_LONGER_OPEN` and the whole move rolls back, so a booking can never move while its proposal says otherwise. Because the allocator's supersede sweep closes every other open proposal on the same released slots as `DECLINED`, a confirming caller passes `excludeRescheduleRequestId` to keep its own row out of that set.
 
 ## Known raw-status writers (CAS-bypass inventory)
 
@@ -169,13 +165,13 @@ These write status WITHOUT a `transition*` helper. Each was audited on PR 2a;
 they are CAS-guarded inline (allowed-from rides their WHERE) and accepted as
 documented exceptions. Adding one requires an entry here + doctrine review.
 
-| Writer                                                           | Entity                                                | Guard shape                                               | Note                                                                                                                                                                                    |
-| ---------------------------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `handlers.ts` legacy subscription creator                        | Subscription slot birth                               | n/a (tentative birth, HOIf)                               | writes `appendCreationHistory` since 2026-09-19 (#1583 A-P1-06); its confirm flip (`confirmApprovalStatus`) now goes through `transitionSubscriptionRequest`, not a raw writer any more |
-| `app/api/appointments/[appointmentId]/cancel/route.ts`           | Consultation/Subscription/Webinar/Class → CANCELLED   | `updateMany` with `CANCELLABLE_FROM` / event allowed-from | hoisted maps (#838)                                                                                                                                                                     |
-| `.../reschedule/route.ts`                                        | Consultation PENDING restore; Webinar/Class SCHEDULED | explicit fromIn arrays                                    | policy-gated edges                                                                                                                                                                      |
-| `scripts/appointments/cleanup-invalid-appointments.ts`           | → CANCELLED                                           | from-set per entity                                       | ops repair script                                                                                                                                                                       |
-| `scripts/appointments/expire-stale-requests.ts`                  | Consultation/Subscription → EXPIRED                   | per-cohort subsets of `REQUEST_ALLOWED_FROM.EXPIRED`      | refunds ride along (PR 2c)                                                                                                                                                              |
+| Writer                                                 | Entity                                                | Guard shape                                               | Note                                                                                                                                                                                    |
+| ------------------------------------------------------ | ----------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `handlers.ts` legacy subscription creator              | Subscription slot birth                               | n/a (tentative birth, HOIf)                               | writes `appendCreationHistory` since 2026-09-19 (#1583 A-P1-06); its confirm flip (`confirmApprovalStatus`) now goes through `transitionSubscriptionRequest`, not a raw writer any more |
+| `app/api/appointments/[appointmentId]/cancel/route.ts` | Consultation/Subscription/Webinar/Class → CANCELLED   | `updateMany` with `CANCELLABLE_FROM` / event allowed-from | hoisted maps (#838)                                                                                                                                                                     |
+| `.../reschedule/route.ts`                              | Consultation PENDING restore; Webinar/Class SCHEDULED | explicit fromIn arrays                                    | policy-gated edges                                                                                                                                                                      |
+| `scripts/appointments/cleanup-invalid-appointments.ts` | → CANCELLED                                           | from-set per entity                                       | ops repair script                                                                                                                                                                       |
+| `scripts/appointments/expire-stale-requests.ts`        | Consultation/Subscription → EXPIRED                   | per-cohort subsets of `REQUEST_ALLOWED_FROM.EXPIRED`      | refunds ride along (PR 2c)                                                                                                                                                              |
 
 Converted on 2026-09-19 (#1583 A-P0-05, A-P1-03, B-P1-16): `scripts/appointments/auto-complete-appointments.ts` now completes every parent through its `transition*` helper with `reason: "auto-complete"`, and its cohort predicate counts only live confirmed occurrences, so a stale tentative hold no longer vetoes completion; `lib/moderation/cancel-user-engagements.ts` cancels every parent through its helper and tombstones the released occurrences through `transitionOccurrenceCompletion` (the raw release left CANCELLED rows armed under the #1694 constraint predicate); `scripts/appointments/detect-consultant-no-shows.ts` releases its occurrences the same way. None of the three is a raw writer any more.
 
@@ -190,9 +186,18 @@ Converted on 2026-09-28 (#1846 SM-B13): the capture webhook's group-event re-sta
 - Origin `PENDING` — the parent never left PENDING, so withdraw writes nothing.
 - Origin `APPROVED_PENDING_PAYMENT` — restores to `APPROVED_PENDING_PAYMENT`, so the pay-link expiry cohort keeps the row rather than seeing an unpaid booking that looks paid-for.
 - Origin `APPROVED` (or the unreachable `SCHEDULED`, per the note above) — restores to `APPROVED`.
-- Origin missing (a pre-#1333 row, or `readRescheduleOrigin`'s own `"UNKNOWN"` fallback) — keeps the historical `APPROVED` restore for a consultation and reports once via `reportSentryMessage`, `expected: true`. A subscription with no origin row is left as it is, because the request row cannot tell a whole-booking flip from a partial proposal on a never-approved plan.
+- Origin missing (a row without a history entry, or `readRescheduleOrigin`'s own `"UNKNOWN"` fallback) — the restore refuses to guess. A consultation writes nothing, exactly like the subscription arm, and reports once through `reportSentryMessage` with `expected: true`. The booking stays where it is until an operator or a new allocation settles it; it is never restored to `APPROVED` on a guess, because that could confirm an unpaid booking.
 
 All restores keep `fromIn: ["PENDING"]`, so a parent that moved out of PENDING under the withdraw (a concurrent answer) throws `IllegalTransitionError` rather than being re-stamped.
 
 Deliberately NOT migrated: payout/dispute/ledger state machines live under
 `lib/payments/**` and have their own transition helpers where applicable.
+
+## Deprecated & Superseded Approaches
+
+1. **A consultee-callable allocate route.** Removed: allocation is host-side only.
+2. **An event `PUT` that could write `status`.** Replaced by `USE_CANCEL_ROUTE` and the transition helpers.
+3. **Closing a reschedule proposal in a second transaction after the move.** Replaced by the in-transaction hook above.
+4. **Restoring an unknown origin to `APPROVED`.** Replaced by refusing to write.
+5. **`COUNTERED`** as a reschedule state was removed from the enum because nothing ever built the round-two counter-offer.
+6. **Dead states pending removal in Wave 3:** `SCHEDULED` on consultations and subscriptions, `IN_PROGRESS` on webinars and classes, and the trial `AWAITING_PAYMENT` state have no live writer on the current paths and leave the enums with the schema batch.

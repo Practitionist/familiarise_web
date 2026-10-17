@@ -1,6 +1,6 @@
 # DST & Timezone Posture (#872 stub — read before touching availability)
 
-> Status: **IST-first launch, DST deliberately deferred** (#872). This page is
+> Status: **IST-first launch today; the reader flip to per-date offsets is decided and lands in Wave 1** (D4). This page is
 > the caveat sheet the audit asked for: what the stub does, what silently
 > breaks, and the rules for any code that touches availability time math.
 
@@ -64,6 +64,18 @@ every surface renders in viewer-local time.
    one-line switch that hard-pins every row to IST if that answer is ever
    preferred to the profile's own offset.
 
+## Decision and plan (D4, landing in Wave 1)
+
+The owner decided to flip the readers now rather than after launch. Wave 1 is code-only plus three small interface touches, and it needs no data migration because every weekly write path already fills the local columns.
+
+- **Instant-based matcher.** `isMinuteWithinWeeklySlot(utcDay, utcMinutes, …, offset)` is replaced by a matcher that takes the row's IANA `timezone` and local minutes and converts them with `date-fns-tz` for each concrete date. A local time that does not exist on a spring-forward day is skipped, and a local time that occurs twice on a fall-back day takes its first occurrence.
+- **Readers to flip.** `utils/schedule/weekly-projection.ts`, `utils/scheduling-engine/availabilityCoverage.ts`, `ScheduleValidationService.ts`, `app/api/scheduling/availability-with-allocation/route.ts`, `uncovered-upcoming.ts`, `app/api/user/consultants/[id]/route.ts`, `utils/schedule/formatting.ts`, `mergeAdjacentWeeklyRows.ts`, and the client bundle `lib/scheduling/calendarUtils.ts` used by `UnifiedCalendar.tsx`, `RequestedSlotsDialog.tsx` and `useScheduling.ts`.
+- **Also fixed in the same wave.** The last 23:30 atom of a window is no longer dropped, fetch bounds stop using the browser's local zone, the tail of an overnight row is no longer skipped, and the seed writes the local columns instead of nulls. A decision on zones with a +5:45 offset is stated in the pull request.
+- **Interface.** The availability editor labels the zone "follows daylight saving", a one-time "convert weekly hours?" prompt appears when the profile zone changes (existing rows keep their own `timezone`), and a banner appears when the browser zone differs from the profile zone.
+- **Proof.** Property tests cover New York, London and Sydney transitions, overnight rows, the last atom and a leap day.
+
+Until the flip lands, the rules above still apply: the frozen offset is the live source of truth, and the local columns are written but never read. A worked example of the one-hour error a New York expert sees after 1 November is in [the machinery guide](../start-here/03-booking-and-money-machinery.md#example-9--daylight-saving-a-new-york-experts-monday-0900-wrong-by-one-hour-today-fixed-in-wave-1).
+
 ## Related
 
 - Schema doc-comment block on `AvailabilityWindowWeekly` (prisma/schema.prisma)
@@ -71,3 +83,8 @@ every surface renders in viewer-local time.
 - #1200 — the travel-hazard operational caveat this page documents; folded into
   #872 as a single post-MVP DST issue (2026-09-02 decision, tracked under
   #1319)
+
+## Deprecated & Superseded Approaches
+
+1. **Deferring daylight saving to after launch.** The original posture accepted the frozen-offset hazard for an IST-only market. Decision D4 reverses it, and the rule "never read the local columns" ends when Wave 1 lands.
+2. **A hand-edited `utcOffsetMinutes`.** The offset is derived from the profile zone and never taken from a request body; the instant-based matcher removes the need for it.

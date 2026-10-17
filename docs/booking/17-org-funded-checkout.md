@@ -89,6 +89,17 @@ The editor is `PUT /api/organizations/{orgId}/cancellation-policy`, restricted t
 
 ---
 
+## Who allocates an org-funded booking
+
+A funded booking that has no times yet (a paid subscription, or a booking whose session was released) is scheduled in two steps, and the order is fixed by decision D12: the expert approves first, and only then may the sponsoring organisation place times.
+
+- **Expert approval.** A `PENDING` request shows in the organisation's Unscheduled queue as "Awaiting expert approval" with no Allocate button. The sponsor route answers 409 `EXPERT_APPROVAL_REQUIRED` for any status other than `APPROVED`, and the approval compare-and-swap is narrowed to `APPROVED` through the allocator's `approvableFrom` option. A sponsor can never approve a pending request on the expert's behalf.
+- **Sponsor allocation.** `POST /api/organizations/{orgId}/appointments/{appointmentId}/allocate` (`appointments.allocate.calendarRead`) places the times. It requires that the organisation's own money funded the booking (`NOT_ORG_FUNDED` otherwise), passes `initialAllocation` so an already-scheduled booking is never re-planned (409 `ALREADY_ALLOCATED`), and fixes `override`, `allowPartial` and `topUp` to false. It writes an `APPOINTMENT_ALLOCATED_FOR_ORG` audit row.
+- **Host-organisation operators** (D16) may use the ordinary host allocate route for their own experts' bookings, but only inside the published availability: the `override`, `allowPartial` and `topUp` flags are honoured for the expert and staff alone.
+- **A consultee cannot allocate** their own booking at all; the host allocate route answers 403 `ALLOCATE_FORBIDDEN`.
+
+A request-mode booking that carries an organisation tag is still paid by card today: the approval pay-link writes a card leg, and wallet-debit and skip-gateway parity for the approval flow is not built. Only direct checkout uses the wallet, invoice and licence rails.
+
 ## Where to look
 
 The pointers below are the fastest paths into the code and the neighboring docs. They cite the file and the function or flag name, not a line number — `checkout.ts` has drifted 500-700 lines since this document was first line-cited, and will keep drifting.
@@ -99,8 +110,13 @@ The pointers below are the fastest paths into the code and the neighboring docs.
 | ADR 18 allowlist/exclusivity (in-lock)               | `lib/payments/operations/checkout.ts`, the `revalidateInsideLock()` function; `docs/enterprise/70-design-decisions/18-open-b2b-b2c-boundary.md`                                                          |
 | Gateway skip + synthetic ids                         | `lib/payments/operations/checkout.ts`, the `isOrgWalletPayment` / `isOrgInvoicedPayment` / `isOrgLicensedPayment` / `isOrgSponsoredPayment` booleans and the `skipPayment` flag                          |
 | Wallet debit (atomic conditional updateMany)         | `lib/api/organizations/wallet.ts`, `walletDebit()`                                                                                                                                                       |
-| Engagement debits + caps                             | `recordBookingUtilization()` in `lib/api/organizations/program-helpers.ts`, called from `handleCheckout()`; lazy SUBSCRIPTION debit in `SchedulingService.createAppointments`                        |
+| Engagement debits + caps                             | `recordBookingUtilization()` in `lib/api/organizations/program-helpers.ts`, called from `handleCheckout()`; lazy SUBSCRIPTION debit in `SchedulingService.createAppointments`                            |
 | Inline settlement + ledger posting                   | `lib/payments/operations/checkout.ts`, the sponsored-family branch of the settlement block; `lib/payments/payouts/earnings-service.ts`, `createEarningsFromPayment()`                                    |
 | Cancellation policy resolution + publishing          | `lib/payments/operations/cancellation-policy-store.ts`, `resolveCheckoutCancellationPolicyId()` and `publishOrgCancellationPolicy()`; the tier maths is `lib/payments/operations/cancellation-policy.ts` |
 | Payments-side seam (legs, refunds, wallet lifecycle) | `docs/payments/04-b2c-b2b-funding-seam.md`                                                                                                                                                               |
 | Enterprise money model                               | `docs/enterprise/10-money-and-ledger/`                                                                                                                                                                   |
+
+## Deprecated & Superseded Approaches
+
+1. **A sponsor route that could approve a pending request.** It now allocates only `APPROVED` bookings.
+2. **Silently billing the learner's card when no program assignment covers an org-sponsored booking.** Checkout refuses instead.

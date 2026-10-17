@@ -16,7 +16,8 @@ Complete documentation for the Familiarise payment system — checkout, gateways
 | 04  | [B2C/B2B Funding Seam](./04-b2c-b2b-funding-seam.md)                         | Where the consumer and organisation funding paths meet and diverge                                                                          |
 | 05  | [High-Level Design](./05-high-level-design.md)                               | Four Mermaid diagrams: B2C payment, refunds and payouts, B2B funding, cross-cutting layers                                                  |
 | 06  | [B2C Tax Invoices](./06-b2c-tax-invoice.md)                                  | Consumer tax invoices, credit notes, and the outward-supplies register                                                                      |
-| —   | [Booking & Money Machinery](../start-here/01-booking-and-money-machinery.md) | Canonical cross-rail visual guide: B2C & B2B booking lifecycle, org scoping (`?orgScope=`), permission matrices, and 20 ledger permutations |
+| —   | [Money System HLD](../start-here/02-money-system-hld.md)                     | Price derivation through payout and refund on one page, with the refund policy decisions and the India note                                 |
+| —   | [Booking & Money Machinery](../start-here/03-booking-and-money-machinery.md) | Canonical cross-rail visual guide: B2C & B2B booking lifecycle, org scoping (`?orgScope=`), permission matrices, and 20 ledger permutations |
 
 ## Subsections
 

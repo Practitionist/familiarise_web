@@ -246,10 +246,10 @@ This makes it immediately clear which sessions are affected by the reschedule.
 
 The consultant has two buttons for handling any pending request:
 
-| Button                  | Action                                              | When to use                                       |
-| ----------------------- | --------------------------------------------------- | ------------------------------------------------- |
-| **Use Requested Times** | Accept the times the consultee proposed on a FIRST request | Consultee submitted preferred times and they work |
-| **Allocate Slots**      | Run the auto-allocation algorithm to find new times | Need the system to find optimal times, and the only option after a reschedule |
+| Button                  | Action                                                     | When to use                                                                   |
+| ----------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Use Requested Times** | Accept the times the consultee proposed on a FIRST request | Consultee submitted preferred times and they work                             |
+| **Allocate Slots**      | Run the auto-allocation algorithm to find new times        | Need the system to find optimal times, and the only option after a reschedule |
 
 #### Option A: "Use Requested Times" (useRequestedSlots)
 
@@ -312,7 +312,7 @@ sequenceDiagram
     API_List-->>Tab: Rows with released/tentative counts and a deadline bucket
 
     Tab->>Tab: Derive each row's words
-    Note over Tab: deriveBookingPresentation names the state;<br/>rescheduledSlotCount gates "Approve"
+    Note over Tab: deriveBookingPresentation names the state,<br/>rescheduledSlotCount gates "Approve"
 
     Tab->>Con: Display requests with badges
 
@@ -662,12 +662,12 @@ if (isReschedule) {
 
 Using our example (3 sessions rescheduled, each a 1-hour call = 2 slots):
 
-| Count                           | Value  | Explanation                                            |
-| ------------------------------- | ------ | ------------------------------------------------------ |
-| `existingNonTentativeSlotCount` | 90     | Slots that are confirmed and not being rescheduled     |
-| `tentativeSlotCount`            | 6      | Slots marked for rescheduling                          |
-| `isReschedule`                  | `true` | Because `tentativeSlotCount > 0`                       |
-| `rescheduleSessions`            | 3      | Appointments carrying at least one tentative slot      |
+| Count                           | Value  | Explanation                                             |
+| ------------------------------- | ------ | ------------------------------------------------------- |
+| `existingNonTentativeSlotCount` | 90     | Slots that are confirmed and not being rescheduled      |
+| `tentativeSlotCount`            | 6      | Slots marked for rescheduling                           |
+| `isReschedule`                  | `true` | Because `tentativeSlotCount > 0`                        |
+| `rescheduleSessions`            | 3      | Appointments carrying at least one tentative slot       |
 | `requiredSlots`                 | 6      | `3 sessions x 2 slots = 6` (only the rescheduled slots) |
 
 The algorithm now knows: "I need to find 6 new slots -- one replacement per tentative slot, across the 3 rescheduled sessions." It allocates 6 new confirmed slots, leaving the 90 confirmed ones untouched. (#898 made `requiredSlots` the count of slots being rescheduled; previously it was the booking's full total, which silently over-allocated partial reschedules.)
@@ -784,12 +784,12 @@ The entire operation runs inside a Prisma `$transaction` with a 60-second timeou
 
 ### Comparison Table
 
-| Event Type       | Partial reschedule? | Status field updated | New status value | Notes                                                                                                        |
-| ---------------- | ------------------- | -------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Consultation** | No (always entire)  | `status`      | `PENDING`        | Single session, single appointment. All slots marked tentative.                                              |
+| Event Type       | Partial reschedule? | Status field updated              | New status value | Notes                                                                                                                                                                                                                                      |
+| ---------------- | ------------------- | --------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Consultation** | No (always entire)  | `status`                          | `PENDING`        | Single session, single appointment. All slots marked tentative.                                                                                                                                                                            |
 | **Subscription** | Yes (via `slotIds`) | `status` (entire reschedule only) | `PENDING`        | Supports all three reschedule types. Only an entire reschedule (no `slotIds`) reverts `status` to `PENDING`; a partial reschedule of specific sessions leaves the subscription status unchanged and re-tentatives only the selected slots. |
-| **Webinar**      | No (always entire)  | `status`             | `SCHEDULED`      | All slots marked tentative. Uses `status` not `status` because webinars have a different state model. |
-| **Class**        | No (always entire)  | `status`             | `SCHEDULED`      | Same as webinar. Uses `status` instead of `status`.                                                   |
+| **Webinar**      | No (always entire)  | `status`                          | `SCHEDULED`      | All slots marked tentative. Uses `status` not `status` because webinars have a different state model.                                                                                                                                      |
+| **Class**        | No (always entire)  | `status`                          | `SCHEDULED`      | Same as webinar. Uses `status` instead of `status`.                                                                                                                                                                                        |
 
 ### Why Different Status Fields?
 
@@ -1142,12 +1142,12 @@ In practice, this edge case is unlikely because sessions rarely span midnight. B
 
 ### Fix Roadmap
 
-| Phase   | Scope                       | Issues Fixed                                    | Breaking Change? |
-| ------- | --------------------------- | ----------------------------------------------- | ---------------- |
+| Phase   | Scope                       | Issues Fixed                                           | Breaking Change? |
+| ------- | --------------------------- | ------------------------------------------------------ | ---------------- |
 | Phase 1 | API response + status logic | #2 (PENDING status, fixed), #5 (slot vs session count) | No               |
-| Phase 2 | Schema migration            | #3 (tracking field)                             | No (additive)    |
-| Phase 3 | New endpoint                | #1 (slotIds to appointmentIds)                  | Yes              |
-| Phase 4 | Optimization                | #4 (session-aware validation)                   | No               |
+| Phase 2 | Schema migration            | #3 (tracking field)                                    | No (additive)    |
+| Phase 3 | New endpoint                | #1 (slotIds to appointmentIds)                         | Yes              |
+| Phase 4 | Optimization                | #4 (session-aware validation)                          | No               |
 
 ---
 
@@ -1166,7 +1166,7 @@ Two refusals guard the accept path specifically, because accept is the action th
 
 ## Confirming a proposal without declining it (2026-09-05, #1340)
 
-Both confirmation paths — the consultee-initiated auto-confirm in `lib/booking/reschedule-auto-confirm.ts` and the explicit accept in `lib/booking/reschedule-respond.ts` — run in two steps, and the order of those steps is what makes this correct. They first call `SchedulingService.allocate` in manual mode under the consultant-wide lock, so the full availability, cap and conflict validation happens before anything is written, and only when that transaction has committed do they close the proposal itself with a compare-and-swap from `PENDING_REVIEW` to `AUTO_ACCEPTED` or `ACCEPTED`.
+Both confirmation paths — the consultee-initiated auto-confirm in `lib/booking/reschedule-auto-confirm.ts` and the explicit accept in `lib/booking/reschedule-respond.ts` — are one atomic transaction. They call `SchedulingService.allocate` in manual mode under the consultant-wide lock, so the full availability, cap and conflict validation happens before anything is written, and they pass an `inTx(tx)` hook. The allocator runs the hook inside its own transaction after the status compare-and-swap, and the hook closes the proposal from `PENDING_REVIEW` to `AUTO_ACCEPTED` or `ACCEPTED` (`closeConfirmedProposal` in `lib/booking/reschedule-confirm.ts`). If the proposal is no longer open, because it expired, was withdrawn or was declined in the meantime, the hook throws 409 `RESCHEDULE_NO_LONGER_OPEN` and the entire move rolls back. The booking therefore never moves while its proposal says something else. Earlier versions committed the move first and closed the proposal in a second transaction, which could leave a moved booking with a refusal in its audit trail.
 
 The allocator's final act inside that transaction is `resolveConsumedPreferenceRequests`, which closes every open reschedule proposal whose released slots the newly placed times replace. That sweep exists because placing times on the calendar is itself an answer: a competing proposal must not keep holding its `openForAppointmentId` reservation once the session has been moved. Until #1340 the sweep had no way to tell a competing proposal from the one it was serving, so a confirmation superseded itself. The proposal was marked `DECLINED` inside the allocator's transaction, the caller's compare-and-swap then matched zero rows and threw `IllegalTransitionError`, and the booking moved while its audit trail recorded a refusal. Auto-confirm swallowed the error and answered `autoConfirmed: false` to a consultee whose session had already been rescheduled, and the explicit accept rethrew it as a `409` and never sent the MOVED notification.
 
@@ -1181,3 +1181,17 @@ A proposal that nobody answers now leaves the booking exactly as it was before t
 A restore flips the released rows back to confirmed, and that can meet the `occurrence_no_confirmed_overlap` constraint (SQLSTATE 23P01) when the consultant's original time was booked while the proposal was open. The two callers answer that differently. Withdraw rolls back whole and answers 409 `ORIGINAL_TIME_TAKEN` instead of a raw 500, and the proposal stays open so that the parties can agree a new time. The sweep reports the miss, expires the proposal without the restore, leaves the slots released, and counts the row in its result as `proposalsExpiredUnrestored`.
 
 When a restore brings at least one slot back, both parties hear that the original time stands through the `EXPIRED` outcome of the existing `appointment-rescheduled` Novu family and its email, sent by `notifyRescheduleRestored` in `lib/booking/reschedule-outcome-notice.ts`. The withdraw notice uses the same helper. The lifecycle view of this change is in [06-booking-lifecycle.md](./06-booking-lifecycle.md), and the job itself is documented in [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md).
+
+## Unknown origin is refused, not guessed
+
+When a withdrawn or expired proposal is restored, `restoreRescheduledBooking` reads the origin status from the `BookingStatusHistory` row the reschedule wrote. If that row is missing or its `fromStatus` is the unknown marker, the consultation arm now writes nothing, as the subscription arm always did, and reports once to Sentry as an expected event. It no longer restores to `APPROVED`, because that could confirm a booking whose payment was never made. Parking such a booking in a visible state instead is a separate state-machine decision that has not been taken.
+
+## Limits that count rows, not deletions
+
+The consultee limit of two reschedules per booking (`MAX_CONSULTEE_RESCHEDULES` in the reschedule route) is counted today as occurrence rows with `completionStatus = RESCHEDULED`, scaled by the number of sessions involved. The allocator hard-deletes those released rows when it re-plans, so they vanish from the count and the cap does not bind. **Landing in Wave 0 (W0-7):** the count comes from `RescheduleRequest` rows, and a cap of two expert-initiated reschedules per booking is added, with a reliability strike for every expert cancel or no-show.
+
+## Deprecated & Superseded Approaches
+
+1. **Closing the proposal after the move in a second transaction.** Replaced by the in-transaction hook.
+2. **Restoring an unknown origin to `APPROVED`.** Replaced by refusing to write.
+3. **Leaving released slots released when a proposal expires.** Expiry now restores the booking exactly as it was.
