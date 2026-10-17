@@ -340,7 +340,7 @@ Every financial state change in `familiarise_web` maps to one of the **20 canoni
 ### Permutation 5: Backoffice Administrative Referral Credit Revocation (`#1844`)
 
 - **Context**: Admin revokes ₹1,000 unspent referral credit due to abuse or expiration.
-- **Idempotency Key**: `credit-revoke:crd_bad_991`
+- **Idempotency Key**: `referral-reverse:crd_bad_991` (the admin reversal route keys it `referral-reverse:<creditId>`)
 
 | Account          | Direction | Amount (Paise) | Display Amount | Notes                               |
 | :--------------- | :-------- | -------------: | -------------: | :---------------------------------- |

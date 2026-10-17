@@ -48,7 +48,7 @@ Every org route under `app/api/organizations/**` names one key from the permissi
 
 A matrix replaced the rank ladder because privilege in an organization is not one-dimensional. An organization has an operations track (MANAGER and SUPPORT), a finance track (BILLING_ADMIN) and member roles (EXPERT and LEARNER), so BILLING_ADMIN sits above MANAGER numerically yet must see less of the operations surfaces, and SUPPORT sits below EXPERT yet sees more of them. `ORG_ROLE_RANK` in `lib/auth/role-ranks.ts` still exists, but only as a display order; it picks the most operator-like organization to land on and chooses one role when a SCIM user sits in several mapped groups, and nothing reads it to decide what a role may do.
 
-Platform admins (`UserRole.ADMIN`) pass every org gate as a synthetic OWNER. `requireOrgAccess` returns a stub membership whose id is `__admin_stub_<userId>`, so that admin-initiated writes still produce valid `OrgAuditLog.actorMembershipId` values. Capability gates such as `canSponsor`, `canHost`, `requiresPO` and `fundingSource` describe the organization's shape rather than the member's role, so they stay outside the matrix and are checked separately at each route.
+Platform admins (`UserRole.ADMIN`) have read-only access to organisations. On a gate marked `readOnly`, `requireOrgAccess` returns a synthetic OWNER membership whose id is `__admin_stub_<userId>`; on every other gate it answers 403 `ADMIN_READ_ONLY`, and admin writes go through the audited `/api/admin/*` doors. Capability gates such as `canSponsor`, `canHost`, `requiresPO` and `fundingSource` describe the organization's shape rather than the member's role, so they stay outside the matrix and are checked separately at each route.
 
 The next section mirrors the `ORG_PERMISSIONS` map in `lib/auth/org-permissions.ts` key for key. No generator script exists in the repository today, so when a grant changes in that file, update the matching row here in the same pull request.
 
@@ -56,7 +56,7 @@ The next section mirrors the `ORG_PERMISSIONS` map in `lib/auth/org-permissions.
 
 This table mirrors `lib/auth/org-permissions.ts`, which is the source of truth; edit the code first and then the row.
 Each row is one permission key, and a tick means the role holds it.
-A platform admin passes every org gate as a synthetic Owner.
+A platform admin passes only read-only org gates, as a synthetic Owner.
 Capability gates such as `canSponsor` and `canHost` are checked separately at each route, so a tick is necessary but not always sufficient.
 
 ### `activity`
@@ -314,7 +314,7 @@ The 3 keys below govern the `webhooks` surface.
 
 ## What each organisation permission key controls
 
-The table below names, for every key in the generated matrix above, the surface it belongs to and what it controls. The ticks live only in the generated matrix, so they cannot drift apart.
+The table below names, for every key in the matrix above, the surface it belongs to and what it controls. It carries no ticks, so the role grants are stated in one place only.
 
 | Surface / Domain    | Permission Key                                                                | What It Controls                                                                                                                      |
 | :------------------ | :---------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ |

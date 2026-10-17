@@ -68,6 +68,22 @@ const BACKTICK_PATH = /`([A-Za-z0-9_.@[\]/-]+\/[A-Za-z0-9_.@[\]-]+)`/g;
 const MD_LINK = /\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const LINE_REF = /[\w.[\]/-]+\.(?:ts|tsx|mts|js|mjs|sql|prisma):\d+/;
 
+/** A malformed percent-escape is reported as a broken link rather than aborting the scan. */
+function safeDecode(target: string): string | null {
+  try {
+    return decodeURI(target);
+  } catch {
+    return null;
+  }
+}
+
+/** A leading `/` is repo-root-relative; anything else is relative to the doc. */
+function resolveLink(dir: string, target: string): string {
+  return target.startsWith("/")
+    ? target.slice(1)
+    : path.normalize(path.join(dir, target));
+}
+
 function checkFile(
   file: string,
   text: string,
@@ -104,12 +120,9 @@ function checkFile(
       if (/^(https?:|mailto:|#)/.test(target) || PLACEHOLDER.test(target)) {
         continue;
       }
-      const bare = decodeURI(target.replace(/[#?].*$/, ""));
+      const bare = safeDecode(target.replace(/[#?].*$/, ""));
       if (bare === "") continue;
-      const resolved = bare.startsWith("/")
-        ? bare.slice(1)
-        : path.normalize(path.join(dir, bare));
-      if (!exists(resolved)) {
+      if (bare === null || !exists(resolveLink(dir, bare))) {
         findings.push({
           file,
           line,

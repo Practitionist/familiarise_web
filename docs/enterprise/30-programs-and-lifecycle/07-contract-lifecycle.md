@@ -399,31 +399,33 @@ time (created atomically in the same tx).
 
 ## Contract, program and assignment rollover
 
+The three layers roll over on different clocks. A contract changes only by supersession, a program carries the cycle terms, and each learner's assignment is re-minted for every cycle by the nightly `advance-program-cycles` job.
+
 ```text
-+------------------------------------------------------------------------+
-| 1. CONTRACT (`ContractStatus`: DRAFT -> ACTIVE -> SUPERSEDED/EXPIRED)  |
-|    - Signed by Sponsor `OWNER` (`contracts.manage`).                   |
-|    - Supersession (`AMENDMENT` / `RENEWAL`) links `parentContractId`   |
-|      and atomically flips old contract `ACTIVE -> SUPERSEDED`.         |
-+-----------------------------------+------------------------------------+
-                                    |
-                                    v
-+------------------------------------------------------------------------+
-| 2. PROGRAM (`ProgramType`: LICENSED_SEAT | CREDIT_POOL)                |
-|    - Defines cycle cadence (`MONTHLY` / `QUARTERLY` / `ANNUAL`),       |
-|      `coveredEngagementsPerCycle` or `creditBudgetPerCycle`,           |
-|      `priceCapPerEngagementPaise`, and `overageBehavior`.              |
-+-----------------------------------+------------------------------------+
-                                    |
-                                    v
-+------------------------------------------------------------------------+
-| 3. PROGRAM ASSIGNMENT (`ProgramAssignment` — Per Learner, Per Cycle)   |
-|    - Nightly `advance-program-cycles` sweep checks `cycleEndsAt <= now`|
-|    - Marks completed cycle `EXPIRED`, snapshots unused allowance       |
-|      (no rollover of unspent credits unless contract specifies),       |
-|      and mints successor cycle row `[newCycleStart, newCycleEnd]`      |
-|      with `engagementsUsed = 0`, `consumedPaise = 0`.                  |
-+------------------------------------------------------------------------+
++--------------------------------------------------------------------------+
+| 1. CONTRACT (`ContractStatus`: DRAFT -> ACTIVE -> EXPIRED | TERMINATED)   |
+|    - Signed by a sponsor operator holding `contracts.manage`.            |
+|    - Supersession stamps `supersededByContractId` on the OLD row:        |
+|        AMENDMENT -> old row TERMINATED;  RENEWAL -> old row EXPIRED.      |
++------------------------------------+-------------------------------------+
+                                     |
+                                     v
++--------------------------------------------------------------------------+
+| 2. PROGRAM (`ProgramType`: LICENSED_SEAT | CREDIT_POOL)                  |
+|    - Cycle cadence (`BillingCycle`: MONTHLY / QUARTERLY / ANNUAL),       |
+|      `coveredEngagementsPerCycle` or `creditBudgetPerCycle`,             |
+|      `priceCapPerEngagementPaise`, and `overageBehavior`.                |
++------------------------------------+-------------------------------------+
+                                     |
+                                     v
++--------------------------------------------------------------------------+
+| 3. PROGRAM ASSIGNMENT (one row per learner per cycle)                    |
+|    - `advance-program-cycles` picks ACTIVE rows with `periodEnd <= now`. |
+|    - Contract still ACTIVE: the row becomes ROLLED, points at a fresh    |
+|      ACTIVE successor through `rolledToAssignmentId`, and the successor  |
+|      starts with `engagementsUsed = 0` and `consumedPaise = 0`.          |
+|    - Contract EXPIRED or TERMINATED: the row becomes CLOSED instead.     |
++--------------------------------------------------------------------------+
 ```
 
 ## Related docs
