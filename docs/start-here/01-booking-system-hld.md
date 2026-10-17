@@ -8,7 +8,7 @@ last-reviewed: 2026-10-17
 
 # Booking System — High-Level Design
 
-This document describes the booking system as it is on `dev` today, then marks where the booking productionization program takes it next. Every behaviour is labelled **current** when it is merged on `dev` and **landing in Wave N** when it belongs to an open or planned pull request. The money half of the story lives in [02-money-system-hld.md](./02-money-system-hld.md), and [03-booking-and-money-machinery.md](./03-booking-and-money-machinery.md) holds the data model, the organisational scoping rules, the ledger permutations and the worked end-to-end examples.
+This document describes the booking system as it is on `dev` today, then marks where the booking productionization program takes it next. Every behaviour is labelled **current** when it is merged on `dev` and **landing in Wave N** when it belongs to an open or planned pull request. The money half of the story lives in [02-money-system-hld.md](./02-money-system-hld.md), and [03-booking-and-money-machinery.md](./03-booking-and-money-machinery.md) holds the seeded cast, the data model and the worked end-to-end examples.
 
 ## 1. End-to-end pipeline
 
@@ -62,19 +62,19 @@ The left column is the expert's supply side and the right column is the consulte
 
 Several checks run before any gateway call or any row is written. The table lists them with their status so that the reader knows which ones exist today.
 
-| Guard                                                                                                                                                                | Refusal                                                                                    | Where it lives                                                                                  | Status            |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ----------------- |
-| Allocation is a host-side act: only the expert, the plan's host-organisation operators and staff may set times                                                       | 403 `ALLOCATE_FORBIDDEN`                                                                   | `lib/scheduling/allocate-route.ts`                                                              | Current           |
-| A sponsoring organisation may allocate only a booking the expert has already approved                                                                                | 409 `EXPERT_APPROVAL_REQUIRED`                                                             | `app/api/organizations/[orgId]/appointments/[appointmentId]/allocate/route.ts`                  | Current           |
-| Only the expert and staff may waive availability rules (`override`), place fewer sessions (`allowPartial`) or top up                                                 | The flags are ignored for host-organisation operators                                      | `lib/scheduling/allocate-route.ts`                                                              | Current           |
-| A webinar or class `PUT` cannot change `status` or re-point relations                                                                                                | 409 `USE_CANCEL_ROUTE`                                                                     | `app/api/bookings/webinars/[webinarId]/route.ts`, `app/api/bookings/classes/[classId]/route.ts` | Current           |
-| A reschedule accept closes its proposal inside the move transaction                                                                                                  | 409 `RESCHEDULE_NO_LONGER_OPEN` rolls the move back                                        | `lib/booking/reschedule-respond.ts`, `lib/booking/reschedule-confirm.ts`                        | Current           |
-| A restore after a withdrawn or expired reschedule refuses an unknown origin status instead of guessing `APPROVED`                                                    | Nothing is written and one Sentry report is made                                           | `lib/booking/reschedule-restore.ts`                                                             | Current           |
-| A meeting extension writes `endsAt` in the database first, then calls Stream, and reverts by compare-and-swap if Stream fails                                        | 409 `EXTEND_CONFLICT` or 503                                                               | `app/api/meetings/[meetingId]/extend/route.ts`                                                  | Current           |
-| Booking and money writes fail closed with 503 and `Retry-After` when the maintenance state cannot be read, and four more routes are on the degraded write-block list | 503                                                                                        | `lib/maintenance-edge.ts`                                                                       | Current           |
-| The booked window must match the plan duration on request-for-approval, direct consultation checkout and trial scheduling                                            | 400 `WINDOW_DURATION_MISMATCH`                                                             | `lib/booking/slot-validation.ts`                                                                | Landing in Wave 0 |
-| A paused expert (`acceptingRequests = false`) refuses every new booking, including direct checkout and trials                                                        | 409 `NOT_ACCEPTING_BOOKINGS`                                                               | the purchasability gate in `lib/payments/operations/checkout.ts`                                | Landing in Wave 0 |
-| Request-for-approval accepts an `Idempotency-Key` stored on the request row                                                                                          | A replay returns the original 201; another user's key answers 422 `IDEMPOTENCY_KEY_REUSED` | `app/api/scheduling/request-for-approval/route.ts`                                              | Landing in Wave 0 |
+| Guard                                                                                                                                                                | Refusal                                                                                    | Where it lives                                                                                  | Status  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- | ------- |
+| Allocation is a host-side act: only the expert, the plan's host-organisation operators and staff may set times                                                       | 403 `ALLOCATE_FORBIDDEN`                                                                   | `lib/scheduling/allocate-route.ts`                                                              | Current |
+| A sponsoring organisation may allocate only a booking the expert has already approved                                                                                | 409 `EXPERT_APPROVAL_REQUIRED`                                                             | `app/api/organizations/[orgId]/appointments/[appointmentId]/allocate/route.ts`                  | Current |
+| Only the expert and staff may waive availability rules (`override`), place fewer sessions (`allowPartial`) or top up                                                 | The flags are ignored for host-organisation operators                                      | `lib/scheduling/allocate-route.ts`                                                              | Current |
+| A webinar or class `PUT` cannot change `status` or re-point relations                                                                                                | 409 `USE_CANCEL_ROUTE`                                                                     | `app/api/bookings/webinars/[webinarId]/route.ts`, `app/api/bookings/classes/[classId]/route.ts` | Current |
+| A reschedule accept closes its proposal inside the move transaction                                                                                                  | 409 `RESCHEDULE_NO_LONGER_OPEN` rolls the move back                                        | `lib/booking/reschedule-respond.ts`, `lib/booking/reschedule-confirm.ts`                        | Current |
+| A restore after a withdrawn or expired reschedule refuses an unknown origin status instead of guessing `APPROVED`                                                    | Nothing is written and one Sentry report is made                                           | `lib/booking/reschedule-restore.ts`                                                             | Current |
+| A meeting extension writes `endsAt` in the database first, then calls Stream, and reverts by compare-and-swap if Stream fails                                        | 409 `EXTEND_CONFLICT` or 503                                                               | `app/api/meetings/[meetingId]/extend/route.ts`                                                  | Current |
+| Booking and money writes fail closed with 503 and `Retry-After` when the maintenance state cannot be read, and four more routes are on the degraded write-block list | 503                                                                                        | `lib/maintenance-edge.ts`                                                                       | Current |
+| The booked window must match the plan duration on request-for-approval, direct consultation checkout and trial scheduling                                            | 400 `WINDOW_DURATION_MISMATCH`                                                             | `lib/booking/slot-validation.ts`                                                                | Current |
+| A paused expert (`acceptingRequests = false`) refuses every new booking, including direct checkout and trials                                                        | 409 `NOT_ACCEPTING_BOOKINGS`                                                               | the purchasability gate in `lib/payments/operations/checkout.ts`                                | Current |
+| Request-for-approval accepts an `Idempotency-Key` stored on the request row                                                                                          | A replay returns the original 201; another user's key answers 422 `IDEMPOTENCY_KEY_REUSED` | `app/api/scheduling/request-for-approval/route.ts`                                              | Current |
 
 ## 2. The 30-minute atom and coverage
 
@@ -229,7 +229,7 @@ flowchart TD
   LAPSE -.->|"Late Capture Race (captured_after_release)"| AUTO_REFUND["Webhook sees EXPIRED Payment -> claims SUCCEEDED & immediately triggers 100% auto-refund"]
 ```
 
-Instant mode locks the consultee and then each 30-minute atom of the interval, creates the tentative occurrence and a pending payment in one Serializable transaction, and waits for the capture. Request mode defers both the slot hold and the money until the expert approves. A request that is already settled (a free plan or an existing `SUCCEEDED` payment) lands directly in `APPROVED`; an unpaid one lands in `APPROVED_PENDING_PAYMENT` and mints its pay order after the commit.
+Instant mode locks the consultee and then each 30-minute atom of the interval, creates the tentative occurrence and a pending payment in one Serializable transaction, and waits for the capture. Request mode takes the same consultee and slot locks and writes a `PENDING` consultation with a tentative occurrence, and that occurrence does block the expert's calendar: `OCCUPIED_REQUEST_STATUSES` in `utils/scheduling-engine/occupancyPolicy.ts` counts `PENDING` as occupied, so no other checkout or request can take the time. What request mode defers is the money, and a consultee may hold at most three such pending requests at once (`MAX_ACTIVE_REQUESTS_PER_USER` in `lib/booking/request-caps.ts`). A request that is already settled (a free plan or an existing `SUCCEEDED` payment) lands directly in `APPROVED`; an unpaid one lands in `APPROVED_PENDING_PAYMENT` and mints its pay order after the commit.
 
 ## 6. Lifecycle and state machines
 
@@ -272,7 +272,7 @@ stateDiagram-v2
     [*] --> DRAFT : Created in studio (stays DRAFT across allocations)
     DRAFT --> SCHEDULED : Published by host
     SCHEDULED --> SCHEDULED : Re-allocation re-stamp
-    SCHEDULED --> IN_PROGRESS : Live session starts
+    SCHEDULED --> IN_PROGRESS : Host sets it through the event PATCH
     IN_PROGRESS --> COMPLETED : All occurrences ended > 1h ago
     SCHEDULED --> COMPLETED : All occurrences ended > 1h ago
     SCHEDULED --> CANCELLED : Host cancels whole event (100% refund to undelivered seats)
@@ -360,7 +360,7 @@ CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key"
 
 Money sweeps use `failMode: "closed"` and abort when the lease cannot be verified, because a skipped sweep is safer than a duplicate dunning, invoice or payout run. Idempotent cleanup sweeps use `failMode: "open"` and proceed with a warning.
 
-Every sweep repeats the money predicate in its compare-and-swap, so it never expires a paid booking. The two session-outcome sweeps have no GitHub Actions twin: the batch sizes above are the only throughput they have, which is 50 sessions an hour for auto-complete and 20 for the no-show detector. Wave 0 PR 4 adds a time-boxed drain loop so that a backlog clears inside one lease instead of one batch per tick. The full per-job reference is [docs/booking/13-cron-jobs-and-background-tasks.md](../booking/13-cron-jobs-and-background-tasks.md).
+Every sweep repeats the money predicate in its compare-and-swap, so it never expires a paid booking. The two session-outcome sweeps have no GitHub Actions twin: the batch sizes above are the only throughput they have, which is 50 sessions an hour for auto-complete and 20 for the no-show detector. Landing in Wave 0 (W0-4), a time-boxed drain loop will clear a backlog inside one lease instead of one batch per tick. The full per-job reference is [docs/booking/13-cron-jobs-and-background-tasks.md](../booking/13-cron-jobs-and-background-tasks.md).
 
 ## 9. Target state (Waves 0–3)
 
@@ -384,7 +384,7 @@ Every sweep repeats the money predicate in its compare-and-swap, so it never exp
 
 In the target state Postgres is the only arbiter of time and capacity, and Redis keeps rate limits and short interactive mutexes. The waves get there in this order:
 
-- **Wave 0** fixes the defects that exist on today's schema: authorization, checkout correctness (landing in Wave 0), durable "refund owed" markers, correctly scoped sweeps, a 60-second consultee grid poll that is freshness only and never correctness, and the subscription session-return policy.
+- **Wave 0** fixes the defects that exist on today's schema: authorization and checkout correctness (both merged), durable "refund owed" markers, correctly scoped sweeps, a 60-second consultee grid poll that is freshness only and never correctness, and the subscription session-return policy.
 - **Wave 1** flips the availability readers to per-date daylight-saving offsets computed from the IANA zone, and adds platform-incident voiding and webinar seat transfer.
 - **Wave 2** splits `SchedulingService.ts` and `checkout.ts` along their module seams without changing behaviour.
 - **Wave 3** lands inside the owner's database reset window: the schema batch, the busy-time ledger that makes the database the arbiter of every person's time, and the scheduling rules.
@@ -404,9 +404,18 @@ The end-state invariants and what enforces each of them:
 | Buffer, notice and horizon                                                      | Padded `busyRange` exclusion and shared validation (Wave 3)                      |
 | An outage never forfeits a learner's money                                      | `PLATFORM_VOID` classification (Wave 1)                                          |
 
+## 10. Glossary
+
+The money terms (pre-mint, tombstone, dedupe key, leg, earnings hold and credit note) are defined in [the money HLD's glossary](./02-money-system-hld.md#13-glossary).
+
+- **Hold.** A booking that is reserved but not yet paid: a tentative occurrence plus a `PENDING` payment whose `expiresAt` is thirty minutes out on direct checkout (`DIRECT_CHECKOUT_HOLD_MS` in `lib/payments/operations/checkout.ts`) or 24 hours out on an approval pay-link. The `abandoned-payments` and `expire-stale-requests` sweeps release a hold once it lapses.
+- **Tentative.** An `AppointmentOccurrence` with `isTentative = true`, which is a hold or a requested time rather than a confirmed session. It still blocks the expert's calendar through the occupancy filter in `utils/scheduling-engine/occupancyPolicy.ts`, but the database overlap constraint `occurrence_no_confirmed_overlap` ignores it, so the Redis slot locks are what keep two holds apart.
+- **CAS-in-WHERE.** A compare-and-swap status change: an `updateMany` whose `WHERE` names the expected prior status, so a row that has already moved matches zero rows and the write fails instead of overwriting it. The helpers in `lib/booking/transitions.ts` do this for every booking status and throw `IllegalTransitionError` on a miss.
+- **Sweep.** A background job that finds rows in a stale state and moves them on, for example an unpaid hold to `EXPIRED`. Every sweep is registered in `lib/cron/cleanup-registry.ts`, runs under the Postgres lease in `withCronLock`, and is fired by the five-minute ticker `netlify/functions/cron-tick.mts` or by a GitHub Actions batch workflow.
+
 ## Related issues
 
-Program umbrella #2137. Pull requests: #2141 (merged), #2142 (open).
+Program umbrella #2137. Pull requests: #2141 (merged), #2142 (merged).
 
 ## Deprecated & Superseded Approaches
 
@@ -415,6 +424,6 @@ These patterns existed earlier and are gone or going. Recognising them lets an e
 1. **Consultee-callable allocation.** The allocation route used to admit any participant, so a consultee could move their own request from `PENDING` to `APPROVED`. It is now host-side only, and the sponsor-organisation route allocates only `APPROVED` bookings.
 2. **Status and relation writes through the event `PUT`.** Webinar and class updates once accepted `status` and `connect` re-pointing in the body. Cancelling goes through the cancel route so that refunds and history are written, and the body is parsed with a Zod schema.
 3. **Hourly per-job GitHub Actions twins for booking sweeps.** The booking sweeps used to be driven by one workflow per job at an hourly cadence, which GitHub delivered roughly once every hundred minutes. They now run on the five-minute ticker, and no per-job workflow exists; a job missing from the ticker runs nowhere.
-4. **A gateway call before any durable payment row on the approval path.** Landing in Wave 0: the pay-link mint now writes a pre-mint row first.
+4. **A gateway call before any durable payment row on the approval path.** The pay-link mint now writes a pre-mint row first.
 5. **A reschedule accept that committed the move and then closed the proposal in a second transaction.** The proposal is now closed inside the move.
 6. **Restoring an unknown origin status to `APPROVED`.** A booking whose origin cannot be read is now left alone and reported once.

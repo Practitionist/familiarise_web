@@ -191,9 +191,9 @@ export async function handlePaymentSuccess(paymentIntentId, metadata) {
 }
 ```
 
-## Durable Approval Mint (Landing in Wave 0)
+## Durable Approval Mint
 
-Today `createApprovalPaymentIntent` in `lib/payments/operations/approval-payment.ts` calls the gateway first and writes the `Payment` row afterwards, so a function killed between the two leaves a live Razorpay order that no row knows about. The open pull request replaces that order with a pre-mint row:
+`createApprovalPaymentIntent` in `lib/payments/operations/approval-payment.ts` writes a durable `Payment` row before it calls the gateway, so a function killed between the two steps can never leave a live Razorpay order that no row knows about:
 
 ```text
   pre-mint:  fresh mint  -> INSERT Payment PENDING, paymentIntent "premint_<uuid>", CARD leg
@@ -466,5 +466,5 @@ console.error(`Failed to acquire lock for ${consultationId}`); // Error
 
 ## Deprecated & Superseded Approaches
 
-1. **Gateway call before any durable row.** An approval order could exist at Razorpay with no `Payment` row. The pre-mint row replaces it (landing in Wave 0).
+1. **Gateway call before any durable row.** An approval order could exist at Razorpay with no `Payment` row. The pre-mint row replaced it.
 2. **Overwriting `paymentIntent` on a re-mint.** A payment on the replaced order matched no row. The old order now moves to a tombstone.

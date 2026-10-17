@@ -40,7 +40,7 @@ Platform-wide orientation and end-to-end cross-subsystem explainers.
 - [README.md](./start-here/README.md) - Orientation index and subsystem reading map
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
-- [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Canonical end-to-end visual guide combining booking lifecycle, org scoping (`?orgScope=`), permission matrices, 20 double-entry ledger permutations, and worked numeric scenarios
+- [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Canonical worked guide: the seeded cast, the entity model, numeric permutation walk-throughs and end-to-end examples, with pointers to the scoping matrices and the 20 ledger permutations
 
 ---
 
@@ -70,7 +70,7 @@ Booking system, slot allocation, validation, and scheduling logic for all 5 even
 - [14-local-development-and-testing.md](./booking/14-local-development-and-testing.md) - Dev setup, mock payments, test scenarios, debugging
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
-- [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - End-to-end visual guide combining booking lifecycle, org scoping, permission matrices, and worked ledger examples
+- [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and end-to-end ledger examples
 
 ---
 
@@ -95,7 +95,7 @@ Payment system, checkout flows, gateway integrations, payouts, refunds, and more
 - [04-abandoned-solutions.md](./payments/04-abandoned-solutions.md) - Abandoned payment handling
 - [01-booking-system-hld.md](./start-here/01-booking-system-hld.md) - Booking system high-level design: pipeline, allocation, concurrency layers, state machines, cron architecture
 - [02-money-system-hld.md](./start-here/02-money-system-hld.md) - Money system high-level design: pricing, capture, legs, ledger, earnings, payouts, refunds and policy decisions
-- [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - End-to-end visual guide with org scoping, permission matrices, 20 ledger permutations, and worked numeric examples
+- [03-booking-and-money-machinery.md](./start-here/03-booking-and-money-machinery.md) - Worked guide with the seeded cast, entity model and worked numeric examples
 
 #### Checkout Flow
 

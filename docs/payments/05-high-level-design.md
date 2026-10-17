@@ -4,7 +4,7 @@ This page is the map a newcomer should read before any other payments document. 
 
 The diagrams describe the code as it stands after the 2026-09-03 finance train (PRs #1385, #1386, #1389, #1390, #1391, #1393, #1392 and #1414) and the 2026-09-19 Muse Spark finance train. Where a box only exists because of one of those PRs, the PR number is written on it. The verdict record that motivated the earlier train lives in [audits/2026-09-03-finance-verdicts.md](./audits/2026-09-03-finance-verdicts.md).
 
-For the one-page walk from price derivation to payout and refund, with the refund policy decisions and the pre-mint approval design landing in Wave 0, read [the money system HLD](../start-here/02-money-system-hld.md) first; this page then goes deeper on each diagram.
+For the one-page walk from price derivation to payout and refund, with the refund policy decisions and the pre-mint approval design, read [the money system HLD](../start-here/02-money-system-hld.md) first; this page then goes deeper on each diagram.
 
 ## 1. B2C: a consultee pays for a session
 

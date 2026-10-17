@@ -126,6 +126,16 @@ If a surface needs a role distinction, add the key.
 whose only difference was which route tree you landed in. Merging them into one
 `(backoffice)/[tree]` (#1527) means the difference has to live somewhere real.
 
+### Backoffice surfaces by category
+
+| Backoffice Surface Category              | Surface Keys                                                                                                                                                                                                                                                                       |                  **`ADMIN`** (Olivia Brown)                  |                    **`STAFF`** (Maria Brown)                    | Policy Rationale                                                                                                                         |
+| :--------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------: | :-------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------- |
+| **Support & Triage**                     | `tickets.manage`, `threads.manage`, `feedback.manage`, `moderation.manage`, `appointments.manage`, `waitlist.manage`, `users.read`, `users.verify`, `team.read`, `analytics.read`, `opsLog.read`                                                                                   |                       **Read + Write**                       | **Read + Write** (Staff see only their own `OpsActionLog` rows) | Staff own day-to-day support, appointment triage, and expert verification.                                                               |
+| **Class Series Non-Money Doors**         | `classSeries.support` (Cancel 1 session for host, grant make-up + 14d bypass, flag/clear reliability, add ops note)                                                                                                                                                                |                         **Execute**                          |                           **Execute**                           | Moves schedule state, never moves money.                                                                                                 |
+| **Money Surfaces (Read vs Execute)**     | `payments.*`, `refunds.*`, `disputes.*`, `invoices.*`, `subscriptions.*`, `payouts.*`, `referrals.*`                                                                                                                                                                               |           **`.read` + `.manage` (Execute Money)**            |                        **`.read` ONLY**                         | Staff can inspect every payment, refund, dispute, invoice, and payout to answer billing tickets, but **cannot execute money mutations**. |
+| **Admin-Only Money & Tax Doors**         | `classSeries.money` (Skip make-up early refund, cancel whole series with refunds, run 14d sweep), `approvalPayments.manage`, `tds.read`                                                                                                                                            |                        **Admin Only**                        |                                —                                | Directly moves cash/credits or exposes cross-org tax aggregates.                                                                         |
+| **Sensitive Content & Platform Control** | `recordings.play` (watch private video), `users.moderate` (ban/role change/operator revoke), `organizations.manage` (KYB verify/suspend), `systemJobs.manage`, `maintenance.manage`, `compliance.manage` (DPDP erasure), `leads.manage`, `announcements.manage`, `newsletter.send` | **Admin Only** (`recordings.read` metadata is open to Staff) |                                —                                | Irreversible account/org actions and private video playback are restricted strictly to `ADMIN`.                                          |
+
 ## 6. Why three, and why not merged
 
 ### The load-bearing reason: privilege here is not one-dimensional
@@ -238,6 +248,59 @@ doors (`withOpsAction`). Capability gates still apply, so an admin hitting a
 WALLET-only endpoint on an INVOICE org gets a **404**, because that endpoint
 genuinely does not exist for that org shape. Authority to look is not authority
 to call a route that does not apply.
+
+### Worked permutations of `UserRole`, organisation capability and `MemberRole`
+
+Every user has one global `User.role` (`UserRole`), independent global profile links (`consultantProfileId`, `consulteeProfileId`, `orgWorkspaceProfileId`), and one `Membership` (`MemberRole`) per organization ([`docs/onboarding/02-identity-and-org-permutations.md`](../onboarding/02-identity-and-org-permutations.md)).
+
+```mermaid
+flowchart LR
+  subgraph UserLayer["Layer 1: Global User & Profiles"]
+    UR["User.role: CONSULTEE | CONSULTANT | ORG_WORKSPACE | STAFF | ADMIN"]
+    CP["ConsultantProfile (Verified Expert)"]
+    CEP["ConsulteeProfile (Learner)"]
+    OWP["OrgWorkspaceProfile (Operator)"]
+  end
+
+  subgraph OrgLayer["Layer 2: Organization Capability"]
+    SP["SPONSOR (canSponsor=true, canHost=false) - e.g. Wipro"]
+    HO["HOST (canSponsor=false, canHost=true) - e.g. LearnPro"]
+    HY["HYBRID (canSponsor=true, canHost=true) - e.g. IIT Madras"]
+    IN["INERT (false, false) - REJECTED AT CREATE"]
+  end
+
+  subgraph RoleLayer["Layer 3: Per-Org Membership (MemberRole)"]
+    OPS["Operator Roles: OWNER, MAINTAINER, BILLING_ADMIN, MANAGER, SUPPORT (no profile link)"]
+    EXP["EXPERT (links ConsultantProfile, payoutRecipient = SELF | ORGANIZATION)"]
+    LRN["LEARNER (links ConsulteeProfile, receives ProgramAssignment)"]
+  end
+
+  UR --> CP & CEP & OWP
+  SP -->|"Allows"| OPS & LRN
+  SP -.->|"Refuses (EXPERT_REQUIRES_CANHOST)"| EXP
+  HO -->|"Allows"| OPS & EXP
+  HO -.->|"Refuses (LEARNER_REQUIRES_CANSPONSOR)"| LRN
+  HY -->|"Allows"| OPS & EXP & LRN
+```
+
+#### Exhaustive Permutation Table (`UserRole × Org Capability × MemberRole`)
+
+| Global `User.role`    | Org Capability (`SPONSOR` / `HOST` / `HYBRID`) | Target `MemberRole`                                              | Status & Exact System Behavior                                                                                                                                                                                                                        | Real Seeded / Concrete Example                                                                                                                                 |
+| :-------------------- | :--------------------------------------------- | :--------------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`ORG_WORKSPACE`**   | `SPONSOR` / `HOST` / `HYBRID`                  | `OWNER` / `MAINTAINER` / `BILLING_ADMIN` / `MANAGER` / `SUPPORT` | **Allowed** (Canonical operator setup). Only `ORG_WORKSPACE` and `ADMIN` can call `POST /api/organizations` to create an org. Profile links on `Membership` are cleared.                                                                              | **Charlotte Anderson** (`charlotte.anderson@gmail.com`) is `ORG_WORKSPACE` + `OWNER` of **IIT Madras** (`HYBRID`).                                             |
+| **`ORG_WORKSPACE`**   | `HOST` / `HYBRID`                              | `EXPERT`                                                         | **Refused (`400 NOT_A_CONSULTANT`)** unless the user first completes the onboarding wizard's Add-Consultant mode (`/form/onboarding?add=CONSULTANT`), which creates a `ConsultantProfile` while keeping `User.role = ORG_WORKSPACE`.                  | Operator adding a consulting practice to their account.                                                                                                        |
+| **`ORG_WORKSPACE`**   | `SPONSOR` / `HYBRID`                           | `LEARNER`                                                        | **Allowed** via invitation accept; lazily creates `ConsulteeProfile` (`ensureConsulteeProfile`).                                                                                                                                                      | Operator learning through a sponsor org.                                                                                                                       |
+| **`CONSULTANT`**      | `HOST` / `HYBRID`                              | `OWNER` / `MAINTAINER` / `BILLING_ADMIN` / `MANAGER` / `SUPPORT` | **Allowed by invitation** (or seeded). Cannot create a new org via `POST /api/organizations` unless role is `ORG_WORKSPACE`/`ADMIN`.                                                                                                                  | **Daniel Anderson** (`daniel.anderson@outlook.com`) is `CONSULTANT` + `OWNER` of **LearnPro Academy** (`HOST`); **Arjun Anderson** is `OWNER` of his solo org. |
+| **`CONSULTANT`**      | `HOST` / `HYBRID`                              | `EXPERT` (`payoutRecipient = SELF`)                              | **Allowed**. Links `ConsultantProfile`; flips `ConsultantProfile.isIndependent = false`. Expert receives their `consultantBps` share into `ConsultantEarnings`.                                                                                       | **Aarav, Aditi, Alex, Amit, Ananya Anderson** at **LearnPro Academy**; **Arjun, Benjamin, Catherine Anderson** at **IIT Madras**.                              |
+| **`CONSULTANT`**      | `HOST` / `HYBRID`                              | `EXPERT` (`payoutRecipient = ORGANIZATION`)                      | **Allowed** (Salaried / Internal Faculty). Expert's `consultantBps` share is routed directly into `OrganizationEarnings` (`CONSULTANT_PAYABLE = 0`).                                                                                                  | **Andrew Anderson** & **Angela Anderson** at **IIT Madras** (`HYBRID`).                                                                                        |
+| **`CONSULTANT`**      | `SPONSOR`                                      | `EXPERT`                                                         | **Refused (`400 EXPERT_REQUIRES_CANHOST`)**. A pure `SPONSOR` org cannot host experts.                                                                                                                                                                | Attempting to invite **Aarav Anderson** as `EXPERT` to **Wipro** is rejected.                                                                                  |
+| **`CONSULTANT`**      | `SPONSOR` / `HYBRID`                           | `LEARNER`                                                        | **Allowed**! Lazily creates `ConsulteeProfile` (`ensureConsulteeProfile`). A consultant in Org A can be a sponsored `LEARNER` in Org B. **Self-Deal Guard**: `revalidateInsideLock` blocks them from booking their _own_ `ConsultantProfile`'s plans! | A consultant who is also an enrolled learner at **Wipro**.                                                                                                     |
+| **`CONSULTEE`**       | `SPONSOR` / `HYBRID`                           | `LEARNER`                                                        | **Allowed** (Canonical B2B learner). Links `ConsulteeProfile`. Lands on `/dashboard/organization/[orgId]/my-program`.                                                                                                                                 | **Olivia, Patrick, Priya Anderson** at **Wipro** (`SPONSOR`); **Rachel, Raj, Rebecca, Robert Anderson** at **IIT Madras** (`HYBRID`).                          |
+| **`CONSULTEE`**       | `HOST`                                         | `LEARNER`                                                        | **Refused (`400 LEARNER_REQUIRES_CANSPONSOR`)**. A pure `HOST` org cannot sponsor learners.                                                                                                                                                           | Attempting to invite **Olivia Anderson** as `LEARNER` to **LearnPro Academy** is rejected.                                                                     |
+| **`CONSULTEE`**       | `HOST` / `HYBRID`                              | `EXPERT`                                                         | **Refused (`400 NOT_A_CONSULTANT`)** until the user completes `/form/onboarding?add=CONSULTANT`, which creates `ConsultantProfile` and promotes `User.role` from `CONSULTEE` → `CONSULTANT`.                                                          | Learner upgrading to become an expert.                                                                                                                         |
+| **`CONSULTEE`**       | `SPONSOR` / `HOST` / `HYBRID`                  | `OWNER` / `MAINTAINER` / `BILLING_ADMIN` / `MANAGER` / `SUPPORT` | **Allowed by invitation** (or seed).                                                                                                                                                                                                                  | **Samantha Anderson** (`samantha.anderson@yahoo.com`) is `CONSULTEE` + `OWNER` of **Wipro Limited**.                                                           |
+| **Any User**          | Same Org                                       | `LEARNER` ↔ `EXPERT`                                             | **Refused (`409 ROLE_TRANSITION_BLOCKED`)** & `@@unique([userId, organizationId])` prevents holding both roles in the same org. Must remove (`REMOVE_AND_REINVITE` if obligations cleared) and re-invite.                                             | Prevents `ProgramAssignment` attribution ambiguity and in-org self-dealing.                                                                                    |
+| **`ADMIN` / `STAFF`** | Any Org                                        | Synthetic `OWNER` Stub                                           | **Bypasses `requireOrgAccess`** (`__admin_stub_<userId>`) so platform operators can inspect/assist while keeping `OrgAuditLog.actorMembershipId` valid.                                                                                               | **Olivia Brown** (`ADMIN`) or **Maria Brown** (`STAFF`).                                                                                                       |
 
 ## 8. Open items
 

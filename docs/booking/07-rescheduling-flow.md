@@ -1176,7 +1176,7 @@ Accept now also runs inside `withAppointmentLock`, the same per-appointment atom
 
 ## Expiry restores the booking, and withdraw can meet a taken time (2026-09-28, #1846)
 
-A proposal that nobody answers now leaves the booking exactly as it was before the reschedule (#1527 decision 9). The restore moved into `lib/booking/reschedule-restore.ts`, and the initiator's withdrawal and the expiry sweep both call its `restoreRescheduledBooking`. The sweep expires each lapsed proposal under the appointment lock and restores the booking in the same transaction, so an answer or a cancel cannot interleave with the restore. Decline is still the one ending that leaves the slots released for the consultant's allocate queue.
+A proposal that nobody answers normally leaves the booking as it was before the reschedule (#1527 decision 9); the exception, an original time that was taken in the meantime, is described below. The restore moved into `lib/booking/reschedule-restore.ts`, and the initiator's withdrawal and the expiry sweep both call its `restoreRescheduledBooking`. The sweep expires each lapsed proposal under the appointment lock and restores the booking in the same transaction, so an answer or a cancel cannot interleave with the restore. Decline is still the one ending that leaves the slots released for the consultant's allocate queue.
 
 A restore flips the released rows back to confirmed, and that can meet the `occurrence_no_confirmed_overlap` constraint (SQLSTATE 23P01) when the consultant's original time was booked while the proposal was open. The two callers answer that differently. Withdraw rolls back whole and answers 409 `ORIGINAL_TIME_TAKEN` instead of a raw 500, and the proposal stays open so that the parties can agree a new time. The sweep reports the miss, expires the proposal without the restore, leaves the slots released, and counts the row in its result as `proposalsExpiredUnrestored`.
 
@@ -1194,4 +1194,4 @@ The consultee limit of two reschedules per booking (`MAX_CONSULTEE_RESCHEDULES` 
 
 1. **Closing the proposal after the move in a second transaction.** Replaced by the in-transaction hook.
 2. **Restoring an unknown origin to `APPROVED`.** Replaced by refusing to write.
-3. **Leaving released slots released when a proposal expires.** Expiry now restores the booking exactly as it was.
+3. **Leaving released slots released when a proposal expires.** Expiry now normally restores the booking as it was. The exception is an original time that was booked while the proposal was open: the restore then fails on the overlap constraint, and the slots stay released.

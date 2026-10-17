@@ -34,7 +34,7 @@ stateDiagram-v2
 - **DRAFT** — created but not signed. Terms are still editable; the row can be
   hard-deleted (only while it has no programs and no invoices).
 - **ACTIVE** — signed (`signedAt` stamped, status flipped to `ACTIVE`). Terms
-  lock (see *Field locking* below); programs draw against it; invoices bill
+  lock (see _Field locking_ below); programs draw against it; invoices bill
   against it.
 - **EXPIRED** — `effectiveTo` passed and the expiry cron flipped it, **or** a
   RENEWAL supersede retired it (the completed term ended). Soft enforcement:
@@ -141,11 +141,11 @@ a second supersede on the same contract hits `P2002`). The three supersession
 reasons in the `ContractSupersessionReason` enum, and how each one treats the
 successor and the old row, are laid out in the table below.
 
-| Reason | Trigger | Successor `effectiveFrom` | Old contract → | Set by |
-|---|---|---|---|---|
-| `AMENDMENT` | mid-term terms change | now (cut-over) | `TERMINATED` | supersede route |
-| `RENEWAL` | term rollover | old `effectiveTo` (same duration default) | `EXPIRED` | supersede route **or** auto-renew cron |
-| `TERMINATION_REPLACEMENT` | system-set replacement | — | — | system only |
+| Reason                    | Trigger                | Successor `effectiveFrom`                 | Old contract → | Set by                                 |
+| ------------------------- | ---------------------- | ----------------------------------------- | -------------- | -------------------------------------- |
+| `AMENDMENT`               | mid-term terms change  | now (cut-over)                            | `TERMINATED`   | supersede route                        |
+| `RENEWAL`                 | term rollover          | old `effectiveTo` (same duration default) | `EXPIRED`      | supersede route **or** auto-renew cron |
+| `TERMINATION_REPLACEMENT` | system-set replacement | —                                         | —              | system only                            |
 
 The supersede route (`POST /api/organizations/[orgId]/contracts/[contractId]/supersede`)
 accepts **only** `AMENDMENT | RENEWAL` in its Zod body — `TERMINATION_REPLACEMENT`
@@ -155,7 +155,7 @@ In the supersede transaction:
 1. Guard: the old contract must be `ACTIVE` (`409 CONTRACT_NOT_ACTIVE`) and not
    already superseded (`409 CONTRACT_ALREADY_SUPERSEDED`).
 2. Create the successor (`status = ACTIVE`, `signedAt = now` — the supersede
-   action *is* the signing event for the new terms). Omitted fields carry over
+   action _is_ the signing event for the new terms). Omitted fields carry over
    from the old contract.
 3. `program.updateMany({ where: { contractId: old } })` re-points every program
    to the successor — without this the cycle engine would see a non-ACTIVE
@@ -185,7 +185,7 @@ Per contract due (`status = ACTIVE`, `autoRenew = true`, `autoRenewedAt = null`,
    skip).
 2. Mint the RENEWAL successor — same org / billingAccount / PO / payment terms /
    rate card, `effectiveFrom = old.effectiveTo`, `effectiveTo = old.effectiveTo +
-   (old duration)`, `status = ACTIVE`, `autoRenew` carried.
+(old duration)`, `status = ACTIVE`, `autoRenew` carried.
 3. Re-point programs to the successor (same reason as the manual path).
 4. Stamp `supersededByContractId`/`supersededAt`/`supersessionReason = RENEWAL`
    and flip the **old** contract to `EXPIRED` in the same tx (not left ACTIVE
@@ -207,18 +207,18 @@ On the night of 2026-06-30 the cron picks it up (`status = ACTIVE`,
 `autoRenew = true`, `autoRenewedAt = null`, `effectiveTo <= now`) and, in one
 Serializable tx, writes:
 
-| Row | Field | Before | After |
-|---|---|---|---|
-| **old** `C₁` | `status` | `ACTIVE` | `EXPIRED` |
-| | `autoRenewedAt` | `null` | `2026-06-30T02:30Z` (claim gate) |
-| | `supersededByContractId` | `null` | `C₂.id` |
-| | `supersededAt` | `null` | `2026-06-30T02:30Z` |
-| | `supersessionReason` | `null` | `RENEWAL` |
-| **new** `C₂` | `effectiveFrom` | — | `2026-06-30` (= old `effectiveTo`) |
-| | `effectiveTo` | — | `2027-06-30` (= +same `durationMs`) |
-| | `status` | — | `ACTIVE` |
-| | `autoRenew` / `billingAccountId` / `paymentTermsDays` / `rateCardId` / `purchaseOrderId` | — | carried from `C₁` |
-| **programs** | `contractId` | `C₁.id` | `C₂.id` (re-pointed `updateMany`) |
+| Row          | Field                                                                                    | Before   | After                               |
+| ------------ | ---------------------------------------------------------------------------------------- | -------- | ----------------------------------- |
+| **old** `C₁` | `status`                                                                                 | `ACTIVE` | `EXPIRED`                           |
+|              | `autoRenewedAt`                                                                          | `null`   | `2026-06-30T02:30Z` (claim gate)    |
+|              | `supersededByContractId`                                                                 | `null`   | `C₂.id`                             |
+|              | `supersededAt`                                                                           | `null`   | `2026-06-30T02:30Z`                 |
+|              | `supersessionReason`                                                                     | `null`   | `RENEWAL`                           |
+| **new** `C₂` | `effectiveFrom`                                                                          | —        | `2026-06-30` (= old `effectiveTo`)  |
+|              | `effectiveTo`                                                                            | —        | `2027-06-30` (= +same `durationMs`) |
+|              | `status`                                                                                 | —        | `ACTIVE`                            |
+|              | `autoRenew` / `billingAccountId` / `paymentTermsDays` / `rateCardId` / `purchaseOrderId` | —        | carried from `C₁`                   |
+| **programs** | `contractId`                                                                             | `C₁.id`  | `C₂.id` (re-pointed `updateMany`)   |
 
 Then a `CONTRACT_AUTO_RENEWED` audit row lands. Two subtleties worth internalising:
 
@@ -247,7 +247,7 @@ still `ACTIVE` whose non-null `effectiveTo` has passed → `EXPIRED`. By the tim
 it runs, auto-renew has already moved anything renewable, so it only catches
 non-renewing terms.
 
-**Soft enforcement** — expiry does *not* take the org offline
+**Soft enforcement** — expiry does _not_ take the org offline
 (`requireOrgAccess` still honours the org). The effects are:
 
 1. New subscription-invoice rolls only generate while the contract is `ACTIVE`
@@ -269,7 +269,7 @@ The guard refuses to sever a money trail or orphan an entitlement:
 
 - **Live-assignment block:** if any `ProgramAssignment` under the contract is
   still in its current cycle (`periodEnd >= now`), the PATCH returns `409` —
-  *"Cancel the assignments first or wait for the cycle to expire."* Without this,
+  _"Cancel the assignments first or wait for the cycle to expire."_ Without this,
   checkout would 500 on the now-parentless assignment lookup. This is the
   dangerous-mutation guard pattern: a status precondition + a count block + an
   in-tx cascade (no `riskLevel` field exists anywhere).
@@ -287,7 +287,7 @@ contract must be terminated via PATCH so the audit timeline keeps continuity.
 
 ### Walkthrough — Meridian Consulting cancels mid-term (fictional)
 
-**Meridian Consulting** (a *fictional* SPONSOR org used only for the failure
+**Meridian Consulting** (a _fictional_ SPONSOR org used only for the failure
 path — not seeded) signed a 1-year LICENSED_SEAT contract and now wants out three
 months in, while 40 learners still have live assignments and one ₹2L invoice is
 `ISSUED`. An OWNER hits `PATCH …/contracts/[contractId]` with
@@ -311,9 +311,9 @@ Two refusals stand between the operator and termination, evaluated in this order
 inside the PATCH transaction:
 
 1. **Live-assignment block.** `programAssignment.count` where the program is on
-   this contract and `periodEnd >= now` returns 40 → `409`, message *"Cannot
+   this contract and `periodEnd >= now` returns 40 → `409`, message _"Cannot
    terminate a contract with 40 active assignment(s) in the current cycle. Cancel
-   the assignments first or wait for the cycle to expire."* (The count is in the
+   the assignments first or wait for the cycle to expire."_ (The count is in the
    message string; unlike the invoice block, this guard doesn't attach a
    structured `counts` object.) Without it, checkout would later **500** on the
    now-parentless assignment lookup.
@@ -339,7 +339,7 @@ shape — status precondition + count block + in-tx cascade — and note there i
   contract) trades that friction for orphaned entitlements (checkout 500s on a
   parentless assignment) and a severed money trail (an owed invoice with no
   contract behind it). The friction is deliberate: every wind-down step leaves an
-  audit row, so the *why* of a termination is reconstructable.
+  audit row, so the _why_ of a termination is reconstructable.
 - **`LOCKED_CONTRACT_FIELDS` scope — five locked, one open.** The predicate
   (`config-lock.ts`) locks `billingAccountId`, `effectiveFrom`, `effectiveTo`,
   `paymentTermsDays`, `rateCardId` — everything that could retroactively rewrite
@@ -356,7 +356,7 @@ shape — status precondition + count block + in-tx cascade — and note there i
 **Config-lock moved from contract-create to first-assignment.** The persistent
 money-config lock (`#779 §B`, commit `4a6c2d76`) deliberately does **not** fire at
 create time — `Program.configLockedAt` is stamped in the transaction that creates
-the *first* `ProgramAssignment` (`assignments/route.ts:161`, an `updateMany` gated
+the _first_ `ProgramAssignment` (`assignments/route.ts:161`, an `updateMany` gated
 on `configLockedAt: null` so a re-stamp on an already-locked program is a no-op
 and the original lock instant is preserved). The contract analogue is the
 `isContractTermsLocked` predicate: terms stay editable while the contract is
@@ -368,7 +368,7 @@ it's safe, then slams shut the instant real money rides on the terms.
 
 **Supersede-don't-edit became the only way to change committed terms.** CRUD
 completeness (`#777 §B / #779 §A`, commit `e454d429`) landed the
-`POST …/supersede` route precisely so there's a *legal* path to change locked
+`POST …/supersede` route precisely so there's a _legal_ path to change locked
 terms without mutating settled history. The decision: an in-place
 `effectiveTo`/rate edit on a contract that's already billed would silently rewrite
 the terms its invoices were issued under — a reconciliation landmine. Instead,
@@ -382,19 +382,48 @@ run unattended.
 
 The contract routes and the role gate each verb enforces are listed below.
 
-| Route | Verb | Role gate |
-|---|---|---|
-| `/api/organizations/[orgId]/contracts` | `GET` | MAINTAINER + canSponsor |
-| `/api/organizations/[orgId]/contracts` | `POST` | OWNER + canSponsor + **requireActive** |
-| `/api/organizations/[orgId]/contracts/[contractId]` | `GET` | MAINTAINER + canSponsor |
-| `/api/organizations/[orgId]/contracts/[contractId]` | `PATCH` | OWNER + canSponsor |
-| `/api/organizations/[orgId]/contracts/[contractId]` | `DELETE` | OWNER + canSponsor (DRAFT-only) |
-| `/api/organizations/[orgId]/contracts/[contractId]/supersede` | `POST` | OWNER + canSponsor |
+| Route                                                         | Verb     | Role gate                              |
+| ------------------------------------------------------------- | -------- | -------------------------------------- |
+| `/api/organizations/[orgId]/contracts`                        | `GET`    | MAINTAINER + canSponsor                |
+| `/api/organizations/[orgId]/contracts`                        | `POST`   | OWNER + canSponsor + **requireActive** |
+| `/api/organizations/[orgId]/contracts/[contractId]`           | `GET`    | MAINTAINER + canSponsor                |
+| `/api/organizations/[orgId]/contracts/[contractId]`           | `PATCH`  | OWNER + canSponsor                     |
+| `/api/organizations/[orgId]/contracts/[contractId]`           | `DELETE` | OWNER + canSponsor (DRAFT-only)        |
+| `/api/organizations/[orgId]/contracts/[contractId]/supersede` | `POST`   | OWNER + canSponsor                     |
 
 `POST /contracts` requires a verified/active org (`requireActive: true`) —
 nothing should bind the platform to an org that hasn't cleared verification.
 A LICENSE-funded contract may carry a flat-fee `BillingSubscription` at create
 time (created atomically in the same tx).
+
+## Contract, program and assignment rollover
+
+```text
++------------------------------------------------------------------------+
+| 1. CONTRACT (`ContractStatus`: DRAFT -> ACTIVE -> SUPERSEDED/EXPIRED)  |
+|    - Signed by Sponsor `OWNER` (`contracts.manage`).                   |
+|    - Supersession (`AMENDMENT` / `RENEWAL`) links `parentContractId`   |
+|      and atomically flips old contract `ACTIVE -> SUPERSEDED`.         |
++-----------------------------------+------------------------------------+
+                                    |
+                                    v
++------------------------------------------------------------------------+
+| 2. PROGRAM (`ProgramType`: LICENSED_SEAT | CREDIT_POOL)                |
+|    - Defines cycle cadence (`MONTHLY` / `QUARTERLY` / `ANNUAL`),       |
+|      `coveredEngagementsPerCycle` or `creditBudgetPerCycle`,           |
+|      `priceCapPerEngagementPaise`, and `overageBehavior`.              |
++-----------------------------------+------------------------------------+
+                                    |
+                                    v
++------------------------------------------------------------------------+
+| 3. PROGRAM ASSIGNMENT (`ProgramAssignment` — Per Learner, Per Cycle)   |
+|    - Nightly `advance-program-cycles` sweep checks `cycleEndsAt <= now`|
+|    - Marks completed cycle `EXPIRED`, snapshots unused allowance       |
+|      (no rollover of unspent credits unless contract specifies),       |
+|      and mints successor cycle row `[newCycleStart, newCycleEnd]`      |
+|      with `engagementsUsed = 0`, `consumedPaise = 0`.                  |
++------------------------------------------------------------------------+
+```
 
 ## Related docs
 

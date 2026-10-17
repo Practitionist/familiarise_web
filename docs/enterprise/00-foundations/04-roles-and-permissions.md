@@ -49,11 +49,11 @@ A matrix replaced the rank ladder because privilege in an organization is not on
 
 Platform admins (`UserRole.ADMIN`) pass every org gate as a synthetic OWNER. `requireOrgAccess` returns a stub membership whose id is `__admin_stub_<userId>`, so that admin-initiated writes still produce valid `OrgAuditLog.actorMembershipId` values. Capability gates such as `canSponsor`, `canHost`, `requiresPO` and `fundingSource` describe the organization's shape rather than the member's role, so they stay outside the matrix and are checked separately at each route.
 
-The next section is the literal output of `npx tsx scripts/utils/print-org-role-matrix.ts`, and it replaces the hand-written gate matrix this page used to carry. To change it, edit `lib/auth/org-permissions.ts`, re-run the script, and paste the new output over it.
+The next section mirrors the `ORG_PERMISSIONS` map in `lib/auth/org-permissions.ts` key for key. No generator script exists in the repository today, so when a grant changes in that file, update the matching row here in the same pull request.
 
 ## Org role matrix
 
-This table is generated from `lib/auth/org-permissions.ts` by `scripts/utils/print-org-role-matrix.ts`, so edit the code and regenerate rather than editing the table.
+This table mirrors `lib/auth/org-permissions.ts`, which is the source of truth; edit the code first and then the row.
 Each row is one permission key, and a tick means the role holds it.
 A platform admin passes every org gate as a synthetic Owner.
 Capability gates such as `canSponsor` and `canHost` are checked separately at each route, so a tick is necessary but not always sufficient.
@@ -62,264 +62,317 @@ Capability gates such as `canSponsor` and `canHost` are checked separately at ea
 
 The key below governs the `activity` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `activity.read` | ✓ | ✓ | — | ✓ | — | — | — |
+| Key             | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| --------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `activity.read` |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
 
 ### `appointments`
 
 The 4 keys below govern the `appointments` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `appointments.actForOrg.cancel` | ✓ | ✓ | — | — | — | — | — |
-| `appointments.actForOrg.reschedule` | ✓ | ✓ | — | ✓ | — | — | — |
-| `appointments.allocate.calendarRead` | ✓ | ✓ | — | — | — | — | — |
-| `appointments.unscheduled.read` | ✓ | ✓ | — | ✓ | — | — | — |
+| Key                                  | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ------------------------------------ | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `appointments.actForOrg.cancel`      |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
+| `appointments.actForOrg.reschedule`  |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
+| `appointments.allocate.calendarRead` |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
+| `appointments.unscheduled.read`      |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
 
 ### `audit`
 
 The 3 keys below govern the `audit` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `audit.read` | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| `audit.read.money` | ✓ | ✓ | ✓ | — | — | — | — |
-| `audit.read.ops` | ✓ | ✓ | — | ✓ | ✓ | — | — |
+| Key                | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ------------------ | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `audit.read`       |   ✓   |     ✓      |       ✓       |    ✓    |    ✓    |   —    |    —    |
+| `audit.read.money` |   ✓   |     ✓      |       ✓       |    —    |    —    |   —    |    —    |
+| `audit.read.ops`   |   ✓   |     ✓      |       —       |    ✓    |    ✓    |   —    |    —    |
 
 ### `billing`
 
 The 3 keys below govern the `billing` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `billing.fundingSource.switch` | ✓ | — | ✓ | — | — | — | — |
-| `billing.manage` | ✓ | — | ✓ | — | — | — | — |
-| `billing.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Key                            | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ------------------------------ | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `billing.fundingSource.switch` |   ✓   |     —      |       ✓       |    —    |    —    |   —    |    —    |
+| `billing.manage`               |   ✓   |     —      |       ✓       |    —    |    —    |   —    |    —    |
+| `billing.read`                 |   ✓   |     ✓      |       ✓       |    ✓    |    —    |   —    |    —    |
 
 ### `catalog`
 
 The key below governs the `catalog` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `catalog.manage` | ✓ | ✓ | — | ✓ | — | — | — |
+| Key              | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ---------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `catalog.manage` |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
 
 ### `consent`
 
 The 2 keys below govern the `consent` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `consent.read` | ✓ | ✓ | — | ✓ | — | — | — |
-| `consent.requestWithdrawal` | ✓ | ✓ | — | ✓ | — | — | — |
+| Key                         | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| --------------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `consent.read`              |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
+| `consent.requestWithdrawal` |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
 
 ### `contracts`
 
 The 2 keys below govern the `contracts` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `contracts.manage` | ✓ | — | — | — | — | — | — |
-| `contracts.read` | ✓ | ✓ | ✓ | — | — | — | — |
+| Key                | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ------------------ | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `contracts.manage` |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `contracts.read`   |   ✓   |     ✓      |       ✓       |    —    |    —    |   —    |    —    |
 
 ### `dataExports`
 
 The 2 keys below govern the `dataExports` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `dataExports.finance` | ✓ | — | ✓ | — | — | — | — |
-| `dataExports.people` | ✓ | ✓ | — | — | — | — | — |
+| Key                   | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| --------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `dataExports.finance` |   ✓   |     —      |       ✓       |    —    |    —    |   —    |    —    |
+| `dataExports.people`  |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
 
 ### `disputes`
 
 The key below governs the `disputes` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `disputes.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Key             | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| --------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `disputes.read` |   ✓   |     ✓      |       ✓       |    ✓    |    —    |   —    |    —    |
 
 ### `identity`
 
 The 2 keys below govern the `identity` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `identity.manage` | ✓ | — | — | — | — | — | — |
-| `identity.read` | ✓ | ✓ | — | — | — | — | — |
+| Key               | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ----------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `identity.manage` |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `identity.read`   |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
 
 ### `integrations`
 
 The key below governs the `integrations` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `integrations.manage` | ✓ | — | ✓ | — | — | — | — |
+| Key                   | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| --------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `integrations.manage` |   ✓   |     —      |       ✓       |    —    |    —    |   —    |    —    |
 
 ### `invitations`
 
 The key below governs the `invitations` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `invitations.manage` | ✓ | ✓ | — | — | — | — | — |
+| Key                  | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| -------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `invitations.manage` |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
 
 ### `materials`
 
 The key below governs the `materials` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `materials.manage.orgPlan` | ✓ | ✓ | — | ✓ | — | — | — |
+| Key                        | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| -------------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `materials.manage.orgPlan` |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
 
 ### `memberContent`
 
 The key below governs the `memberContent` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `memberContent.delete` | — | — | — | — | — | — | — |
+| Key                    | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ---------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `memberContent.delete` |   —   |     —      |       —       |    —    |    —    |   —    |    —    |
 
 ### `members`
 
 The 7 keys below govern the `members` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `members.directory` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `members.manage` | ✓ | ✓ | — | — | — | — | — |
-| `members.payoutRecipient.change` | ✓ | — | ✓ | — | — | — | — |
-| `members.read` | ✓ | ✓ | — | ✓ | ✓ | — | — |
-| `members.remove.force` | ✓ | — | — | — | — | — | — |
-| `members.role.grant.governance` | ✓ | — | — | — | — | — | — |
-| `members.role.grant.operational` | ✓ | ✓ | — | — | — | — | — |
+| Key                              | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| -------------------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `members.directory`              |   ✓   |     ✓      |       ✓       |    ✓    |    ✓    |   ✓    |    ✓    |
+| `members.manage`                 |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
+| `members.payoutRecipient.change` |   ✓   |     —      |       ✓       |    —    |    —    |   —    |    —    |
+| `members.read`                   |   ✓   |     ✓      |       —       |    ✓    |    ✓    |   —    |    —    |
+| `members.remove.force`           |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `members.role.grant.governance`  |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `members.role.grant.operational` |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
 
 ### `messaging`
 
 The key below governs the `messaging` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `messaging.read` | ✓ | ✓ | — | ✓ | — | — | — |
+| Key              | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ---------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `messaging.read` |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
 
 ### `myArrangement`
 
 The key below governs the `myArrangement` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `myArrangement.read` | — | — | — | — | — | ✓ | — |
+| Key                  | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| -------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `myArrangement.read` |   —   |     —      |       —       |    —    |    —    |   ✓    |    —    |
 
 ### `myProgram`
 
 The key below governs the `myProgram` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `myProgram.read` | — | — | — | — | — | — | ✓ |
+| Key              | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ---------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `myProgram.read` |   —   |     —      |       —       |    —    |    —    |   —    |    ✓    |
 
 ### `operations`
 
 The key below governs the `operations` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `operations.read` | ✓ | ✓ | — | ✓ | ✓ | — | — |
+| Key               | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ----------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `operations.read` |   ✓   |     ✓      |       —       |    ✓    |    ✓    |   —    |    —    |
 
 ### `org`
 
 The key below governs the `org` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `org.delete` | ✓ | — | — | — | — | — | — |
+| Key          | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ------------ | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `org.delete` |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
 
 ### `payouts`
 
 The 4 keys below govern the `payouts` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `payouts.account.manage` | ✓ | — | — | — | — | — | — |
-| `payouts.approve` | ✓ | — | ✓ | — | — | — | — |
-| `payouts.manage` | ✓ | — | ✓ | — | — | — | — |
-| `payouts.read` | ✓ | ✓ | ✓ | — | — | — | — |
+| Key                      | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ------------------------ | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `payouts.account.manage` |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `payouts.approve`        |   ✓   |     —      |       ✓       |    —    |    —    |   —    |    —    |
+| `payouts.manage`         |   ✓   |     —      |       ✓       |    —    |    —    |   —    |    —    |
+| `payouts.read`           |   ✓   |     ✓      |       ✓       |    —    |    —    |   —    |    —    |
 
 ### `programs`
 
 The 4 keys below govern the `programs` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `programs.assign` | ✓ | ✓ | — | ✓ | — | — | — |
-| `programs.manage` | ✓ | ✓ | — | — | — | — | — |
-| `programs.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| `programs.seat.period` | ✓ | ✓ | — | — | — | — | — |
+| Key                    | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ---------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `programs.assign`      |   ✓   |     ✓      |       —       |    ✓    |    —    |   —    |    —    |
+| `programs.manage`      |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
+| `programs.read`        |   ✓   |     ✓      |       ✓       |    ✓    |    —    |   —    |    —    |
+| `programs.seat.period` |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
 
 ### `purchaseOrders`
 
 The 2 keys below govern the `purchaseOrders` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `purchaseOrders.manage` | ✓ | — | ✓ | — | — | — | — |
-| `purchaseOrders.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Key                     | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ----------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `purchaseOrders.manage` |   ✓   |     —      |       ✓       |    —    |    —    |   —    |    —    |
+| `purchaseOrders.read`   |   ✓   |     ✓      |       ✓       |    ✓    |    —    |   —    |    —    |
 
 ### `quality`
 
 The key below governs the `quality` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `quality.read` | ✓ | ✓ | — | ✓ | ✓ | — | — |
+| Key            | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| -------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `quality.read` |   ✓   |     ✓      |       —       |    ✓    |    ✓    |   —    |    —    |
 
 ### `reimbursements`
 
 The key below governs the `reimbursements` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `reimbursements.read` | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Key                   | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| --------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `reimbursements.read` |   ✓   |     ✓      |       ✓       |    ✓    |    —    |   —    |    —    |
 
 ### `settings`
 
 The 4 keys below govern the `settings` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `settings.cancellationPolicy.publish` | ✓ | — | — | — | — | — | — |
-| `settings.manage` | ✓ | ✓ | — | — | — | — | — |
-| `settings.ownerFields` | ✓ | — | — | — | — | — | — |
-| `settings.verification.resubmit` | ✓ | ✓ | — | — | — | — | — |
+| Key                                   | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| ------------------------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `settings.cancellationPolicy.publish` |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `settings.manage`                     |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
+| `settings.ownerFields`                |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `settings.verification.resubmit`      |   ✓   |     ✓      |       —       |    —    |    —    |   —    |    —    |
 
 ### `supportRequests`
 
 The key below governs the `supportRequests` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `supportRequests.org` | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| Key                   | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| --------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `supportRequests.org` |   ✓   |     ✓      |       ✓       |    ✓    |    ✓    |   —    |    —    |
 
 ### `webhooks`
 
 The 3 keys below govern the `webhooks` surface.
 
-| Key | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
-| `webhooks.delete` | ✓ | — | — | — | — | — | — |
-| `webhooks.rotateSecret` | ✓ | — | — | — | — | — | — |
-| `webhooks.subscribe.memberEvents` | ✓ | — | — | — | — | — | — |
+| Key                               | Owner | Maintainer | Billing admin | Manager | Support | Expert | Learner |
+| --------------------------------- | :---: | :--------: | :-----------: | :-----: | :-----: | :----: | :-----: |
+| `webhooks.delete`                 |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `webhooks.rotateSecret`           |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+| `webhooks.subscribe.memberEvents` |   ✓   |     —      |       —       |    —    |    —    |   —    |    —    |
+
+## What each organisation permission key controls
+
+The table below names, for every key in the generated matrix above, the surface it belongs to and what it controls. The ticks live only in the generated matrix, so they cannot drift apart.
+
+| Surface / Domain    | Permission Key                                                                | What It Controls                                                                                                                      |
+| :------------------ | :---------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ |
+| **Activity**        | `activity.read`                                                               | Org activity feed                                                                                                                     |
+| **Appointments**    | `appointments.actForOrg.cancel`                                               | Cancel org-funded 1:1/subscription booking (triggers refund)                                                                          |
+|                     | `appointments.actForOrg.reschedule`                                           | Request reschedule on org-funded 1:1/subscription booking                                                                             |
+|                     | `appointments.allocate.calendarRead`                                          | Read calendar availability for allocation                                                                                             |
+|                     | `appointments.unscheduled.read`                                               | View unscheduled bookings queue                                                                                                       |
+| **Audit**           | `audit.read`                                                                  | Access audit log surface                                                                                                              |
+|                     | `audit.read.money`                                                            | View financial audit events (`WALLET`, `INVOICE`, `PAYOUT`)                                                                           |
+|                     | `audit.read.ops`                                                              | View operational audit events (`MEMBER`, `PROGRAM`, `CATALOG`)                                                                        |
+| **Billing**         | `billing.fundingSource.switch`                                                | Switch `PERSONAL`/`WALLET`/`INVOICE`/`LICENSE` (requires drained wallet if disabling sponsor)                                         |
+|                     | `billing.manage`                                                              | Top up wallet, pay invoices, edit `billingEmail` & `paymentTermsDays`                                                                 |
+|                     | `billing.read`                                                                | View billing account, invoices, wallet balance                                                                                        |
+| **Catalog**         | `catalog.manage`                                                              | Create/edit org-owned offerings & rate cards                                                                                          |
+| **Consent (DPDP)**  | `consent.read` / `consent.requestWithdrawal`                                  | View member DPDP consent status / trigger withdrawal                                                                                  |
+| **Contracts**       | `contracts.manage`                                                            | Create/supersede (`AMENDMENT` / `RENEWAL`) commercial contracts                                                                       |
+|                     | `contracts.read`                                                              | Read commercial contracts                                                                                                             |
+| **Data Exports**    | `dataExports.finance`                                                         | Export invoices, ledger, payouts, reimbursements CSVs                                                                                 |
+|                     | `dataExports.people`                                                          | Export members, utilization, activity CSVs                                                                                            |
+| **Disputes**        | `disputes.read`                                                               | View payment chargebacks                                                                                                              |
+| **Identity (SSO)**  | `identity.manage`                                                             | Configure SAML/OIDC SSO, SCIM tokens, domain verification                                                                             |
+|                     | `identity.read`                                                               | View SSO & domain settings                                                                                                            |
+| **Integrations**    | `integrations.manage`                                                         | Manage outbound webhooks (non-member events) & HRIS                                                                                   |
+| **Invitations**     | `invitations.manage`                                                          | Send/revoke member invitations                                                                                                        |
+| **Materials**       | `materials.manage.orgPlan`                                                    | Add/replace/remove materials on org-owned plans (audited)                                                                             |
+| **Member Content**  | `memberContent.delete`                                                        | **Nobody in org** (ADR 20: private session chats/uploads/recordings are metadata-only to orgs; only platform backoffice can moderate) |
+| **Members**         | `members.directory`                                                           | View basic member directory                                                                                                           |
+|                     | `members.read`                                                                | View detailed member roster & obligations                                                                                             |
+|                     | `members.manage` / `members.role.grant.operational`                           | Grant/change/remove `MANAGER`, `SUPPORT`, `EXPERT`, `LEARNER`                                                                         |
+|                     | `members.role.grant.governance`                                               | Grant/change/remove `OWNER`, `MAINTAINER`, `BILLING_ADMIN`                                                                            |
+|                     | `members.remove.force`                                                        | Force-remove member with active obligations (`?force=true`)                                                                           |
+|                     | `members.payoutRecipient.change`                                              | Flip `EXPERT` between `SELF` and `ORGANIZATION`                                                                                       |
+| **Messaging**       | `messaging.read`                                                              | Read org-level channel metadata                                                                                                       |
+| **Member Views**    | `myArrangement.read`                                                          | Expert's `/compensation` view (shows only their effective RateCard)                                                                   |
+|                     | `myProgram.read`                                                              | Learner's `/my-program` view (shows seat/pool utilization)                                                                            |
+| **Operations**      | `operations.read` / `quality.read`                                            | View operational queues & aggregate quality signals                                                                                   |
+| **Organization**    | `org.delete` / `settings.ownerFields` / `settings.cancellationPolicy.publish` | Delete org, edit `slug`/`canSponsor`/`canHost`/`gstin`/`pan`/`requiresPO`, publish org refund ladder                                  |
+| **Settings**        | `settings.manage` / `settings.verification.resubmit`                          | Edit branding (`name`, `logo`, colors) & resubmit KYB                                                                                 |
+| **Payouts**         | `payouts.account.manage`                                                      | Link/change `OrganizationPayoutAccount` bank/UPI                                                                                      |
+|                     | `payouts.approve` / `payouts.manage`                                          | Create & approve org payout batches (**Two-Person Rule**: creator cannot approve if another active holder exists)                     |
+|                     | `payouts.read`                                                                | View org earnings & payout batches                                                                                                    |
+| **Programs**        | `programs.manage` / `programs.seat.period`                                    | Create/archive programs & extend seat periods                                                                                         |
+|                     | `programs.assign`                                                             | Assign/unassign learners to program seats                                                                                             |
+|                     | `programs.read`                                                               | View programs & assignments                                                                                                           |
+| **Purchase Orders** | `purchaseOrders.manage`                                                       | Create/edit POs                                                                                                                       |
+|                     | `purchaseOrders.read` / `reimbursements.read`                                 | View POs & out-of-pocket reimbursements                                                                                               |
+| **Support**         | `supportRequests.org`                                                         | Raise/view org support cases                                                                                                          |
+| **Webhooks**        | `webhooks.delete` / `rotateSecret` / `subscribe.memberEvents`                 | Delete webhooks, rotate signing secrets, subscribe to PII `member.*` events                                                           |
 
 ## The org PATCH field gate
 
 `PATCH /api/organizations/[orgId]` is the one route whose gate is per field, because a single organization row mixes identity, branding, billing, tax and capability fields. A caller holding `settings.ownerFields` (OWNER) may set every field. Any other caller may touch only the fields inside its remit, and the route returns `403 FIELD_RBAC_FORBIDDEN` naming the offending fields otherwise; the table below lists each remit and the key that grants it.
 
-| Key | Holders | Fields it opens |
-| --- | --- | --- |
-| `settings.ownerFields` | OWNER | Every field, including the slug, `canSponsor` and `canHost`, `gstin`, `pan`, `gstStateCode`, `requiresPO`, the policies and `isPublic`. |
-| `settings.manage` | OWNER, MAINTAINER | `name`, `description`, `industry`, `website`, `sizeBucket`, `logo`, `bannerImage`, `primaryColor` and `secondaryColor`. |
-| `billing.manage` | OWNER, BILLING_ADMIN | `billingEmail` and `paymentTermsDays`. |
+| Key                    | Holders              | Fields it opens                                                                                                                         |
+| ---------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `settings.ownerFields` | OWNER                | Every field, including the slug, `canSponsor` and `canHost`, `gstin`, `pan`, `gstStateCode`, `requiresPO`, the policies and `isPublic`. |
+| `settings.manage`      | OWNER, MAINTAINER    | `name`, `description`, `industry`, `website`, `sizeBucket`, `logo`, `bannerImage`, `primaryColor` and `secondaryColor`.                 |
+| `billing.manage`       | OWNER, BILLING_ADMIN | `billingEmail` and `paymentTermsDays`.                                                                                                  |
 
 ## Who may grant, change or remove which role
 
@@ -333,11 +386,11 @@ Three more changes are finance or governance decisions rather than roster edits,
 
 #1851 sorts every record an organization can reach into three classes, and each class has its own rule. The table below lists them.
 
-| Class | Records | Rule |
-| --- | --- | --- |
-| Org-owned | The catalog, programs, contracts, purchase orders, billing, payouts, settings, integrations and data exports. | An explicit role × action matrix decides every create, read, update, delete and special verb. |
-| Member-owned content | Messages, support chats, a member's uploads and recording content. | Org roles can never change or delete this content, and their oversight is metadata only (ADR 20). A legal or compliance takedown is handled by platform staff in the back office, never by the organization, which is why `memberContent.delete` deliberately holds no role. |
-| Members' bookings and seats | Appointments, occurrences and program seats. | Org roles act only through named, audited verbs, each shown behind an "Acting for <Org>" banner. |
+| Class                       | Records                                                                                                       | Rule                                                                                                                                                                                                                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Org-owned                   | The catalog, programs, contracts, purchase orders, billing, payouts, settings, integrations and data exports. | An explicit role × action matrix decides every create, read, update, delete and special verb.                                                                                                                                                                                |
+| Member-owned content        | Messages, support chats, a member's uploads and recording content.                                            | Org roles can never change or delete this content, and their oversight is metadata only (ADR 20). A legal or compliance takedown is handled by platform staff in the back office, never by the organization, which is why `memberContent.delete` deliberately holds no role. |
+| Members' bookings and seats | Appointments, occurrences and program seats.                                                                  | Org roles act only through named, audited verbs, each shown behind an "Acting for <Org>" banner.                                                                                                                                                                             |
 
 The act-for-org verbs reach only 1:1 and subscription bookings that the organization funds. `resolveOrgActor` in `lib/booking/org-actor.ts` refuses a webinar or class seat, because an org-hosted group session carries the host organization's id and moving or cancelling it would change every attendee's seat; the host changes such a session from Catalog as a whole instead. Rescheduling for the organization needs `appointments.actForOrg.reschedule` (OWNER, MAINTAINER or MANAGER), and cancelling needs `appointments.actForOrg.cancel` (OWNER or MAINTAINER), because a cancel refunds money. Each act-for-org cancel or reschedule request writes an `OrgAuditLog` row in the booking's transaction, with the action `APPOINTMENT_CANCELLED_FOR_ORG` or `APPOINTMENT_RESCHEDULE_REQUESTED_FOR_ORG` in the MEMBER category, because the booking is the member's record.
 
@@ -381,13 +434,13 @@ reset; seeded roles use canonical values.
 enum value and explains what each status means for access; `requireOrgAccess`
 rejects anything that is not `ACTIVE`.
 
-| Value       | Meaning |
-|-------------|---------|
-| `PENDING`   | The member was HRIS auto-provisioned, or is a legacy row from a bulk import made before #1854, and the membership is not yet active. Only accepting an invitation makes such a row ACTIVE; the members PATCH refuses PENDING to ACTIVE with `PENDING_REQUIRES_ACCEPT`. |
-| `ACTIVE`    | The role is live. |
-| `SUSPENDED` | The membership is temporarily blocked, and the API returns a 403 with `"Membership is suspended"`. |
+| Value       | Meaning                                                                                                                                                                                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PENDING`   | The member was HRIS auto-provisioned, or is a legacy row from a bulk import made before #1854, and the membership is not yet active. Only accepting an invitation makes such a row ACTIVE; the members PATCH refuses PENDING to ACTIVE with `PENDING_REQUIRES_ACCEPT`.  |
+| `ACTIVE`    | The role is live.                                                                                                                                                                                                                                                       |
+| `SUSPENDED` | The membership is temporarily blocked, and the API returns a 403 with `"Membership is suspended"`.                                                                                                                                                                      |
 | `REMOVED`   | The member was removed, and the row is retained for audit. REMOVED is not terminal: accepting a new invitation reactivates the same row with the invited role, which keeps its downstream foreign keys. The members PATCH and SCIM can never move a row out of REMOVED. |
-| `ERASED`    | DPDP §12 tombstone, set by the erasure pipeline when a user exercises right-to-erasure. The row remains for audit and financial-trail integrity, but the user identifiers are scrubbed to pseudonymous values (see `User.erasedAt`). |
+| `ERASED`    | DPDP §12 tombstone, set by the erasure pipeline when a user exercises right-to-erasure. The row remains for audit and financial-trail integrity, but the user identifiers are scrubbed to pseudonymous values (see `User.erasedAt`).                                    |
 
 ## Zod narrowers for self-service
 
@@ -448,12 +501,12 @@ membership to one of those global profiles; the operator roles (OWNER,
 MAINTAINER, BILLING_ADMIN, MANAGER, SUPPORT) carry no profile linkage
 at all. The following table states what is allowed across those layers.
 
-| Setup | Allowed? | Why |
-|---|---|---|
-| One user holds both profiles platform-wide | Yes | Profiles are global and non-exclusive. |
-| EXPERT in org A while LEARNER in org B | Yes | Each org gets its own Membership row with its own role and profile link; multi-org experts and learners are first-class (see the scenarios doc). |
-| EXPERT and LEARNER inside the same org | No — by decision (2026-06-07) | `@@unique([userId, organizationId])` allows one role per org, and the LEARNER↔EXPERT transition is blocked. Allowing a dual-side membership would make `ProgramAssignment` attribution ambiguous and open self-dealing (an expert consuming their own org's sponsored budget). The remediation is remove + re-invite, or a second org for genuinely separate capacities. |
-| Operator role plus sponsored consumption in the same org | No | Same single-role constraint; operators have no consumer profile linkage. An operator who needs sponsored sessions takes a LEARNER membership in a different org or books personally funded sessions. |
+| Setup                                                    | Allowed?                      | Why                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| One user holds both profiles platform-wide               | Yes                           | Profiles are global and non-exclusive.                                                                                                                                                                                                                                                                                                                                   |
+| EXPERT in org A while LEARNER in org B                   | Yes                           | Each org gets its own Membership row with its own role and profile link; multi-org experts and learners are first-class (see the scenarios doc).                                                                                                                                                                                                                         |
+| EXPERT and LEARNER inside the same org                   | No — by decision (2026-06-07) | `@@unique([userId, organizationId])` allows one role per org, and the LEARNER↔EXPERT transition is blocked. Allowing a dual-side membership would make `ProgramAssignment` attribution ambiguous and open self-dealing (an expert consuming their own org's sponsored budget). The remediation is remove + re-invite, or a second org for genuinely separate capacities. |
+| Operator role plus sponsored consumption in the same org | No                            | Same single-role constraint; operators have no consumer profile linkage. An operator who needs sponsored sessions takes a LEARNER membership in a different org or books personally funded sessions.                                                                                                                                                                     |
 
 A fourth layer is easy to mistake for a gate on the three above, so it is worth stating plainly that it is not one. `UserRole` is a single nullable scalar on `User` holding one of CONSULTANT, CONSULTEE, ADMIN, STAFF or ORG_WORKSPACE, and it decides two things only: which dashboard a newly onboarded user lands on, and which back-office surfaces they reach through `lib/auth/backoffice-permissions.ts`. No code anywhere reads it when assigning a `MemberRole`. Identity on this platform is driven by which profiles exist, not by that field, which is why the dashboard switcher offers every facet a user holds rather than the single one `UserRole` names. A user whose `UserRole` is CONSULTANT can therefore hold a LEARNER membership without contradiction, and does so routinely.
 
@@ -515,12 +568,12 @@ roles. The entry-point router at `app/dashboard/organization/[orgId]/page.tsx` c
 destination from the role. The table below reads one role per row and gives the
 page it lands on and the reason for that choice.
 
-| Role | Lands on | Why |
-|------|----------|-----|
-| `OWNER` / `MAINTAINER` / `MANAGER` / `SUPPORT` | `/home` | Operator overview (analytics, members, billing). |
-| `LEARNER` | `/my-program` | Per-cycle ProgramAssignment + utilization. The only in-org consumer surface for sponsored bookings. |
-| `EXPERT` | `/compensation` | Membership.payoutRecipient, the expert's own split and recent earnings on org-tagged payments. Since #1860 the split is only the card that applies to this expert, resolved by `resolveEffectiveRateCard` as their membership override, else the org default, else the platform default, and the page never lists the org's other rate cards. |
-| no membership | personal dashboard fallback (`resolvePersonalDashboardHref` → `/dashboard`) | Stranger to this org — bounce out entirely. |
+| Role                                           | Lands on                                                                    | Why                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OWNER` / `MAINTAINER` / `MANAGER` / `SUPPORT` | `/home`                                                                     | Operator overview (analytics, members, billing).                                                                                                                                                                                                                                                                                              |
+| `LEARNER`                                      | `/my-program`                                                               | Per-cycle ProgramAssignment + utilization. The only in-org consumer surface for sponsored bookings.                                                                                                                                                                                                                                           |
+| `EXPERT`                                       | `/compensation`                                                             | Membership.payoutRecipient, the expert's own split and recent earnings on org-tagged payments. Since #1860 the split is only the card that applies to this expert, resolved by `resolveEffectiveRateCard` as their membership override, else the org default, else the platform default, and the page never lists the org's other rate cards. |
+| no membership                                  | personal dashboard fallback (`resolvePersonalDashboardHref` → `/dashboard`) | Stranger to this org — bounce out entirely.                                                                                                                                                                                                                                                                                                   |
 
 Both `/my-program` and `/compensation` are read-only in v1. A LEARNER
 cannot self-assign to a Program; an EXPERT cannot flip their own
@@ -537,6 +590,32 @@ suppressed. The "Personal
 Dashboard" footer chip on the sidebar (`resolvePersonalDashboardHref`)
 stays so consumers can hop back to their personal surface without
 hunting for the URL.
+
+## `?orgScope=` resolution and automatic downgrade (`lib/api/scope/parse.ts`)
+
+Every multi-tenant list endpoint calls `resolveOrgScope()` to turn the caller's session and the `?orgScope=` query parameter into one of four scope kinds, and the scoped list helpers in `lib/api/scope/` build their Prisma filters from that kind. A member who lacks the `operations.read` permission is downgraded to their own rows rather than refused, so a learner or an expert can still open the organisation view and see only their own sessions.
+
+```text
+resolveOrgScope({ raw, userId, userRole, memberships })
+  |
+  +-- raw missing, "mine" or "personal"
+  |     -> { kind: "personal" }
+  |
+  +-- raw === "all"
+  |     |-- userRole is ADMIN or STAFF -> { kind: "all" }  (unfiltered backoffice view)
+  |     +-- anyone else                -> 403 (never silently downgraded)
+  |
+  +-- raw === "<orgId>"
+        |-- no ACTIVE membership in that org                 -> 403
+        |-- org status not in ORG_SCOPE_READABLE_STATUSES    -> 403
+        |     (PENDING_VERIFICATION, ACTIVE, SUSPENDED are readable)
+        |-- role holds operations.read (OWNER, MAINTAINER, MANAGER, SUPPORT)
+        |     -> { kind: "org", orgId }        organisation-wide rows
+        +-- any other role (BILLING_ADMIN, EXPERT, LEARNER)
+              -> { kind: "orgMember", orgId, userId }   only the caller's own rows in that org
+```
+
+For example, Olivia Anderson, a learner at Wipro, sees only her own Wipro-sponsored bookings, and Aarav Anderson, an expert at LearnPro Academy, sees only his own sessions. Every scoped list helper ends its `switch` with `assertNeverScope(scope)`, so a scope kind added later fails closed at compile time instead of falling through to the unfiltered `all` branch.
 
 ## Related docs
 

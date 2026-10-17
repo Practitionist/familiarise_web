@@ -95,19 +95,19 @@ flowchart TD
 
 `kind` is a value of the `LedgerTransactionKind` enum, paired with a structured `idempotencyKey`. The enum (verbatim) is `BOOKING · TOPUP · TOPUP_REFUND · INVOICE_ISSUED · INVOICE_PAID · INVOICE_REFUND · PAYOUT · ORG_PAYOUT · REFUND · OVERAGE_MEMBER · GRANT · REFERRAL_CREDIT · UNAPPLIED_RECEIPT`:
 
-| `kind`              | `idempotencyKey`                                                                               | Posted by                                                                                                                                       |
-| ------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TOPUP`             | `topup:<providerOrderId>`                                                                      | `walletCredit()` — `lib/api/organizations/wallet.ts`                                                                                            |
-| `BOOKING`           | `booking:<paymentId>`                                                                          | `createEarningsFromPayment()` — `lib/payments/payouts/earnings-service.ts`                                                                      |
-| `INVOICE_ISSUED`    | `invoice-issued:<invoiceId>`, `invoice-voided:<invoiceId>`, `overage-accrual:<childPaymentId>` | invoice issue and void — `lib/payments/billing/org-invoice-journal.ts`; CHARGE_ORG child accrual — `lib/payments/billing/overage-settlement.ts` |
-| `INVOICE_PAID`      | `invoicepaid:<invoiceId>`                                                                      | invoice-paid webhook — `app/api/webhooks/utils.ts`                                                                                              |
-| `INVOICE_REFUND`    | `invoice-refund:<refundId>`                                                                    | invoice refund webhook — `app/api/webhooks/utils.ts`                                                                                            |
-| `TOPUP_REFUND`      | `topup-refund:<providerPaymentId>`                                                             | refund webhook — `app/api/webhooks/utils.ts`                                                                                                    |
-| `REFUND`            | `refund:<refundId>`                                                                            | refund cascade — `lib/payments/operations/refund.ts`                                                                                            |
-| `PAYOUT`            | `payout:<payoutId>`                                                                            | consultant payout — `lib/payments/payouts/payout-service.ts`                                                                                    |
-| `ORG_PAYOUT`        | `orgpayout:<payoutId>`                                                                         | host-org payout — `lib/payments/payouts/org-payout-service.ts`                                                                                  |
+| `kind`              | `idempotencyKey`                                                                               | Posted by                                                                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TOPUP`             | `topup:<providerOrderId>`                                                                      | `walletCredit()` — `lib/api/organizations/wallet.ts`                                                                                                   |
+| `BOOKING`           | `booking:<paymentId>`                                                                          | `createEarningsFromPayment()` — `lib/payments/payouts/earnings-service.ts`                                                                             |
+| `INVOICE_ISSUED`    | `invoice-issued:<invoiceId>`, `invoice-voided:<invoiceId>`, `overage-accrual:<childPaymentId>` | invoice issue and void — `lib/payments/billing/org-invoice-journal.ts`; CHARGE_ORG child accrual — `lib/payments/billing/overage-settlement.ts`        |
+| `INVOICE_PAID`      | `invoicepaid:<invoiceId>`                                                                      | invoice-paid webhook — `app/api/webhooks/utils.ts`                                                                                                     |
+| `INVOICE_REFUND`    | `invoice-refund:<refundId>`                                                                    | invoice refund webhook — `app/api/webhooks/utils.ts`                                                                                                   |
+| `TOPUP_REFUND`      | `topup-refund:<providerPaymentId>`                                                             | refund webhook — `app/api/webhooks/utils.ts`                                                                                                           |
+| `REFUND`            | `refund:<refundId>`                                                                            | refund cascade — `lib/payments/operations/refund.ts`                                                                                                   |
+| `PAYOUT`            | `payout:<payoutId>`                                                                            | consultant payout — `lib/payments/payouts/payout-service.ts`                                                                                           |
+| `ORG_PAYOUT`        | `orgpayout:<payoutId>`                                                                         | host-org payout — `lib/payments/payouts/org-payout-service.ts`                                                                                         |
 | `OVERAGE_MEMBER`    | `overage:<sideChargePaymentId>`                                                                | CHARGE_MEMBER overage settle — `lib/payments/webhooks/overage-handlers.ts` (see [§4.8](#48-member-overage--overage_member-overagesidechargepaymentid)) |
-| `UNAPPLIED_RECEIPT` | `unapplied:<paymentId>`, `unapplied-released:<paymentId>`                                      | a capture that funds no booking parks its cash, and an operator recovery releases it — `lib/payments/ledger/unapplied-receipts.ts`              |
+| `UNAPPLIED_RECEIPT` | `unapplied:<paymentId>`, `unapplied-released:<paymentId>`                                      | a capture that funds no booking parks its cash, and an operator recovery releases it — `lib/payments/ledger/unapplied-receipts.ts`                     |
 
 **`GRANT` is declared but posts no journal leg today.** `INVOICE_ISSUED` posts only for an invoice that bills a supply no booking journal has booked — a licence subscription fee or a manual programme or contract fee (§4.3a). An invoice that bills bookings (the accrual rollup, which stamps `billedPayments`) posts nothing at issue, because each booking already debited `ORG_RECEIVABLE` and credited `GST_PAYABLE` in its own transaction; **payment** is what clears the receivable in both cases.
 
@@ -273,6 +273,278 @@ The side-`Payment` carries a single `CARD` leg (`sourceRef` = gateway order id),
 - **Don't post in a non-INR currency** — leave `AccountRef.currency` unset (§5.5).
 
 ---
+
+## 7. The twenty ledger permutations
+
+Every financial state change in `familiarise_web` maps to one of the **20 canonical double-entry ledger permutations** below. In every permutation, `∑ Debit === ∑ Credit` is enforced at `COMMIT` by the deferred constraint trigger `ledger_txn_balanced`:
+
+### Permutation 1: Standard B2C Direct Card Booking
+
+- **Context**: List price ₹1,000 + 18% GST (₹180) = ₹1,180 charged to card. 20% platform commission (₹200).
+- **Idempotency Key**: `booking:pay_b2c_std`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                            |
+| :------------------------ | :-------- | -------------: | -------------: | :------------------------------- |
+| `CASH`                    | `DEBIT`   |        118,000 |      ₹1,180.00 | Gateway gross card collection    |
+| `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | 20% platform revenue cut         |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | 80% consultant share             |
+| `GST_PAYABLE`             | `CREDIT`  |         18,000 |        ₹180.00 | 18% Output GST (Principal model) |
+
+- **Balance Check**: `∑ Debit = 118,000 == ∑ Credit = 118,000 ✓`
+
+### Permutation 2: B2C Card Booking with Partial Referral Credit
+
+- **Context**: List ₹1,000 + GST ₹180 = ₹1,180. User applies ₹500 referral credit. Net gateway charge = ₹680.
+- **Idempotency Key**: `booking:pay_b2c_split_credit`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                             |
+| :------------------------ | :-------- | -------------: | -------------: | :-------------------------------- |
+| `CASH`                    | `DEBIT`   |         68,000 |        ₹680.00 | Net cash charged to gateway       |
+| `PLATFORM_PROMO`          | `DEBIT`   |         50,000 |        ₹500.00 | Platform-absorbed referral credit |
+| `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | Commission on full nominal base   |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | Consultant receives full earnings |
+| `GST_PAYABLE`             | `CREDIT`  |         18,000 |        ₹180.00 | 18% GST on full nominal base      |
+
+- **Balance Check**: `∑ Debit = 118,000 == ∑ Credit = 118,000 ✓`
+
+### Permutation 3: B2C Booking with Platform Discount / Coupon
+
+- **Context**: List ₹1,000 with ₹200 coupon. Discounted base = ₹800 + 18% GST (₹144) = ₹944 charged to card.
+- **Idempotency Key**: `booking:pay_b2c_coupon`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                  |
+| :------------------------ | :-------- | -------------: | -------------: | :------------------------------------- |
+| `CASH`                    | `DEBIT`   |         94,400 |        ₹944.00 | Discounted price + GST charged to card |
+| `DISCOUNT`                | `DEBIT`   |         20,000 |        ₹200.00 | Platform-absorbed discount plug        |
+| `PLATFORM_FEE`            | `CREDIT`  |         20,000 |        ₹200.00 | Platform commission base               |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | Consultant share of nominal list       |
+| `GST_PAYABLE`             | `CREDIT`  |         14,400 |        ₹144.00 | 18% GST on discounted base             |
+
+- **Balance Check**: `∑ Debit = 114,400 == ∑ Credit = 114,400 ✓`
+
+### Permutation 4: 100% Free Referral-Funded Booking
+
+- **Context**: ₹500 consultation fully paid using ₹590 referral credits (covering base + 18% GST). Card charge = ₹0.
+- **Idempotency Key**: `booking:pay_b2c_100free`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                |
+| :------------------------ | :-------- | -------------: | -------------: | :----------------------------------- |
+| `PLATFORM_PROMO`          | `DEBIT`   |         59,000 |        ₹590.00 | Platform absorbs 100% of price & tax |
+| `PLATFORM_FEE`            | `CREDIT`  |         10,000 |        ₹100.00 | Platform fee accounting allocation   |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         40,000 |        ₹400.00 | Consultant owed their delivery fee   |
+| `GST_PAYABLE`             | `CREDIT`  |          9,000 |         ₹90.00 | 18% GST remitted to government       |
+
+- **Balance Check**: `∑ Debit = 59,000 == ∑ Credit = 59,000 ✓`
+
+### Permutation 5: Backoffice Administrative Referral Credit Revocation (`#1844`)
+
+- **Context**: Admin revokes ₹1,000 unspent referral credit due to abuse or expiration.
+- **Idempotency Key**: `credit-revoke:crd_bad_991`
+
+| Account          | Direction | Amount (Paise) | Display Amount | Notes                               |
+| :--------------- | :-------- | -------------: | -------------: | :---------------------------------- |
+| `PLATFORM_FEE`   | `DEBIT`   |        100,000 |      ₹1,000.00 | De-allocates platform promo reserve |
+| `PLATFORM_PROMO` | `CREDIT`  |        100,000 |      ₹1,000.00 | Reverses contra-revenue liability   |
+
+- **Balance Check**: `∑ Debit = 100,000 == ∑ Credit = 100,000 ✓`
+
+### Permutation 6: Organization Wallet Top-Up
+
+- **Context**: Client org `org_wipro` tops up prepaid balance by ₹5,00,000.
+- **Idempotency Key**: `topup:order_topup_882`
+
+| Account             | Direction | Amount (Paise) | Display Amount | Notes                                  |
+| :------------------ | :-------- | -------------: | -------------: | :------------------------------------- |
+| `CASH`              | `DEBIT`   |     50,000,000 |   ₹5,00,000.00 | Bank deposit / payment gateway receipt |
+| `WALLET(org_wipro)` | `CREDIT`  |     50,000,000 |   ₹5,00,000.00 | Prepaid balance liability credited     |
+
+- **Balance Check**: `∑ Debit = 50,000,000 == ∑ Credit = 50,000,000 ✓`
+
+### Permutation 7: B2B Prepaid Wallet Booking (Direct Consultant)
+
+- **Context**: Employee books session using company wallet. Price ₹2,000 + 18% GST (₹360) = ₹2,360.
+- **Idempotency Key**: `booking:pay_org_wlt_dir`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :------------------------ | :-------- | -------------: | -------------: | :--------------------------------- |
+| `WALLET(org_wipro)`       | `DEBIT`   |        236,000 |      ₹2,360.00 | Atomic decrement of wallet balance |
+| `PLATFORM_FEE`            | `CREDIT`  |         40,000 |        ₹400.00 | 20% platform commission            |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |        160,000 |      ₹1,600.00 | 80% consultant share               |
+| `GST_PAYABLE`             | `CREDIT`  |         36,000 |        ₹360.00 | 18% Output GST                     |
+
+- **Balance Check**: `∑ Debit = 236,000 == ∑ Credit = 236,000 ✓`
+
+### Permutation 8: B2B Wallet Booking with 3-Way Split (Host Academy)
+
+- **Context**: Session with consultant affiliated with `org_learnpro` (Host Org). Rate card: Platform 10%, Host Org 20%, Consultant 70%. Base ₹10,000 + GST ₹1,800 = ₹11,800.
+- **Idempotency Key**: `booking:pay_3way_split`
+
+| Account                     | Direction | Amount (Paise) | Display Amount | Notes                            |
+| :-------------------------- | :-------- | -------------: | -------------: | :------------------------------- |
+| `WALLET(org_wipro)`         | `DEBIT`   |      1,180,000 |     ₹11,800.00 | Corporate wallet debited in full |
+| `PLATFORM_FEE`              | `CREDIT`  |        100,000 |      ₹1,000.00 | 10% platform share               |
+| `ORG_PAYABLE(org_learnpro)` | `CREDIT`  |        200,000 |      ₹2,000.00 | 20% host organization share      |
+| `CONSULTANT_PAYABLE(c_1)`   | `CREDIT`  |        700,000 |      ₹7,000.00 | 70% expert delivery share        |
+| `GST_PAYABLE`               | `CREDIT`  |        180,000 |      ₹1,800.00 | 18% Output GST                   |
+
+- **Balance Check**: `∑ Debit = 1,180,000 == ∑ Credit = 1,180,000 ✓`
+
+### Permutation 9: B2B Postpaid Invoice Accrual (Monthly Invoiced Booking)
+
+- **Context**: Booking on `INVOICE` rail. Base ₹5,000 + GST ₹900 = ₹5,900. No immediate funds move.
+- **Idempotency Key**: `booking:pay_inv_accrual`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                               |
+| :------------------------ | :-------- | -------------: | -------------: | :---------------------------------- |
+| `ORG_RECEIVABLE(org_tcs)` | `DEBIT`   |        590,000 |      ₹5,900.00 | Unbilled accrual owed by enterprise |
+| `PLATFORM_FEE`            | `CREDIT`  |        100,000 |      ₹1,000.00 | Accrued commission revenue          |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |        400,000 |      ₹4,000.00 | Earnings held for delivery          |
+| `GST_PAYABLE`             | `CREDIT`  |         90,000 |        ₹900.00 | GST liability recognized            |
+
+- **Balance Check**: `∑ Debit = 590,000 == ∑ Credit = 590,000 ✓`
+
+### Permutation 10: Settlement of Monthly Enterprise Invoice (`INVOICE_PAID`)
+
+- **Context**: `org_tcs` wires ₹1,18,000 settling their consolidated monthly invoice.
+- **Idempotency Key**: `invoicepaid:inv_oct_2026_01`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :------------------------ | :-------- | -------------: | -------------: | :--------------------------------- |
+| `CASH`                    | `DEBIT`   |     11,800,000 |   ₹1,18,000.00 | Bank deposit receipt               |
+| `ORG_RECEIVABLE(org_tcs)` | `CREDIT`  |     11,800,000 |   ₹1,18,000.00 | Clears monthly accounts receivable |
+
+- **Balance Check**: `∑ Debit = 11,800,000 == ∑ Credit = 11,800,000 ✓`
+
+### Permutation 11: Consultant Payout with Exact bps TDS (Section 194-O)
+
+- **Context**: Consultant payout batch of ₹80,000 gross. Section 194-O rate = 10 bps (0.10%). Math: `(8,000,000 * 10) / 10,000 = 8,000 paise` (₹80.00). Net transfer = ₹79,920.
+- **Idempotency Key**: `payout:pout_cons_991`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                |
+| :------------------------ | :-------- | -------------: | -------------: | :----------------------------------- |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |      8,000,000 |     ₹80,000.00 | Settles consultant liability in full |
+| `CASH`                    | `CREDIT`  |      7,992,000 |     ₹79,920.00 | Net wire via RazorpayX               |
+| `TDS_PAYABLE`             | `CREDIT`  |          8,000 |         ₹80.00 | Exact 10 bps statutory withholding   |
+
+- **Balance Check**: `∑ Debit = 8,000,000 == ∑ Credit = 8,000,000 ✓`
+
+### Permutation 12: Host Organization Payout Disbursement (`ORG_PAYOUT`)
+
+- **Context**: Payout to `org_learnpro` of ₹2,00,000 gross. Section 194-O TDS @ 10 bps = ₹200. Net wire = ₹1,99,800.
+- **Idempotency Key**: `orgpayout:pout_org_552`
+
+| Account                     | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :-------------------------- | :-------- | -------------: | -------------: | :--------------------------------- |
+| `ORG_PAYABLE(org_learnpro)` | `DEBIT`   |     20,000,000 |   ₹2,00,000.00 | Gross host org share cleared       |
+| `CASH`                      | `CREDIT`  |     19,980,000 |   ₹1,99,800.00 | Net wire to corporate bank account |
+| `TDS_PAYABLE`               | `CREDIT`  |         20,000 |        ₹200.00 | Withholding under Section 194-O    |
+
+- **Balance Check**: `∑ Debit = 20,000,000 == ∑ Credit = 20,000,000 ✓`
+
+### Permutation 13: Host Org Payout Post-Completion Bank Bounce / Reversal
+
+- **Context**: Permutation 12 is returned by the bank due to invalid account details (`markOrgPayoutReversed`).
+- **Idempotency Key**: `orgpayout-reversal:pout_org_552`
+
+| Account                     | Direction | Amount (Paise) | Display Amount | Notes                              |
+| :-------------------------- | :-------- | -------------: | -------------: | :--------------------------------- |
+| `CASH`                      | `DEBIT`   |     19,980,000 |   ₹1,99,800.00 | Funds returned to platform bank    |
+| `TDS_PAYABLE`               | `DEBIT`   |         20,000 |        ₹200.00 | Tax withholding liability reversed |
+| `ORG_PAYABLE(org_learnpro)` | `CREDIT`  |     20,000,000 |   ₹2,00,000.00 | Re-opens payable owed to host org  |
+
+- **Balance Check**: `∑ Debit = 20,000,000 == ∑ Credit = 20,000,000 ✓`
+
+### Permutation 14: Payout Clawback (Refund on Already-Disbursed Earnings)
+
+- **Context**: A booking is cancelled/refunded, but the consultant has already received the payout. Platform claws back the debt from the consultant's balance.
+- **Idempotency Key**: `clawback:rfnd_123:pout_cons_991`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                               |
+| :------------------------ | :-------- | -------------: | -------------: | :---------------------------------- |
+| `CASH`                    | `DEBIT`   |         80,000 |        ₹800.00 | Cash recovery from payout debt      |
+| `CONSULTANT_PAYABLE(c_1)` | `CREDIT`  |         80,000 |        ₹800.00 | Offsets negative consultant balance |
+
+- **Balance Check**: `∑ Debit = 80,000 == ∑ Credit = 80,000 ✓`
+
+### Permutation 15: Full Refund of B2C Card Booking (`REFUND`)
+
+- **Context**: Reversing Permutation 1 (₹1,180 card booking).
+- **Idempotency Key**: `refund:rfnd_b2c_full`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                    |
+| :------------------------ | :-------- | -------------: | -------------: | :--------------------------------------- |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |         80,000 |        ₹800.00 | Consultant earnings debited              |
+| `GST_PAYABLE`             | `DEBIT`   |         18,000 |        ₹180.00 | Reverses Output GST (Credit Note issued) |
+| `PLATFORM_FEE`            | `DEBIT`   |         20,000 |        ₹200.00 | Platform fee plug debited                |
+| `CASH`                    | `CREDIT`  |        118,000 |      ₹1,180.00 | Gateway refund returns cash to card      |
+
+- **Balance Check**: `∑ Debit = 118,000 == ∑ Credit = 118,000 ✓`
+
+### Permutation 16: Partial Refund (50% Cancellation Tier)
+
+- **Context**: Permutation 1 cancelled within 2–24h notice window (50% tier). Consultee receives ₹590.
+- **Idempotency Key**: `refund:rfnd_b2c_half`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                     |
+| :------------------------ | :-------- | -------------: | -------------: | :---------------------------------------- |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |         40,000 |        ₹400.00 | 50% prorated consultant earnings clawback |
+| `GST_PAYABLE`             | `DEBIT`   |          9,000 |         ₹90.00 | 50% tax reversal via Credit Note          |
+| `PLATFORM_FEE`            | `DEBIT`   |         10,000 |        ₹100.00 | 50% platform fee reversed                 |
+| `CASH`                    | `CREDIT`  |         59,000 |        ₹590.00 | Gateway partial refund to buyer           |
+
+- **Balance Check**: `∑ Debit = 59,000 == ∑ Credit = 59,000 ✓`
+
+### Permutation 17: Full Refund of B2B Wallet Booking
+
+- **Context**: Reversing Permutation 7 (₹2,360 wallet booking). Re-credits corporate wallet balance.
+- **Idempotency Key**: `refund:rfnd_wlt_rev`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                 |
+| :------------------------ | :-------- | -------------: | -------------: | :------------------------------------ |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |        160,000 |      ₹1,600.00 | Consultant earnings reversed          |
+| `GST_PAYABLE`             | `DEBIT`   |         36,000 |        ₹360.00 | Tax reversed                          |
+| `PLATFORM_FEE`            | `DEBIT`   |         40,000 |        ₹400.00 | Platform fee reversed                 |
+| `WALLET(org_wipro)`       | `CREDIT`  |        236,000 |      ₹2,360.00 | Wallet balance re-credited atomically |
+
+- **Balance Check**: `∑ Debit = 236,000 == ∑ Credit = 236,000 ✓`
+
+### Permutation 18: Full Refund of B2B Invoice-Accrued Booking
+
+- **Context**: Reversing Permutation 9 (₹5,900 invoiced booking).
+- **Idempotency Key**: `refund:rfnd_inv_rev`
+
+| Account                   | Direction | Amount (Paise) | Display Amount | Notes                                  |
+| :------------------------ | :-------- | -------------: | -------------: | :------------------------------------- |
+| `CONSULTANT_PAYABLE(c_1)` | `DEBIT`   |        400,000 |      ₹4,000.00 | Consultant earnings reversed           |
+| `GST_PAYABLE`             | `DEBIT`   |         90,000 |        ₹900.00 | Output GST reversed                    |
+| `PLATFORM_FEE`            | `DEBIT`   |        100,000 |      ₹1,000.00 | Platform fee reversed                  |
+| `ORG_RECEIVABLE(org_tcs)` | `CREDIT`  |        590,000 |      ₹5,900.00 | Clears unbilled accrual before invoice |
+
+- **Balance Check**: `∑ Debit = 590,000 == ∑ Credit = 590,000 ✓`
+
+### Permutation 19: Member Overage Side-Charge Settlement (`OVERAGE_MEMBER`)
+
+- **Context**: Employee books past corporate cap and pays ₹1,000 marginal directly via personal card. This provides an org-relief credit.
+- **Idempotency Key**: `overage:pay_side_charge_44`
+
+| Account                  | Direction | Amount (Paise) | Display Amount | Notes                                  |
+| :----------------------- | :-------- | -------------: | -------------: | :------------------------------------- |
+| `CASH`                   | `DEBIT`   |        100,000 |      ₹1,000.00 | Collected from member's personal card  |
+| `ORG_PAYABLE(org_wipro)` | `CREDIT`  |        100,000 |      ₹1,000.00 | Relief credit realized by organization |
+
+- **Balance Check**: `∑ Debit = 100,000 == ∑ Credit = 100,000 ✓`
+
+### Permutation 20: Member Overage Late-Capture Invoice Recarve (`#1900`)
+
+- **Context**: Employee side-charge was initially marked `FAILED` (so `basePaise` ₹800 was restored to the parent invoice accrual). The member later pays via late capture (`FAILED → CHARGED`). The engine reverses the invoice accrual on the parent invoice to prevent double collection.
+- **Idempotency Key**: `overage-recarve-invoice:pay_side_charge_44`
+
+| Account                     | Direction | Amount (Paise) | Display Amount | Notes                           |
+| :-------------------------- | :-------- | -------------: | -------------: | :------------------------------ |
+| `PLATFORM_FEE`              | `DEBIT`   |         80,000 |        ₹800.00 | Clears restored accrual plug    |
+| `ORG_RECEIVABLE(org_wipro)` | `CREDIT`  |         80,000 |        ₹800.00 | Reverses parent invoice accrual |
+
+- **Balance Check**: `∑ Debit = 80,000 == ∑ Credit = 80,000 ✓`
 
 ## Balance reads — aggregated from the journal
 
