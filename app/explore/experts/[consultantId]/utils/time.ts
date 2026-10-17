@@ -1,3 +1,5 @@
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+
 // Helper function to round 59 minutes to next hour
 export const roundTime = (timeString: string): string => {
   // Parse time like "4:59 PM" or "11:59 AM"
@@ -58,4 +60,29 @@ export const getLocalDay = (date: Date, timezone: string): number => {
   return new Date(
     date.toLocaleString("en-US", { timeZone: timezone }),
   ).getDay();
+};
+
+/**
+ * The fetch window for week `weekOffset` counted from `now`, in `timeZone`:
+ * local midnight to the local midnight seven days later, end exclusive, so the
+ * last 23:30 atom of the week is inside it.
+ */
+export const zonedWeekWindow = (
+  now: Date,
+  weekOffset: number,
+  timeZone: string,
+): { start: Date; end: Date } => {
+  const [year, month, day] = formatInTimeZone(now, timeZone, "yyyy-MM-dd")
+    .split("-")
+    .map(Number);
+  const midnight = (daysAhead: number) => {
+    const key = new Date(Date.UTC(year, month - 1, day + daysAhead))
+      .toISOString()
+      .slice(0, 10);
+    return fromZonedTime(`${key}T00:00:00`, timeZone);
+  };
+  return {
+    start: midnight(weekOffset * 7),
+    end: midnight(weekOffset * 7 + 7),
+  };
 };

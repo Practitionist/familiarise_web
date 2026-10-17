@@ -67,6 +67,11 @@ const weeklyRow = (
   endDay: day,
   endTimeUtc: endHourUtc * 60,
   utcOffsetMinutes: 0,
+  timezone: "UTC",
+  localStartDay: day,
+  localStartMinutes: startHourUtc * 60,
+  localEndMinutes: endHourUtc * 60,
+  localEndDay: day,
 });
 
 /** Monday 2025-01-06, the first Monday after the frozen clock. */

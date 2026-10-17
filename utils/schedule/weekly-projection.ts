@@ -1,23 +1,16 @@
 import type { DayOfWeek } from "@prisma/client";
-import { resolveOvernightStatus } from "@/utils/schedule/overnight";
+import { formatInTimeZone } from "date-fns-tz";
 
 /**
- * Projecting a weekly availability row onto real dates (#1342, #1343).
+ * Projecting a weekly availability row onto real instants.
  *
- * `AvailabilityWindowWeekly.startDay` is the day the CONSULTANT published, in
- * their own local calendar; `startTimeUtc`/`endTimeUtc` are minutes since
- * midnight UTC and `utcOffsetMinutes` is the offset frozen at write time. The
- * UTC weekday a row lands on is therefore derived, never stored and never
- * taken from whoever happens to be looking: an IST Monday 01:00 row is a UTC
- * Sunday 19:30 instant, and a New York viewer looking at the same row must see
- * the same instant. That derivation existed in three copies (the validator and
- * two allocator helpers) and was missing entirely from the grid, which matched
- * on the VIEWER's weekday instead — the grid then painted the row a day away
- * from where checkout would accept it.
+ * A weekly row means "this local wall-clock window, every week, in this IANA
+ * zone": `localStartDay` + `localStartMinutes`..`localEndMinutes` in `timezone`.
+ * Each occurrence is materialised per local date through the zone's own rules,
+ * so a New York Monday 09:00 row is 13:00Z in summer and 14:00Z in winter.
  *
- * Same posture as `utils/schedule/overnight.ts`: type-only Prisma import, no
- * Sentry, no prisma, no date-fns, so the client bundle, jsdom tests and the
- * allocator can all share one generator.
+ * Type-only Prisma import and no server-only modules: the client bundle, jsdom
+ * tests and the allocator all share this one generator.
  */
 
 /** DayOfWeek to JS `getUTCDay()` index. */
@@ -44,21 +37,10 @@ export const DAY_BY_INDEX: DayOfWeek[] = [
 
 const MINUTES_PER_DAY = 1440;
 const MS_PER_MINUTE = 60_000;
-
-export interface WeeklyRowTimes {
-  /** The consultant's LOCAL day (#1343). */
-  startDay: DayOfWeek;
-  /**
-   * Optional: whether a row crosses midnight is decided by the minutes below,
-   * because `validateWeeklySlotTimeOrder` only lets a row store
-   * `startDay !== endDay` together with `startTimeUtc > endTimeUtc`. Callers
-   * that hold only the start day (the validator) can omit it.
-   */
-  endDay?: DayOfWeek;
-  startTimeUtc: number;
-  endTimeUtc: number;
-  utcOffsetMinutes?: number | null;
-}
+const MS_PER_DAY = MINUTES_PER_DAY * MS_PER_MINUTE;
+const MS_PER_WEEK = 7 * MS_PER_DAY;
+/** Wider than any UTC offset (±14 h) plus a day, so the probes bracket a whole local date. */
+const OFFSET_PROBE_MS = 36 * 60 * MS_PER_MINUTE;
 
 /** JS day index for a DayOfWeek string, or -1 when it is not one. */
 export function dayIndexOf(day: string): number {
@@ -66,101 +48,7 @@ export function dayIndexOf(day: string): number {
   return index === undefined ? -1 : index;
 }
 
-/**
- * The UTC weekday the row's start instant falls on, derived from the local day
- * through the row's own frozen offset:
- * `utcDay = (localDay − floor((startTimeUtc + offset) / 1440)) mod 7`.
- * Returns -1 for an unrecognised day so callers can drop the row.
- */
-export function utcStartDayIndex(
-  row: Pick<WeeklyRowTimes, "startDay" | "startTimeUtc" | "utcOffsetMinutes">,
-): number {
-  const localDay = dayIndexOf(row.startDay);
-  if (localDay === -1) return -1;
-  const localStartMinutes = row.startTimeUtc + (row.utcOffsetMinutes ?? 0);
-  const dayAdjust = Math.floor(localStartMinutes / MINUTES_PER_DAY);
-  return (((localDay - dayAdjust) % 7) + 7) % 7;
-}
-
-/**
- * How long the row runs, in minutes. Overnight is read off the UTC minutes
- * rather than the day pair so this agrees with `isMinuteWithinWeeklySlot`,
- * which is the rule checkout enforces: a legacy row whose day pair and minutes
- * disagree would otherwise be generated at one length and validated at
- * another (#1342).
- */
-export function weeklyRowDurationMinutes(
-  row: Pick<WeeklyRowTimes, "startTimeUtc" | "endTimeUtc">,
-): number {
-  const { isOvernight } = resolveOvernightStatus({
-    startTimeUtc: row.startTimeUtc,
-    endTimeUtc: row.endTimeUtc,
-  });
-  return isOvernight
-    ? MINUTES_PER_DAY - row.startTimeUtc + row.endTimeUtc
-    : row.endTimeUtc - row.startTimeUtc;
-}
-
-/**
- * Every occurrence of the row inside `[rangeStartUtc, rangeEndUtc)`, as
- * half-open UTC instants. This is the one generator every surface shares — the
- * grid, the allocator's next-occurrence and day-match helpers, and the pin that
- * asserts the grid and the validator agree.
- *
- * The walk starts one UTC day before the range so an overnight occurrence that
- * began before it keeps its tail, and each candidate is kept only when it
- * actually overlaps the range.
- */
-export function weeklyRowOccurrencesInRange(
-  row: WeeklyRowTimes,
-  rangeStartUtc: Date,
-  rangeEndUtc: Date,
-): { start: Date; end: Date }[] {
-  const occurrences: { start: Date; end: Date }[] = [];
-  if (
-    !rangeStartUtc ||
-    !rangeEndUtc ||
-    isNaN(rangeStartUtc.getTime()) ||
-    isNaN(rangeEndUtc.getTime()) ||
-    rangeEndUtc.getTime() <= rangeStartUtc.getTime()
-  ) {
-    return occurrences;
-  }
-
-  const targetDay = utcStartDayIndex(row);
-  if (targetDay === -1) return occurrences;
-
-  const durationMinutes = weeklyRowDurationMinutes(row);
-  if (durationMinutes <= 0) return occurrences;
-
-  const cursor = new Date(
-    Date.UTC(
-      rangeStartUtc.getUTCFullYear(),
-      rangeStartUtc.getUTCMonth(),
-      rangeStartUtc.getUTCDate(),
-    ),
-  );
-  cursor.setUTCDate(cursor.getUTCDate() - 1);
-
-  while (cursor.getTime() < rangeEndUtc.getTime()) {
-    if (cursor.getUTCDay() === targetDay) {
-      const start = new Date(
-        cursor.getTime() + row.startTimeUtc * MS_PER_MINUTE,
-      );
-      const end = new Date(start.getTime() + durationMinutes * MS_PER_MINUTE);
-      if (
-        end.getTime() > rangeStartUtc.getTime() &&
-        start.getTime() < rangeEndUtc.getTime()
-      ) {
-        occurrences.push({ start, end });
-      }
-    }
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-
-  return occurrences;
-}
-
+/** The five DST columns a weekly row is projected from. */
 export interface WeeklyRowLocalColumns {
   timezone: string;
   localStartMinutes: number;
@@ -169,41 +57,352 @@ export interface WeeklyRowLocalColumns {
   localEndDay: DayOfWeek;
 }
 
+/** The same columns as stored, where every one is nullable. */
+export type NullableWeeklyRowLocalColumns = {
+  [K in keyof WeeklyRowLocalColumns]: WeeklyRowLocalColumns[K] | null;
+};
+
+export interface Interval {
+  start: Date;
+  end: Date;
+}
+
+const knownZones = new Set<string>();
+
+/** Whether the runtime can resolve `zone` as an IANA time zone; only valid zones are cached. */
+export function isKnownTimeZone(zone: string): boolean {
+  if (knownZones.has(zone)) return true;
+  if (zone.length === 0) return false;
+  try {
+    formatInTimeZone(0, zone, "xxx");
+  } catch {
+    return false;
+  }
+  knownZones.add(zone);
+  return true;
+}
+
+const canonicalZones = new Map<string, string>();
+
+/** Whether two zone names are the same IANA zone, aliases included (Asia/Calcutta = Asia/Kolkata). */
+export function sameTimeZone(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (!isKnownTimeZone(a) || !isKnownTimeZone(b)) return false;
+  const canonical = (zone: string) => {
+    let name = canonicalZones.get(zone);
+    if (name === undefined) {
+      name = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone,
+      }).resolvedOptions().timeZone;
+      canonicalZones.set(zone, name);
+    }
+    return name;
+  };
+  return canonical(a) === canonical(b);
+}
+
+const OFFSET_TOKEN = /^([+-])(\d{2}):(\d{2})$/;
+
+/** The zone's UTC offset in minutes at one exact instant (local = utc + offset). */
+export function zoneOffsetMinutesAt(zone: string, instantMs: number): number {
+  const match = OFFSET_TOKEN.exec(formatInTimeZone(instantMs, zone, "xxx"));
+  if (!match) return 0;
+  const sign = match[1] === "-" ? -1 : 1;
+  return sign * (Number(match[2]) * 60 + Number(match[3]));
+}
+
+function isMinuteOfDay(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value < MINUTES_PER_DAY
+  );
+}
+
+/** A row is projectable only when all five local columns are present and valid. */
+export function hasWeeklyRowLocalColumns<
+  T extends NullableWeeklyRowLocalColumns,
+>(row: T): row is T & WeeklyRowLocalColumns {
+  return (
+    typeof row.timezone === "string" &&
+    isKnownTimeZone(row.timezone) &&
+    row.localStartDay !== null &&
+    dayIndexOf(row.localStartDay) !== -1 &&
+    row.localEndDay !== null &&
+    dayIndexOf(row.localEndDay) !== -1 &&
+    isMinuteOfDay(row.localStartMinutes) &&
+    isMinuteOfDay(row.localEndMinutes)
+  );
+}
+
+/** Splits rows into projectable ones and refused ones (NULL or invalid local columns). */
+export function partitionWeeklyRows<T extends NullableWeeklyRowLocalColumns>(
+  rows: readonly T[],
+): { usable: (T & WeeklyRowLocalColumns)[]; refused: T[] } {
+  const usable: (T & WeeklyRowLocalColumns)[] = [];
+  const refused: T[] = [];
+  for (const row of rows) {
+    if (hasWeeklyRowLocalColumns(row)) usable.push(row);
+    else refused.push(row);
+  }
+  return { usable, refused };
+}
+
+/** The row's end lands on the next local day when it is overnight. */
+export function crossesLocalMidnight(
+  row: Pick<
+    WeeklyRowLocalColumns,
+    "localStartDay" | "localEndDay" | "localStartMinutes" | "localEndMinutes"
+  >,
+): boolean {
+  return (
+    row.localEndDay !== row.localStartDay ||
+    row.localEndMinutes <= row.localStartMinutes
+  );
+}
+
+/** Published length in local minutes; a DST night can make the real interval differ. */
+export function weeklyRowLocalDurationMinutes(
+  row: Pick<
+    WeeklyRowLocalColumns,
+    "localStartDay" | "localEndDay" | "localStartMinutes" | "localEndMinutes"
+  >,
+): number {
+  return crossesLocalMidnight(row)
+    ? MINUTES_PER_DAY - row.localStartMinutes + row.localEndMinutes
+    : row.localEndMinutes - row.localStartMinutes;
+}
+
 /**
- * The five DST columns (`timezone`, `localStartMinutes`, `localEndMinutes`,
- * `localStartDay`, `localEndDay`) for a row that is about to be written.
- *
- * #872 — these are dual-written from 2026-09-05 and read by nothing until the
- * reader flip, so every write path computes them here rather than inline.
- * `localEndDay` is derived from the local minutes instead of copied from the
- * stored `endDay`: `endDay` records whether the row crosses midnight in UTC,
- * which is a different question — an IST 22:00–02:00 row is same-day in UTC
- * and cross-day locally.
+ * The instant a local wall-clock time names, given candidate offsets. A time
+ * that exists under no candidate (spring-forward gap) is null; one that exists
+ * under two (fall-back overlap) resolves to the earlier instant.
+ */
+function resolveWallClock(
+  zone: string,
+  wallMs: number,
+  offsets: readonly number[],
+): number | null {
+  let first: number | null = null;
+  for (const offset of offsets) {
+    const instant = wallMs - offset * MS_PER_MINUTE;
+    if (zoneOffsetMinutesAt(zone, instant) !== offset) continue;
+    if (first === null || instant < first) first = instant;
+  }
+  return first;
+}
+
+/**
+ * One local `[wallStart, wallEnd)` window as UTC instants, or null when either
+ * end falls in a spring-forward gap. Equal offsets 36 h either side mean no
+ * transition can sit between them, since no zone changes offset twice in 4 days.
+ */
+function resolveWallWindow(
+  zone: string,
+  wallStartMs: number,
+  wallEndMs: number,
+): { startMs: number; endMs: number } | null {
+  const before = zoneOffsetMinutesAt(zone, wallStartMs - OFFSET_PROBE_MS);
+  const after = zoneOffsetMinutesAt(zone, wallEndMs + OFFSET_PROBE_MS);
+  if (before === after) {
+    return {
+      startMs: wallStartMs - before * MS_PER_MINUTE,
+      endMs: wallEndMs - before * MS_PER_MINUTE,
+    };
+  }
+  const offsets = [before, after];
+  const startMs = resolveWallClock(zone, wallStartMs, offsets);
+  const endMs = resolveWallClock(zone, wallEndMs, offsets);
+  if (startMs === null || endMs === null || endMs <= startMs) return null;
+  return { startMs, endMs };
+}
+
+function isValidRange(rangeStart: Date, rangeEnd: Date): boolean {
+  return (
+    rangeStart instanceof Date &&
+    rangeEnd instanceof Date &&
+    !Number.isNaN(rangeStart.getTime()) &&
+    !Number.isNaN(rangeEnd.getTime()) &&
+    rangeEnd.getTime() > rangeStart.getTime()
+  );
+}
+
+/**
+ * Every occurrence of the row overlapping `[rangeStart, rangeEnd)`, as
+ * half-open UTC intervals, one per local date whose weekday is
+ * `localStartDay`. The walk starts a local day early so an overnight
+ * occurrence that began before the range keeps its tail.
+ */
+export function weeklyRowIntervalsInRange(
+  row: WeeklyRowLocalColumns,
+  rangeStart: Date,
+  rangeEnd: Date,
+): Interval[] {
+  const intervals: Interval[] = [];
+  if (!isValidRange(rangeStart, rangeEnd)) return intervals;
+  const targetDay = dayIndexOf(row.localStartDay);
+  if (targetDay === -1 || !isKnownTimeZone(row.timezone)) return intervals;
+
+  const zone = row.timezone;
+  const rangeStartMs = rangeStart.getTime();
+  const rangeEndMs = rangeEnd.getTime();
+  const localDayOf = (instantMs: number) => {
+    const wall =
+      instantMs + zoneOffsetMinutesAt(zone, instantMs) * MS_PER_MINUTE;
+    return Math.floor(wall / MS_PER_DAY) * MS_PER_DAY;
+  };
+  const endDayOffsetMs = crossesLocalMidnight(row) ? MS_PER_DAY : 0;
+  const lastDayMs = localDayOf(rangeEndMs);
+
+  for (
+    let dayMs = localDayOf(rangeStartMs) - MS_PER_DAY;
+    dayMs <= lastDayMs;
+    dayMs += MS_PER_DAY
+  ) {
+    if (new Date(dayMs).getUTCDay() !== targetDay) continue;
+    const window = resolveWallWindow(
+      zone,
+      dayMs + row.localStartMinutes * MS_PER_MINUTE,
+      dayMs + endDayOffsetMs + row.localEndMinutes * MS_PER_MINUTE,
+    );
+    if (!window) continue;
+    if (window.endMs > rangeStartMs && window.startMs < rangeEndMs) {
+      intervals.push({
+        start: new Date(window.startMs),
+        end: new Date(window.endMs),
+      });
+    }
+  }
+  return intervals;
+}
+
+/** Whether one occurrence of the row contains the whole of `[instantStart, instantEnd)`. */
+export function isInstantWithinWeeklyRow(
+  row: WeeklyRowLocalColumns,
+  instantStart: Date,
+  instantEnd: Date,
+): boolean {
+  const startMs = instantStart.getTime();
+  const endMs = instantEnd.getTime();
+  return weeklyRowIntervalsInRange(row, instantStart, instantEnd).some(
+    (interval) =>
+      interval.start.getTime() <= startMs && interval.end.getTime() >= endMs,
+  );
+}
+
+export interface WeeklyCoverage {
+  /** Whether one occurrence of one row contains `[startMs, endMs)`. */
+  covers(startMs: number, endMs: number): boolean;
+}
+
+/**
+ * `isInstantWithinWeeklyRow` over a set of rows, for callers that test many
+ * windows: occurrences are projected once per UTC week and reused.
+ */
+export function createWeeklyCoverage(
+  rows: readonly WeeklyRowLocalColumns[],
+): WeeklyCoverage {
+  const byWeek = new Map<number, [number, number][]>();
+  const intervalsForWeek = (week: number): [number, number][] => {
+    const cached = byWeek.get(week);
+    if (cached) return cached;
+    const weekStart = new Date(week * MS_PER_WEEK);
+    const weekEnd = new Date((week + 1) * MS_PER_WEEK);
+    const intervals = rows.flatMap((row) =>
+      weeklyRowIntervalsInRange(row, weekStart, weekEnd).map(
+        (i): [number, number] => [i.start.getTime(), i.end.getTime()],
+      ),
+    );
+    byWeek.set(week, intervals);
+    return intervals;
+  };
+  return {
+    covers(startMs, endMs) {
+      if (rows.length === 0 || Number.isNaN(endMs - startMs)) return false;
+      if (endMs <= startMs) return false;
+      return intervalsForWeek(Math.floor(startMs / MS_PER_WEEK)).some(
+        ([start, end]) => start <= startMs && end >= endMs,
+      );
+    },
+  };
+}
+
+/**
+ * The calendar date the weekly save path converts local times on. Every stored
+ * `startTimeUtc`/`endTimeUtc` is the typed wall clock minus the zone's offset on
+ * this date, so that offset (not today's) recovers what the consultant typed.
+ */
+export const WEEKLY_SAVE_PROBE_DATE = "1970-01-01";
+const WEEKLY_SAVE_PROBE_MS = Date.UTC(1970, 0, 1, 12);
+
+/** The zone's offset on `WEEKLY_SAVE_PROBE_DATE`. */
+export function weeklySaveProbeOffsetMinutes(zone: string): number {
+  return isKnownTimeZone(zone)
+    ? zoneOffsetMinutesAt(zone, WEEKLY_SAVE_PROBE_MS)
+    : 0;
+}
+
+/** Minimal weekly shape the writers hand over: the local day plus UTC minutes. */
+export interface WeeklyRowTimes {
+  startDay: DayOfWeek;
+  endDay?: DayOfWeek;
+  startTimeUtc: number;
+  endTimeUtc: number;
+}
+
+const toMinuteOfDay = (minutes: number) =>
+  ((minutes % MINUTES_PER_DAY) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+
+/**
+ * The five DST columns for a row about to be written. `offsetMinutes` must be
+ * the offset its UTC minutes were derived with (`weeklySaveProbeOffsetMinutes`
+ * for the save path). `startDay` is already the consultant's local day.
  */
 export function weeklyRowLocalColumns(
   row: WeeklyRowTimes,
   timezone: string,
-  utcOffsetMinutes: number,
+  offsetMinutes: number,
 ): WeeklyRowLocalColumns {
-  const toLocal = (minuteUtc: number) =>
-    (((minuteUtc + utcOffsetMinutes) % MINUTES_PER_DAY) + MINUTES_PER_DAY) %
-    MINUTES_PER_DAY;
-  const localStartMinutes = toLocal(row.startTimeUtc);
-  const localEndMinutes = toLocal(row.endTimeUtc);
-  const localStartDayIndex = dayIndexOf(row.startDay);
-  const crossesLocalMidnight = localEndMinutes <= localStartMinutes;
-  const localEndDayIndex =
-    localStartDayIndex === -1
-      ? -1
-      : crossesLocalMidnight
-        ? (localStartDayIndex + 1) % 7
-        : localStartDayIndex;
-
+  const localStartMinutes = toMinuteOfDay(row.startTimeUtc + offsetMinutes);
+  const localEndMinutes = toMinuteOfDay(row.endTimeUtc + offsetMinutes);
+  const startIndex = dayIndexOf(row.startDay);
+  const crosses = localEndMinutes <= localStartMinutes;
+  const endDay =
+    crosses && startIndex !== -1
+      ? DAY_BY_INDEX[(startIndex + 1) % 7]
+      : row.startDay;
   return {
     timezone,
     localStartMinutes,
     localEndMinutes,
     localStartDay: row.startDay,
-    localEndDay: DAY_BY_INDEX[localEndDayIndex] ?? row.startDay,
+    localEndDay: endDay,
+  };
+}
+
+/**
+ * The inverse of `weeklyRowLocalColumns`: the UTC writer columns for a row
+ * whose local columns are authoritative. `endDay` records a UTC-midnight
+ * crossing, which is what the overlap SQL and `validateWeeklySlotTimeOrder` read.
+ */
+export function weeklyWriterColumnsFromLocal(
+  local: Pick<
+    WeeklyRowLocalColumns,
+    "localStartDay" | "localStartMinutes" | "localEndMinutes"
+  >,
+  offsetMinutes: number,
+): Required<WeeklyRowTimes> {
+  const startTimeUtc = toMinuteOfDay(local.localStartMinutes - offsetMinutes);
+  const endTimeUtc = toMinuteOfDay(local.localEndMinutes - offsetMinutes);
+  const startIndex = dayIndexOf(local.localStartDay);
+  return {
+    startDay: local.localStartDay,
+    endDay:
+      endTimeUtc <= startTimeUtc && startIndex !== -1
+        ? DAY_BY_INDEX[(startIndex + 1) % 7]
+        : local.localStartDay,
+    startTimeUtc,
+    endTimeUtc,
   };
 }

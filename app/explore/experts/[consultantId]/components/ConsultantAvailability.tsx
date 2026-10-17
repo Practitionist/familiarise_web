@@ -5,10 +5,11 @@ import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
 import { SlotStatusLegend } from "@/components/scheduling/SlotStatusLegend";
 import { BUYER_LEGEND_KEYS } from "@/lib/scheduling/interval-status-tokens";
-import { addDays, startOfDay, endOfDay } from "date-fns";
+import { addDays, startOfDay } from "date-fns";
 import { toZonedTime, formatInTimeZone } from "date-fns-tz";
 import type { ConsultantDetailData, PickerInterval } from "../types";
 import { useAvailabilityWindow } from "../hooks/useAvailabilityWindow";
+import { zonedWeekWindow } from "../utils/time";
 
 interface ConsultantAvailabilityProps {
   consultantDetails: ConsultantDetailData;
@@ -50,10 +51,11 @@ export function ConsultantAvailability({
   // reads the same (consultant, window, timezone) key, so the mount-time
   // overview fetch and the pricing day fetch collapse into ONE allocation
   // compute instead of two overlapping ones.
-  const today = new Date();
-  const windowStart = addDays(today, weekOffset * 7);
-  const startDateInUtc = startOfDay(windowStart);
-  const endDateInUtc = endOfDay(addDays(windowStart, 6));
+  const { start: startDateInUtc, end: endDateInUtc } = zonedWeekWindow(
+    new Date(),
+    weekOffset,
+    timezone,
+  );
 
   const weekQuery = useAvailabilityWindow({
     consultantId: consultantDetails?.id,

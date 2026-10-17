@@ -26,56 +26,56 @@ import {
   mergeConsecutiveSlots,
 } from "../../utils/scheduling-engine/intervals";
 import type { TIntervalTiming } from "../../types/slots";
+import type { DayOfWeek } from "@prisma/client";
+import { weeklyWriterColumnsFromLocal } from "../../utils/schedule/weekly-projection";
+
+/** An IST weekly row described by its local columns, with its UTC writer columns derived. */
+const localRow = (
+  localStartDay: DayOfWeek,
+  localStartMinutes: number,
+  localEndMinutes: number,
+  localEndDay: DayOfWeek = localStartDay,
+) => ({
+  ...weeklyWriterColumnsFromLocal(
+    { localStartDay, localStartMinutes, localEndMinutes },
+    330,
+  ),
+  utcOffsetMinutes: 330,
+  timezone: "Asia/Kolkata",
+  localStartDay,
+  localStartMinutes,
+  localEndMinutes,
+  localEndDay,
+});
 
 // The live rows from the report: Monday 10:00–11:00 and 11:00–12:00 UTC
 // (15:30–17:30 IST), stored as two 60-minute rows.
-const ROW_A = {
-  startDay: "MONDAY" as const,
-  endDay: "MONDAY" as const,
-  startTimeUtc: 600,
-  endTimeUtc: 660,
-  utcOffsetMinutes: 330,
-};
-const ROW_B = {
-  startDay: "MONDAY" as const,
-  endDay: "MONDAY" as const,
-  startTimeUtc: 660,
-  endTimeUtc: 720,
-  utcOffsetMinutes: 330,
-};
-const ROW_GAP = {
-  startDay: "MONDAY" as const,
-  endDay: "MONDAY" as const,
-  startTimeUtc: 840,
-  endTimeUtc: 900,
-  utcOffsetMinutes: 330,
-};
+const ROW_A = localRow("MONDAY", 930, 990);
+const ROW_B = localRow("MONDAY", 990, 1050);
+const ROW_GAP = localRow("MONDAY", 1170, 1230);
 
 describe("mergeAdjacentWeeklyRows", () => {
   it("folds exactly-adjacent same-day rows into one and leaves gaps alone", () => {
     const merged = mergeAdjacentWeeklyRows([ROW_GAP, ROW_B, ROW_A]);
-    expect(merged).toEqual([{ ...ROW_A, endTimeUtc: 720 }, ROW_GAP]);
+    expect(merged).toEqual([
+      { ...ROW_A, endTimeUtc: 720, localEndMinutes: 1050 },
+      ROW_GAP,
+    ]);
   });
 
-  it("never merges across days, offsets, or overnight rows", () => {
-    const tue = {
-      ...ROW_B,
-      startDay: "TUESDAY" as const,
-      endDay: "TUESDAY" as const,
-    };
-    const otherOffset = { ...ROW_B, utcOffsetMinutes: -180 };
-    const overnight = {
-      startDay: "MONDAY" as const,
-      endDay: "TUESDAY" as const,
-      startTimeUtc: 1380,
-      endTimeUtc: 60,
-      utcOffsetMinutes: 330,
-    };
+  it("never merges across days, zones, or overnight rows", () => {
+    const tue = localRow("TUESDAY", 990, 1050);
+    const otherZone = { ...ROW_B, timezone: "Asia/Dubai" };
+    const evening = localRow("MONDAY", 900, 1380);
+    const overnight = localRow("MONDAY", 1380, 60, "TUESDAY");
     expect(mergeAdjacentWeeklyRows([ROW_A, tue])).toHaveLength(2);
-    expect(mergeAdjacentWeeklyRows([ROW_A, otherOffset])).toHaveLength(2);
-    expect(
-      mergeAdjacentWeeklyRows([{ ...ROW_A, endTimeUtc: 1380 }, overnight]),
-    ).toHaveLength(2);
+    expect(mergeAdjacentWeeklyRows([ROW_A, otherZone])).toHaveLength(2);
+    expect(mergeAdjacentWeeklyRows([evening, overnight])).toHaveLength(2);
+  });
+
+  it("leaves a row without local columns untouched", () => {
+    const legacy = { ...ROW_B, timezone: null, localStartMinutes: null };
+    expect(mergeAdjacentWeeklyRows([ROW_A, legacy])).toEqual([ROW_A, legacy]);
   });
 
   it("is idempotent", () => {
@@ -86,36 +86,24 @@ describe("mergeAdjacentWeeklyRows", () => {
   // A merged row longer than isValidTimeRange's cap is filtered out of the
   // settings form, and the next PUT deletes what the form did not send back.
   it("stops the fold at the twelve-hour bound", () => {
-    const eightHours = { ...ROW_A, startTimeUtc: 0, endTimeUtc: 480 };
-    const nextEightHours = { ...ROW_A, startTimeUtc: 480, endTimeUtc: 960 };
+    const eightHours = localRow("MONDAY", 0, 480);
+    const nextEightHours = localRow("MONDAY", 480, 960);
     expect(mergeAdjacentWeeklyRows([eightHours, nextEightHours])).toHaveLength(
       2,
     );
 
-    const fourHours = { ...ROW_A, startTimeUtc: 0, endTimeUtc: 240 };
-    const thenEightHours = { ...ROW_A, startTimeUtc: 240, endTimeUtc: 720 };
+    const fourHours = localRow("MONDAY", 0, 240);
+    const thenEightHours = localRow("MONDAY", 240, 720);
     expect(mergeAdjacentWeeklyRows([fourHours, thenEightHours])).toEqual([
-      { ...fourHours, endTimeUtc: 720 },
+      { ...localRow("MONDAY", 0, 720), endTimeUtc: thenEightHours.endTimeUtc },
     ]);
   });
 
-  it("does not merge two rows on the same local startDay that fall on different UTC start days (24h apart)", () => {
-    // Monday 22:00–01:00 IST -> UTC Monday 16:30–19:30 (990..1170, utcStartDay=Monday)
-    const monNightIst = {
-      startDay: "MONDAY" as const,
-      endDay: "MONDAY" as const,
-      startTimeUtc: 990,
-      endTimeUtc: 1170,
-      utcOffsetMinutes: 330,
-    };
-    // Monday 01:00–02:00 IST -> UTC Sunday 19:30–20:30 (1170..1230, utcStartDay=Sunday)
-    const monPreDawnIst = {
-      startDay: "MONDAY" as const,
-      endDay: "MONDAY" as const,
-      startTimeUtc: 1170,
-      endTimeUtc: 1230,
-      utcOffsetMinutes: 330,
-    };
+  it("does not fold a Monday night's tail into the same Monday's pre-dawn row", () => {
+    // Monday 22:00 -> Tuesday 01:00 and Monday 01:00 -> 02:00 share a UTC
+    // minute (19:30Z) but sit a day apart locally.
+    const monNightIst = localRow("MONDAY", 1320, 60, "TUESDAY");
+    const monPreDawnIst = localRow("MONDAY", 60, 120);
     expect(mergeAdjacentWeeklyRows([monNightIst, monPreDawnIst])).toHaveLength(
       2,
     );
@@ -370,35 +358,17 @@ describe("checkout coverage rule (#1320)", () => {
 });
 
 /**
- * The covering-row lookup is a containment test WITHIN one day pair. Without
- * `endDay` an overnight row (endTimeUtc < startTimeUtc) matches any same-day
+ * The covering-row lookup is a containment test WITHIN one local day pair.
+ * Without `localEndDay` an overnight row (end < start) matches any same-day
  * row that starts earlier, so an edit is answered with someone else's window.
  */
 describe("coalesceAndResolve resolves the edited row (#1320)", () => {
-  interface StoredRow {
-    id: string;
-    startDay: string;
-    endDay: string;
-    startTimeUtc: number;
-    endTimeUtc: number;
-    utcOffsetMinutes: number;
-  }
-  const SAME_DAY: StoredRow = {
-    id: "same-day",
-    startDay: "MONDAY",
-    endDay: "MONDAY",
-    startTimeUtc: 540,
-    endTimeUtc: 1080,
-    utcOffsetMinutes: 0,
-  };
-  const OVERNIGHT: StoredRow = {
+  const SAME_DAY = { id: "same-day", ...localRow("MONDAY", 540, 1080) };
+  const OVERNIGHT = {
     id: "overnight",
-    startDay: "MONDAY",
-    endDay: "TUESDAY",
-    startTimeUtc: 1320,
-    endTimeUtc: 120,
-    utcOffsetMinutes: 0,
+    ...localRow("MONDAY", 1320, 120, "TUESDAY"),
   };
+  type StoredRow = typeof SAME_DAY;
 
   function weeklyDb(rows: StoredRow[]) {
     return {
@@ -410,20 +380,18 @@ describe("coalesceAndResolve resolves the edited row (#1320)", () => {
           where,
         }: {
           where: {
-            startDay: string;
-            endDay: string;
-            startTimeUtc: { lte: number };
-            endTimeUtc: { gte: number };
+            localStartDay: string;
+            localEndDay: string;
+            localStartMinutes: { lte: number };
+            localEndMinutes: { gte: number };
           };
         }) =>
-          // Absent filters are absent, as Prisma treats them — so dropping
-          // the endDay term makes the same-day row match this window again.
           rows.find(
             (r) =>
-              r.startDay === where.startDay &&
-              (where.endDay === undefined || r.endDay === where.endDay) &&
-              r.startTimeUtc <= where.startTimeUtc.lte &&
-              r.endTimeUtc >= where.endTimeUtc.gte,
+              r.localStartDay === where.localStartDay &&
+              r.localEndDay === where.localEndDay &&
+              r.localStartMinutes <= where.localStartMinutes.lte &&
+              r.localEndMinutes >= where.localEndMinutes.gte,
           ) ?? null,
       },
     } as unknown as Pick<Tx, "availabilityWindowWeekly">;
@@ -433,12 +401,7 @@ describe("coalesceAndResolve resolves the edited row (#1320)", () => {
     const covering = await coalesceAndResolve(
       weeklyDb([SAME_DAY, OVERNIGHT]),
       "cp-1",
-      {
-        startDay: OVERNIGHT.startDay as "MONDAY",
-        endDay: OVERNIGHT.endDay as "TUESDAY",
-        startTimeUtc: OVERNIGHT.startTimeUtc,
-        endTimeUtc: OVERNIGHT.endTimeUtc,
-      },
+      OVERNIGHT,
     );
     expect(covering?.id).toBe("overnight");
   });

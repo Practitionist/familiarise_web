@@ -21,7 +21,6 @@ import prisma, {
 import {
   Appointment,
   AppointmentsType,
-  type DayOfWeek,
   Prisma,
   AppointmentStatus,
   OccurrenceCompletionStatus,
@@ -99,10 +98,7 @@ import {
   UNPAID_SUBSCRIPTION,
   type ApprovalOutcome,
 } from "@/lib/booking/approve-request";
-import {
-  isMinuteWithinWeeklySlot,
-  TWENTY_FOUR_HOURS_IN_MS,
-} from "./slotTimeUtils";
+import { TWENTY_FOUR_HOURS_IN_MS } from "./slotTimeUtils";
 import {
   buildAvailabilityIndex,
   createSearchBudget,
@@ -111,9 +107,13 @@ import {
   type SearchBudget,
 } from "./availability-search";
 import {
-  utcStartDayIndex,
-  weeklyRowDurationMinutes,
+  createWeeklyCoverage,
+  partitionWeeklyRows,
+  weeklyRowIntervalsInRange,
+  type WeeklyCoverage,
+  type WeeklyRowLocalColumns,
 } from "@/utils/schedule/weekly-projection";
+import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
 import {
   AllocationValidationError,
   AllocationNotFoundError,
@@ -193,7 +193,14 @@ interface AllocationWalkContext {
    * replaces ran once per candidate.
    */
   customIndex?: AvailabilityInterval[];
+  /** The weekly rows' projected occurrences, built on first use like `customIndex`. */
+  weeklyCoverage?: WeeklyCoverage;
 }
+
+/** A weekly row the allocator can project. */
+type ProjectableWeeklyRow = { id: string } & WeeklyRowLocalColumns;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Main service for slot allocation operations
@@ -3385,15 +3392,8 @@ export class SchedulingService {
   }
 
   /**
-   * Check if a 30-minute candidate slot falls within the consultant's availability.
-   * Replaces the pre-computed availableSlotsSet to eliminate the 8-week cap.
-   *
-   * FIX Issue #6: Now uses Int (minutes since midnight UTC) directly
-   * instead of extracting hours/minutes from DateTime objects.
-   *
-   * Handles overnight (cross-midnight) availability slots where
-   * endTimeUtc <= startTimeUtc (e.g., 22:00→02:00 spanning two days).
-   * Mirrors the logic from ScheduleValidationService.validateMatchesSchedule().
+   * Whether a 30-minute candidate sits inside one occurrence of a published
+   * row; weekly rows are projected through their own zone, as the validator does.
    */
   private static isWithinAvailability(
     candidate: Date,
@@ -3401,20 +3401,9 @@ export class SchedulingService {
     walk?: AllocationWalkContext,
   ): boolean {
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
-      const candidateDay = candidate.getUTCDay();
-      const candidateMinutes =
-        candidate.getUTCHours() * 60 + candidate.getUTCMinutes();
-
-      return consultant.availabilityWindowsWeekly.some((slot) =>
-        isMinuteWithinWeeklySlot(
-          candidateDay,
-          candidateMinutes,
-          30, // all atomic slots are 30 minutes
-          slot.startDay,
-          slot.startTimeUtc,
-          slot.endTimeUtc,
-          slot.utcOffsetMinutes,
-        ),
+      return this.weeklyAvailabilityCoverage(consultant, walk).covers(
+        candidate.getTime(),
+        candidate.getTime() + SCHEDULING_INTERVAL_MS,
       );
     }
     // CUSTOM schedule: the candidate's own atom must fit inside ONE published
@@ -3428,6 +3417,41 @@ export class SchedulingService {
       this.customAvailabilityIndex(consultant, walk),
       candidate.getTime(),
     );
+  }
+
+  /** The consultant's projectable weekly rows; refused ones are reported by the caller. */
+  private static projectableWeeklyRows(
+    consultant: ConsultantAllocationData,
+  ): ProjectableWeeklyRow[] {
+    return partitionWeeklyRows(consultant.availabilityWindowsWeekly).usable;
+  }
+
+  private static weeklyAvailabilityCoverage(
+    consultant: ConsultantAllocationData,
+    walk?: AllocationWalkContext,
+  ): WeeklyCoverage {
+    if (walk?.weeklyCoverage) return walk.weeklyCoverage;
+    const coverage = createWeeklyCoverage(
+      this.projectableWeeklyRows(consultant),
+    );
+    if (walk) walk.weeklyCoverage = coverage;
+    return coverage;
+  }
+
+  /** Weekly rows ordered by their next occurrence after `now`; rows with none sort last. */
+  private static sortWeeklyByNextOccurrence(
+    rows: ProjectableWeeklyRow[],
+    now: Date,
+  ): ProjectableWeeklyRow[] {
+    const horizon = new Date(now.getTime() + 15 * DAY_MS);
+    const nextStart = (row: ProjectableWeeklyRow) =>
+      weeklyRowIntervalsInRange(row, now, horizon)
+        .find((occurrence) => occurrence.start > now)
+        ?.start.getTime() ?? Number.POSITIVE_INFINITY;
+    return rows
+      .map((row) => ({ row, next: nextStart(row) }))
+      .sort((a, b) => a.next - b.next)
+      .map(({ row }) => row);
   }
 
   /**
@@ -3636,10 +3660,9 @@ export class SchedulingService {
    * Best-scoring placeable call inside one row on a recurring event's day, or
    * null when the row can host none.
    *
-   * Candidates are held to the row's own scheduling-timezone day so that
-   * walking an overnight row cannot spill a session into the next day and
-   * breach the per-day cap the validator enforces (ADR B9 buckets by the
-   * event's timezone, not the server's).
+   * A candidate may cross local midnight inside one overnight row, but only
+   * onto a day and week whose caps still have room (`hasRoomOn`), so the walk
+   * never breaches the per-day cap the validator enforces (ADR B9).
    *
    * #1065 — ordering by preference score, never filtering by it. Every
    * candidate that was placeable before is still placeable; only which of them
@@ -3658,17 +3681,15 @@ export class SchedulingService {
       startDate: Date;
       endDate: Date;
       schedulingTimezone?: string;
+      /** Whether the per-day and per-week caps have room at this start. */
+      hasRoomOn: (candidateStart: Date) => boolean;
     },
     /** Epoch ms of this row's own end (#1194). */
     rowEndMs: number,
     preference?: AllocationPreference,
     walk?: AllocationWalkContext,
   ): { block: Date[]; score: number } | null {
-    const { now, startDate, endDate, schedulingTimezone } = bounds;
-    const rowDayKey = ScheduleCalculationService.dayKey(
-      rowStart,
-      schedulingTimezone,
-    );
+    const { now, startDate, endDate, schedulingTimezone, hasRoomOn } = bounds;
     const maxScore = maxPreferenceScore(preference);
     let best: { block: Date[]; score: number } | null = null;
 
@@ -3689,10 +3710,7 @@ export class SchedulingService {
         candidateStart < now ||
         candidateStart < startDate ||
         candidateEnd > endDate ||
-        ScheduleCalculationService.dayKey(
-          candidateStart,
-          schedulingTimezone,
-        ) !== rowDayKey
+        !hasRoomOn(candidateStart)
       ) {
         continue;
       }
@@ -3748,7 +3766,7 @@ export class SchedulingService {
     slotsPerCall: number,
     bookedSlots: Set<string>,
     now: Date,
-    sortedWeekly: ConsultantAllocationData["availabilityWindowsWeekly"],
+    sortedWeekly: ProjectableWeeklyRow[],
     sortedCustom: ConsultantAllocationData["availabilityWindowsCustom"],
     schedulingTimezone?: string,
     preference?: AllocationPreference,
@@ -3764,19 +3782,23 @@ export class SchedulingService {
     /** Row {start, endMs} pairs, in the order the search has always used them. */
     const rowStarts: { start: Date; endMs: number }[] = [];
     if (consultant.scheduleType === ScheduleType.WEEKLY) {
+      // Week-major, row-minor: each row's next `maxWeeksToSearch` occurrences
+      // after now, projected per date so a DST change moves the instant, not the wall clock.
+      const horizon = new Date(
+        now.getTime() + (maxWeeksToSearch * 7 + 1) * DAY_MS,
+      );
+      const occurrencesByRow = sortedWeekly.map((slot) =>
+        weeklyRowIntervalsInRange(slot, now, horizon)
+          .filter((occurrence) => occurrence.start > now)
+          .slice(0, maxWeeksToSearch),
+      );
       for (let week = 0; week < maxWeeksToSearch; week++) {
-        for (const slot of sortedWeekly) {
-          const start = this.getNextOccurrenceWeekly(
-            slot.startDay,
-            slot.startTimeUtc,
-            slot.utcOffsetMinutes,
-          );
-          if (week > 0) start.setUTCDate(start.getUTCDate() + week * 7);
-          // #1342 — the same duration rule the validator applies, in one place.
-          const durationMin = weeklyRowDurationMinutes(slot);
+        for (const occurrences of occurrencesByRow) {
+          const occurrence = occurrences[week];
+          if (!occurrence) continue;
           rowStarts.push({
-            start,
-            endMs: start.getTime() + durationMin * 60_000,
+            start: occurrence.start,
+            endMs: occurrence.end.getTime(),
           });
         }
       }
@@ -3884,6 +3906,12 @@ export class SchedulingService {
       consultantProfileId,
       reportedTruncations: new Set(),
     };
+    if (consultant.scheduleType === ScheduleType.WEEKLY) {
+      reportIncompleteWeeklyRows(
+        partitionWeeklyRows(consultant.availabilityWindowsWeekly).refused,
+        { op: "auto-allocate", consultantProfileId },
+      );
+    }
     // Only FUTURE occupancy can collide with a candidate: buildConsecutiveBlock
     // rejects any candidate start before `now`, so a slot that has already
     // ended can never block a placement. Bounding the read to live intervals
@@ -4025,7 +4053,8 @@ export class SchedulingService {
     }
 
     // Validate availability exists
-    const hasWeeklySlots = consultant.availabilityWindowsWeekly.length > 0;
+    const projectableWeekly = this.projectableWeeklyRows(consultant);
+    const hasWeeklySlots = projectableWeekly.length > 0;
     const hasCustomSlots = consultant.availabilityWindowsCustom.length > 0;
     if (
       (consultant.scheduleType === ScheduleType.WEEKLY && !hasWeeklySlots) ||
@@ -4050,19 +4079,7 @@ export class SchedulingService {
     // Without this, Tue 08:00 (480min) would sort before Mon 09:00 (540min).
     const sortedWeekly =
       consultant.scheduleType === ScheduleType.WEEKLY
-        ? [...consultant.availabilityWindowsWeekly]
-            .map((slot) => ({
-              slot,
-              nextOccurrence: this.getNextOccurrenceWeekly(
-                slot.startDay,
-                slot.startTimeUtc,
-                slot.utcOffsetMinutes,
-              ),
-            }))
-            .sort(
-              (a, b) => a.nextOccurrence.getTime() - b.nextOccurrence.getTime(),
-            )
-            .map((w) => w.slot)
+        ? this.sortWeeklyByNextOccurrence(projectableWeekly, now)
         : [];
     const sortedCustom =
       consultant.scheduleType === ScheduleType.CUSTOM
@@ -4156,12 +4173,8 @@ export class SchedulingService {
       );
     }
 
-    // The cursor advances in UTC days because matchWeeklySlotToDay resolves the
-    // row's UTC day-of-week from targetDay.getUTCDay(). Anchoring the cursor to
-    // a timezone week instead made those two disagree: Sunday 00:00 IST is
-    // Saturday 18:30 UTC, so getUTCDay() answered SATURDAY and every placement
-    // was credited to the week before the one being iterated — the allocator
-    // then emitted output its own validate() rejected with [WEEKLY_LIMIT].
+    // The cursor advances in UTC days and each weekly occurrence is filed under
+    // the UTC day its start falls on, so every occurrence is offered exactly once.
     //
     // Caps are counted in the event's scheduling timezone (ADR B9), keyed off
     // the placed slot rather than the cursor, so the two bucketings cannot drift.
@@ -4178,8 +4191,41 @@ export class SchedulingService {
         ? MAX_CLASS_SESSIONS_PER_DAY
         : MAX_SUBSCRIPTION_SESSIONS_PER_DAY;
 
+    // Weekly occurrences over the whole period, projected once and filed by the
+    // UTC day they start on, in `sortedWeekly` order.
+    const weeklyStartsByUtcDay = new Map<
+      number,
+      { start: Date; endMs: number }[]
+    >();
+    if (consultant.scheduleType === ScheduleType.WEEKLY) {
+      const periodStart = new Date(
+        Date.UTC(
+          startDate.getUTCFullYear(),
+          startDate.getUTCMonth(),
+          startDate.getUTCDate(),
+        ),
+      );
+      const periodEnd = new Date(endDate.getTime() + DAY_MS);
+      for (const slot of sortedWeekly) {
+        for (const occurrence of weeklyRowIntervalsInRange(
+          slot,
+          periodStart,
+          periodEnd,
+        )) {
+          const dayMs =
+            Math.floor(occurrence.start.getTime() / DAY_MS) * DAY_MS;
+          const starts = weeklyStartsByUtcDay.get(dayMs) ?? [];
+          starts.push({
+            start: occurrence.start,
+            endMs: occurrence.end.getTime(),
+          });
+          weeklyStartsByUtcDay.set(dayMs, starts);
+        }
+      }
+    }
+
     /**
-     * Availability rows that touch this UTC day, as {start, endMs} pairs.
+     * Availability rows that start on this UTC day, as {start, endMs} pairs.
      * #1194 — the end lets candidateStartsInRow bound its walk to the row's
      * own time range instead of a blind 48-step cap that adjacent rows can
      * trick into walking past.
@@ -4188,23 +4234,7 @@ export class SchedulingService {
       currentDay: Date,
     ): { start: Date; endMs: number }[] =>
       consultant.scheduleType === ScheduleType.WEEKLY
-        ? sortedWeekly
-            .map((slot) => {
-              const start = this.matchWeeklySlotToDay(
-                slot.startDay,
-                slot.startTimeUtc,
-                currentDay,
-                slot.utcOffsetMinutes,
-              );
-              if (!start) return null;
-              // #1342 — shared duration rule (see bestBlockForSingleSession).
-              const durationMin = weeklyRowDurationMinutes(slot);
-              return {
-                start,
-                endMs: start.getTime() + durationMin * 60_000,
-              };
-            })
-            .filter((r): r is { start: Date; endMs: number } => r !== null)
+        ? (weeklyStartsByUtcDay.get(currentDay.getTime()) ?? [])
         : sortedCustom
             .map((slot) => {
               const start = this.matchCustomSlotToDay(
@@ -4215,6 +4245,21 @@ export class SchedulingService {
               return { start, endMs: new Date(slot.endsAt).getTime() };
             })
             .filter((r): r is { start: Date; endMs: number } => r !== null);
+
+    /** Whether the per-day and per-week caps still have room for a call starting here. */
+    const hasRoomOn = (candidateStart: Date): boolean =>
+      (placedPerDay.get(
+        ScheduleCalculationService.dayKey(
+          candidateStart,
+          config.schedulingTimezone,
+        ),
+      ) ?? 0) < maxPerDay &&
+      (sessionsPlacedPerWeek.get(
+        ScheduleCalculationService.weekKey(
+          candidateStart,
+          config.schedulingTimezone,
+        ),
+      ) ?? 0) < sessionsPerWeek;
 
     /**
      * Place at most `maxPerDay` calls on this day, honouring the
@@ -4235,26 +4280,22 @@ export class SchedulingService {
       for (const { start: rowStart, endMs: rowEndMs } of rowStartsForDay(
         currentDay,
       )) {
-        const rowDayKey = ScheduleCalculationService.dayKey(
-          rowStart,
-          config.schedulingTimezone,
-        );
-        const rowWeekKey = ScheduleCalculationService.weekKey(
-          rowStart,
-          config.schedulingTimezone,
-        );
-
-        if ((placedPerDay.get(rowDayKey) ?? 0) >= maxPerDay) continue;
-        if ((sessionsPlacedPerWeek.get(rowWeekKey) ?? 0) >= sessionsPerWeek)
-          continue;
-
-        // Day-of-week is a property of the whole row, so a preferred-only sweep
-        // can rule the row out here instead of walking its availability,
-        // building blocks and then discarding them below. On a year-long class
-        // with a weekend preference that is ~260 days of wasted block-building
-        // per sweep. Safe because bestFittingBlockInRow holds every candidate
-        // to the row's own timezone day, so they all share this weekday.
+        // A row inside one scheduling-timezone day shares that day's caps and
+        // weekday, so it can be ruled out before its walk; an overnight row's
+        // tail lands on the next day and is judged per candidate instead.
+        const lastRowAtom = new Date(rowEndMs - SCHEDULING_INTERVAL_MS);
+        const withinOneDay =
+          ScheduleCalculationService.dayKey(
+            rowStart,
+            config.schedulingTimezone,
+          ) ===
+          ScheduleCalculationService.dayKey(
+            lastRowAtom,
+            config.schedulingTimezone,
+          );
+        if (withinOneDay && !hasRoomOn(rowStart)) continue;
         if (
+          withinOneDay &&
           perfectOnly &&
           !matchesPreferredDays(rowStart, preference, config.schedulingTimezone)
         ) {
@@ -4271,6 +4312,15 @@ export class SchedulingService {
             startDate,
             endDate,
             schedulingTimezone: config.schedulingTimezone,
+            hasRoomOn: perfectOnly
+              ? (start) =>
+                  hasRoomOn(start) &&
+                  matchesPreferredDays(
+                    start,
+                    preference,
+                    config.schedulingTimezone,
+                  )
+              : hasRoomOn,
           },
           rowEndMs,
           preference,
@@ -4412,95 +4462,6 @@ export class SchedulingService {
     }
 
     return selectedSlots.sort((a, b) => a.getTime() - b.getTime());
-  }
-
-  /**
-   * Get next occurrence of a weekly slot starting from now.
-   * Uses Int (startTimeUtc) and DayOfWeek enum string directly.
-   *
-   * FIX Issue #6: No longer parses DateTime objects for time extraction.
-   * FIX BUG-2: Applies UTC day adjustment using utcOffsetMinutes so that
-   * a slot on "MONDAY" in local time is correctly resolved to the UTC day
-   * (e.g., IST Monday 01:00 = UTC Sunday 19:30).
-   */
-  private static getNextOccurrenceWeekly(
-    startDay: string,
-    startTimeUtc: number,
-    utcOffsetMinutes: number = 0,
-  ): Date {
-    const now = new Date();
-    // #1342 — one shared derivation for the row's UTC weekday.
-    const targetDay = utcStartDayIndex({
-      startDay: startDay as DayOfWeek,
-      startTimeUtc,
-      utcOffsetMinutes,
-    });
-    if (targetDay === -1) {
-      throw new Error(`Invalid day of week: ${startDay}`);
-    }
-
-    const targetHours = Math.floor(startTimeUtc / 60);
-    const targetMinutes = startTimeUtc % 60;
-    const currentDay = now.getUTCDay();
-
-    // Calculate days until next occurrence
-    let daysToAdd = targetDay - currentDay;
-    if (daysToAdd < 0) {
-      daysToAdd += 7; // Next week
-    } else if (daysToAdd === 0) {
-      // Same day - check if time has passed
-      const nowHours = now.getUTCHours();
-      const nowMinutes = now.getUTCMinutes();
-      if (
-        nowHours > targetHours ||
-        (nowHours === targetHours && nowMinutes >= targetMinutes)
-      ) {
-        daysToAdd = 7; // Next week
-      }
-    }
-
-    const nextOccurrence = new Date(now);
-    nextOccurrence.setUTCDate(now.getUTCDate() + daysToAdd);
-    nextOccurrence.setUTCHours(targetHours, targetMinutes, 0, 0);
-
-    return nextOccurrence;
-  }
-
-  /**
-   * Match a weekly slot pattern to a specific target day.
-   * Uses Int startTimeUtc and DayOfWeek string directly.
-   *
-   * FIX BUG-2: Applies UTC day adjustment so that a local-day slot
-   * is matched against the correct UTC day-of-week.
-   */
-  private static matchWeeklySlotToDay(
-    startDay: string,
-    startTimeUtc: number,
-    targetDay: Date,
-    utcOffsetMinutes: number = 0,
-  ): Date | null {
-    // #1342 — one shared derivation for the row's UTC weekday.
-    const slotDayOfWeek = utcStartDayIndex({
-      startDay: startDay as DayOfWeek,
-      startTimeUtc,
-      utcOffsetMinutes,
-    });
-    if (slotDayOfWeek === -1) return null;
-
-    const targetDayOfWeek = targetDay.getUTCDay();
-
-    if (slotDayOfWeek === targetDayOfWeek) {
-      const result = new Date(targetDay);
-      result.setUTCHours(
-        Math.floor(startTimeUtc / 60),
-        startTimeUtc % 60,
-        0,
-        0,
-      );
-      return result;
-    }
-
-    return null;
   }
 
   /**

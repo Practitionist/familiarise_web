@@ -45,7 +45,11 @@ import {
   MAX_CLASS_SESSIONS_PER_DAY,
   MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
 } from "./sessionCaps";
-import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
+import {
+  createWeeklyCoverage,
+  partitionWeeklyRows,
+} from "@/utils/schedule/weekly-projection";
+import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
 
 // AE-5/RV-6 — every slot is uniformly 30 minutes. The old slotDurationMinutes
 // param invited callers to pass arbitrary values that silently mismatch the
@@ -594,8 +598,8 @@ export class ScheduleValidationService {
     const profile = c.consultantProfile;
     const hasScheduleData = Boolean(
       profile?.scheduleType &&
-        (Array.isArray(profile.availabilityWindowsWeekly) ||
-          Array.isArray(profile.availabilityWindowsCustom)),
+      (Array.isArray(profile.availabilityWindowsWeekly) ||
+        Array.isArray(profile.availabilityWindowsCustom)),
     );
     return {
       consultantProfileId: c.consultantProfileId,
@@ -914,14 +918,8 @@ export class ScheduleValidationService {
   }
 
   /**
-   * UNIVERSAL VALIDATOR: Ensure slots match consultant's schedule
-   *
-   * FIX Issue #6: Now uses Int (startTimeUtc/endTimeUtc) directly instead of
-   * extracting hours/minutes from DateTime objects. This eliminates the
-   * complex DateTime-to-minutes conversion that was the source of timezone bugs.
-   *
-   * Also checks adjacent day's availability for timezone edge cases
-   * (e.g., 21:00 UTC Saturday = 02:30 IST Sunday).
+   * UNIVERSAL VALIDATOR: every 30-minute slot sits inside one occurrence of a
+   * published row, each weekly row projected through its own zone.
    */
   private validateMatchesSchedule(
     slots: Date[],
@@ -941,28 +939,19 @@ export class ScheduleValidationService {
         "Saturday",
       ];
 
-      // For each slot, check if it falls within ANY weekly availability
-      // Also check adjacent day's availability for timezone edge cases
+      const { usable, refused } = partitionWeeklyRows(
+        consultant.availabilityWindowsWeekly,
+      );
+      reportIncompleteWeeklyRows(refused, { op: "validate-matches-schedule" });
+      const weekly = createWeeklyCoverage(usable);
+
       for (const slot of slots) {
         const slotDay = slot.getUTCDay();
         const slotHours = slot.getUTCHours();
         const slotMinutes = slot.getUTCMinutes();
-        const slotTimeMinutes = slotHours * 60 + slotMinutes;
-
-        // Check if this slot matches any availability pattern
-        // Delegates to isMinuteWithinWeeklySlot — single source of truth for
-        // same-day, overnight, and timezone-compensated day matching
-        const matchesAvailability = consultant.availabilityWindowsWeekly.some(
-          (availSlot) =>
-            isMinuteWithinWeeklySlot(
-              slotDay,
-              slotTimeMinutes,
-              30, // 30-minute slot duration
-              availSlot.startDay,
-              availSlot.startTimeUtc,
-              availSlot.endTimeUtc,
-              availSlot.utcOffsetMinutes,
-            ),
+        const matchesAvailability = weekly.covers(
+          slot.getTime(),
+          slot.getTime() + 30 * 60 * 1000,
         );
 
         if (!matchesAvailability) {
@@ -981,7 +970,7 @@ export class ScheduleValidationService {
       }
     } else {
       // Custom schedule — CONTAINMENT, the same rule the weekly arm above
-      // applies via isMinuteWithinWeeklySlot. #1320: this used to test overlap
+      // applies. #1320: this used to test overlap
       // (`slot < availableEnd && availableStart < slotEnd`), so a 30-minute
       // atom hanging half outside a custom row passed manual allocation and
       // was then rejected by checkout, which has always required the whole

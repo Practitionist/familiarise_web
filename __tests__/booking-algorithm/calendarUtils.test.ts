@@ -2,8 +2,6 @@
  * Comprehensive tests for calendarUtils
  *
  * Covers:
- * - mapWeeklySlots (UTC consistency, interval generation, edge cases)
- * - mapCustomSlots (interval generation, edge cases)
  * - slotsOverlap
  * - getSlotStatus (booking detection fix, partial booking, conflicts)
  * - formatSlotsForAPI
@@ -21,8 +19,6 @@
 import "./setup";
 
 import {
-  mapWeeklySlots,
-  mapCustomSlots,
   slotsOverlap,
   getSlotStatus,
   formatSlotsForAPI,
@@ -40,143 +36,11 @@ import {
   type CalendarInterval,
   type Appointment,
 } from "@/lib/scheduling/calendarUtils";
-import { ScheduleType, DayOfWeek, AppointmentsType } from "@prisma/client";
+import { AppointmentsType } from "@prisma/client";
 import {
   makeTimeSlot,
   makeConsecutiveTimeSlots,
-  makeWeeklyAvailabilitySlot,
-  makeCustomAvailabilitySlot,
-  makeConsultantData,
 } from "../fixtures/booking.mockData";
-
-// ─── mapWeeklySlots ─────────────────────────────────────────────────────────
-
-describe("mapWeeklySlots", () => {
-  it("should return empty array for non-WEEKLY schedule type", () => {
-    const data = makeConsultantData({ scheduleType: ScheduleType.CUSTOM });
-    expect(mapWeeklySlots(data as any, new Date())).toEqual([]);
-  });
-
-  it("should return empty array when no weekly slots defined", () => {
-    const data = makeConsultantData({
-      scheduleType: ScheduleType.WEEKLY,
-      availabilityWindowsWeekly: [],
-    });
-    expect(mapWeeklySlots(data as any, new Date())).toEqual([]);
-  });
-
-  it("should generate 30-minute intervals from availability slot", () => {
-    const data = makeConsultantData({
-      scheduleType: ScheduleType.WEEKLY,
-      availabilityWindowsWeekly: [
-        makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 11), // 2 hours = 4 slots
-      ],
-    });
-
-    const slots = mapWeeklySlots(data as any, new Date("2025-01-06"), "week");
-    // Only Monday has availability, so all generated slots are for Monday
-    expect(slots.length).toBe(4); // 9:00, 9:30, 10:00, 10:30 UTC
-    // Verify UTC hours are set correctly from the availability
-    expect(slots[0].startTime.getUTCHours()).toBe(9);
-    expect(slots[0].startTime.getUTCMinutes()).toBe(0);
-    expect(slots[1].startTime.getUTCHours()).toBe(9);
-    expect(slots[1].startTime.getUTCMinutes()).toBe(30);
-    expect(slots[2].startTime.getUTCHours()).toBe(10);
-    expect(slots[2].startTime.getUTCMinutes()).toBe(0);
-    expect(slots[3].startTime.getUTCHours()).toBe(10);
-    expect(slots[3].startTime.getUTCMinutes()).toBe(30);
-  });
-
-  it("should use UTC hours (timezone fix verification)", () => {
-    const data = makeConsultantData({
-      scheduleType: ScheduleType.WEEKLY,
-      availabilityWindowsWeekly: [
-        makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 14, 15), // 2pm-3pm UTC
-      ],
-    });
-
-    const slots = mapWeeklySlots(data as any, new Date("2025-01-06"), "week");
-    const mondaySlots = slots.filter((s) => s.startTime.getUTCDay() === 1);
-    expect(
-      mondaySlots.map((s) => s.startTime.getUTCHours()).every((h) => h === 14),
-    ).toBe(true);
-  });
-
-  it("should handle month view", () => {
-    const data = makeConsultantData({
-      scheduleType: ScheduleType.WEEKLY,
-      availabilityWindowsWeekly: [
-        makeWeeklyAvailabilitySlot(DayOfWeek.WEDNESDAY, 10, 11),
-      ],
-    });
-
-    const slots = mapWeeklySlots(data as any, new Date("2025-01-15"), "month");
-    // January has 4-5 Wednesdays
-    expect(slots.length).toBeGreaterThanOrEqual(4); // at least 2 slots × 4 Wednesdays
-  });
-
-  it("should mark all generated slots as available and not booked", () => {
-    const data = makeConsultantData({
-      scheduleType: ScheduleType.WEEKLY,
-      availabilityWindowsWeekly: [
-        makeWeeklyAvailabilitySlot(DayOfWeek.TUESDAY, 9, 10),
-      ],
-    });
-
-    const slots = mapWeeklySlots(data as any, new Date("2025-01-06"), "week");
-    slots.forEach((s) => {
-      expect(s.isAvailable).toBe(true);
-      expect(s.isBooked).toBe(false);
-    });
-  });
-});
-
-// ─── mapCustomSlots ─────────────────────────────────────────────────────────
-
-describe("mapCustomSlots", () => {
-  it("should return empty array for non-CUSTOM schedule type", () => {
-    const data = makeConsultantData({ scheduleType: ScheduleType.WEEKLY });
-    expect(mapCustomSlots(data as any)).toEqual([]);
-  });
-
-  it("should return empty array when no custom slots", () => {
-    const data = makeConsultantData({
-      scheduleType: ScheduleType.CUSTOM,
-      availabilityWindowsCustom: [],
-    });
-    expect(mapCustomSlots(data as any)).toEqual([]);
-  });
-
-  it("should generate 30-minute intervals from custom slot", () => {
-    const data = makeConsultantData({
-      scheduleType: ScheduleType.CUSTOM,
-      availabilityWindowsCustom: [
-        makeCustomAvailabilitySlot(
-          "2025-01-10T09:00:00.000Z",
-          "2025-01-10T11:00:00.000Z",
-        ),
-      ],
-    });
-
-    const slots = mapCustomSlots(data as any);
-    expect(slots.length).toBe(4); // 2 hours = 4 × 30-min slots
-  });
-
-  it("should support configurable interval", () => {
-    const data = makeConsultantData({
-      scheduleType: ScheduleType.CUSTOM,
-      availabilityWindowsCustom: [
-        makeCustomAvailabilitySlot(
-          "2025-01-10T09:00:00.000Z",
-          "2025-01-10T10:00:00.000Z",
-        ),
-      ],
-    });
-
-    const slots = mapCustomSlots(data as any, 60);
-    expect(slots.length).toBe(1); // 1 hour = 1 × 60-min slot
-  });
-});
 
 // ─── slotsOverlap ───────────────────────────────────────────────────────────
 

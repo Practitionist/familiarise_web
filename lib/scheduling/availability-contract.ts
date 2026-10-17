@@ -16,6 +16,12 @@ import {
   validateWeeklySlotTimeOrder,
 } from "@/utils/scheduling-engine/slotTimeUtils";
 import { SCHEDULING_INTERVAL_MS } from "@/lib/appointments/occurrences";
+import {
+  isKnownTimeZone,
+  weeklySaveProbeOffsetMinutes,
+  zoneOffsetMinutesAt,
+  type WeeklyRowLocalColumns,
+} from "@/utils/schedule/weekly-projection";
 
 export const MIN_WINDOW_MINUTES = 30;
 export const MAX_WINDOW_MINUTES = 12 * 60;
@@ -45,8 +51,14 @@ export interface WeeklyWindowInput {
   endDay: DayOfWeek;
   startTimeUtc: number;
   endTimeUtc: number;
-  utcOffsetMinutes?: number | null;
 }
+
+/** A weekly window plus the local columns the pairwise overlap check compares. */
+export type WeeklyWindowWithLocal = WeeklyWindowInput &
+  Pick<
+    WeeklyRowLocalColumns,
+    "localStartDay" | "localEndDay" | "localStartMinutes" | "localEndMinutes"
+  >;
 
 export interface CustomWindowInput {
   startsAt: Date | string;
@@ -60,7 +72,8 @@ export type AvailabilityRefusalCode =
   | "DURATION"
   | "GRID"
   | "OVERLAP"
-  | "PAST";
+  | "PAST"
+  | "ZONE";
 
 export interface AvailabilityRefusal {
   code: AvailabilityRefusalCode;
@@ -92,6 +105,7 @@ export const AVAILABILITY_REFUSAL_STATUS: Record<
   GRID: 400,
   OVERLAP: 400,
   PAST: 400,
+  ZONE: 400,
 };
 
 function weeklyDurationMinutes(row: WeeklyWindowInput): number {
@@ -138,6 +152,40 @@ function gridRefusal(
   return offGrid ? { code: "GRID", index, message: gridMessage(index) } : null;
 }
 
+function formatUtcOffset(offsetMinutes: number): string {
+  const sign = offsetMinutes < 0 ? "-" : "+";
+  const abs = Math.abs(offsetMinutes);
+  const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+  const mm = String(abs % 60).padStart(2, "0");
+  return `${sign}${hh}:${mm}`;
+}
+
+/**
+ * The ZONE refusal: weekly rows are projected in their own zone, so a zone
+ * whose offset (today, or on the save probe date) is not a whole number of
+ * grid atoms (UTC+05:45) puts local :00/:30 starts off the UTC grid checkout enforces.
+ */
+export function weeklyZoneRefusal(
+  timezone: string,
+  at: Date = new Date(),
+): AvailabilityRefusal | null {
+  if (!isKnownTimeZone(timezone)) return null;
+  const offset = zoneOffsetMinutesAt(timezone, at.getTime());
+  const probeOffset = weeklySaveProbeOffsetMinutes(timezone);
+  if (
+    offset % AVAILABILITY_GRID_MINUTES === 0 &&
+    probeOffset % AVAILABILITY_GRID_MINUTES === 0
+  ) {
+    return null;
+  }
+  const failing =
+    offset % AVAILABILITY_GRID_MINUTES === 0 ? probeOffset : offset;
+  return {
+    code: "ZONE",
+    message: `Weekly hours can't be published in ${timezone} yet: its UTC${formatUtcOffset(failing)} offset puts every local hour off the ${AVAILABILITY_GRID_MINUTES}-minute booking grid. Use date-specific availability instead.`,
+  };
+}
+
 /** Validate one weekly window on its own (no pairwise check). */
 export function validateWeeklyWindow(
   row: WeeklyWindowInput,
@@ -172,7 +220,7 @@ export function validateWeeklyWindow(
  * says otherwise (a per-row route validates one row, not the set).
  */
 export function validateWeeklyWindows(
-  rows: readonly WeeklyWindowInput[],
+  rows: readonly WeeklyWindowWithLocal[],
   opts: { allowEmpty?: boolean } = {},
 ): AvailabilityRefusal | null {
   if (rows.length === 0) {
@@ -282,7 +330,7 @@ export function validateCustomWindows(
 }
 
 export function assertWeeklyWindows(
-  rows: readonly WeeklyWindowInput[],
+  rows: readonly WeeklyWindowWithLocal[],
   opts?: { allowEmpty?: boolean },
 ): void {
   const refusal = validateWeeklyWindows(rows, opts);

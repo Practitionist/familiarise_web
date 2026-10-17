@@ -40,6 +40,9 @@ export function AvailabilityForm({
             onAddSlot={form.handleAddSlot}
             onUpdateSlot={form.handleUpdateSlot}
             onDeleteSlot={form.handleDeleteSlot}
+            weeklyTimezone={form.weeklyTimezone}
+            profileTimezone={form.profileTimezone}
+            browserTimezone={form.browserTimezone}
           />
         </CardContent>
       </Card>

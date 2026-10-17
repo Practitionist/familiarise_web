@@ -8,6 +8,7 @@
 import type { AppointmentStatus } from "@prisma/client";
 import type { Tx } from "@/lib/prisma";
 import type { StagedTrigger } from "@/lib/novu/outbox";
+import type { NullableWeeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 
 /**
  * Allocation modes supported by the system
@@ -296,14 +297,10 @@ export interface ProgressInfo {
 export interface ConsultantAllocationData {
   userId: string;
   scheduleType: "WEEKLY" | "CUSTOM";
-  availabilityWindowsWeekly: Array<{
-    id: string;
-    startDay: string;
-    startTimeUtc: number;
-    endDay: string;
-    endTimeUtc: number;
-    utcOffsetMinutes: number;
-  }>;
+  /** Projected from the local columns only; NULL ones are refused by every reader. */
+  availabilityWindowsWeekly: Array<
+    { id: string } & NullableWeeklyRowLocalColumns
+  >;
   availabilityWindowsCustom: Array<{
     id: string;
     startsAt: Date;

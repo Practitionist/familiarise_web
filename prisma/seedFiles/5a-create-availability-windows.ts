@@ -2,6 +2,7 @@ import { faker } from "@faker-js/faker";
 import { DayOfWeek, ScheduleType } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { getTimezoneOffsetMinutes } from "../../utils/scheduling-engine/slotTimeUtils";
+import { weeklyRowLocalColumns } from "../../utils/schedule/weekly-projection";
 import { UserWithProfiles } from "./1a-create-users";
 
 const MAX_SLOT_DURATION = 6 * 2; // In 30-min intervals (12)
@@ -81,6 +82,7 @@ export async function createSlotsOfAvailability(
       const utcOffsetMinutes = consultant.timezone
         ? getTimezoneOffsetMinutes(consultant.timezone)
         : 0;
+      const rowTimezone = consultant.timezone ?? "UTC";
 
       if (slotType === ScheduleType.WEEKLY) {
         // Create weekly slots for each day with business hours focus
@@ -159,8 +161,12 @@ export async function createSlotsOfAvailability(
           }
         }
 
+        // Readers project from the local columns, so every seeded row carries them.
         await prisma.availabilityWindowWeekly.createMany({
-          data: weeklySlots,
+          data: weeklySlots.map((row) => ({
+            ...row,
+            ...weeklyRowLocalColumns(row, rowTimezone, utcOffsetMinutes),
+          })),
         });
       } else {
         // Create custom slots for the next 3 months

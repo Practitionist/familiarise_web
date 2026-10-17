@@ -35,7 +35,7 @@ graph TD
 - **3 validation layers** -- Zod schemas (input format) -> ScheduleValidationService (business rules) -> Prisma (DB constraints)
 - **Sunday-to-Saturday weeks** -- `ScheduleCalculationService.countWeeks()` is the single source of truth
 - **`isTentative` flag** -- marks slots pending payment or reschedule; cleaned up by cron after 24 hours (`TENTATIVE_EXPIRATION_HOURS = 24`, reduced from 7 days by #833); users can self-release via `DELETE /api/checkout/pending/[paymentId]` (#849)
-- **`startDay`/`endDay` DayOfWeek enum + `startTimeUtc`/`endTimeUtc` Int** -- source of truth for weekly availability (minutes since midnight UTC, 0-1439; supports overnight/cross-midnight slots)
+- **`timezone` + `localStartDay`/`localEndDay` + `localStartMinutes`/`localEndMinutes`** -- source of truth for weekly availability: a local wall-clock window in an IANA zone, projected per date so it follows DST (see `19-dst-and-timezone-posture.md`)
 - The canonical scheduling glossary — availability window, bookable interval, appointment occurrence, appointment, engagement, meeting, trial, auth session — lives in [`docs/enterprise/00-foundations/06-scheduling-glossary.md`](../enterprise/00-foundations/06-scheduling-glossary.md), which this document assumes rather than restates.
 
 ## Reading the audit trail
@@ -51,7 +51,7 @@ Every guarded status transition appends one `BookingStatusHistory` row inside th
 | `ScheduleCalculationService.ts` | Pure math: countWeeks, calculateRequiredSlots, getSlotsPerCall, groupSlotsByDay/Week, progress                                                   |
 | `ScheduleValidationService.ts`  | Unified validation: future check, conflict detection, schedule matching, event-specific rules                                                    |
 | `SchedulingService.ts`          | Allocation engine: auto/manual/requested modes, rescheduling, appointment creation                                                               |
-| `intervals.ts`                  | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowOccurrencesInRange`                  |
+| `intervals.ts`                  | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowIntervalsInRange`                    |
 | `interval-validation.ts`        | Validates a submitted interval against `MAX_DURATION_MINUTES` (12h) and the 30-minute/15-minute increment rules an availability row must satisfy |
 | `interval-meta.ts`              | Overlap and metadata helpers shared by availability rows and appointment intervals, keyed off `TimeSlotMeta`                                     |
 | `types.ts`                      | Shared types: EventType, AllocationMode, AllocationRequest, ValidationResult, etc.                                                               |
@@ -81,7 +81,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | `allocationAlgorithms.ts`        | Client-side pre-validation + submission for manual and requested allocation modes only (no auto engine) |
 | `allocationMessages.ts`          | Single catalog of user-facing allocation messages, bucketed by the event's scheduling timezone          |
 | `availabilityPolling.ts`         | Pure poll-decision logic for the availability heatmap (60s interval; polling, not push, by design)      |
-| `calendarUtils.ts`               | Calendar display: mapWeeklySlots, mapCustomSlots, getConsultantAvailabilityForDay                       |
+| `calendarUtils.ts`               | Calendar cell status, slot selection validation and session grouping                                    |
 | `schedulingTimezone.ts`          | Resolves the scheduling timezone stamped on a Subscription/Class, from the consultant's `User.timezone` |
 | `intervalSelectionValidation.ts` | Pure client-side selection rules for the Allocate Slots calendar, unit-testable apart from the hook     |
 | `slot-status-tokens.ts`          | Single colour vocabulary for slot availability states, shared by every calendar/grid surface            |

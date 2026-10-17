@@ -91,16 +91,16 @@ if (isMockPayment) {
 
 The seeder runs in numbered phases. Booking-relevant phases:
 
-| Phase | Script                            | What It Creates                                                                      |
-| ----- | --------------------------------- | ------------------------------------------------------------------------------------ |
-| 1     | `1a-create-users`                 | Consultant and consultee user accounts with profiles                                 |
-| 4a    | `4a-create-consultation-plans`    | Consultation plans with duration and pricing                                         |
+| Phase | Script                            | What It Creates                                                                         |
+| ----- | --------------------------------- | --------------------------------------------------------------------------------------- |
+| 1     | `1a-create-users`                 | Consultant and consultee user accounts with profiles                                    |
+| 4a    | `4a-create-consultation-plans`    | Consultation plans with duration and pricing                                            |
 | 4b    | `4b-create-subscription-plans`    | Subscription plans with `sessionsPerWeek`, `sessionDurationInHours`, `durationInMonths` |
-| 4c    | `4c-create-webinar-plans`         | Webinar plans with duration                                                          |
-| 4d    | `4d-create-class-plans`           | Class plans with `sessionsPerWeek` and class contents                                |
-| 5a    | `5a-create-slots-of-availability` | Weekly and custom availability slots for consultants                                 |
-| 6a    | `6a-create-appointments`          | Appointments with slot records across all event types                                |
-| 8b    | `8b-create-payments`              | Payment records linked to appointments                                               |
+| 4c    | `4c-create-webinar-plans`         | Webinar plans with duration                                                             |
+| 4d    | `4d-create-class-plans`           | Class plans with `sessionsPerWeek` and class contents                                   |
+| 5a    | `5a-create-slots-of-availability` | Weekly and custom availability slots for consultants                                    |
+| 6a    | `6a-create-appointments`          | Appointments with slot records across all event types                                   |
+| 8b    | `8b-create-payments`              | Payment records linked to appointments                                                  |
 
 ### Running the Seeder
 
@@ -173,12 +173,12 @@ Prisma Studio lets you browse all tables, filter by fields like `isTentative`, `
 
 ### f. Test Auto-Allocation vs Manual Allocation
 
-| Aspect               | Auto (`mode: "auto"`)                                | Manual (`mode: "manual"`)              |
-| -------------------- | ---------------------------------------------------- | -------------------------------------- |
-| Input                | No slots needed                                      | Explicit ISO string array              |
-| Strategy             | Finds earliest available consecutive slots           | Validates provided slots against rules |
-| Subscription         | Distributes across weeks optimally                   | Validates slot count and weekly limits |
-| Reschedule detection | Checks for existing tentative slots                  | Replaces all existing appointments     |
+| Aspect               | Auto (`mode: "auto"`)                                    | Manual (`mode: "manual"`)              |
+| -------------------- | -------------------------------------------------------- | -------------------------------------- |
+| Input                | No slots needed                                          | Explicit ISO string array              |
+| Strategy             | Finds earliest available consecutive slots               | Validates provided slots against rules |
+| Subscription         | Distributes across weeks optimally                       | Validates slot count and weekly limits |
+| Reschedule detection | Checks for existing tentative slots                      | Replaces all existing appointments     |
 | Validation           | Runs `ScheduleValidationService.validate` on found slots | Runs validation on provided slots      |
 
 Both paths run inside a 60-second Prisma transaction and call `ScheduleValidationService.validate` before creating appointments.
@@ -219,16 +219,16 @@ npx jest --coverage
 
 ### Test File Reference
 
-| File                             | What It Tests                                                                                                                                                                                                                                                                                                                                                                                            |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `slotAllocationService.test.ts`  | `SchedulingService.allocate` -- mode routing (auto/manual/requested), duplicate detection, slot count validation, appointment creation, event data extraction, status updates, existing appointment deletion                                                                                                                                                                                         |
-| `slotCalculationService.test.ts` | `ScheduleCalculationService` -- week counting (`countWeeks`), `startOfWeekSunday`, duration validation, `calculateRequiredSlots` for all event types, `getSlotsPerCall`, `groupSlotsByDay`/`groupSlotsByWeek`, progress calculation                                                                                                                                                                          |
-| `slotValidationService.test.ts`  | `ScheduleValidationService.validate` -- future slot checks (5-second buffer), weekly/custom schedule matching, scheduling period boundaries, conflict detection, event-specific rules (consultation: same-day + consecutive, webinar: consecutive, class: weekly limits + session grouping), 30-minute fixed slot duration                                                                                   |
-| `allocationAlgorithms.test.ts`   | `AllocationAlgorithms` -- `manualAllocate` (validation, business rules) and `allocateRequestedSlots` (requested slot validation and delegation; formerly `preAllocate`). Auto mode is not covered here: the client auto-allocator was deleted in #997/#1132, and the server's picks are tested in `slotAllocationService.test.ts` and `preference-scored-allocation.test.ts`.                                                                                                                                               |
-| `rescheduleCancel.test.ts`       | Reschedule and cancel API routes -- authentication (401), 404 handling, 24-hour policy enforcement, per-type slot marking (CONSULTATION/SUBSCRIPTION/WEBINAR/CLASS), partial vs entire reschedule, `CancelAppointmentSchema` validation, cancellation data recording, `cleanupTentativeSlots` script                                                                             |
-| `subscriptionValidation.test.ts` | `SubscriptionValidationService` -- week key format consistency (Bug A fix), appointment-per-call counting (Bug B fix), weekly limit enforcement (Bug C fix), scheduling period validation, weekly info generation, `getAvailableWeeksForSubscription`, `canScheduleInWeek`, incomplete proposed call detection, `excludeAppointmentIds`                                                                  |
-| `calendarUtils.test.ts`          | Calendar utilities -- `mapWeeklySlots`/`mapCustomSlots` (interval generation, UTC consistency), `slotsOverlap`, `getSlotStatus` (booking detection, partial booking, conflicts), `formatSlotsForAPI`, `validateSelectedSlots` (all event types), `groupSlotsByWeek`, `validateSlotDistribution`, `validateDayBasedConsecutiveSlots`, `calculateCallProgress`, `getAppointmentTitle`/`getAppointmentUser` |
-| `booking.mockData.ts`            | Shared mock data factories -- `makeTimeSlot`, `makeConsecutiveTimeSlots`, `makeWeekOfAvailability`, `makeSubscriptionPlan`/`makeSubscription`, `makeAppointmentWithSlots`, `makeMockPrisma`, `makeConsultantData`, `makeWeeklyAvailabilitySlot`/`makeCustomAvailabilitySlot`                                                                                                                             |
+| File                             | What It Tests                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `slotAllocationService.test.ts`  | `SchedulingService.allocate` -- mode routing (auto/manual/requested), duplicate detection, slot count validation, appointment creation, event data extraction, status updates, existing appointment deletion                                                                                                                                                                  |
+| `slotCalculationService.test.ts` | `ScheduleCalculationService` -- week counting (`countWeeks`), `startOfWeekSunday`, duration validation, `calculateRequiredSlots` for all event types, `getSlotsPerCall`, `groupSlotsByDay`/`groupSlotsByWeek`, progress calculation                                                                                                                                           |
+| `slotValidationService.test.ts`  | `ScheduleValidationService.validate` -- future slot checks (5-second buffer), weekly/custom schedule matching, scheduling period boundaries, conflict detection, event-specific rules (consultation: same-day + consecutive, webinar: consecutive, class: weekly limits + session grouping), 30-minute fixed slot duration                                                    |
+| `allocationAlgorithms.test.ts`   | `AllocationAlgorithms` -- `manualAllocate` (validation, business rules) and `allocateRequestedSlots` (requested slot validation and delegation; formerly `preAllocate`). Auto mode is not covered here: the client auto-allocator was deleted in #997/#1132, and the server's picks are tested in `slotAllocationService.test.ts` and `preference-scored-allocation.test.ts`. |
+| `rescheduleCancel.test.ts`       | Reschedule and cancel API routes -- authentication (401), 404 handling, 24-hour policy enforcement, per-type slot marking (CONSULTATION/SUBSCRIPTION/WEBINAR/CLASS), partial vs entire reschedule, `CancelAppointmentSchema` validation, cancellation data recording, `cleanupTentativeSlots` script                                                                          |
+| `subscriptionValidation.test.ts` | `SubscriptionValidationService` -- week key format consistency (Bug A fix), appointment-per-call counting (Bug B fix), weekly limit enforcement (Bug C fix), scheduling period validation, weekly info generation, `getAvailableWeeksForSubscription`, `canScheduleInWeek`, incomplete proposed call detection, `excludeAppointmentIds`                                       |
+| `calendarUtils.test.ts`          | Calendar utilities -- `slotsOverlap`, `getSlotStatus` (booking detection, partial booking, conflicts), `formatSlotsForAPI`, `validateSelectedSlots` (all event types), `groupSlotsByWeek`, `validateSlotDistribution`, `validateDayBasedConsecutiveSlots`, `calculateCallProgress`, `getAppointmentTitle`/`getAppointmentUser`                                                |
+| `booking.mockData.ts`            | Shared mock data factories -- `makeTimeSlot`, `makeConsecutiveTimeSlots`, `makeWeekOfAvailability`, `makeSubscriptionPlan`/`makeSubscription`, `makeAppointmentWithSlots`, `makeMockPrisma`, `makeConsultantData`, `makeWeeklyAvailabilitySlot`/`makeCustomAvailabilitySlot`                                                                                                  |
 
 ### Test Count
 
@@ -250,16 +250,16 @@ curl -X GET http://localhost:3000/api/cleanup/{job-name} \
 
 ### Booking-Related Cron Endpoints
 
-| Endpoint                                   | Schedule                         | Purpose                                                                    |
-| ------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------- |
-| `/api/cleanup/auto-complete-appointments`  | `0 * * * *` (hourly)             | Transitions appointments to `COMPLETED` after session ends (1-hour buffer) |
+| Endpoint                                         | Schedule                         | Purpose                                                                    |
+| ------------------------------------------------ | -------------------------------- | -------------------------------------------------------------------------- |
+| `/api/cleanup/auto-complete-appointments`        | `0 * * * *` (hourly)             | Transitions appointments to `COMPLETED` after session ends (1-hour buffer) |
 | `/api/cleanup/tentative-occurrences`             | `0 */2 * * *` (every 2h)         | Deletes tentative slots older than 24 hours with no successful payment     |
-| `/api/cleanup/stale-pending-consultations` | `30 * * * *` (hourly at :30)     | Cleans up consultations stuck in `PENDING` state                           |
-| `/api/cleanup/invalid-appointments`        | `0 * * * *` (hourly)             | Detects and removes duplicate or invalid appointment records               |
-| `/api/cleanup/expire-stale-requests`       | `0 1 * * *` (daily at 01:00 UTC) | Expires unanswered consultation/subscription requests                      |
+| `/api/cleanup/stale-pending-consultations`       | `30 * * * *` (hourly at :30)     | Cleans up consultations stuck in `PENDING` state                           |
+| `/api/cleanup/invalid-appointments`              | `0 * * * *` (hourly)             | Detects and removes duplicate or invalid appointment records               |
+| `/api/cleanup/expire-stale-requests`             | `0 1 * * *` (daily at 01:00 UTC) | Expires unanswered consultation/subscription requests                      |
 | `/api/cleanup/reconcile-occurrence-availability` | `15 * * * *` (hourly at :15)     | Reconciles slot availability after payment state changes                   |
-| `/api/cleanup/approval-payments`           | See cron config                  | Processes approval-based (pay-later) payment flows                         |
-| `/api/cleanup/abandoned-payments`          | See cron config                  | Cleans up abandoned payment intents                                        |
+| `/api/cleanup/approval-payments`                 | See cron config                  | Processes approval-based (pay-later) payment flows                         |
+| `/api/cleanup/abandoned-payments`                | See cron config                  | Cleans up abandoned payment intents                                        |
 
 ### Example: Test Tentative Slot Cleanup
 
