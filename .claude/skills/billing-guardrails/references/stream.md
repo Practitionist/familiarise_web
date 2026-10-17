@@ -6,7 +6,7 @@ The repo records the account as the Maker plan (`docs/infrastructure/production-
 
 ## 2. What causes surprise bills or outages
 
-- The MAU cliff: the 2,001st user moves from free to a $499 plan, and then $0.09 per extra MAU; the repo doc projects +$499 at the first overage.
+- The MAU cliff: past the free limit (2,000 MAU per the repo doc, 1,000 per the live page) the account must move to a paid plan, starting at $499 a month (the repo doc projects +$499). Whether Stream hard-blocks excess connections on Maker or Build until you upgrade is not stated on the pages read (unknown; confirm in the dashboard). The $0.09 per extra MAU overage applies to the Start and Elevate plans, not to the free tier.
 - MAU counts `connectUser()` calls with unique ids; `setGuestUser()` mints a new anonymous id per call and inflates MAU.
 - Participant minutes multiply by attendees: a 60-minute class with 20 people is 1,200 participant minutes (0.36 percent of 333,000), about INR 32 at $0.30 per 1,000 (INFERRED rate INR 90 per dollar).
 - Recording and transcription are billed per call minute on top, and Stream keeps recordings for 14 days unless copied out.
