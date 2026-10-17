@@ -239,7 +239,8 @@ jobs:
 
   build:
     name: Build
-    if: github.actor != 'dependabot[bot]' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    # PRs are built by the Netlify deploy preview (the build gate); CI builds pushes and release PRs.
+    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.base_ref == 'prod') && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset') && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # No redis service — see the note on unit-tests.
@@ -294,7 +295,10 @@ jobs:
         run: |
           test "${{ needs.typecheck.result }}" = success
           test "${{ needs.unit-tests.result }}" = success
-          test "${{ needs.build.result }}" = success
+          test "${{ needs.build.result }}" = success \
+            || { test "${{ github.event_name }}" = pull_request \
+              && test "${{ github.base_ref }}" != prod \
+              && test "${{ needs.build.result }}" = skipped; }
 
   # Hermetic: applies this branch's schema + SQL sidecars to a throwaway Postgres
   # and asserts them, so red means the branch is broken, never the shared DB.
