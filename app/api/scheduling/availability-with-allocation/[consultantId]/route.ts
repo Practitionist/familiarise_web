@@ -32,9 +32,18 @@ import {
   ifNoneMatchSatisfied,
   readAvailabilityGridMarker,
 } from "@/lib/scheduling/availabilityGridMarker";
-import { isMinuteWithinWeeklySlot } from "@/utils/scheduling-engine/slotTimeUtils";
+import {
+  createWeeklyCoverage,
+  partitionWeeklyRows,
+  weeklyRowLocalDurationMinutes,
+  type NullableWeeklyRowLocalColumns,
+} from "@/utils/schedule/weekly-projection";
+import { reportIncompleteWeeklyRows } from "@/lib/scheduling/incomplete-weekly-rows";
 import type { TIntervalTiming } from "@/types/slots";
 import type { BookingStatus } from "@/utils/scheduling-engine/intervals";
+
+/** A weekly row as loaded, before its local columns are checked. */
+type StoredWeeklyRow = { id: string } & NullableWeeklyRowLocalColumns;
 
 type SlotTimingWithOverlap = TIntervalTiming & {
   isAllocated: boolean;
@@ -419,7 +428,7 @@ export async function GET(
       consultantProfileId: string;
       userId: string;
       scheduleType?: string;
-      availabilityWindowsWeekly?: WeeklySlot[];
+      availabilityWindowsWeekly?: StoredWeeklyRow[];
       availabilityWindowsCustom?: {
         id: string;
         startsAt: Date;
@@ -451,7 +460,7 @@ export async function GET(
               id?: string;
               userId?: string;
               scheduleType?: string;
-              availabilityWindowsWeekly?: WeeklySlot[];
+              availabilityWindowsWeekly?: StoredWeeklyRow[];
               availabilityWindowsCustom?: {
                 id: string;
                 startsAt: Date;
@@ -765,76 +774,26 @@ export async function GET(
         endsAt: slot.endsAt,
       }));
 
-    // Convert to utility interfaces with defensive validation
-    // Weekly slots now use Int (minutes since midnight UTC 0-1439) instead of DateTime
-    const weeklySlots: WeeklySlot[] = (
-      consultant.availabilityWindowsWeekly ?? []
-    )
+    // Rows without valid local columns are a data error: refused, reported once.
+    const weeklyPartition = partitionWeeklyRows(
+      consultant.availabilityWindowsWeekly ?? [],
+    );
+    reportIncompleteWeeklyRows(weeklyPartition.refused, {
+      op: "availability-grid",
+      consultantProfileId: consultantId,
+    });
+    const weeklySlots: WeeklySlot[] = weeklyPartition.usable
       .filter((slot) => {
-        // Defensive: Validate required fields exist
-        if (
-          slot.startTimeUtc === null ||
-          slot.startTimeUtc === undefined ||
-          slot.endTimeUtc === null ||
-          slot.endTimeUtc === undefined ||
-          !slot.startDay
-        ) {
-          console.warn(
-            `⚠️ Filtering out weekly slot ${slot.id}: missing required fields`,
-          );
-          return false;
-        }
-
-        // Defensive: Validate values are in range (0-1439 minutes)
-        if (
-          slot.startTimeUtc < 0 ||
-          slot.startTimeUtc > 1439 ||
-          slot.endTimeUtc < 0 ||
-          slot.endTimeUtc > 1439
-        ) {
-          console.warn(
-            `⚠️ Filtering out weekly slot ${slot.id}: time values out of range (0-1439)`,
-          );
-          return false;
-        }
-
-        // For same-day slots, start must be before end
-        if (
-          slot.startDay === slot.endDay &&
-          slot.startTimeUtc >= slot.endTimeUtc
-        ) {
-          console.warn(
-            `❌ Filtering out invalid weekly slot ${slot.id}: startTimeUtc (${slot.startTimeUtc}) >= endTimeUtc (${slot.endTimeUtc}) on same day`,
-          );
-          return false;
-        }
-
-        // Defensive: Check duration is reasonable (<= 24 hours = 1440 minutes)
-        const durationMinutes =
-          slot.startDay === slot.endDay
-            ? slot.endTimeUtc - slot.startTimeUtc
-            : 1440 - slot.startTimeUtc + slot.endTimeUtc;
-        if (durationMinutes > 1440) {
-          console.warn(
-            `⚠️ Filtering out weekly slot ${slot.id}: duration > 24 hours (${(durationMinutes / 60).toFixed(1)}h)`,
-          );
-          return false;
-        }
-
-        return true;
+        const minutes = weeklyRowLocalDurationMinutes(slot);
+        return minutes > 0 && minutes <= 1440;
       })
-      // #1342 — the stored columns travel through as they are, including
-      // utcOffsetMinutes: the generator derives each occurrence's UTC weekday
-      // from the row's own frozen offset. Flattening the row onto a 1970
-      // reference date threw that offset away and left the grid matching rows
-      // against the viewer's weekday.
       .map((slot) => ({
         id: slot.id,
-        startDay: slot.startDay,
-        endDay: slot.endDay,
-        startTimeUtc: slot.startTimeUtc,
-        endTimeUtc: slot.endTimeUtc,
-        utcOffsetMinutes: slot.utcOffsetMinutes,
+        timezone: slot.timezone,
+        localStartDay: slot.localStartDay,
+        localStartMinutes: slot.localStartMinutes,
+        localEndMinutes: slot.localEndMinutes,
+        localEndDay: slot.localEndDay,
       }));
 
     const customSlots: CustomSlot[] = (
@@ -932,24 +891,28 @@ export async function GET(
           Array.isArray(ch.availabilityWindowsCustom)),
     );
     if (coHostsWithSchedule.length > 0) {
+      const weeklyCoverageByCoHost = new Map(
+        coHostsWithSchedule.map((ch) => {
+          const { usable, refused } = partitionWeeklyRows(
+            ch.availabilityWindowsWeekly ?? [],
+          );
+          reportIncompleteWeeklyRows(refused, {
+            op: "availability-grid-cohost",
+            consultantProfileId: ch.consultantProfileId,
+          });
+          return [ch.consultantProfileId, createWeeklyCoverage(usable)];
+        }),
+      );
       const isCoveredByCoHost = (
         slotStart: Date,
         slotEnd: Date,
         ch: (typeof coHostsWithSchedule)[number],
       ): boolean => {
         if (ch.scheduleType === "WEEKLY") {
-          const day = slotStart.getUTCDay();
-          const mins = slotStart.getUTCHours() * 60 + slotStart.getUTCMinutes();
-          return (ch.availabilityWindowsWeekly ?? []).some((w) =>
-            isMinuteWithinWeeklySlot(
-              day,
-              mins,
-              30,
-              w.startDay,
-              w.startTimeUtc,
-              w.endTimeUtc,
-              w.utcOffsetMinutes ?? 0,
-            ),
+          return (
+            weeklyCoverageByCoHost
+              .get(ch.consultantProfileId)
+              ?.covers(slotStart.getTime(), slotEnd.getTime()) ?? false
           );
         }
         return (ch.availabilityWindowsCustom ?? []).some(

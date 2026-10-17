@@ -31,7 +31,10 @@ import {
   PARTY_USER_SELECT,
 } from "@/lib/booking/list-selects";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
+import {
+  refundRejectedRequest,
+  stampRejectionRefundOwed,
+} from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
 import {
@@ -612,6 +615,15 @@ export async function PATCH(
                     session.user.id,
                   )
                 : null;
+            // The refund a paid rejection owes commits with the rejection.
+            const rejectionPlan =
+              status === AppointmentStatus.REJECTED
+                ? await stampRejectionRefundOwed(tx, {
+                    kind: "consultation",
+                    requestId: consultationId,
+                    actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+                  })
+                : null;
             const consultation = await tx.consultation.findUniqueOrThrow({
               where: { id: consultationId },
               include: {
@@ -633,7 +645,12 @@ export async function PATCH(
               },
             });
 
-            return { data: consultation, duplicate: false, holdNotices };
+            return {
+              data: consultation,
+              duplicate: false,
+              holdNotices,
+              rejectionPlan,
+            };
           },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // LAYER 2: Highest isolation
@@ -674,6 +691,7 @@ export async function PATCH(
               requestId: consultationId,
               initiatedByUserId: session.user.id,
               actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+              plan: ("rejectionPlan" in result && result.rejectionPlan) || null,
             })
           : null;
 

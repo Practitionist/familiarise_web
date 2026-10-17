@@ -74,7 +74,10 @@ import {
 // previews a refund (cancel preview, cancel, reject all 500'd on prod). The
 // barrel is imported at the single gateway call below instead.
 import type { createRefund as createGatewayRefund } from "@/lib/payments";
-import { RefundError } from "@/lib/payments/core/types";
+import {
+  isDefinitiveRefundRefusal,
+  RefundError,
+} from "@/lib/payments/core/types";
 import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
@@ -566,8 +569,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           ...(input.reason ? { reason: input.reason } : {}),
           dashboardUrl: `${getAppUrl()}${queue}`,
         },
-        // Notification identity = the refund row, not the payload shape.
-        reserved.id,
+        // One logical refund, one notice: every attempt under a key shares
+        // the identity, so a retry's outbox row dedupes onto the first.
+        input.dedupeKey ?? reserved.id,
       );
     }
   } catch (notifyError) {
@@ -607,21 +611,28 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       tags: { feature: "refund" },
       extra: { paymentId: input.paymentId, refundRowId: reserved.id },
     });
-    // Keep the PENDING placeholder: the reconcile cron matches it against
-    // the gateway (covers "call actually landed but we never heard back")
-    // or FAILs it after 24h, which triggers the payer notification (#779).
+    const gatewayError = err instanceof Error ? err.message : String(err);
+    const metadata = {
+      initiatedByUserId: input.initiatedByUserId ?? null,
+      source: "app",
+      gateway_error: gatewayError,
+    } as Prisma.InputJsonValue;
+    // A definitive refusal created no gateway refund, so the reservation is
+    // FAILED now and frees the balance and the key for a retry. Anything
+    // ambiguous stays PENDING for the reconcile cron to resolve by lookup.
     await prisma.refund
       .updateMany({
         where: { id: reserved.id, status: RefundStatus.PENDING },
-        data: {
-          metadata: {
-            initiatedByUserId: input.initiatedByUserId ?? null,
-            source: "app",
-            gateway_error: err instanceof Error ? err.message : String(err),
-          } as Prisma.InputJsonValue,
-        },
+        data: isDefinitiveRefundRefusal(err)
+          ? {
+              metadata,
+              status: RefundStatus.FAILED,
+              failureReason: gatewayError,
+              failedAt: new Date(),
+            }
+          : { metadata },
       })
-      .catch(() => undefined); // best-effort annotation only
+      .catch(() => undefined); // best-effort; the reconcile cron is the backstop
     throw new RefundGatewayError(
       `Gateway refund failed for payment ${input.paymentId}: ${err instanceof Error ? err.message : String(err)}`,
       "GATEWAY_REFUND_FAILED",

@@ -13,11 +13,12 @@ import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
   WeeklyOffsetConflictError,
-  weeklyRowLocalColumns,
+  weeklyLocalColumnsForSave,
 } from "@/lib/scheduling/weeklyUtcOffset";
 import { getSession } from "@/lib/auth-server";
 import {
   validateWeeklyWindow,
+  weeklyZoneRefusal,
   AVAILABILITY_REFUSAL_STATUS,
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
@@ -231,7 +232,6 @@ export async function POST(req: NextRequest) {
       utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
         profileTimezone,
         callerSupplied: suppliedUtcOffsetMinutes ?? null,
-        consultantProfileId,
       });
     } catch (error) {
       if (error instanceof WeeklyOffsetConflictError) {
@@ -242,11 +242,18 @@ export async function POST(req: NextRequest) {
       }
       throw error;
     }
-    // #872 — dual-written, read by nothing until the reader flip.
-    const localColumns = weeklyRowLocalColumns(
+    const rowTimezone = resolveWeeklyTimezone(profileTimezone);
+    const zoneRefusal = weeklyZoneRefusal(rowTimezone);
+    if (zoneRefusal) {
+      return NextResponse.json(
+        { error: zoneRefusal.message, code: zoneRefusal.code },
+        { status: AVAILABILITY_REFUSAL_STATUS[zoneRefusal.code] },
+      );
+    }
+    // The local columns are what every reader projects from.
+    const localColumns = weeklyLocalColumnsForSave(
       { startDay, endDay, startTimeUtc, endTimeUtc },
-      resolveWeeklyTimezone(profileTimezone),
-      utcOffsetMinutes,
+      rowTimezone,
     );
 
     // Overlap check, write and coalescing share one Serializable transaction:
@@ -292,12 +299,11 @@ export async function POST(req: NextRequest) {
 
           // #1320 — an entry that touches an existing row becomes one row; answer
           // with the row that now covers what was asked for.
-          const covering = await coalesceAndResolve(tx, consultantProfileId, {
-            startDay,
-            endDay,
-            startTimeUtc,
-            endTimeUtc,
-          });
+          const covering = await coalesceAndResolve(
+            tx,
+            consultantProfileId,
+            localColumns,
+          );
           const { uncoveredUpcoming } = await settleAvailabilityWrite(
             tx,
             consultantProfileId,

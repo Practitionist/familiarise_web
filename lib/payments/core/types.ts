@@ -146,6 +146,33 @@ export class RefundError extends Error {
   }
 }
 
+/**
+ * Refusals that prove no gateway refund was created: our own pre-call checks
+ * and the gateway's 4xx validation class. Anything else (timeout, 5xx, an
+ * in-flight or reused idempotency key) may have moved money.
+ */
+const DEFINITIVE_REFUND_REFUSAL_CODES = new Set([
+  "NO_PAYMENT_FOUND",
+  "NOT_CAPTURED",
+  "INVALID_AMOUNT",
+  "RAZORPAY_NOT_INITIALIZED",
+  "REFUND_IDEMPOTENCY_KEY_INVALID",
+  "BAD_REQUEST_ERROR",
+]);
+
+/** True when the refund call failed before any gateway refund could exist. */
+export function isDefinitiveRefundRefusal(error: unknown): boolean {
+  if (!(error instanceof RefundError)) return false;
+  if (DEFINITIVE_REFUND_REFUSAL_CODES.has(error.code)) return true;
+  const original = error.originalError;
+  return (
+    !!original &&
+    typeof original === "object" &&
+    "statusCode" in original &&
+    original.statusCode === 404
+  );
+}
+
 export class DisputeError extends Error {
   constructor(
     message: string,

@@ -38,6 +38,8 @@ import type {
   EventConfig,
   EventType,
 } from "../../utils/scheduling-engine/types";
+import type { DayOfWeek } from "@prisma/client";
+import { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";
 
 const IST = "Asia/Kolkata";
 const IST_OFFSET = 330;
@@ -72,18 +74,18 @@ const findAvailableSlots = (
 
 /** A consultant offering one weekly window, expressed in UTC minutes. */
 function weeklyConsultant(
-  rows: Array<{ day: string; startUtc: number; endUtc: number }>,
+  rows: Array<{ day: DayOfWeek; startUtc: number; endUtc: number }>,
 ): ConsultantAllocationData {
   return {
     userId: "consultant-user",
     scheduleType: "WEEKLY",
     availabilityWindowsWeekly: rows.map((r, i) => ({
       id: `weekly-${i}`,
-      startDay: r.day,
-      startTimeUtc: r.startUtc,
-      endDay: r.day,
-      endTimeUtc: r.endUtc,
-      utcOffsetMinutes: IST_OFFSET,
+      ...weeklyRowLocalColumns(
+        { startDay: r.day, startTimeUtc: r.startUtc, endTimeUtc: r.endUtc },
+        "Asia/Kolkata",
+        IST_OFFSET,
+      ),
     })),
     availabilityWindowsCustom: [],
   };
@@ -293,6 +295,47 @@ describe("findAvailableSlots — scanning within an availability row", () => {
   });
 });
 
+describe("findAvailableSlots — an overnight row's post-midnight tail", () => {
+  it("places a session at 00:30 when the evening half is booked", async () => {
+    // IST Monday 22:00 → Tuesday 02:00 is UTC Monday 16:30 → 20:30.
+    const overnight: ConsultantAllocationData = {
+      userId: "consultant-user",
+      scheduleType: "WEEKLY",
+      availabilityWindowsWeekly: [
+        {
+          id: "overnight",
+          timezone: IST,
+          localStartDay: "MONDAY",
+          localStartMinutes: 1320,
+          localEndMinutes: 120,
+          localEndDay: "TUESDAY",
+        },
+      ],
+      availabilityWindowsCustom: [],
+    };
+    const booked = [0, 1, 2, 3, 4].map(
+      (i) => new Date(Date.UTC(2026, 7, 10, 16, 30 + i * 30)),
+    );
+    const slots = await findAvailableSlots(
+      dbOccupying(booked),
+      overnight,
+      1,
+      1,
+      "subscription",
+      {
+        sessionsPerWeek: 1,
+        sessionDurationInHours: 0.5,
+        schedulingPeriodStartsAt: new Date("2026-08-06T00:00:00Z"),
+        schedulingPeriodEndsAt: new Date("2026-08-20T00:00:00Z"),
+        schedulingTimezone: IST,
+      },
+    );
+    expect(slots.map((s) => s.toISOString())).toEqual([
+      "2026-08-10T19:00:00.000Z", // Tuesday 00:30 IST
+    ]);
+  });
+});
+
 describe("findAvailableSlots — recurring placement buckets by scheduling timezone", () => {
   // A Saturday row is the case that exposed the drift: Sunday 00:00 IST is
   // Saturday 18:30 UTC, so a tz-anchored cursor read with getUTCDay() landed on
@@ -306,7 +349,9 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
 
   it("places one session per timezone week and never double-books a week", async () => {
     const periodStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    const periodEnd = new Date(periodStart.getTime() + 28 * 24 * 60 * 60 * 1000);
+    const periodEnd = new Date(
+      periodStart.getTime() + 28 * 24 * 60 * 60 * 1000,
+    );
 
     const slots = await findAvailableSlots(
       dbOccupying([]),
@@ -337,7 +382,9 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
 
   it("never places two sessions in the same scheduling-timezone day", async () => {
     const periodStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    const periodEnd = new Date(periodStart.getTime() + 56 * 24 * 60 * 60 * 1000);
+    const periodEnd = new Date(
+      periodStart.getTime() + 56 * 24 * 60 * 60 * 1000,
+    );
 
     const slots = await findAvailableSlots(
       dbOccupying([]),
@@ -363,7 +410,9 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
 
   it("never reuses a day a surviving session already occupies", async () => {
     const periodStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    const periodEnd = new Date(periodStart.getTime() + 56 * 24 * 60 * 60 * 1000);
+    const periodEnd = new Date(
+      periodStart.getTime() + 56 * 24 * 60 * 60 * 1000,
+    );
     const config = {
       sessionsPerWeek: 2,
       sessionDurationInHours: 0.5,
@@ -380,7 +429,14 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
     // surviving confirmed session. The per-day cap counts existing appointments,
     // so re-placing on that day would be rejected downstream.
     const survivor = (
-      await findAvailableSlots(dbOccupying([]), twoDayConsultant, 1, 1, "subscription", config)
+      await findAvailableSlots(
+        dbOccupying([]),
+        twoDayConsultant,
+        1,
+        1,
+        "subscription",
+        config,
+      )
     )[0];
 
     const slots = await findAvailableSlots(
@@ -445,18 +501,27 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
 
   it("counts a partial reschedule's surviving sessions against the week cap", async () => {
     const periodStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    const periodEnd = new Date(periodStart.getTime() + 28 * 24 * 60 * 60 * 1000);
+    const periodEnd = new Date(
+      periodStart.getTime() + 28 * 24 * 60 * 60 * 1000,
+    );
 
     // One confirmed session already sits in the first IST week that the search
     // would otherwise fill; it must be skipped rather than doubled up.
     const firstSaturday = (
-      await findAvailableSlots(dbOccupying([]), consultant, 1, 1, "subscription", {
-        sessionsPerWeek: 1,
-        sessionDurationInHours: 0.5,
-        schedulingPeriodStartsAt: periodStart,
-        schedulingPeriodEndsAt: periodEnd,
-        schedulingTimezone: IST,
-      })
+      await findAvailableSlots(
+        dbOccupying([]),
+        consultant,
+        1,
+        1,
+        "subscription",
+        {
+          sessionsPerWeek: 1,
+          sessionDurationInHours: 0.5,
+          schedulingPeriodStartsAt: periodStart,
+          schedulingPeriodEndsAt: periodEnd,
+          schedulingTimezone: IST,
+        },
+      )
     )[0];
 
     const slots = await findAvailableSlots(

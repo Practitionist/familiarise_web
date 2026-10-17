@@ -13,13 +13,11 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import { DayOfWeek, Prisma } from "@prisma/client";
+import { isNextDayOfWeek } from "@/utils/schedule/overnight";
 import {
-  isNextDayOfWeek,
-  resolveOvernightStatus,
-} from "@/utils/schedule/overnight";
-import {
-  utcStartDayIndex,
-  weeklyRowDurationMinutes,
+  DAY_INDEX,
+  weeklyRowLocalDurationMinutes,
+  type WeeklyRowLocalColumns,
 } from "@/utils/schedule/weekly-projection";
 
 /** 24 hours expressed in milliseconds */
@@ -86,19 +84,6 @@ export const DAY_OF_WEEK_TO_INDEX: Record<string, number> = {
 export function dateToMinuteUtc(date: Date): number {
   return date.getUTCHours() * 60 + date.getUTCMinutes();
 }
-
-/**
- * Ordered array of DayOfWeek enum values matching JS getUTCDay() indices (Sunday=0).
- */
-const DAY_ORDER: DayOfWeek[] = [
-  DayOfWeek.SUNDAY,
-  DayOfWeek.MONDAY,
-  DayOfWeek.TUESDAY,
-  DayOfWeek.WEDNESDAY,
-  DayOfWeek.THURSDAY,
-  DayOfWeek.FRIDAY,
-  DayOfWeek.SATURDAY,
-];
 
 // #503 item 2 — canonical impl lives in utils/schedule/overnight.ts;
 // re-exported here for existing callers.
@@ -246,46 +231,23 @@ export function buildWeeklyOverlapWhere(
   }
 }
 
+type LocalWeekWindow = Pick<
+  WeeklyRowLocalColumns,
+  "localStartDay" | "localEndDay" | "localStartMinutes" | "localEndMinutes"
+>;
+
 /**
- * Check whether two weekly slot records overlap in-memory.
- * Works for both same-day and overnight slots.
- *
- * Each slot is described by { startDay, endDay, startTimeUtc, endTimeUtc }
- * where times are minutes-since-midnight-UTC (0-1439).
- *
- * Logic: convert each slot to a set of (day, minuteStart, minuteEnd) ranges,
- * then check for pairwise overlap.
+ * Whether two weekly rows of the same schedule overlap, compared on their
+ * local week timeline [0, 10080) where an overnight row wraps past Saturday.
  */
-export function slotsOverlap(
-  a: {
-    startDay: DayOfWeek;
-    endDay: DayOfWeek;
-    startTimeUtc: number;
-    endTimeUtc: number;
-    utcOffsetMinutes?: number | null;
-  },
-  b: {
-    startDay: DayOfWeek;
-    endDay: DayOfWeek;
-    startTimeUtc: number;
-    endTimeUtc: number;
-    utcOffsetMinutes?: number | null;
-  },
-): boolean {
-  // Project each slot onto the 10,080-minute UTC week timeline [0, 10080)
-  // using utcStartDayIndex (which reduces to DAY_ORDER.indexOf(startDay) when
-  // utcOffsetMinutes is 0 or omitted) and weeklyRowDurationMinutes.
+export function slotsOverlap(a: LocalWeekWindow, b: LocalWeekWindow): boolean {
   const MINUTES_PER_WEEK = 7 * 1440;
-  const toWeekRanges = (s: typeof a): Array<[number, number]> => {
-    const startDayIdx = utcStartDayIndex({
-      startDay: s.startDay,
-      startTimeUtc: s.startTimeUtc,
-      utcOffsetMinutes: s.utcOffsetMinutes ?? 0,
-    });
-    if (startDayIdx === -1) return [];
-    const duration = weeklyRowDurationMinutes(s);
+  const toWeekRanges = (s: LocalWeekWindow): Array<[number, number]> => {
+    const startDayIdx = DAY_INDEX[s.localStartDay];
+    if (startDayIdx === undefined) return [];
+    const duration = weeklyRowLocalDurationMinutes(s);
     if (duration <= 0) return [];
-    const startMin = startDayIdx * 1440 + s.startTimeUtc;
+    const startMin = startDayIdx * 1440 + s.localStartMinutes;
     const endMin = startMin + duration;
     if (endMin <= MINUTES_PER_WEEK) {
       return [[startMin, endMin]];
@@ -360,65 +322,4 @@ export function getTimezoneOffsetMinutes(
     });
     return 0;
   }
-}
-
-/**
- * Check if a candidate slot fits entirely within a weekly availability window.
- * Handles both same-day and overnight (cross-midnight) availability.
- *
- * Used by: checkout validation, auto-allocator (isWithinAvailability).
- *
- * @param candidateDay - JS getUTCDay() index (0=Sunday..6=Saturday)
- * @param candidateMinutes - Start time as minutes since midnight UTC (0-1439)
- * @param slotDurationMinutes - Duration of the candidate slot in minutes
- * @param availStartDay - DayOfWeek enum string for availability start
- * @param availStartTimeUtc - Availability start in minutes since midnight UTC
- * @param availEndTimeUtc - Availability end in minutes since midnight UTC
- * @param utcOffsetMinutes - UTC offset for the consultant's timezone (e.g. 330 for IST, -300 for EST).
- */
-export function isMinuteWithinWeeklySlot(
-  candidateDay: number,
-  candidateMinutes: number,
-  slotDurationMinutes: number,
-  availStartDay: string,
-  availStartTimeUtc: number,
-  availEndTimeUtc: number,
-  utcOffsetMinutes: number,
-): boolean {
-  const candidateEndMinutes = candidateMinutes + slotDurationMinutes;
-  const { isOvernight } = resolveOvernightStatus({
-    startTimeUtc: availStartTimeUtc,
-    endTimeUtc: availEndTimeUtc,
-  });
-
-  // availStartDay is the consultant's LOCAL day; the UTC day the row starts on
-  // differs whenever their midnight is not UTC midnight. #1342 — that
-  // derivation now lives in the one module the grid generator also uses, so
-  // the validator and the grid cannot drift apart again.
-  const utcStartDay = utcStartDayIndex({
-    startDay: availStartDay as DayOfWeek,
-    startTimeUtc: availStartTimeUtc,
-    utcOffsetMinutes,
-  });
-  if (utcStartDay === -1) return false;
-
-  if (!isOvernight) {
-    return (
-      candidateDay === utcStartDay &&
-      candidateMinutes >= availStartTimeUtc &&
-      candidateEndMinutes <= availEndTimeUtc
-    );
-  }
-
-  // Overnight: spans utcStartDay (from startTimeUtc to midnight) then
-  // utcEndDay (from midnight to endTimeUtc).
-  const utcEndDay = (utcStartDay + 1) % 7;
-  if (candidateDay === utcStartDay && candidateMinutes >= availStartTimeUtc) {
-    if (candidateEndMinutes <= 1440) return true;
-    return candidateEndMinutes - 1440 <= availEndTimeUtc;
-  }
-  if (candidateDay === utcEndDay && candidateEndMinutes <= availEndTimeUtc) {
-    return true;
-  }
-  return false;
 }

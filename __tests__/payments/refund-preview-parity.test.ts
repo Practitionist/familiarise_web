@@ -67,6 +67,8 @@ const txStub = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
+  // The refund the cancel owes is stamped on the payment in the same commit.
+  payment: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   // #1766 — a subscription cancel stamps the undelivered earnings tranches.
   consultantEarnings: {
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -112,7 +114,10 @@ jest.mock("../../lib/prisma", () => ({
     payment: {
       findMany: (...a: unknown[]) => mockPaymentFindMany(...a),
       findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
+    // No earlier refund carries the cancel's key.
+    refund: { findUnique: jest.fn().mockResolvedValue(null) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     membership: { findUnique: jest.fn().mockResolvedValue(null) },
   },
@@ -140,6 +145,7 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
 }));
 
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  stampWholeEventRefundsOwed: jest.fn().mockResolvedValue(new Map()),
   refundWholeEventPayments: jest.fn().mockResolvedValue({
     refundsIssued: 0,
     refundedPaise: 0,

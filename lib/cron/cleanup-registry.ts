@@ -782,6 +782,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failedCount: r.failedCount,
           unresolvableCount: r.unresolvableCount,
           retiredCount: r.retiredCount,
+          deadLettered: r.deadLettered,
           errors: r.errors.slice(0, 5),
         }),
         status: (r) =>
@@ -903,8 +904,10 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           failed: r.failed,
           stuck: r.stuck,
           errors: r.errors,
+          owed: r.owed,
         }),
-        status: (r) => statusFor(r, r.stuck.length > 0),
+        status: (r) =>
+          statusFor(r, r.stuck.length > 0 || r.owed.stuck.length > 0),
         failureMessage: "Failed to retry auto-refunds",
       }),
 

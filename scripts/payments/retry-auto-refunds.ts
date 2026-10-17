@@ -18,10 +18,18 @@
  * the gateway the marker becomes `Auto-refund stuck:` and an operator is paged
  * once, instead of retrying (and telling the payer the refund failed) forever.
  *
+ * A second cohort drains the refunds the booking doors owe: a cancel,
+ * rejection, moderation ban, maintenance freeze or no-show stamps
+ * `Payment.refundOwedKey` in the commit that ends the booking, and this sweep
+ * drives each marker under its own key until the money is back. The attempt
+ * count on the row retires a marker to an operator at MAX_REFUND_OWED_ATTEMPTS,
+ * and markers older than two hours are surfaced once a day as an ops event.
+ *
  * Imported by jobs/payments/retry-auto-refunds.ts (GitHub Actions) and
  * app/api/cleanup/retry-auto-refunds/route.ts (the ticker twin).
  */
 
+import { createHash } from "node:crypto";
 import { PaymentStatus, RefundStatus } from "@prisma/client";
 
 import prisma from "../../lib/prisma";
@@ -41,7 +49,20 @@ import {
   releaseBlockedBookingHold,
   settleAutoRefundMarker,
 } from "@/lib/payments/webhooks/handlers";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  recordSystemError,
+  recordSystemErrorSafe,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
+import {
+  driveRefundOwed,
+  markerFromRow,
+  MAX_REFUND_OWED_ATTEMPTS,
+  REFUND_OWED_SELECT,
+  type RefundOwedMarker,
+  type RefundOwedOutcome,
+} from "@/lib/payments/operations/refund-owed";
+import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { reportSentryError } from "@/lib/observability/report";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
@@ -57,6 +78,19 @@ export interface RetryAutoRefundsResult {
   /** Payments whose attempt budget ran out this run; an operator was paged. */
   stuck: string[];
   errors: number;
+  /** The refund-owed cohort: markers the booking doors stamped. */
+  owed: {
+    scanned: number;
+    refunded: number;
+    /** Cleared because the money was already back. */
+    settled: number;
+    /** Drives that failed and stay on the marker. */
+    failed: number;
+    /** Markers retired to an operator this run. */
+    stuck: string[];
+    /** Markers older than two hours, stuck ones included. */
+    aged: number;
+  };
   timestamp: string;
 }
 
@@ -65,6 +99,9 @@ const DEFAULT_LIMIT = 10;
 const GRACE_MS = 15 * 60_000;
 /** Failed gateway refunds after which the payment goes to an operator. */
 export const MAX_AUTO_REFUND_ATTEMPTS = 3;
+/** A refund owed this long after its door committed is surfaced to ops. */
+const OWED_ALERT_AFTER_MS = 2 * 60 * 60_000;
+const OWED_REPORT_WINDOW_MS = 24 * 60 * 60_000;
 
 // #476 — one lock for every entry; fail-closed because this sweep refunds.
 export async function retryAutoRefunds(
@@ -85,6 +122,14 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
     failed: 0,
     stuck: [],
     errors: 0,
+    owed: {
+      scanned: 0,
+      refunded: 0,
+      settled: 0,
+      failed: 0,
+      stuck: [],
+      aged: 0,
+    },
     timestamp: now.toISOString(),
   };
 
@@ -140,8 +185,161 @@ async function retryUnlocked(limit: number): Promise<RetryAutoRefundsResult> {
       extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
     });
   }
+  await retryRefundsOwed(limit, now, result);
+  await reportAgedRefundsOwed(now, result);
   result.success = result.errors === 0;
   return result;
+}
+
+/**
+ * Drive the oldest markers, fewest attempts first so a failing row rotates
+ * behind fresh ones. A payment with a PENDING refund belongs to
+ * reconcile-refunds and one under a live dispute waits for it; a marker whose
+ * key already carries a settled refund is cleared by the drive's replay.
+ */
+async function retryRefundsOwed(
+  limit: number,
+  now: Date,
+  result: RetryAutoRefundsResult,
+): Promise<void> {
+  const rows = await prisma.payment.findMany({
+    where: {
+      refundOwedKey: { not: null },
+      refundOwedAt: { lt: new Date(now.getTime() - GRACE_MS) },
+      refundOwedAttempts: { lt: MAX_REFUND_OWED_ATTEMPTS },
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      deletedAt: null,
+      refunds: { none: { status: RefundStatus.PENDING } },
+      disputes: {
+        none: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+      },
+    },
+    orderBy: [{ refundOwedAttempts: "asc" }, { refundOwedAt: "asc" }],
+    take: limit,
+    select: REFUND_OWED_SELECT,
+  });
+  result.owed.scanned = rows.length;
+
+  // One Sentry event per run, never per row.
+  let firstError: unknown;
+  const failedIds: string[] = [];
+  for (const marker of rows.flatMap((row) => markerFromRow(row) ?? [])) {
+    const outcome = await driveRefundOwed(marker, { initiatedByUserId: null });
+    const holdError = await startTrialHoldIfSettled(marker, outcome);
+    if (holdError !== undefined) {
+      result.errors += 1;
+      firstError ??= holdError;
+      failedIds.push(marker.paymentId);
+    }
+    if (outcome.kind === "refunded") result.owed.refunded += 1;
+    else if (outcome.kind === "replayed" || outcome.kind === "settled") {
+      result.owed.settled += 1;
+    } else if (outcome.kind === "failed") {
+      result.owed.failed += 1;
+      firstError ??= outcome.error;
+      failedIds.push(marker.paymentId);
+      if (outcome.stuck) result.owed.stuck.push(marker.paymentId);
+    }
+  }
+  if (failedIds.length > 0) {
+    reportSentryError(firstError, {
+      subsystem: "payments",
+      op: "retry-auto-refunds.owed",
+      fingerprint: ["retry-auto-refunds", "owed"],
+      extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
+    });
+  }
+}
+
+/**
+ * A settled trial refund starts the retained earnings' hold; the credits rail
+ * has no cascade to do it, and the stamp is idempotent. A failed stamp is
+ * returned for the run's one report and recorded durably, because the marker
+ * is already cleared.
+ */
+async function startTrialHoldIfSettled(
+  marker: RefundOwedMarker,
+  outcome: RefundOwedOutcome,
+): Promise<unknown> {
+  const settled =
+    outcome.kind === "settled" ||
+    ((outcome.kind === "refunded" || outcome.kind === "replayed") &&
+      outcome.refund.status !== "PENDING");
+  if (!settled || !marker.key.startsWith("trial-cancel:")) return undefined;
+  try {
+    await stampTrialEarningsOnCancel(prisma, { paymentId: marker.paymentId });
+    return undefined;
+  } catch (error) {
+    await recordSystemErrorSafe({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `Trial refund settled for payment ${marker.paymentId} but its earnings hold was not started`,
+      err: error,
+      context: { paymentId: marker.paymentId, key: marker.key },
+    });
+    return error ?? new Error("trial hold stamp failed");
+  }
+}
+
+/**
+ * Markers older than two hours are money a booking door still owes. The ops
+ * event reads the persisted owed amount and is recorded once per distinct id
+ * set per day, so a stuck backlog does not re-page every tick.
+ */
+async function reportAgedRefundsOwed(
+  now: Date,
+  result: RetryAutoRefundsResult,
+): Promise<void> {
+  const aged = await prisma.payment.findMany({
+    where: {
+      refundOwedKey: { not: null },
+      refundOwedAt: { lt: new Date(now.getTime() - OWED_ALERT_AFTER_MS) },
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      deletedAt: null,
+    },
+    orderBy: { refundOwedAt: "asc" },
+    take: 200,
+    select: {
+      id: true,
+      refundOwedKey: true,
+      refundOwedPaise: true,
+      refundOwedAttempts: true,
+    },
+  });
+  result.owed.aged = aged.length;
+  if (aged.length === 0) return;
+
+  const ids = aged.map((p) => p.id);
+  const correlationId = `retry-auto-refunds:owed:${createHash("sha256")
+    // Code-unit order, not localeCompare: a dedupe key must not vary by collation.
+    .update([...ids].sort((a, b) => Number(a > b) - Number(a < b)).join(","))
+    .digest("hex")
+    .slice(0, 16)}`;
+  const reported = await prisma.systemEvent
+    .findFirst({
+      where: {
+        correlationId,
+        createdAt: { gte: new Date(now.getTime() - OWED_REPORT_WINDOW_MS) },
+      },
+      select: { id: true },
+    })
+    .catch(() => null);
+  if (reported) return;
+  await recordSystemEvent({
+    category: "PAYMENT",
+    severity: "WARN",
+    message: `${aged.length} cancelled or ended bookings still owe a refund more than 2 h after their door committed`,
+    context: {
+      owed: aged.slice(0, 50).map((p) => ({
+        paymentId: p.id,
+        key: p.refundOwedKey,
+        // Null is the full remaining balance, as stamped.
+        owedPaise: p.refundOwedPaise,
+        attempts: p.refundOwedAttempts,
+      })),
+    },
+    correlationId,
+  });
 }
 
 async function retryOne(

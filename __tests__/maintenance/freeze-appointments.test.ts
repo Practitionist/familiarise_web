@@ -59,10 +59,10 @@ describe("freeze-appointments doctrine (#1162)", () => {
     expect(freezeSource).not.toContain("tx.trial.updateMany(");
   });
 
-  it("refunds through the front door with a graceful re-run skip", () => {
-    expect(freezeSource).toContain("refundBookingPayment({");
+  it("stamps each refund owed in the freeze commit and drives it after", () => {
+    expect(freezeSource).toContain("await stampRefundsOwed(tx, owed);");
+    expect(freezeSource).toContain("driveRefundOwed(owed)");
     expect(freezeSource).not.toContain("createRefund({");
-    expect(freezeSource).toContain("ALREADY_FULLY_REFUNDED");
   });
 
   it("loads payments unfiltered so PENDING payments keep their appointment", () => {

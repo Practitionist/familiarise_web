@@ -10,7 +10,7 @@ import prisma, { type Tx } from "@/lib/prisma";
 import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
-  weeklyRowLocalColumns,
+  weeklyLocalColumnsForSave,
 } from "@/lib/scheduling/weeklyUtcOffset";
 import type { StagedTrigger } from "@/lib/novu";
 import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
@@ -20,6 +20,7 @@ import {
   assertCustomWindows,
   assertWeeklyWindows,
   AvailabilityContractError,
+  weeklyZoneRefusal,
 } from "@/lib/scheduling/availability-contract";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import type { VerificationDocumentRefSchema } from "./onboarding";
@@ -200,7 +201,6 @@ async function syncAvailabilitySlots(
   // throws into the failed transaction rather than being written.
   const utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
     profileTimezone: timezone,
-    consultantProfileId,
   });
   const rowTimezone = resolveWeeklyTimezone(timezone);
   if (scheduleType === ScheduleType.WEEKLY) {
@@ -214,35 +214,40 @@ async function syncAvailabilitySlots(
     // The contract refuses an empty set: a CONSULTANT with scheduleType WEEKLY
     // and no windows is unbookable and no guard would ever notice (the wizard
     // enforced "at least one" client-side only).
-    const weeklySlotsToCreate =
-      profileData.availabilityWindowsWeekly?.create ?? [];
+    const zoneRefusal = weeklyZoneRefusal(rowTimezone);
+    if (zoneRefusal) {
+      throw toRefusal(
+        new AvailabilityContractError(zoneRefusal),
+        "weeklySlots",
+      );
+    }
+    // The local columns are derived first: the contract's overlap check and
+    // the #1320 merge both compare them.
+    const weeklySlotsToCreate = (
+      profileData.availabilityWindowsWeekly?.create ?? []
+    ).map((slot) => ({
+      ...slot,
+      utcOffsetMinutes,
+      ...weeklyLocalColumnsForSave(slot, rowTimezone),
+    }));
     try {
       assertWeeklyWindows(weeklySlotsToCreate);
     } catch (error) {
       throw toRefusal(error, "weeklySlots");
     }
-    // #1320 — adjacent entries ("3:30–4:30" + "4:30–5:30") become one row so
-    // storage matches the window the customer is shown and can book.
-    //
-    // #1326 — the offset is stamped BEFORE the merge: mergeAdjacentWeeklyRows
-    // refuses to fold rows whose offsets differ, and every row here carried
-    // an absent offset until after the fold, so that guard was comparing
-    // undefined with undefined and could never fire.
-    // #872 — the five DST columns are derived from the MERGED row, which is
-    // the one actually stored. No reader consults them until the reader flip.
-    const rowsWithOffset = weeklySlotsToCreate.map((slot) => ({
-      ...slot,
-      utcOffsetMinutes,
-    }));
     await tx.availabilityWindowWeekly.createMany({
-      data: mergeAdjacentWeeklyRows(rowsWithOffset).map((slot) => ({
+      data: mergeAdjacentWeeklyRows(weeklySlotsToCreate).map((slot) => ({
         startDay: slot.startDay,
         startTimeUtc: slot.startTimeUtc,
         endDay: slot.endDay,
         endTimeUtc: slot.endTimeUtc,
         consultantProfileId,
         utcOffsetMinutes,
-        ...weeklyRowLocalColumns(slot, rowTimezone, utcOffsetMinutes),
+        timezone: slot.timezone,
+        localStartMinutes: slot.localStartMinutes,
+        localEndMinutes: slot.localEndMinutes,
+        localStartDay: slot.localStartDay,
+        localEndDay: slot.localEndDay,
       })),
     });
   } else if (scheduleType === ScheduleType.CUSTOM) {

@@ -17,7 +17,7 @@ This document describes the booking system as it is on `dev` today, then marks w
  EXPERT SIDE                                   CONSULTEE SIDE
  ───────────                                   ──────────────
  Publish availability                          Explore expert page
-  ├ Weekly rows (UTC mins + frozen offset)           │
+  ├ Weekly rows (local clock + IANA zone)            │
   └ Custom rows (absolute timestamptz)               ▼
         │                                   ┌──────────────────────┐
         ▼                                   │ Availability grid    │  GET /api/... (ETag, max-age 30s)

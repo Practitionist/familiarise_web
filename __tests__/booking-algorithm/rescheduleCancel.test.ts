@@ -81,6 +81,7 @@ jest.mock("../../lib/novu", () => ({
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
   // #1780 D-5 — the per-seat ledgers read before the cancel transaction.
   classSeriesLedgers: jest.fn().mockResolvedValue(new Map()),
+  stampWholeEventRefundsOwed: jest.fn().mockResolvedValue(new Map()),
   refundWholeEventPayments: jest.fn().mockResolvedValue({
     refundsIssued: 0,
     refundedPaise: 0,

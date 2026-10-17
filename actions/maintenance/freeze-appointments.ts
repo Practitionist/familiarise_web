@@ -14,8 +14,11 @@ import { flushNotificationsAfter } from "@/lib/novu/stage-then-attempt";
 import { stageAppointmentCancelledEmail } from "@/lib/email/senders/booking";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
-import { RefundValidationError } from "@/lib/payments/operations/refund";
+import {
+  driveRefundOwed,
+  stampRefundsOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
 import {
   transitionConsultationRequest,
   transitionSubscriptionRequest,
@@ -201,7 +204,8 @@ type FreezeContext = {
  */
 type FreezeEffects = {
   notifications: NotificationPayload[];
-  refunds: PendingRefundPayment[];
+  /** Refunds stamped owed in the freeze commit, driven after it. */
+  refunds: RefundOwedMarker[];
   trialsToTombstone: string[];
   subscriptionIds: string[];
 };
@@ -443,18 +447,23 @@ const FREEZE_STEPS = [
 ];
 
 /**
- * SUCCEEDED payments still worth sending to the refund front door.
+ * The full refund each SUCCEEDED payment of a frozen booking is owed.
  *
- * #781 §B — retired (soft-deleted) rows are left behind: refundBookingPayment
- * refuses them, so queueing one only mints a false refund failure and a
- * Sentry event.
+ * Retired (soft-deleted) rows are left behind: the front door
+ * refuses them, so queueing one only mints a false refund failure.
  */
-function refundablePayments(
+function refundsOwed(
+  appointmentId: string,
   payments: PendingRefundPayment[],
-): PendingRefundPayment[] {
-  return payments.filter(
-    (p) => p.paymentStatus === "SUCCEEDED" && p.deletedAt === null,
-  );
+): RefundOwedMarker[] {
+  return payments
+    .filter((p) => p.paymentStatus === "SUCCEEDED" && p.deletedAt === null)
+    .map((p) => ({
+      paymentId: p.id,
+      amountPaise: null,
+      key: `freeze:${appointmentId}:${p.id}`,
+      reason: "Scheduled platform maintenance",
+    }));
 }
 
 /**
@@ -494,8 +503,10 @@ async function freezeOneAppointment(ctx: FreezeContext) {
       mergeEffects(effects, result);
     }
 
-    // Collect SUCCEEDED payments for refund processing after the tx.
-    effects.refunds.push(...refundablePayments(ctx.appointment.payment));
+    // Every refund the freeze owes commits with it, in one statement.
+    const owed = refundsOwed(ctx.appointment.id, ctx.appointment.payment);
+    await stampRefundsOwed(tx, owed);
+    effects.refunds.push(...owed);
 
     await closeFrozenSlots(tx, ctx);
     // Leaving a proposal open reserves openForAppointmentId forever and lets
@@ -557,6 +568,7 @@ export async function freezeAppointments(
   let refundsIssued = 0;
   let refundsSkippedAlreadyRefunded = 0;
   let refundErrors = 0;
+  let firstRefundError: unknown;
   let subscriptionsExtended = 0;
   // Appointments whose transaction failed outright (not a terminal skip) —
   // the loop continues so one bad appointment can't abort the freeze.
@@ -569,7 +581,7 @@ export async function freezeAppointments(
   // never belongs inside a transaction. Only SUCCEEDED payments refund;
   // refundBookingPayment routes every rail (gateway, org_*, free_) and clamps
   // to the refundable balance (#1162).
-  const pendingRefunds: PendingRefundPayment[] = [];
+  const pendingRefunds: RefundOwedMarker[] = [];
   // Trials tombstone through their own domain helper post-tx (#1074 rule).
   const trialAppointmentsToTombstone: string[] = [];
   let skippedAlreadyTerminal = 0;
@@ -615,13 +627,8 @@ export async function freezeAppointments(
     }
   }
 
-  // Issue refunds AFTER the transaction commits.
-  // The Payment records still exist (appointments with payments were not deleted).
-  // On gateway failure a PENDING placeholder is created for the
-  // reconcile-pending-refunds cron, which RECONCILES (matches an existing
-  // gateway refund by amount + time window) or marks the row FAILED after
-  // 24h and notifies the payer (#779) — it does NOT re-initiate the gateway
-  // call, so a throw here means no money moved until an operator retries.
+  // Refunds are driven AFTER the transactions commit; each was stamped owed in
+  // its freeze commit, so a failure here is retried by the retry-auto-refunds sweep.
   // #1074 — trials tombstone through their domain helper (never deleted).
   for (const trialAppointmentId of trialAppointmentsToTombstone) {
     try {
@@ -634,45 +641,35 @@ export async function freezeAppointments(
     }
   }
 
-  for (const payment of pendingRefunds) {
-    try {
-      // #1162 — the front door: refundable-balance clamp, org_*/free_ rails,
-      // and its own PENDING reservation for the reconcile cron on gateway
-      // failure. The old raw createRefund refunded payment.amount GROSS
-      // (over-refunding partially-refunded payments) and threw
-      // UNKNOWN_GATEWAY on every org-funded booking.
-      await refundBookingPayment({
-        paymentId: payment.id,
-        reason: "Scheduled platform maintenance",
-      });
+  for (const owed of pendingRefunds) {
+    // The marker's key makes a re-invoked freeze and the retry sweep one
+    // refund with this drive; a failure stays on the marker for the sweep.
+    const outcome = await driveRefundOwed(owed);
+    if (outcome.kind === "refunded" || outcome.kind === "replayed") {
       refundsIssued++;
-    } catch (err) {
-      if (
-        err instanceof RefundValidationError &&
-        err.code === "ALREADY_FULLY_REFUNDED"
-      ) {
-        // Re-run over an already-settled payment — the clamp held.
-        refundsSkippedAlreadyRefunded++;
-        continue;
-      }
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "maintenance" } },
-      );
+    } else if (outcome.kind === "settled") {
+      refundsSkippedAlreadyRefunded++;
+    } else {
+      refundErrors++;
+      if (outcome.kind === "failed") firstRefundError ??= outcome.error;
       console.error(
         JSON.stringify({
           event: "maintenance_refund_failed",
-          paymentId: payment.id,
-          error: err instanceof Error ? err.message : String(err),
+          paymentId: owed.paymentId,
+          outcome: outcome.kind,
           timestamp: new Date().toISOString(),
         }),
       );
-      // No manual placeholder here any more: refundBookingPayment's gateway
-      // rail reserves its own PENDING row before the gateway call, so a
-      // second one would double-reserve the refundable balance. The
-      // reconcile-pending-refunds cron owns recovery from that reservation.
-      refundErrors++;
     }
+  }
+  // One Sentry event per freeze, never per payment.
+  if (firstRefundError !== undefined) {
+    Sentry.captureException(
+      firstRefundError instanceof Error
+        ? firstRefundError
+        : new Error(String(firstRefundError)),
+      { tags: { subsystem: "maintenance" }, extra: { refundErrors } },
+    );
   }
 
   // Extend scheduling period for affected subscriptions.

@@ -949,12 +949,31 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
         status: RefundStatus.FAILED,
         failedNotifiedAt: null,
       },
-      include: { payment: { select: { userId: true, organizationId: true } } },
+      include: {
+        payment: {
+          select: {
+            userId: true,
+            organizationId: true,
+            refundOwedKey: true,
+            refundOwedAt: true,
+          },
+        },
+      },
       orderBy: { createdAt: "asc" },
     })) ?? [];
 
   let notified = 0;
   for (const refund of failed) {
+    // An attempt of the refund the payment still owes is retried by the owed
+    // sweep, so it is claimed silently; a spent marker pages ops instead.
+    const owedAt = refund.payment.refundOwedAt;
+    if (refund.payment.refundOwedKey && owedAt && refund.createdAt >= owedAt) {
+      await prisma.refund.updateMany({
+        where: { id: refund.id, failedNotifiedAt: null },
+        data: { failedNotifiedAt: now, failedAt: refund.failedAt ?? now },
+      });
+      continue;
+    }
     // Prefer a gateway-supplied reason carried in metadata; fall back to the
     // existing operator `reason` only as failure context, else default copy.
     const meta = (refund.metadata ?? {}) as Record<string, unknown>;

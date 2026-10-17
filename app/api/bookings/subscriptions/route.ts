@@ -21,7 +21,10 @@ import {
   releaseDeclinedRequestHold,
   validateListRequestStatusPatch,
 } from "@/lib/booking/request-route-guards";
-import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
+import {
+  refundRejectedRequest,
+  stampRejectionRefundOwed,
+} from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
@@ -315,18 +318,32 @@ export async function PATCH(request: NextRequest) {
     try {
       // #836 — allowed-from guard rides the WHERE; updateMany returns no
       // row, so re-read for the heavy include.
-      const holdNotices = await prisma.$transaction(async (tx) => {
-        await transitionSubscriptionRequest(tx, {
-          where: { id },
-          to: status,
-          data: { pendingPaymentUrl: null },
-        });
-        return releaseDeclinedRequestHold(
-          tx,
-          { subscriptionId: id },
-          session.user.id,
-        );
-      });
+      const { holdNotices, rejectionPlan } = await prisma.$transaction(
+        async (tx) => {
+          await transitionSubscriptionRequest(tx, {
+            where: { id },
+            to: status,
+            data: { pendingPaymentUrl: null },
+          });
+          // The refund a paid rejection owes commits with the rejection.
+          const rejectionPlan =
+            status === AppointmentStatus.REJECTED
+              ? await stampRejectionRefundOwed(tx, {
+                  kind: "subscription",
+                  requestId: id,
+                  actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+                })
+              : null;
+          return {
+            rejectionPlan,
+            holdNotices: await releaseDeclinedRequestHold(
+              tx,
+              { subscriptionId: id },
+              session.user.id,
+            ),
+          };
+        },
+      );
       await flushBackupInterestNotices(holdNotices);
 
       // #1004 — rejection refund through the front door, after commit.
@@ -337,6 +354,7 @@ export async function PATCH(request: NextRequest) {
               requestId: id,
               initiatedByUserId: session.user.id,
               actor: isConsultant ? "CONSULTANT" : "PLATFORM",
+              plan: rejectionPlan,
             })
           : null;
 

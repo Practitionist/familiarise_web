@@ -22,20 +22,20 @@ import {
   validateCustomWindow,
   validateWeeklyWindow,
   validateWeeklyWindows,
+  type WeeklyWindowWithLocal,
 } from "../../lib/scheduling/availability-contract";
+import type { DayOfWeek } from "@prisma/client";
+import { weeklyRowLocalColumns } from "../../utils/schedule/weekly-projection";
 
 const weekly = (
   startTimeUtc: number,
   endTimeUtc: number,
-  startDay = "MONDAY",
-  endDay = startDay,
-) =>
-  ({
-    startDay,
-    endDay,
-    startTimeUtc,
-    endTimeUtc,
-  }) as Parameters<typeof validateWeeklyWindow>[0];
+  startDay: DayOfWeek = "MONDAY",
+  endDay: DayOfWeek = startDay,
+): WeeklyWindowWithLocal => {
+  const row = { startDay, endDay, startTimeUtc, endTimeUtc };
+  return { ...row, ...weeklyRowLocalColumns(row, "UTC", 0) };
+};
 
 /** 10:15 UTC — the brief's example. */
 const OFF_GRID = 615;

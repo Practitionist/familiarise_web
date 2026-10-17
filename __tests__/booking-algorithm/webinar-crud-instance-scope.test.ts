@@ -6,7 +6,12 @@
 
 const mockTx = {
   webinarPlan: { update: jest.fn() },
-  webinar: { findUnique: jest.fn() },
+  webinar: {
+    findUnique: jest.fn(),
+    updateMany: jest.fn(),
+    findUniqueOrThrow: jest.fn(),
+  },
+  bookingStatusHistory: { create: jest.fn() },
 };
 
 const transaction = jest.fn();
@@ -134,5 +139,28 @@ describe("webinar PATCH only moves a plan to a profile the caller owns", () => {
 
     expect(response.status).toBe(200);
     expect(base.consultantProfile.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe("webinar PATCH moves status only along the publish edge", () => {
+  it("publishes a DRAFT through the CAS helper, matching DRAFT only", async () => {
+    const draft = { ...WEBINAR, status: "DRAFT" };
+    base.webinar.findFirst.mockResolvedValue(draft);
+    mockTx.webinar.findUnique.mockResolvedValue(draft);
+    mockTx.webinar.updateMany.mockResolvedValue({ count: 1 });
+    mockTx.webinar.findUniqueOrThrow.mockResolvedValue({
+      ...draft,
+      status: "SCHEDULED",
+    });
+
+    const response = await PATCH(
+      request({ id: "plan-1", webinarId: "web-1", status: "SCHEDULED" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockTx.webinar.updateMany).toHaveBeenCalledWith({
+      where: { id: "web-1", status: { in: ["DRAFT"] } },
+      data: { status: "SCHEDULED" },
+    });
   });
 });

@@ -15,20 +15,20 @@ import {
   validateWeeklyWindows,
   AvailabilityContractError,
   assertWeeklyWindows,
+  type WeeklyWindowWithLocal,
 } from "../../lib/scheduling/availability-contract";
+import type { DayOfWeek } from "@prisma/client";
+import { weeklyRowLocalColumns } from "../../utils/schedule/weekly-projection";
 
 const weekly = (
   startTimeUtc: number,
   endTimeUtc: number,
-  startDay = "MONDAY",
-  endDay = startDay,
-) =>
-  ({
-    startDay,
-    endDay,
-    startTimeUtc,
-    endTimeUtc,
-  }) as Parameters<typeof validateWeeklyWindow>[0];
+  startDay: DayOfWeek = "MONDAY",
+  endDay: DayOfWeek = startDay,
+): WeeklyWindowWithLocal => {
+  const row = { startDay, endDay, startTimeUtc, endTimeUtc };
+  return { ...row, ...weeklyRowLocalColumns(row, "UTC", 0) };
+};
 
 describe("weekly windows", () => {
   it("accepts the bounds exactly (30 min and 12 h)", () => {

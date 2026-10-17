@@ -21,9 +21,14 @@ import {
   refundCancelledTrial,
   softCancelTrialAppointment,
   softCancelTrialAppointmentInTx,
+  trialRefundOwed,
   TrialRefundQuoteError,
   type TrialRefundOutcome,
 } from "@/lib/trials/cancellation";
+import {
+  stampRefundOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
 import { TrialStatus, AppointmentsType, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -365,6 +370,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       /** #1846 — a CANCELLED here was quoted unpaid, so it refunds nothing. */
       quote?: null;
     } | null = null;
+    // A declined paid trial's quote and owed marker, both taken in the PATCH commit.
+    const declinedRefund: {
+      quote: Awaited<ReturnType<typeof quoteTrialRefund>>;
+      owed: RefundOwedMarker | null;
+    } = { quote: null, owed: null };
 
     if (notes !== undefined) {
       updateData.notes = notes;
@@ -1115,6 +1125,26 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             : {}),
         });
       }
+      // A declined paid trial owes its refund from this commit: quoted on the
+      // transaction's client and stamped beside the status move.
+      if (deferredCancellation && deferredCancellation.quote !== null) {
+        const quote = await quoteTrialRefund(
+          {
+            appointmentId: deferredCancellation.appointmentId,
+            paymentId: deferredCancellation.paymentId,
+            isConsultantInitiated: deferredCancellation.isConsultantInitiated,
+          },
+          tx,
+        );
+        const owed = trialRefundOwed({
+          trialId,
+          quote,
+          isConsultantInitiated: deferredCancellation.isConsultantInitiated,
+        });
+        if (owed) await stampRefundOwed(tx, owed);
+        declinedRefund.quote = quote;
+        declinedRefund.owed = owed;
+      }
       // #1775 C-9 — delivery starts the paid trial's earnings hold.
       if (nextStatus === TrialStatus.COMPLETED) {
         await stampTrialEarningsHold(
@@ -1194,11 +1224,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       }
       refund = await refundCancelledTrial({
         trialId,
-        appointmentId: deferredCancellation.appointmentId,
-        paymentId: deferredCancellation.paymentId,
         initiatedByUserId: session.user.id,
-        isConsultantInitiated: deferredCancellation.isConsultantInitiated,
-        quote: deferredCancellation.quote,
+        quote: declinedRefund.quote,
+        owed: declinedRefund.owed,
       });
       // #1775 C-12 — a declined paid trial's learner hears "refunded" only
       // once the money actually moved.
@@ -1335,7 +1363,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     const isConsultantInitiated =
       session.user.consulteeProfileId !== existingTrial.consulteeProfileId;
     const confirmedRefundPaise = await readConfirmedRefund(request);
-    const cancelTrial = () =>
+    const cancelTrial = (owed: RefundOwedMarker | null) =>
       prisma.$transaction(async (tx) => {
         await transitionTrial(tx, {
           actorUserId: session.user.id,
@@ -1349,6 +1377,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         if (cancelled.appointmentId) {
           await softCancelTrialAppointmentInTx(tx, cancelled.appointmentId);
         }
+        // The confirmed refund commits with the cancel, so a death before the
+        // refund leaves a marker the retry sweep drives.
+        if (owed) await stampRefundOwed(tx, owed);
         return cancelled;
       });
     // #1846 — a paid trial refunds only the amount the caller confirmed from
@@ -1362,19 +1393,22 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
         isConsultantInitiated,
       });
       assertTrialQuoteConfirmed(quote, confirmedRefundPaise);
-      return { quote, cancelled: await cancelTrial() };
+      const owed = trialRefundOwed({ trialId, quote, isConsultantInitiated });
+      return { quote, owed, cancelled: await cancelTrial(owed) };
     };
-    const { quote, cancelled: updatedTrial } = lockId
+    const {
+      quote,
+      owed,
+      cancelled: updatedTrial,
+    } = lockId
       ? await withAppointmentLock(lockId, quoteThenCancel)
       : await quoteThenCancel();
 
     const refund = await refundCancelledTrial({
       trialId,
-      appointmentId: updatedTrial.appointmentId,
-      paymentId: updatedTrial.paymentId,
       initiatedByUserId: session.user.id,
-      isConsultantInitiated,
       quote,
+      owed,
     });
 
     const userIds = [

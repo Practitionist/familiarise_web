@@ -12,6 +12,7 @@ import {
   faqReplaceNested,
 } from "@/lib/api/plans/content";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
+import { editorStatusOrRefusal } from "@/lib/api/plans/event-status";
 import { refundWindowHoursSchema } from "@/lib/booking/refund-window";
 import { ClassStatus, Prisma } from "@prisma/client";
 import {
@@ -97,6 +98,7 @@ const PatchClassWithPlanBodySchema =
   PostClassWithPlanBodySchema.partial().extend({
     id: z.string().min(1, "Class Plan ID is required for update"), // Plan ID is required
     classId: z.string().optional().nullable(), // Class Instance ID is optional
+    status: z.unknown().optional(),
     // topics is already optional via partial()
     // Add endDate specific to PATCH updates
     endDate: z
@@ -539,6 +541,9 @@ export async function PATCH(request: NextRequest) {
     }
 
     const validatedData = validationResult.data;
+    // The editor only saves a draft or publishes; cancellation owns refunds.
+    const status = editorStatusOrRefusal(validatedData.status, "class");
+    if (status instanceof NextResponse) return status;
     const {
       id,
       classId,
@@ -564,7 +569,6 @@ export async function PATCH(request: NextRequest) {
       consultantProfileId,
       topics: topicNames,
       classContents,
-      status,
       startDate: startDateString,
       endDate: endDateString,
       recordingEnabled,
@@ -825,17 +829,15 @@ export async function PATCH(request: NextRequest) {
               maxParticipants?: number;
             } = {};
 
-            // #1319 — status rides the CAS helper (see the webinar twin): a
-            // stale tab must not resurrect a CANCELLED class after refunds.
-            // The else-branch below re-reads the row when no other field
-            // changed, so a status-only PATCH still returns the moved status.
+            // Publishing DRAFT -> SCHEDULED is the only status edge an edit may
+            // move; any other change matches zero rows and answers 409.
             const publishing =
               status === "SCHEDULED" && updatedClass.status === "DRAFT";
             if (status !== undefined && status !== updatedClass.status) {
               await transitionClassEvent(tx, {
                 where: { id: updatedClass.id },
                 to: status,
-                fromIn: publishing ? EVENT_PUBLISHABLE_FROM : undefined,
+                fromIn: EVENT_PUBLISHABLE_FROM,
               });
             }
 

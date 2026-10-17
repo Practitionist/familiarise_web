@@ -51,7 +51,11 @@ import {
   sendAppointmentCancelledEmail,
   sendRefundProcessedEmail,
 } from "../../lib/email";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  driveRefundOwed,
+  stampRefundOwed,
+  type RefundOwedMarker,
+} from "@/lib/payments/operations/refund-owed";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { reportSentryMessage } from "@/lib/observability/report";
 import {
@@ -509,6 +513,7 @@ export async function detectBothAbsent(
 async function claimConsultantNoShow(
   consultationId: string,
   appointmentId: string,
+  owed: RefundOwedMarker | null,
 ): Promise<boolean> {
   try {
     await prisma.$transaction(async (tx) => {
@@ -546,6 +551,8 @@ async function claimConsultantNoShow(
         actorUserId: null,
         reason: "consultant no-show",
       });
+      // The full refund the no-show owes commits with the claim.
+      if (owed) await stampRefundOwed(tx, owed);
     });
   } catch (error) {
     // Zero rows matched (parent or occurrences) means someone else moved it
@@ -564,18 +571,29 @@ async function claimConsultantNoShow(
   return true;
 }
 
+/** The full refund a consultant no-show owes, under the arm's own key. */
+function noShowRefundOwed(paymentId: string): RefundOwedMarker {
+  return {
+    paymentId,
+    amountPaise: null,
+    // Distinct from every expiry arm's key, so a later refund of the same
+    // payment for another reason is a real ALREADY_FULLY_REFUNDED.
+    key: `consultant-no-show:${paymentId}`,
+    reason: "consultant no-show (#471)",
+  };
+}
+
+function paidPaymentOf(consultation: NoShowCandidate): PaidPayment | undefined {
+  return consultation.appointment?.payment?.find(
+    (p) => p.paymentStatus === PaymentStatus.SUCCEEDED,
+  );
+}
+
 /**
- * Full refund, reusing B1's refundPayment path (#990). Idempotent on a key the
- * unique index enforces: without one, the only guard was refundPayment's
- * re-derivation of the refundable balance inside its own Serializable
- * transaction, which is a read-then-write — two concurrent unkeyed runs (an
- * expired `cron:lock:` grant lets exactly that) both read `refundable = amount`,
- * both pass, and both create a Refund row, because Refund is unique on nothing
- * but `dedupeKey`. with-cron-lock calls the CAS guards the correctness backstop;
- * the claim that held the balance re-derivation could not is why the key is
- * here (#P0-4). On failure we surface for ops (the cancellation stands) rather
- * than silently swallowing. Returns the refunded amount, whether refundPayment
- * succeeded, and the payment (for notifications).
+ * Drive the full refund the claim stamped, through the booking front door so
+ * gateway, org-funded and credit rails each settle correctly. The key makes a
+ * second run (a lost lock) and the retry sweep one refund with this one; a
+ * failure stays on the marker and is surfaced for ops.
  */
 async function refundNoShowConsultation(
   consultation: NoShowCandidate,
@@ -585,60 +603,44 @@ async function refundNoShowConsultation(
   succeeded: boolean;
   paidPayment: PaidPayment | undefined;
 }> {
-  const paidPayment = consultation.appointment?.payment?.find(
-    (p) => p.paymentStatus === PaymentStatus.SUCCEEDED,
-  );
+  const paidPayment = paidPaymentOf(consultation);
   if (!paidPayment) {
     const msg = `No refundable payment for no-show consultation ${consultation.id}`;
     console.warn(`   ⚠️ ${msg}`);
     errors.push(msg);
     return { refundedPaise: 0, succeeded: false, paidPayment: undefined };
   }
-  try {
-    // E2E-audit P1 fix — route through the booking front door (doctrine
-    // rule 3). Raw refundPayment throws UNKNOWN_GATEWAY on org-funded
-    // internal intents (org_wallet_/org_invoice_/org_license_), which used
-    // to strand the refund as a PENDING placeholder until the reconcile cron
-    // failed it a day later — with the booking already CANCELLED. The front
-    // door splits gateway / in-ledger-org / credits rails correctly.
-    const r = await refundBookingPayment({
-      paymentId: paidPayment.id,
-      reason: "consultant no-show (#471)",
-      initiatedByUserId: null,
-      // #P0-4 — the arm's own name and the payment, so a lost lock's second
-      // run answers with the first run's refund instead of moving money twice.
-      // Distinct from every expiry arm's key, so a later refund of the same
-      // payment for a different reason is a real ALREADY_FULLY_REFUNDED and
-      // not this sweep's own key coming back.
-      dedupeKey: `consultant-no-show:${paidPayment.id}`,
-    });
-    console.log(`   💸 Refunded ${r.amountRefundedPaise}p via ${r.rail}`);
+  const outcome = await driveRefundOwed(noShowRefundOwed(paidPayment.id));
+  if (outcome.kind === "refunded" || outcome.kind === "replayed") {
+    console.log(
+      `   💸 Refunded ${outcome.refund.amountRefundedPaise}p via ${outcome.refund.rail ?? "an earlier run"}`,
+    );
     return {
-      refundedPaise: r.amountRefundedPaise,
+      refundedPaise: outcome.refund.amountRefundedPaise,
       succeeded: true,
       paidPayment,
     };
-  } catch (refundErr) {
-    const msg = `Failed to refund no-show consultation ${consultation.id} (payment ${paidPayment.id}): ${refundErr}`;
-    console.error(`   ❌ ${msg}`);
-    errors.push(msg);
-    // Ops parity with every other refund-failure path: durable signal, not
-    // just this job's stdout.
-    // Awaited, not `void`. This is a single write on a failure path rather than
-    // a per-iteration call, so serialising it costs nothing, and awaiting is
-    // what makes the record durable: the job exits when its event loop drains,
-    // and a floating write is lost whenever the loop drains first — which is
-    // precisely the failure `*Safe` was introduced to stop hiding.
-    await recordSystemErrorSafe({
-      organizationId: null,
-      category: "PAYMENT",
-      summary: `No-show refund failed for consultation ${consultation.id}`,
-      err:
-        refundErr instanceof Error ? refundErr : new Error(String(refundErr)),
-      context: { paymentId: paidPayment.id },
-    });
-    return { refundedPaise: 0, succeeded: false, paidPayment };
   }
+  if (outcome.kind === "settled") {
+    return { refundedPaise: 0, succeeded: true, paidPayment };
+  }
+  const refundErr =
+    outcome.kind === "failed"
+      ? outcome.error
+      : new Error(`payment ${paidPayment.id} has an open dispute`);
+  const msg = `Failed to refund no-show consultation ${consultation.id} (payment ${paidPayment.id}): ${refundErr}`;
+  console.error(`   ❌ ${msg}`);
+  errors.push(msg);
+  // Ops parity with every other refund-failure path: a durable signal, awaited
+  // so the job's exit cannot drop it.
+  await recordSystemErrorSafe({
+    organizationId: null,
+    category: "PAYMENT",
+    summary: `No-show refund failed for consultation ${consultation.id}`,
+    err: refundErr instanceof Error ? refundErr : new Error(String(refundErr)),
+    context: { paymentId: paidPayment.id },
+  });
+  return { refundedPaise: 0, succeeded: false, paidPayment };
 }
 
 // #1654 — awaited notifications (staged, then attempted) reusing the Novu service.
@@ -769,9 +771,11 @@ async function detectConsultantNoShowsUnlocked(
       console.log(`\n🚫 Consultant no-show: consultation ${consultation.id}`);
       console.log(`   Plan: ${consultation.consultationPlan?.title}`);
 
+      const paid = paidPaymentOf(consultation);
       const claimed = await claimConsultantNoShow(
         consultation.id,
         party.appointmentId,
+        paid ? noShowRefundOwed(paid.id) : null,
       );
       if (!claimed) {
         console.log(`   ⏭️ Skipped — status changed since scan`);

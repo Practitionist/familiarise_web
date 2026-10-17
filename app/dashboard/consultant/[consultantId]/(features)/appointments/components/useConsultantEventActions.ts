@@ -15,6 +15,13 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
+import {
+  applyRefundRequote,
+  cancelPreviewUrl,
+  readRefundQuoteChanged,
+  shownQuoteBody,
+  type ShownCancelQuote,
+} from "@/lib/appointments/cancel-requote";
 
 interface UseConsultantEventActionsOptions {
   consultantId: string;
@@ -28,16 +35,14 @@ interface UseConsultantEventActionsOptions {
 /** Shape of `/api/appointments/[id]/cancel`'s `refund` field (1:1 bookings). */
 interface CancelRefundResult {
   status:
-    | "REFUNDED"
-    | "PENDING"
-    | "FAILED"
-    | "NOTHING_REFUNDABLE"
-    | "POLICY_ZERO";
+    "REFUNDED" | "PENDING" | "FAILED" | "NOTHING_REFUNDABLE" | "POLICY_ZERO";
 }
 
 /** Shape of the same route's `eventRefund` field (class/webinar). */
 interface CancelEventRefundSummary {
   failures: { paymentId: string; error: string }[];
+  /** Seats left for the retry sweep after the inline bite. */
+  deferred?: number;
 }
 
 /**
@@ -52,8 +57,11 @@ function cancelRefundSentence(body: unknown): string {
     eventRefund?: CancelEventRefundSummary | null;
   };
   if (eventRefund) {
-    return eventRefund.failures.length > 0
-      ? "Most refunds have gone out; a few need a manual look, and support has been notified."
+    if (eventRefund.failures.length > 0) {
+      return "Most refunds have gone out; a few need a manual look, and support has been notified.";
+    }
+    return (eventRefund.deferred ?? 0) > 0
+      ? "Because you cancelled, everyone who paid is being refunded; the remaining refunds follow shortly."
       : "Because you cancelled, everyone who paid has been refunded.";
   }
   switch (refund?.status) {
@@ -249,21 +257,28 @@ export function useConsultantEventActions({
     }
   };
 
-  const handleCancelConfirm = async () => {
+  /** Resolves false when the dialog must stay open on a re-quoted refund. */
+  const handleCancelConfirm = async (
+    quote?: ShownCancelQuote,
+  ): Promise<boolean> => {
     if (!appointmentId) {
       toast({
         title: "Error",
         description: "Appointment ID is missing",
         variant: "destructive",
       });
-      return;
+      return true;
     }
 
     setIsLoading(true);
     try {
       const response = await fetch(
         `/api/appointments/${appointmentId}/cancel`,
-        { method: "POST", headers: { "Content-Type": "application/json" } },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(shownQuoteBody(quote)),
+        },
       );
       // Typed read: an edge 504 page must not surface as a JSON SyntaxError.
       let body: unknown;
@@ -273,6 +288,25 @@ export function useConsultantEventActions({
           "Failed to cancel appointment",
         );
       } catch (error) {
+        // The refund moved since the dialog quoted it: show the new figure
+        // and ask again, with nothing committed.
+        const requote =
+          error instanceof ApiResponseError && error.status === 409
+            ? readRefundQuoteChanged(error.body)
+            : null;
+        if (requote) {
+          applyRefundRequote(
+            queryClient,
+            cancelPreviewUrl(appointmentId),
+            requote,
+          );
+          toast({
+            title: "The refund has changed",
+            description:
+              "Check the new amount in the dialog and confirm again.",
+          });
+          return false;
+        }
         if (error instanceof ApiResponseError && error.status === 409) {
           toast({
             title: "Booking already updated",
@@ -280,7 +314,7 @@ export function useConsultantEventActions({
               "This booking changed state in the meantime — refreshing.",
           });
           invalidateBookingData();
-          return;
+          return true;
         }
         throw error;
       }
@@ -297,6 +331,7 @@ export function useConsultantEventActions({
           (refundSentence ? ` ${refundSentence}` : ""),
       });
       invalidateBookingData();
+      return true;
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
@@ -310,6 +345,7 @@ export function useConsultantEventActions({
         ),
         variant: "destructive",
       });
+      return true;
     } finally {
       setIsLoading(false);
     }

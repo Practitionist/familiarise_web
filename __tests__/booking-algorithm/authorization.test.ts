@@ -69,6 +69,7 @@ jest.mock("../../lib/auth-server", () => ({
 }));
 
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  stampWholeEventRefundsOwed: jest.fn().mockResolvedValue(new Map()),
   refundWholeEventPayments: jest.fn().mockResolvedValue({
     refundsIssued: 0,
     refundedPaise: 0,
