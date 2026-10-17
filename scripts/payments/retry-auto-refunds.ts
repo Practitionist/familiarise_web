@@ -59,6 +59,8 @@ import {
   markerFromRow,
   MAX_REFUND_OWED_ATTEMPTS,
   REFUND_OWED_SELECT,
+  type RefundOwedMarker,
+  type RefundOwedOutcome,
 } from "@/lib/payments/operations/refund-owed";
 import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { reportSentryError } from "@/lib/observability/report";
@@ -223,30 +225,11 @@ async function retryRefundsOwed(
   const failedIds: string[] = [];
   for (const marker of rows.flatMap((row) => markerFromRow(row) ?? [])) {
     const outcome = await driveRefundOwed(marker, { initiatedByUserId: null });
-    // A settled trial refund starts the retained earnings' hold; the credits
-    // rail has no cascade to do it, and the stamp is idempotent.
-    const settled =
-      outcome.kind === "settled" ||
-      ((outcome.kind === "refunded" || outcome.kind === "replayed") &&
-        outcome.refund.status !== "PENDING");
-    if (settled && marker.key.startsWith("trial-cancel:")) {
-      try {
-        await stampTrialEarningsOnCancel(prisma, {
-          paymentId: marker.paymentId,
-        });
-      } catch (error) {
-        // The marker is already cleared, so the durable row is the recovery path.
-        result.errors += 1;
-        firstError ??= error;
-        failedIds.push(marker.paymentId);
-        await recordSystemErrorSafe({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Trial refund settled for payment ${marker.paymentId} but its earnings hold was not started`,
-          err: error,
-          context: { paymentId: marker.paymentId, key: marker.key },
-        });
-      }
+    const holdError = await startTrialHoldIfSettled(marker, outcome);
+    if (holdError !== undefined) {
+      result.errors += 1;
+      firstError ??= holdError;
+      failedIds.push(marker.paymentId);
     }
     if (outcome.kind === "refunded") result.owed.refunded += 1;
     else if (outcome.kind === "replayed" || outcome.kind === "settled") {
@@ -265,6 +248,36 @@ async function retryRefundsOwed(
       fingerprint: ["retry-auto-refunds", "owed"],
       extra: { failed: failedIds.length, sample: failedIds.slice(0, 10) },
     });
+  }
+}
+
+/**
+ * A settled trial refund starts the retained earnings' hold; the credits rail
+ * has no cascade to do it, and the stamp is idempotent. A failed stamp is
+ * returned for the run's one report and recorded durably, because the marker
+ * is already cleared.
+ */
+async function startTrialHoldIfSettled(
+  marker: RefundOwedMarker,
+  outcome: RefundOwedOutcome,
+): Promise<unknown> {
+  const settled =
+    outcome.kind === "settled" ||
+    ((outcome.kind === "refunded" || outcome.kind === "replayed") &&
+      outcome.refund.status !== "PENDING");
+  if (!settled || !marker.key.startsWith("trial-cancel:")) return undefined;
+  try {
+    await stampTrialEarningsOnCancel(prisma, { paymentId: marker.paymentId });
+    return undefined;
+  } catch (error) {
+    await recordSystemErrorSafe({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `Trial refund settled for payment ${marker.paymentId} but its earnings hold was not started`,
+      err: error,
+      context: { paymentId: marker.paymentId, key: marker.key },
+    });
+    return error ?? new Error("trial hold stamp failed");
   }
 }
 
