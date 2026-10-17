@@ -17,13 +17,11 @@
  * outcome, not an error.
  */
 
-import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { EventType } from "@/utils/scheduling-engine/types";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
-import { transitionRescheduleRequest } from "@/lib/booking/transitions";
+import { closeConfirmedProposal } from "@/lib/booking/reschedule-confirm";
 import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
-import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -31,8 +29,7 @@ import {
 } from "@/utils/appointmentlock";
 
 export type AutoConfirmOutcome =
-  | { confirmed: true }
-  | { confirmed: false; reason: string };
+  { confirmed: true } | { confirmed: false; reason: string };
 
 /**
  * @param rescheduleRequestId the proposal to try
@@ -82,22 +79,9 @@ export async function tryAutoConfirmProposal(
       const result = await SchedulingService.allocate({
         eventType,
         eventId,
-        // The proposed times go STRAIGHT to the allocator. Nothing is written until
-        // it commits.
-        //
-        // This used to stamp the times onto the released slot rows, run the
-        // allocator in "requested" mode so it would read them back, and restore the
-        // originals from an in-memory snapshot if validation rejected them. Two
-        // ways that broke: the finalize step below ran in its own transaction, so
-        // failing it left a confirmed booking whose proposal never closed —
-        // openForAppointmentId still set, blocking every later reschedule of that
-        // appointment. And a crash anywhere in between left the rows holding
-        // proposed times with the originals only ever in RAM, unrecoverable.
-        //
-        // Manual mode already accepts explicit times, and on a reschedule
-        // deleteExistingAppointments removes only TENTATIVE slots — which is
-        // exactly the released ones — so confirmed sessions elsewhere in the
-        // booking survive untouched.
+        // The proposed times go straight to the allocator, and nothing is written
+        // unless it commits. On a reschedule, deleteExistingAppointments removes
+        // only the tentative (released) slots, so confirmed sessions survive.
         mode: "manual",
         slots: request.proposedTimes.map((p) => p.startsAt.toISOString()),
         // Consultant-wide lock: these times were not picked per-day by a human, so
@@ -107,47 +91,24 @@ export async function tryAutoConfirmProposal(
         wideLock: true,
         // #1340 — the allocator closes every open proposal on these released slots
         // as DECLINED, because placing times supersedes them. THIS proposal is the
-        // one being confirmed, not superseded: without the exclusion it was
-        // DECLINED inside the allocator's transaction, the AUTO_ACCEPTED CAS below
-        // matched zero rows, and the route reported `autoConfirmed: false` on a
-        // booking that had already moved.
+        // one being confirmed, not superseded, so it is excluded.
         excludeRescheduleRequestId: request.id,
+        // AUTO_ACCEPTED commits with the move or not at all.
+        inTx: (tx) =>
+          closeConfirmedProposal(tx, {
+            where: { id: request.id },
+            to: "AUTO_ACCEPTED",
+          }),
       });
 
       if (!result.success) {
         // Nothing was written, so there is nothing to undo. The released slots are
         // untouched and still carry their original times; the request stays open
-        // for the consultant to answer.
+        // for the consultant to answer unless it was closed under us.
         return {
           confirmed: false,
           reason: result.errorCode ?? "VALIDATION_FAILED",
         };
-      }
-
-      try {
-        await prisma.$transaction(async (tx) => {
-          await transitionRescheduleRequest(tx, {
-            where: { id: request.id },
-            to: "AUTO_ACCEPTED",
-            // AUTO_ACCEPTED has no allowed-from in the map: it is normally only ever
-            // written at creation. This is that write, arriving one step late because
-            // validation had to run outside the creating transaction.
-            fromIn: ["PENDING_REVIEW"],
-          });
-        });
-      } catch (err) {
-        // A lost race (the proposal was answered or expired concurrently) is the
-        // ordinary outcome this CAS guard models by throwing. Anything else means
-        // the reallocation above already succeeded but the proposal's bookkeeping
-        // never caught up — the booking is correct, its paperwork is not.
-        const isLostRace = err instanceof IllegalTransitionError;
-        reportSentryError(err, {
-          subsystem: "bookings",
-          op: "reschedule-auto-confirm",
-          expected: isLostRace,
-          extra: { phase: "finalize", rescheduleRequestId, eventType, eventId },
-        });
-        throw err;
       }
 
       return { confirmed: true };

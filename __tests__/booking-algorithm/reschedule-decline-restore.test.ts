@@ -604,7 +604,7 @@ describe("the propose response's outcome code", () => {
     for (const reason of [
       "PROPOSAL_NOT_OPEN",
       "PROPOSAL_NOT_FOUND",
-      "TRANSITION_REFUSED",
+      "RESCHEDULE_NO_LONGER_OPEN",
     ]) {
       expect(
         rescheduleProposeOutcome({

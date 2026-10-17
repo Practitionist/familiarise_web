@@ -184,6 +184,11 @@ export default async function OrgAppointmentDetailPage({
         )
       : false;
 
+  // A sponsor org schedules only an expert-approved booking with no confirmed time.
+  const hasConfirmedLiveSession = appointment.occurrences.some(
+    (o) => !o.isTentative && !isDeadOccurrence(o),
+  );
+
   return (
     <OrgActorDetail
       orgId={orgId}
@@ -203,7 +208,11 @@ export default async function OrgAppointmentDetailPage({
         RESCHEDULABLE_FROM.includes(status)
       }
       canAllocate={
-        mayAllocate && status === "PENDING" && fundedByOrg && booking !== null
+        mayAllocate &&
+        status === "APPROVED" &&
+        fundedByOrg &&
+        booking !== null &&
+        !hasConfirmedLiveSession
       }
       isSubscription={appointment.subscription !== null}
     />

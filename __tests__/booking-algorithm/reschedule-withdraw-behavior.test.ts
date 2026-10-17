@@ -340,11 +340,12 @@ describe("withdrawRescheduleRequest", () => {
       withdrawnById: INITIATOR,
     });
 
-    expect(state.consultation?.status).toBe("APPROVED");
+    expect(state.consultation?.status).toBe("PENDING");
+    expect(tx.consultation.updateMany).not.toHaveBeenCalled();
     expect(reportSentryMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the APPROVED restore and reports once when no origin row exists", async () => {
+  it("refuses to guess APPROVED and reports once when no origin row exists", async () => {
     seed({ origin: undefined });
     state.origin = undefined;
 
@@ -353,7 +354,8 @@ describe("withdrawRescheduleRequest", () => {
       withdrawnById: INITIATOR,
     });
 
-    expect(state.consultation?.status).toBe("APPROVED");
+    expect(state.consultation?.status).toBe("PENDING");
+    expect(tx.consultation.updateMany).not.toHaveBeenCalled();
     expect(reportSentryMessage).toHaveBeenCalledTimes(1);
   });
 

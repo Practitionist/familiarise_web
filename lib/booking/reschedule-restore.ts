@@ -1,5 +1,6 @@
 import type { Tx } from "@/lib/prisma";
-import type { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
+import { z } from "zod";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
   reportSentryError,
@@ -96,24 +97,25 @@ async function readRescheduleOrigin(
  * Where a restored request goes back to. A never-approved PENDING request
  * must not come back APPROVED (consultant-gate bypass) and an unpaid
  * APPROVED_PENDING_PAYMENT one must not come back APPROVED (payment bypass).
- * `null` means the parent never left PENDING, so nothing is written.
+ * `null` writes nothing: the parent never left PENDING, or its origin is unknown.
  */
+const AppointmentStatusSchema = z.nativeEnum(AppointmentStatus);
+
 function restoreTargetFor(
   origin: string | undefined,
-  fallback: AppointmentStatus | null,
 ): AppointmentStatus | null {
-  switch (origin) {
-    case "PENDING":
-      return null;
-    case "APPROVED_PENDING_PAYMENT":
-      return "APPROVED_PENDING_PAYMENT";
+  const parsed = AppointmentStatusSchema.safeParse(origin);
+  if (!parsed.success) return null;
+  switch (parsed.data) {
+    case AppointmentStatus.APPROVED_PENDING_PAYMENT:
+      return AppointmentStatus.APPROVED_PENDING_PAYMENT;
     // SCHEDULED is unreachable for requests (docs/booking/18-state-machines.md),
     // so APPROVED is the only live shape it can stand for.
-    case "APPROVED":
-    case "SCHEDULED":
-      return "APPROVED";
+    case AppointmentStatus.APPROVED:
+    case AppointmentStatus.SCHEDULED:
+      return AppointmentStatus.APPROVED;
     default:
-      return fallback;
+      return null;
   }
 }
 
@@ -157,10 +159,9 @@ async function settleParentAfterReschedule(
   // reaching here means the state moved under us and should throw, not be
   // re-stamped.
   //
-  // #1589 R-P1-01 — "back to what it was" is the ORIGIN status, not
-  // APPROVED: a PENDING origin writes nothing, an unpaid origin stays
-  // unpaid (the pay-link expiry cohort keeps it), and a missing origin
-  // keeps the historical APPROVED restore and reports once.
+  // "Back to what it was" is the ORIGIN status: a PENDING origin writes
+  // nothing, an unpaid origin stays unpaid, and an unknown origin is refused
+  // (no write, reported once) rather than guessed as APPROVED.
   const consultationId = request.appointment?.consultationId;
   if (consultationId) {
     const origin = await readRescheduleOrigin(
@@ -170,7 +171,7 @@ async function settleParentAfterReschedule(
       request.createdAt,
     );
     if (origin === undefined) reportMissingOrigin("CONSULTATION");
-    const to = restoreTargetFor(origin, "APPROVED");
+    const to = restoreTargetFor(origin);
     if (to) {
       await transitionConsultationRequest(tx, {
         ...auditMeta,
@@ -209,7 +210,7 @@ async function settleParentAfterReschedule(
       // subscription (#448 leaves that parent untouched), so the safe
       // direction is no write — promoting it would be the consultant-gate
       // bypass this restore exists to prevent.
-      const to = restoreTargetFor(origin, null);
+      const to = restoreTargetFor(origin);
       if (to) {
         await transitionSubscriptionRequest(tx, {
           ...auditMeta,

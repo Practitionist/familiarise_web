@@ -59,13 +59,17 @@ export type AllocationConflictCode = Extract<
   | "ALREADY_ALLOCATED"
   | "RESCHEDULE_STATE_CHANGED"
   | "SLOT_TAKEN"
+  | "RESCHEDULE_NO_LONGER_OPEN"
 >;
 
 /** 409 — lock contention, duplicate booking race, already allocated */
 export class AllocationConflictError extends AllocationError {
   readonly httpStatus = 409 as const;
   readonly errorCode: AllocationConflictCode;
-  constructor(message: string, code: AllocationConflictCode = "LOCK_CONTENTION") {
+  constructor(
+    message: string,
+    code: AllocationConflictCode = "LOCK_CONTENTION",
+  ) {
     super(message);
     this.errorCode = code;
   }

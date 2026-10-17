@@ -25,6 +25,8 @@ export interface MaintenanceState {
   reason: string | null;
   estimatedEnd: string | null;
   bypassSecret: string | null;
+  /** The Redis read failed; booking and money writes fail closed on this. */
+  unreadable?: true;
 }
 
 const OFF_STATE: MaintenanceState = {
@@ -33,6 +35,8 @@ const OFF_STATE: MaintenanceState = {
   estimatedEnd: null,
   bypassSecret: null,
 };
+
+const UNREADABLE_STATE: MaintenanceState = { ...OFF_STATE, unreadable: true };
 
 let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
@@ -97,9 +101,9 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
     cacheTimestamp = now;
     return state;
   } catch {
-    cachedState = OFF_STATE;
+    cachedState = UNREADABLE_STATE;
     cacheTimestamp = now - CACHE_TTL_MS + FAILURE_CACHE_MS;
-    return OFF_STATE;
+    return UNREADABLE_STATE;
   }
 }
 
@@ -145,6 +149,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/bookings/webinars",
   "/api/bookings/classes",
   "/api/bookings/*/allocate",
+  "/api/bookings/*/abandon",
   "/api/trials",
   "/api/plans/*/materials",
   "/api/stream/meetings",
@@ -170,6 +175,9 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/participants",
   "/api/meetings/*/join",
   "/api/meetings/*/end",
+  "/api/meetings/*/extend",
+  "/api/appointments/*/occurrences",
+  "/api/organizations/*/appointments/*/allocate",
   "/api/organizations/*/billing-account/wallet/top-ups",
   "/api/organizations/*/billing-account/invoices",
   "/api/organizations/*/billing-account/purchase-orders",
@@ -184,23 +192,14 @@ const WRITE_BLOCKED_IN_DEGRADED = [
 
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+// Segment-wise prefix match; a `*` segment matches any one non-empty segment.
 function matchesBlockedPattern(pathname: string, pattern: string): boolean {
-  const star = pattern.indexOf("*");
-  if (star === -1) {
-    return pathname === pattern || pathname.startsWith(pattern + "/");
-  }
-
-  const prefix = pattern.slice(0, star);
-  const suffix = pattern.slice(star + 1);
-  if (!pathname.startsWith(prefix)) return false;
-
-  const rest = pathname.slice(prefix.length);
-  const slash = rest.indexOf("/");
-  const segment = slash === -1 ? rest : rest.slice(0, slash);
-  if (segment.length === 0) return false;
-
-  const tail = slash === -1 ? "" : rest.slice(slash);
-  return tail === suffix || tail.startsWith(suffix + "/");
+  const want = pattern.split("/");
+  const got = pathname.split("/");
+  if (got.length < want.length) return false;
+  return want.every((segment, i) =>
+    segment === "*" ? got[i].length > 0 : segment === got[i],
+  );
 }
 
 export function isWriteBlockedInDegraded(
@@ -218,6 +217,44 @@ export function isWriteBlockedInDegraded(
   if (READ_ONLY_METHODS.has(method.toUpperCase())) return false;
 
   return WRITE_BLOCKED_IN_DEGRADED.some((pattern) =>
+    matchesBlockedPattern(pathname, pattern),
+  );
+}
+
+// Booking and money writes that already need Redis for their locks, so failing
+// them closed while maintenance state is unreadable costs no availability.
+const FAIL_CLOSED_WHEN_UNREADABLE = [
+  "/api/checkout",
+  "/api/appointments/*/cancel",
+  "/api/appointments/*/reschedule",
+  "/api/appointments/*/occurrences",
+  "/api/bookings/consultations",
+  "/api/bookings/subscriptions",
+  "/api/bookings/webinars",
+  "/api/bookings/classes",
+  "/api/bookings/*/allocate",
+  "/api/bookings/*/abandon",
+  "/api/trials",
+  "/api/scheduling/request-for-approval",
+  "/api/meetings/*/extend",
+  "/api/organizations/*/appointments/*/allocate",
+  "/api/payments/*/recover",
+  "/api/recordings/*/purchase",
+  "/api/overage/*/order",
+  "/api/admin/payouts",
+  "/api/admin/refunds",
+  "/api/consultant/payouts/instant",
+  "/api/organizations/*/billing-account/wallet/top-ups",
+  "/api/organizations/*/billing-account/invoices",
+  "/api/organizations/*/payouts",
+];
+
+export function isFailClosedWhenUnreadable(
+  pathname: string,
+  method: string,
+): boolean {
+  if (READ_ONLY_METHODS.has(method.toUpperCase())) return false;
+  return FAIL_CLOSED_WHEN_UNREADABLE.some((pattern) =>
     matchesBlockedPattern(pathname, pattern),
   );
 }
