@@ -620,7 +620,9 @@ async function findEventPlanOwner(
  * operator of the plan's host org. A consultee of the booking never qualifies.
  */
 export async function isEventHost(
-  session: Session,
+  session: {
+    user: Pick<Session["user"], "id" | "role" | "consultantProfileId">;
+  },
   eventType: "consultation" | "subscription" | "webinar" | "class",
   eventId: string,
 ): Promise<boolean> {

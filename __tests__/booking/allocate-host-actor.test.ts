@@ -41,12 +41,18 @@ jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
 }));
 
 import { NextRequest } from "next/server";
-import type { Session } from "@/lib/auth";
 import { isEventHost } from "@/lib/auth-helpers";
 import { POST as orgAllocate } from "@/app/api/organizations/[orgId]/appointments/[appointmentId]/allocate/route";
 
-const sessionOf = (user: Record<string, unknown>) =>
-  ({ user: { id: "u-x", role: "CONSULTEE", ...user } }) as unknown as Session;
+type HostSession = Parameters<typeof isEventHost>[0];
+const sessionOf = (user: Partial<HostSession["user"]> = {}): HostSession => ({
+  user: {
+    id: "u-x",
+    role: "CONSULTEE",
+    consultantProfileId: undefined,
+    ...user,
+  } satisfies HostSession["user"],
+});
 
 beforeEach(() => {
   jest.clearAllMocks();

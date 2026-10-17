@@ -1,5 +1,6 @@
 import type { Tx } from "@/lib/prisma";
-import type { AppointmentStatus } from "@prisma/client";
+import { AppointmentStatus } from "@prisma/client";
+import { z } from "zod";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import {
   reportSentryError,
@@ -98,19 +99,21 @@ async function readRescheduleOrigin(
  * APPROVED_PENDING_PAYMENT one must not come back APPROVED (payment bypass).
  * `null` writes nothing: the parent never left PENDING, or its origin is unknown.
  */
+const AppointmentStatusSchema = z.nativeEnum(AppointmentStatus);
+
 function restoreTargetFor(
   origin: string | undefined,
 ): AppointmentStatus | null {
-  switch (origin) {
-    case "PENDING":
-      return null;
-    case "APPROVED_PENDING_PAYMENT":
-      return "APPROVED_PENDING_PAYMENT";
+  const parsed = AppointmentStatusSchema.safeParse(origin);
+  if (!parsed.success) return null;
+  switch (parsed.data) {
+    case AppointmentStatus.APPROVED_PENDING_PAYMENT:
+      return AppointmentStatus.APPROVED_PENDING_PAYMENT;
     // SCHEDULED is unreachable for requests (docs/booking/18-state-machines.md),
     // so APPROVED is the only live shape it can stand for.
-    case "APPROVED":
-    case "SCHEDULED":
-      return "APPROVED";
+    case AppointmentStatus.APPROVED:
+    case AppointmentStatus.SCHEDULED:
+      return AppointmentStatus.APPROVED;
     default:
       return null;
   }

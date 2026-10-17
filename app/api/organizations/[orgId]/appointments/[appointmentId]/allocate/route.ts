@@ -171,7 +171,7 @@ export async function POST(
       return NextResponse.json(
         {
           error: result.error ?? "Could not allocate slots for this booking.",
-          errorCode: result.errorCode,
+          code: result.errorCode,
           placeableSessions: result.placeableSessions,
           requiredSessions: result.requiredSessions,
         },
