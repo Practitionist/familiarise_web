@@ -197,6 +197,12 @@ describe("unreadable maintenance state", () => {
       isFailClosedWhenUnreadable("/api/bookings/booking_1/abandon", "POST"),
     ).toBe(true);
     expect(isFailClosedWhenUnreadable("/api/checkout", "POST")).toBe(true);
+    expect(
+      isFailClosedWhenUnreadable(
+        "/api/organizations/org_1/billing-account/wallet/top-ups",
+        "POST",
+      ),
+    ).toBe(true);
     expect(isFailClosedWhenUnreadable("/api/checkout", "GET")).toBe(false);
     expect(isFailClosedWhenUnreadable("/api/waitlist", "POST")).toBe(false);
   });

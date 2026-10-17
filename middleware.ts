@@ -308,9 +308,11 @@ export async function middleware(
   const isSubNavigation =
     req.headers.get("Next-Router-Prefetch") === "1" ||
     req.headers.get("RSC") === "1";
-  const maintenanceState = isSubNavigation
-    ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
-    : await getMaintenanceState();
+  // Only a read may answer from the cache; a write always awaits the fresh state.
+  const maintenanceState =
+    isSubNavigation && req.method === "GET"
+      ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
+      : await getMaintenanceState();
   const maintenance = handleMaintenance(req, pathname, maintenanceState);
   if (maintenance?.kind === "respond") return maintenance.response;
 

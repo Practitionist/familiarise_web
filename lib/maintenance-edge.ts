@@ -239,9 +239,14 @@ const FAIL_CLOSED_WHEN_UNREADABLE = [
   "/api/meetings/*/extend",
   "/api/organizations/*/appointments/*/allocate",
   "/api/payments/*/recover",
+  "/api/recordings/*/purchase",
+  "/api/overage/*/order",
   "/api/admin/payouts",
   "/api/admin/refunds",
   "/api/consultant/payouts/instant",
+  "/api/organizations/*/billing-account/wallet/top-ups",
+  "/api/organizations/*/billing-account/invoices",
+  "/api/organizations/*/payouts",
 ];
 
 export function isFailClosedWhenUnreadable(
