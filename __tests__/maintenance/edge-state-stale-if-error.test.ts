@@ -90,3 +90,22 @@ it("fails closed once the last confirmed state is older than 15 minutes", async 
     unreadable: true,
   });
 });
+
+it("never serves the stale fallback past the 15-minute window from cache", async () => {
+  const edge = loadFresh();
+  const fetchSpy = jest
+    .spyOn(global, "fetch")
+    .mockImplementation(async () => okResponse("OFF"));
+  await edge.getMaintenanceState();
+
+  // A failure 10 s before the window closes serves the fallback once...
+  nowMs += 15 * 60_000 - 10_000;
+  fetchSpy.mockRejectedValue(new Error("redis down"));
+  await expect(edge.getMaintenanceState()).resolves.toEqual(OFF);
+
+  // ...and 20 s later the cached fallback has expired, so the read fails closed.
+  nowMs += 20_000;
+  await expect(edge.getMaintenanceState()).resolves.toMatchObject({
+    unreadable: true,
+  });
+});

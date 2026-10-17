@@ -105,12 +105,16 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
     state = await readMaintenanceState().catch(() => readMaintenanceState());
   } catch {
     // Serve the last confirmed state while it is fresh enough, and retry soon.
+    const staleLeft = lastGoodState ? lastGoodAt + STALE_IF_ERROR_MS - now : 0;
     const fallback =
-      lastGoodState && now - lastGoodAt < STALE_IF_ERROR_MS
-        ? lastGoodState
-        : UNREADABLE_STATE;
+      staleLeft > 0 && lastGoodState ? lastGoodState : UNREADABLE_STATE;
+    // The fallback is cached no longer than the stale window it was served under.
+    const holdMs =
+      fallback === UNREADABLE_STATE
+        ? FAILURE_CACHE_MS
+        : Math.min(FAILURE_CACHE_MS, staleLeft);
     cachedState = fallback;
-    cacheTimestamp = now - CACHE_TTL_MS + FAILURE_CACHE_MS;
+    cacheTimestamp = now - CACHE_TTL_MS + holdMs;
     return fallback;
   }
 
