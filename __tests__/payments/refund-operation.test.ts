@@ -98,6 +98,10 @@ function txStub() {
     referralCreditUsage: {
       findMany: jest.fn(async () => []),
     },
+    // The refund-raised notice goes to ops.
+    user: {
+      findMany: jest.fn(async () => [{ id: "admin-1", role: "ADMIN" }]),
+    },
     payment: {
       findUnique: jest.fn(async ({ where, select, include }: any) => {
         const p = state.payments.get(where.id);
@@ -539,6 +543,12 @@ function restoreState(snapshot: Store): void {
 // ---------------------------------------------------------------------------
 
 const mockCreateGatewayRefund = jest.fn();
+const mockNotifyRefundRequested = jest.fn(async () => []);
+jest.mock("../../lib/novu/service", () => ({
+  ...jest.requireActual("../../lib/novu/service"),
+  notifyRefundRequested: (...a: unknown[]) =>
+    mockNotifyRefundRequested(...(a as [])),
+}));
 jest.mock("../../lib/payments", () => ({
   __esModule: true,
   createRefund: (...args: unknown[]) => mockCreateGatewayRefund(...args),
@@ -1068,6 +1078,12 @@ describe("refundPayment — M1 gateway wiring", () => {
     expect(state.refunds.filter((r) => r.status === "SUCCEEDED")).toHaveLength(
       1,
     );
+    // Both attempts raise the ops notice under the key, so the outbox's
+    // deterministic transaction id stages it once.
+    const identities = mockNotifyRefundRequested.mock.calls.map(
+      (c: unknown[]) => c[2],
+    );
+    expect(identities).toEqual(["cancel:a:pay-1", "cancel:a:pay-1"]);
   });
 
   it("gateway-PENDING refund defers the cascade to the webhook path (no double-post)", async () => {

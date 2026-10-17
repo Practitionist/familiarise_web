@@ -569,8 +569,9 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           ...(input.reason ? { reason: input.reason } : {}),
           dashboardUrl: `${getAppUrl()}${queue}`,
         },
-        // Notification identity = the refund row, not the payload shape.
-        reserved.id,
+        // One logical refund, one notice: every attempt under a key shares
+        // the identity, so a retry's outbox row dedupes onto the first.
+        input.dedupeKey ?? reserved.id,
       );
     }
   } catch (notifyError) {
