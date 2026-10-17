@@ -91,6 +91,8 @@ function WeeklyZonePrompt({
         "Couldn't convert your weekly hours",
       );
       const uncovered = uncoveredUpcoming?.count ?? 0;
+      const sessions =
+        uncovered === 1 ? "session now falls" : "sessions now fall";
       toast({
         title:
           data.converted > 0
@@ -98,7 +100,7 @@ function WeeklyZonePrompt({
             : "No weekly hours needed converting",
         description:
           uncovered > 0
-            ? `${uncovered} upcoming ${uncovered === 1 ? "session now falls" : "sessions now fall"} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.`
+            ? `${uncovered} upcoming ${sessions} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.`
             : undefined,
       });
       onClose();
