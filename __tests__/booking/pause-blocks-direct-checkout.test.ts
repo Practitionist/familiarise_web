@@ -5,35 +5,12 @@
 // Invariant: a paused expert (acceptingRequests false) takes no new direct booking of any product.
 
 import "../booking-algorithm/setup";
-
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: jest.requireActual("./repro/checkout-harness/setup").db,
-}));
-jest.mock("../../lib/payments/payouts", () => ({
-  __esModule: true,
-  createEarningsFromPayment: jest.fn(),
-}));
-const createPaymentIntent = jest.fn();
-jest.mock("../../lib/payments/index", () => ({
-  __esModule: true,
-  createPaymentIntent: (...a: unknown[]) => createPaymentIntent(...a),
-  cancelPaymentIntent: jest.fn(),
-}));
-jest.mock("../../utils/appointmentlock", () => ({
-  __esModule: true,
-  CHECKOUT_WAIT_RETRY_CONFIG: { retryCount: 5 },
-  CHECKOUT_LOCK_TTL_MS: {},
-  EventFullError: class extends Error {},
-  lockSlotBooking: jest.fn(async () => ({ key: "k" })),
-  unlockSlotBooking: jest.fn(),
-  lockEventCheckout: jest.fn(async () => ({ key: "k" })),
-  unlockEventCheckout: jest.fn(),
-  lockConsulteeBooking: jest.fn(async () => ({ key: "k" })),
-  unlockConsulteeBooking: jest.fn(),
-  extendLock: jest.fn(async () => true),
-  extendSlotInterval: jest.fn(async () => true),
-}));
+import {
+  buildCheckoutInput,
+  buyerRow,
+  mockCreatePaymentIntent as createPaymentIntent,
+  silenceConsole,
+} from "./repro/checkout-harness/mocks/setup";
 
 import { handleCheckout } from "../../lib/payments/operations/checkout";
 import { resetDouble } from "./repro/checkout-harness/setup";
@@ -80,29 +57,20 @@ const cases: Array<[CheckoutInput["appointmentType"], Partial<CheckoutInput>]> =
 beforeEach(() => {
   createPaymentIntent.mockReset();
   resetDouble({
-    "user.findUnique": () => ({
-      id: "buyer",
-      consulteeProfile: { id: "cp-buyer", billingStateCode: null },
-    }),
+    "user.findUnique": () => buyerRow(),
     "consultationPlan.findUnique": () => plan,
     "subscriptionPlan.findUnique": () => plan,
     "webinar.findUnique": () => ({ ...event, webinarPlan: plan }),
     "class.findUnique": () => ({ ...event, classPlan: plan }),
   });
-  jest.spyOn(console, "log").mockImplementation(() => {});
-  jest.spyOn(console, "error").mockImplementation(() => {});
+  silenceConsole();
 });
 afterEach(() => jest.restoreAllMocks());
 
 it.each(cases)(
   "%s checkout refuses with 409 NOT_ACCEPTING_BOOKINGS before any gateway call",
   async (appointmentType, extra) => {
-    const input: CheckoutInput = {
-      appointmentType,
-      planId: "plan-1",
-      paymentGateway: "RAZORPAY",
-      ...extra,
-    };
+    const input = buildCheckoutInput({ appointmentType, ...extra });
 
     const error = await handleCheckout(input, "buyer").then(
       () => null,

@@ -293,11 +293,7 @@ function asSeatPaymentConflict(err: unknown): unknown {
 }
 
 /** The buyer's earlier Payment on a shared webinar/class appointment, if any. */
-async function findPriorSeatPayment(
-  tx: Tx,
-  userId: string,
-  appointmentId: string,
-) {
+function findPriorSeatPayment(tx: Tx, userId: string, appointmentId: string) {
   return tx.payment.findFirst({
     where: { userId, appointmentId },
     select: {

@@ -5,40 +5,15 @@
 // Invariant: re-buying a webinar seat after an EXPIRED payment never 500s; the dead row is re-minted in place and its old order is tombstoned.
 
 import "../../booking-algorithm/setup";
+import {
+  buildCheckoutInput,
+  buyerRow,
+  mintOrder,
+  mockCreatePaymentIntent as createPaymentIntent,
+  silenceConsole,
+} from "./checkout-harness/mocks/setup";
 import { Prisma } from "@prisma/client";
 
-jest.mock("../../../lib/prisma", () => ({
-  __esModule: true,
-  default: jest.requireActual("./checkout-harness/setup").db,
-}));
-jest.mock("../../../lib/payments/payouts", () => ({
-  __esModule: true,
-  createEarningsFromPayment: jest.fn(),
-}));
-const createPaymentIntent = jest.fn();
-jest.mock("../../../lib/payments/index", () => ({
-  __esModule: true,
-  createPaymentIntent: (...a: unknown[]) => createPaymentIntent(...a),
-  cancelPaymentIntent: jest.fn(),
-}));
-jest.mock("../../../utils/appointmentlock", () => ({
-  __esModule: true,
-  CHECKOUT_WAIT_RETRY_CONFIG: { retryCount: 5 },
-  CHECKOUT_LOCK_TTL_MS: {},
-  EventFullError: class extends Error {},
-  lockSlotBooking: jest.fn(async () => ({ key: "k" })),
-  unlockSlotBooking: jest.fn(),
-  lockEventCheckout: jest.fn(async () => ({ key: "k" })),
-  unlockEventCheckout: jest.fn(),
-  lockConsulteeBooking: jest.fn(async () => ({ key: "k" })),
-  unlockConsulteeBooking: jest.fn(),
-  extendLock: jest.fn(async () => true),
-  extendSlotInterval: jest.fn(async () => true),
-}));
-jest.mock("../../../lib/compliance/dpdp", () => ({
-  __esModule: true,
-  checkConsent: jest.fn(async () => true),
-}));
 jest.mock("../../../lib/payments/operations/cancellation-policy-store", () => ({
   __esModule: true,
   ensurePlatformCancellationPolicy: jest.fn(async () => undefined),
@@ -47,7 +22,6 @@ jest.mock("../../../lib/payments/operations/cancellation-policy-store", () => ({
 
 import { handleCheckout } from "../../../lib/payments/operations/checkout";
 import { overrides, resetDouble } from "./checkout-harness/setup";
-import type { CheckoutInput } from "../../../schemas/checkout";
 
 type Row = Record<string, unknown>;
 let payments: Row[] = [];
@@ -99,12 +73,11 @@ const p2002 = () =>
     meta: { target: ["userId", "appointmentId"] },
   });
 
-const input: CheckoutInput = {
+const input = buildCheckoutInput({
   appointmentType: "WEBINAR",
   planId: "wplan-1",
   eventId: "web-1",
-  paymentGateway: "RAZORPAY",
-};
+});
 
 type Outcome = {
   value: Awaited<ReturnType<typeof handleCheckout>> | null;
@@ -121,16 +94,9 @@ beforeEach(() => {
       paymentStatus: "EXPIRED",
     },
   ];
-  createPaymentIntent.mockReset();
-  createPaymentIntent.mockResolvedValue({
-    id: "order_NEW",
-    client_secret: "s",
-  });
+  mintOrder("order_NEW");
   resetDouble({
-    "user.findUnique": () => ({
-      id: BUYER,
-      consulteeProfile: { id: "cp-buyer", billingStateCode: null },
-    }),
+    "user.findUnique": () => buyerRow(BUYER),
     "webinar.findUnique": () => webinar,
     "webinarPlan.findUnique": () => ({
       consultantProfileId: "cons-profile",
@@ -178,9 +144,7 @@ beforeEach(() => {
       return { count: hit.length };
     },
   });
-  jest.spyOn(console, "log").mockImplementation(() => {});
-  jest.spyOn(console, "error").mockImplementation(() => {});
-  jest.spyOn(console, "warn").mockImplementation(() => {});
+  silenceConsole();
 });
 afterEach(() => jest.restoreAllMocks());
 
