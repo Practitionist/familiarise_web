@@ -85,14 +85,14 @@ export async function stampRefundOwed(
  * Stamps many markers in one statement, so a whole roster costs one round trip
  * inside the caller's transaction instead of one per seat.
  */
-export async function stampRefundsOwed(
+export function stampRefundsOwed(
   tx: Pick<Tx, "$executeRaw">,
   markers: readonly RefundOwedMarker[],
 ): Promise<number> {
   const due = markers.filter(
     (m) => m.amountPaise === null || m.amountPaise > 0,
   );
-  if (due.length === 0) return 0;
+  if (due.length === 0) return Promise.resolve(0);
   const ids = due.map((m) => m.paymentId);
   const keys = due.map((m) => m.key);
   const owed = due.map((m) => m.amountPaise);

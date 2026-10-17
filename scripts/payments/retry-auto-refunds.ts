@@ -59,6 +59,7 @@ import {
   MAX_REFUND_OWED_ATTEMPTS,
   REFUND_OWED_SELECT,
 } from "@/lib/payments/operations/refund-owed";
+import { stampTrialEarningsOnCancel } from "@/lib/trials/cancellation";
 import { reportSentryError } from "@/lib/observability/report";
 import { scrubStringValue } from "@/lib/observability/sentry-scrubber";
 
@@ -221,6 +222,15 @@ async function retryRefundsOwed(
   const failedIds: string[] = [];
   for (const marker of rows.flatMap((row) => markerFromRow(row) ?? [])) {
     const outcome = await driveRefundOwed(marker, { initiatedByUserId: null });
+    // A settled trial refund starts the retained earnings' hold; the credits
+    // rail has no cascade to do it, and the stamp is idempotent.
+    const settled =
+      outcome.kind === "settled" ||
+      ((outcome.kind === "refunded" || outcome.kind === "replayed") &&
+        outcome.refund.status !== "PENDING");
+    if (settled && marker.key.startsWith("trial-cancel:")) {
+      await stampTrialEarningsOnCancel(prisma, { paymentId: marker.paymentId });
+    }
     if (outcome.kind === "refunded") result.owed.refunded += 1;
     else if (outcome.kind === "replayed" || outcome.kind === "settled") {
       result.owed.settled += 1;

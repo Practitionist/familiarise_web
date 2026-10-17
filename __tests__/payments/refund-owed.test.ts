@@ -120,6 +120,8 @@ const mockDb = {
     ),
   },
   refund: { findMany: jest.fn(async () => []) },
+  consultantEarnings: { updateMany: jest.fn(async () => ({ count: 1 })) },
+  organizationEarnings: { updateMany: jest.fn(async () => ({ count: 0 })) },
   referralCreditUsage: { findMany: jest.fn(async () => []) },
   systemEvent: { findFirst: jest.fn(async () => null) },
   // The batched stamp: one statement whose values are [ids, keys, owed, reasons].
@@ -370,6 +372,21 @@ describe("whole-event refunds", () => {
 });
 
 describe("retry-auto-refunds: the owed cohort", () => {
+  it("starts a settled trial refund's earnings hold", async () => {
+    seat("t1", 0, "free_abc");
+    Object.assign(mockRows.get("t1")!, {
+      refundOwedKey: "trial-cancel:trial-1:t1",
+      refundOwedReason: "trial cancellation",
+      refundOwedAt: longAgo(),
+    });
+    await retryAutoRefunds();
+    expect(mockDb.consultantEarnings.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paymentId: "t1", holdUntil: null }),
+      }),
+    );
+  });
+
   it("surfaces markers older than two hours once, reading the persisted amount", async () => {
     seat("p1", 10_000);
     marker("p1", 4_000);

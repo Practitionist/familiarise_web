@@ -201,17 +201,23 @@ async function replayCommittedCancel(
     cancelledAt: true,
     cancellationReason: true,
   } as const;
-  const request = appointment.consultation
-    ? await prisma.consultation.findUnique({
-        where: { id: appointment.consultation.id },
-        select,
-      })
-    : appointment.subscription
-      ? await prisma.subscription.findUnique({
-          where: { id: appointment.subscription.id },
-          select,
-        })
-      : null;
+  let request: {
+    status: string;
+    cancelledBy: string | null;
+    cancelledAt: Date | null;
+    cancellationReason: CancellationReason | null;
+  } | null = null;
+  if (appointment.consultation) {
+    request = await prisma.consultation.findUnique({
+      where: { id: appointment.consultation.id },
+      select,
+    });
+  } else if (appointment.subscription) {
+    request = await prisma.subscription.findUnique({
+      where: { id: appointment.subscription.id },
+      select,
+    });
+  }
   if (request?.status !== "CANCELLED" || request.cancelledBy !== userId) {
     return null;
   }
@@ -254,6 +260,43 @@ async function replayCommittedCancel(
   };
 }
 
+/** A failed replay read answers the original 409, which the client handles. */
+async function safeReplayCommittedCancel(
+  ...args: Parameters<typeof replayCommittedCancel>
+) {
+  try {
+    return await replayCommittedCancel(...args);
+  } catch (readErr) {
+    console.warn("[cancel] replay read failed:", readErr);
+    return null;
+  }
+}
+
+/** The refund a 1:1 cancel owes under its quote, or null when it pays nothing. */
+function cancelRefundOwed(
+  appointmentId: string,
+  paymentId: string,
+  quote: BookingRefundQuote,
+  isConsultantInitiated: boolean,
+): RefundOwedMarker | null {
+  if (quote.creditRestoresInFull) {
+    return {
+      paymentId,
+      amountPaise: null,
+      key: cancelRefundKey(appointmentId, paymentId),
+      reason: `cancellation (credit-funded booking, credit restored in full from the ${quote.tierRefundPct}% tier)`,
+    };
+  }
+  if (quote.refundPaise <= 0) return null;
+  const side = isConsultantInitiated ? "consultant" : "consultee";
+  return {
+    paymentId,
+    amountPaise: quote.refundPaise,
+    key: cancelRefundKey(appointmentId, paymentId),
+    reason: `cancellation (${quote.refundPct}% per booking-time policy, ${side}-initiated)`,
+  };
+}
+
 /**
  * Drives the stamped marker and words the outcome for the client. A failure is
  * reported once here and left on the marker for the retry sweep.
@@ -292,39 +335,49 @@ async function settleCancelRefund(
       };
     case "blocked":
       return { amountRefundedPaise: 0, refundPct, status: "PENDING" };
-    case "failed": {
-      const err = outcome.error;
-      reportRefundFailure(err, credit ? "bookings" : "appointments");
-      // Sentry is an alert channel rather than a queue anyone works; money owed
-      // on a cancelled booking also lands on the durable ops surface.
-      await recordSystemErrorSafe({
-        organizationId: ctx.organizationId,
-        category: "PAYMENT",
-        summary: credit
-          ? "Credit-funded booking cancelled but the credit restoration failed"
-          : `Cancellation refund failed for payment ${owed.paymentId}; ` +
-            `${refundPct}% of ${ctx.grossPaise} paise is still owed`,
-        err,
-        context: {
-          appointmentId: ctx.appointmentId,
-          paymentId: owed.paymentId,
-          refundPct,
-          tierRefundPct: quote.tierRefundPct,
-          attemptedPaise: owed.amountPaise,
-          refundablePaise: ctx.refundablePaise,
-        },
-      });
-      if (await refundLeftPending(err)) {
-        return { amountRefundedPaise: 0, refundPct, status: "PENDING" };
-      }
-      return {
-        amountRefundedPaise: 0,
-        refundPct,
-        status: "FAILED",
-        ...(credit ? { requiresManualReview: true } : {}),
-      };
-    }
+    case "failed":
+      return failedCancelRefund(outcome.error, owed, quote, refundPct, ctx);
   }
+}
+
+/** Reports a failed drive once; the marker stays for the retry sweep. */
+async function failedCancelRefund(
+  err: unknown,
+  owed: RefundOwedMarker,
+  quote: BookingRefundQuote,
+  refundPct: number,
+  ctx: Parameters<typeof settleCancelRefund>[2],
+): Promise<CancelRefund> {
+  const credit = quote.creditRestoresInFull;
+  reportRefundFailure(err, credit ? "bookings" : "appointments");
+  // Sentry is an alert channel rather than a queue anyone works; money owed
+  // on a cancelled booking also lands on the durable ops surface.
+  await recordSystemErrorSafe({
+    organizationId: ctx.organizationId,
+    category: "PAYMENT",
+    summary: credit
+      ? "Credit-funded booking cancelled but the credit restoration failed"
+      : `Cancellation refund failed for payment ${owed.paymentId}; ` +
+        `${refundPct}% of ${ctx.grossPaise} paise is still owed`,
+    err,
+    context: {
+      appointmentId: ctx.appointmentId,
+      paymentId: owed.paymentId,
+      refundPct,
+      tierRefundPct: quote.tierRefundPct,
+      attemptedPaise: owed.amountPaise,
+      refundablePaise: ctx.refundablePaise,
+    },
+  });
+  if (await refundLeftPending(err)) {
+    return { amountRefundedPaise: 0, refundPct, status: "PENDING" };
+  }
+  return {
+    amountRefundedPaise: 0,
+    refundPct,
+    status: "FAILED",
+    ...(credit ? { requiresManualReview: true } : {}),
+  };
 }
 
 type AttendeesByRail = {
@@ -755,11 +808,9 @@ export async function POST(
       (isPrivilegedUser && session.user.id !== consulteeUserId) ||
       (isHostOrgOperator && session.user.id !== consulteeUserId);
 
-    const eventKind = appointment.class
-      ? ("class" as const)
-      : appointment.webinar
-        ? ("webinar" as const)
-        : null;
+    let eventKind: "class" | "webinar" | null = null;
+    if (appointment.class) eventKind = "class";
+    else if (appointment.webinar) eventKind = "webinar";
     const eventId = appointment.class?.id ?? appointment.webinar?.id ?? null;
     const eventRefundReason = `whole-event ${eventKind ?? "event"} cancellation (${validatedData.reason ?? "cancelled"})`;
 
@@ -873,22 +924,14 @@ export async function POST(
 
           // The refund this cancel owes commits with the cancel, so a death
           // before the refund leaves a marker the retry sweep drives.
-          const owed: RefundOwedMarker | null =
-            quote &&
-            paidPayment &&
-            (quote.creditRestoresInFull || quote.refundPaise > 0)
-              ? {
-                  paymentId: paidPayment.id,
-                  amountPaise: quote.creditRestoresInFull
-                    ? null
-                    : quote.refundPaise,
-                  key: cancelRefundKey(appointmentId, paidPayment.id),
-                  reason: quote.creditRestoresInFull
-                    ? `cancellation (credit-funded booking, credit restored in full from the ${quote.tierRefundPct}% tier)`
-                    : `cancellation (${quote.refundPct}% per booking-time policy, ${
-                        isConsultantInitiated ? "consultant" : "consultee"
-                      }-initiated)`,
-                }
+          const owed =
+            quote && paidPayment
+              ? cancelRefundOwed(
+                  appointmentId,
+                  paidPayment.id,
+                  quote,
+                  isConsultantInitiated,
+                )
               : null;
           if (owed) await stampRefundOwed(tx, owed);
           if (eventKind && eventId) {
@@ -966,12 +1009,7 @@ export async function POST(
       // with what that click committed. Otherwise the original 409 stands.
       const replay =
         isNotCancellable(err) || err instanceof RefundQuoteChangedError
-          ? await replayCommittedCancel(appointment, session.user.id).catch(
-              (readErr: unknown) => {
-                console.warn("[cancel] replay read failed:", readErr);
-                return null;
-              },
-            )
+          ? await safeReplayCommittedCancel(appointment, session.user.id)
           : null;
       if (replay) return { replay };
       throw err;
