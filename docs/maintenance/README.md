@@ -18,13 +18,13 @@ Familiarise's maintenance mode system provides two-tier protection (DEGRADED and
 1. [Architecture](./01-architecture.md) -- System design, data flow, key files
 2. [DEGRADED vs OFFLINE](./02-degraded-vs-offline.md) -- What each phase blocks (with tables)
 3. [Business Risks](./03-business-risks.md) -- Money-at-stake analysis
-4. [Cron Jobs Reference](./04-cron-jobs-reference.md) -- All 61 jobs, schedules, locking, maintenance impact
+4. [Cron Jobs Reference](./04-cron-jobs-reference.md) -- Job catalogue: all 72 scheduled jobs, entrypoints, lock modes, schedules, what each mutates
 5. [Webhook Behavior](./05-webhook-behavior.md) -- Payment webhook handling during downtime
 6. [Pre-Maintenance Checklist](./06-pre-maintenance-checklist.md) -- Step-by-step operational checklist
 7. [Post-Maintenance Recovery](./07-post-maintenance-recovery.md) -- Verification and reconciliation steps
 8. [SDK Update Guide](./08-sdk-update-guide.md) -- Detailed per-package update guide
 9. [Future Improvements](./09-future-improvements.md) -- Planned code changes for better protection
-10. [Cron, Sidecars and Reconciliation Reference](./10-cron-and-reconciliation-reference.md) -- **Current authority** for every job, lock mode, response code, the sidecar inventory and the reconciler rules. Supersedes parts of [04](./04-cron-jobs-reference.md)
+10. [Cron, Sidecars and Reconciliation Reference](./10-cron-and-reconciliation-reference.md) -- Scheduling mechanics: response codes, `?limit=`, lease durations, phase staggering, the Postgres sidecars, reconciler rules, known doc-vs-code drift. Pairs with [04](./04-cron-jobs-reference.md)
 
 ---
 

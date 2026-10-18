@@ -9,9 +9,9 @@ last-reviewed: 2026-10-18
 
 # Cron, Sidecars and Reconciliation — Operational Reference
 
-This is the operational counterpart to [../start-here/04-platform-architecture.md](../start-here/04-platform-architecture.md), which explains _why_ the scheduling and enforcement machinery is shaped this way. This document is the lookup surface: every registered job, every lock mode, every response code, the sidecar inventory, and the places where a document and the code currently disagree.
+This is the operational counterpart to [../start-here/04-platform-architecture.md](../start-here/04-platform-architecture.md), which explains _why_ the scheduling and enforcement machinery is shaped this way. This document covers the **mechanics**: the registry structure, the dispatch path, the response-code contract, lock modes and lease durations, phase staggering, the Postgres sidecars, and the reconciler taxonomy.
 
-For the conceptual model — state-as-outbox, the three enforcement layers, and why there is no message broker — read the start-here document first.
+For the **job catalogue** — what each job is, what it mutates, and which workflow runs it — see [04-cron-jobs-reference.md](./04-cron-jobs-reference.md). The two pages deliberately do not repeat each other: this one describes the machinery every job passes through, that one describes the jobs themselves.
 
 ## The dispatch path
 
@@ -127,6 +127,8 @@ Two consequences follow from that formula. A tick that fires up to four minutes 
 | `settle-cancelled-sessions`        | 30 min  | :25 :55                     | 10            |
 | `retry-moderation-enforcement`     | 30 min  | :25 :55                     | n/a           |
 
+The stagger is exact: **every one of the twelve five-minute tick slots fires precisely eight targets**, which `__tests__/maintenance/cron-tick-targets.test.ts` pins between five and eight. Before offsets were introduced, nineteen targets fired simultaneously at `:00`, `:15`, `:30` and `:45`, which saturated the single-connection Postgres pool that Netlify functions run with.
+
 ### Why the ticker always answers 200
 
 `statusFor()` in the ticker is hard-coded to return 200. Netlify re-invokes a scheduled function that answers 5xx up to three times, seconds apart, and every retry re-fires every due target. This was observed in production: a single failing target made the whole ticker run at triple rate for weeks.
@@ -166,63 +168,9 @@ Both closed and open modes flip to **closed** when the error looks like connecti
 
 A running job renews its lease every `ttl / 3`. A failed renewal logs a warning and increments a metric; it does **not** abort the job. The consequence to plan for: a hard-killed invocation leaks its lease until it expires, and the ticker records the resulting `409` as _held_, not _failed_. There is no per-run time budget on most jobs beyond the ticker's own per-target abort timeout.
 
-## The remaining 29 registry jobs
+## The Actions-scheduled jobs
 
-These have an HTTP twin in the registry but are scheduled by GitHub Actions, not the ticker.
-
-| Slug                                | Workflow schedule        | Purpose                                                         |
-| ----------------------------------- | ------------------------ | --------------------------------------------------------------- |
-| `abandoned-org-top-ups`             | daily                    | Hard-deletes stale pending organisation wallet top-ups          |
-| `archive-webhook-events`            | weekly                   | Retention for webhook events and outbound deliveries            |
-| `auth-tokens`                       | daily                    | Expired verification tokens, stale sessions, lapsed invitations |
-| `create-payout-batch`               | weekly, Monday 20:00 UTC | Builds the consultant payout batch                              |
-| `expire-onboarding-drafts`          | weekly                   | Deletes onboarding drafts past 90 days                          |
-| `expire-recordings`                 | daily                    | Applies the recording retention schedule                        |
-| `expire-referral-credits`           | monthly                  | Posts expired referral credits back to the liability ledger     |
-| `expire-stale-collaborator-invites` | daily                    | Declines invites unanswered for 14 days                         |
-| `gst-outward-register-export`       | monthly                  | Builds the GSTR-1 outward register working file                 |
-| `handle-stuck-payouts`              | every 4 hours            | Polls the gateway for payouts stuck in processing               |
-| `process-payouts`                   | weekly, Monday 21:00 UTC | Submits approved payouts; applies TDS withholding               |
-| `prune-audit-logs`                  | daily                    | Dual-window audit-log retention                                 |
-| `prune-system-job-executions`       | daily                    | 90-day retention; stamps stranded `RUNNING` rows failed         |
-| `purge-deleted-documents`           | daily                    | Tombstones expired documents, then purges tombstones            |
-| `purge-unverified-users`            | daily                    | Deletes never-verified accounts past 7 days                     |
-| `reconcile-disputes`                | every 6 hours            | Polls gateway dispute status                                    |
-| `reconcile-document-storage`        | daily                    | Finds orphaned and missing Supabase Storage objects             |
-| `reconcile-ledgers`                 | daily                    | The internal-cache reconciler; 17 derivation families           |
-| `reconcile-occurrence-availability` | hourly                   | Clears tentative flags; **detects** double bookings             |
-| `reconcile-orphaned-recordings`     | daily                    | Re-syncs meetings against Stream recordings                     |
-| `reconcile-payout-status`           | every 6 hours            | Polls RazorpayX for pending payouts                             |
-| `reconcile-sessions`                | :25 and :55 hourly       | Reconciles orphaned meetings against Stream video calls         |
-| `settle-invoice-accruals`           | monthly                  | Settles accrued organisation invoice balances                   |
-| `stream-sync`                       | daily                    | Soft-deletes Stream users absent from the database              |
-| `sweep-abandoned-overage-charges`   | daily                    | Resolves abandoned member overage charges                       |
-| `sweep-verification`                | daily                    | Expires stale verification submissions                          |
-| `tds-return-draft`                  | quarterly                | Builds the Form 26Q deductee-wise TDS draft                     |
-| `transfer-recordings`               | every 6 hours            | Copies ready recordings out of Stream's 14-day window           |
-| `wind-down-deactivated-orgs`        | daily                    | Tears down Stream resources for deactivated organisations       |
-
-## Scheduled jobs with no HTTP twin
-
-Thirteen jobs have no `/api/cleanup` slug at all. They are bare Node entrypoints in `jobs/`, invoked directly by GitHub Actions, and they hold their own locks.
-
-| Job name                         | Purpose                                         |
-| -------------------------------- | ----------------------------------------------- |
-| `generate-subscription-invoices` | Mints subscription-cycle invoices               |
-| `advance-program-cycles`         | Advances organisation program cycles            |
-| `dunning`                        | Invoice dunning and suspension                  |
-| `timeout-member-overages`        | Times out unsettled member overage charges      |
-| `auto-renew-contracts`           | Renews organisation contracts                   |
-| `expire-contracts`               | Expires contracts at term                       |
-| `irp-uploader`                   | Registers e-invoices with the government portal |
-| `wallet-low-balance`             | Alerts on low organisation wallet balances      |
-| `msme-payment-alerts`            | MSME 43B(h) payment-deadline alerts             |
-| `prune-system-events`            | System-event retention                          |
-| `expire-event-channels`          | Expires stale Stream event channels             |
-| `databreach-deadline-alerts`     | DPDP breach reporting deadline alerts           |
-| `consent-retention-sweeper`      | Consent artifact retention                      |
-
-Nine of the thirteen are in `FINANCIAL_JOB_NAMES`, which is why a `DEGRADED` maintenance phase holds them.
+The remaining 29 registry slugs and the 13 jobs with no HTTP twin are catalogued, with their entrypoints, lock modes and what each mutates, in [04-cron-jobs-reference.md](./04-cron-jobs-reference.md). They are not repeated here.
 
 ## Sidecars
 
@@ -325,16 +273,18 @@ Two workflows that write to the shared production database — the load gate and
 
 Recorded here so the next reader does not trust the prose over the source. The authoritative status of each item is the linked issue.
 
-| Area                         | Documented                                                                                  | Actual                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Platform cron switch         | An Upstash key that mutes the ticker on a hot-standby host so both hosts never fire         | No such gate exists. The documented sub-minute failback step is a no-op                |
-| Standalone container build   | A conditional `output: "standalone"` for non-Netlify hosts                                  | No `output` key is set. The production Dockerfile is not standalone                    |
-| Image optimisation exclusion | `sharp` excluded only on Netlify or Vercel, so container hosts keep in-process optimisation | It is excluded unconditionally                                                         |
-| Client IP trust              | Platform-scoped headers trusted only on their matching runtime                              | Trusted unconditionally, so off-Netlify a caller can choose its own rate-limit key     |
-| Smoke-test auth header       | A dedicated cron header for the failback drain command                                      | The route accepts only `Authorization: Bearer`; the documented command returns 401     |
-| Overlap constraint name      | A constraint named `slot_no_confirmed_overlap` in the agent instructions                    | The object is `occurrence_no_confirmed_overlap`                                        |
-| Cron registry size           | Various counts of "47", "48" and "56" slugs                                                 | 56 annotations, 27 ticker targets                                                      |
-| Cron reference document      | Five workflows, a 67-job fleet, a Redis-based lock                                          | Seven scheduled workflows, a Postgres lease, and several job rows that no longer exist |
+| Area                             | Documented                                                                                     | Actual                                                                                                                                                                                                   |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Platform cron switch             | An Upstash key that mutes the ticker on a hot-standby host so both hosts never fire            | No such gate exists. The documented sub-minute failback step is a no-op                                                                                                                                  |
+| Standalone container build       | A conditional `output: "standalone"` for non-Netlify hosts                                     | No `output` key is set. The production Dockerfile is not standalone                                                                                                                                      |
+| Image optimisation exclusion     | `sharp` excluded only on Netlify or Vercel, so container hosts keep in-process optimisation    | It is excluded unconditionally                                                                                                                                                                           |
+| Client IP trust                  | Platform-scoped headers trusted only on their matching runtime                                 | Trusted unconditionally, so off-Netlify a caller can choose its own rate-limit key                                                                                                                       |
+| Smoke-test auth header           | A dedicated cron header for the failback drain command                                         | The route accepts only `Authorization: Bearer`; the documented command returns 401                                                                                                                       |
+| Overlap constraint name          | A constraint named `slot_no_confirmed_overlap` in the agent instructions                       | The object is `occurrence_no_confirmed_overlap`                                                                                                                                                          |
+| Cron registry size               | Various counts of "47", "48" and "56" slugs across docs and comments                           | 56 registry slugs, 13 jobs with no HTTP twin, 27 ticker targets                                                                                                                                          |
+| Cron schedule staggering         | That CI enforces stagger minutes across the fleet                                              | `scripts/ci/check-workflow-hygiene.ts` checks the secrets manifest, not staggering. Stagger minutes are maintained by hand                                                                               |
+| Dead job names in the alert list | `cascade-refund-earnings` and `release-pending-trust-earnings` listed in `MONEY_CRITICAL_JOBS` | Both jobs were folded into the `reconcile-refunds` and `release-earnings` cores. The names remain in `scripts/ci/notify-ops-failure.sh` where they can never match, so those two failures would not page |
+| Actions as a fleet backstop      | That the GitHub Actions cron fleet backs up the ticker                                         | It does not. Fourteen of the 27 ticker targets have no Actions workflow at all, and `auto-complete-appointments` and `detect-consultant-no-shows` gate money with the ticker as their only scheduler     |
 
 The general rule these rows all illustrate: **verify a named object with a grep before building on it.** The repository has taught an agent a phantom constraint before, and agents trust these files as doctrine.
 
@@ -373,4 +323,4 @@ Issue 2157 (infrastructure and maintenance audit) and its sub-issues carry the r
 
 **A keep-warm Netlify function.** Deleted once disabling Next.js entry preloading removed the cold-start stall it existed to fight. A test asserts the file stays absent.
 
-**The old `04-cron-jobs-reference.md` fleet inventory.** That document remains as background, but its schedule tables, its job count and its description of the locking backend are superseded by this reference.
+**A "superseded" banner on `04-cron-jobs-reference.md`.** A first attempt at these two pages marked the older job catalogue partially superseded rather than correcting it, on the reasoning that a 76 KB rewrite was not a small change. That was the wrong call: it left two documents claiming the same authority with a signpost between them, and the signpost is where drift grows. The catalogue was corrected in place instead — real entrypoints, real schedules, dead rows deleted — and the division of labour between the two pages is by subject, not by recency.
