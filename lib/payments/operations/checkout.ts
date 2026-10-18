@@ -3,11 +3,6 @@
  * Handles the complete checkout flow for all appointment types
  */
 
-import {
-  flushBackupInterestNotices,
-  stageNoticesForAppointmentHolds,
-  type StagedBackupInterestNotices,
-} from "@/lib/booking/backup-interest";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -19,17 +14,12 @@ import {
   linkParticipantsToPayment,
   liveParticipant,
   recordParticipants,
-  releaseParticipant,
   transitionParticipant,
 } from "@/lib/booking/participants";
 import {
   appendCreationHistory,
-  transitionConsultationRequest,
-  transitionOccurrenceCompletion,
-  transitionSubscriptionRequest,
   transitionTrial,
 } from "@/lib/booking/transitions";
-import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { PaymentError } from "@/lib/payments/core/types";
 import prisma, { type Tx } from "@/lib/prisma";
 import type { CheckoutInput } from "@/schemas/checkout";
@@ -81,11 +71,7 @@ import {
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import {
-  applyCreditsToPayment,
-  getUserCredits,
-  reverseCreditsForPayment,
-} from "@/lib/referrals/service";
+import { applyCreditsToPayment, getUserCredits } from "@/lib/referrals/service";
 import { notifyCreditsAppliedBestEffort } from "@/lib/referrals/referral-notify";
 import {
   asWelcomeDiscountConflict,
@@ -161,62 +147,23 @@ import {
 import { seatPayerOrganizationId } from "@/lib/data/org-sponsored-seats";
 import { assertWindowMatchesPlanDuration } from "@/lib/booking/slot-validation";
 import { tombstonePriorIntent } from "@/lib/payments/operations/prior-intent-tombstone";
+import {
+  releaseSupersededHolds,
+  findReusablePendingOrderPayment,
+} from "@/lib/payments/checkout/order-reuse";
+import {
+  type SubscriptionCheckoutResult,
+  buildPaymentMetadata,
+} from "@/lib/payments/checkout/schema";
+import { tombstoneAbortedGatewayOrder } from "@/lib/payments/checkout/gateway-intent";
 
 // ============================================================================
 // Type Definitions
 // ============================================================================
 
-/**
- * Unified return type for subscription checkout
- * FIX Issue #2: Creates placeholder appointment for payment linkage
- * This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
- * Consultant allocates specific slots later via Requests tab
- */
-type SubscriptionCheckoutResult = {
-  // #780 — extended-client reads return price/trialPriceInPaise as number;
-  // GetPayload says bigint.
-  plan: Omit<
-    Prisma.SubscriptionPlanGetPayload<{
-      include: {
-        consultantProfile: {
-          include: { user: true };
-        };
-      };
-    }>,
-    "price" | "trialPriceInPaise"
-  > & { price: number; trialPriceInPaise: number };
-  amount: number;
-  subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
-  appointment: Prisma.AppointmentGetPayload<Record<string, never>>;
-  isSchedulingPeriodRequest: boolean;
-};
-
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * #1437 — Razorpay caps an order's `notes` at 15 keys and 256 characters per
- * value, and this object is that payload (Stripe's own limits are far looser,
- * so the tighter gateway sets the shape for both).
- *
- * Two consequences are handled here. The buyer's booking note is truncated
- * rather than forwarded verbatim: `checkoutSchema` already rejects anything
- * longer, and the full text is persisted on the Payment and Appointment rows,
- * so this copy exists only for the gateway dashboard and losing its tail costs
- * nothing — whereas exceeding the limit costs the buyer the whole purchase.
- * And `discountCode` was dropped: the org-sponsored event case emitted exactly
- * 15 keys, leaving no headroom for the next one, and the discount is already
- * reflected in the order amount and recorded on the Payment row, while nothing
- * in the webhook path ever reads it back out of the gateway.
- *
- * #1462 — an optional field with no value is omitted rather than emitted as an
- * empty string, because the webhook schemas type those fields as `.optional()`,
- * which admits an absent key but rejects `""`; sending the empty key made every
- * scheduling-period subscription fail validation at capture, and it also spent
- * key budget the 15-key ceiling above has no room for.
- */
-const GATEWAY_NOTE_MAX_CHARS = 256;
 
 /**
  * #1766 — the statuses under which a subscription still holds its
@@ -241,10 +188,6 @@ const RENEWABLE_SUBSCRIPTION_STATUSES: ReadonlySet<AppointmentStatus> = new Set(
 
 const REFERRAL_CREDITS_DROPPED_NOTICE =
   "Referral credits can't be used on organisation-funded bookings, so none were spent.";
-
-/** Why a superseded open order's booking was cancelled (#1463). */
-const SUPERSEDED_HOLD_NOTE =
-  "Superseded by a newer checkout attempt for the same booking";
 
 /**
  * #1582 B-P1-01b — coded refusals raised INSIDE the checkout transaction that
@@ -364,122 +307,9 @@ function assertSeatRemintable(
   throw alreadyHeldSeatError(kind);
 }
 
-/**
- * Build payment metadata for both payment intents and webhook handlers
- * Ensures consistency between payment creation and mock payment flows.
- *
- * When the booking is org-sponsored, `organizationId` and `fundingSource`
- * are stamped into the gateway's `notes` (C.1, #687). This lets the
- * webhook attribute the payment to the org without an extra DB lookup
- * and gives invoice-fraud reconcilers a server-side proof that the
- * booker's claimed org matches the gateway's record.
- */
-export function buildPaymentMetadata(
-  data: CheckoutInput,
-  userId: string,
-  orgContext?: {
-    organizationId: string | null;
-    fundingSource: "PERSONAL" | "WALLET" | "INVOICE" | "LICENSE" | null;
-  },
-): { appointmentId: string; appointmentType: string; [key: string]: string } {
-  const notes = (data.notes || "").slice(0, GATEWAY_NOTE_MAX_CHARS);
-  return {
-    appointmentId: "pending",
-    appointmentType: data.appointmentType,
-    userId: userId,
-    planId: data.planId,
-    // #1462 — every key below is conditional. A scheduling-period subscription
-    // carries no direct slots, so `startsAt`/`endsAt` used to reach the gateway
-    // as `""` and then failed `z.string().datetime().optional()` on the way
-    // back in, stranding a captured sale as REQUIRES_MANUAL_RECOVERY.
-    ...(data.startsAt && { startsAt: data.startsAt }),
-    ...(data.endsAt && { endsAt: data.endsAt }),
-    ...(data.availabilityWindowWeeklyId && {
-      availabilityWindowWeeklyId: data.availabilityWindowWeeklyId,
-    }),
-    ...(data.availabilityWindowCustomId && {
-      availabilityWindowCustomId: data.availabilityWindowCustomId,
-    }),
-    ...(data.schedulingPeriodStartsAt && {
-      schedulingPeriodStartsAt: data.schedulingPeriodStartsAt,
-    }),
-    ...(data.schedulingPeriodEndsAt && {
-      schedulingPeriodEndsAt: data.schedulingPeriodEndsAt,
-    }),
-    ...(notes && { notes }),
-    ...(data.eventId && { eventId: data.eventId }),
-    ...(orgContext?.organizationId && {
-      organizationId: orgContext.organizationId,
-    }),
-    ...(orgContext?.fundingSource && {
-      fundingSource: orgContext.fundingSource,
-    }),
-  };
-}
-
 // ============================================================================
 // Open-Order Reuse (rec C, checkout dossier Q2)
 // ============================================================================
-
-/**
- * Rec C (bugs/finances/checkout-webhooks-idempotency.md Q2) — a checkout
- * remount or new tab mints a FRESH clientIdempotencyKey, so #828's same-key
- * replay sees nothing and a naive flow mints a PARALLEL Razorpay order for
- * the same user+plan — parallel charges. Before any gateway call we adopt an
- * open PENDING payment for the same user+plan(+org) whose expiresAt window
- * is still live and hand its orderId back so every mount resumes the SAME
- * order.
- *
- * The scope is deliberately tight: userId equality, status PENDING,
- * expiresAt strictly in the future (respect the minted window), same routed
- * gateway (a Razorpay order cannot be resumed through Stripe.js or vice
- * versa — the replay path refuses cross-gateway resume for the same reason),
- * soft-deletes excluded, and plan identity resolved through the appointment
- * join (Payment carries no planId column). Legitimate repeat purchases are
- * unaffected: once the hold expires or is cancelled, the row is no longer
- * (PENDING ∧ fresh) and the next attempt mints fresh.
- *
- * Race-safe without a claim column: every schema-valid checkout input takes
- * a distributed lock keyed identically for the same user+plan (consultee +
- * slot atoms for slot shapes, event-checkout:<type>:<event|plan> otherwise),
- * so two concurrent remounts serialize before reaching here and the loser
- * observes the winner's COMMITTED row; same-key duplicates stay covered by
- * the clientIdempotencyKey unique (#828 P2002 replay).
- */
-/** A resumable open order — the fields the resume response needs. */
-interface ReusableOrder {
-  id: string;
-  paymentIntent: string;
-  amount: number;
-  currency: string;
-  isMockPayment: boolean;
-  /** #1861 L1 — the hold's end, echoed so Checkout can time out before it. */
-  expiresAt?: Date | null;
-  /** The booked window's slot rows (consultation/class shape); empty for
-   *  subscription placeholders whose period lives on the slot rows too. */
-  appointment?: {
-    occurrences: Array<{ startsAt: Date; endsAt: Date }>;
-  } | null;
-}
-
-/**
- * The [start, end) a set of slot rows actually covers.
- *
- * #1463 — a booked window is stored as N contiguous 30-minute atoms (#1319), so
- * the window gate below cannot read the first row's endpoints: for anything
- * longer than half an hour the first atom ends 30 minutes into the booking and
- * every resume was rejected as a slot-window mismatch. The run's first start and
- * last end are the window.
- */
-function slotRunWindow(
-  slots: Array<{ startsAt: Date; endsAt: Date }> | undefined,
-): { startsAt: Date; endsAt: Date } | null {
-  if (!slots || slots.length === 0) return null;
-  return {
-    startsAt: new Date(Math.min(...slots.map((s) => s.startsAt.getTime()))),
-    endsAt: new Date(Math.max(...slots.map((s) => s.endsAt.getTime()))),
-  };
-}
 
 /**
  * #1744 row 4 — the one credit-limit predicate both gates share: the booking
@@ -546,389 +376,9 @@ export async function readInvoiceExposurePaise(
   );
 }
 
-export async function findReusablePendingOrderPayment(
-  db: Pick<typeof prisma, "payment">,
-  params: {
-    userId: string;
-    appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
-    planId: string;
-    eventId?: string;
-    organizationId: string | null;
-    paymentGateway: PaymentGateway;
-    /**
-     * #1220-triage — the CURRENT request's computed total. A candidate whose
-     * frozen amount differs (changed coupon, credit balance moved) is
-     * superseded instead of resumed, so a stale price can never be charged.
-     */
-    expectedAmountPaise: number;
-    /** Slot window for direct bookings — a resume must be for THIS time,
-     *  not just this plan (#1220-triage critical finding). */
-    slotWindow?: { startsAt: Date; endsAt: Date };
-    /** Subscription billing-period window; both-null rows only match a
-     *  both-null request. */
-    schedulingPeriod?: { startsAt: Date; endsAt: Date } | null;
-  },
-): Promise<{
-  reusable: ReusableOrder | null;
-  /** Scope/freshness matches rejected by the window/amount gates — the caller
-   *  EXPIRES these ("superseded") so they can neither be resumed nor re-minted
-   *  into a parallel charge. */
-  supersede: Array<{ id: string; reason: string }>;
-}> {
-  // Plan identity per type — events are identified by their event row (the
-  // plan is 1:1 with it); direct bookings by their plan id. An undefined
-  // eventId would make Prisma drop the filter entirely (matches ANY
-  // appointment), which is exactly the over-broad reuse we must never do.
-  let planScope: Record<string, unknown> | null;
-  switch (params.appointmentType) {
-    case "CONSULTATION":
-      planScope = { consultation: { consultationPlanId: params.planId } };
-      break;
-    case "SUBSCRIPTION":
-      planScope = { subscription: { subscriptionPlanId: params.planId } };
-      break;
-    case "WEBINAR":
-      planScope = params.eventId ? { webinarId: params.eventId } : null;
-      break;
-    case "CLASS":
-      planScope = params.eventId ? { classId: params.eventId } : null;
-      break;
-    default:
-      planScope = null;
-  }
-  if (!planScope) return { reusable: null, supersede: [] };
-
-  const now = new Date();
-  const candidates = await db.payment.findMany({
-    where: {
-      userId: params.userId,
-      paymentStatus: PaymentStatus.PENDING,
-      // Null-safe org equality: personal stays personal, sponsored matches sponsor.
-      organizationId: params.organizationId,
-      paymentGateway: params.paymentGateway,
-      deletedAt: null,
-      appointment: planScope,
-    },
-    orderBy: { createdAt: "desc" },
-    take: 5, // bounded: newest attempts first; older ones get superseded below
-    select: {
-      id: true,
-      paymentIntent: true,
-      amount: true,
-      currency: true,
-      isMockPayment: true,
-      expiresAt: true,
-      appointment: {
-        select: {
-          occurrences: {
-            select: { startsAt: true, endsAt: true },
-            orderBy: { startsAt: "asc" as const },
-            // #1463 — the whole run, not its first atom. Bounded well above any
-            // single bookable window so a pathological row cannot widen the read.
-            take: 48,
-          },
-          subscription: {
-            select: {
-              schedulingPeriodStartsAt: true,
-              schedulingPeriodEndsAt: true,
-            },
-          },
-        },
-      },
-    },
-  });
-
-  const reusable: ReusableOrder[] = [];
-  const supersede: Array<{ id: string; reason: string }> = [];
-
-  for (const candidate of candidates) {
-    // #1478 — a PENDING row whose hold window has lapsed is never resumed,
-    // and must be actively superseded so its tentative slot / participant seat
-    // is released before the new booking writes (even if the cleanup cron has
-    // not swept it yet).
-    if (
-      !candidate.expiresAt ||
-      candidate.expiresAt.getTime() <= now.getTime()
-    ) {
-      supersede.push({ id: candidate.id, reason: "hold-expired" });
-      continue;
-    }
-
-    const appt = candidate.appointment as {
-      occurrences: Array<{ startsAt: Date; endsAt: Date }>;
-      subscription?: {
-        schedulingPeriodStartsAt: Date | null;
-        schedulingPeriodEndsAt: Date | null;
-      } | null;
-    } | null;
-
-    // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
-    // DIFFERENT appointment time must never resume the first attempt's order.
-    if (params.appointmentType === "CONSULTATION") {
-      const run = slotRunWindow(appt?.occurrences);
-      if (!params.slotWindow || !run) {
-        supersede.push({ id: candidate.id, reason: "window-unmatchable" });
-        continue;
-      }
-      if (
-        run.startsAt.getTime() !== params.slotWindow.startsAt.getTime() ||
-        run.endsAt.getTime() !== params.slotWindow.endsAt.getTime()
-      ) {
-        supersede.push({ id: candidate.id, reason: "slot-window-mismatch" });
-        continue;
-      }
-    }
-    if (params.appointmentType === "SUBSCRIPTION") {
-      const reqPeriod = params.schedulingPeriod ?? null;
-      // Subscription windows ride the SAME slot rows as consultations when
-      // direct-slot booked, or live on `appointment.subscription` when minted
-      // as a scheduling-period placeholder (which has no occurrences yet).
-      const subRow = appt?.subscription;
-      const rowPeriod =
-        slotRunWindow(appt?.occurrences) ??
-        (subRow?.schedulingPeriodStartsAt && subRow?.schedulingPeriodEndsAt
-          ? {
-              startsAt: subRow.schedulingPeriodStartsAt,
-              endsAt: subRow.schedulingPeriodEndsAt,
-            }
-          : null);
-      if (!!reqPeriod !== !!rowPeriod) {
-        supersede.push({ id: candidate.id, reason: "period-mismatch" });
-        continue;
-      }
-      if (
-        reqPeriod &&
-        rowPeriod &&
-        (rowPeriod.startsAt.getTime() !== reqPeriod.startsAt.getTime() ||
-          rowPeriod.endsAt.getTime() !== reqPeriod.endsAt.getTime())
-      ) {
-        supersede.push({ id: candidate.id, reason: "period-mismatch" });
-        continue;
-      }
-    }
-
-    // Gate 2 — priced-input parity (#1220-triage Major): a changed coupon /
-    // credit balance / tax profile computes a DIFFERENT total for this
-    // request; resuming would charge the stale number. Expire-and-fresh.
-    if (candidate.amount !== params.expectedAmountPaise) {
-      supersede.push({ id: candidate.id, reason: "amount-mismatch" });
-      continue;
-    }
-
-    reusable.push(candidate);
-    break; // newest match wins
-  }
-
-  return { reusable: reusable[0] ?? null, supersede };
-}
-
-/**
- * #1463 — superseding an open order is a RELEASE, not just a status flip.
- *
- * Expiring the Payment row alone left the superseded attempt's tentative
- * appointment and slots occupying the calendar, so the very next attempt for
- * the same window hit "Time slot is already booked" again and the buyer was
- * walled in until the cleanup sweep ran. The hold has to go back at the same
- * moment its payment stops being payable, which is why the payment CAS, the
- * slot release and the parent request's cancellation all sit in one
- * transaction: a partial release is exactly the state that reopens the wall.
- *
- * Every write is CAS-in-WHERE per ADR 21 — the payment claim carries
- * `paymentStatus: PENDING` so a capture that landed a millisecond earlier wins
- * and its booking is left completely alone, and the appointment and slot moves
- * go through the guarded helpers in `lib/booking/transitions.ts` rather than a
- * bare update. A parent that has already moved on (its own payment succeeded)
- * throws `IllegalTransitionError`, which is caught per appointment so the rest
- * of the release still commits.
- *
- * Group events mint no per-buyer occurrence: a webinar or class seat is the
- * buyer's participant row on the event's own appointment. Superseding the
- * order without giving that row back is a permanent loss, not a temporary wall
- * — `isAlreadyRegistered` / `isUserEnrolled` read `liveParticipant`, which
- * counts HELD, so every later attempt by this buyer is refused over a seat
- * whose payment is EXPIRED. And no sweep reclaims it: the abandoned-payment
- * sweep cohorts on `paymentStatus: PENDING`, which this row no longer is. So
- * the event runs one seat short with nothing left to release it. The seat is
- * released here, in the same transaction that stops the payment being payable,
- * and only for this buyer's own row — other attendees' seats are not ours.
- */
-async function releaseSupersededHolds(params: {
-  paymentIds: string[];
-  userId: string;
-}): Promise<void> {
-  const holdNotices = await prisma.$transaction(async (tx: Tx) => {
-    const claimWhere = {
-      id: { in: params.paymentIds },
-      userId: params.userId,
-      paymentStatus: PaymentStatus.PENDING,
-    };
-    const claimData = {
-      paymentStatus: PaymentStatus.EXPIRED,
-      expiresAt: new Date(),
-    };
-    const claimed = await tx.payment.updateManyAndReturn({
-      where: claimWhere,
-      data: claimData,
-      select: { id: true, appointmentId: true },
-    });
-
-    await Promise.all(
-      claimed.map((row) => reverseCreditsForPayment(row.id, tx)),
-    );
-
-    const appointmentIds = claimed
-      .map((row) => row.appointmentId)
-      .filter((id): id is string => id !== null);
-    if (appointmentIds.length === 0) return { bells: [], emails: [] };
-
-    const appointments = await tx.appointment.findMany({
-      where: { id: { in: appointmentIds }, deletedAt: null },
-      select: {
-        id: true,
-        webinarId: true,
-        classId: true,
-        consultation: { select: { id: true } },
-        subscription: { select: { id: true } },
-      },
-    });
-
-    const notices: StagedBackupInterestNotices = { bells: [], emails: [] };
-    for (const appointment of appointments) {
-      if (appointment.webinarId || appointment.classId) {
-        // The seat, not an occurrence, is what this buyer gave up. Scoped to
-        // their own row on this event, and a CAS on the live statuses, so a
-        // second pass — or a capture that confirmed the seat first — matches
-        // zero rows and changes nothing.
-        await releaseParticipant(tx, {
-          appointmentId: appointment.id,
-          userId: params.userId,
-        });
-        continue;
-      }
-
-      // #1778 — the superseded hold frees its times: tell anyone waiting.
-      const staged = await stageNoticesForAppointmentHolds(tx, appointment.id);
-      notices.bells.push(...(staged?.bells ?? []));
-      notices.emails.push(...(staged?.emails ?? []));
-      // Doctrine rule 2: a slot is freed by status, never by DELETE — the
-      // buyer keeps the record of the attempt they abandoned.
-      await transitionOccurrenceCompletion(tx, {
-        where: {
-          appointmentId: appointment.id,
-          isTentative: true,
-          deletedAt: null,
-        },
-        to: "CANCELLED",
-        data: { deletedAt: new Date() },
-        reason: SUPERSEDED_HOLD_NOTE,
-        actorUserId: params.userId,
-        allowZero: true,
-      });
-
-      try {
-        if (appointment.consultation) {
-          await transitionConsultationRequest(tx, {
-            where: { id: appointment.consultation.id },
-            to: "CANCELLED",
-            fromIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
-            actorUserId: params.userId,
-            reason: SUPERSEDED_HOLD_NOTE,
-            data: {
-              cancellationNotes: SUPERSEDED_HOLD_NOTE,
-              cancelledAt: new Date(),
-            },
-          });
-        }
-        if (appointment.subscription) {
-          await transitionSubscriptionRequest(tx, {
-            where: { id: appointment.subscription.id },
-            to: "CANCELLED",
-            fromIn: ["PENDING", "APPROVED_PENDING_PAYMENT"],
-            actorUserId: params.userId,
-            reason: SUPERSEDED_HOLD_NOTE,
-            data: {
-              cancellationNotes: SUPERSEDED_HOLD_NOTE,
-              cancelledAt: new Date(),
-            },
-          });
-        }
-      } catch (error) {
-        // The parent moved past the payment stage under us, which means some
-        // other payment already carried it — that booking is not ours to
-        // cancel. Modelled, so it is reported for visibility only.
-        if (!(error instanceof IllegalTransitionError)) throw error;
-        reportSentryError(error, {
-          subsystem: "payments",
-          level: "warning",
-          expected: true,
-          extra: { appointmentId: appointment.id },
-        });
-      }
-    }
-    return notices;
-  });
-  await flushBackupInterestNotices(holdNotices);
-}
-
 // ============================================================================
 // Payment Intent Manager
 // ============================================================================
-
-/**
- * Manages payment intent creation and cleanup with proper error handling
- */
-/**
- * #1695 — record a gateway order that was minted and then abandoned by an
- * in-transaction abort, so a late capture on it has a row to be refunded
- * against. EXPIRED with `expiresAt` now: no sweep re-drives it (they cohort on
- * PENDING) and no checkout resumes it. A failure here must not mask the abort
- * the buyer is about to hear about, so it only reports — and returns whether
- * the row landed, for a caller whose next answer depends on it.
- */
-export async function tombstoneAbortedGatewayOrder(input: {
-  paymentIntent: string;
-  userId: string;
-  amount: number;
-  originalAmount: number;
-  taxAmount: number;
-  currency: Currency;
-  reason: string;
-}): Promise<boolean> {
-  try {
-    await prisma.payment.create({
-      data: {
-        amount: input.amount,
-        originalAmount: input.originalAmount,
-        taxAmount: input.taxAmount,
-        currency: input.currency,
-        paymentMethod: "CARD",
-        paymentIntent: input.paymentIntent,
-        paymentGateway: PaymentGateway.RAZORPAY,
-        paymentStatus: PaymentStatus.EXPIRED,
-        expiresAt: new Date(),
-        userId: input.userId,
-        description: `Checkout aborted after the gateway order was minted (${input.reason.slice(0, 160)}). A late capture on this order is auto-refunded.`,
-        // The funding-leg trigger rejects a priced Payment with no legs at COMMIT.
-        ...(input.amount > 0 && {
-          legs: {
-            create: {
-              source: "CARD",
-              amountPaise: input.amount,
-              sourceRef: input.paymentIntent,
-            },
-          },
-        }),
-      },
-    });
-    return true;
-  } catch (tombstoneError) {
-    reportSentryError(tombstoneError, {
-      subsystem: "payments",
-      extra: { paymentIntent: input.paymentIntent },
-    });
-    return false;
-  }
-}
 
 // ============================================================================
 // Amount Calculation and Validation

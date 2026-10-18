@@ -48,7 +48,7 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import { checkoutSchema, type CheckoutInput } from "../../schemas/checkout";
-import { buildPaymentMetadata } from "../../lib/payments/operations/checkout";
+import { buildPaymentMetadata } from "../../lib/payments/checkout/schema";
 
 const HOUR_MS = 60 * 60 * 1000;
 const LONG_NOTE = "a".repeat(300);

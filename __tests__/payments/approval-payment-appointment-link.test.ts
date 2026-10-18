@@ -167,11 +167,11 @@ jest.mock("../../lib/compliance/lut", () => ({
 }));
 
 // CodeRabbit r1 — the loser of a double-accept tombstones its minted order
-// (#1695). Boundary-mocked: checkout.ts's import graph is not under test.
+// (#1695). Boundary-mocked: the checkout module graph is not under test.
 const mockTombstone = jest.fn<Promise<boolean>, [Record<string, unknown>]>(
   async () => true,
 );
-jest.mock("../../lib/payments/operations/checkout", () => ({
+jest.mock("../../lib/payments/checkout/gateway-intent", () => ({
   __esModule: true,
   tombstoneAbortedGatewayOrder: (input: Record<string, unknown>) =>
     mockTombstone(input),
