@@ -545,7 +545,7 @@ export async function autoAllocate(
         }
 
         // Create appointments
-        const appointments = await createAppointments(
+        const { appointments, overageNotice } = await createAppointments(
           tx,
           eventType,
           eventId,
@@ -611,6 +611,7 @@ export async function autoAllocate(
           success: true,
           outcome,
           appointments,
+          overageNotice,
           warnings: validation.warnings,
           deletedAppointmentIds, // AE-4
           stagedNotices,

@@ -522,9 +522,10 @@ const BUSINESS_ERROR_ENTRIES = [
       "CLASS_PRICE_CHANGED",
       // #1743 — subscription renewal already linked to an active successor.
       "ALREADY_RENEWED",
-      // A refunded seat cannot be bought again yet; a paused expert takes no new booking.
+      // A refunded seat cannot be bought again yet; a paused or unverified expert takes no new booking.
       "SEAT_REBUY_UNSUPPORTED",
       "NOT_ACCEPTING_BOOKINGS",
+      "EXPERT_NOT_VERIFIED",
       // A subscription session going back to the plan.
       "RETURN_WINDOW_CLOSED",
       "RETURN_CAP_REACHED",

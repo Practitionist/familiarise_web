@@ -228,7 +228,8 @@ export async function acquireCheckoutLock(
     JSON.stringify({
       event: "checkout_no_lock_needed",
       appointmentType,
-      data,
+      planId: data.planId,
+      eventId: data.eventId ?? null,
       timestamp: new Date().toISOString(),
     }),
   );

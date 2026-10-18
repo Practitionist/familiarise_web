@@ -225,6 +225,36 @@ describe("#1819 — late join", () => {
     expect(stamped(tx).sessionsPurchased).toBe(4);
   });
 
+  it("meters a late joiner for the sessions bought, not the whole batch", async () => {
+    const tx = txWith(eight(4), {
+      price: 99_999,
+      totalSessions: 8,
+      lateJoinUntilSession: 6,
+    });
+    const result = await buy(tx, 4);
+    expect(result.engagementsConsumed).toBe(4);
+    expect(result.engagementIds).toEqual(["s5", "s6", "s7", "s8"]);
+  });
+
+  it("meters a rescheduled session once, on its replacement row", async () => {
+    const rows = eight(4);
+    // Released before session 5 starts, so it sorts ahead of it by time.
+    const tombstone = {
+      ...occurrence(
+        "s6-old",
+        new Date(rows[4].startsAt.getTime() - 1),
+        "RESCHEDULED",
+      ),
+      ordinal: 6,
+    };
+    const tx = txWith([...rows.slice(0, 4), tombstone, ...rows.slice(4)], {
+      totalSessions: 8,
+      lateJoinUntilSession: 6,
+    });
+    const result = await buy(tx, 4);
+    expect(result.engagementIds).toEqual(["s5", "s6", "s7", "s8"]);
+  });
+
   it("closes enrolment once session 1 starts when the host set no cutoff", async () => {
     const tx = txWith(eight(1), { totalSessions: 8 });
     await expect(buy(tx)).rejects.toMatchObject({ code: "ENROLMENT_CLOSED" });
