@@ -1,3 +1,8 @@
+# Cost rule: Actions minutes are capped, so a PR pays only for what it can break.
+# Docs-only changes skip every job (paths filter), PRs into non-release branches
+# run jest on changed files only, and the full sharded suite plus the build run
+# on pushes and on PRs into prod. New jobs must state which of these they follow.
+
 # Bot review rounds: two, then stop.
 #
 # CodeRabbit runs on the ASSERTIVE profile and re-reviews on every push, so each
@@ -201,9 +206,41 @@ jobs:
         continue-on-error: true
         run: node_modules/.bin/tsx scripts/ci/check-docs-drift.ts
 
+  # Pull requests into non-release branches: only tests related to the diff.
+  unit-tests-changed:
+    name: Unit tests (changed files)
+    if: github.actor != 'dependabot[bot]' && github.event_name == 'pull_request' && github.base_ref != 'prod' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Load environment
+        run: echo "${{ secrets.ENV_FILE }}" | base64 -d > .env
+
+      - name: Generate Prisma Client
+        run: npm run db:generate
+
+      - name: Unit Tests (changed since base)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: npx jest --changedSince="origin/${BASE_REF}" --passWithNoTests --coverage=false
+
+  # Pushes and pull requests into prod: the full suite, sharded.
   unit-tests:
     name: Unit tests (${{ matrix.shard }})
-    if: github.actor != 'dependabot[bot]' && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
+    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.base_ref == 'prod') && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -286,7 +323,7 @@ jobs:
 
   test-and-build:
     name: TypeScript, Tests & Build
-    needs: [typecheck, unit-tests, build]
+    needs: [typecheck, unit-tests, unit-tests-changed, build]
     if: always() && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'db-reset')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -294,7 +331,9 @@ jobs:
       - name: All of typecheck, unit tests and build passed
         run: |
           test "${{ needs.typecheck.result }}" = success
-          test "${{ needs.unit-tests.result }}" = success
+          full="${{ needs.unit-tests.result }}"; changed="${{ needs.unit-tests-changed.result }}"
+          { test "$full" = success && test "$changed" = skipped; } \
+            || { test "$changed" = success && test "$full" = skipped; }
           test "${{ needs.build.result }}" = success \
             || { test "${{ github.event_name }}" = pull_request \
               && test "${{ github.base_ref }}" != prod \

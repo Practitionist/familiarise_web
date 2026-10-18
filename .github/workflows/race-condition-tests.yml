@@ -6,14 +6,14 @@ concurrency:
 
 on:
   push:
-    branches: [dev] # Only run when merged to dev
+    branches: [prod] # Release gate only; dev pushes and PRs do not run it
     paths:
       - "**"
       - "!docs/**"
       - "!**/*.md"
       - "!.claude/**"
       - "!prompts/**"
-  workflow_dispatch: # Allow manual trigger for testing
+  workflow_dispatch: # On-demand run
     inputs:
       use_real_redis:
         description: "Use real Upstash Redis instead of mock"
