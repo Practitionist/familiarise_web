@@ -1,0 +1,471 @@
+// The allocator's event read (consultant, config, org context) and the CAS
+// status write that lands the event once its times exist.
+
+import type { Tx, PrismaLike } from "@/lib/prisma";
+import { AppointmentStatus, OccurrenceCompletionStatus } from "@prisma/client";
+import { addMonths } from "date-fns";
+import {
+  EventType,
+  ConsultantAllocationData,
+  EventConfig,
+} from "@/utils/scheduling-engine/types";
+import { intervalStartsOf } from "@/lib/appointments/occurrences";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
+import {
+  ALLOCATION_APPROVABLE_FROM,
+  transitionClassEvent,
+  transitionConsultationRequest,
+  transitionSubscriptionRequest,
+  transitionWebinarEvent,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import {
+  SETTLED_CONSULTATION,
+  SETTLED_SUBSCRIPTION,
+  UNPAID_CONSULTATION,
+  UNPAID_SUBSCRIPTION,
+  type ApprovalOutcome,
+} from "@/lib/booking/approve-request";
+import {
+  AllocationValidationError,
+  AllocationNotFoundError,
+} from "@/utils/scheduling-engine/errors";
+
+/**
+ * #1775 B-9 — an unpaid approval's freshly placed sessions are the hold
+ * its pay order is for, not confirmed times: created confirmed by
+ * `createAppointments`, they are marked tentative here so the capture
+ * webhook confirms them and a lapse or withdraw releases them by status.
+ */
+export async function holdUntilPaid(
+  tx: Tx,
+  appointments: { id: string }[],
+  outcome: ApprovalOutcome | undefined,
+): Promise<void> {
+  if (outcome !== "awaiting_payment" || appointments.length === 0) return;
+  await tx.appointmentOccurrence.updateMany({
+    where: {
+      appointmentId: { in: appointments.map((a) => a.id) },
+      deletedAt: null,
+      completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+    },
+    data: { isTentative: true },
+  });
+}
+
+/**
+ * #1775 B-9 — two CAS attempts, the money predicate in each WHERE. The
+ * first lands a settled request in APPROVED (the self-edge keeps
+ * re-allocation of a paid booking legal); the second lands an unpaid one in
+ * APPROVED_PENDING_PAYMENT from PENDING or from itself. Both missing means
+ * the row is not approvable (cancelled, expired, or a wrapper in an odd
+ * money state) and the allocation rolls back as before.
+ */
+export async function approveByMoney<
+  W extends { id: string },
+  D extends object,
+>(
+  eventId: string,
+  transition: (args: {
+    where: W;
+    to: AppointmentStatus;
+    fromIn: AppointmentStatus[];
+    data?: D;
+  }) => Promise<void>,
+  settled: Omit<W, "id">,
+  unpaid: Omit<W, "id"> | (() => Promise<void>),
+  data?: D,
+  approvableFrom: AppointmentStatus[] = ALLOCATION_APPROVABLE_FROM,
+): Promise<ApprovalOutcome> {
+  try {
+    await transition({
+      where: { id: eventId, ...settled } as W,
+      to: AppointmentStatus.APPROVED,
+      fromIn: approvableFrom,
+      data,
+    });
+    return "approved";
+  } catch (error) {
+    if (!(error instanceof IllegalTransitionError)) throw error;
+    // #1775 C-1 — a refusal instead of the awaiting-payment edge; it throws
+    // a typed error for an unpaid row, else the original miss stands.
+    if (typeof unpaid === "function") {
+      await unpaid();
+      throw error;
+    }
+  }
+  await transition({
+    where: { id: eventId, ...unpaid } as W,
+    to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    fromIn: [
+      AppointmentStatus.PENDING,
+      AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    ].filter((status) => approvableFrom.includes(status)),
+    data,
+  });
+  return "awaiting_payment";
+}
+
+/**
+ * Update event status after allocation
+ */
+export async function updateEventStatus(
+  tx: Tx,
+  eventType: EventType,
+  eventId: string,
+  firstSlot: Date,
+  config: EventConfig,
+  approvableFrom?: AppointmentStatus[],
+): Promise<ApprovalOutcome | undefined> {
+  switch (eventType) {
+    // #836 — allocation racing a cancel/expiry must not resurrect the
+    // request to APPROVED; the allowed-from guard rides the WHERE and a
+    // miss rolls back the whole allocation tx. fromIn keeps the APPROVED
+    // self-edge legal for re-allocation of an already-approved event.
+    // #1775 B-9 — allocation IS the approval, and the money decides where
+    // it lands: a settled wrapper (SUCCEEDED payment, or a free plan) goes
+    // to APPROVED; an unpaid request goes to APPROVED_PENDING_PAYMENT and
+    // the caller mints the pay order after the commit. Both predicates
+    // ride the CAS WHERE; an unpaid row that already awaits payment keeps
+    // its live link (self-edge), it is never re-stamped APPROVED.
+    case "consultation":
+      return approveByMoney(
+        eventId,
+        (args) => transitionConsultationRequest(tx, args),
+        SETTLED_CONSULTATION,
+        UNPAID_CONSULTATION,
+        undefined,
+        approvableFrom,
+      );
+
+    // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
+    // never parked in APPROVED_PENDING_PAYMENT.
+    case "subscription":
+      return approveByMoney(
+        eventId,
+        (args) => transitionSubscriptionRequest(tx, args),
+        SETTLED_SUBSCRIPTION,
+        async () => {
+          const unpaid = await tx.subscription.count({
+            where: {
+              id: eventId,
+              status: { in: approvableFrom ?? ALLOCATION_APPROVABLE_FROM },
+              ...UNPAID_SUBSCRIPTION,
+            },
+          });
+          if (unpaid > 0) {
+            throw new BookingRuleError(
+              "SUBSCRIPTION_UNPAID",
+              "This plan is paid at purchase — the request has no successful payment.",
+            );
+          }
+        },
+        {
+          // FIX: Only set schedulingPeriod if not already configured
+          // This prevents overwriting the user's scheduling period with the first allocated slot
+          // which could cause slots to appear outside the intended scheduling window
+          ...(!config.schedulingPeriodStartsAt || !config.schedulingPeriodEndsAt
+            ? {
+                schedulingPeriodStartsAt: firstSlot,
+                schedulingPeriodEndsAt: addMonths(
+                  firstSlot,
+                  config.durationInMonths || 1,
+                ),
+              }
+            : {}),
+        },
+        approvableFrom,
+      );
+
+    case "webinar": {
+      // Allocation gives an event its sessions; it never publishes one, so a
+      // DRAFT keeps DRAFT while CANCELLED/COMPLETED are still refused.
+      try {
+        await transitionWebinarEvent(tx, {
+          where: { id: eventId },
+          to: "SCHEDULED",
+        });
+      } catch (error) {
+        if (
+          !(error instanceof IllegalTransitionError) ||
+          error.from !== "DRAFT"
+        ) {
+          throw error;
+        }
+      }
+      break;
+    }
+
+    case "class": {
+      // Class model HAS schedulingPeriod fields
+      // FIX: Only set schedulingPeriod if not already configured — same guard as SUBSCRIPTION.
+      // Overwriting an explicitly-set period on re-allocation shifts the window, allowing
+      // slots outside the original range to pass the scheduling-period validation check.
+      const periodData =
+        !config.schedulingPeriodStartsAt || !config.schedulingPeriodEndsAt
+          ? {
+              schedulingPeriodStartsAt: firstSlot,
+              schedulingPeriodEndsAt: addMonths(
+                firstSlot,
+                config.durationInMonths || 2,
+              ),
+            }
+          : {};
+
+      // Same DRAFT-keeps-its-status rule as WEBINAR above.
+      try {
+        await transitionClassEvent(tx, {
+          where: { id: eventId },
+          to: "SCHEDULED",
+          data: periodData,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof IllegalTransitionError) ||
+          error.from !== "DRAFT"
+        ) {
+          throw error;
+        }
+        // A draft still needs its scheduling period, or its new slots sit
+        // outside a window that is never set.
+        if (Object.keys(periodData).length > 0) {
+          await tx.class.updateMany({
+            where: { id: eventId, status: "DRAFT" },
+            data: periodData,
+          });
+        }
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Fetch event data including consultant and config
+ */
+export async function fetchEventData(
+  // #908 — accepts the base client so event/config reads can run OUTSIDE the
+  // write transaction (under the locks). Reads only.
+  db: PrismaLike,
+  eventType: EventType,
+  eventId: string,
+): Promise<{
+  consultant: ConsultantAllocationData;
+  config: EventConfig;
+  consulteeUserId?: string;
+  requestedSlots?: Date[];
+  /**
+   * Org context for any Appointment rows created by this allocation.
+   * Resolved per event type; see #768 Comment 5.
+   */
+  organizationId?: string | null;
+  /** AE-2 (#784) — the plan the co-host guard reads its collaborators from. */
+  planId?: string | null;
+} | null> {
+  const consultantProfileSelect = {
+    select: {
+      user: true,
+      scheduleType: true,
+      availabilityWindowsWeekly: true,
+      availabilityWindowsCustom: true,
+    },
+  } as const;
+
+  let consultantProfile:
+    | {
+        user: { id: string; timezone?: string | null };
+        scheduleType: "WEEKLY" | "CUSTOM";
+        availabilityWindowsWeekly: ConsultantAllocationData["availabilityWindowsWeekly"];
+        availabilityWindowsCustom: ConsultantAllocationData["availabilityWindowsCustom"];
+      }
+    | null
+    | undefined;
+  let config: EventConfig;
+  let consulteeUserId: string | undefined;
+  let requestedSlots: Date[] | undefined;
+  // #768 Comment 5
+  let organizationId: string | null = null;
+  // AE-2 (#784) — webinar/class only; the other two have no collaborators.
+  let planId: string | null = null;
+
+  switch (eventType) {
+    case "consultation": {
+      const event = await db.consultation.findUnique({
+        where: { id: eventId },
+        include: {
+          consultationPlan: {
+            include: { consultantProfile: consultantProfileSelect },
+          },
+          requestedBy: { include: { user: true } },
+          appointment: { include: { occurrences: true } },
+        },
+      });
+      if (!event) return null;
+      consultantProfile = event.consultationPlan?.consultantProfile;
+      config = {
+        durationInHours: event.consultationPlan?.durationInHours,
+      };
+      consulteeUserId = event.requestedBy?.user?.id;
+      // #1319 — atom STARTS, not one entry per row. The approval gate counts
+      // covered half-hour atoms and `validateConsultation` compares against
+      // `getSlotsPerCall`, so a legacy 60-minute row offered as one requested
+      // slot answered "1" to both questions and could never be approved.
+      requestedSlots = event.appointment?.occurrences?.flatMap((s) =>
+        intervalStartsOf(s),
+      );
+      // #768 — preserve org tag across reschedule (delete+recreate).
+      organizationId = event.appointment?.organizationId ?? null;
+      break;
+    }
+
+    case "subscription": {
+      const event = await db.subscription.findUnique({
+        where: { id: eventId },
+        include: {
+          subscriptionPlan: {
+            include: { consultantProfile: consultantProfileSelect },
+          },
+          requestedBy: { include: { user: true } },
+          appointment: {
+            include: {
+              occurrences: true,
+              payment: { select: { organizationId: true } },
+            },
+          },
+        },
+      });
+      if (!event) return null;
+      consultantProfile = event.subscriptionPlan?.consultantProfile;
+      // #1766 — one counter: the frozen entitlement and the current cycle
+      // decide how many sessions this run may place and in which window.
+      const entitlement = subscriptionEntitlement({
+        sessionsTotal: sessionsTotalOf(event),
+        sessionsPerWeek: event.subscriptionPlan.sessionsPerWeek,
+        durationInMonths: event.subscriptionPlan.durationInMonths,
+        occurrences: event.appointment?.occurrences ?? [],
+        schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
+        schedulingTimezone: event.schedulingTimezone,
+      });
+      config = {
+        durationInMonths: event.subscriptionPlan?.durationInMonths,
+        sessionsPerWeek: event.subscriptionPlan?.sessionsPerWeek,
+        sessionDurationInHours: event.subscriptionPlan?.sessionDurationInHours,
+        totalSessions: entitlement.total,
+        cycleTargetSessions: entitlement.cycle.nextBatch,
+        schedulingPeriodStartsAt: entitlement.cycle.windowStart,
+        schedulingPeriodEndsAt: entitlement.cycle.windowEnd,
+        schedulingTimezone: event.schedulingTimezone ?? undefined,
+      };
+      consulteeUserId = event.requestedBy?.user?.id;
+      // #1319 — same coverage rule as the consultation arm above.
+      requestedSlots = event.appointment?.occurrences.flatMap((s) =>
+        intervalStartsOf(s),
+      );
+      // #768 — the purchase wrapper from checkout carries the org tag.
+      // New lazy-allocated occurrences inherit it.
+      organizationId =
+        event.appointment?.organizationId ??
+        event.appointment?.payment.find((p) => p?.organizationId)
+          ?.organizationId ??
+        null;
+      break;
+    }
+
+    case "webinar": {
+      const event = await db.webinar.findUnique({
+        where: { id: eventId },
+        include: {
+          webinarPlan: {
+            include: { consultantProfile: consultantProfileSelect },
+          },
+        },
+      });
+      if (!event) return null;
+      consultantProfile = event.webinarPlan?.consultantProfile;
+      config = {
+        durationInHours: event.webinarPlan?.durationInHours,
+      };
+      // #768 — WEBINAR Appointment is SHARED across registrants from
+      // multiple orgs; tag with the plan's host org if any.
+      organizationId = event.webinarPlan?.organizationId ?? null;
+      planId = event.webinarPlanId ?? null;
+      break;
+    }
+
+    case "class": {
+      const event = await db.class.findUnique({
+        where: { id: eventId },
+        include: {
+          classPlan: {
+            include: {
+              consultantProfile: consultantProfileSelect,
+            },
+          },
+          appointment: { include: { occurrences: true } },
+        },
+      });
+      if (!event) return null;
+      consultantProfile = event.classPlan?.consultantProfile;
+      // The plan's sessionDurationInHours is the ONE source of truth for a
+      // class session's slot count: crud-with-plan writes tentative slots at
+      // this duration, /validate validates against it, and the client picks
+      // slots with it. The former avg(classContents.hoursAllotted)
+      // derivation disagreed with all three whenever a curriculum item's
+      // hours differed from the plan — validate passed while allocate
+      // rejected, and createAppointments regrouped sessions to the wrong
+      // length. Curriculum items describe content coverage, not the length
+      // of the sessions that teach it.
+      const sessionDuration = event.classPlan?.sessionDurationInHours || 1;
+
+      config = {
+        durationInMonths: event.classPlan?.durationInMonths,
+        sessionsPerWeek: event.classPlan?.sessionsPerWeek,
+        sessionDurationInHours: sessionDuration,
+        totalSessions: event.classPlan?.totalSessions,
+        schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
+        schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
+        schedulingTimezone: event.schedulingTimezone ?? undefined,
+      };
+      // #768 — CLASS sessions inherit host-org from the plan; locked
+      // even on reschedule. Marketplace classes stay null.
+      organizationId = event.classPlan?.organizationId ?? null;
+      planId = event.classPlanId ?? null;
+      break;
+    }
+  }
+
+  if (!consultantProfile) {
+    throw new AllocationNotFoundError("Consultant profile not found");
+  }
+
+  // FIX: Validate date ordering for events with scheduling periods
+  // This prevents bugs in auto-allocation and week calculation
+  if (config.schedulingPeriodStartsAt && config.schedulingPeriodEndsAt) {
+    if (config.schedulingPeriodStartsAt >= config.schedulingPeriodEndsAt) {
+      throw new AllocationValidationError(
+        `Invalid date range: schedulingPeriodStartsAt (${config.schedulingPeriodStartsAt.toISOString()}) ` +
+          `must be before schedulingPeriodEndsAt (${config.schedulingPeriodEndsAt.toISOString()}). ` +
+          `Please check the ${eventType} configuration.`,
+      );
+    }
+  }
+
+  return {
+    consultant: {
+      userId: consultantProfile.user.id,
+      scheduleType: consultantProfile.scheduleType,
+      availabilityWindowsWeekly: consultantProfile.availabilityWindowsWeekly,
+      availabilityWindowsCustom: consultantProfile.availabilityWindowsCustom,
+      timezone: consultantProfile.user.timezone ?? undefined,
+    },
+    config,
+    consulteeUserId,
+    requestedSlots,
+    organizationId,
+    planId,
+  };
+}
