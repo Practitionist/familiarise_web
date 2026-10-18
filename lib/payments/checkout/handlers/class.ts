@@ -16,8 +16,8 @@ import {
 } from "@/lib/payments/checkout/seats";
 
 /**
- * The sessions a seat bought: those not yet started, one per ordinal as
- * classEnrolmentFrom counts them, preferring a RESCHEDULED row's replacement.
+ * The sessions a seat bought: per ordinal, its live row (a RESCHEDULED row only
+ * until it is replaced), kept while not yet started, as classEnrolmentFrom counts.
  */
 function sessionsBought<
   T extends {
@@ -26,18 +26,19 @@ function sessionsBought<
     completionStatus: string;
   },
 >(sessions: T[], remaining: number, now: Date): T[] {
-  const notStarted = new Map<number, T>();
+  const byOrdinal = new Map<number, T>();
   for (const session of sessions) {
-    const started =
-      session.startsAt <= now && session.completionStatus !== "RESCHEDULED";
-    if (started) continue;
     const key = session.ordinal ?? session.startsAt.getTime();
-    const kept = notStarted.get(key);
+    const kept = byOrdinal.get(key);
     if (!kept || kept.completionStatus === "RESCHEDULED") {
-      notStarted.set(key, session);
+      byOrdinal.set(key, session);
     }
   }
-  return [...notStarted.entries()]
+  return [...byOrdinal.entries()]
+    .filter(
+      ([, session]) =>
+        session.startsAt > now || session.completionStatus === "RESCHEDULED",
+    )
     .sort(([a], [b]) => a - b)
     .map(([, session]) => session)
     .slice(-remaining);
