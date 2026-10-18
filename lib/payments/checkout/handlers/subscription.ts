@@ -1,0 +1,296 @@
+// Creates the subscription with its first-cycle window and frozen
+// entitlement, plus the placeholder wrapper the payment hangs on.
+
+import { recordParticipants } from "@/lib/booking/participants";
+import {
+  appendCreationHistory,
+  transitionTrial,
+} from "@/lib/booking/transitions";
+import type { Tx } from "@/lib/prisma";
+import type { CheckoutInput } from "@/schemas/checkout";
+import {
+  firstCycleWindow,
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
+import {
+  AppointmentsType,
+  Prisma,
+  AppointmentStatus,
+  TrialStatus,
+} from "@prisma/client";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
+import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
+import type { SubscriptionCheckoutResult } from "@/lib/payments/checkout/schema";
+import { resolvePriorSubscriptionForRenewal } from "@/lib/payments/checkout/renewal";
+
+/**
+ * #1766 — the statuses under which a subscription still holds its
+ * entitlement. SCHEDULED is legal in REQUEST_ALLOWED_FROM though no writer
+ * reaches it yet; listing it keeps the guard right if one appears.
+ */
+export const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
+  AppointmentStatus.PENDING,
+  AppointmentStatus.APPROVED,
+  AppointmentStatus.APPROVED_PENDING_PAYMENT,
+  AppointmentStatus.SCHEDULED,
+];
+
+export async function linkCompletedTrialToSubscription(
+  tx: Tx,
+  consulteeProfileId: string,
+  consultantProfileId: string,
+  subscriptionId: string,
+): Promise<void> {
+  const completedTrial = await tx.trial.findFirst({
+    where: {
+      consulteeProfileId,
+      consultantProfileId,
+      status: TrialStatus.COMPLETED,
+      convertedToSubscriptionId: null,
+    },
+  });
+
+  if (!completedTrial) return;
+
+  await transitionTrial(tx, {
+    where: { id: completedTrial.id },
+    to: TrialStatus.CONVERTED,
+    data: { convertedToSubscriptionId: subscriptionId },
+  });
+
+  console.log(
+    JSON.stringify({
+      event: "trial_converted",
+      trialId: completedTrial.id,
+      subscriptionId,
+      consulteeProfileId,
+      consultantProfileId,
+      timestamp: new Date().toISOString(),
+    }),
+  );
+}
+
+export async function handleSubscriptionCheckout(
+  tx: Tx,
+  data: CheckoutInput,
+  consulteeProfileId: string,
+  _skipPayment: boolean,
+  /** Resolved org context — see handleConsultationCheckout for rationale. */
+  organizationId: string | null,
+  /** #1499 — see handleConsultationCheckout. */
+  cancellationPolicyId: string,
+  precomputedSchedulingPeriod?: { startsAt: Date; endsAt: Date } | null,
+): Promise<SubscriptionCheckoutResult> {
+  const plan = await tx.subscriptionPlan.findUnique({
+    where: { id: data.planId },
+    include: {
+      consultantProfile: {
+        include: { user: true },
+      },
+    },
+  });
+
+  if (!plan) {
+    throw new Error("Subscription plan not found");
+  }
+
+  // #1743 — validate renewal source when renewsSubscriptionId is provided.
+  const priorSubscription = await resolvePriorSubscriptionForRenewal(
+    tx,
+    data.renewsSubscriptionId,
+    consulteeProfileId,
+    plan.id,
+  );
+
+  const isSchedulingPeriodRequest = Boolean(
+    data.schedulingPeriodStartsAt || data.renewsSubscriptionId,
+  );
+  // #1766 — window = first cycle; a client end is clamped/ignored, never
+  // refused. Start from the client (default now), end derived server-side.
+  // #1743 — when renewing a prior subscription, anchor the new cycle start to
+  // max(prior.schedulingPeriodEndsAt, requestedStart, now) so the renewal
+  // starts seamlessly when the prior cycle ends.
+  const schedulingTimezone = resolveSchedulingTimezone(
+    plan.consultantProfile?.user?.timezone,
+  );
+  const now = new Date();
+  const requestedStart = data.schedulingPeriodStartsAt
+    ? new Date(data.schedulingPeriodStartsAt)
+    : now;
+  const effectiveStart = priorSubscription
+    ? new Date(
+        Math.max(
+          priorSubscription.schedulingPeriodEndsAt.getTime(),
+          requestedStart.getTime(),
+          now.getTime(),
+        ),
+      )
+    : requestedStart;
+  const { start: startDate, end: endDate } =
+    precomputedSchedulingPeriod &&
+    (!priorSubscription ||
+      precomputedSchedulingPeriod.startsAt >=
+        priorSubscription.schedulingPeriodEndsAt)
+      ? {
+          start: precomputedSchedulingPeriod.startsAt,
+          end: precomputedSchedulingPeriod.endsAt,
+        }
+      : firstCycleWindow(plan, effectiveStart, schedulingTimezone);
+
+  // #1766 — the double-buy guard follows the entitlement, not the window: a
+  // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
+  // #1743 — exclude the priorSubscription being explicitly renewed.
+  const liveRows = await tx.subscription.findMany({
+    where: {
+      subscriptionPlanId: plan.id,
+      requestedById: consulteeProfileId,
+      deletedAt: null,
+      status: { in: LIVE_SUBSCRIPTION_STATUSES },
+      ...(priorSubscription ? { id: { not: priorSubscription.id } } : {}),
+    },
+    select: {
+      sessionsTotal: true,
+      schedulingPeriodStartsAt: true,
+      schedulingTimezone: true,
+      subscriptionPlan: {
+        select: {
+          totalSessions: true,
+          sessionsPerWeek: true,
+          durationInMonths: true,
+        },
+      },
+      appointment: {
+        select: {
+          occurrences: {
+            select: {
+              startsAt: true,
+              endsAt: true,
+              completionStatus: true,
+              isTentative: true,
+              deletedAt: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  const sessionsLeft = liveRows.reduce(
+    (max, row) =>
+      Math.max(
+        max,
+        subscriptionEntitlement({
+          sessionsTotal: sessionsTotalOf(row),
+          sessionsPerWeek: row.subscriptionPlan.sessionsPerWeek,
+          durationInMonths: row.subscriptionPlan.durationInMonths,
+          occurrences: row.appointment?.occurrences ?? [],
+          schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
+          schedulingTimezone: row.schedulingTimezone,
+        }).remaining,
+      ),
+    0,
+  );
+  if (sessionsLeft > 0) {
+    throw Object.assign(
+      new Error(
+        `You already have this plan with ${sessionsLeft} session${sessionsLeft === 1 ? "" : "s"} left — schedule those first.`,
+      ),
+      { httpStatus: 409, code: "SUBSCRIPTION_ALREADY_ACTIVE" },
+    );
+  }
+
+  // Create subscription - consultant will allocate slots via Requests tab
+  let subscription: Prisma.SubscriptionGetPayload<Record<string, never>>;
+  try {
+    subscription = await tx.subscription.create({
+      data: {
+        subscriptionPlanId: plan.id,
+        status: AppointmentStatus.PENDING, // Always PENDING until consultant allocates slots
+        requestedById: consulteeProfileId,
+        requestNotes: data.notes,
+        bookingSource: "DIRECT_CHECKOUT",
+        schedulingPeriodStartsAt: startDate,
+        schedulingPeriodEndsAt: endDate,
+        // #1076 — caps bucket on the consultant's days, not the column default.
+        schedulingTimezone,
+        // #1766 — the entitlement is frozen at purchase; plan edits never move it.
+        sessionsTotal: plan.totalSessions,
+        ...(priorSubscription
+          ? { renewedFromSubscriptionId: priorSubscription.id }
+          : {}),
+      },
+    });
+  } catch (createErr) {
+    if (
+      isUniqueViolationOn(createErr, "renewedFromSubscriptionId") ||
+      isUniqueViolationOn(createErr, "renewsSubscriptionId")
+    ) {
+      throw Object.assign(
+        new Error("This subscription has already been renewed."),
+        { httpStatus: 409, code: "ALREADY_RENEWED" },
+      );
+    }
+    throw createErr;
+  }
+
+  // Link any completed trial to this subscription (trial conversion tracking)
+  await linkCompletedTrialToSubscription(
+    tx,
+    consulteeProfileId,
+    plan.consultantProfileId,
+    subscription.id,
+  );
+
+  // FIX Issue #2: Create placeholder appointment for payment linkage
+  // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
+  // Makes this handler symmetrical with others - consultant allocates slots later
+  const appointment = await tx.appointment.create({
+    data: {
+      appointmentType: AppointmentsType.SUBSCRIPTION,
+      subscriptionId: subscription.id,
+      organizationId,
+      // #1499 — the placeholder carries the money, so it must carry the terms too:
+      // the sessions allocated later inherit this row's policy, and `cancellation-
+      // scope` reads the terms off whichever row the Payment hangs on. The old Json
+      // snapshot was never written here, which is why the fallback in that module
+      // existed at all.
+      cancellationPolicyId,
+      // No slots created - consultant allocates later via Requests tab
+    },
+  });
+  // #1319 A9 — the placeholder has no slots yet, but the buyer is a
+  // participant of the engagement from the moment they hold it.
+  const consulteeUser = await tx.consulteeProfile.findUnique({
+    where: { id: consulteeProfileId },
+    select: { userId: true },
+  });
+  if (consulteeUser) {
+    await recordParticipants(
+      tx,
+      appointment.id,
+      [{ userId: consulteeUser.userId, role: "CONSULTEE" }],
+      { organizationId, status: _skipPayment ? "CONFIRMED" : "HELD" },
+    );
+  }
+  // #1333 — see handleConsultationCheckout. Placed after the buyer lookup so
+  // the opening row carries the same attribution the participant rows do.
+  await appendCreationHistory(
+    tx,
+    "SUBSCRIPTION",
+    subscription.id,
+    AppointmentStatus.PENDING,
+    {
+      appointmentId: appointment.id,
+      actorUserId: consulteeUser?.userId ?? null,
+      organizationId,
+    },
+  );
+
+  return {
+    appointment,
+    subscription,
+    plan,
+    amount: plan.price,
+    isSchedulingPeriodRequest: !!isSchedulingPeriodRequest,
+  };
+}

@@ -83,7 +83,7 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn().mockReturnValue({ isFull: false }),
 }));
 
-import { handleClassCheckout } from "../../lib/payments/operations/checkout";
+import { handleClassCheckout } from "../../lib/payments/checkout/handlers/class";
 import type { Tx } from "../../lib/prisma";
 import type { CheckoutInput } from "../../schemas/checkout";
 

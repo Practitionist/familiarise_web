@@ -78,7 +78,7 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn(),
 }));
 
-import { handleSubscriptionCheckout } from "../../lib/payments/operations/checkout";
+import { handleSubscriptionCheckout } from "../../lib/payments/checkout/handlers/subscription";
 import {
   classifyError,
   isBusinessErrorCode,
