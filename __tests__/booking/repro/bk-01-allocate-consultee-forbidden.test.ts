@@ -5,8 +5,8 @@
 // Invariant: only the plan's consultant, a host-org operator or staff may allocate; a consultee gets 403 ALLOCATE_FORBIDDEN.
 
 const allocate = jest.fn();
-jest.mock("../../../utils/scheduling-engine/SchedulingService", () => ({
-  SchedulingService: { allocate: (...a: unknown[]) => allocate(...a) },
+jest.mock("../../../lib/booking/allocation", () => ({
+  allocate: (...a: unknown[]) => allocate(...a),
 }));
 const resolveEventHostActor = jest.fn();
 jest.mock("../../../lib/auth-helpers", () => ({

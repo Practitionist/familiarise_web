@@ -11,8 +11,8 @@
  */
 
 const allocate = jest.fn();
-jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
-  SchedulingService: { allocate: (...a: unknown[]) => allocate(...a) },
+jest.mock("../../lib/booking/allocation", () => ({
+  allocate: (...a: unknown[]) => allocate(...a),
 }));
 jest.mock("../../lib/auth-helpers", () => ({
   requireApiAuth: async () => ({

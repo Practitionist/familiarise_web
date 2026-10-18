@@ -22,7 +22,9 @@ jest.mock("../../lib/prisma", () => ({
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
 jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
-  ...jest.requireActual("../../utils/scheduling-engine/ScheduleValidationService"),
+  ...jest.requireActual(
+    "../../utils/scheduling-engine/ScheduleValidationService",
+  ),
   ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
@@ -45,7 +47,7 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { allocate } from "@/lib/booking/allocation";
 
 const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
@@ -54,10 +56,7 @@ const mockPrisma = prisma as unknown as {
   appointmentOccurrence: { count: jest.Mock };
 };
 
-const FUTURE_SLOTS = [
-  "2026-08-03T09:00:00.000Z",
-  "2026-08-03T09:30:00.000Z",
-];
+const FUTURE_SLOTS = ["2026-08-03T09:00:00.000Z", "2026-08-03T09:30:00.000Z"];
 
 const richSubscription = {
   subscriptionPlan: {
@@ -106,7 +105,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       },
     ]);
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -147,7 +146,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       warnings: [],
     });
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -179,7 +178,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       warnings: [],
     });
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -232,21 +231,23 @@ describe("#1012 expectedTentativeSlotCount", () => {
       warnings: [],
     });
 
-    mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
-      const tx = {
-        $executeRaw: jest.fn().mockResolvedValue(1),
-        appointment: {
-          findMany: jest.fn().mockResolvedValue(confirmedAfterRace),
-          findFirst: jest.fn().mockResolvedValue(null),
-        },
-        appointmentOccurrence: {
-          count: jest.fn().mockResolvedValue(0),
-        },
-      };
-      return fn(tx);
-    });
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => Promise<unknown>) => {
+        const tx = {
+          $executeRaw: jest.fn().mockResolvedValue(1),
+          appointment: {
+            findMany: jest.fn().mockResolvedValue(confirmedAfterRace),
+            findFirst: jest.fn().mockResolvedValue(null),
+          },
+          appointmentOccurrence: {
+            count: jest.fn().mockResolvedValue(0),
+          },
+        };
+        return fn(tx);
+      },
+    );
 
-    const result = await SchedulingService.allocate({
+    const result = await allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",

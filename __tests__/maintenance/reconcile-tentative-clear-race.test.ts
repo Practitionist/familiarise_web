@@ -58,9 +58,9 @@ jest.mock("../../lib/observability/standing-finding", () => ({
 }));
 
 // The allocator is out of scope here and drags Novu/undici into the graph.
-jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
+jest.mock("../../lib/booking/allocation", () => ({
   __esModule: true,
-  SchedulingService: { allocate: jest.fn() },
+  allocate: jest.fn(),
 }));
 jest.mock("../../utils/scheduling-engine/ScheduleCalculationService", () => ({
   __esModule: true,
@@ -179,9 +179,8 @@ describe("reconcile-occurrence-availability result semantics (QA #1741)", () => 
 
 describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
   const HOUR = 60 * 60 * 1000;
-  const allocate = jest.requireMock(
-    "../../utils/scheduling-engine/SchedulingService",
-  ).SchedulingService.allocate as jest.Mock;
+  const allocate = jest.requireMock("../../lib/booking/allocation")
+    .allocate as jest.Mock;
 
   /** A held subscription at 2/week: `statuses` are its wrapper's rows. */
   function heldSubscription(id: string, statuses: string[]) {

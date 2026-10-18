@@ -1,7 +1,7 @@
 /**
  * Two bounds on the allocator's availability search, kept out of
- * `SchedulingService` because they are pure and because each has to be true of
- * every candidate rather than of one walk.
+ * `lib/booking/allocation` because they are pure and because each has to be
+ * true of every candidate rather than of one walk.
  *
  * 1. `buildAvailabilityIndex` — the CUSTOM arm's per-candidate `.some()` over
  *    every published row, with two `new Date()` allocations per row per call,
