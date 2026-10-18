@@ -75,6 +75,7 @@ import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
 import { ClassSessionControls } from "./ClassSessionControls";
+import { SubscriptionReturnControls } from "./SubscriptionReturnControls";
 import { SessionAttendance } from "./SessionAttendance";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { caseKeyOf } from "@/lib/support/case-key";
@@ -902,6 +903,25 @@ export function AppointmentDetailClient({
                 }}
               />
             )}
+
+            {/* D8 — the consultee returns one upcoming session to the plan. */}
+            {role === "consultee" &&
+              vm.kind === "SUBSCRIPTION" &&
+              detail.appointment.subscription?.status === "APPROVED" && (
+                <SubscriptionReturnControls
+                  appointmentId={appointmentId}
+                  sessions={detail.appointment.occurrences}
+                  sessionsReturned={
+                    detail.appointment.subscription.sessionsReturned
+                  }
+                  rescheduleOpen={!!openProposal}
+                  onChanged={() => {
+                    void queryClient.invalidateQueries({
+                      queryKey: ["appointment-detail", appointmentId],
+                    });
+                  }}
+                />
+              )}
 
             {role === "consultant" && (
               <Section title="Participants">

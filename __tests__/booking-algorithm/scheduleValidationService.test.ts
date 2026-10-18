@@ -27,6 +27,7 @@ import {
   ScheduleValidationService,
   isOccupiedByLiveAppointment,
 } from "@/utils/scheduling-engine/ScheduleValidationService";
+import { OCCUPYING_OCCURRENCE_WHERE } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   ScheduleType,
   DayOfWeek,
@@ -277,13 +278,13 @@ describe("checkSlotAvailability", () => {
   // Defense-in-depth: the conflict scan never trusts a tombstoned slot as a
   // booking. (Deliberately NO completionStatus filter here — RESCHEDULED rows
   // are a pending reschedule's live hold and must still block.)
-  it("excludes deletedAt slot tombstones from the conflict scan", async () => {
+  it("drops tombstoned and host-cancelled rows from the conflict scan, keeps RESCHEDULED holds", async () => {
     await service.checkSlotAvailability(futureSlots(1), "user-1");
     const where = mockPrisma.appointment.findMany.mock.calls[0][0].where;
     const slotFilter = where.AND.find((clause: any) => clause.occurrences)
       .occurrences.some.AND;
-    expect(slotFilter).toContainEqual({ deletedAt: null });
-    expect(JSON.stringify(slotFilter)).not.toContain("completionStatus");
+    expect(slotFilter).toContainEqual(OCCUPYING_OCCURRENCE_WHERE);
+    expect(JSON.stringify(slotFilter)).not.toContain("RESCHEDULED");
   });
 
   // Behavior guard, stated honestly for a mocked Prisma: the DB applies the
@@ -322,7 +323,7 @@ describe("checkSlotAvailability", () => {
     // Same three conditions, same order: envelope ×2, tombstone. #1554 — the
     // participant predicate sits on the appointment, not on the rows.
     expect(includeFilter).toEqual(slotFilter);
-    expect(includeFilter).toContainEqual({ deletedAt: null });
+    expect(includeFilter).toContainEqual(OCCUPYING_OCCURRENCE_WHERE);
     expect(reachOrOf(call)).toContainEqual({
       participants: {
         some: {

@@ -802,6 +802,13 @@ export function useCalendarData(
    * start so every cell below is an O(1) lookup instead of the old
    * O(cells × (availabilitySlots + appointments)) cross-reference join.
    */
+  // The past/now boundary re-derives once a minute, so a slot greys out as it passes.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const serverGridByISO = useMemo(() => {
     const map = new Map<string, RawSlotData>();
     const allRaw = [
@@ -866,7 +873,7 @@ export function useCalendarData(
    */
   const slotStatusMap = useMemo((): Map<string, SlotStatusResult> => {
     const map = new Map<string, SlotStatusResult>();
-    const now = Date.now();
+    const now = nowMs;
 
     for (const date of visibleDates) {
       const y = date.getFullYear();
@@ -890,7 +897,7 @@ export function useCalendarData(
     }
 
     return map;
-  }, [visibleDates, deriveStatusFromServerGrid, gridZone]);
+  }, [visibleDates, deriveStatusFromServerGrid, gridZone, nowMs]);
 
   /**
    * SLOT STATUS LOOKUP — O(1) via precomputed Map.
@@ -920,10 +927,10 @@ export function useCalendarData(
       return deriveStatusFromServerGrid(
         localIntervalStartDate,
         localIntervalEndDate,
-        Date.now(),
+        nowMs,
       );
     },
-    [slotStatusMap, deriveStatusFromServerGrid, gridZone],
+    [slotStatusMap, deriveStatusFromServerGrid, gridZone, nowMs],
   );
 
   // PERFORMANCE: Fetch all data function with parallel API calls

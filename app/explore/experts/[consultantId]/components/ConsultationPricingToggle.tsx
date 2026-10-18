@@ -32,6 +32,7 @@ import {
   stashPurchaseIntent,
 } from "@/utils/purchase-intent";
 import { useToast } from "@/hooks/use-toast";
+import { SLOT_JUST_TAKEN_MESSAGE } from "@/lib/errors/mapping/payment-error-toast-map";
 import { useCurrency } from "@/hooks/useCurrency";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { BookingMode } from "@prisma/client";
@@ -327,6 +328,16 @@ export default function ConsultationPricingToggle({
           planKind: "CONSULTATION",
           planId: activePlan.id,
         });
+      }
+      if (error instanceof ApiResponseError && error.code === "SLOT_TAKEN") {
+        setSelectedSlot(null);
+        onRefreshSlots?.();
+        toast({
+          title: SLOT_JUST_TAKEN_MESSAGE,
+          description: error.message,
+          variant: "destructive",
+        });
+        return;
       }
       toast({
         title: "Couldn't submit approval request",

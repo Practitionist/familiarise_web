@@ -308,7 +308,11 @@ function makeMockTx() {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // The reschedule caps count past release acts.
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
     // Cancel closes any live reschedule proposal so the appointment's
     // openForAppointmentId reservation is released and the expiry cron cannot
     // act on a cancelled booking. Reschedule creates one when times are proposed.
@@ -620,6 +624,83 @@ describe("Reschedule Route Handler - POST", () => {
         // refunded a live booking whose proposal was still open.
         data: { status: "PENDING", requestedAt: expect.any(Date) },
       });
+    });
+  });
+
+  // ─── Reschedule caps (counted from the release history) ─────────────────
+
+  describe("caps", () => {
+    const releaseActs = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        createdAt: new Date(Date.UTC(2026, 9, 1 + i)),
+      }));
+
+    it("refuses an expert's third reschedule, proposal or not", async () => {
+      (getSession as jest.Mock).mockResolvedValue({
+        user: { id: "consultant-1", consultantProfileId: "cp-1" },
+      });
+      mockTx.appointment.findUnique.mockResolvedValue(
+        makeConsultationAppointment(),
+      );
+      mockTx.bookingStatusHistory.groupBy.mockResolvedValue(releaseActs(2));
+
+      const res = await rescheduleHandler(
+        makeRescheduleRequest("apt-1", "CONSULTATION"),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe("EXPERT_RESCHEDULE_CAP");
+      expect(mockTx.bookingStatusHistory.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            entity: "OCCURRENCE",
+            toStatus: "RESCHEDULED",
+          }),
+        }),
+      );
+    });
+
+    it("holds the consultee cap across accept → reschedule again (replaced rows are gone)", async () => {
+      // Two accepted reschedules: the allocator deleted the replaced rows, so
+      // only the history remembers them; one live session is left.
+      mockTx.appointment.findUnique.mockResolvedValue(
+        makeConsultationAppointment({
+          occurrences: [makeSlot("slot-3", FUTURE_DATE)],
+        }),
+      );
+      mockTx.rescheduleRequest.findMany.mockResolvedValue([
+        { initiatedById: "user-1", status: "ACCEPTED" },
+        { initiatedById: "user-1", status: "ACCEPTED" },
+      ]);
+      mockTx.bookingStatusHistory.groupBy.mockResolvedValue(releaseActs(2));
+
+      const res = await rescheduleHandler(
+        makeRescheduleRequest("apt-1", "CONSULTATION"),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(422);
+      expect((await res.json()).code).toBe("MAX_RESCHEDULES_EXCEEDED");
+    });
+
+    it("does not charge a withdrawn proposal", async () => {
+      mockTx.appointment.findUnique.mockResolvedValue(
+        makeConsultationAppointment({
+          occurrences: [makeSlot("slot-3", FUTURE_DATE)],
+        }),
+      );
+      mockTx.rescheduleRequest.findMany.mockResolvedValue([
+        { initiatedById: "user-1", status: "WITHDRAWN" },
+      ]);
+      mockTx.bookingStatusHistory.groupBy.mockResolvedValue(releaseActs(2));
+
+      const res = await rescheduleHandler(
+        makeRescheduleRequest("apt-1", "CONSULTATION"),
+        makeParams("apt-1"),
+      );
+
+      expect(res.status).toBe(200);
     });
   });
 

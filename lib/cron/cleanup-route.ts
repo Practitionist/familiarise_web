@@ -141,7 +141,8 @@ function ingestCanaryEnabled(job: string): boolean {
 export function cleanupRoute<T extends object>(opts: {
   /** Job name — feeds `assertNotInMaintenance`, the Sentry logger key, and the tag. */
   job: string;
-  run: (req: NextRequest) => Promise<T>;
+  /** `startedAt` is when the request reached the route, for a sweep's drain deadline. */
+  run: (req: NextRequest, ctx: { startedAt: number }) => Promise<T>;
   /** What to log on finish; defaults to the whole result. */
   summarize?: (result: T) => Record<string, unknown>;
   /** Defaults to {@link statusFor} with no needs-attention flag. */
@@ -159,6 +160,7 @@ export function cleanupRoute<T extends object>(opts: {
   async function executeCleanupJob(
     req: NextRequest,
   ): Promise<{ body: unknown; status: number; ok: boolean }> {
+    const startedAt = Date.now();
     try {
       const authHeader = req.headers.get("authorization");
       const cronSecret =
@@ -181,7 +183,7 @@ export function cleanupRoute<T extends object>(opts: {
       console.log(`Starting ${job} via API...`);
       Sentry.logger.info(`cron:${job} started`);
 
-      const result = await run(req);
+      const result = await run(req, { startedAt });
       const summary: Record<string, unknown> = summarize
         ? summarize(result)
         : (result as Record<string, unknown>);

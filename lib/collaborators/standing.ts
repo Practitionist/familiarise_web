@@ -1,4 +1,5 @@
 import type { Tx } from "@/lib/prisma";
+import { transitionParticipant } from "@/lib/booking/participants";
 
 /** One plan whose collaborator row left PENDING/ACCEPTED; phase 2 revokes it. */
 export interface CollaborationRef {
@@ -58,11 +59,12 @@ export async function removeCollaboratorStanding(
   if (rows.length === 0) return [];
 
   if (tx.appointmentParticipant) {
-    await tx.appointmentParticipant.updateMany({
-      where: {
+    // Through the participant map, so a REFUNDED seat stays terminal.
+    await transitionParticipant(
+      tx,
+      {
         userId: targetUserId,
         role: "COLLABORATOR",
-        status: { not: "CANCELLED" },
         appointment: {
           deletedAt: null,
           occurrences: {
@@ -73,8 +75,8 @@ export async function removeCollaboratorStanding(
           },
         },
       },
-      data: { status: "CANCELLED" },
-    });
+      "CANCELLED",
+    );
   }
 
   return rows.flatMap((row) => {

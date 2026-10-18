@@ -26,6 +26,7 @@ import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
 import { useTimezone } from "@/hooks/useTimezone";
 import {
+  invalidateAvailability,
   useAvailabilityMonth,
   useAvailabilityWindow,
 } from "./hooks/useAvailabilityWindow";
@@ -39,6 +40,8 @@ interface ExpertProfileClientProps {
   userDetails: TUserWithProfessionalBackground;
   reviews: TPublicConsultantReview[];
   reviewTracks: TReviewTrackPresence;
+  /** Strikes in the last 90 days, only when they reach the public threshold. */
+  reliabilityStrikes: number | null;
 }
 
 export function ExpertProfileClient({
@@ -46,6 +49,7 @@ export function ExpertProfileClient({
   userDetails,
   reviews,
   reviewTracks,
+  reliabilityStrikes,
 }: ExpertProfileClientProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -129,26 +133,21 @@ export function ExpertProfileClient({
   const slotTimings: TIntervalTiming[] =
     (selectedDateKey && dayQuery.data?.[selectedDateKey]) || [];
 
+  // A failed background poll keeps the last good answer on screen, so only a
+  // read with nothing to show is worth a toast.
+  const dayQueryHasData = dayQuery.data !== undefined;
   useEffect(() => {
-    if (dayQuery.error) {
+    if (dayQuery.error && !dayQueryHasData) {
       toast({
         title: "Error fetching slots",
         description: dayQuery.error.message || "Please try again",
         variant: "destructive",
       });
     }
-  }, [dayQuery.error, toast]);
+  }, [dayQuery.error, dayQueryHasData, toast]);
 
   const refreshSlots = useCallback(
-    () =>
-      Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["availability", consultantDetails?.id],
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ["availability-month", consultantDetails?.id],
-        }),
-      ]).then(() => undefined),
+    () => invalidateAvailability(queryClient, consultantDetails?.id),
     [queryClient, consultantDetails?.id],
   );
 
@@ -434,6 +433,7 @@ export function ExpertProfileClient({
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
                 reviewCount={consultantDetails._count.reviews}
+                reliabilityStrikes={reliabilityStrikes}
               />
 
               <AboutSection

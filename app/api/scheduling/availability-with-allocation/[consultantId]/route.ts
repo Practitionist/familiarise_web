@@ -13,6 +13,7 @@ import {
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildConsultantOccupancyWhere,
+  OCCUPYING_OCCURRENCE_WHERE,
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleValidationService";
@@ -517,10 +518,7 @@ export async function GET(
     const slotsInWindow = {
       occurrences: {
         some: {
-          // A tombstoned slot is not a booking — never paint it busy.
-          // (No completionStatus filter: RESCHEDULED rows are a pending
-          // reschedule's live hold and must still occupy the grid.)
-          deletedAt: null,
+          ...OCCUPYING_OCCURRENCE_WHERE,
           OR: [
             {
               startsAt: {
@@ -550,7 +548,7 @@ export async function GET(
     // out-of-window occurrences on multi-month subscriptions/classes are not
     // fetched on every 60s poll.
     const windowOccurrencesWhere = {
-      deletedAt: null,
+      ...OCCUPYING_OCCURRENCE_WHERE,
       startsAt: { lt: endDate },
       endsAt: { gt: startDate },
     };

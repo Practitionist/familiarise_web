@@ -66,6 +66,7 @@ import {
 import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
+  OCCUPYING_OCCURRENCE_WHERE,
 } from "./occupancyPolicy";
 import {
   MAX_CLASS_SESSIONS_PER_DAY,
@@ -1570,6 +1571,12 @@ export class SchedulingService {
           consultantProfileId,
           isTentative: false,
           deletedAt: null,
+          completionStatus: {
+            notIn: [
+              OccurrenceCompletionStatus.CANCELLED,
+              OccurrenceCompletionStatus.RESCHEDULED,
+            ],
+          },
           startsAt: { lt: latest },
           endsAt: { gt: earliest },
           appointment: {
@@ -3926,12 +3933,13 @@ export class SchedulingService {
     // is busy — see buildConsultantOccupancyWhere.
     const appointmentFilter: Prisma.AppointmentWhereInput[] = [
       buildConsultantOccupancyWhere(consultantProfileId, consultant.userId),
-      // Bounded read — see occupancyClock above. deletedAt: null keeps a
-      // tombstoned slot from blocking (defense-in-depth; RESCHEDULED rows
-      // stay occupied — a pending reschedule is a live hold).
+      // Bounded read — see occupancyClock above.
       {
         occurrences: {
-          some: { endsAt: { gt: occupancyClock }, deletedAt: null },
+          some: {
+            endsAt: { gt: occupancyClock },
+            ...OCCUPYING_OCCURRENCE_WHERE,
+          },
         },
       },
     ];
@@ -3958,7 +3966,7 @@ export class SchedulingService {
         // appointments (CodeRabbit triage).
         occurrences: {
           where: {
-            deletedAt: null,
+            ...OCCUPYING_OCCURRENCE_WHERE,
             endsAt: { gt: occupancyClock },
             ...(excludeOccurrenceIds.length > 0
               ? { id: { notIn: excludeOccurrenceIds } }
@@ -4008,7 +4016,7 @@ export class SchedulingService {
               occurrences: {
                 some: {
                   endsAt: { gt: occupancyClock },
-                  deletedAt: null,
+                  ...OCCUPYING_OCCURRENCE_WHERE,
                   ...(excludeOccurrenceIds.length > 0
                     ? { id: { notIn: excludeOccurrenceIds } }
                     : {}),
@@ -4028,7 +4036,7 @@ export class SchedulingService {
           // appointments (CodeRabbit triage).
           occurrences: {
             where: {
-              deletedAt: null,
+              ...OCCUPYING_OCCURRENCE_WHERE,
               endsAt: { gt: occupancyClock },
               ...(excludeOccurrenceIds.length > 0
                 ? { id: { notIn: excludeOccurrenceIds } }

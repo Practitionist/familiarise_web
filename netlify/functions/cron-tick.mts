@@ -47,17 +47,9 @@ const TARGETS = [
   "appointment-reminders",
   "tentative-occurrences",
   "expire-stale-requests",
-  // #1775 auto-complete / no-show detection. Both gate money: auto-complete
-  // releases the earnings hold and opens feedback one hour after a session
-  // ends, and the no-show detector issues a 100% refund. The docs previously
-  // recorded their absence from this list as deliberate ("not
-  // latency-sensitive"), on the reasoning that Actions was a sufficient
-  // driver. That reasoning does not survive the code: ADR 22 measured Actions
-  // delivering a sub-hourly schedule at roughly one delivery per hundred
-  // minutes, so "an hourly Actions twin" is an unbounded upper bound and the
-  // earnings release could sit ~100 minutes behind a session that ended. The
-  // two are added here for the same reason as every other money sweep above —
-  // not because the Actions run is insufficient, but because it is not a bound.
+  // Both gate money: auto-complete releases the earnings hold one hour after a
+  // session ends, and the no-show detector issues a 100% refund. No workflow
+  // runs either; this ticker is their only scheduler.
   "auto-complete-appointments",
   "detect-consultant-no-shows",
   // #1780 row 4 — refunds a cancelled class session nobody made up in 14 days.
@@ -128,11 +120,9 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "reschedule-proposals": 25,
   "tentative-occurrences": 200,
   "expire-unpaid-trials": 25,
-  // #1775 — auto-complete judges each past session against a Stream call
-  // report, and the no-show detector corroborates every candidate against a
-  // Stream call report too, so both are network-bound per row rather than
-  // database-bound. A small bite is what fits the 20 s tier; the Actions
-  // hourly run drains the rest.
+  // One Stream call report per row, so these are bite sizes: each run loops
+  // bites until SWEEP_START_DEADLINE_MS (16 s) after its request began, which
+  // drains a backlog in one run and leaves in-flight rows inside the 24 s abort.
   "auto-complete-appointments": 25,
   "detect-consultant-no-shows": 10,
   // #1859 M-P0-14 — read-only scan, but one Sentry page per orphan row group;
@@ -259,9 +249,9 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "retry-auto-refunds": 20_000,
   "vest-referral-credits": 20_000,
   "reconcile-refunds": 20_000,
-  // One Stream call-report round trip per judged session or candidate.
-  "auto-complete-appointments": 20_000,
-  "detect-consultant-no-shows": 20_000,
+  // Cold boot (~5 s) runs before the job's 16 s drain clock starts, so these need headroom above it while staying under Netlify's ~26 s edge cut.
+  "auto-complete-appointments": 24_000,
+  "detect-consultant-no-shows": 24_000,
   "alert-orphaned-payments": 20_000,
   "reconcile-orphaned-payments": 20_000,
   "process-data-exports": 20_000,

@@ -6,6 +6,11 @@ import {
   getConsultantReviewTracks,
 } from "@/lib/data/consultant-detail";
 import { TUserWithProfessionalBackground } from "@/types/user";
+import { countExpertStrikes } from "@/lib/booking/expert-reliability";
+import {
+  showsReliabilityNotice,
+  strikeWindowStart,
+} from "@/lib/booking/expert-reliability-rules";
 import { ExpertProfileClient } from "./ExpertProfileClient";
 import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader";
 
@@ -50,10 +55,11 @@ export default async function ExpertProfile({
   // [], so a parameter being rendered for the first time has NO cached copy to
   // fall back on and its visitor gets the error boundary. Only a *revalidation*
   // of an already-cached profile keeps serving the last good copy.
-  const [consultant, reviews, reviewTracks] = await Promise.all([
+  const [consultant, reviews, reviewTracks, strikes] = await Promise.all([
     getConsultantDetail(consultantId),
     getConsultantReviews(consultantId),
     getConsultantReviewTracks(consultantId),
+    countExpertStrikes(consultantId, strikeWindowStart(new Date())),
   ]);
 
   if (!consultant || !consultant.user) {
@@ -67,6 +73,7 @@ export default async function ExpertProfile({
         userDetails={consultant.user as TUserWithProfessionalBackground}
         reviews={reviews}
         reviewTracks={reviewTracks}
+        reliabilityStrikes={showsReliabilityNotice(strikes) ? strikes : null}
       />
     </Suspense>
   );

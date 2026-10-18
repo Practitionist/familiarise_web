@@ -89,6 +89,8 @@ jest.mock("../../lib/prisma", () => {
       create: jest.fn().mockResolvedValue({}),
     },
     maintenanceWindow: { findMany: jest.fn().mockResolvedValue([]) },
+    // The claim writes the expert's reliability strike.
+    systemEvent: { create: jest.fn().mockResolvedValue({}) },
     // The claim stamps the owed refund; the drive clears it by CAS.
     payment: { updateMany: async () => ({ count: 1 }) },
     refund: { findUnique: async () => null },
@@ -138,6 +140,7 @@ function noShowCandidate(payment: {
     id: "cons-1",
     consultationPlan: {
       title: "Career strategy",
+      consultantProfileId: "cp-1",
       consultantProfile: {
         userId: CONSULTANT_USER,
         user: { name: "Consultant" },
@@ -196,6 +199,24 @@ describe("consultant no-show refunds", () => {
     });
   });
 
+  it("drains a backlog of 30 candidates in one run, bite after bite", async () => {
+    const backlog = Array.from({ length: 30 }, (_, i) => ({
+      ...noShowCandidate({ id: `pay-${i}`, amount: 150000 }),
+      id: `cons-${i}`,
+    }));
+    (prisma.consultation.findMany as jest.Mock).mockImplementation(
+      async (args: { take: number; where: { id?: { notIn: string[] } } }) =>
+        backlog
+          .filter((c) => !args.where.id?.notIn.includes(c.id))
+          .slice(0, args.take),
+    );
+
+    const result = await detectConsultantNoShows({ maxCandidates: 10 });
+
+    expect(result.refunded).toBe(30);
+    expect(refundBookingPayment).toHaveBeenCalledTimes(30);
+  });
+
   it("refunds through the front door, never the raw gateway path", async () => {
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
       noShowCandidate({ id: "pay-1", amount: 150000 }),
@@ -215,6 +236,12 @@ describe("consultant no-show refunds", () => {
     expect(refundPayment).not.toHaveBeenCalled();
     expect(result.detected).toBe(1);
     expect(result.refunded).toBe(1);
+    // D10 — the claim's transaction writes the expert's strike.
+    expect(prisma.systemEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        correlationId: "expert-reliability:cp-1",
+      }),
+    });
   });
 
   it("handles a fully credit-funded booking (amount 0) instead of skipping it", async () => {

@@ -13,6 +13,7 @@ import {
   AppointmentStatus,
   BookingSource,
   CollaboratorStatus,
+  OccurrenceCompletionStatus,
   PaymentStatus,
   TrialStatus,
   Prisma,
@@ -41,6 +42,16 @@ export const OCCUPIED_REQUEST_STATUSES: AppointmentStatus[] = [
  * - IN_PROGRESS: Event is currently happening
  */
 export const OCCUPIED_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS"] as const;
+
+/**
+ * An occurrence row that still holds its time. A host-cancelled session keeps its row for make-up and
+ * refund accounting but frees the time; a RESCHEDULED row is a pending reschedule's hold and still occupies.
+ */
+export const OCCUPYING_OCCURRENCE_WHERE = {
+  deletedAt: null,
+  hostCancelledAt: null,
+  completionStatus: { not: OccurrenceCompletionStatus.CANCELLED },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 /**
  * Build a Prisma OR clause for filtering appointments by occupied status.
@@ -150,12 +161,10 @@ export function buildConsultantOccupancyWhere(
 ): Prisma.AppointmentWhereInput {
   const reachesConsultant: Prisma.AppointmentWhereInput[] = [
     {
-      // #1554 — the consultant holds a seat (as consultee elsewhere) and the
-      // appointment has a live row. Defense-in-depth: a tombstoned occurrence
-      // is not a booking. No completionStatus filter — RESCHEDULED rows are a
-      // pending reschedule's live hold and must still occupy the grid.
+      // The consultant holds a seat (as consultee elsewhere) on an
+      // appointment with a row that still holds its time.
       participants: { some: liveParticipant(consultantUserId) },
-      occurrences: { some: { deletedAt: null } },
+      occurrences: { some: OCCUPYING_OCCURRENCE_WHERE },
     },
   ];
 
