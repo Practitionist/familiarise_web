@@ -261,7 +261,8 @@ export async function findAvailableSlots(
   // Validate availability exists
   const projectableWeekly = projectableWeeklyRows(consultant);
   const hasWeeklySlots = projectableWeekly.length > 0;
-  const hasCustomSlots = consultant.availabilityWindowsCustom.length > 0;
+  const hasCustomSlots =
+    consultant.hasCustomRows ?? consultant.availabilityWindowsCustom.length > 0;
   if (
     (consultant.scheduleType === ScheduleType.WEEKLY && !hasWeeklySlots) ||
     (consultant.scheduleType === ScheduleType.CUSTOM && !hasCustomSlots)

@@ -48,8 +48,8 @@ import { revalidateInsideLock } from "@/lib/payments/checkout/revalidate";
 import {
   assertWithinInvoiceCreditLimit,
   readInvoiceExposurePaise,
+  resolveOrgFunding,
 } from "@/lib/payments/checkout/org-funding";
-import { resolveOrgFunding } from "@/lib/payments/checkout/org-funding";
 import { commitCheckout } from "@/lib/payments/checkout/commit";
 import { dispatchProgramBell } from "@/lib/payments/checkout/program-bell";
 
