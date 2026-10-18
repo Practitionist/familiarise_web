@@ -386,7 +386,7 @@ Every sweep repeats the money predicate in its compare-and-swap, so it never exp
 In the target state Postgres is the only arbiter of time and capacity, and Redis keeps rate limits and short interactive mutexes. The waves get there in this order:
 
 - **Wave 0** fixes the defects that exist on today's schema: authorization and checkout correctness (both merged), durable "refund owed" markers, correctly scoped sweeps, a 60-second consultee grid poll that is freshness only and never correctness, and the subscription session-return policy.
-- **Wave 1** flips the availability readers to per-date daylight-saving offsets computed from the IANA zone, and adds platform-incident voiding and webinar seat transfer.
+- **Wave 1** flips the availability readers to per-date daylight-saving offsets computed from the IANA zone, and adds platform-incident voiding. Seat transfer is deferred until after launch, and it would cover webinars only if it is ever built (#2140).
 - **Wave 2** splits `SchedulingService.ts` and `checkout.ts` along their module seams without changing behaviour.
 - **Wave 3** lands inside the owner's database reset window: the schema batch, the busy-time ledger that makes the database the arbiter of every person's time, and the scheduling rules.
 - **Wave 4** proves it with a concurrency harness on real Postgres, which is the launch gate.
