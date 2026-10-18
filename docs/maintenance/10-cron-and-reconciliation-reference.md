@@ -149,12 +149,14 @@ CREATE UNIQUE INDEX "SystemJobExecution_running_jobName_key"
 
 Acquisition sweeps expired `RUNNING` rows, checks for a live one, then inserts. A unique-violation on the race between the check and the insert is collapsed into the same `CronLockHeldError`, so two replicas racing produce exactly one winner.
 
-| Mode     | Count                                    | Behaviour when the lease table is unreachable                                  |
-| -------- | ---------------------------------------- | ------------------------------------------------------------------------------ |
-| `closed` | 24 jobs                                  | Refuses to run; raises `CronLockUnavailableError`, route answers `503`         |
-| `open`   | 26 jobs                                  | Runs unlocked with a warning; no execution trail row is written                |
-| bespoke  | `create-payout-batch`, `process-payouts` | Use a Redis lock, because they coordinate interactive admin-triggered runs too |
-| exempt   | `sentry-ingest-canary`                   | No lock                                                                        |
+| Mode     | Count   | Behaviour when the lease table is unreachable                                                                              |
+| -------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `closed` | 29 jobs | Refuses to run; raises `CronLockUnavailableError`, route answers `503`                                                     |
+| `open`   | 23 jobs | Runs unlocked with a warning; no execution trail row is written                                                            |
+| `none`   | 3 jobs  | Deliberately unlocked — see below                                                                                          |
+| bespoke  | 2 jobs  | `create-payout-batch` and `process-payouts` use a Redis lock, because they coordinate interactive admin-triggered runs too |
+
+The three unlocked jobs are `expire-onboarding-drafts` (which wraps its own inline `withCronLock` rather than locking inside a core module), `reconcile-sessions` and `sentry-ingest-canary`. The 29 and 23 above plus those three and the two bespoke Redis locks account for all 57 registry slugs.
 
 Both closed and open modes flip to **closed** when the error looks like connection or pool exhaustion (`isDbConnectionOrPoolError`). The reasoning is that the pool outage which breaks the lease is precisely the window in which two runners would both believe they held it.
 
@@ -222,7 +224,9 @@ The trap is that `db:push:schema` **also exists as a standalone script** and com
 
 ## Reconcilers
 
-Reconcilers are read-only and set-based. There are two families, and a third category that must not exist.
+Reconcilers are set-based, and there are two families plus a third category that must not exist.
+
+**They are not all read-only.** The internal-cache family only reports. The vendor-boundary family _writes_: adopting the gateway's answer means updating the local row through a conditional update, and a payment or refund reconciler can therefore re-enter the pipeline it is reconciling — `reconcile-refunds` can move a refund to `FAILED` through a CAS, and `reconcile-payment-status` adopts a terminal payment state. What no reconciler does is _invent_ a state. Every write it makes copies an external authority across a compare-and-set.
 
 **Vendor-boundary reconcilers** adopt the external system's answer when it disagrees with a local row.
 
@@ -282,7 +286,7 @@ Recorded here so the next reader does not trust the prose over the source. The a
 | Client IP trust                  | Platform-scoped headers trusted only on their matching runtime                                 | Trusted unconditionally, so off-Netlify a caller can choose its own rate-limit key                                                                                                                       |
 | Smoke-test auth header           | A dedicated cron header for the failback drain command                                         | The route accepts only `Authorization: Bearer`; the documented command returns 401                                                                                                                       |
 | Overlap constraint name          | A constraint named `slot_no_confirmed_overlap` in the agent instructions                       | The object is `occurrence_no_confirmed_overlap`                                                                                                                                                          |
-| Cron registry size               | Various counts of "47", "48" and "56" slugs across docs and comments                           | 56 registry slugs, 13 jobs with no HTTP twin, 27 ticker targets                                                                                                                                          |
+| Cron registry size               | Various counts of "47", "48" and "56" slugs across docs and comments                           | 57 registry slugs, 13 jobs with no HTTP twin, 28 ticker targets                                                                                                                                          |
 | Cron schedule staggering         | That CI enforces stagger minutes across the fleet                                              | `scripts/ci/check-workflow-hygiene.ts` checks the secrets manifest, not staggering. Stagger minutes are maintained by hand                                                                               |
 | Dead job names in the alert list | `cascade-refund-earnings` and `release-pending-trust-earnings` listed in `MONEY_CRITICAL_JOBS` | Both jobs were folded into the `reconcile-refunds` and `release-earnings` cores. The names remain in `scripts/ci/notify-ops-failure.sh` where they can never match, so those two failures would not page |
 | Actions as a fleet backstop      | That the GitHub Actions cron fleet backs up the ticker                                         | It does not. Twenty-seven of the 28 ticker targets have no Actions workflow at all, and `auto-complete-appointments` and `detect-consultant-no-shows` gate money with the ticker as their only scheduler |

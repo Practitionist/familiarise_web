@@ -10,7 +10,7 @@ This page is the **job catalogue**: what each job is, what it mutates, how it lo
 
 ## Universal Cron Locking & Heartbeat
 
-Cron locking is now universal. Before PR 6 of that train, one scheduled job ran with no mutual exclusion of any kind, and nothing in the repository could tell you that. Today every scheduled job either takes a `withCronLock` lock or holds a documented bespoke lock, and `__tests__/maintenance/cron-lock-registry.test.ts` re-derives that claim from source on every CI run, so the next unlocked job fails the build instead of quietly double-running for a year.
+Cron locking is now universal for every job that needs it. Before PR 6 of that train, one scheduled job ran with no mutual exclusion of any kind, and nothing in the repository could tell you that. Today every scheduled job takes a `withCronLock` lease, holds a documented bespoke lock, or is on an explicit exemption list, and `__tests__/maintenance/cron-lock-registry.test.ts` re-derives that claim from source on every CI run, so the next unlocked job fails the build instead of quietly double-running for a year.
 
 The lock is a **Postgres lease on `SystemJobExecution`**, not a Redis lock. Redis is deliberately kept off the cron path: an incident on 2026-09-21 spent roughly 430,000 of the account's 500,000 monthly commands on cron locking alone.
 
@@ -67,7 +67,7 @@ Counts below are the registry's current state. The registry holds **57 HTTP-twin
 | Jobs in the HTTP registry (`lib/cron/cleanup-registry.ts`)      | 57     |
 | Jobs with no HTTP twin (`jobs/**` entrypoints)                  | 13     |
 | Standalone read-only monitor workflows                          | 3      |
-| **Total scheduled jobs**                                        | **72** |
+| **Total scheduled jobs**                                        | **73** |
 | Registry slugs on the Netlify ticker                            | 28     |
 | Registry slugs on GitHub Actions                                | 29     |
 | Ticker targets with no Actions workflow at all                  | 27     |
@@ -117,7 +117,7 @@ These jobs move bookings through their lifecycle and hand back the slots that no
 
 Two of these jobs read the same cohort and must not race. **Auto-complete appointments** and **Detect consultant no-shows** both scan `APPROVED` and `SCHEDULED` consultations whose slots have ended, and only the detector can cancel and refund a session the consultant never joined. Since #1504 they share one attendance predicate: auto-complete defers a booking in the no-show shape until the detector has had its runs, then completes it after `NO_SHOW_HANDOFF_MINUTES`, so a booking the detector declined is never left live forever.
 
-#1846 considered three nightly detectors (double charge, missing Stream provisioning, paid-without-seat) and built none: unique indexes make a double charge unrepresentable, `Meeting` rows are minted lazily on first join, and every seat release either auto-refunds inline with a retry marker or records a `PAYMENT` `SystemEvent` when its refund fails.
+PR #1846 considered three nightly detectors (double charge, missing Stream provisioning, paid-without-seat) and built none: unique indexes make a double charge unrepresentable, `Meeting` rows are minted lazily on first join, and every seat release either auto-refunds inline with a retry marker or records a `PAYMENT` `SystemEvent` when its refund fails.
 
 ## Money in
 
@@ -293,7 +293,7 @@ Three independent mechanisms verify cron fleet health:
 
 The mechanical claims here — how many jobs exist, which are locked, which are fail-closed, which are financial, and which have a scheduler — are re-derived from source on every CI run by `__tests__/maintenance/cron-lock-registry.test.ts` and `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, so they cannot drift silently. The prose, the **Mutates** column and the group headings are hand-written and need a human to revisit them when a job's purpose changes.
 
-When adding a scheduled job: give it a `scripts/**` or `jobs/**` core, register its HTTP handler in `lib/cron/cleanup-registry.ts` served by `app/api/cleanup/[job]/route.ts`, wrap the core in `withCronLock` with a deliberate `failMode` stated as a string literal rather than computed, call `abortIfMaintenance()` in the CLI entrypoint, add the job name to `FINANCIAL_JOB_NAMES` if it touches money, give the job a ticker target or a workflow step but not both, keep every module in the entrypoint's import graph free of `server-only`, give any workflow every environment variable those modules read at import time, add the failure-notification step, and add a row here.
+When adding a scheduled job: give it a `scripts/**` or `jobs/**` core, and — if it needs an HTTP twin, which is what makes it reachable from the ticker and the admin console — register it in `lib/cron/cleanup-registry.ts` served by `app/api/cleanup/[job]/route.ts`, wrap the core in `withCronLock` with a deliberate `failMode` stated as a string literal rather than computed, call `abortIfMaintenance()` in the CLI entrypoint, add the job name to `FINANCIAL_JOB_NAMES` if it touches money, give the job at least one scheduler, and understand that listing it on both is a deliberate choice rather than a duplicate: a ticker target backed by a daily Actions run gets fast recovery plus an unbounded safety net, keep every module in the entrypoint's import graph free of `server-only`, give any workflow every environment variable those modules read at import time, add the failure-notification step, and add a row here.
 
 ---
 

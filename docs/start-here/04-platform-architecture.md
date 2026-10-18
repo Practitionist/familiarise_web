@@ -64,12 +64,14 @@ A scheduled job in this repository is a single function in a single domain modul
 
 Adding a parallel `route.ts` plus a `jobs/` wrapper plus a `scripts/` wrapper for the same job is explicitly banned, because in practice those three copies drift apart and only one of them gets updated.
 
-There are exactly two schedulers, and a given job runs on exactly one of them:
+There are exactly two schedulers, and every job is reached by at least one of them:
 
 - `netlify/functions/cron-tick.mts` runs every five minutes and drives the **latency-sensitive recovery sweeps**. It currently dispatches 28 targets.
 - The GitHub Actions cron workflows (`cron-intra-day.yml`, `cron-daily.yml`, `cron-weekly.yml`) drive the **daily, weekly and statutory batch work**, where a delay of an hour or more is harmless.
 
-There is no silent gap and no accidental double-fire: a test, `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, fails the build if a registered job has no scheduler at all.
+Most jobs sit on exactly one. A handful are deliberately on both — `alert-orphaned-payments` is a ticker target _and_ a daily Actions step, which buys fast recovery plus an unbounded safety net — and the shared Postgres lease makes the overlap safe: whichever runner loses answers 409.
+
+There is no silent gap: a test, `__tests__/maintenance/cleanup-job-scheduler-drift.test.ts`, fails the build if a registered job has no scheduler at all.
 
 ### 4. Status transitions are compare-and-set, never read-then-write
 
@@ -176,15 +178,15 @@ Neither family re-verifies a database invariant. A reconciler that did so would 
 
 ## Failure modes and recovery
 
-| Failure                                                         | What catches it                                                                                              | Recovery                                                                                                  |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Two requests book the same slot at once                         | The `occurrence_no_confirmed_overlap` exclusion index refuses the second commit                              | The losing request gets a typed `SCHEDULE_CONFLICT` 409; no cleanup needed                                |
-| A payment is captured but the process dies before confirming it | The capture webhook is the only `SUCCEEDED` writer; a sweep re-polls the gateway for aged `PENDING` payments | `reconcile-payment-status` adopts the gateway's terminal state                                            |
-| A ledger posting is left half-written                           | The deferred constraint trigger refuses the unbalanced transaction at `COMMIT`                               | Nothing was written; the caller retries                                                                   |
-| A refund is requested but the process dies                      | The refund row carries its own retry state, and any unpaid obligation is stamped on the payment              | `reconcile-refunds` re-drives it; after a bounded number of attempts it is dead-lettered for a human      |
-| A job's process is killed mid-run                               | The `SystemJobExecution` lease expires                                                                       | The next run sweeps the stale `RUNNING` row before acquiring; worst case the job waits one lease duration |
-| A sweep finds a state the application never permits             | The sweep's own finding list                                                                                 | It is routed to a needs-human queue or raises an alert; it is never silently repaired                     |
-| Redis is unreachable                                            | Maintenance reads fail open; cron locks do not depend on Redis                                               | The site stays up; the lock guarantees are unaffected                                                     |
+| Failure                                                         | What catches it                                                                                              | Recovery                                                                                                                                                                              |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Two requests book the same slot at once                         | The `occurrence_no_confirmed_overlap` exclusion index refuses the second commit                              | The losing request gets a typed `SCHEDULE_CONFLICT` 409; no cleanup needed                                                                                                            |
+| A payment is captured but the process dies before confirming it | The capture webhook is the only `SUCCEEDED` writer; a sweep re-polls the gateway for aged `PENDING` payments | `reconcile-payment-status` adopts the gateway's terminal state                                                                                                                        |
+| A ledger posting is left half-written                           | The deferred constraint trigger refuses the unbalanced transaction at `COMMIT`                               | Nothing was written; the caller retries                                                                                                                                               |
+| A refund is requested but the process dies                      | The refund row carries its own retry state, and any unpaid obligation is stamped on the payment              | `reconcile-refunds` re-drives it; after a bounded number of attempts it is dead-lettered for a human                                                                                  |
+| A job's process is killed mid-run                               | The `SystemJobExecution` lease expires                                                                       | The next run sweeps the stale `RUNNING` row before acquiring; worst case the job waits one lease duration                                                                             |
+| A sweep finds a state the application never permits             | The sweep's own finding list                                                                                 | It is routed to a needs-human queue or raises an alert; it is never silently repaired                                                                                                 |
+| Redis is unreachable                                            | Maintenance reads fail open. The `withCronLock` leases are Postgres rows, so they are unaffected             | The site stays up. `create-payout-batch` and `process-payouts` are the exception: they hold Redis locks, so payout work is deferred until Redis recovers rather than running unlocked |
 
 ## Glossary
 
