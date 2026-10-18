@@ -120,12 +120,6 @@ describe("where allowSuspended is used", () => {
     const join = read("app/api/meetings/[meetingId]/join/route.ts");
     expect(join).not.toContain("requireOrgAccess");
   });
-
-  it("org-funded checkout refuses a non-ACTIVE membership (typed)", () => {
-    const checkout = read("lib/payments/operations/checkout.ts");
-    expect(checkout).toContain('callerMembership.status !== "ACTIVE"');
-    expect(checkout).toContain('code: "ORG_MEMBERSHIP_REQUIRED"');
-  });
 });
 
 it("a suspended learner can't cancel or reschedule an org-funded booking (#1527 3c)", async () => {

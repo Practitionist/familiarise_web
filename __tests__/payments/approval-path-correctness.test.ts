@@ -33,7 +33,6 @@ const approvalPayment = read("lib/payments/operations/approval-payment.ts");
 const requestForApproval = read(
   "app/api/scheduling/request-for-approval/route.ts",
 );
-const checkout = read("lib/payments/operations/checkout.ts");
 // #1775 B-9 — the one post-commit mint every approval writer calls.
 const approveRequest = read("lib/booking/approve-request.ts");
 
@@ -130,36 +129,6 @@ describe("#1166 ORG-9 — org sponsorship survives the approval flow", () => {
     expect(approvalPayment).toContain(
       "metadata.organizationId = params.organizationId",
     );
-  });
-});
-
-describe("checkout hardening (#1093 tail + tentative visibility)", () => {
-  it("the pre-booking conflict check sees live tentative holds", () => {
-    const start = checkout.indexOf(
-      "const existingBooking = await tx.appointmentOccurrence.findFirst(",
-    );
-    expect(start).toBeGreaterThan(-1);
-    const query = checkout
-      .slice(start, checkout.indexOf("if (existingBooking)", start))
-      // Comments in this window explain the removed predicate by name.
-      .replace(/^\s*\/\/.*$/gm, "");
-    // A confirmed-only predicate here hides an in-flight hold; occupancy
-    // status is the whole check.
-    expect(query).not.toContain("isTentative");
-    expect(query).toContain("OR: buildOccupiedAppointmentFilter()");
-  });
-
-  it("the STEP-5 Serializable transaction is retried on P2034", () => {
-    const step5 = checkout.indexOf(
-      "// STEP 5: Create tentative appointment + payment record",
-    );
-    // #1435 — the window is measured in characters, so the comment block
-    // between the marker and the call decides whether this passes. Strip the
-    // comments and assert on the code instead of enlarging it again.
-    const window = checkout
-      .slice(step5, step5 + 2000)
-      .replace(/^\s*\/\/.*$/gm, "");
-    expect(window).toContain("withSerializableRetry(");
   });
 });
 

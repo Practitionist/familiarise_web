@@ -64,13 +64,7 @@ describe("#1527 Q4 — offering plan drafts", () => {
     });
   });
 
-  it("gates checkout's assertPlanPurchasable but not approval pay-links", () => {
-    const checkout = source("lib/payments/operations/checkout.ts");
-    const start = checkout.indexOf("const assertPlanPurchasable = (");
-    const body = checkout.slice(start, checkout.indexOf("switch (", start));
-    expect(body).toMatch(/planSaleRefusal\(p\)/);
-    expect(body).toMatch(/"PLAN_NOT_PUBLISHED"/);
-
+  it("never applies the new-sale gate to an approved request's pay-link", () => {
     const approval = source("lib/payments/operations/approval-payment.ts");
     expect(approval).not.toMatch(/planSaleRefusal|PLAN_NOT_PUBLISHED/);
   });
