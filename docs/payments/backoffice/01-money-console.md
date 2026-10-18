@@ -133,11 +133,11 @@ from the same heartbeat the scheduled invocation writes.
 
 ## Platform incidents
 
-When the call platform or the app fails for everyone, no presence evidence exists, and the session-outcome classifier could read the silence as a learner absence, which forfeits the learner's money. The Incidents section lets an admin declare the failure window so that every session it overlaps is voided as the platform's miss and every learner is made whole. Voiding and refunding is done by the `settle-platform-incidents` sweep, not by the declare door, which only records the window.
+When the call platform or the app fails for everyone, no presence evidence exists, and the session-outcome classifier could read the silence as a learner absence, which forfeits the learner's money. The Incidents section lets an admin declare the failure window so that every eligible session it overlaps is voided as the platform's miss and each learner receives the remedy for their product. Sessions already cancelled or rescheduled, and voids that already carry a refund or are settled, are skipped. Voiding and refunding is done by the `settle-platform-incidents` sweep, not by the declare door, which only records the window.
 
 ### The Incidents tab
 
-The tab (`components/dashboard/backoffice/money/IncidentsTab.tsx`, read through `GET /api/admin/incidents`) lists incidents newest first. Each row shows the window in the viewer's zone, the reason, who declared it, a status and the remedy counts. The status reads "Voiding sessions" until the retroactive pass has decided every overlapping session (`enumeratedAt`), "Remedies in progress" after that, and "Settled" once the ops report is sent and every remedy is finished (`settledAt`). The counts are remedies due, done, and "need a human", which are the dead-lettered rows described in the runbook below.
+The tab (`components/dashboard/backoffice/money/IncidentsTab.tsx`, read through `GET /api/admin/incidents`) lists incidents newest first. Each row shows the window in the viewer's zone, the reason, who declared it, a status and the remedy counts. The status reads "Voiding sessions" until the retroactive pass has decided every overlapping session (`enumeratedAt`), "Remedies in progress" after that, and "Settled" once the ops report is staged and every remedy is finished (`settledAt`). The counts are remedies due, done, and "need a human", which are the dead-lettered rows described in the runbook below.
 
 ### The declare door
 
@@ -163,7 +163,7 @@ Each unsettled incident has a "Run now" button for an admin (`POST /api/admin/in
 ### Runbook: declaring and following an incident
 
 1. **Confirm the outage.** Check the suggestion panel and the status page for the hour. Pick a window that has ended, covers every affected session, and is no longer than 24 hours. A window that is too wide voids healthy sessions that overlap it, because any overlap counts.
-2. **Declare it.** In Money, Incidents, enter the start and end (shown in your own zone), write a reason of at least five characters and confirm with your second factor. For example, an outage from Sat 18 Oct 2026 00:30 to 02:30 IST is declared as that window; the audit log shows `incident.declare` against the new incident.
+2. **Declare it.** In Money, Incidents, enter the start and end (shown in your own zone), write a reason of at least five characters and confirm with your second factor. For example, an outage from Sun 18 Oct 2026 00:30 to 02:30 IST is declared as that window; the audit log shows `incident.declare` against the new incident.
 3. **Know what each learner gets.** The sweep writes one remedy per live seat that held the session before it started:
    - Consultation: 100% of the remaining balance, refunded 48 hours after the void.
    - Paid trial: the same 48-hour refund, and the trial is cancelled in the same commit, which frees the expert pair.
