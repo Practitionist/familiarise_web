@@ -36,7 +36,10 @@ export async function POST(
 
   return await withIdempotency(
     request,
-    { scope: "booking.session-return", userId: session.user.id },
+    {
+      scope: `booking.session-return:${appointmentId}:${occurrenceId}`,
+      userId: session.user.id,
+    },
     async (body) => {
       const parsed = SessionReturnSchema.safeParse(body ?? {});
       if (!parsed.success) {

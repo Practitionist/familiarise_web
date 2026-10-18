@@ -14,7 +14,7 @@ import {
   liveParticipant,
   transitionParticipant,
 } from "@/lib/booking/participants";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import type { z } from "zod";
@@ -397,6 +397,27 @@ type AttendeesByRail = {
  * funded: a paid seat by its payment's rail, a seat with no payment as free.
  * Read off the seats as well as the payments, so a free seat is not skipped.
  */
+/** A seat still held under a SUCCEEDED payment, read on the cancel's own transaction. */
+async function hasPaidLiveSeat(
+  tx: Tx,
+  appointmentId: string,
+): Promise<boolean> {
+  const seats = await tx.appointmentParticipant.findMany({
+    where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
+    select: { userId: true },
+  });
+  if (seats.length === 0) return false;
+  const paid = await tx.payment.count({
+    where: {
+      appointmentId,
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+      userId: { in: seats.map((seat) => seat.userId) },
+    },
+  });
+  return paid > 0;
+}
+
 async function eventAttendeesByRail(
   appointmentId: string,
 ): Promise<AttendeesByRail> {
@@ -819,7 +840,9 @@ export async function POST(
     const isExpertSideCancel =
       (!!session.user.consultantProfileId &&
         consultantUserId === session.user.id) ||
-      (isHostOrgOperator && session.user.id !== consulteeUserId);
+      (isHostOrgOperator &&
+        !isPrivilegedUser &&
+        session.user.id !== consulteeUserId);
 
     let eventKind: "class" | "webinar" | null = null;
     if (appointment.class) eventKind = "class";
@@ -947,9 +970,13 @@ export async function POST(
                 )
               : null;
           if (owed) await stampRefundOwed(tx, owed);
-          const isPaidBooking =
-            paidPayment !== null || (attendees?.payerOf.size ?? 0) > 0;
-          if (isExpertSideCancel && isPaidBooking && hostProfileId) {
+          if (
+            isExpertSideCancel &&
+            hostProfileId &&
+            (paidPayment !== null ||
+              (eventKind !== null &&
+                (await hasPaidLiveSeat(tx, appointmentId))))
+          ) {
             await recordExpertStrike(tx, {
               consultantProfileId: hostProfileId,
               cause: "EXPERT_CANCEL",
