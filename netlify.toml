@@ -6,19 +6,9 @@
 [build.environment]
   # Node version
   NODE_VERSION = "22"
-  # Heap headroom for the webpack build. Lint + tsc are now skipped in `next build`
-  # (next.config.mjs) since CI gates them, so this no longer has to cover that step. #932
-  #
-  # 4096 was tried for #1795 and REVERTED: the webpack compile phase needs
-  # >4 GB heap (FATAL "Reached heap limit" ~2.5 min into "Creating an optimized
-  # production build", exit 2 — a V8-limit death, not the RSS kill). This flag
-  # binds the parent/compile process; prerender workers spawn with
-  # isolatedMemory (flag stripped, uncapped — see vercel/next.js#95744), so the
-  # static-phase RSS risk is handled by staticGenerationMaxConcurrency=4 +
-  # on-demand ISR + enablePrerenderSourceMaps=false instead. Raised 4096 ->
-  # 6144 when ADR 24 added two route trees; the 8 GB image tolerates it as long
-  # as prerender RSS stays capped.
-  NODE_OPTIONS = "--max-old-space-size=5376"
+  # V8 heap for the webpack compile; prerender workers are separate processes that ignore it.
+  # Production also builds Sentry source maps and needs more than 5376 MB; the 8 GB image fits 6144.
+  NODE_OPTIONS = "--max-old-space-size=6144"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Function memory / #1124 stall — RESOLVED IN next.config.mjs (#1972).
