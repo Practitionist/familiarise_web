@@ -84,16 +84,16 @@ Every past session that the outcome pass decides receives exactly one automatic 
 
 The verdict decides the completion status. The table below lists every outcome and the status it writes.
 
-| Outcome           | Status       | Meaning                                                                                                                                       |
-| ----------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HELD`            | `COMPLETED`  | Both sides were present and the void rule did not fire.                                                                                       |
-| `LEARNER_ABSENT`  | `COMPLETED`  | The host was present and no learner joined; the session is forfeit and no money moves.                                                        |
-| `CUT_SHORT`       | `VOIDED`     | The host side dropped while learners stayed, for at least min(15, booked / 2) minutes.                                                        |
+| Outcome           | Status       | Meaning                                                                                                                                                                               |
+| ----------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HELD`            | `COMPLETED`  | Both sides were present and the void rule did not fire.                                                                                                                               |
+| `LEARNER_ABSENT`  | `COMPLETED`  | The host was present and no learner joined; the session is forfeit and no money moves.                                                                                                |
+| `CUT_SHORT`       | `VOIDED`     | The host side dropped while learners stayed, for at least min(15, booked / 2) minutes.                                                                                                |
 | `PLATFORM_OUTAGE` | `VOIDED`     | The session overlaps an ops-declared incident window, or everyone dropped within two minutes of each other, or the minutes lost overlap maintenance and outweigh the host's own loss. |
-| `HOST_ABSENT`     | `VOIDED`     | A learner waited and no host-side person ever joined.                                                                                         |
-| `NOBODY_JOINED`   | `UNVERIFIED` | A call exists but nobody has a presence interval.                                                                                             |
-| `INCONCLUSIVE`    | `UNVERIFIED` | A guard failed (an open interval, a Stream report that saw more people, a maintenance hold); ops decides.                                     |
-| `OFFLINE`         | `UNVERIFIED` | There is no call at all, which is what an in-person session looks like.                                                                       |
+| `HOST_ABSENT`     | `VOIDED`     | A learner waited and no host-side person ever joined.                                                                                                                                 |
+| `NOBODY_JOINED`   | `UNVERIFIED` | A call exists but nobody has a presence interval.                                                                                                                                     |
+| `INCONCLUSIVE`    | `UNVERIFIED` | A guard failed (an open interval, a Stream report that saw more people, a maintenance hold); ops decides.                                                                             |
+| `OFFLINE`         | `UNVERIFIED` | There is no call at all, which is what an in-person session looks like.                                                                                                               |
 
 Two rows are deliberately left `SCHEDULED`. A session with an open presence interval on a room that has not ended is a live overrun and waits for the next run. A consultation whose verdict is `HOST_ABSENT` belongs to `detect-consultant-no-shows` until the no-show handoff, which cancels and refunds it in full; the handoff clock pauses for every DEGRADED or OFFLINE maintenance minute (#1746 B), and a host no-show the detector declined is parked `UNVERIFIED` with its outcome for ops.
 
