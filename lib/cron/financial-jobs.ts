@@ -38,6 +38,8 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "expire-unpaid-trials",
   // #1780 row 4 — refunds a cancelled class session not made up in 14 days.
   "settle-cancelled-sessions",
+  // Voids a declared incident's sessions and refunds them through the front door.
+  "settle-platform-incidents",
   // #1846 N2 — re-drives the capture webhook's owed auto-refunds.
   "retry-auto-refunds",
   // Orphan auto-heal refunds stranded captures through the refund front door.

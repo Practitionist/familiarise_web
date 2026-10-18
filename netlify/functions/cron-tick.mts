@@ -54,6 +54,8 @@ const TARGETS = [
   "detect-consultant-no-shows",
   // #1780 row 4 — refunds a cancelled class session nobody made up in 14 days.
   "settle-cancelled-sessions",
+  // Voids a declared platform incident's sessions and applies each learner's remedy.
+  "settle-platform-incidents",
   // #1846 N2 — re-drives the auto-refunds the capture webhook tried once.
   "retry-auto-refunds",
   // #1859 M-P0-14 — SUCCEEDED with no appointment: the stranded-money cohort.
@@ -103,6 +105,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "vest-referral-credits": 10,
   // #1780 — a gateway refund per seat; ten sessions fit the 20 s budget.
   "settle-cancelled-sessions": 10,
+  // A gateway refund per remedy row, same bite as the session sweep.
+  "settle-platform-incidents": 10,
   // #1846 N2 — a gateway refund per payment, same bite as the session sweep.
   "retry-auto-refunds": 10,
   // #1583 P1 — the five booking sweeps used to be appended `?limit=50` here and
@@ -160,6 +164,8 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "tentative-occurrences": 15,
   "expire-stale-requests": 15,
   "settle-cancelled-sessions": 30,
+  // 30, not 15: only the :00/:30 ticks have room under the 8-target cap; the refunds wait 48 h anyway.
+  "settle-platform-incidents": 30,
   "retry-auto-refunds": 15,
   // #1775 — 30 minutes, not 15. Both jobs are latency-relevant but not
   // minute-relevant: auto-complete's own buffer is one hour after a session
@@ -207,6 +213,7 @@ export const TARGET_OFFSET_MINUTES: Partial<Record<Target, number>> = {
   "tentative-occurrences": 10,
   "expire-stale-requests": 10,
   "settle-cancelled-sessions": 25,
+  "settle-platform-incidents": 0,
   "retry-auto-refunds": 10,
   // Thirty-minute session-outcome jobs and orphan healer on staggered slots
   "auto-complete-appointments": 15,
@@ -246,6 +253,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   // Per row: an appointment lock, a transaction, a slot restore and a notice.
   "reschedule-proposals": 20_000,
   "settle-cancelled-sessions": 20_000,
+  "settle-platform-incidents": 20_000,
   "retry-auto-refunds": 20_000,
   "vest-referral-credits": 20_000,
   "reconcile-refunds": 20_000,

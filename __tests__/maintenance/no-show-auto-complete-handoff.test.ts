@@ -87,6 +87,7 @@ jest.mock("../../lib/prisma", () => {
     },
     supportTicket: { findFirst: jest.fn() },
     maintenanceWindow: { findMany: jest.fn(async () => []) },
+    platformIncident: { findMany: jest.fn(async () => []) },
     bookingStatusHistory: { create: jest.fn() },
     // The claim writes the expert's reliability strike.
     systemEvent: { create: jest.fn(async () => ({})) },
