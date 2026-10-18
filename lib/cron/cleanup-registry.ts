@@ -16,9 +16,9 @@ export type CleanupRouteHandlers = {
 // overrides them (clamped to LIMIT_CAP); no caller gets an unbounded cohort.
 /** Sessions per reminder window; each costs a claim, a bell and an email. */
 const MAX_REMINDER_SESSIONS_PER_WINDOW = 25;
-/** Parents per pass and slot outcomes per pass; one Stream report each. */
+/** Parents and slot outcomes per bite; one Stream report each, bites until the drain deadline. */
 const MAX_AUTO_COMPLETE_PER_PASS = 25;
-/** Candidates per run; each is checked against a Stream call report. */
+/** Candidates per bite; each is checked against a Stream call report. */
 const MAX_NO_SHOW_CANDIDATES = 10;
 /** Rows per stale-request arm; the refund arm calls the gateway per row. */
 const MAX_STALE_REQUESTS_PER_ARM = 20;
@@ -227,7 +227,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "auto-complete-appointments": () =>
       cleanupRoute({
         job: "auto-complete-appointments",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { autoCompleteAppointments } =
             await import("@/scripts/appointments/auto-complete-appointments");
           const limit = parseLimitParamOrDefault(
@@ -237,6 +237,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
           return autoCompleteAppointments({
             maxParents: limit,
             maxSlotOutcomes: limit,
+            startedAt,
           });
         },
         summarize: (r) => ({
@@ -264,7 +265,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
     "detect-consultant-no-shows": () =>
       cleanupRoute({
         job: "detect-consultant-no-shows",
-        run: async (req) => {
+        run: async (req, { startedAt }) => {
           const { detectConsultantNoShows } =
             await import("@/scripts/appointments/detect-consultant-no-shows");
           return detectConsultantNoShows({
@@ -272,6 +273,7 @@ export const CLEANUP_JOB_BUILDERS: Record<string, () => CleanupRouteHandlers> =
               req,
               MAX_NO_SHOW_CANDIDATES,
             ),
+            startedAt,
           });
         },
         summarize: (r) => ({

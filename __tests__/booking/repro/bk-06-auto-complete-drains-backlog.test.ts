@@ -81,4 +81,20 @@ describe("autoCompleteAppointments backlog", () => {
 
     expect(decided.length).toBe(BACKLOG);
   });
+
+  it("stops starting sessions once the drain deadline has passed", async () => {
+    const startedAt = Date.now();
+    // Each decision costs one simulated second of the 12 s budget.
+    jest
+      .spyOn(Date, "now")
+      .mockImplementation(() => startedAt + decided.length * 1000);
+
+    await autoCompleteAppointments({
+      maxParents: BITE,
+      maxSlotOutcomes: BITE,
+      startedAt,
+    });
+
+    expect(decided.length).toBe(12);
+  });
 });
