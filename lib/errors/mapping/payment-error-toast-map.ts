@@ -19,6 +19,10 @@ import {
 // Toast message definitions
 // ============================================================================
 
+/** What a buyer sees when another buyer took their chosen time first. */
+export const SLOT_JUST_TAKEN_MESSAGE =
+  "That time was just taken — pick another.";
+
 interface ToastMessage {
   title: string;
   /** Static description. When null, the raw error message is used. */
@@ -274,6 +278,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "That Time Isn't Bookable",
     description: null, // "Times start on the hour or half hour" — already exact.
   },
+  [ErrorTypes.SLOT_TAKEN]: {
+    title: SLOT_JUST_TAKEN_MESSAGE,
+    description: null,
+  },
 };
 
 // ============================================================================
@@ -296,6 +304,7 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
 const TYPED_CODE_TOAST_MAP: Record<string, ToastMessage> = {
   [ErrorTypes.SLOT_TOO_SOON]: ERROR_TOAST_MAP[ErrorTypes.SLOT_TOO_SOON],
   [ErrorTypes.SLOT_NOT_ON_GRID]: ERROR_TOAST_MAP[ErrorTypes.SLOT_NOT_ON_GRID],
+  [ErrorTypes.SLOT_TAKEN]: ERROR_TOAST_MAP[ErrorTypes.SLOT_TAKEN],
 };
 
 // ============================================================================

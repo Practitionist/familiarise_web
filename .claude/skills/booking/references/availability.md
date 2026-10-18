@@ -148,10 +148,20 @@ The grid is `GET /api/scheduling/availability-with-allocation/[consultantId]` wi
 expert page asks for `zonedWeekWindow` bounds — viewer-zone local midnight to the
 local midnight seven days later, end exclusive — so the week's last 23:30 atom is
 inside the window.
-There is no polling interval on it and none should be added: ADR 16
-(`docs/enterprise/70-design-decisions/16-slot-freshness-without-realtime.md`)
-records freshness here as a user-experience concern met by a precise 409 toast,
-per-query refetch on focus and invalidate-on-mutation.
+The expert page's grid queries (`useAvailabilityWindow`, `useAvailabilityMonth`)
+poll it every 60 s plus jitter while the tab is visible, refetch on focus, back
+off to 5 minutes after three failed polls in a row, and send the ETag so an
+unchanged poll is a 304 (`createGridPollInterval` in
+`lib/scheduling/availabilityPolling.ts`). Freshness stays a user-experience
+concern (ADR 16, `docs/enterprise/70-design-decisions/16-slot-freshness-without-realtime.md`):
+checkout's recheck under the slot lock is the only correctness mechanism, and a
+taken slot answers 409 `code: "SLOT_TAKEN"`, which returns the buyer to a
+refetched grid with "That time was just taken — pick another."
+
+Host-cancelled class sessions keep their row (no `deletedAt`) for make-up and
+refund accounting, so every occupancy reader filters occurrences through
+`OCCUPYING_OCCURRENCE_WHERE` (`utils/scheduling-engine/occupancyPolicy.ts`): live,
+not host-cancelled, not `CANCELLED`. `RESCHEDULED` rows still occupy.
 
 ## 5. Occupancy, and when a hold is dead
 

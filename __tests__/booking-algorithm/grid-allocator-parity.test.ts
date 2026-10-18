@@ -22,6 +22,7 @@ import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
   OCCUPIED_REQUEST_STATUSES,
+  OCCUPYING_OCCURRENCE_WHERE,
 } from "../../utils/scheduling-engine/occupancyPolicy";
 import { isOccupiedByLiveAppointment } from "../../utils/scheduling-engine/ScheduleValidationService";
 
@@ -43,10 +44,8 @@ describe("buildConsultantOccupancyWhere", () => {
 
     expect(arms).toHaveLength(3);
 
-    // Participation (#1554): the consultant holds a live seat, whatever plan
-    // the appointment belongs to, and it has a live row. deletedAt: null — a
-    // tombstoned occurrence is not a booking (defense-in-depth; RESCHEDULED
-    // rows stay occupied, a pending reschedule is a live hold).
+    // Participation: the consultant holds a live seat, whatever plan the
+    // appointment belongs to, on a row that still holds its time.
     expect(arms[0]).toEqual({
       participants: {
         some: {
@@ -54,7 +53,7 @@ describe("buildConsultantOccupancyWhere", () => {
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
         },
       },
-      occurrences: { some: { deletedAt: null } },
+      occurrences: { some: OCCUPYING_OCCURRENCE_WHERE },
     });
 
     // Ownership: the appointment is delivered under one of their own plans,
@@ -120,7 +119,7 @@ describe("buildConsultantOccupancyWhere", () => {
           status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
         },
       },
-      occurrences: { some: { deletedAt: null } },
+      occurrences: { some: OCCUPYING_OCCURRENCE_WHERE },
     });
   });
 

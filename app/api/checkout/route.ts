@@ -350,13 +350,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // A taken 1:1 time is an answer the client acts on (refetch the grid), never a fault.
+    if (isSlotTaken(error)) {
+      countCheckoutConflict(ErrorTypes.SLOT_TAKEN);
+      return NextResponse.json(
+        {
+          error:
+            "Someone else booked this time moments ago. Your card was not charged.",
+          errorType: ErrorTypes.AVAILABILITY,
+          code: ErrorTypes.SLOT_TAKEN,
+          yourCardWasNotCharged: true,
+          timestamp: new Date().toISOString(),
+        },
+        { status: 409 },
+      );
+    }
+
     // #1477 — an error carrying a registered business code is an ANSWER, not a
     // fault: the classifier below already resolves it to its own status and
     // toast. Capturing it here as an exception is what kept every coded refusal
     // without an explicit branch above — the #1458 programme-cap codes, the
     // #1467 entitlement codes — paging as a checkout incident. Report it the
     // way the modelled refusals inside handleCheckout are reported instead.
-    if (isSlotTaken(error)) countCheckoutConflict("SLOT_TAKEN");
     let errorId: string | undefined;
     if (isBusinessErrorCode((error as { code?: unknown } | null)?.code)) {
       reportSentryError(error, { subsystem: "checkout", expected: true });

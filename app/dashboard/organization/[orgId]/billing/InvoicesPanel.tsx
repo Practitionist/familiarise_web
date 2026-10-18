@@ -87,9 +87,9 @@ function SummaryStats({ summary }: Readonly<{ summary: BillingSummary }>) {
   return (
     <StatRow columns={4}>
       <Stat
-        label="This month gross"
-        value={formatCurrencyAmount(summary.monthToDate.gross, "INR")}
-        hint={`${summary.monthToDate.paymentCount} bookings`}
+        label="Spent (net of refunds)"
+        value={formatCurrencyAmount(summary.monthToDate.net, "INR")}
+        hint={`${summary.monthToDate.paymentCount} bookings this month`}
       />
       <Stat
         label="Outstanding"

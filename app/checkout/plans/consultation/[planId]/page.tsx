@@ -21,6 +21,7 @@ import {
   type SupportedCheckoutGateway,
 } from "@/schemas/checkout";
 import {
+  DIRECT_CHECKOUT_HOLD_MS,
   MINIMUM_BOOKING_LEAD_TIME_MS,
   MINIMUM_BOOKING_LEAD_TIME_MINUTES,
 } from "@/lib/payments/constants";
@@ -42,6 +43,9 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import { createHandleApiError, paymentGateways } from "../../utils";
+import { isSlotStillOffered } from "@/app/explore/experts/[consultantId]/hooks/useAvailabilityWindow";
+import { useSlotJustTaken } from "@/app/explore/experts/[consultantId]/hooks/useSlotJustTaken";
+import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
 import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
@@ -102,6 +106,27 @@ function gatewaylessConfirmationText(data: {
     return "Mock payment processed. Your consultation has been confirmed. Check your dashboard for details.";
   }
   return "Your consultation has been confirmed. Check your dashboard for details.";
+}
+
+// sessionStorage can throw in privacy modes; a lost marker only re-runs the advisory slot check.
+// The marker holds the hold's expiry, so once the hold has lapsed the check runs again.
+function holdMarkerLive(key: string): boolean {
+  try {
+    return Number(globalThis.sessionStorage?.getItem(key)) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function writeHoldMarker(key: string): void {
+  try {
+    globalThis.sessionStorage?.setItem(
+      key,
+      String(Date.now() + DIRECT_CHECKOUT_HOLD_MS),
+    );
+  } catch {
+    // Advisory only: checkout's own recheck still arbitrates the slot.
+  }
 }
 
 export default function ConsultationCheckoutPage({
@@ -346,6 +371,50 @@ export default function ConsultationCheckoutPage({
   // Matches subscription/class/webinar pages (de-dupes the old inline map).
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
 
+  const consultantProfileId = eventData?.data?.consultantProfile?.id;
+  const slotJustTaken = useSlotJustTaken(consultantProfileId);
+  // A taken time sends the buyer back to a refreshed grid; every other refusal toasts in place.
+  const handleCheckoutError = useCallback(
+    (errorData: Parameters<typeof handleApiError>[0]) => {
+      if (errorData.code === ErrorTypes.SLOT_TAKEN) slotJustTaken();
+      else handleApiError(errorData);
+    },
+    [handleApiError, slotJustTaken],
+  );
+
+  // The checkout page can be reached from a stale grid, so it re-asks the grid once before Pay.
+  // The buyer's own open hold on this window reads as taken there, so a page that already
+  // started payment skips it until that hold lapses, leaving it to checkout's resume path.
+  const holdMarkerKey = `checkout-hold:${resolvedParams.planId}:${validatedSearchParams?.startsAt ?? ""}`;
+  const slotOfferedQuery = useQuery({
+    queryKey: [
+      "checkout-slot-offered",
+      consultantProfileId,
+      validatedSearchParams?.startsAt,
+      validatedSearchParams?.endsAt,
+    ],
+    enabled: !!consultantProfileId && !!validatedSearchParams,
+    // Re-asked on every mount, never answered from an earlier visit's cache.
+    gcTime: 0,
+    refetchOnMount: "always",
+    retry: false,
+    refetchOnWindowFocus: false,
+    queryFn: () =>
+      holdMarkerLive(holdMarkerKey) ||
+      !consultantProfileId ||
+      !validatedSearchParams
+        ? Promise.resolve(true)
+        : isSlotStillOffered(
+            consultantProfileId,
+            new Date(validatedSearchParams.startsAt),
+            new Date(validatedSearchParams.endsAt),
+          ),
+  });
+  const slotNoLongerOffered = slotOfferedQuery.data === false;
+  useEffect(() => {
+    if (slotNoLongerOffered) slotJustTaken();
+  }, [slotNoLongerOffered, slotJustTaken]);
+
   // Common API request logic
   const makeCheckoutRequest = useCallback(
     async (
@@ -436,7 +505,7 @@ export default function ConsultationCheckoutPage({
 
         if (!response.ok) {
           const errorData = await response.json();
-          handleApiError(errorData);
+          handleCheckoutError(errorData);
           return; // Toast already shown — don't throw to avoid double toast + console overlay
         }
 
@@ -450,7 +519,7 @@ export default function ConsultationCheckoutPage({
 
         // Handle application-level errors returned with HTTP 200 (e.g. expired contract, credit limit)
         if (!data.success) {
-          handleApiError({ error: data.error, errorType: data.errorType });
+          handleCheckoutError({ error: data.error, errorType: data.errorType });
           return;
         }
 
@@ -502,7 +571,7 @@ export default function ConsultationCheckoutPage({
       billingState.bodyField,
       validatedSearchParams,
       currency,
-      handleApiError,
+      handleCheckoutError,
       makeCheckoutRequest,
     ],
   );
@@ -959,13 +1028,17 @@ export default function ConsultationCheckoutPage({
                               .onPaymentSuccess
                           }
                           disabled={isMaintenanceBlocked}
+                          onBeforeCheckout={async () => {
+                            writeHoldMarker(holdMarkerKey);
+                            return true;
+                          }}
                           onPaymentError={(error: {
                             description?: string;
                             code?: string;
                             reason?: string;
                             message?: string;
                           }) =>
-                            handleApiError({
+                            handleCheckoutError({
                               error:
                                 error.description ??
                                 error.message ??

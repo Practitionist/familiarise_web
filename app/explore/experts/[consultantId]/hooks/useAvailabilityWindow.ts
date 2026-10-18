@@ -1,23 +1,40 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, type QueryClient } from "@tanstack/react-query";
 import { endOfMonth, startOfMonth } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
-import { useRef, type MutableRefObject } from "react";
+import { useRef, useState, type MutableRefObject } from "react";
+import { z } from "zod";
 import type { TIntervalTiming } from "@/types/slots";
+import { createGridPollInterval } from "@/lib/scheduling/availabilityPolling";
 
 /**
-  * One day of the availability-with-allocation grid answer.
-  *
-  * The endpoint keys days `yyyy-MM-dd` in the requested timezone and returns
-  * the slot timings plus the allocation overlay the pricing panel needs.
-  */
+ * One day of the availability-with-allocation grid answer.
+ *
+ * The endpoint keys days `yyyy-MM-dd` in the requested timezone and returns
+ * the slot timings plus the allocation overlay the pricing panel needs.
+ */
 export type AvailabilityDaySlots = (TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
 })[];
 
 export type AvailabilityWindowData = Record<string, AvailabilityDaySlots>;
+
+const gridAnswerSchema = z.object({
+  data: z
+    .record(
+      z.string(),
+      z.array(
+        z.object({
+          startsAt: z.string(),
+          isAllocated: z.boolean().optional(),
+          bookingStatus: z.string().optional(),
+        }),
+      ),
+    )
+    .nullish(),
+});
 
 export interface EtagCacheEntry {
   key: string;
@@ -89,6 +106,33 @@ async function fetchWindow(
   return resolved;
 }
 
+/**
+ * Freshness is UX only: checkout's atomic recheck under the slot lock is what keeps a taken time
+ * from being sold. Polls only while the tab is visible; 304s keep the cached answer.
+ */
+function useGridPollOptions() {
+  const [interval] = useState(createGridPollInterval);
+  return {
+    refetchInterval: (query: { state: Parameters<typeof interval>[0] }) =>
+      interval(query.state),
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  };
+}
+
+/** Marks every grid read for this consultant stale, so mounted readers refetch now. */
+export function invalidateAvailability(
+  queryClient: QueryClient,
+  consultantId: string | undefined,
+): Promise<void> {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["availability", consultantId] }),
+    queryClient.invalidateQueries({
+      queryKey: ["availability-month", consultantId],
+    }),
+  ]).then(() => undefined);
+}
+
 export function availabilityQueryKey(
   consultantId: string,
   startUtc: Date,
@@ -147,6 +191,7 @@ export function useAvailabilityWindow({
   bypassRef?: MutableRefObject<boolean>;
 }) {
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
+  const pollOptions = useGridPollOptions();
   const ready =
     enabled && !!consultantId && !!startUtc && !!endUtc && !!timezone;
   return useQuery({
@@ -180,7 +225,37 @@ export function useAvailabilityWindow({
     // is the normal shape on this host.
     staleTime: 30_000,
     retry: 1,
+    ...pollOptions,
   });
+}
+
+const ATOM_MS = 30 * 60 * 1000;
+
+/**
+ * Whether the grid still offers every 30-minute atom of [startsAt, endsAt) as free. Fails open on
+ * any read failure: checkout's recheck under the lock stays the arbiter.
+ */
+export async function isSlotStillOffered(
+  consultantId: string,
+  startsAt: Date,
+  endsAt: Date,
+): Promise<boolean> {
+  const url = `/api/scheduling/availability-with-allocation/${consultantId}?startDateInUtc=${startsAt.toISOString()}&endDateInUtc=${endsAt.toISOString()}&timezone=UTC`;
+  const response = await fetch(url, { cache: "no-store" }).catch(() => null);
+  if (!response?.ok) return true;
+  const body: unknown = await response.json().catch(() => null);
+  const parsed = gridAnswerSchema.safeParse(body);
+  if (!parsed.success) return true;
+  const free = new Set(
+    Object.values(parsed.data.data ?? {})
+      .flat()
+      .filter((s) => !s.isAllocated && s.bookingStatus === "available")
+      .map((s) => new Date(s.startsAt).getTime()),
+  );
+  for (let t = startsAt.getTime(); t < endsAt.getTime(); t += ATOM_MS) {
+    if (!free.has(t)) return false;
+  }
+  return true;
 }
 
 /** `yyyy-MM` of a month's first day in the viewer's zone — the month query's key part. */
@@ -211,6 +286,7 @@ export function useAvailabilityMonth({
   enabled?: boolean;
 }) {
   const etagCacheRef = useRef<EtagCacheEntry | null>(null);
+  const pollOptions = useGridPollOptions();
   const ready = enabled && !!consultantId && !!timezone;
   const monthKey = timezone ? monthKeyOf(monthStart, timezone) : "";
   const queryKey = consulteeUserId
@@ -232,5 +308,6 @@ export function useAvailabilityMonth({
     enabled: ready,
     staleTime: 60_000,
     retry: 1,
+    ...pollOptions,
   });
 }
